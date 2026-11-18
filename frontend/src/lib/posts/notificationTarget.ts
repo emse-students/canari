@@ -144,6 +144,7 @@ export function notificationHref(
     case 'live_cut':
     case 'live_suspended':
     case 'live_withdrawn':
+    case 'live_reinstated':
       return null;
     // The bookings' notices (WP-N): `postId` is the BOOKING, which has no page of its own - the
     // reader's bookings are listed on Reservations (a cancelled one there too, marked).
@@ -202,6 +203,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_cut',
   'live_suspended',
   'live_withdrawn',
+  'live_reinstated',
   'follow_request',
   'follow_accepted',
   'birthday',

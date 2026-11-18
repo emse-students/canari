@@ -97,6 +97,8 @@ maybe('pins per space against PostgreSQL', () => {
     )[0].id;
   let icmSe: string;
   let isminSe: string;
+  /** PDIS x saint-etienne: governed by the INSTITUTION with no BDE (WP-D1) inside its own test only. */
+  let pdisSe: string;
 
   const pinnedFor = async (viewer: string): Promise<string[]> =>
     (await q<{ id: string }>(PINNED_FOR_VIEWER_IDS_SQL, [Object.values(P), viewer]))
@@ -173,10 +175,12 @@ maybe('pins per space against PostgreSQL', () => {
     await q(`UPDATE spaces SET "bdeAssociationId" = NULL`);
     await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.bdeIcm, icmSe]);
     await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.bdeIsmin, isminSe]);
+    pdisSe = await space('PDIS', 'saint-etienne');
     const members: [string, string, number][] = [
       ['icmMod', A.bdeIcm, MODERATE],
       ['icmVal', A.bdeIcm, VALIDATE_EVENTS], // another BDE flag: pins nothing
       ['isminMod', A.bdeIsmin, MODERATE],
+      ['instMod', A.inst, MODERATE], // MODERATE in the institution governing pdisSe
     ];
     for (const [userId, asso, permissions] of members) {
       await q(
@@ -281,6 +285,24 @@ maybe('pins per space against PostgreSQL', () => {
     );
     expect(await outcome(service.pin(P.inst, asUser('icmMod'), icmSe))).toBe('accepted');
     expect(await outcome(service.pin(P.inst, GRANT, isminSe))).toBe('accepted');
+  });
+
+  it('an institution governing a space is no BDE there: its MODERATE pins nothing (owner, 2026-11-15, decision 3)', async () => {
+    // P.inst's rule (NULL, saint-etienne) reaches pdisSe, so the post is pinnable there - by the
+    // platform admin, never by the governing institution's moderator. Governed here only, so the
+    // migration 128 population below keeps its two BDE spaces.
+    await q(`UPDATE spaces SET "bdeAssociationId" = $1 WHERE id = $2`, [A.inst, pdisSe]);
+    try {
+      expect(await outcome(service.pin(P.inst, asUser('instMod'), pdisSe))).toBe(
+        SPACE_PIN_FORBIDDEN
+      );
+      expect(await outcome(service.pin(P.inst, asUser('instMod'), icmSe))).toBe(
+        SPACE_PIN_FORBIDDEN
+      );
+    } finally {
+      await q(`DELETE FROM post_space_pins WHERE space_id = $1`, [pdisSe]);
+      await q(`UPDATE spaces SET "bdeAssociationId" = NULL WHERE id = $1`, [pdisSe]);
+    }
   });
 
   it('pins only a post visible in that space, and live there', async () => {

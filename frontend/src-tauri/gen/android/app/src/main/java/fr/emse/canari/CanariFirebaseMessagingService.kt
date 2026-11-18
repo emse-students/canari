@@ -2219,6 +2219,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   conversation type - the fact the push carries as `isGroup`, so both triggers draw an
          *   unnamed group as a group ([ConversationShape.isGroup]). Null when the row has no type:
          *   not said, and the name rule decides.
+         * @param reaction whether this frame is a REACTION to one of this account's messages rather
+         *   than a message (2026-11-17): [body] is then the emoji, [senderId] / [senderName] the
+         *   actor, [sentAt] the reaction's own instant, and the post is [showReactionNotification] -
+         *   the push's own composition, on [CHANNEL_REACTIONS] under [reactionNotifKey].
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -2233,11 +2237,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             covers: Int,
             authorProven: Boolean,
             isGroup: Boolean?,
+            reaction: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
+            }
+            if (reaction) {
+                // THE FRAME TRIGGER OF A REACTION: the WebView decided this conversation is off
+                // screen. The push may draw the same reaction too; the shared stamp makes them one.
+                Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
+                WS_NOTIF_LANE.execute {
+                    try {
+                        context.showReactionNotification(groupId, senderId, senderName, body, sentAt, suppressInForeground = false)
+                    } catch (e: Exception) {
+                        // EVERY SWALLOWED BRANCH LOGS: in the foreground this lane is the only path.
+                        Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                    }
+                }
+                return true
             }
             Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
@@ -2309,6 +2328,67 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             return true
         }
+
+        /**
+         * Posts (or updates) a conversation's REACTION notification - the ONE composition both
+         * triggers of a reaction share: the push ([handleReactionNotification], app not in front)
+         * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, that
+         * conversation off screen, decided in the WebView by `reactionNotification.ts`). Both may fire
+         * for one reaction; the stamp below makes them one.
+         *
+         * Filed on [CHANNEL_REACTIONS] under [reactionNotifKey], so it never overwrites the
+         * conversation's unread message notification and a second reaction joins the first. A push
+         * and a frame for ONE reaction land on one notification AND one line: both stamp it with the
+         * reaction's own instant ([reactionAt]), which `alreadyPosted` and the alerted ledger in
+         * [showMessageNotification] match on, under [REACTION_POST_LOCK]. No quick actions: there is
+         * nothing to reply to and nothing to mark read. The sentence is `notif_reaction_body`, the
+         * same string for both.
+         *
+         * @param fallbackName the actor's name when this conversation holds no nickname for them -
+         *   the push's title, or the name the WebView resolved.
+         * @param reactionAt the reaction's own instant (`ReactionMsg.at`, the reactor's clock): the
+         *   frame's `at`, and the push's `at` (sent since 2026-11-17). 0 from a reactor predating
+         *   that field - the line is then stamped now, and a push and a frame of that one reaction
+         *   cannot be recognised as one (two lines, two alerts), exactly as before.
+         * @param suppressInForeground TRUE for the push, which knows only whether the app is in
+         *   front; FALSE for the frame, whose trigger already asked the finer question.
+         */
+        internal fun Context.showReactionNotification(
+            groupId: String,
+            actorId: String,
+            fallbackName: String,
+            emoji: String,
+            reactionAt: Long,
+            suppressInForeground: Boolean = true,
+        ) {
+            // The actor's nickname in that conversation first (owner, 2026-11-14), else the fallback.
+            val actorName = nicknameLookup(
+                this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
+            )(actorId) ?: fallbackName
+            val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
+                ?: generateInitialsBitmap(actorName)
+            // ONE CHECK-AND-POST AT A TIME: the push (its FCM thread) and the frame (the WebSocket
+            // lane) may build the SAME reaction at once now that the frame trigger no longer defers to
+            // the push. Each asks the shade and the alerted ledger, then posts and records; two
+            // interleaved would both find nothing and both alert. Held only around that, never the
+            // avatar fetch above.
+            synchronized(REACTION_POST_LOCK) {
+                showMessageNotification(
+                    senderName = actorName,
+                    groupName = "",
+                    body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
+                    largeIcon = largeIcon,
+                    groupId = groupId,
+                    channel = CHANNEL_REACTIONS,
+                    quickActions = false,
+                    sentAt = reactionAt,
+                    suppressInForeground = suppressInForeground,
+                )
+            }
+        }
+
+        /** Serialises [showReactionNotification]'s check-and-post across its two triggers. */
+        private val REACTION_POST_LOCK = Any()
 
         // --- The message notification, and the avatar chain it needs -------------------
         //
@@ -2832,8 +2912,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // something visible, it is a second announcement of something the user already dismissed.
             //
             // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
-            // and for the same reason: a reaction reaches here with `sentAt = 0`, no message of its
-            // own can be identified, and this must never guess. A salon push carried 0 until
+            // and for the same reason: a reaction from a reactor predating `at` reaches here with
+            // `sentAt = 0`, no reaction of its own can be identified, and this must never guess. A salon push carried 0 until
             // 2026-09-22 and now carries `createdAt`.
             //
             // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
@@ -5264,12 +5344,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return withMlsStateLock(5) {
             if (foregroundTookOver("catchup")) return@withMlsStateLock null
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
-            decryptProtoWithCommits(
+            // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of
+            // a shut phone pays it again, and its size grows with the key group and the days the
+            // app stayed shut (channel-encryption section 28). Read on the rig from logcat.
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            val outcome = decryptProtoWithCommits(
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
                 locale = ctx.locale,
             )
+            val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
+            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
+            outcome
         }
     }
 
@@ -5854,6 +5941,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_withdrawn_title),
                 res.getString(R.string.notif_social_live_withdrawn_body)
             )
+            "social_live_reinstated" -> Pair(
+                res.getString(R.string.notif_social_live_reinstated_title),
+                res.getString(R.string.notif_social_live_reinstated_body)
+            )
             // The bookings' notices (WP-N): who acted names the title - a person, or the
             // association of the space - and the body is the place, the organiser's word for a
             // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).
@@ -5996,10 +6087,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""
         val actorId = data["senderId"] ?: ""
-        // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
-        val actorName = nicknameLookup(
-            this, MlsContextLoader.loadPushContext(this)?.userId, salon = false, conversation = groupId, label = "[REACTION_NAME]",
-        )(actorId) ?: data["title"] ?: getString(R.string.app_name)
 
         if (groupId.isEmpty()) {
             // Without it there is no conversation to attach to and no stable id to reuse, so the
@@ -6009,18 +6096,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
-        val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
-            ?: generateInitialsBitmap(actorName)
-
-        showMessageNotification(
-            senderName = actorName,
-            groupName = "",
-            body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
-            largeIcon = largeIcon,
-            groupId = groupId,
-            channel = CHANNEL_REACTIONS,
-            quickActions = false,
-        )
+        // The reaction's own instant, the stamp the frame trigger uses too; absent from an older reactor.
+        val reactionAt = data["at"]?.toLongOrNull() ?: 0L
+        // The push's title is the server's name for the actor - the fallback behind their nickname.
+        showReactionNotification(groupId, actorId, data["title"] ?: getString(R.string.app_name), emoji, reactionAt)
     }
 
     // --- Channel (community) message push --------------------------------------

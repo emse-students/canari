@@ -391,6 +391,31 @@ export interface ApnsRequest {
 export const APNS_COLLAPSE_ID_MAX_BYTES = 64;
 
 /**
+ * The `collapseId` of ONE reaction's push - the decimal the author's iPhone files it under, and the
+ * very identifier the author's page gives its own notification of that reaction (the notification
+ * plugin's request id, `"\(notification.id)"`), so the system REPLACES one by the other instead of
+ * showing two (review of #3792). The frontend's `reactionCollapseId` (`reactionNotification.ts` over
+ * `stableNotifId.ts`) is the other copy; the two languages cannot share code, so both test suites
+ * assert the same vector.
+ *
+ * Java's string hash of `reaction:<messageId>:<actor>:<at>`, folded positive - the plugin's id space.
+ *
+ * THE REACTED-TO MESSAGE'S ID, NEVER THE CONVERSATION'S (review of #3792, round 3). This rides the
+ * content-free wake as an APNs header Apple reads. A hash of `<groupId>:<actor>:<at>` was a hash of
+ * values Apple can learn elsewhere - a call ring carries the group and the caller in clear - so a few
+ * thousand candidate instants would confirm "A reacted in G" on a push meant to say nothing. The
+ * message id travels in no wake and no ring, so the hash cannot be checked against a guess.
+ */
+export function reactionCollapseId(messageId: string, actorId: string, at: number): string {
+  const key = `reaction:${messageId}:${actorId.toLowerCase()}:${at}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (Math.imul(31, hash) + key.charCodeAt(i)) | 0;
+  }
+  return String(Math.abs(hash) || 1);
+}
+
+/**
  * Builds the APNs request for a queued message.
  *
  * Visible messages use `mutable-content: 1` so the Notification Service

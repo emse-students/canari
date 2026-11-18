@@ -265,6 +265,9 @@ export const LIVE_RULES_VERSION = 2;
  * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
  * the text - it is sealed with the live key - so this is the CLIENT's bound, published here so an
  * installed build reads it rather than carries it; the server bounds the sealed size below.
+ * It is ALSO the v1 chat format's bound (`LIVE_CHAT_V1_MAX_CHARS`, frontend `liveChatCrypto.ts`): a
+ * viewer drops a longer line, so raising it is a format v2, never an edit here. Held equal by
+ * `liveChatCrypto.test.ts`.
  */
 export const LIVE_CHAT_MESSAGE_MAX_CHARS = 300;
 

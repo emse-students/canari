@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.7.0-alpha.7"
+version = "1.7.0-alpha.12"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -105,6 +105,10 @@ tauri-plugin-system-components = "=0.1.8"
 # secret there; the bench command uses the same function. Already in the tree through wry, so this
 # names a version the lock carries.
 objc2 = "0.6"
+# The expiration handler of the background-time assertion every foreground seed-mirror edit holds
+# (`app_group::BackgroundTime`): an app suspended holding a lock on an App Group file is killed
+# (`0xdead10cc`). Already in the tree through objc2's users, so this names a version the lock carries.
+block2 = "0.6"
 
 # A BENCH build for the phone on the bench (`ios.yml` with `local_url`), and NOTHING else: the
 # `bench_native_store` command the cross-client rig asks the iPhone's native stores through

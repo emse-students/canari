@@ -15,7 +15,8 @@
  *
  * `liveKeyVersion` names the secret a row was sealed under. Only {@link LIVE_KEY_VERSION} opens
  * today; a rotation adds the next version's secret beside this one, seals new lives under it, and
- * keeps the old one until the last row of the old version is purged (a live lives an hour at most).
+ * keeps the old one until no row of the old version is left - read from the rows, never assumed
+ * from a clock: a live has had no duration cap since 2026-10-31 (owner).
  *
  * THE PREVIOUS FORMAT (durable-rules: an at-rest envelope change ships its reader for the previous
  * format in the same commit): a row written before migration 110, or by the previous release's

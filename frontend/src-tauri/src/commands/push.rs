@@ -477,6 +477,73 @@ pub(crate) fn read_and_clear_read_watermarks(app: tauri::AppHandle) -> Vec<serde
     take_ndjson_handoff(&app, "read_watermarks.ndjson", "READ_WATERMARK")
 }
 
+/// Takes the groups a background Welcome joined while the app was shut, and deletes the ledger
+/// (`mobile::background::take_background_joins`). Called once at start-up, before the drain: the
+/// frontend makes each conversation among them owe its register (`registerOwed.ts`), as a Welcome
+/// the page processes does, and believes an entry only when the state it loaded holds the group.
+///
+/// Empty on desktop, where no push service joins anything. An unreadable ledger is said at error
+/// and answered empty - what is lost is the register ask of those groups, never a message.
+#[tauri::command]
+pub(crate) fn take_background_joins(app: tauri::AppHandle) -> Vec<String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!(
+                    "[BG_JOIN] app_data_dir() failed: {e} - the background joins are not taken"
+                );
+                return vec![];
+            }
+        };
+        match crate::mobile::background::take_background_joins(&data_dir) {
+            Ok(taken) => {
+                if !taken.is_empty() {
+                    log::info!("[BG_JOIN] ledger taken: {} group(s)", taken.len());
+                }
+                taken
+            }
+            Err(e) => {
+                log::error!("[BG_JOIN] ledger not taken ({e}) - those groups ask no register");
+                vec![]
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        vec![]
+    }
+}
+
+/// Forgets `group_id` in the background-join ledger: the PAGE installed that group's Welcome itself
+/// (`handleWelcome`), so whatever a background engine noted for it - a join whose `mls.bin` write was
+/// refused, or erased by the page's own persist - describes a join that is not the one this device
+/// holds, and its register is the page's to ask and take (review of #3777, P2-2). Without this, the
+/// next start would take the stale note for a group the page HOLDS and owe a register it already
+/// took. Nothing on desktop; a failure is said at error.
+#[tauri::command]
+pub(crate) fn forget_background_join(app: tauri::AppHandle, group_id: String) {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!(
+                    "[BG_JOIN] app_data_dir() failed: {e} - a stale note may re-owe a register"
+                );
+                return;
+            }
+        };
+        crate::mobile::background::forget_background_join(&data_dir, &group_id);
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, group_id);
+    }
+}
+
 /// Takes the ledger of key-group joins the push service attempted while the app was shut, and
 /// deletes it (channel-encryption section 26, `mobile::key_group_join`).
 ///
@@ -654,7 +721,7 @@ fn with_graine_mirror<R>(
 
 /// Takes the seed mirror's writers' lock in `data_dir` (`graine_seeds.lock`), held until the returned
 /// file is dropped. EVERY WRITER of a `graine_seeds.json` takes it - the edits below, and the iOS
-/// activation copy into the App Group ([`sync_seed_mirror_copy`]).
+/// fold of the app's former copy into the App Group's ([`fold_legacy_seed_mirror`]).
 fn lock_seed_mirror(data_dir: &std::path::Path) -> Result<std::fs::File, String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
@@ -667,73 +734,196 @@ fn lock_seed_mirror(data_dir: &std::path::Path) -> Result<std::fs::File, String>
     Ok(lock)
 }
 
-/// Copies the app's seed mirror over the App Group's, UNDER THE GROUP COPY'S WRITERS' LOCK - the iOS
-/// activation mirror (`CanariMirrorPushStateToAppGroup`), which used to copy it in Objective-C with
-/// no lock. Unlocked, it could read the app's copy before an account's wipe and write it over the
-/// group's after the wipe had edited it, bringing the wiped seeds back for the extension. Under the
-/// lock, a copy read before the wipe lands before the wipe's own edit of the group's copy, which
-/// waits for the same lock. Returns whether a copy was made: an app with no mirror leaves the
-/// group's as it is, as the Objective-C did.
-#[cfg(any(target_os = "ios", test))]
-pub(crate) fn sync_seed_mirror_copy(
-    data_dir: &std::path::Path,
-    group: &std::path::Path,
-) -> Result<bool, String> {
-    let _lock = lock_seed_mirror(group)?;
-    // Read without the app's lock: its writers rename whole files, so this is one version or the
-    // other, never half of one. COPIED AS BYTES, never opened: the copy answers no question about
-    // the mirror's contents, which only `read_graine_mirror` reads.
-    let source = data_dir.join("graine_seeds.json");
-    let bytes = match std::fs::read(&source) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(format!("read the app's seed mirror: {e}")),
-    };
-    let path = group.join("graine_seeds.json");
-    let tmp = group.join("graine_seeds.json.tmp");
-    std::fs::write(&tmp, bytes).map_err(|e| format!("write the group copy: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename the group copy: {e}"))?;
-    crate::native_cache::exclude_from_backup(&path);
-    Ok(true)
+/// Removes the seed mirror in `dir` under the lock its writers take, so a push writing a seed at
+/// the same instant lands entirely before or entirely after. Returns whether a file was there.
+///
+/// The lock is opened only when the mirror exists: creating `graine_seeds.lock` in a container that
+/// never had a mirror would leave a file this call invented. Shared by the iOS factory wipe of the
+/// App Group (`storage::wipe_app_group`) and the bench's `forget_graine`.
+#[cfg(any(target_os = "ios", test, feature = "bench-observables"))]
+pub(crate) fn remove_graine_mirror(dir: &std::path::Path) -> Result<bool, String> {
+    let path = dir.join("graine_seeds.json");
+    if !path.exists() {
+        return Ok(false);
+    }
+    // Released when `_lock` drops, on every return path.
+    let _lock = lock_seed_mirror(dir)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("remove graine_seeds.json: {e}")),
+    }
 }
 
-/// The C entry of [`sync_seed_mirror_copy`], called by `CanariMirrorPushStateToAppGroup`
-/// (`canari_push.mm`) with the app data directory. Answers one of the `MIRROR_*` codes of
-/// `mls_account_state.rs` (`CANARI_MLS_MIRROR_*` in `canari_rust_bridge.h`), which the caller logs.
+/// What [`fold_legacy_seed_mirror`] did: nothing when the app held no copy of its own.
+#[cfg(any(target_os = "ios", test))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct LegacyFold {
+    /// The app's former copy existed, and is gone now.
+    pub found: bool,
+    /// Sessions it held that the App Group's copy did not, added to it.
+    pub added: usize,
+    /// Sessions both held: the App Group's entry kept, with the app's writers added to its labels.
+    pub merged: usize,
+}
+
+/// Folds the app's FORMER seed mirror (`{app_data_dir}/graine_seeds.json`) into the App Group's,
+/// the one copy on iOS since 2026-11-17, and deletes it.
 ///
-/// # Safety
-/// `data_dir` is null or a valid NUL-terminated string for the duration of the call.
-#[cfg(target_os = "ios")]
-#[no_mangle]
-pub unsafe extern "C" fn canari_ios_mirror_graine_seeds_to_app_group(
-    data_dir: *const std::os::raw::c_char,
-) -> i32 {
-    use crate::commands::mls_account_state::{
-        MIRROR_FAILED, MIRROR_NO_DIR, MIRROR_NO_GROUP, MIRROR_OK,
-    };
-    if data_dir.is_null() {
-        return MIRROR_NO_DIR;
+/// **THERE WERE TWO COPIES, AND THE ONE WITHOUT THE EXTENSION'S SEEDS WON** (production 2026-11-16,
+/// channel-encryption section 27). The extension opens a seed frame and writes the App Group copy;
+/// the foreground wrote its own copy; and every `didBecomeActive` / `willResignActive` copied the
+/// app's file over the group's AS BYTES. So a seed the extension stored while the app was shut was
+/// erased the moment the app came to the foreground, and the next push of that session drew the
+/// generic banner (`[PUSH_BLIND] missing=seed refused=none`); and a seed the foreground absorbed
+/// reached the extension only at the next lifecycle copy. Now the foreground writes the App Group's
+/// file itself (`seed_mirror_home`), so there is nothing to copy - only this one-time fold of
+/// what an older build left.
+///
+/// A UNION, never an overwrite: a session the group already holds keeps its entry (the writers of
+/// both are united on it), a session it lacks is added, and each channel the fold added to is held
+/// to the per-channel bound. Under BOTH writers' locks, the app's first: an account's wipe edits
+/// the one copy it finds under that copy's lock, so a fold cannot read the app's copy before a wipe
+/// and land it in the group's after. An app copy no key opens, or that is not JSON, is deleted
+/// unfolded - the cache key never rotates, so nothing on this install will ever read it; an app copy
+/// that merely failed to READ is kept, and the call fails, so the next edit folds it.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn fold_legacy_seed_mirror(
+    app_dir: &std::path::Path,
+    group: &std::path::Path,
+    key: &CacheKey,
+) -> Result<LegacyFold, String> {
+    let legacy_path = app_dir.join("graine_seeds.json");
+    if !legacy_path.exists() {
+        return Ok(LegacyFold::default());
     }
-    // SAFETY: non-null, and NUL-terminated for the call by this function's contract.
-    let Ok(dir) = std::ffi::CStr::from_ptr(data_dir).to_str() else {
-        return MIRROR_NO_DIR;
-    };
-    let group = match crate::app_group::app_group_dir() {
-        Ok(group) => group,
-        Err(e) => {
-            log::error!("[GRAINE_MIRROR] activation mirror: no App Group container: {e}");
-            return MIRROR_NO_GROUP;
+    // Released when `_app_lock` is dropped, after the file is removed.
+    let _app_lock = lock_seed_mirror(app_dir)?;
+    let legacy = match read_graine_mirror(app_dir, Some(key)) {
+        Ok(Some(root)) => root,
+        // Removed between the check and the lock: there is nothing left to fold.
+        Ok(None) => return Ok(LegacyFold::default()),
+        // A read that failed THIS time says nothing about the bytes: the file stays for the next
+        // edit, and this one fails rather than land beside a copy it has not folded.
+        Err(e @ MirrorReadError::Io(_)) => return Err(e.to_string()),
+        // For good: the key never rotates, and bytes that are not JSON never will be.
+        Err(e @ (MirrorReadError::Unopenable(_) | MirrorReadError::Unparsable(_))) => {
+            log::error!(
+                "[GRAINE_MIRROR] the app's former seed mirror will never open and is deleted unfolded: {e}"
+            );
+            serde_json::json!({})
         }
     };
-    match sync_seed_mirror_copy(std::path::Path::new(dir), &group) {
-        Ok(copied) => {
-            log::debug!("[GRAINE_MIRROR] activation mirror of the seed mirror: copied={copied}");
-            MIRROR_OK
+    let mut fold = LegacyFold {
+        found: true,
+        ..LegacyFold::default()
+    };
+    if let Some(channels) = legacy.as_object().filter(|c| !c.is_empty()) {
+        fold = with_graine_mirror(group, key, |map| {
+            let mut done = fold;
+            let mut changed = false;
+            for (channel_id, sessions) in channels {
+                let Some(sessions) = sessions.as_object() else {
+                    continue;
+                };
+                let mut added_here = false;
+                for (session_id, entry) in sessions {
+                    let held_channel = map
+                        .iter()
+                        .find(|(_, held)| held.get(session_id).is_some())
+                        .map(|(ch, _)| ch.clone());
+                    let Some(held_channel) = held_channel else {
+                        let target = map
+                            .entry(channel_id.clone())
+                            .or_insert_with(|| serde_json::json!({}));
+                        if let Some(target) = target.as_object_mut() {
+                            target.insert(session_id.clone(), entry.clone());
+                            done.added += 1;
+                            added_here = true;
+                            changed = true;
+                        }
+                        continue;
+                    };
+                    let held = &mut map[held_channel.as_str()][session_id.as_str()];
+                    // A SESSION ID NAMES ONE SEED IN ONE SALON, FOR EVER (`merge_graine_seed`).
+                    if held_channel != *channel_id
+                        || !same_seed(
+                            held["seed"].as_str().unwrap_or_default(),
+                            entry["seed"].as_str().unwrap_or_default(),
+                        )
+                    {
+                        log::error!(
+                            "[GRAINE_MIRROR] fold: session {session_id} is held for channel {held_channel} with another seed or salon - the App Group's entry is kept"
+                        );
+                        continue;
+                    }
+                    for account in entry_accounts(entry) {
+                        changed |= label_entry(held, account);
+                    }
+                    // A writer nobody can name stays unnamed: no per-account wipe may take it.
+                    if entry_unattributed(entry) && !entry_unattributed(held) {
+                        if let Some(obj) = held.as_object_mut() {
+                            obj.insert(UNATTRIBUTED_FIELD.to_string(), true.into());
+                            changed = true;
+                        }
+                    }
+                    done.merged += 1;
+                }
+                if added_here {
+                    if let Some(target) = map
+                        .get_mut(channel_id.as_str())
+                        .and_then(|v| v.as_object_mut())
+                    {
+                        prune_graine_sessions(target);
+                    }
+                }
+            }
+            Ok((done, changed))
+        })?;
+    }
+    std::fs::remove_file(&legacy_path)
+        .map_err(|e| format!("remove the app's former seed mirror: {e}"))?;
+    Ok(fold)
+}
+
+/// Where this install's ONE seed mirror lives: the directory every foreground edit writes.
+///
+/// On Android, the app data directory, which Kotlin hands the push service too. On iOS, the App
+/// Group container, because the notification extension is another process that cannot reach the
+/// app's data directory - and one file there, under one lock, is what keeps the extension's seeds
+/// and the foreground's in the same map ([`fold_legacy_seed_mirror`] says what two copies cost).
+/// The app's former copy is folded in on the way, so no edit ever lands beside one.
+#[cfg(mobile)]
+fn seed_mirror_home(
+    data_dir: &std::path::Path,
+    #[allow(unused_variables)] key: &CacheKey,
+) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let group = crate::app_group::app_group_dir().map_err(|e| {
+            log::error!(
+                "[GRAINE_MIRROR] no App Group container - the seed mirror is not written: {e}"
+            );
+            format!("App Group: {e}")
+        })?;
+        let fold = fold_legacy_seed_mirror(data_dir, &group, key).map_err(|e| {
+            log::error!(
+                "[GRAINE_MIRROR] the app's former seed mirror was not folded into the App Group: {e}"
+            );
+            e
+        })?;
+        if fold.found {
+            log::info!(
+                "[GRAINE_MIRROR] the app's former seed mirror folded into the App Group: {} added, {} already held",
+                fold.added,
+                fold.merged
+            );
         }
-        Err(e) => {
-            log::error!("[GRAINE_MIRROR] activation mirror of the seed mirror failed: {e}");
-            MIRROR_FAILED
-        }
+        Ok(group)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        Ok(data_dir.to_path_buf())
     }
 }
 
@@ -798,6 +988,39 @@ pub(crate) fn reseal_graine_mirror(
     with_graine_mirror_inner(data_dir, key, true, |_| Ok(((), false))).map(|(_, wrote)| wrote)
 }
 
+/// Why [`read_graine_mirror`] could not answer - a TYPE, because its callers act on the difference:
+/// the fold of the app's former copy deletes a file nothing will ever open, and keeps one it merely
+/// could not read this time (2026-11-17 review).
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+#[derive(Debug)]
+pub(crate) enum MirrorReadError {
+    /// The file is there and reading it failed - a fault of this moment; its bytes may be sound.
+    Io(std::io::Error),
+    /// The bytes are sealed and no key was handed over, or the install's key does not open them -
+    /// for good, since that key never rotates.
+    Unopenable(String),
+    /// The bytes opened and are not a JSON document.
+    Unparsable(serde_json::Error),
+}
+
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+impl std::fmt::Display for MirrorReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "read graine_seeds.json: {e}"),
+            Self::Unopenable(e) => write!(f, "graine_seeds.json: {e}"),
+            Self::Unparsable(e) => write!(f, "graine_seeds.json unparsable: {e}"),
+        }
+    }
+}
+
+#[cfg(any(mobile, test, feature = "bench-observables"))]
+impl From<MirrorReadError> for String {
+    fn from(e: MirrorReadError) -> Self {
+        e.to_string()
+    }
+}
+
 /// Reads the whole mirror, or `None` when there is none. `key` may be absent only while the file is
 /// still the older build's plaintext: a sealed mirror with no key to open it is an error, never an
 /// empty map, because "I could not look" is not "there is nothing".
@@ -805,24 +1028,26 @@ pub(crate) fn reseal_graine_mirror(
 pub(crate) fn read_graine_mirror(
     data_dir: &std::path::Path,
     key: Option<&CacheKey>,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<serde_json::Value>, MirrorReadError> {
     let bytes = match std::fs::read(data_dir.join("graine_seeds.json")) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+        Err(e) => return Err(MirrorReadError::Io(e)),
     };
     let plain = match key {
         Some(key) => open_file(key, Purpose::SeedMirror, &bytes)
-            .map_err(|e| format!("graine_seeds.json: {e}"))?
+            .map_err(|e| MirrorReadError::Unopenable(e.to_string()))?
             .into_inner(),
         None if crate::native_cache::is_sealed_file(&bytes) => {
-            return Err("graine_seeds.json is sealed and no cache key was handed over".into())
+            return Err(MirrorReadError::Unopenable(
+                "sealed, and no cache key was handed over".into(),
+            ))
         }
         None => bytes,
     };
     serde_json::from_slice(&plain)
         .map(Some)
-        .map_err(|e| format!("graine_seeds.json unparsable: {e}"))
+        .map_err(MirrorReadError::Unparsable)
 }
 
 /// Writes the seeds a background decrypt found in a key-material frame - the `seeds` array of a
@@ -1061,8 +1286,8 @@ pub(crate) async fn store_graine_seed(
     .await
 }
 
-/// Runs a mirror edit for a foreground command: the app data directory, the install's cache key, off
-/// the main thread.
+/// Runs a mirror edit for a foreground command: the mirror's one home (`seed_mirror_home` - the App
+/// Group on iOS), the install's cache key, off the main thread.
 ///
 /// ON A DESKTOP THERE IS NOTHING TO MIRROR, and saying so is the whole branch: the mirror exists for
 /// a notification service that decrypts a push with the app shut, and a desktop build has none - no
@@ -1077,7 +1302,12 @@ async fn with_app_mirror<T: Send + Default + 'static>(
         #[cfg(mobile)]
         {
             let key = crate::native_cache::app_cache_key(&app)?;
-            edit(&data_dir, &key)
+            // Held across the fold and the edit, both of which lock a file of the App Group: an
+            // app suspended holding that lock is killed (`0xdead10cc`, `app_group::BackgroundTime`).
+            #[cfg(target_os = "ios")]
+            let _background = crate::app_group::BackgroundTime::begin(c"canari-seed-mirror");
+            let home = seed_mirror_home(&data_dir, &key)?;
+            edit(&home, &key)
         }
         #[cfg(not(mobile))]
         {
@@ -1451,12 +1681,11 @@ fn named_account(user_id: &str) -> Result<String, String> {
 /// good: every other exit (the bound, the retention sweep, a community left) runs from that
 /// account's page, which never runs again.
 ///
-/// BOTH COPIES ON iOS, the app's FIRST: the App Group's is the extension's, which it writes itself,
-/// and the next activation mirror would copy the app's over it - but until then it would still hold
-/// the account's seeds. A failure to reach the App Group fails the call AFTER the app's copy was
-/// edited, so the wipe stays owed and its resume (idempotent) edits the group's.
+/// ONE COPY ON EVERY PLATFORM since 2026-11-17 - on iOS the App Group's, which the extension writes
+/// too (`seed_mirror_home`); a failure to reach it fails the call, so the wipe stays owed and its
+/// resume (idempotent) edits it.
 ///
-/// Returns how many entries left the APP's copy; each copy reports its own line.
+/// Returns how many entries left the mirror.
 #[tauri::command]
 pub(crate) async fn forget_account_graine_seeds(
     app: tauri::AppHandle,
@@ -1470,29 +1699,18 @@ pub(crate) async fn forget_account_graine_seeds(
         Unattributed::Keep
     };
     with_app_mirror(app, move |dir, key| {
-        let done = forget_account_in_mirror(dir, key, &account, ForgetScope::Everything, unattributed)?;
-        log_account_forgotten("the app's copy", &done);
-        #[cfg(target_os = "ios")]
-        {
-            let group = crate::app_group::app_group_dir().map_err(|e| {
-                log::error!(
-                    "[GRAINE_MIRROR] the App Group copy was not reached - the account's seeds stay there until the resumed wipe: {e}"
-                );
-                format!("App Group copy: {e}")
-            })?;
-            let group_done =
-                forget_account_in_mirror(&group, key, &account, ForgetScope::Everything, unattributed)?;
-            log_account_forgotten("the App Group copy", &group_done);
-        }
+        let done =
+            forget_account_in_mirror(dir, key, &account, ForgetScope::Everything, unattributed)?;
+        log_account_forgotten(&done);
         Ok(done.gone())
     })
     .await
 }
 
-/// One line per copy a wipe edited.
-fn log_account_forgotten(copy: &str, done: &AccountForgotten) {
+/// The one line a wipe writes.
+fn log_account_forgotten(done: &AccountForgotten) {
     log::info!(
-        "[GRAINE_MIRROR] the account's seeds in {copy}: {} removed, {} kept for another writer, {} of unknown writer removed, {} of unknown writer left, {} channel(s) dropped",
+        "[GRAINE_MIRROR] the account's seeds in the mirror: {} removed, {} kept for another writer, {} of unknown writer removed, {} of unknown writer left, {} channel(s) dropped",
         done.removed,
         done.unlabelled,
         done.unattributed_dropped,
@@ -3199,8 +3417,8 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
-        forget_account_entries, forget_account_in_mirror, sync_seed_mirror_copy, AccountForgotten,
-        ForgetScope, SeedsStored, Unattributed,
+        fold_legacy_seed_mirror, forget_account_entries, forget_account_in_mirror,
+        AccountForgotten, ForgetScope, LegacyFold, SeedsStored, Unattributed,
     };
     use super::{
         graine_seed_held, merge_graine_seed, prune_graine_sessions, read_graine_mirror,
@@ -3862,21 +4080,156 @@ mod graine_mirror_tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// The iOS activation copy into the App Group takes the group copy's writers' lock and copies the
-    /// app's bytes as they are; an app with no mirror leaves the group's alone.
+    /// PRODUCTION, 2026-11-16 (channel-encryption section 27): a salon session minted while the
+    /// iPhone was shut opened from its frame in the extension, the next push read it from the
+    /// mirror, and the push 12 s later - the app had just come to the foreground - found no seed.
+    /// The extension writes the App Group copy, and the app becoming active copied its OWN file over
+    /// it, which had never seen that seed. Red against that copy (`sync_seed_mirror_copy`); the
+    /// fold that replaces it keeps both writers' seeds.
     #[test]
-    fn the_app_group_copy_is_made_whole_and_only_from_a_mirror_that_exists() {
-        let app = mirror_dir("copy-app");
-        let group = mirror_dir("copy-group");
-        assert_eq!(sync_seed_mirror_copy(&app, &group), Ok(false));
-        merge_as(&app, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
-        assert_eq!(sync_seed_mirror_copy(&app, &group), Ok(true));
+    fn a_seed_the_extension_stored_survives_the_app_becoming_active() {
+        let app = mirror_dir("ext-app");
+        let group = mirror_dir("ext-group");
+        merge_as(&app, "chan", "s-old", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&group, "chan", "s-old", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        // The extension opens a frame while the app is shut, into the App Group copy.
+        merge_as(&group, "chan", "s-new", "bmV3", 2, Some("acct-a")).unwrap();
+
+        fold_legacy_seed_mirror(&app, &group, &KEY).unwrap();
+
+        assert_eq!(graine_seed_held(&group, Some(&KEY), "chan", "s-new"), 1);
+        assert_eq!(graine_seed_held(&group, Some(&KEY), "chan", "s-old"), 1);
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The fold is a UNION: the app's sessions the group lacks are added, a session both hold keeps
+    /// the group's entry with both writers on it, and the app's file is gone afterwards - so the
+    /// next edit finds nothing to fold and an app with no copy of its own changes nothing.
+    #[test]
+    fn the_app_s_former_copy_is_folded_into_the_group_s_once() {
+        let app = mirror_dir("fold-app");
+        let group = mirror_dir("fold-group");
+        assert_eq!(
+            fold_legacy_seed_mirror(&app, &group, &KEY),
+            Ok(LegacyFold::default())
+        );
+        assert!(!group.join("graine_seeds.json").exists());
+
+        merge_as(&app, "chan", "s-both", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&app, "chan", "s-app", "YXBw", 2, Some("acct-a")).unwrap();
+        merge_as(&group, "chan", "s-both", "c2VlZA==", 1, Some("acct-b")).unwrap();
+
+        assert_eq!(
+            fold_legacy_seed_mirror(&app, &group, &KEY),
+            Ok(LegacyFold {
+                found: true,
+                added: 1,
+                merged: 1
+            })
+        );
+        let held = mirror(&group);
+        assert_eq!(held["chan"]["s-app"]["seed"], "YXBw");
+        assert_eq!(
+            held["chan"]["s-both"]["accounts"],
+            serde_json::json!(["acct-b", "acct-a"])
+        );
+        assert!(!app.join("graine_seeds.json").exists());
+        assert_eq!(
+            fold_legacy_seed_mirror(&app, &group, &KEY),
+            Ok(LegacyFold::default())
+        );
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// A session id the group holds with OTHER bytes is never replaced by the fold - the rule
+    /// `merge_graine_seed` holds for every writer - and the fold still completes.
+    #[test]
+    fn the_fold_never_replaces_a_held_seed() {
+        let app = mirror_dir("fold-replace-app");
+        let group = mirror_dir("fold-replace-group");
+        merge_as(&app, "chan", "s-1", "b3RoZXI=", 1, Some("acct-a")).unwrap();
+        merge_as(&group, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+
+        let fold = fold_legacy_seed_mirror(&app, &group, &KEY).unwrap();
+
+        assert_eq!((fold.found, fold.added, fold.merged), (true, 0, 0));
+        assert_eq!(mirror(&group)["chan"]["s-1"]["seed"], "c2VlZA==");
+        assert!(!app.join("graine_seeds.json").exists());
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// An app copy that could not be READ is a fault of the moment, not of its bytes: the fold fails,
+    /// the file stays for the next edit, and the group's copy is untouched. (A directory where the
+    /// file should be makes the read fail without a NotFound on every platform.)
+    #[test]
+    fn a_former_copy_that_fails_to_read_is_kept_and_the_fold_fails() {
+        let app = mirror_dir("fold-io-app");
+        let group = mirror_dir("fold-io-group");
+        std::fs::create_dir_all(app.join("graine_seeds.json")).unwrap();
+        merge_as(&group, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        let before = std::fs::read(group.join("graine_seeds.json")).unwrap();
+
+        let refused = fold_legacy_seed_mirror(&app, &group, &KEY);
+
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(app.join("graine_seeds.json").exists());
         assert_eq!(
             std::fs::read(group.join("graine_seeds.json")).unwrap(),
-            std::fs::read(app.join("graine_seeds.json")).unwrap()
+            before
         );
-        assert!(group.join("graine_seeds.lock").exists());
-        assert!(!group.join("graine_seeds.json.tmp").exists());
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// Bytes that open and are not JSON will never be: deleted unfolded, like a copy no key opens.
+    #[test]
+    fn an_unparsable_former_copy_is_deleted_unfolded() {
+        let app = mirror_dir("fold-junk-app");
+        let group = mirror_dir("fold-junk-group");
+        std::fs::write(app.join("graine_seeds.json"), b"not json").unwrap();
+
+        let fold = fold_legacy_seed_mirror(&app, &group, &KEY).unwrap();
+
+        assert_eq!((fold.found, fold.added), (true, 0));
+        assert!(!app.join("graine_seeds.json").exists());
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// An app copy no key opens is deleted unfolded: the install's key never rotates, so nothing
+    /// will ever read it, and the group's copy is left as it was.
+    #[test]
+    fn an_unreadable_former_copy_is_deleted_unfolded() {
+        let app = mirror_dir("fold-sealed-app");
+        let group = mirror_dir("fold-sealed-group");
+        merge_as(&group, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_graine_seed(
+            &app,
+            &[9u8; 32],
+            &MirrorSeed {
+                channel_id: "chan",
+                session_id: "s-other",
+                seed_b64: "c2VlZA==",
+                created_at: 1,
+                first_index: 0,
+                v2: None,
+                account: Some("acct-a"),
+            },
+        )
+        .unwrap();
+        let before = std::fs::read(group.join("graine_seeds.json")).unwrap();
+
+        let fold = fold_legacy_seed_mirror(&app, &group, &KEY).unwrap();
+
+        assert_eq!((fold.found, fold.added), (true, 0));
+        assert!(!app.join("graine_seeds.json").exists());
+        assert_eq!(
+            std::fs::read(group.join("graine_seeds.json")).unwrap(),
+            before
+        );
         std::fs::remove_dir_all(&app).ok();
         std::fs::remove_dir_all(&group).ok();
     }

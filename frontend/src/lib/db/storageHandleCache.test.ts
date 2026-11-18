@@ -11,7 +11,7 @@
  * a store whose connection is gone - every call on it failing for a reason the caller could not
  * name. So the three facts pinned here are the three the cache can get wrong.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
 
@@ -41,6 +41,16 @@ vi.mock('./sqlite', () => ({
 }));
 
 describe('getStorage shares one open handle per user', () => {
+  // THE FIRST `import('../db')` TRANSFORMS THE WHOLE STORAGE MODULE GRAPH, and that cost landed inside
+  // whichever test ran first: alone it is ~5 s of a 7 s file, so under a full-suite load the first
+  // test crossed its 5 s budget while asserting nothing slow (a push of fix/seal-group-names,
+  // 2026-11-17). Paid once here, in a hook whose budget names it, so each test runs in ~70 ms.
+  // `vi.resetModules()` below still re-EVALUATES the module per test from the transformed cache,
+  // which is what the tests need.
+  beforeAll(async () => {
+    await import('../db');
+  }, 60_000);
+
   beforeEach(() => {
     opens = 0;
     failNextOpen = false;

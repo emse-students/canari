@@ -25,11 +25,16 @@ import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-help
 giveMediaStreamGetTracks();
 afterAll(adoptTransitionAnimations());
 
+// The REAL switch decides unless a test forces it off: since the 1.7.0 flip it is on in every build,
+// production included, so "SWITCH ON" below is what a stable shows.
 const writer = vi.hoisted(() => ({ on: true }));
-vi.mock('$lib/reels/chatReelWriter', async (orig) => ({
-  ...(await orig<typeof import('$lib/reels/chatReelWriter')>()),
-  chatReelAllowed: () => writer.on,
-}));
+vi.mock('$lib/reels/chatReelWriter', async (orig) => {
+  const actual = await orig<typeof import('$lib/reels/chatReelWriter')>();
+  return {
+    ...actual,
+    chatReelAllowed: (isChannel: boolean) => writer.on && actual.chatReelAllowed(isChannel),
+  };
+});
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(async () => true) }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
@@ -160,7 +165,8 @@ let unstubCameras = () => {};
 let unregister = () => {};
 beforeEach(() => {
   // Each test reads ITS toasts: one left by an earlier test would satisfy, or break, its assertions.
-  for (const t of [...toastStore.toasts]) dismissToast(t.id);
+  // A copy: each dismissal removes from the list being walked.
+  for (const t of toastStore.toasts.slice()) dismissToast(t.id);
   writer.on = true;
   unstubCameras = stubCameraCount(2);
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -337,7 +343,7 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-send]')).not.toBeNull();
   });
 
-  it('SWITCH ON: a video review offers "Envoyer a...", which opens the sheet, and Back returns to the take', async () => {
+  it('SWITCH ON (every build, a production stable included): a video review offers "Envoyer a...", which opens the sheet, and Back returns to the take', async () => {
     const { target, hold } = await render();
     await hold();
     expect(target.querySelector('[data-reel-next]')!.textContent).toContain(m.reel_sendto_action());

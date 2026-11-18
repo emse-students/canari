@@ -93,6 +93,8 @@
 "notif.social.live_suspended.body" = "Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.";
 "notif.social.live_withdrawn.title" = "Droit de lancer un live retiré";
 "notif.social.live_withdrawn.body" = "La modération vous a retiré le droit de lancer un live.";
+"notif.social.live_reinstated.title" = "Droit de lancer un live rétabli";
+"notif.social.live_reinstated.body" = "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin.";
 "notif.social.booking_cancelled.title" = "%@ a annulé une réservation";
 "notif.social.booking_cancelled.body" = "Elle n'aura pas lieu";
 "notif.social.booking_withdrawn.title" = "%@ a quitté votre réservation";

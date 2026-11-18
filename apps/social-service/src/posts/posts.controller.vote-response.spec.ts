@@ -110,6 +110,10 @@ describe('PostsController.votePoll', () => {
       moderatedAssociationIds: jest.fn((id: string, ids: string[]) =>
         Promise.resolve(new Set(id === MODERATOR ? ids : []))
       ),
+      // ... as a BDE: no institution's MODERATE is held here.
+      commentStandings: jest.fn(() =>
+        Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
+      ),
     };
     const postRepo = {
       manager: { query },

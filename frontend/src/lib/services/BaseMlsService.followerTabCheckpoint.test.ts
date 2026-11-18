@@ -117,6 +117,9 @@ async function openTab(storedVersion: number) {
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     stageCheckpointLedgers: BaseMlsService.prototype['stageCheckpointLedgers'],
     emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
+    // No bulk-ingest observer holds rows here (`BaseMlsService.rowsBeforeRatchet.test.ts` owns the hold).
+    holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    bulkIngestObservers: [],
     writeCheckpoint: vi.fn(async (_key: string, latch: HexModule.MlsStateWriteLatch) => {
       const outcome = await hex.saveMlsStateEncrypted(
         'u',

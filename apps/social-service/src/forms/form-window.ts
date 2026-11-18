@@ -36,3 +36,29 @@ export function assertMayCloseAt(opensAt: Date | null | undefined, now: Date): v
     'This form has not opened yet: move or clear its opening instead of closing it.'
   );
 }
+
+/** What a form's window says now: it takes answers, it opens later, or its end has passed. */
+export const FORM_WINDOW_OPEN = 'open';
+export const FORM_WINDOW_NOT_YET = 'not-yet';
+export const FORM_WINDOW_CLOSED = 'closed';
+export type FormWindowState =
+  | typeof FORM_WINDOW_OPEN
+  | typeof FORM_WINDOW_NOT_YET
+  | typeof FORM_WINDOW_CLOSED;
+
+/**
+ * THE rule that says whether a form takes answers, judged on THE SERVER's clock: before the opening
+ * it is `not-yet`, from the end instant on (the manager's close or a date that came) it is `closed`,
+ * else `open`. Every refusal (`assertFormOpen`) and every read (`windowState` on the list, the
+ * single read, the public read and the close answer) takes its answer from here, so a client never
+ * compares a stored timestamp with its OWN clock - a phone behind the server would read a
+ * just-closed form open (read on the Mi 9T, 2026-11-17).
+ */
+export function formWindowState(
+  form: { opensAt?: Date | string | null; closedAt?: Date | string | null },
+  now: Date = new Date()
+): FormWindowState {
+  if (form.opensAt && new Date(form.opensAt) > now) return FORM_WINDOW_NOT_YET;
+  if (form.closedAt && new Date(form.closedAt) <= now) return FORM_WINDOW_CLOSED;
+  return FORM_WINDOW_OPEN;
+}

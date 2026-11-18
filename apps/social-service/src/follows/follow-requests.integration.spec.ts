@@ -164,7 +164,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
-        "publishedAt" timestamptz NOT NULL DEFAULT now());
+        "publishedAt" timestamptz NOT NULL DEFAULT now(),
+        -- The bell reads a comment's writer behind an empty actor (bellRowActorAccountSql).
+        comments jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255));

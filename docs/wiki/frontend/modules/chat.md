@@ -447,8 +447,43 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
   arrival this device could not count": the badge from the server, a request in flight never joined,
   a burst of three counted by two requests) - all four fail without the fix, and the two last fail
   each on its own mutation (joining allowed, the owed loop removed).
-- **Owed:** [the reading](../../backlog.d/reading-owed-a-salon-message-arriving-before-its-seed-raises-its-badge.md)
-  on both phones.
+- **Read on both phones:** the Mi on `1.7.0-alpha.6`, the iPhone's invite-then-burst branch 4 of 4 on
+  `1.7.0-alpha.12` ([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+
+### A salon's badge starts at the grant (owner, 2026-11-16)
+
+**The decision, under principle 3 of [the charter](../../../principes.md)** (*your attention is not for
+sale*): a private salon handed to a member counts as unread only what is posted AFTER access was
+granted. Its past stays readable (principle 2 is untouched); only the count changes. Before, a member
+granted a salon long after joining the community saw a badge of every non-own row since their
+community join (or the 2026-10-08 tracking floor), because nothing recorded when access was given.
+
+**The mechanism, server-side and without a migration.** Every write that lets someone see a salon's
+past raises that person's PRIVATE floor `channel_members."clearedMarks"[salon]` to the grant instant,
+in the grant's own transaction (`ChannelService.floorUnreadAtGrant`, social-service): a grant
+(`grantPrivateChannelAccess` - an accepted invite, an admin join, a member added from the panel), an
+access rewrite that adds a name to a private salon, and a private salon made public (every member it
+did not name). Making a public salon private floors nobody: they all saw it already. The floor is the
+one "Marquer tout comme lu" raises ([read-receipt-privacy](../../read-receipt-privacy.md)), so it
+claims nothing public - the "Lu par" read mark does not move - and `listUnreadCounts` already reads
+it. It is taken on the DATABASE clock (`clock_timestamp()`), the clock that stamps `createdAt`, ONE
+MILLISECOND BELOW the grant's: the count keeps a row only when its whole millisecond is above the
+floor, so a floor on the grant's own millisecond hid a row posted after the grant inside it (found in
+review, failing first); below it, the worst case is one row of that millisecond's past counted. It is
+only ever raised (`GREATEST`); a revoke leaves it, a re-grant raises it again. The client needs no
+change: a grantee was outside the salon's audience before, so no live message was tallied, and the
+count it draws is the server's.
+
+**Locks.** The grant writes the grantee's membership row, so it now reads that row `FOR UPDATE`
+instead of `FOR SHARE` (two grants of two salons to one member, each upgrading a shared lock, would
+deadlock), and the access rewrite reads the community's membership rows `FOR UPDATE`, in id order,
+when it floors anyone. The salon-before-member order of every path is unchanged.
+
+**Tests.** `channel-grant-unread-floor.integration.spec.ts` (PostgreSQL: ten rows of past, a grant,
+one row after it - the count is 1, not 11; a higher floor is never lowered; the rewrite's two cases);
+`channel-access-announcement.spec.ts` (who is floored per kind of rewrite, and the lock mode);
+`distribution-group.spec.ts` (the admin join). The live row is `bun unread-communities.mjs run
+grantlate`: the reader's badge after a restart, its floor and its untouched read mark.
 
 ### Every member list reads by family name, and a row never moves because its name arrived (2026-10-05)
 
@@ -495,6 +530,39 @@ channel's member list in the server's order. All three now render through `membe
 
 Association rosters (`EditMembersTab`, `AssociationDetailView`) are NOT sorted: their order is the
 one the bureau arranges by drag (`sortOrder`), and the president is its first row.
+
+### A removal names its member, and no remove control is live while the order is settling (2026-11-17)
+
+Read on the `1.7.0-alpha.9` bench ([device-verification](../../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)):
+a community removal aimed at `beta` removed `alpha`, four times out of four. **The removal was
+always bound to an identity** - each row's control closes over its own member's id, in the four
+paths (group `ChatGroupPanel` -> `useConversations.handleRemoveMember`, community
+`SidebarCommunityAdminPanel`, salon access `ChannelSettingsPanel`, association `EditMembersTab`) -
+so what moved was the ROW UNDER THE POINTER, which a finger meets as well as the rig.
+
+**The cause is the "a member who joins appears at their place" rule above.** The list draws once ANY
+lookup has settled; a member whose lookup is still in flight (the re-invited `alpha`, a cold cache)
+is inserted later at their family-name place, moving every row below it. A tap aimed at `beta`'s
+control during that window lands on whichever row has taken its place. Not a re-sort on a live signal:
+no member list re-sorts on presence, typing or last-seen (`ChannelMembersList` only splits admins
+from members; the salon access list and the association roster are in server or drag order).
+
+- **No remove control is live while a lookup is pending** (`removeControlDisabled` in
+  `memberOrder.svelte.ts`, used by `ChatGroupPanel` and `SidebarCommunityAdminPanel`, the two lists
+  that order by name). A count of lookups, not a clock. **It NARROWS the window and does not close
+  it**: rows still move when a newcomer's lookup settles later, or when a member leaves or another
+  admin removes one.
+- **THE GUARANTEE: every removal dialog names the member** (`confirmMemberRemoval`, `utils/users/memberRemovalConfirm.ts`,
+  `{member}` in the four messages, both locales), as the row draws them: the group's nickname there,
+  the profile name elsewhere, the id when no name is known (at warn). The name is the one already
+  known (the row drew it), so a stalled link never keeps the dialog from opening; the network is
+  asked only when nothing is known. A tap that lands on a moved row is read before it is confirmed.
+- **The rig asserts it**: `removeCommunityMember` (`tools/cross-client-harness/comm.mjs`) waits for the
+  control to be live and refuses to confirm a dialog that does not name the member it was asked for.
+
+Pinned by `ChatGroupPanel.removeMember.svelte.test.ts` (alpha inserted above beta after beta's row is
+drawn: the control is dead until then, and beta's control removes beta),
+`memberOrder.svelte.test.ts` (`removeControlDisabled`, both panels) and `memberRemovalConfirm.test.ts`.
 
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 
@@ -1637,7 +1705,7 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
   review): a drain restarting behind each close would otherwise hold it for good. What remains is a
   window that never closes - a hung handler or observer, which `guarded` reports every minute - and
   then this document, out of the election (`leaving`), stays a stale copy until it is reloaded by
-  hand. The loss itself is not closed by this wait: [rows before ratchet](../../backlog.d/p1-rows-before-ratchet.md);
+  hand. The loss itself is closed by an order, not by this wait: [rows before ratchet](#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17);
 - **a lead handed over and not yet taken is released at `freeze`**: the old leader is a follower
   from the grant, but holds the lock until the asker steals it, and an asker that closed in between
   never will. Frozen with that hold, it left every tab a follower until it was thawed;
@@ -3150,6 +3218,100 @@ failed to submit and left its text in the box, the next `Input.insertText` appen
 app faithfully delivered ONE message carrying TWO markers - twelve markers on screen for eleven
 sends. The app was right and the count was wrong; the harness now clears the composer before arming.
 
+#### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
+
+**The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in
+the UI buffer above until its window closes (`endBulkMessageIngest`). A checkpoint was not ordered
+behind that close: one started by a send, by an earlier window, by the persister's coalescing - and
+by the window's OWN close, since `BaseMlsService.endBulkIngest` runs the persister observer (registered
+in `setupMessageHandler`) before the UI one (registered in `sessionAuth`) - exported the frame's
+ratchet advance and its seen mark (staged INTO the state, KILL-2) while the row was only in memory. A
+kill there (a browser closed, a crash, an app swiped away) lost the message from the device: the
+generation is spent on disk (`SecretReuseError`) and the frame is marked seen, so it is neither
+decrypted again nor replayed. Principle 2 of the [charter](../../../principes.md): the essential is
+never lost.
+
+**The fix is an order.** `persistCheckpoint` asks every bulk-ingest observer that holds rows
+(`BulkIngestObserver.holdRowsForCheckpoint`, implemented by `useMessaging.holdRowsForCheckpoint`)
+to store them BEFORE it stages the ledgers and exports, and keeps the hold until its write settled
+(on native the export runs inside the command, so releasing at the capture would not be enough).
+While a hold is taken, an inbound message does not enter the buffer: it takes the live path, whose
+handler stores its own row - which is what makes the wait end after ONE store of what is held,
+without a clock and without racing a drain that keeps refilling the buffer. Every store of the buffer
+(the hold's and the window close's) goes through ONE chain (`storeBufferedRows`), so a hold that
+meets a close already storing waits for that store's rows too. Nothing in the hold waits on a drain
+handler, so a handler that awaits a checkpoint (a commit's structural checkpoint) cannot deadlock it.
+
+**A row that could not be stored refuses the checkpoint (review of #3786).** `batchAddMessages`
+renders a batch and then writes it, and a failed write was only logged: the hold resolved and the
+export went through with the rows in memory alone. A failed write is now kept whole
+(`unstoredRowWrites`, the batch's own `writeBatchRows` seam), whichever path wrote it - the hold's
+store, a window's close, a restore. A hold retries every kept write ONCE, puts back in the buffer a
+conversation whose batch threw, and rejects (`BufferedRowsNotStoredError`) while anything stands;
+`persistCheckpoint` then refuses (`MlsCheckpointNotWrittenError` at step `rows`) and the persister
+keeps the state dirty. One refusal per trigger, no timer: the next checkpoint's hold retries. The
+window's close only logs, as it always did - it is not a checkpoint. A retried write that lands
+SETTLES what arrived meanwhile (`settlePendingFor`, as the batch does after its own write): an edit,
+a deletion or a reaction that met the row shown and not stored was kept "for its write", and the
+snapshot the retry stores predates it (re-review of #3786). A kept write is written under the
+conversation that SHOWS its rows now - its own, or the group a 1:1 was re-keyed onto at a Welcome -
+and dropped only when none does (deleted, purged). Each write's failure is said once, by the batch;
+a retry says ONE line for all its writes, with the first cause. A batch that THREW (before it
+rendered anything - nothing after the render may skip the write or throw, so the announcement and
+the settle after the write are guarded) is kept too (`unstoredBatches`), whichever path took it, and
+run again first by the next store of EITHER kind - a close shows it without waiting for a hold -
+each on its own, so a later message of that conversation never joins a batch that keeps failing; it
+is said once per batch, and replayed under the key that shows its thread now (the ids it showed when
+kept anchor it across a re-key). **A batch that always throws blocks every checkpoint - commits,
+joins and sends - until a reload**, said once per page as the cause.
+**The chain never rejects:** a step that throws resolves `false` with one line, and the hold gives
+its counter back in a `finally` - one exception costs one store, never every later checkpoint and
+close of the page.
+
+**What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
+reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
+held by `DrainAckHold`, or one not acknowledged) is decrypted again; an APPLICATION frame a leader
+tab already acknowledged at the drain's end is gone from the server and comes back through the
+history archive, whose replay reads it because no landed checkpoint marked it seen.
+
+**A hung row write holds every checkpoint.** An IndexedDB write that never settles leaves the hold
+pending: that checkpoint never exports, and the persister's in-flight one (`inFlightEncrypted`)
+never clears, so no later checkpoint starts either. No timeout, deliberately - exporting past a row
+write that has not answered is the loss this order exists to prevent; the hung store is the defect,
+and every other write to it hangs too.
+
+**A store that keeps refusing the rows blocks every checkpoint too** - commits and joins included
+(`externalJoin` awaits one), until a write lands or the page reloads; said once per page as the
+cause (`[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they
+are ...`). Accepted for the same reason: a checkpoint that lands past them is the loss.
+
+**One observer, every hook required.** Each page hands the session ONE object,
+`useMessaging.bulkIngestObserver(msgCtx)` (`SessionCallbacks.messageIngestObserver`,
+`Required<BulkIngestObserver>`), so the window's open, its close and the checkpoint's hold are
+registered together or not at all; `messageIngestObserver.wiring.test.ts` pins both pages and the
+session's registration.
+
+**What it costs.** A checkpoint that lands inside an open window renders the buffered messages at
+that moment instead of at the close, and messages arriving while it writes render one by one (the
+live path). The persister defers its own checkpoints inside a window, so this is the rare case. The
+log says it once per hold that stored something: `[ADD_MSG] A checkpoint is about to export: storing
+the N buffered message(s) first, the window stays open`.
+
+**Pinned by** `useMessaging.rowsBeforeRatchet.svelte.test.ts` (the buffered rows are in the store
+when the hold resolves, the window still open - the simulated kill; a message during the hold is
+stored by its handler; buffering resumes after release; a hold waits for a close already storing; a
+failing store rejects the hold and the next hold retries it, from the hold's own store and from a
+close's; the observer's hold is the messaging hold) and `BaseMlsService.rowsBeforeRatchet.test.ts`
+(rows stored, then export, then write, then release; released on a failed write; a failed hold
+refuses the checkpoint and exports nothing).
+
+**What it does not close, stated.** Narrower windows of the same class remain, in the
+[backlog entry](../../backlog.d/p1-rows-before-ratchet.md): a row not yet STORED when the export is
+taken (a frame whose handler has not reached `addMessageToChat`, or a live-path write still in
+flight); an application frame acknowledged at the drain's end (`announceAck` in `onDrainEnd`) before
+the close stores its row, whose backstop is the history archive; the orphan buffer (`bufferOrphan`);
+and the device reading of a kill inside a window.
+
 ### Forwarding
 
 `forwardMessage` crosses freely between the two worlds: a channel message can be forwarded into a
@@ -3292,6 +3454,12 @@ when the server reports `no_peer_online` with a positive `excludedOnline` - ever
 has answered. The walk removes one member per step and the proof is delivered rather than inferred,
 which is what makes it terminate without a clock. Full reasoning in
 [history-reconciliation](../../protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
+
+**Its sibling, `history_cannot_repair {from, to, since}`, answers an asker that PROVED itself
+incomplete** - its probe carried `incomplete: true` because it holds frames it cannot read - when
+the responder holds nothing it lacks (keys equal, or a digest leaving nothing to send). It replaces
+the coverage line in that case, and the asker excludes that member until a repair lands
+([HEAL-repair](../../protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
 
 **Every ask states its own window and the answer is clipped to it.** `since` rides on all three
 probe kinds and on the pull. Four rules hold the whole thing together and none may be undone: it is
@@ -4577,7 +4745,7 @@ a DM's new row, and the "already held" Welcome of a group joined in the backgrou
 already has a seed keeps it - a re-Welcome (a re-add, a repair) does not move a conversation. A
 Welcome with no server time is ACCUSED at warn and invents nothing. Tests:
 `setupMessageHandler.test.ts` ("a Welcome orders the joined conversation by the server time of its
-admission"). Reading owed: [the entry](../../backlog.d/reading-owed-a-group-joined-with-the-list-in-front-is-ordered-by-its-admission.md).
+admission"). Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): the row was on the first screen within seconds; the entry is deleted.
 
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 
@@ -6101,10 +6269,142 @@ A user in the English app wanted a GROUP and created a COMMUNITY: the community 
 
 | Entry point | What it creates | fr / en |
 |---|---|---|
-| "Nouvelle discussion" > tab "Groupe" (`SidebarNewChatModal`, `onCreateGroup`) | an MLS group conversation | button "Créer la discussion de groupe" / "Create group conversation" |
+| "Nouvelle discussion" with two or more people chosen, then the name step (`SidebarNewChatModal`, `onCreateGroup`; [one panel](#one-new-discussion-panel)) | an MLS group conversation | button "Créer un groupe avec N personnes" / "Create a group with N people", then "Créer la discussion de groupe" / "Create group conversation" |
 | The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
 
 **English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.
+
+### One new discussion panel
+
+The owner, 2026-11-17: creating a group took "Nouvelle discussion", then the "Groupe" tab, then a name, then an
+EMPTY group whose members were added afterwards from its own panel. Now there is one panel
+(`SidebarNewChatModal`) and people are chosen FIRST; the number chosen decides
+([principe 7](../../../principes.md), simple).
+
+| Chosen | The footer button | What it does |
+| --- | --- | --- |
+| nobody | "Démarrer la discussion", disabled | - |
+| one person | "Démarrer la discussion" | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
+| two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first |
+
+**The name step.** The field is EMPTY, and its placeholder - greyed - is the label the group will
+carry if it stays empty: the chosen people's first names, composed by the same function every
+device uses afterwards (`composeUnnamedGroupLabel`), so the suggestion is exactly what will show.
+Keeping it creates an **UNNAMED group**; typing creates a named one, with the duplicate-name refusal
+as before. Either way `createGroupWithMembers` (`useConversations`) creates the group, which adds this
+account's own devices, then invites the people chosen into it, addressed by the key the creation
+answered - two commits, the order every creation already took. An invitation that reaches only some
+of them is told by `reportBulkAdditionOutcome` like any other; the group exists and is completed
+from its panel. An invitation that added NOBODY names everyone it invited, and one that met another
+device's add lock is owed rather than refused ([below](#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
+
+**Decisions taken here (reversible):**
+- **Layout**: the chosen people are removable chips ABOVE the search, the Messenger pattern; the
+  recent 1:1 peers are listed below as toggles (a check in a circle), so a group of familiar people
+  costs a tap each. Tapping a recent peer no longer opens their 1:1 at once - it chooses them, and the
+  footer acts: one gesture model for one person and for ten.
+- **Communities stay a separate entry** (the rail's dashed "+"): a community is a different object
+  with a different name (the 2026-11-04 decision just above), and offering it here would put it back
+  in the panel the owner asked to simplify.
+- **The button** with several chosen says what it does and how many: "Créer un groupe avec N
+  personnes" / "Create a group with N people". N counts the people chosen, not the creator.
+
+#### Nothing takes the add lock it does not commit under (2026-11-17)
+
+Read on `1.7.0-alpha.10`: a group created on the iPhone held its creator alone. The creation's own
+commit admitted the creator's other devices; the web seat processed its Welcome, and the
+group-ready sweep (`announceGroupReady` -> `processDeviceInvitationsLocally` ->
+`processPendingInvitations`) found the group's `pending` rows - the creator's devices not yet
+`active`, all already leaves of that very commit - and **took the group's add lock before reading
+a single row**, only to vouch for them. In that second the iPhone's invitation asked for the lock,
+was refused (`add-lock-busy`), and nobody was added.
+
+Every taker of the add lock, and when it takes it:
+
+| Caller | Takes the lock | What it commits under it |
+| --- | --- | --- |
+| `processPendingInvitations` (`actions.ts`), the sweep | **at the first row that needs an Add** (`takeLockForAnAdd`), after its leaf check and BEFORE its package is claimed; vouching, an ask raised for a member and a cleanup take none | the Add of a pending device NOT in the tree |
+| `handleWelcomeRequest` (`actions.ts`) | **once the Add is decided**: after the cooldown, the refused-device check and the anti-livelock limit (a refused lock is not counted as an attempt), before the package is claimed | the Add or replace answering a `welcome_request`; a package missing or refused by the vetting is still learned under it |
+| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose; its `Thread.sleep` retry of the lock is a [backlog entry](../../backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md) |
+| `createGroup` (`groupCreation.ts`) | before the creation's Add of the creator's other devices | that Add |
+| `processBulkAddition` (`groupCreation.ts`) | before the invitation's Add | the invitation |
+| `performDirectAdd` (`groupCreation.ts`) | before the 1:1's Add | the peer's and own devices |
+| `admitNewcomer` (`graine/admitNewcomer.ts`) | before the Add | a newcomer into a key-distribution group |
+
+A lazily taken lock decides nothing the eager one did: it never made the local tree current (a
+holder's commit may still be queued here when it releases) - the server's epoch gate does, and the
+Add staged on a moved tree is refused and rebuilt. A refused lock ends the sweep's pass for that
+group; its rows stay `pending` for the next sweep (`onGroupNotSwept`).
+
+**A REAL Add in that second is still possible** - a sibling answering a `welcome_request`, or
+adding a device it was owed - so **a member's FIRST invitation that meets another device's lock is
+OWED, never refused** (`add-lock-owed`). `processBulkAddition` hands `acquireAddLockAnswer` an
+`oweIfHeld` that states the invitation with its roster baseline (`owedInvitationOf`); on `held` the
+service records it (`oweInvitationOnHeldLock`, at the group's current epoch) BEFORE the refusal
+arms its wake. **The record merges, and a conclusion settles only what it covered**
+(`owedInvitations.ts`): two gestures owed at one epoch - this one and a kept commit lost at the same
+base, or a second invitation refused by the lock a drain holds - are one entry holding both people,
+and a re-plan that concludes removes the people IT re-planned, never the entry. It then takes the path a lost invitation
+waiting on `add-lock` takes ([mls-protocol](../../protocols/mls-protocol.md)): re-planned at the
+server-stated end of the lock (`wakeAtAddLockExpiry`), a commit applied in the group, the release of
+this device's own lock, or the next connection - events, never a retry on a clock - and every ending
+that does not complete is told by `reportLostInvitation`. Not for a re-plan (it already is the owed
+entry) nor for a join ask's answer (the member tapped it, and is told it is busy). A roster that
+cannot be read records nothing: an entry without a baseline could never be re-planned, so that
+refusal stays the member's to retry.
+
+**What the member is told.** An invitation that added nobody names everyone it invited, from the
+local name cache (they were just chosen in a panel that drew them): "Ajout non effectué pour
+{names}. {reason}" / "Not added: {names}. {reason}" (`chat_invite_not_added`, owner 2026-11-17); an
+owed one says when it will finish (`chat_invite_owed_add_lock_named`, a warning); the kept Add that
+finishes by itself (`outcome-unknown`) names nobody.
+
+Tests: `actions.pendingInvitations.test.ts` ("the add lock is taken only for an Add"),
+`actions.welcomeRequest.test.ts` (the lock and the claim), `lostInvitation.test.ts` ("another device
+holds the add lock"), `BaseMlsService.unresolvedCommit.test.ts` (the record and its wake),
+`conversationRefusalMessage.test.ts`.
+
+#### An unnamed group: no name stored, the members' first names drawn
+
+The owner's decision: a group whose creator kept the suggestion stores NO name - the client sends
+`createRemoteGroup(null)` (no `name` key; the `dm_groups.name` column stays NULL), the row stores
+`''`, and no MLS statement names it - and EVERY device draws it by its current members' first names,
+updated as people join or leave (Messenger and WhatsApp do the same). It fits
+[sealed names](../../backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md): the server never learns a name the members did not
+choose, and the label is composed from what each device already holds.
+
+- **Who**: the user ids of the group's RATCHET TREE (`getGroupMemberIdentities`, local), not the
+  server's roster. Every member's device holds the same tree at the same epoch, so they name the same
+  people; the roster is a routing table read at an instant. `groupTreeMembers.ts` keeps them,
+  reactive, re-read after every inbound commit and every Welcome (`setupMessageHandler`) and after
+  every commit of this device's own (`BaseMlsService.mergeAccepted`) - only for a group a label was
+  ever drawn for, so a named group or a key group costs no read. A group is read on first sight. The
+  newest read wins: a read that straddles a commit and answers last is dropped. A group this device
+  does not hold (a newcomer before its Welcome, a follower tab) keeps the generic word.
+- **What they are called**: the local display-name cache, by FIRST name (`getUserFirstNameSync`;
+  a nickname set in the group replaces it, as everywhere in the group). Each member's profile is
+  asked once when the tree is read, and the label fills in as profiles land.
+- **The order** is the first names' under ONE fixed collation (`'fr'`), then the ids', never the
+  tree's leaf order, so every device spells the same label. Up to three names are spelt out; past
+  three, two are named and the rest counted ("Alice, Bob et 3 autres"), so the count is never one.
+  The viewer is never named; alone in it, the group reads
+  "Groupe".
+- **Everywhere a name shows** reads `resolveConversationListPresentation`, whose last resort is now
+  the members' label before "Groupe": the list and its search, the thread header, the conversation
+  panel, the share sheet, a call's peers - and an in-app or Android-builder notification
+  (`notificationGroupName` takes the resolved title for a group, `useMessaging`).
+- **What it does not cover**, and is accepted: a push raised while the app is DEAD is composed by the
+  native code from the server's push or the mirrored rows, and an unnamed group's carries no title,
+  so it reads as the sender alone - the plain-notification rule for "a group with no name to show"
+  (`composePlainNotificationText`). A build older than this one reads the server's NULL name and
+  shows "Groupe". A row that only knows its id (a newcomer's placeholder of a NAMED group, before the
+  name arrives) shows the members' names for that moment instead of "Groupe".
+- **Naming it later** is the ordinary rename (`groupRenamed`, dated by step 1 of the sealed-names work,
+  PR #3785). Taking a name back off - "remove the name" - does not exist; a frame carrying an empty
+  name is refused (`empty-name`).
+
+Tests: `unnamedGroupLabel.test.ts`, `groupTreeMembers.test.ts`, `conversations.unnamedGroup.test.ts`,
+`groupCreation.unnamed.test.ts`, `nativeNotification.test.ts`, `Sidebar.creationRefusal.svelte.test.ts`.
 
 ## Per-conversation nicknames ("Modifier les pseudos", 2026-11-08)
 
@@ -6135,8 +6435,11 @@ its setter leaves.
 
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
-every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
+every message is withheld, so a new member gets the names in the first bundle; since 2026-11-17 the
+push carries the state and NO message (the messages come by the newcomer's own sealed reconciliation,
+[history-answer-addressing](../../protocols/history-answer-addressing.md#what-is-not-sealed-the-inviters-join-push---so-it-carries-no-message-2026-11-17)).
+That join push and the answer to the newcomer's own register ask (below) are the ONLY bundles a
+register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
 on a caller** (#3185). `BaseMlsService.sendWelcomeConsuming` is the one place a Welcome is known
 stored by the server, whoever sent it - the member's "Ajouter" (`inviteMembersToGroup`, which a
 join-request approval also is), a pending invitation, a welcome_request answer, a group's creation, or
@@ -6166,21 +6469,24 @@ find that out**: the Welcome's answer says whether the server can address the de
 (`DeliveredWelcome.addressability`, [history-answer-addressing rule 3](../../protocols/history-answer-addressing.md#the-rules-as-built)),
 and a device answered `offline` or `undeclared` is sent nothing. That outcome - or, for a device that
 left between the Welcome and the push, the send's own refusal (`sendFullHistoryBundle` ->
-`unaddressable`) - is said at warn (`[JOIN_PUSH] NOT DELIVERED`), never swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+`unaddressable`) - is said at debug (`[JOIN_PUSH] ... no push to <device>`), naming the follow-up:
+since #3777 the newcomer asks for its register at its next connection, so an offline newcomer is the
+ordinary case and no longer a warning (it was until 2026-11-17, and named a step that had shipped). **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
 choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
 the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
 retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
 The newcomer, by contrast, is online by construction when it asks, already runs a reconciliation on
 every connection whose deferral waits for a member to return, and can keep a durable "register owed"
-marker until an answer clears it. So the register will ride the existing digest ask (`register: true`)
-and its elected answer, under the same four limits below - designed in
-[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), not built in #3185 because
-it changes the reconciliation's wire and deserves its own review.
+marker until an answer clears it. So the register rides the existing digest ask (`register: true`)
+and its elected answer, sealed to the ask, under the same four limits below
+(`registerOwed.ts`, built 2026-11-17 in a draft pull request:
+[the mechanism](../../protocols/history-answer-addressing.md#the-newcomer-asks-for-its-register-2026-11-17),
+its entry (entry deleted 2026-11-18, every half read)).
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
-(reading 2 of `1.6.9-alpha.1`, fixed by #3185; its re-reading is a row of the
-[readings owed](../../plan.md#readings-owed)).
+(reading 2 of `1.6.9-alpha.1`, fixed by #3185; re-read on the phones and the web seats, and every
+item of the reading closed on 2026-11-18, [S6](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
 in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
@@ -6238,7 +6544,9 @@ In neither case does the screen say "saved".
 
 **Old clients.** An unknown system event is ACKed silently, so an older build ignores the frame. The
 community change rides `workspace.updated`, whose absent fields every build reads as "unchanged"; a new
-event type would have been logged as an error by every older one.
+event type would have been logged as an error by every older one. Read on the Mi 9T on 2026-11-18 with `v1.6.7-alpha.1`: a group and a community nickname set
+by a web seat gave only `[MLS] System event 'nickname' ...`, no warning or error, and the community member under
+its profile name ([S6](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
 
 **The name is resolved in ONE place.** `getUserDisplayNameSync` / `getUserFirstNameSync`
 (`displayName.ts`) and `userDisplayName` / `userDisplayNames` (`displayNames.svelte.ts`) take an

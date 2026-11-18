@@ -1,3 +1,9 @@
+const { noteRepairLanded } = vi.hoisted(() => ({ noteRepairLanded: vi.fn() }));
+vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>()),
+  noteRepairLanded,
+}));
+
 import { handleSystemEvent } from './systemMessageHandler';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
@@ -96,6 +102,26 @@ const TOMBSTONE = {
 
 beforeEach(() => {
   forgetHistoryAsks();
+  noteRepairLanded.mockClear();
+});
+
+describe('history_bundle - the repair landing', () => {
+  // THE ONE DISCHARGE of a proof of incompleteness (HEAL-repair): this device's store changed, so
+  // every member that said it holds nothing we lack compared against a store we no longer have.
+  it('discharges the proof when it ADDS a message, and only then', async () => {
+    const { ctx } = makeCtx(AUTHOR, { m1: STORED });
+
+    await handleSystemEvent('history_bundle', { messages: [TOMBSTONE] }, ctx as any);
+    expect(noteRepairLanded).not.toHaveBeenCalled();
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [{ id: 'm2', senderId: AUTHOR, content: 'new', timestamp: 2000 }] },
+      ctx as any
+    );
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
+    expect(noteRepairLanded).toHaveBeenCalledWith(GROUP, AUTHOR, expect.any(Function));
+  });
 });
 
 describe('history_bundle - rows memory does not show', () => {
@@ -122,7 +148,7 @@ describe('history_bundle - an addressed answer carries a deletion onto a held ro
   /** An answer to the digest this device asked, as the reconciliation exchange delivers it. */
   async function answer(ctx: any, messages: unknown[]) {
     const requestId = mintHistoryRequestId();
-    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 });
+    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 }, null);
     await handleSystemEvent(
       'history_bundle',
       { messages, requestId, to: digestIdentity(ME, MY_DEVICE), last: true },

@@ -17,6 +17,7 @@
  */
 
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
+import type { TokenVerdict } from '$lib/utils/tokenVerdict';
 
 /** The two identities that disagree. Ids only - never a name, an address or a token. */
 export interface IdentitySplit {
@@ -31,6 +32,9 @@ export interface IdentitySplit {
  * sentence; it is NOT a session expiry (the credential is alive) and NOT a transport failure.
  */
 export class IdentitySplitError extends Error {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict = 'identity-split';
+
   constructor(readonly split: IdentitySplit) {
     super('Token identity does not match the local identity - sign out to continue');
     this.name = 'IdentitySplitError';

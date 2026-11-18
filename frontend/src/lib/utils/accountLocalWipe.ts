@@ -359,7 +359,7 @@ export async function wipeDeletedAccountLocalData(
         aloneOnInstall,
       });
       console.log(
-        `${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed from the app's copy (alone on the install: ${aloneOnInstall})`
+        `${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed from the mirror (alone on the install: ${aloneOnInstall})`
       );
     });
     // The notification replies still waiting for the page: ONLY this account's lines, since the file

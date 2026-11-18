@@ -17,6 +17,8 @@ vi.mock('$lib/minesweeper/api', () => ({
 }));
 
 import MinesweeperModal from './MinesweeperModal.svelte';
+import { startMinesweeperChallenge, submitMinesweeperChallenge } from '$lib/minesweeper/api';
+import { CHALLENGE, createBoard, revealCell } from '$lib/minesweeper/game';
 import { flushMacrotask } from '../../../test/flush';
 
 afterAll(adoptTransitionAnimations());
@@ -204,4 +206,58 @@ describe('pan inertia', () => {
   it('does not glide after a mouse drag: the board stops where the cursor does', async () => {
     expect(await flickGlides('mouse')).toBe(false);
   });
+});
+
+describe('the timed move log of a ranked game', () => {
+  // A seed whose generator-2 board is known, so the test can win it by clicking every safe cell.
+  const seed = '8601e326fcef5ef936a1c69d6ab6ac41';
+  const first = 16 * CHALLENGE.width + 9;
+
+  it('stamps every move from the first dig, and submits the winning move as the game length', async () => {
+    vi.mocked(startMinesweeperChallenge).mockResolvedValueOnce({
+      challengeId: 'c-1',
+      seed,
+      generatorVersion: 2,
+      config: CHALLENGE,
+      startedAt: '2026-11-17T10:00:00Z',
+      expiresAt: '2026-11-17T12:00:00Z',
+      serverNow: '2026-11-17T10:00:00Z',
+    });
+    vi.mocked(submitMinesweeperChallenge).mockResolvedValueOnce({
+      accepted: true,
+      durationMs: 1,
+      moveCount: 1,
+      personalBestMs: 1,
+      isPersonalBest: true,
+      rank: 1,
+      previousRank: null,
+      ranksGained: 0,
+    });
+    const reference = createBoard(CHALLENGE, seed, 2);
+    revealCell(reference, 9, 16);
+    const safe = reference.cells.flatMap((c, i) => (c.mine ? [] : [i]));
+
+    await open();
+    const cell = (i: number) => document.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)!;
+    cell(first).click();
+    for (let i = 0; i < 12; i++) {
+      await flushMacrotask();
+      flushSync();
+    }
+    for (const i of safe) {
+      if (cell(i).className.includes('ms-hidden')) {
+        cell(i).click();
+        flushSync();
+      }
+    }
+    await settle();
+
+    expect(submitMinesweeperChallenge).toHaveBeenCalledTimes(1);
+    const [, moves, claimed] = vi.mocked(submitMinesweeperChallenge).mock.calls[0];
+    expect(moves[0]).toMatchObject({ type: 'reveal', x: 9, y: 16, t: 0 });
+    expect(moves.every((m) => Number.isInteger(m.t) && m.t >= 0)).toBe(true);
+    expect(moves.every((m, i) => i === 0 || m.t >= moves[i - 1].t)).toBe(true);
+    // The server refuses a log that does not end where the game did.
+    expect(claimed).toBe(moves[moves.length - 1].t);
+  }, 60_000);
 });

@@ -62,6 +62,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import { setAvatarToken } from '$lib/utils/avatarUrl';
+import type { TokenVerdict } from '$lib/utils/tokenVerdict';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -266,9 +267,15 @@ function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessag
  * a definitively dead session.
  */
 export class SessionExpiredError extends Error {
-  constructor() {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict;
+
+  constructor(
+    verdict: Extract<TokenVerdict, 'session-expired' | 'device-revoked'> = 'session-expired'
+  ) {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+    this.tokenVerdict = verdict;
   }
 }
 
@@ -288,7 +295,7 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
    *   which is not necessarily the device asking (its id may have rotated since the session opened).
    */
   constructor(readonly revoked: RevokedDeviceIdentity) {
-    super();
+    super('device-revoked');
     this.message = 'A device was revoked by its owner - this session has ended';
     this.name = 'SessionEndedByDeviceRevocationError';
   }
@@ -309,6 +316,9 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
  * nothing else - no logout, no redirect, no retry, no error shown.
  */
 export class SignOutInProgressError extends Error {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict = 'signing-out';
+
   constructor(stage: string) {
     super(`refresh ${stage} dropped - a sign-out is in progress`);
     this.name = 'SignOutInProgressError';

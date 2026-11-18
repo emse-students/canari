@@ -201,6 +201,38 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     expect(log).toHaveBeenCalledWith(expect.stringContaining('still joining, skip'));
     expect(mlsService.replaceMember).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
+    // NO ADD, SO NO LOCK: held for this read, it refused another device's real Add in that second.
+    expect(mlsService.acquireAddLock).not.toHaveBeenCalled();
+  });
+
+  // THE LOCK IS TAKEN ONCE THE ADD IS DECIDED, BEFORE THE PACKAGE IS CLAIMED: a refused lock spends
+  // none of the requester's pool, and is not counted as an attempt.
+  it('claims no package when the lock is refused, and counts no attempt', async () => {
+    const mlsService = admissible({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
+      acquireAddLock: vi.fn().mockResolvedValue(false),
+    });
+    const log = vi.fn();
+
+    for (let i = 0; i < 5; i++) await run('g-lock-refused', mlsService, log);
+
+    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.releaseAddLock).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('re-add suspended'));
+  });
+
+  it('takes the lock before the package is claimed', async () => {
+    // A member's device whose own leaf is gone: the Add is decided.
+    const mlsService = admissible({
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
+    });
+
+    await run('g-lock-order', mlsService);
+
+    expect(vi.mocked(mlsService.acquireAddLock).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(mlsService.fetchDeviceKeyPackage).mock.invocationCallOrder[0]
+    );
+    expect(mlsService.releaseAddLock).toHaveBeenCalledTimes(1);
   });
 
   // AND PAST THE COOLDOWN THE REPAIR NAMES WHICH CAUSE IT REPAIRS: a Welcome sent here and lost,

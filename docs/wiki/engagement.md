@@ -108,6 +108,11 @@ of its adversarial review.
      written, and the erasure also removes the id
      (`post_notifications_liked_by`, `meta - 'likedBy'`). The push is sent at once and carries the
      name of that moment (`actorName` plus `contentCount`); a delivered push cannot be recalled.
+     **A dropped naming is not logged (2026-11-17)**: the bell is polled every 60 s by each open client, and
+     a row whose naming went (the like taken back, the switch off) is dropped again at EVERY read, so a
+     line per drop (`[TREND] bell: N of N naming(s) no longer hold`, about 37 in 15 minutes on dev) said the
+     same stable, designed state again and again. The read is a pure function of durable state; nothing
+     was decided, so there is nothing to say. `campus-trend.integration.spec.ts` pins the silence.
    - The three trend keys stay; every native table chooses one of three sentences by the count
      ("Aimée par Léa", "... et 1 autre personne", "... et 9 autres", English "Liked by ..." at
      parity), and the bell row draws the same through Paraglide from the served `{name, others}`.
@@ -208,7 +213,7 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
      `event_proposed`, `event_validated`, `event_rejected`, `event_updated`, `event_deleted`,
      `event_pending`, `event_pending_coorganiser`, `profile_correction_applied`,
      `profile_correction_refused`, `repost_personal_requested`, `repost_personal_accepted`,
-     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`,
+     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`, `live_reinstated`,
      `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused`,
      `lydia_refund_issued`, `lydia_cashier_added`, `delegation_revoked`,
      `delegation_receiver_not_ready`, `delegation_resumed`).

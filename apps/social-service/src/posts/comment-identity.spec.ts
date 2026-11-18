@@ -18,6 +18,7 @@ const viewer = (over: Partial<CommentViewer> = {}): CommentViewer => ({
   isModerator: false,
   managedAssociationIds: new Set(),
   moderatedAssociationIds: new Set(),
+  moderatedInstitutionIds: new Set(),
   ...over,
 });
 
@@ -184,6 +185,34 @@ describe('commentRights', () => {
       canDelete: true,
     });
     expect(commentRights(PLAIN, viewer())).toEqual({ canEdit: false, canDelete: false });
+  });
+});
+
+describe("an institution's own moderator (owner, 2026-11-15, decision 4)", () => {
+  /** MODERATE in institution `asso-1`, under a post it does not moderate. */
+  const institutionModerator = (over: Partial<CommentViewer> = {}) =>
+    viewer({ moderatedInstitutionIds: new Set(['asso-1']), ...over });
+
+  it("deletes a comment in its institution's name wherever it sits, and sees its writer", () => {
+    expect(commentRights(ASSO, institutionModerator())).toEqual({
+      canEdit: false,
+      canDelete: true,
+    });
+    expect(moderatesComment(ASSO, institutionModerator())).toBe(true);
+    expect(serveComment(ASSO, institutionModerator(), POST, CARDS).userId).toBe('writer');
+    // The id is compared lowercased, as the SQL answers it.
+    const upper = { ...ASSO, associationId: 'ASSO-1' };
+    expect(moderatesComment(upper, institutionModerator())).toBe(true);
+  });
+
+  it('reaches nothing else under a post it does not moderate', () => {
+    expect(commentRights(PLAIN, institutionModerator())).toEqual({
+      canEdit: false,
+      canDelete: false,
+    });
+    expect(serveComment(ANON, institutionModerator(), POST, CARDS).userId).toBeUndefined();
+    const club = { ...ASSO, associationId: 'club-1' };
+    expect(moderatesComment(club, institutionModerator())).toBe(false);
   });
 });
 

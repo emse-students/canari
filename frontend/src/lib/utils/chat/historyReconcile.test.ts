@@ -21,6 +21,9 @@ import {
   groupsAwaitingAPeer,
   forgetGroupReconciliation,
   noteCoverageShortfall,
+  noteCannotRepair,
+  noteRepairLanded,
+  holdsUnrepairedProof,
   statedCoverage,
   resetHistoryReconciliation,
   setHistoryProbeSender,
@@ -114,7 +117,7 @@ describe('reconcileGroup', () => {
     const mls = service({}, vi.fn().mockResolvedValue(undefined), ['distribution-group']);
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
   });
 
   // DEL-1, 2026-09-05: a peer re-added this device to a group it had been evicted from, and the
@@ -141,7 +144,7 @@ describe('reconcileGroup', () => {
     mls.isGroupActive.mockResolvedValue(true);
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
   });
 
   // A THROW IS NOT A `false`, AND THE TWO CAUSES IT CONFLATES - the client is not loaded, the group
@@ -152,7 +155,7 @@ describe('reconcileGroup', () => {
     mls.isGroupActive.mockRejectedValue(new Error('[MLS] WASM client not ready'));
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
     const said = log.mock.calls.map((c) => String(c[0])).join(' | ');
     expect(said).toContain("could not read this device's membership");
     expect(said).toContain('asking anyway');
@@ -184,7 +187,7 @@ describe('reconcileGroup', () => {
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(true);
     expect(order).toEqual(['elect', 'probe']);
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
   });
 
   it('sends NO probe when the server elected nobody, and remembers only that', async () => {
@@ -253,7 +256,7 @@ describe('reconcileGroup', () => {
 
     await retryDeferredReconciliations(service(), [GROUP], log);
 
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
     expect(deferredGroups()).toEqual([]);
   });
 
@@ -591,7 +594,7 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockRejectedValueOnce(new Error('boom'));
 
     await reconcileAllGroups(mls, [GROUP, OTHER], log);
-    expect(probe).toHaveBeenCalledWith(OTHER);
+    expect(probe).toHaveBeenCalledWith(OTHER, { incomplete: false });
   });
 
   it('reports how many asks went out', async () => {
@@ -911,7 +914,7 @@ describe('noteCoverageShortfall', () => {
     await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
 
     expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W1] });
-    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: false });
   });
 
   it('records the claim but chases nothing when the peer DOES cover what we asked', async () => {
@@ -1223,5 +1226,158 @@ describe('raiseReconcile - a burst of unreadable frames is ONE evaluation', () =
     await raiseReconcile(mls, OTHER, log);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
     expect(log.mock.calls.flat().join('\n')).not.toContain('further unreadable');
+  });
+});
+
+describe('a member that holds nothing we lack - the walk is driven by its ANSWER (HEAL-repair)', () => {
+  /**
+   * The coin flip measured on 2026-09-08: the server elects a RANDOM online member, one of three
+   * held the messages, and the asker stopped on a peer's AGREEMENT. Agreement is not completeness
+   * while this device holds frames it cannot read, so the asker says it holds them, a peer that
+   * holds nothing it lacks says so, and that ANSWER excludes the peer until the repair lands.
+   */
+  const W1 = 'u1:w1';
+  const W3 = 'u1:w3';
+
+  /** A service whose elections answer `outcomes` in turn, then repeat the last one. */
+  function elections(
+    ...outcomes: Array<{ target?: string; noPeerOnline?: boolean; excludedOnline?: number }>
+  ) {
+    let i = 0;
+    return {
+      sendHistoryRequest: vi
+        .fn()
+        .mockImplementation(async () => outcomes[Math.min(i++, outcomes.length - 1)]),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+      isDistributionGroup: vi.fn(() => false),
+      isGroupActive: vi.fn().mockResolvedValue(true),
+    } as unknown as Parameters<typeof reconcileGroup>[0] & {
+      sendHistoryRequest: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it('says it holds frames it cannot read on an ask raised by one, and on no other', async () => {
+    const mls = elections({ target: W3 });
+
+    await raiseReconcile(mls, GROUP, log);
+    await reconcileGroup(mls, OTHER, log);
+
+    expect(probe).toHaveBeenCalledWith(GROUP, { incomplete: true });
+    expect(probe).toHaveBeenCalledWith(OTHER, { incomplete: false });
+    expect(holdsUnrepairedProof(GROUP)).toBe(true);
+    expect(holdsUnrepairedProof(OTHER)).toBe(false);
+  });
+
+  it('excludes the member that answered and elects another AT ONCE - no further edge needed', async () => {
+    const mls = elections({ target: W3 }, { target: W1 });
+    await raiseReconcile(mls, GROUP, log);
+
+    await noteCannotRepair(mls, GROUP, W3, log);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    expect(mls.sendHistoryRequest.mock.calls[1][1]).toEqual({ exclude: [W3] });
+    expect(probe).toHaveBeenLastCalledWith(GROUP, { incomplete: true });
+  });
+
+  it('keeps the exclusion past the coalescing window - the next ask cannot re-draw that member', async () => {
+    // THE COIN FLIP ITSELF. The asks were ~33 s apart, past the 30 s window, so each one began a
+    // FRESH walk from the whole membership and the random election re-drew the agreeing member.
+    const mls = elections({ target: W3 }, { target: W1 });
+    const now = Date.now();
+    await escalateReconciliation(mls, GROUP, log, now);
+    await noteCannotRepair(mls, GROUP, W3, log, now + 1_000);
+
+    await escalateReconciliation(mls, GROUP, log, now + 120_000);
+    await reconcileGroup(mls, GROUP, log, now + 240_000);
+
+    expect(mls.sendHistoryRequest.mock.calls[2][1]).toEqual({ exclude: [W3] });
+    expect(mls.sendHistoryRequest.mock.calls[3][1]).toEqual({ exclude: [W3] });
+  });
+
+  it('ends on the server proof when every reachable member holds nothing we lack', async () => {
+    const mls = elections(
+      { target: W3 },
+      { target: W1 },
+      { noPeerOnline: true, excludedOnline: 2 }
+    );
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log);
+
+    await noteCannotRepair(mls, GROUP, W1, log);
+
+    expect(mls.sendHistoryRequest.mock.calls[2][1]).toEqual({ exclude: [W3, W1] });
+    const said = log.mock.calls.map((c) => String(c[0])).join(' | ');
+    expect(said).toContain('every reachable member (2) holds nothing');
+    expect(said).not.toContain('has stated its coverage');
+    // Not deferred: the holder of a frame this device cannot read is its sender, who was online to
+    // send it - a presence edge would only replay this same election.
+    expect(deferredGroups()).not.toContain(GROUP);
+  });
+
+  it('is discharged by the repair LANDING - the next ask excludes nobody and claims nothing', async () => {
+    const mls = elections({ target: W3 }, { target: W1 });
+    const now = Date.now();
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log, now);
+
+    noteRepairLanded(GROUP, W1, log);
+    await reconcileGroup(mls, GROUP, log, now + 120_000);
+
+    expect(holdsUnrepairedProof(GROUP)).toBe(false);
+    expect(mls.sendHistoryRequest).toHaveBeenLastCalledWith(GROUP, { exclude: [] });
+    expect(probe).toHaveBeenLastCalledWith(GROUP, { incomplete: false });
+  });
+
+  it('is never discharged by a peer saying something - an answer after the repair elects nobody', async () => {
+    const mls = elections({ target: W3 });
+    await raiseReconcile(mls, GROUP, log);
+    noteRepairLanded(GROUP, W1, log);
+
+    await noteCannotRepair(mls, GROUP, W3, log);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('a frame LOST after the walk ended re-opens it - its sender may be a member that had agreed', async () => {
+    // Review of #3762: W3 and W1 said they held nothing we lacked and the walk ended on the server's
+    // proof. Then a NEW frame from W3 is lost. W3 holds that message; an ask that still excluded it
+    // would end on the same empty election for the rest of the session.
+    const mls = elections(
+      { target: W3 },
+      { target: W1 },
+      { noPeerOnline: true, excludedOnline: 2 },
+      { target: W3 }
+    );
+    const now = Date.now();
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log, now);
+    await noteCannotRepair(mls, GROUP, W1, log, now);
+
+    await raiseReconcile(mls, GROUP, log);
+
+    expect(mls.sendHistoryRequest.mock.calls[3][1]).toEqual({ exclude: [] });
+    expect(probe).toHaveBeenLastCalledWith(GROUP, { incomplete: true });
+    expect(log.mock.calls.flat().join(' | ')).toContain('eligible again');
+  });
+
+  it('a REPLAY of frames already asked about keeps the members that agreed excluded', async () => {
+    const mls = elections({ target: W3 }, { target: W1 });
+    const now = Date.now();
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log, now);
+
+    await escalateReconciliation(mls, GROUP, log, now + 120_000);
+
+    expect(mls.sendHistoryRequest.mock.calls[2][1]).toEqual({ exclude: [W3] });
+  });
+
+  it('forgets the proof with the conversation', async () => {
+    const mls = elections({ target: W3 });
+    await raiseReconcile(mls, GROUP, log);
+    await noteCannotRepair(mls, GROUP, W3, log);
+
+    forgetGroupReconciliation(GROUP);
+
+    expect(holdsUnrepairedProof(GROUP)).toBe(false);
   });
 });

@@ -310,6 +310,10 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
     );
     expect(end).toContain('removeDeliveredNotificationsWithIdentifiers');
     expect(end).toContain('canariCallId');
+    // Content-free push WP-W6: the ring-end push carries no `groupId` since 2026-11-17, so this
+    // branch must find the ring by `callId` alone.
+    expect(end).toContain('CanariEndCallKitCall(callId, ');
+    expect(end).not.toContain('groupId');
   });
 
   it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {

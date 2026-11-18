@@ -108,6 +108,40 @@ export class LivesController {
     return this.lives.withdraw(caller, target, body ?? {});
   }
 
+  /**
+   * STAFF READ the accounts whose right to broadcast is withdrawn - newest first, narrowed to the
+   * people the caller may act on (the lift's scope), so the list never offers a lift that would be
+   * refused. The door is `assertStaff` (403 `LIVE_WITHDRAWAL_FORBIDDEN`), asked first.
+   */
+  @Get('broadcasters/withdrawn')
+  @Header('Cache-Control', 'no-store')
+  async withdrawn(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    return this.lives.listWithdrawn((ids) =>
+      this.associations.moderatedUserIds(caller, ids, { isGlobalAdmin: globalAdmin === 'true' })
+    );
+  }
+
+  /**
+   * STAFF READ one account's standing without a report (cuts on record, suspension, withdrawal):
+   * the same door and scope as the withdrawal it precedes (403 `LIVE_WITHDRAWAL_FORBIDDEN`,
+   * `MODERATION_OUT_OF_SCOPE`); 404 `LIVE_BROADCASTER_NOT_FOUND` for an id that is no account.
+   */
+  @Get('broadcasters/:userId/standing')
+  @Header('Cache-Control', 'no-store')
+  async broadcasterStanding(
+    @Param('userId') target: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined
+  ) {
+    const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
+    return this.lives.broadcasterStanding(target);
+  }
+
   /** STAFF LIFT a withdrawal: `{ userId, lifted }`, idempotent. Same predicate as the withdrawal. */
   @Delete('broadcasters/:userId/withdrawal')
   @HttpCode(200)
@@ -122,9 +156,9 @@ export class LivesController {
   }
 
   /**
-   * The ONE staff predicate of this API (`isContentModerator`: a platform admin or a BDE member
-   * holding `MODERATE`, the posts' moderation controls'), asked before anything is read. Returns the
-   * caller; refuses 403 with `code`.
+   * The ONE staff predicate of this API (`isContentModerator`: a platform admin, or a member holding
+   * `MODERATE` in a BDE or an institution - the posts' moderation controls'), asked before anything
+   * is read. Returns the caller; refuses 403 with `code`. The scope is asked after it, per act.
    */
   private async assertStaff(
     userId: string,
@@ -167,9 +201,11 @@ export class LivesController {
   /**
    * Starts a live: `{ key: <64 hex>, associationId?: <uuid>, acceptedRulesVersion?: <int> }`. 409 if
    * the caller has one open; 403 `LIVE_RULES_NOT_ACCEPTED` while the first-live rules are not
-   * accepted (send `acceptedRulesVersion` when the member tapped Start on them).
+   * accepted (send `acceptedRulesVersion` when the member tapped Start on them). `no-store`: the
+   * answer echoes the live key, and a key never sits in any cache (review G7, 2026-11-17).
    */
   @Post()
+  @Header('Cache-Control', 'no-store')
   start(
     @Headers('x-user-id') userId: string,
     @Body()
@@ -347,9 +383,10 @@ export class LivesController {
 
   /**
    * STAFF CUT a live (WP-L8): `{ reason: 'spam'|'harassment'|'inappropriate'|'other', details? }`.
-   * Who may: `isContentModerator` - a platform admin or a BDE member holding `MODERATE`, the ONE
-   * predicate of the posts' moderation controls and of `/api/moderation` - and, for a BDE, only a
-   * live of its governed spaces (`mayModerateLive`, 403 `MODERATION_OUT_OF_SCOPE`). Anyone else is 403
+   * Who may: `isContentModerator` - a platform admin, or a member holding `MODERATE` in a BDE or an
+   * institution, the ONE predicate of the posts' moderation controls and of `/api/moderation` - and
+   * then only a live it moderates (`mayModerateLive`: a BDE's governed spaces, an institution's own
+   * live; refused 403 `MODERATION_OUT_OF_SCOPE` or `MODERATION_OUTSIDE_OWN_INSTITUTION`). Anyone else is 403
    * `LIVE_CUT_FORBIDDEN`, asked BEFORE the live is looked up, so the refusal says nothing about
    * whether the live exists. Idempotent: a repeat answers the first cut with `newlyCut: false`.
    */

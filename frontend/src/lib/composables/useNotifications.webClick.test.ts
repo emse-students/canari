@@ -27,7 +27,7 @@ function handler(anchor: string, start: string, end: string): string {
 
 describe('the web notification click', () => {
   it('publishes the conversation and never navigates itself', () => {
-    const body = handler('canari-${conversationId', 'n.onclick = () =>', 'n.close();');
+    const body = handler('canari-${idKey', 'n.onclick = () =>', 'n.close();');
     expect(body).toContain('notifNav.navigate(conversationId)');
     expect(body).not.toMatch(/\bgoto\(/);
   });

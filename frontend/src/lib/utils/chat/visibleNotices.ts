@@ -19,9 +19,10 @@
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
-import { mkNoticeEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
+import { mkNoticeEnvelope, parseEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
 import { noticeText, noticeUserIds } from './noticeText';
-import type { AddMessageToChatOptions } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation } from '$lib/types';
+import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay } from './groupName';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
 
@@ -151,6 +152,9 @@ export function receivedNoticeTime(
   };
 }
 
+/** What a sent notice frame came to: the server's acceptance time, and the `sentAt` it carried. */
+export type SentNotice = { receivedAt: number | null; sentAt: number };
+
 /**
  * Sends a visible notice frame and, once the delivery service has ACCEPTED it, writes the acting
  * device's own row under the id the frame carries.
@@ -169,25 +173,38 @@ export function receivedNoticeTime(
  * `own` is absent where the acting user's devices deliberately draw nothing - a departure or a
  * deletion, whose conversation this device is about to drop - so no device of that user holds the
  * row and there is still nothing to diverge.
+ *
+ * Returns the server's acceptance time of the frame (`null` when the answer named none) - the
+ * instant every member's copy is dated by, which a rename dates its own row with (`groupName.ts`) -
+ * and the `sentAt` the frame carries, which every receiver bounds that time by: the sender runs the
+ * same bound on its own frame (`renameGroupAndBroadcast`).
+ *
+ * `minted` re-sends a frame whose first send got no answer under the id and `sentAt` it was minted
+ * with (`resendPendingRename`): every device then holds one notice, under one id, whichever copy
+ * reached it.
  */
 export async function sendVisibleNotice(
   mlsService: IMlsService,
   groupId: string,
   event: VisibleNoticeEvent | 'memberLeft' | 'groupDeleted',
   payload: Record<string, unknown>,
-  own?: OwnNotice
-): Promise<void> {
-  const frame = mkVisibleSystem(event, JSON.stringify(payload));
+  own?: OwnNotice,
+  minted?: { messageId: string; sentAt: number }
+): Promise<SentNotice> {
+  // A re-send is the SAME frame - the id and sentAt of the first - so the members draw one notice.
+  const frame = minted
+    ? { ...mkVisibleSystem(event, JSON.stringify(payload)), ...minted }
+    : mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
   // From whichever tab acts: a follower's gesture hands its notice to the leader (`frameFromAnyTab`).
   const sent = await sendFrameFromThisTab(mlsService, groupId, encodeAppMessage(frame));
-  if (noOwnRow) return;
+  if (noOwnRow) return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   if (text === null) {
     console.warn(
       `[NOTICE] ${event} sent in ${groupId.slice(0, 8)}… names nothing to draw - no row written here, and none on the members' devices`
     );
-    return;
+    return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   }
   // THE ACTING DEVICE'S COPY GETS THE SERVER TIME every member's copy carries, exactly as an own
   // text row gets it from its send (`patchServerTimestamp` in the outbox): MLS never hands this
@@ -211,9 +228,51 @@ export async function sendVisibleNotice(
     console.error(
       `[NOTICE] ${event} was DELIVERED in ${groupId.slice(0, 8)}… but this device's own row ${frame.messageId.slice(0, 8)} was not written - the members hold it and this device does not: ${String(e).slice(0, 120)}`
     );
-    return;
+    return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
   }
   console.debug(
     `[NOTICE] ${event} written on the acting device in ${groupId.slice(0, 8)}… as ${frame.messageId.slice(0, 8)} - the id every member's device writes`
   );
+  return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
+}
+
+/** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */
+export function renamedToOf(content: string): string | undefined {
+  const envelope = parseEnvelope(content);
+  return envelope.kind === 'system' && envelope.notice?.event === 'groupRenamed'
+    ? envelope.notice.name
+    : undefined;
+}
+
+/**
+ * The heal of a rename whose fate this device never learnt (`ownRenameFromRelay`), run on the rows a
+ * history bundle adds - live and replayed, one rule. Returns the row to write, or `null` when no
+ * relayed row is one of this device's own rename frames; says what it did either way it acts.
+ */
+export function ownRenameSettledByRelay(
+  convo: Conversation,
+  rows: ReadonlyArray<{ id: string; content: string; serverTimestamp?: number }>,
+  relayer: string,
+  log: (msg: string) => void
+): Conversation | null {
+  const settled = ownRenameFromRelay(
+    convo,
+    rows.map((r) => ({
+      id: r.id,
+      ...(typeof r.serverTimestamp === 'number' ? { serverTimestamp: r.serverTimestamp } : {}),
+      renamedTo: renamedToOf(r.content),
+    }))
+  );
+  if (!settled) return null;
+  const what = `own rename ${settled.frame.messageId.slice(0, 8)} in ${convo.id.slice(0, 8)}…`;
+  if ('refused' in settled) {
+    console.error(
+      `[GROUP_NAME] ${what}: the copy ${relayer.slice(0, 8)} relayed is not taken - ${settled.refused === 'other-name' ? 'it names another name under that id' : GROUP_NAME_REFUSAL_TEXT[settled.refused]}`
+    );
+    return null;
+  }
+  log(
+    `[GROUP_NAME] ${what} landed, proven by the copy ${relayer.slice(0, 8)} relayed - ${settled.outcome === 'applied' ? 'the name taken at the time the members hold it' : 'a later name stands, as for every member'}`
+  );
+  return settled.row;
 }

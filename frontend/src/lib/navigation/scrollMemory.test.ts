@@ -311,13 +311,6 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
     expect(watching).toContain(back.list.children[5]);
     resizedAt(back.list);
     expect(back.offsetOf(5)).toBe(0);
-    frame();
-    frame();
-    expect(live.every((o) => !o.active)).toBe(true);
-    const quiet = back.el.scrollTop;
-    back.model.heights[0] = 700;
-    resizedAt(back.list); // the restore is over: a later change is not followed
-    expect(back.el.scrollTop).toBe(quiet);
   });
 
   it('follows a card growing in place: the anchor itself is observed', () => {
@@ -412,41 +405,74 @@ describe('the place is an anchor, not only a distance (1.7.0-alpha.2: left at 15
   });
 });
 
-describe('the restore ends by a proof, never by the page going quiet', () => {
-  it('a subtree that keeps mutating (a live dot, a counter) does not hold it: confirmed twice, over', async () => {
+describe('the restore has no proof of alignment: an event ends it, never the page looking right', () => {
+  it('a subtree that keeps mutating (a live dot, a counter) stays aligned and costs no frame loop', async () => {
     const back = leaveAndReturn();
     back.draw(20);
     restoreOnReturn(1, back.el);
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 5; i++) {
       back.list.appendChild(document.createElement('span')); // a mutation in EVERY frame
       await flush();
       frame();
     }
-    expect(live.every((o) => !o.active)).toBe(true);
+    expect(frameQueue.length).toBe(0);
     expect(back.offsetOf(5)).toBe(0);
   });
 
-  it('a frame where the anchor had drifted re-aligns it and restarts the count', () => {
+  it('content arriving FAR AFTER the page looked aligned (a preview answering late) is still absorbed', () => {
     const back = leaveAndReturn();
     back.draw(20);
     restoreOnReturn(1, back.el);
-    frame(); // confirmed once
-    back.model.heights[0] = 400; // drifts with NO notification at all
-    frame(); // re-aligned, count restarts
+    for (let i = 0; i < 50; i++) frame(); // however many frames pass, nothing ends it
     expect(back.offsetOf(5)).toBe(0);
-    expect(live.some((o) => o.active)).toBe(true);
-    frame();
-    frame();
-    expect(live.every((o) => !o.active)).toBe(true);
+    back.model.heights[3] = 300 + 11; // 11 px of preview lands above the anchor, late
+    resizedAt(back.list);
+    expect(back.offsetOf(5)).toBe(0);
+    back.model.heights[1] = 300 + 8;
+    resizedAt(back.list);
+    expect(back.offsetOf(5)).toBe(0);
   });
 
-  it('an anchor removed AFTER it was aligned ends the restore: no warning, no jump to the offset', () => {
+  it('a FOREIGN scroll while following (find-in-page, a focus, a screen reader) drops it, no yank back', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.scrollTop = 4000; // nobody the restore wrote
+    back.el.dispatchEvent(new Event('scroll'));
+    expect(live.every((o) => !o.active)).toBe(true);
+    back.model.heights[0] = 700;
+    resizedAt(back.list);
+    expect(back.el.scrollTop).toBe(4000);
+  });
+
+  it('its own scroll event is not foreign', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.dispatchEvent(new Event('scroll'));
+    expect(live.some((o) => o.active)).toBe(true);
+  });
+
+  it('only the reader ends it: after a touch, a late change is not followed', () => {
+    const back = leaveAndReturn();
+    back.draw(20);
+    restoreOnReturn(1, back.el);
+    back.el.dispatchEvent(new Event('touchstart'));
+    expect(live.every((o) => !o.active)).toBe(true);
+    const where = back.el.scrollTop;
+    back.model.heights[0] = 700;
+    resizedAt(back.list);
+    expect(back.el.scrollTop).toBe(where);
+  });
+
+  it('an anchor removed AFTER it was aligned ends the restore: no warning, no jump to the offset', async () => {
     const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
     const back = leaveAndReturn();
     back.draw(20);
     restoreOnReturn(1, back.el);
     const aligned = back.el.scrollTop;
     back.list.children[5].remove();
+    await flush(); // the mutation reports it and starts the one frame loop
     frame();
     expect(live.every((o) => !o.active)).toBe(true);
     expect(back.el.scrollTop).toBe(aligned);
