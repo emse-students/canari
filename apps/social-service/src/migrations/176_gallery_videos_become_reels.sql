@@ -5,6 +5,8 @@
 -- depuis la galerie", and asked whether the videos already posted follow: "Oui, toutes" - each one a
 -- CanaReel expiring ONE YEAR AFTER ITS PUBLICATION, the owner knowing that a video older than a year
 -- then goes at once (docs/wiki/services/reels.md#the-rule-what-is-a-canareel).
+-- CONFIRMED by the owner on 2026-11-19 ("Oui, toutes"), having seen production examples of what it
+-- converts, horizontal clips included: EVERY already-posted single-video post, whatever its frame.
 --
 -- WHAT IT CONVERTS, AND ONLY THAT (an allowlist in the WHERE - docs/wiki/open-questions.md):
 --   - `kind = 'post'`: never a reel already, never a live replay;
@@ -42,7 +44,8 @@
 -- HOW MANY, BEFORE IT RUNS - the read-only count by age band, the same allowlist. Read on 2026-11-14:
 -- dev 2 (all under 30 days), production 39 under 30 days and 1 from 30 to 180 days, NONE over a year
 -- (the oldest post is of 2026-05-13), so the conversion itself deletes nothing; 0 and 4 multi-media
--- posts with a video stay posts:
+-- posts with a video stay posts. Read again on 2026-11-19, production: 47 posts would convert (10
+-- landscape or square, 37 vertical), none a year old, so nothing is deleted before about November 2027:
 --
 --   SELECT CASE
 --            WHEN p."publishedAt" > now() - interval '30 days'  THEN '1. under 30 days'
@@ -67,7 +70,7 @@
 --      AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.images) m
 --                   WHERE m->>'type' = 'video' OR lower(m->>'mimeType') LIKE 'video/%');
 --
--- Numbered 176 (2026-11-18): the highest social number on main is 175, and 171 is taken by an open PR.
+-- Numbered 176 (2026-11-18, checked again 2026-11-19): the highest social number on main is 175, and 171 is taken by an open PR.
 --
 -- Idempotent for CD: DROP CONSTRAINT IF EXISTS before the re-create; a second run finds no `post`
 -- that matches (every match is a `reel` now) and writes nothing. THREE TRANSACTIONS, and LOCKS, in

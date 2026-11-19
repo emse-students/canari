@@ -19,6 +19,11 @@ video published more than a year ago.
 So NOTHING is deleted at the conversion: every converted video expires a year after its publication,
 the first in 2027.
 
+**Re-read on 2026-11-19, production: 47 posts would convert** (10 landscape or square, 37 vertical),
+none a year old, so nothing is deleted before about November 2027. **The owner confirmed it the same
+day** (*"Oui, toutes"*), having seen production examples of what it converts, horizontal clips
+included: EVERY already-posted single-video post, whatever its frame and length.
+
 **The owner's answers of 2026-11-14** ([open-questions](../open-questions.md#decided-2026-11-14---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09)):
 multi-media posts with a video, *"Rester des posts"*; the longest vertical CanaReel, *"3 minutes"*.
 
@@ -71,6 +76,6 @@ Owed, in order:
    `infrastructure/migration-approvals.txt`, by the owner or by the lead under the 2026-11-03
    delegation - its order with the merge as above.
 2. After it ships: the next `[REEL_GC]` tick deletes nothing (band 4 is 0), and the CanaReels
-   list gains the 40 production videos.
+   list gains the 47 production videos (the read of 2026-11-19).
 3. The `refused` count of the first boot's `Reel backfill:` line, above - 0 closes the leak question;
    anything else names the blobs nothing will delete, and they get an entry of their own.

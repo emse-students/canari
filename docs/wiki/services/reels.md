@@ -77,6 +77,10 @@ square** video, or a vertical one past 3 minutes, stays an ordinary post video.
   NULL marks the migration's rows for the rollback). The file carries the read-only count, by age
   band, of what it converts and what it would delete at once, and its rollback. Its approval line is
   the owner's, not written here.
+  **Confirmed by the owner on 2026-11-19** ("Oui, toutes"), having seen production examples of what
+  it converts, horizontal clips included: EVERY already-posted single-video post, whatever its frame
+  and length. The read of 2026-11-19 on production: **47 posts would convert** (10 landscape or
+  square, 37 vertical), and none is a year old, so **nothing is deleted before about November 2027**.
 
 The rule of 2026-11-09, as it stood until then (the "Existing posts are not converted" line is
 superseded by migration 176, and "every other video stays a post" by the OR above):
