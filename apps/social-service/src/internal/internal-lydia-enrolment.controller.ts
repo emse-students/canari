@@ -173,10 +173,16 @@ export class InternalLydiaEnrolmentController {
     assertInternalSecret(headerSecret);
     const claimToken = claimTokenOf(body?.claimToken);
     if (!claimToken) throw new BadRequestException('claimToken is required');
-    return {
-      ok: true,
-      released: await this.associationsService.releaseLydiaResponsable(id, claimToken),
-    };
+    try {
+      return {
+        ok: true,
+        released: await this.associationsService.releaseLydiaResponsable(id, claimToken),
+      };
+    } finally {
+      // A departure that met this claim busy is owed now. Not after a store: core's removal of the
+      // replaced number takes the claim next, and must not meet it busy.
+      this.associationsService.afterCashierClaimReleased(id);
+    }
   }
 
   /**
@@ -228,14 +234,25 @@ export class InternalLydiaEnrolmentController {
     removeOther: boolean;
   }> {
     assertInternalSecret(headerSecret);
-    const recorded = await this.associationsService.recordLydiaResponsable(id, {
-      vendorToken: body?.vendorToken,
-      userId: body?.userId,
-      phone: body?.phone,
-      addedByUserId: body?.addedByUserId,
-      confirmed: body?.confirmed,
-      claimToken: body?.claimToken,
-    });
+    let recorded: Awaited<ReturnType<AssociationsService['recordLydiaResponsable']>>;
+    try {
+      recorded = await this.associationsService.recordLydiaResponsable(id, {
+        vendorToken: body?.vendorToken,
+        userId: body?.userId,
+        phone: body?.phone,
+        addedByUserId: body?.addedByUserId,
+        confirmed: body?.confirmed,
+        claimToken: body?.claimToken,
+      });
+    } catch (err: unknown) {
+      // Refused: no removal of a replaced number follows, so a departure owed is asked now.
+      this.associationsService.afterCashierClaimReleased(id);
+      throw err;
+    }
+    // removeOther: core's removal of the replaced number claims NEXT and must not meet a departure
+    // run holding the claim - that removal's own record or release asks for the departures. Else
+    // the store released the claim, and a departure that met it busy is owed now.
+    if (!recorded.removeOther) this.associationsService.afterCashierClaimReleased(id);
     return {
       responsable: recorded.view,
       cashierId: recorded.cashierId,

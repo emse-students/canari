@@ -63,6 +63,66 @@ export interface RosterEntry {
 }
 
 /**
+ * WHAT CLOUDFLARE SAYS OF A SEATED SESSION (`GET sessions/<id>`), the seat ledger's liveness: the
+ * SFU writes each track's `status` from that session's own media, so it is a liveness written by
+ * the thing whose liveness it measures - never a clock the client keeps, never a timer here.
+ * `live` carries the mids of its active tracks (what an eviction closes).
+ */
+export type SessionLiveness =
+  | { state: 'live'; activeMids: string[] }
+  | { state: 'gone'; why: string }
+  | { state: 'unknown'; why: string };
+
+/**
+ * Classifies Cloudflare's answer about one session, against what the ledger says it pushed.
+ *
+ * - `gone`: Cloudflare answers 404/410 (no such session), or the session pushed tracks (`pushed`,
+ *   from `call:room:<id>:cf:tracks:<session>`) and Cloudflare lists NONE of its local tracks as
+ *   `active` - a track receiving no media for 30 s is collected by the SFU (Cloudflare's limits),
+ *   which is what a killed or offline phone leaves.
+ * - `live`: anything else Cloudflare answers with a readable 2xx - a session that has not pushed
+ *   yet included (it is between `sessions/new` and `tracks/new`, and nothing says it is dead).
+ * - `unknown`: any other status, an `errorCode`, an unreadable body. The seat is KEPT (a destructive
+ *   repair is gated on knowing the state is broken) and the caller logs it at WARN.
+ */
+export function sessionLivenessOf(status: number, text: string, pushed: string[]): SessionLiveness {
+  if (status === 404 || status === 410) {
+    return { state: 'gone', why: `Cloudflare answered ${status}: no such session` };
+  }
+  if (status < 200 || status >= 300) {
+    return { state: 'unknown', why: `Cloudflare answered ${status}` };
+  }
+  let body: { errorCode?: unknown; tracks?: unknown } | null;
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    return { state: 'unknown', why: 'Cloudflare answered an unreadable body' };
+  }
+  if (!body || typeof body !== 'object') {
+    return { state: 'unknown', why: 'Cloudflare answered an unreadable body' };
+  }
+  if (body.errorCode) {
+    return { state: 'unknown', why: `Cloudflare refused: ${String(body.errorCode)}` };
+  }
+  const tracks = (Array.isArray(body.tracks) ? body.tracks : []) as {
+    location?: unknown;
+    mid?: unknown;
+    status?: unknown;
+  }[];
+  const active = tracks.filter((t) => t?.status === 'active');
+  if (pushed.length > 0 && !active.some((t) => t.location === 'local')) {
+    return {
+      state: 'gone',
+      why: `none of the ${pushed.length} track(s) it pushed is active at Cloudflare`,
+    };
+  }
+  return {
+    state: 'live',
+    activeMids: active.map((t) => t.mid).filter((m): m is string => typeof m === 'string'),
+  };
+}
+
+/**
  * The seats of a Cloudflare-relayed room: `userId -> sessionId`. ONE seat per user (the group-call
  * rule of 2026-11-13: keys are per user, so two devices of one person cannot both send), so a
  * second device's session REPLACES the first.
@@ -175,15 +235,23 @@ export class CloudflareSfuService {
       throw this.upstreamRefusal();
     }
     const ttlMs = await this.roomTtlMs(roomId, userId);
-    const [seats, previous] = (await this.redis.eval(
-      CLAIM_SEAT_LUA,
-      1,
-      cloudflareSeatsKey(roomId),
-      userId,
-      sessionId,
-      String(binding.maxSeats),
-      String(ttlMs)
-    )) as [number, string];
+    const claim = async () =>
+      (await this.redis.eval(
+        CLAIM_SEAT_LUA,
+        1,
+        cloudflareSeatsKey(roomId),
+        userId,
+        sessionId,
+        String(binding.maxSeats),
+        String(ttlMs)
+      )) as [number, string];
+    let [seats, previous] = await claim();
+    if (seats < 0) {
+      // Full: a seat may be held by a dead session or a removed member. Ask Cloudflare and the
+      // membership ONCE, release what is proven over, and claim again - a proof, never a wait.
+      const freed = await this.pruneSeats(roomId, `session room=${roomId} user=${userId}`);
+      if (freed > 0) [seats, previous] = await claim();
+    }
     if (seats < 0) {
       // The Cloudflare session just opened carries no track and no peer connection: it costs
       // nothing and closes itself; the refusal is the call's answer.
@@ -199,6 +267,7 @@ export class CloudflareSfuService {
       this.logger.log(
         `[sfu] session room=${roomId} user=${userId}: replaces session ${previous} - one device per user, the earlier one is no longer seated`
       );
+      await this.evictSession(roomId, previous, `replaced room=${roomId} user=${userId}`);
     }
     this.logger.log(
       `[sfu] session room=${roomId} user=${userId} session=${sessionId} seats=${seats}/${binding.maxSeats}`
@@ -338,11 +407,14 @@ export class CloudflareSfuService {
   ): Promise<{ participants: RosterEntry[]; others: number }> {
     const scope = `roster room=${roomId} user=${userId}`;
     await this.calls.assertCloudflareParticipant(userId, roomId, `sfu-${scope}`);
-    const seats = await this.redis.hgetall(cloudflareSeatsKey(roomId));
-    if (seats[userId] === undefined) {
+    if ((await this.redis.hget(cloudflareSeatsKey(roomId), userId)) === null) {
       this.logger.warn(`[sfu] ${scope} REFUSED: the caller holds no seat in this room`);
       throw new ForbiddenException('Join the call before reading who is in it');
     }
+    // Read-repair: a seat whose session Cloudflare says is gone, or whose holder left the
+    // conversation, is released before the list is answered.
+    await this.pruneSeats(roomId, scope, userId);
+    const seats = await this.redis.hgetall(cloudflareSeatsKey(roomId));
     const participants: RosterEntry[] = [];
     for (const [other, sessionId] of Object.entries(seats)) {
       if (other === userId) continue;
@@ -375,16 +447,145 @@ export class CloudflareSfuService {
       userId,
       sessionId
     )) as [number, number];
+    let others = left;
+    if (others > 0) {
+      // Read-repair before answering: a dead phone's seat must not keep the room from reading as
+      // empty to the last real participant (`others: 0` is WP-GC6's empty room).
+      others -= await this.pruneSeats(roomId, `leave room=${roomId} user=${userId}`, userId);
+    }
     if (released !== 1) {
       this.logger.log(
-        `[sfu] leave room=${roomId} user=${userId} session=${sessionId}: not this user's seat (replaced or never seated) - nothing released`
+        `[sfu] leave room=${roomId} user=${userId} session=${sessionId}: not this user's seat (replaced or never seated) - nothing released, seats-left=${others}`
       );
     } else {
       this.logger.log(
-        `[sfu] leave room=${roomId} user=${userId} session=${sessionId} seats-left=${left}${left === 0 ? ' - the room is empty' : ''}`
+        `[sfu] leave room=${roomId} user=${userId} session=${sessionId} seats-left=${others}${others === 0 ? ' - the room is empty' : ''}`
       );
     }
-    return { others: left };
+    return { others };
+  }
+
+  /**
+   * THE SEAT LEDGER'S READ-REPAIR. Every seat but `spare`'s is checked against the two sources that
+   * can prove it over: the conversation's admitted members
+   * ({@link CallsService.cloudflareRoomMembers}) and Cloudflare's own state of its session
+   * ({@link sessionLivenessOf}). A seat proven over is released through {@link RELEASE_SEAT_LUA}
+   * (only if it still holds THAT session, so a device replacing it meanwhile is never unseated); a
+   * removed member's session is also evicted at Cloudflare, since its media would otherwise keep
+   * flowing. A seat nothing proves over is kept. One `try` per seat: one failing check never
+   * decides another.
+   *
+   * @returns How many seats it released.
+   */
+  private async pruneSeats(roomId: string, scope: string, spare?: string): Promise<number> {
+    const seats = await this.redis.hgetall(cloudflareSeatsKey(roomId));
+    const members = await this.calls.cloudflareRoomMembers(roomId);
+    const released = await Promise.all(
+      Object.entries(seats)
+        .filter(([user]) => user !== spare)
+        .map(async ([user, sessionId]) => {
+          try {
+            const removed = members !== null && !members.has(user);
+            let reason = 'no longer a member of the conversation';
+            if (!removed) {
+              const liveness = await this.sessionLiveness(roomId, sessionId, scope);
+              if (liveness.state === 'live') return 0;
+              if (liveness.state === 'unknown') {
+                this.logger.warn(
+                  `[sfu] ${scope} seat of user=${user} session=${sessionId} KEPT: its liveness is unknown (${liveness.why})`
+                );
+                return 0;
+              }
+              reason = `its Cloudflare session is gone (${liveness.why})`;
+            }
+            const [done] = (await this.redis.eval(
+              RELEASE_SEAT_LUA,
+              2,
+              cloudflareSeatsKey(roomId),
+              cloudflareTracksKey(roomId, sessionId),
+              user,
+              sessionId
+            )) as [number, number];
+            if (done !== 1) {
+              this.logger.log(
+                `[sfu] ${scope} seat of user=${user} session=${sessionId} already changed - nothing released`
+              );
+              return 0;
+            }
+            this.logger.log(
+              `[sfu] ${scope} RELEASED the seat of user=${user} session=${sessionId}: ${reason}`
+            );
+            if (removed)
+              await this.evictSession(roomId, sessionId, `${scope} removed user=${user}`);
+            return 1;
+          } catch (e) {
+            this.logger.error(
+              `[sfu] ${scope} seat of user=${user} session=${sessionId} KEPT: its check failed (${e instanceof Error ? e.name : 'unknown'})`
+            );
+            return 0;
+          }
+        })
+    );
+    return released.reduce<number>((n, x) => n + x, 0);
+  }
+
+  /** Asks Cloudflare for one session's state and classifies it ({@link sessionLivenessOf}). */
+  private async sessionLiveness(
+    roomId: string,
+    sessionId: string,
+    scope: string
+  ): Promise<SessionLiveness> {
+    const pushed = await this.redis.smembers(cloudflareTracksKey(roomId, sessionId));
+    const answer = await this.send('GET', `/sessions/${encodeURIComponent(sessionId)}`, undefined);
+    if ('failure' in answer) {
+      this.logger.debug(`[sfu] ${scope} state of session=${sessionId}: ${answer.failure}`);
+      return { state: 'unknown', why: answer.failure };
+    }
+    return sessionLivenessOf(answer.status, answer.text, pushed);
+  }
+
+  /**
+   * EVICTS A SESSION that no longer holds a seat (a replaced device's, a removed member's): closes
+   * every track Cloudflare still lists as active on it - its push, so subscribers stop receiving
+   * it, and its pulls - with `force` (no renegotiation with a client that is out), and forgets the
+   * tracks it pushed. The seat is already gone, so nothing can pull from it again whatever
+   * Cloudflare answers; a failure to close is logged at ERROR (its media flows until Cloudflare
+   * collects the session), never thrown into the call that caused the eviction.
+   */
+  private async evictSession(roomId: string, sessionId: string, scope: string): Promise<void> {
+    try {
+      const liveness = await this.sessionLiveness(roomId, sessionId, scope);
+      await this.redis.del(cloudflareTracksKey(roomId, sessionId));
+      if (liveness.state === 'gone') {
+        this.logger.log(
+          `[sfu] ${scope} evict session=${sessionId}: already gone (${liveness.why})`
+        );
+        return;
+      }
+      if (liveness.state === 'unknown') {
+        this.logger.error(
+          `[sfu] ${scope} evict session=${sessionId}: its tracks were NOT closed - its state is unknown (${liveness.why})`
+        );
+        return;
+      }
+      if (liveness.activeMids.length === 0) {
+        this.logger.log(`[sfu] ${scope} evict session=${sessionId}: no active track to close`);
+        return;
+      }
+      await this.realtime<RealtimeAnswer>(
+        'PUT',
+        `/sessions/${encodeURIComponent(sessionId)}/tracks/close`,
+        { tracks: liveness.activeMids.map((mid) => ({ mid })), force: true },
+        scope
+      );
+      this.logger.log(
+        `[sfu] ${scope} evict session=${sessionId}: closed ${liveness.activeMids.length} track(s)`
+      );
+    } catch (e) {
+      this.logger.error(
+        `[sfu] ${scope} evict session=${sessionId}: its tracks were NOT closed (${e instanceof Error ? e.name : 'unknown'}) - its media flows until Cloudflare collects it`
+      );
+    }
   }
 
   /** The caller's seat must hold exactly `sessionId`: a session is driven only by its opener. */
@@ -459,10 +660,46 @@ export class CloudflareSfuService {
   }
 
   /**
-   * ONE call to Cloudflare Realtime with the app's secret. A missing pair is a 503
-   * (`unconfigured`); a non-2xx status, an `errorCode` in the body, an unreadable body or no answer
-   * within the bound is a 502 (`upstream`) - each logged at ERROR with what Cloudflare said, and
-   * never the secret.
+   * ONE request to Cloudflare Realtime with the app's secret, bounded like the TURN credential call
+   * (a Cloudflare that never answers must not hold a call setup open; the signal covers the body
+   * read too). Answers the status and body, or what kept it from having one - never throws, and
+   * never carries the secret.
+   */
+  private async send(
+    method: 'GET' | 'POST' | 'PUT',
+    path: string,
+    body: unknown
+  ): Promise<{ status: number; text: string } | { failure: string }> {
+    const app = readCloudflareSfuApp();
+    if (!app) return { failure: `${missingCloudflareSfuHalves()} is not set` };
+    const url = `${CLOUDFLARE_REALTIME_API}/apps/${encodeURIComponent(app.appId)}${path}`;
+    try {
+      const init: RequestInit = {
+        method,
+        headers: {
+          Authorization: `Bearer ${app.appSecret}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(METER_TIMEOUT_MS),
+      };
+      // A GET carries no body; every POST/PUT of this proxy carries one.
+      if (body !== undefined) init.body = JSON.stringify(body);
+      const response = await fetch(url, init);
+      return { status: response.status, text: await response.text() };
+    } catch (e) {
+      const timedOut = e instanceof Error && e.name === 'TimeoutError';
+      return {
+        failure: timedOut
+          ? `gave no answer within ${METER_TIMEOUT_MS} ms`
+          : `failed: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
+  /**
+   * ONE call to Cloudflare Realtime that must succeed. A missing pair is a 503 (`unconfigured`); a
+   * non-2xx status, an `errorCode` in the body, an unreadable body or no answer within the bound is
+   * a 502 (`upstream`) - each logged at ERROR with what Cloudflare said, and never the secret.
    */
   private async realtime<T extends object>(
     method: 'POST' | 'PUT',
@@ -470,8 +707,7 @@ export class CloudflareSfuService {
     body: unknown,
     scope: string
   ): Promise<T> {
-    const app = readCloudflareSfuApp();
-    if (!app) {
+    if (!readCloudflareSfuApp()) {
       this.logger.error(
         `[sfu] ${scope} REFUSED: the Cloudflare Realtime app is not configured (${missingCloudflareSfuHalves()} is not set)`
       );
@@ -481,33 +717,23 @@ export class CloudflareSfuService {
         message: 'The group call relay is not available on this server.',
       });
     }
-    const url = `${CLOUDFLARE_REALTIME_API}/apps/${encodeURIComponent(app.appId)}${path}`;
+    const answer = await this.send(method, path, body);
+    if ('failure' in answer) {
+      this.logger.error(`[sfu] ${scope} Cloudflare ${method} ${path} ${answer.failure}`);
+      throw this.upstreamRefusal();
+    }
+    if (answer.status < 200 || answer.status >= 300) {
+      this.logger.error(
+        `[sfu] ${scope} Cloudflare ${method} ${path} answered ${answer.status}: ${answer.text.slice(0, 200)}`
+      );
+      throw this.upstreamRefusal();
+    }
     let json: T & { errorCode?: string; errorDescription?: string };
     try {
-      const response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${app.appSecret}`,
-          'Content-Type': 'application/json',
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        // Bounded like the TURN credential call: a Cloudflare that never answers must not hold a
-        // call setup open. The signal covers the body read as well.
-        signal: AbortSignal.timeout(METER_TIMEOUT_MS),
-      });
-      const text = await response.text();
-      if (!response.ok) {
-        this.logger.error(
-          `[sfu] ${scope} Cloudflare ${method} ${path} answered ${response.status}: ${text.slice(0, 200)}`
-        );
-        throw this.upstreamRefusal();
-      }
-      json = JSON.parse(text) as typeof json;
+      json = JSON.parse(answer.text) as typeof json;
     } catch (e) {
-      if (e instanceof BadGatewayException) throw e;
-      const timedOut = e instanceof Error && e.name === 'TimeoutError';
       this.logger.error(
-        `[sfu] ${scope} Cloudflare ${method} ${path} ${timedOut ? `gave no answer within ${METER_TIMEOUT_MS} ms` : `failed: ${e instanceof Error ? e.message : String(e)}`}`
+        `[sfu] ${scope} Cloudflare ${method} ${path} failed: ${e instanceof Error ? e.message : String(e)}`
       );
       throw this.upstreamRefusal();
     }

@@ -1,9 +1,14 @@
 <script lang="ts">
   /**
-   * "ENVOYER A..." - the camera tab's send sheet (reels-in-chat RC-12, 15.1, 15.8), over the take's
-   * review. FIRST ROW "Publier sur CanaReels" (Snapchat's "My Story"), then the member's DMs and
-   * groups in the conversation list's own order, a local search, a checkbox per row, the ticked
-   * targets as chips and "Envoyer (N)" in the footer.
+   * "ENVOYER A..." - the camera's send sheet (reels-in-chat RC-12, 15.1, 15.8, and the two paths of
+   * section 22), over the take's review. SNAPCHAT'S LIST (owner, 2026-11-16): the search at the top,
+   * then a "CanaReels" section holding the one row "Publier" (Snapchat's "My Story"), then "Recents"
+   * (last activity first), then every other group and DM alphabetically (`reelSendSections`); a round
+   * tick per row, a group's row names a few of its members, the ticked targets as chips and
+   * "Envoyer (N)" in the footer. The rows are the share picker's (`ConversationPickList`).
+   *
+   * OPENED FROM A CONVERSATION'S CAMERA ("Ajouter des destinataires", path 2) that conversation is
+   * ticked from the start (`preticked`); from the CanaReels tab (path 1) nothing is.
    *
    * IT IS A HISTORY ENTRY ABOVE THE TAKE'S, so Android's Back (and iOS's edge swipe) returns to the
    * review. The sheet decides nothing about the send: `onsend` hands the ticks to `ReelCapture`,
@@ -13,18 +18,23 @@
    * (RC-8), and the cap on chat targets is the server's `chatReelMaxTargets` carried in as `cap` -
    * a tick past it is REFUSED WITH A SENTENCE, never silently.
    */
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { Check, ChevronLeft, Film, Search, X } from '@lucide/svelte';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { Check, ChevronLeft, Film, X } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
+  import ConversationPickList from '$lib/components/shared/ConversationPickList.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { cachedMuteStatus, getMuteStatus } from '$lib/moderation/muteCheck';
   import { listBlockedUsers } from '$lib/users/blocks';
-  import { missingPeerNameIds } from '$lib/sharing/shareDestinations';
+  import { missingPeerNameIds, type ShareCandidate } from '$lib/sharing/shareDestinations';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { reelSendCandidates, toggleReelTarget } from '$lib/reels/reelSendTargets';
+  import {
+    reelSendCandidates,
+    reelSendKeyOf,
+    reelSendSections,
+    toggleReelTarget,
+  } from '$lib/reels/reelSendTargets';
   import type { ReelSendHost } from '$lib/reels/reelSendBridge';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import type { ReelClip } from '$lib/reels/reelCapture';
@@ -32,8 +42,12 @@
 
   interface Props {
     clip: ReelClip;
-    /** The messaging layer: the conversations listed and the account (`reelSendBridge`). */
-    host: Pick<ReelSendHost, 'conversations' | 'userId'>;
+    /**
+     * The messaging layer: the conversations listed, the account, and (optional) a group's members
+     * for its subtitle (`reelSendBridge`).
+     */
+    host: Pick<ReelSendHost, 'conversations' | 'userId'> &
+      Partial<Pick<ReelSendHost, 'groupMembers'>>;
     /** The most conversations one take may be sent to (`chatReelTargetCap`): the server's, never a guess. */
     cap: number;
     /** The longest take a conversation accepts (`chatMaxDurationMs`): a longer one can only be posted. */
@@ -44,16 +58,45 @@
     onsend: (choice: { feed: boolean; targetKeys: string[] }) => void;
     /** A press is being written: "Envoyer" waits, so one take can never be queued twice. */
     sending?: boolean;
+    /**
+     * The conversation (its id) the camera was opened from (path 2): ticked from the start. Absent
+     * on the CanaReels tab (path 1).
+     */
+    preticked?: string | null;
   }
 
-  let { clip, host, cap, chatCapMs, onclose, onsend, sending = false }: Props = $props();
+  let {
+    clip,
+    host,
+    cap,
+    chatCapMs,
+    onclose,
+    onsend,
+    sending = false,
+    preticked = null,
+  }: Props = $props();
 
   let query = $state('');
   let feedTicked = $state(false);
-  let selected = $state<string[]>([]);
+  /** Read once: the conversation the camera came from is the first tick, the member's to remove. */
+  let selected = $state<string[]>(untrack(() => initialSelection()));
   let capNotice = $state(false);
   let peerNames = $state<Record<string, string>>({});
-  let blockedPeerIds = $state<ReadonlySet<string>>(new Set());
+  /** A group's subtitle by conversation id: a few of its members' names (`groupMembers`). */
+  let groupSubtitles = $state<Record<string, string>>({});
+  /**
+   * The groups whose members were asked, so the effect asks each once. NOT reactive on purpose: the
+   * effect writes it, and a reactive set would re-run the effect on its own write.
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the effect's own ledger, never rendered
+  const subtitlesAsked = new Set<string>();
+  /**
+   * ONE NAME LOOKUP PER DISTINCT USER, whichever groups they are in (not three per group): the
+   * pending or settled answer by user id. Not reactive, for the reason above.
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup cache, never rendered
+  const memberNames = new Map<string, Promise<string | null>>();
+  const blockedPeerIds = new SvelteSet<string>();
   /**
    * Whether the blocked list was ANSWERED. A block does not refuse a DM message server-side
    * (moderation-and-blocking.md: a failure to ask is not an answer), so until it is read - and for
@@ -64,6 +107,11 @@
   let muted = $state<boolean | null>(cachedMuteStatus()?.isMuted ?? null);
   let heading = $state<HTMLElement | null>(null);
 
+  /**
+   * A photo reaches each chat as its own ordinary image (D-photo), not the post's file: the
+   * "same as the post" sentence is a video's.
+   */
+  const isPhoto = $derived(clip.blob.type.startsWith('image/'));
   /** A silenced take cannot reach a chat: the audio track is dropped only by the feed's publish. */
   const silenced = $derived(clip.soundRemoved === true);
   const tooLong = $derived(clip.durationMs !== undefined && clip.durationMs > chatCapMs);
@@ -73,10 +121,21 @@
   const feedUnknown = $derived(muted === null);
   const feedSend = $derived(feedTicked && muted === false);
 
+  /** How many member names a group's row shows (Snapchat shows a few). */
+  const SUBTITLE_NAMES = 3;
+
   const overlay = bindHistoryOverlay(
     () => true,
     () => onclose()
   );
+
+  /** The tick the sheet opens with: the camera's own conversation (path 2), or none (path 1). */
+  function initialSelection(): string[] {
+    if (preticked === null) return [];
+    const key = reelSendKeyOf(host.conversations(), preticked);
+    console.debug(`[reel-send] opened from a conversation: ${key ? 'ticked' : 'not held here'}`);
+    return key ? [key] : [];
+  }
 
   $effect(() => {
     for (const id of missingPeerNameIds(host.conversations(), host.userId())) {
@@ -86,34 +145,109 @@
     }
   });
 
-  const candidates = $derived(
+  /**
+   * EVERY CONVERSATION THE SHEET LISTS, whatever the search says: what a tick must still belong to,
+   * and where a ticked target's chip reads its name - a chip hidden from the filtered rows by the
+   * search is still named, never shown as its raw key (iPhone 12 reading, 2026-11-16).
+   */
+  const listed = $derived(
     reelSendCandidates({
       conversations: host.conversations(),
       currentUserId: host.userId(),
       peerNames,
-      query,
+      query: '',
       blockedPeerIds,
     })
   );
-  /** Every conversation the sheet lists, whatever the search says: what a tick must still belong to. */
-  const listedKeys = $derived(
-    new Set(
-      reelSendCandidates({
-        conversations: host.conversations(),
-        currentUserId: host.userId(),
-        peerNames,
-        query: '',
-        blockedPeerIds,
-      }).map((c) => c.key)
-    )
+  /** The rows the search keeps (all of them with no search). */
+  const candidates = $derived(
+    query.trim()
+      ? reelSendCandidates({
+          conversations: host.conversations(),
+          currentUserId: host.userId(),
+          peerNames,
+          query,
+          blockedPeerIds,
+        })
+      : listed
   );
-  /** THE SEND SET IS selected AND currently listed: a tick on a row that is no longer one is dropped. */
-  const sendKeys = $derived(chatsBlocked ? [] : selected.filter((k) => listedKeys.has(k)));
+  const sections = $derived(reelSendSections(candidates, query));
+  const listedByKey = $derived(new SvelteMap(listed.map((c) => [c.key, c])));
+  /**
+   * THE SEND SET IS selected AND currently listed, in tick order: a tick on a row that is no longer
+   * one is dropped. Each carries its full-list row, so its chip is named whatever the search hides.
+   */
+  const sendTargets = $derived(
+    chatsBlocked
+      ? []
+      : selected.flatMap((k) => {
+          const cand = listedByKey.get(k);
+          return cand ? [cand] : [];
+        })
+  );
+  const sendKeys = $derived(sendTargets.map((c) => c.key));
   const count = $derived(sendKeys.length + (feedSend ? 1 : 0));
-  const labelOf = (key: string) =>
-    candidates.find((c) => c.key === key)?.label ??
-    [...host.conversations()].find(([k]) => k === key)?.[1].name ??
-    key;
+
+  // A GROUP'S ROW NAMES A FEW MEMBERS (owner, 2026-11-16). Read from the LOCAL trees in ONE batch
+  // once MLS is ready (`groupMembers`), no server call; a group this device does not hold yet (not
+  // `active`) is not asked - its tree is not here. Every listed group, whatever the search shows.
+  $effect(() => {
+    const read = host.groupMembers;
+    if (!read) return;
+    const me = host.userId();
+    const ids = listed
+      .map((cand) => cand.conversation)
+      .filter((c) => c.conversationType === 'group' && c.lifecycle === 'active')
+      .map((c) => c.id)
+      .filter((id) => !subtitlesAsked.has(id));
+    if (ids.length === 0) return;
+    for (const id of ids) subtitlesAsked.add(id);
+    console.debug(`[reel-send] the members of ${ids.length} group(s) asked`);
+    void untrack(() => fillSubtitles(read, ids, me));
+  });
+
+  /** The name of one member, asked once for the whole sheet; a failed lookup names nobody, said. */
+  function memberName(userId: string): Promise<string | null> {
+    let pending = memberNames.get(userId);
+    if (!pending) {
+      pending = resolveUserDisplayName(userId).catch((e: unknown) => {
+        console.warn('[reel-send] a group member name could not be resolved', e);
+        return null;
+      });
+      memberNames.set(userId, pending);
+    }
+    return pending;
+  }
+
+  /**
+   * The subtitles of `groupIds`: the first {@link SUBTITLE_NAMES} other members of each, every
+   * distinct member named once. A group the host could not read gets none (the host said it).
+   */
+  async function fillSubtitles(
+    read: NonNullable<Props['host']['groupMembers']>,
+    groupIds: string[],
+    me: string
+  ) {
+    const members = await read(groupIds);
+    const shownIds = new SvelteMap(
+      [...members].map(([gid, users]) => [
+        gid,
+        users.filter((u) => u !== me).slice(0, SUBTITLE_NAMES),
+      ])
+    );
+    const distinct = [...new SvelteSet([...shownIds.values()].flat())];
+    const names = new SvelteMap(
+      await Promise.all(distinct.map(async (u) => [u, await memberName(u)] as const))
+    );
+    const next = { ...groupSubtitles };
+    for (const [gid, users] of shownIds) {
+      const shown = users
+        .map((u) => names.get(u))
+        .filter((n): n is string => !!n && n.trim().length > 0);
+      if (shown.length > 0) next[gid] = shown.join(', ');
+    }
+    groupSubtitles = next;
+  }
 
   onMount(() => {
     overlay.syncOpen();
@@ -134,7 +268,8 @@
     );
     void listBlockedUsers().then(
       (rows) => {
-        blockedPeerIds = new Set(rows.map((r) => r.userId));
+        blockedPeerIds.clear();
+        for (const r of rows) blockedPeerIds.add(r.userId);
         blocksState = 'read';
       },
       (e: unknown) => {
@@ -167,8 +302,26 @@
     onsend({ feed: feedSend, targetKeys: [...sendKeys] });
   }
 
+  /** A conversation row: a checkbox named "<name>, <kind>", disabled while the chats are withheld. */
+  function rowAttrs(cand: ShareCandidate) {
+    return {
+      role: 'checkbox' as const,
+      'aria-checked': selected.includes(cand.key),
+      'aria-label': m.reel_sendto_row_label({
+        name: cand.label,
+        kind:
+          cand.conversation.conversationType === 'direct'
+            ? m.reel_sendto_kind_direct()
+            : m.reel_sendto_kind_group(),
+      }),
+      disabled: chatsBlocked,
+      'data-reel-send-row': cand.key,
+    };
+  }
+
+  /** The "Publier" row, drawn like the list's own rows (`ConversationPickList`). */
   const ROW =
-    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left outline-none focus-visible:bg-black/5 dark:focus-visible:bg-white/10 enabled:hover:bg-black/5 dark:enabled:hover:bg-white/5 disabled:opacity-50';
+    'flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors enabled:hover:bg-black/5 dark:enabled:hover:bg-white/5';
 </script>
 
 <div
@@ -193,107 +346,27 @@
     </h1>
   </header>
 
-  <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pt-3 pb-3">
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={feedSend}
-      disabled={feedMuted || feedUnknown}
-      class={ROW}
-      onclick={toggleFeed}
-      data-reel-send-feed
-    >
-      <span
-        class="bg-accent/20 text-text-main flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
-      >
-        <Film size={20} strokeWidth={2.25} />
-      </span>
-      <span class="min-w-0 flex-1 text-sm font-semibold">{m.reel_sendto_feed_row()}</span>
-      {@render tick(feedSend)}
-    </button>
-    {#if feedMuted}
-      <p class="text-text-muted text-2xs px-3 pb-1" role="note" data-reel-send-muted>
-        {m.reel_sendto_feed_muted()}
-      </p>
-    {/if}
-
-    <div class="relative my-2">
-      <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
-      <input
-        type="search"
-        bind:value={query}
-        placeholder={m.reel_sendto_search()}
-        aria-label={m.reel_sendto_search()}
-        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-lg border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
-        data-reel-send-search
-      />
-    </div>
-
-    {#if blocksState === 'failed'}
-      <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-blocks-unread>
-        {m.reel_sendto_blocks_unread()}
-      </p>
-    {:else if silenced}
-      <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-silent>
-        {m.reel_sendto_sound_removed_chats()}
-      </p>
-    {:else if tooLong}
-      <p class="text-text-muted text-2xs px-3 pb-2" role="note" data-reel-send-too-long>
-        {m.reel_sendto_too_long_for_chats({ seconds: Math.round(chatCapMs / 1000) })}
-      </p>
-    {/if}
-
-    {#if candidates.length === 0}
-      <p class="text-text-muted py-8 text-center text-sm" data-reel-send-empty>
-        {query.trim() ? m.reel_sendto_no_match() : m.reel_sendto_empty()}
-      </p>
-    {:else}
-      <ul class="flex flex-col gap-0.5">
-        {#each candidates as cand (cand.key)}
-          {@const ticked = selected.includes(cand.key)}
-          <li>
-            <button
-              type="button"
-              role="checkbox"
-              aria-checked={ticked}
-              aria-label={m.reel_sendto_row_label({
-                name: cand.label,
-                kind:
-                  cand.conversation.conversationType === 'direct'
-                    ? m.reel_sendto_kind_direct()
-                    : m.reel_sendto_kind_group(),
-              })}
-              disabled={chatsBlocked}
-              class={ROW}
-              onclick={() => toggleTarget(cand.key)}
-              data-reel-send-row={cand.key}
-            >
-              <span class="h-10 w-10 shrink-0">
-                {#if cand.conversation.conversationType === 'direct'}
-                  <Avatar
-                    userId={cand.conversation.directPeerId ?? cand.conversation.contactName}
-                    fill
-                    fallbackLabel={cand.label}
-                  />
-                {:else}
-                  <GroupAvatar
-                    id={cand.conversation.id}
-                    imageMediaId={cand.conversation.imageMediaId}
-                    name={cand.label}
-                    fill
-                  />
-                {/if}
-              </span>
-              <span class="min-w-0 flex-1 truncate text-sm">
-                <EmojiText text={cand.label} />
-              </span>
-              {@render tick(ticked)}
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
+  <ConversationPickList
+    bind:query
+    class="flex min-h-0 flex-1 flex-col gap-2 px-3 pt-3"
+    listClass="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-3"
+    searchPlaceholder={m.reel_sendto_search()}
+    searchLabel={m.reel_sendto_search()}
+    searchAttrs={{ type: 'search', 'data-reel-send-search': '' }}
+    {sections}
+    emptyText={query.trim() ? m.reel_sendto_no_match() : m.reel_sendto_empty()}
+    emptyAttrs={{ 'data-reel-send-empty': '' }}
+    lead={{ title: m.reel_sendto_section_feed(), body: feedRow }}
+    {notice}
+    emojiNames
+    onpick={(cand) => toggleTarget(cand.key)}
+    {rowAttrs}
+    subtitle={(cand) => groupSubtitles[cand.conversation.id] ?? null}
+  >
+    {#snippet trailing(cand)}
+      {@render tick(selected.includes(cand.key))}
+    {/snippet}
+  </ConversationPickList>
 
   <div
     class="border-cn-border bg-cn-surface shrink-0 border-t px-3 pt-2 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
@@ -303,7 +376,7 @@
         {m.reel_sendto_cap({ count: cap })}
       </p>
     {/if}
-    {#if feedSend && sendKeys.length > 0}
+    {#if feedSend && sendKeys.length > 0 && !isPhoto}
       <!-- ONE FILE FOR THE FEED AND THE CHATS (15.5, D-onefile): the conversations receive the
            published video itself, under the post's key - said, never claimed end-to-end. -->
       <p class="text-text-muted text-2xs mb-2" role="note" data-reel-send-same-as-post>
@@ -312,15 +385,15 @@
     {/if}
     {#if sendKeys.length > 0}
       <ul class="mb-2 flex gap-2 overflow-x-auto" data-reel-send-chips>
-        {#each sendKeys as key (key)}
+        {#each sendTargets as target (target.key)}
           <li class="shrink-0">
             <button
               type="button"
               class="bg-cn-bg border-cn-border text-text-main flex items-center gap-1 rounded-full border py-1 pr-2 pl-3 text-xs"
-              aria-label={m.reel_sendto_chip_remove({ name: labelOf(key) })}
-              onclick={() => toggleTarget(key)}
+              aria-label={m.reel_sendto_chip_remove({ name: target.label })}
+              onclick={() => toggleTarget(target.key)}
             >
-              <span class="max-w-32 truncate"><EmojiText text={labelOf(key)} /></span>
+              <span class="max-w-32 truncate"><EmojiText text={target.label} /></span>
               <X size={14} strokeWidth={2.5} />
             </button>
           </li>
@@ -340,6 +413,47 @@
     </div>
   </div>
 </div>
+
+{#snippet feedRow()}
+  <Button
+    variant="bare"
+    role="checkbox"
+    aria-checked={feedSend}
+    disabled={feedMuted || feedUnknown}
+    class={ROW}
+    onclick={toggleFeed}
+    data-reel-send-feed
+  >
+    <span
+      class="bg-accent/20 text-text-main flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+    >
+      <Film size={18} strokeWidth={2.25} />
+    </span>
+    <span class="min-w-0 flex-1 text-sm font-semibold">{m.reel_sendto_feed_row()}</span>
+    {@render tick(feedSend)}
+  </Button>
+  {#if feedMuted}
+    <p class="text-text-muted text-2xs px-2 pb-1" role="note" data-reel-send-muted>
+      {m.reel_sendto_feed_muted()}
+    </p>
+  {/if}
+{/snippet}
+
+{#snippet notice()}
+  {#if blocksState === 'failed'}
+    <p class="text-text-muted text-2xs px-2 pt-2" role="note" data-reel-send-blocks-unread>
+      {m.reel_sendto_blocks_unread()}
+    </p>
+  {:else if silenced}
+    <p class="text-text-muted text-2xs px-2 pt-2" role="note" data-reel-send-silent>
+      {m.reel_sendto_sound_removed_chats()}
+    </p>
+  {:else if tooLong}
+    <p class="text-text-muted text-2xs px-2 pt-2" role="note" data-reel-send-too-long>
+      {m.reel_sendto_too_long_for_chats({ seconds: Math.round(chatCapMs / 1000) })}
+    </p>
+  {/if}
+{/snippet}
 
 {#snippet tick(on: boolean)}
   <span

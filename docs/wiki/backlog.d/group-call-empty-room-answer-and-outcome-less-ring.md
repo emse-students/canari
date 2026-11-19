@@ -1,6 +1,8 @@
 ## P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 **Owed before `group_calls_mode` flips to `mesh` anywhere but dev** (a gate of the flip, review of
 #3501, 2026-11-14). Both are invisible while the switch is `off`.

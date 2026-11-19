@@ -15,6 +15,7 @@
  */
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
+import { readApiJson } from '$lib/utils/apiJson';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { CLIENT_VERSION_HEADER, withClientVersionHeader } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
@@ -31,6 +32,8 @@ import type {
   LiveLimits,
   LiveCutReason,
   LiveCutResult,
+  LiveBroadcasterStanding,
+  LiveWithdrawalLift,
   LiveWithdrawalResult,
   LiveEndReason,
   LiveListItem,
@@ -227,7 +230,9 @@ async function liveJson<T>(
 ): Promise<T> {
   const res = await apiFetch(url, withClientVersion(init));
   if (!res.ok) throw await liveRefusal(res, what, false, expected);
-  return (await res.json()) as T;
+  // The body is read through the one reader that types a LOST body (the head came, the stream died: an
+  // app suspended mid-request) as a transport failure, never as the engine's bare TypeError.
+  return (await readApiJson(res, what, init.signal)) as T;
 }
 
 /** `GET /api/lives/limits` - the server's numbers; a client keeps no copy of them. */
@@ -256,6 +261,21 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
 export async function fetchLiveStanding(): Promise<LiveOwnStanding> {
   console.debug('[LIVE] standing');
   return liveJson<LiveOwnStanding>(`${livesBase()}/standing`, 'Live standing');
+}
+
+/**
+ * `GET /api/lives/broadcasters/withdrawn` - STAFF: the accounts whose right to broadcast is
+ * withdrawn, newest first, narrowed server-side to the people the caller may act on. The lift's
+ * door, independent of any report. Refusal: `LIVE_WITHDRAWAL_FORBIDDEN` (403).
+ */
+export async function fetchWithdrawnBroadcasters(): Promise<LiveBroadcasterStanding[]> {
+  console.debug('[LIVE] withdrawn broadcasters');
+  const rows = await liveJson<LiveBroadcasterStanding[]>(
+    `${livesBase()}/broadcasters/withdrawn`,
+    'Live withdrawn broadcasters'
+  );
+  console.debug(`[LIVE] ${rows.length} withdrawn broadcaster(s)`);
+  return rows;
 }
 
 /**
@@ -548,6 +568,22 @@ export async function withdrawBroadcaster(
   console.log(
     `[LIVE] right of ${userId} withdrawn (${done.newlyWithdrawn ? 'new' : 'repeat'}, ${done.cutsOnRecord} cuts)`
   );
+  return done;
+}
+
+/**
+ * `DELETE /api/lives/broadcasters/:userId/withdrawal` - a content moderator gives an account back its
+ * right to broadcast. Idempotent (`lifted: false` when nothing was withdrawn). Refusals, read by
+ * `code`: `LIVE_WITHDRAWAL_FORBIDDEN` (403), `LIVE_ACCOUNT_INVALID` (400).
+ */
+export async function liftBroadcasterWithdrawal(userId: string): Promise<LiveWithdrawalLift> {
+  console.debug(`[LIVE] lift the withdrawal of ${userId}`);
+  const done = await liveJson<LiveWithdrawalLift>(
+    `${livesBase()}/broadcasters/${encodeURIComponent(userId)}/withdrawal`,
+    'Live withdrawal lift',
+    { method: 'DELETE' }
+  );
+  console.log(`[LIVE] withdrawal of ${userId} ${done.lifted ? 'lifted' : 'was not there'}`);
   return done;
 }
 

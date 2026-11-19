@@ -90,6 +90,24 @@ describe('NotificationRow avatar', () => {
     expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
   });
 
+  it("renders the association's logo for a mention in its post - it names no member (decision 11)", () => {
+    const target = renderRow({
+      id: 'n4',
+      type: 'mention',
+      postId: 'p4',
+      actorId: '',
+      actorName: 'BDE',
+      associationId: 'asso-1',
+      associationLogoUrl: '/api/media/public/logo1',
+      text: 'salut',
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+
+    expect(target.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+  });
+
   it('still renders a user avatar for a personal notification', () => {
     const notif: PostNotification = {
       id: 'n2',
@@ -579,6 +597,30 @@ describe('NotificationRow for the Lydia payments notices', () => {
   });
 });
 
+describe('NotificationRow for an item in a global admin queue (owner, 2026-11-18)', () => {
+  const adminRow = (type: string): PostNotification => ({
+    id: `n-${type}`,
+    type,
+    postId: 'item-1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: '',
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  it.each([
+    ['admin_profile_correction', () => m.notif_admin_profile_correction_text()],
+    ['admin_report', () => m.notif_admin_report_text()],
+  ])('%s says what waits, in one sentence, names nobody, and opens', (type, text) => {
+    const target = renderRow(adminRow(type));
+    expect(target.textContent).toContain(text());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
 describe('NotificationRow with a type this build does not know', () => {
   const unknown: PostNotification = {
     id: 'n-unk',
@@ -770,4 +812,23 @@ describe('NotificationRow for the right to broadcast suspended or withdrawn (WP-
       expect(target.querySelector('button')!.disabled).toBe(true);
     }
   );
+});
+
+describe('NotificationRow for the right to broadcast given back (1.7.0)', () => {
+  it('live_reinstated is told in the reader locale, with no reason, inert, with no avatar of nobody', () => {
+    const target = renderRow({
+      id: 'n11',
+      type: 'live_reinstated',
+      postId: 'x1',
+      actorId: '',
+      actorName: '',
+      text: '',
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+    expect(target.textContent).toContain(m.notif_live_reinstated_text());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+    expect(target.querySelector('button')!.disabled).toBe(true);
+  });
 });

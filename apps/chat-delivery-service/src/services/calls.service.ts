@@ -35,6 +35,7 @@ import {
 } from '../utils/group-calls-mode';
 import { readCallRelay, RELAY_SEATS, relayModeOf, type RelayMode } from '../utils/call-relay';
 import { missingCloudflareSfuHalves, readCloudflareSfuApp } from '../utils/cloudflare-sfu-app';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -252,6 +253,14 @@ function callAnswerByKey(roomId: string): string {
 function callRingEndedKey(roomId: string): string {
   return `call:room:${roomId}:ring_ended`;
 }
+
+/**
+ * Why a ring ended, as `ring-end` carries it. `room-empty` (WP-GC7): the sender's hangup left the
+ * room of an answered call with nobody in it, AS THE SENDER SEES IT. From the caller it ends every
+ * member's ring, as any caller's ring-end does; from a participant it stops only their own devices
+ * (see `endRing`).
+ */
+export type RingEndReason = 'cancelled' | 'answered' | 'ended' | 'room-empty';
 
 /** What `prepareRing` hands the background fan-out. */
 interface RingPlan {
@@ -1050,12 +1059,18 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Stops the ring on every member device (caller cancelled, someone answered, or the
    * call ended). Sent to ALL members including the sender's own user so sibling devices
    * stop ringing too; the device that is already in the call ignores its own callId.
+   *
+   * On a GROUP call only the caller's ring-end reaches everyone, `room-empty` (WP-GC7) included.
+   * A participant's `room-empty` stops only their own devices and marks nothing: it is the
+   * sender's view of a mesh, not a fact about the room (a member whose links all failed sees nobody
+   * in a live call), and the app has no control to join an ongoing call, so a member whose ring it
+   * stopped would miss that call. The others' rings end with the answer window (`answer_by`).
    */
   async endRing(
     userId: string,
     groupId: string,
     callId: string,
-    reason: 'cancelled' | 'answered' | 'ended'
+    reason: RingEndReason
   ): Promise<{ notified: number }> {
     this.logger.debug(
       `[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`
@@ -1073,6 +1088,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
     // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
+    // `room-empty` (WP-GC7) included: this service holds no fact about who is in the room (the
+    // seats live in call-service's memory), so a participant's word cannot end anyone else's ring.
     const ownOnly = unbound || (binding.maxSeats !== undefined && binding.callerId !== userId);
     if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
@@ -1099,9 +1116,12 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (!this.firebaseReady('ring-end')) return { notified: 0 };
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(memberIds) } });
 
+    // No `groupId` (content-free push WP-W6, owner decision N2 of 2026-11-04): Google and Apple
+    // would read which conversation a call was in. Every receiver ever shipped finds the ring by
+    // `callId` alone (Android `cancelIncomingCallNotification`, iOS `CanariEndCallKitCall` and the
+    // `canariCallId` alert sweep), so nothing a device does changes.
     const dataFields: Record<string, string> = {
       type: 'call_ring_end',
-      groupId,
       callId,
       reason,
     };
@@ -1147,11 +1167,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * deduped): a seat awaiting a member's admission is rung by nobody ({@link ADMITTED_SEAT}).
    */
   private async otherMemberIds(groupId: string, userId: string): Promise<string[]> {
+    return (await this.admittedMemberIds(groupId)).filter((id) => id !== userId);
+  }
+
+  /** Every user holding an ADMITTED membership row in `groupId`, once each (rows are per device). */
+  private async admittedMemberIds(groupId: string): Promise<string[]> {
     const members = await this.groupMemberRepo.find({
       where: { groupId, ...ADMITTED_SEAT },
       select: { userId: true },
     });
-    return [...new Set(members.map((m) => m.userId))].filter((id) => id !== userId);
+    return [...new Set(members.map((m) => m.userId))];
   }
 
   /**
@@ -1307,6 +1332,23 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     await this.assertMembership(userId, binding.groupId, 'calls');
     return binding;
+  }
+
+  /**
+   * WHO MAY STILL HOLD A SEAT in a Cloudflare-relayed room: the users holding an ADMITTED membership
+   * row in the room's conversation now. The proxy reads it to evict a member removed mid-call
+   * (`CloudflareSfuService`'s seat pruning), from the same rows {@link assertMembership} reads.
+   *
+   * @returns `null` when the room is no longer bound or not carried by Cloudflare - the caller
+   *   cannot tell members from non-members then, and prunes nobody on that ground.
+   */
+  async cloudflareRoomMembers(roomId: string): Promise<Set<string> | null> {
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding || binding.mode !== 'cloudflare') {
+      this.logger.debug(`[call] room=${roomId}: no Cloudflare binding - its members are not read`);
+      return null;
+    }
+    return new Set(await this.admittedMemberIds(binding.groupId));
   }
 
   /**
@@ -1564,16 +1606,22 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Deletes the push token row on terminal FCM errors (unregistered/invalid). */
+  /**
+   * Deletes the push token row when FCM says the TOKEN is gone, decided on the error's structured
+   * code ({@link isTerminalPushTokenError}, shared with the message pushes), never on its prose.
+   */
   private async dropTokenIfGone(pt: PushToken, e: unknown, scope: string): Promise<void> {
-    const msg = String(e);
-    if (msg.includes('registration-token-not-registered') || msg.includes('invalid-argument')) {
+    const code = fcmErrorCode(e) ?? 'none';
+    if (isTerminalPushTokenError(e)) {
       await this.pushTokenRepo.delete({ id: pt.id });
       this.logger.warn(
-        `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
+        `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId} code=${code}`
       );
     } else {
-      this.logger.warn(`[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${msg}`);
+      const failure = describeFcmFailure(e);
+      this.logger[failure.level](
+        `[${scope}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
+      );
     }
   }
 

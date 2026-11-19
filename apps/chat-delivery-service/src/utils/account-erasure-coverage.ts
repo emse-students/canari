@@ -64,4 +64,11 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The same rows: the erasure deletes every receipt the account's devices wrote, by its sender id.
   'SentFrameReceipt.senderDeviceId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
+  // The uninvited-entry count (migration 053): pseudonymous, re-identifiable by the device id.
+  'UninvitedEntry.entrantUserDevice': {
+    action: 'delete',
+    except:
+      'matched by the user id cut to eight characters, so another account sharing them loses its ' +
+      'rows of a count too - never spares one of this account',
+  },
 };

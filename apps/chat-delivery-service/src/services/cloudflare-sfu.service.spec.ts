@@ -9,7 +9,12 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { CLAIM_SEAT_LUA, CloudflareSfuService, RELEASE_SEAT_LUA } from './cloudflare-sfu.service';
+import {
+  CLAIM_SEAT_LUA,
+  CloudflareSfuService,
+  RELEASE_SEAT_LUA,
+  sessionLivenessOf,
+} from './cloudflare-sfu.service';
 import type { CallsService } from './calls.service';
 
 /**
@@ -42,6 +47,7 @@ function fakeRedis() {
       m.forEach((x) => set(k).add(x));
       return Promise.resolve(m.length);
     }),
+    del: jest.fn((k: string) => Promise.resolve(Number(sets.delete(k) || hashes.delete(k)))),
     sismember: jest.fn((k: string, m: string) => Promise.resolve(sets.get(k)?.has(m) ? 1 : 0)),
     smembers: jest.fn((k: string) => Promise.resolve([...(sets.get(k) ?? [])])),
     eval: jest.fn((script: string, _n: number, ...args: string[]) => {
@@ -81,7 +87,13 @@ describe('CloudflareSfuService', () => {
   let calls: {
     admitToCloudflareRoom: jest.Mock;
     assertCloudflareParticipant: jest.Mock;
+    cloudflareRoomMembers: jest.Mock;
   };
+  /** Cloudflare's own state: each session's tracks, as `GET sessions/<id>` lists them. */
+  let cfSessions: Map<
+    string,
+    { location: string; mid: string; trackName: string; status: string }[]
+  >;
   let service: CloudflareSfuService;
   let fetchMock: jest.SpyInstance;
   let sessionCounter = 0;
@@ -95,6 +107,7 @@ describe('CloudflareSfuService', () => {
     redis = fakeRedis();
     sessionCounter = 0;
     maxSeats = 8;
+    cfSessions = new Map();
     process.env.CLOUDFLARE_SFU_APP_ID = 'app-id';
     process.env.CLOUDFLARE_SFU_APP_SECRET = 'app-secret';
     calls = {
@@ -104,17 +117,47 @@ describe('CloudflareSfuService', () => {
       assertCloudflareParticipant: jest.fn(() =>
         Promise.resolve({ groupId: 'g', callerId: 'a', maxSeats, video: false, mode: 'cloudflare' })
       ),
+      // Every test user is a member unless a test says otherwise.
+      cloudflareRoomMembers: jest.fn(() => Promise.resolve(new Set(['a', 'b', 'c', 'd']))),
     };
     service = new CloudflareSfuService(calls as unknown as CallsService, redis as never);
-    // Cloudflare: a new session per `sessions/new`; `tracks/new` echoes each track as accepted.
+    // Cloudflare: a new session per `sessions/new`; `tracks/new` echoes each track as accepted and
+    // records it active; `GET sessions/<id>` lists them (404 for a session it does not hold);
+    // `tracks/close` marks the named mids inactive.
     fetchMock = jest.spyOn(global, 'fetch').mockImplementation((url, init) => {
       const path = String(url);
       if (path.endsWith('/sessions/new')) {
         sessionCounter += 1;
+        cfSessions.set(`s${sessionCounter}`, []);
         return Promise.resolve(cfAnswer(201, { sessionId: `s${sessionCounter}` }));
       }
+      const state = /\/sessions\/([^/]+)$/.exec(path);
+      if (state && init?.method === 'GET') {
+        const tracks = cfSessions.get(state[1]);
+        return Promise.resolve(tracks ? cfAnswer(200, { tracks }) : cfAnswer(404, 'not found'));
+      }
+      const closing = /\/sessions\/([^/]+)\/tracks\/close$/.exec(path);
+      if (closing) {
+        const body = JSON.parse(String(init?.body)) as { tracks: { mid: string }[] };
+        const mids = new Set(body.tracks.map((t) => t.mid));
+        for (const t of cfSessions.get(closing[1]) ?? []) {
+          if (mids.has(t.mid)) t.status = 'inactive';
+        }
+        return Promise.resolve(cfAnswer(200, {}));
+      }
       if (path.endsWith('/tracks/new')) {
-        const body = JSON.parse(String(init?.body)) as { tracks: { trackName: string }[] };
+        const body = JSON.parse(String(init?.body)) as {
+          tracks: { trackName: string; location: string; mid?: string }[];
+        };
+        const session = /\/sessions\/([^/]+)\/tracks\/new$/.exec(path)![1];
+        for (const [i, t] of body.tracks.entries()) {
+          cfSessions.get(session)?.push({
+            location: t.location,
+            mid: t.mid ?? `r${i}`,
+            trackName: t.trackName,
+            status: 'active',
+          });
+        }
         return Promise.resolve(
           cfAnswer(200, {
             requiresImmediateRenegotiation: false,
@@ -449,6 +492,154 @@ describe('CloudflareSfuService', () => {
 
       expect(redis.hashes.get(`call:room:${ROOM}:cf:seats`)!.get('a')).toBe(current);
       expect(captured(log)).toContain('nothing released');
+    });
+  });
+
+  describe('the seat ledger reads its liveness from Cloudflare (read-repair)', () => {
+    const seatsOf = () => Object.fromEntries(redis.hashes.get(`call:room:${ROOM}:cf:seats`) ?? []);
+    /** A killed phone: Cloudflare collected every track it pushed (no media for 30 s). */
+    const kill = (sessionId: string) =>
+      cfSessions.get(sessionId)!.forEach((t) => (t.status = 'inactive'));
+
+    it('sessionLivenessOf: gone only on a 404/410 or when every track it pushed is inactive', () => {
+      const local = (status: string) =>
+        JSON.stringify({ tracks: [{ location: 'local', mid: '0', status }] });
+      expect(sessionLivenessOf(404, '', []).state).toBe('gone');
+      expect(sessionLivenessOf(410, '', ['audio']).state).toBe('gone');
+      expect(sessionLivenessOf(200, local('inactive'), ['audio']).state).toBe('gone');
+      expect(sessionLivenessOf(200, JSON.stringify({ tracks: [] }), ['audio']).state).toBe('gone');
+      expect(sessionLivenessOf(200, local('active'), ['audio'])).toEqual({
+        state: 'live',
+        activeMids: ['0'],
+      });
+      // Opened, nothing pushed yet: nothing says it is dead.
+      expect(sessionLivenessOf(200, JSON.stringify({ tracks: [] }), []).state).toBe('live');
+      expect(sessionLivenessOf(500, 'boom', ['audio']).state).toBe('unknown');
+      expect(sessionLivenessOf(200, '<html>', ['audio']).state).toBe('unknown');
+      expect(sessionLivenessOf(200, JSON.stringify({ errorCode: 'X' }), ['audio']).state).toBe(
+        'unknown'
+      );
+    });
+
+    it('roster releases a killed phone and a session Cloudflare forgot, and keeps the live and the unpushed', async () => {
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      const c = await seatAndPush('c', ['audio-c']);
+      const d = await seatAndPush('d');
+      kill(b);
+      cfSessions.delete(c);
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const roster = await service.roster('a', ROOM);
+
+      expect(roster.participants.map((p) => p.userId)).toEqual(['d']);
+      expect(seatsOf()).toEqual({ a: 's1', d });
+      expect(redis.sets.has(`call:room:${ROOM}:cf:tracks:${b}`)).toBe(false);
+      expect(captured(log)).toContain(`RELEASED the seat of user=b session=${b}`);
+      expect(captured(log)).toContain('no such session');
+    });
+
+    it('a seat whose liveness is unknown is KEPT, and said at WARN', async () => {
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      const live = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((url, init) =>
+        String(url).endsWith(`/sessions/${b}`)
+          ? Promise.resolve(cfAnswer(503, 'busy'))
+          : live(url, init)
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      expect((await service.roster('a', ROOM)).others).toBe(1);
+      expect(captured(warn)).toContain(`session=${b} KEPT: its liveness is unknown`);
+    });
+
+    it("the last real participant's leave reads the room as empty though a killed phone held a seat", async () => {
+      const a = await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      kill(b);
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      expect(await service.leave('a', ROOM, a)).toEqual({ others: 0 });
+      expect(seatsOf()).toEqual({});
+      expect(captured(log)).toContain('seats-left=0 - the room is empty');
+    });
+
+    it('a full room seats a newcomer once a dead seat is proven gone, and still refuses when every seat is live', async () => {
+      maxSeats = 2;
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      await expect(service.openSession('c', ROOM, 'token')).rejects.toBeInstanceOf(
+        ConflictException
+      );
+      kill(b);
+      const seated = await service.openSession('c', ROOM, 'token');
+
+      expect(seated.others).toBe(1);
+      expect(Object.keys(seatsOf()).sort()).toEqual(['a', 'c']);
+    });
+
+    it('a member removed mid-call is unseated at roster time and evicted at Cloudflare', async () => {
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      calls.cloudflareRoomMembers.mockResolvedValue(new Set(['a']));
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      expect((await service.roster('a', ROOM)).others).toBe(0);
+      expect(seatsOf()).toEqual({ a: 's1' });
+      expect(cfSessions.get(b)!.every((t) => t.status === 'inactive')).toBe(true);
+      const [url, init] = lastCall();
+      expect(url).toMatch(new RegExp(`/sessions/${b}/tracks/close$`));
+      expect(JSON.parse(String(init.body))).toEqual({ tracks: [{ mid: '0' }], force: true });
+      expect(captured(log)).toContain('no longer a member of the conversation');
+    });
+
+    it('membership unreadable (no binding): nobody is pruned on that ground', async () => {
+      await seatAndPush('a', ['audio-a']);
+      await seatAndPush('b', ['audio-b']);
+      calls.cloudflareRoomMembers.mockResolvedValue(null);
+
+      expect((await service.roster('a', ROOM)).others).toBe(1);
+    });
+  });
+
+  describe("a replaced device's session is evicted", () => {
+    it('its active tracks are closed with force and its pushed tracks forgotten', async () => {
+      const old = await seatAndPush('a', ['audio-a', 'video-a']);
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const current = await service.openSession('a', ROOM, 'token');
+
+      const close = fetchMock.mock.calls.find(([u]) =>
+        String(u).endsWith(`/sessions/${old}/tracks/close`)
+      ) as [string, RequestInit];
+      expect(JSON.parse(String(close[1].body))).toEqual({
+        tracks: [{ mid: '0' }, { mid: '1' }],
+        force: true,
+      });
+      expect(cfSessions.get(old)!.every((t) => t.status === 'inactive')).toBe(true);
+      expect(redis.sets.has(`call:room:${ROOM}:cf:tracks:${old}`)).toBe(false);
+      expect(captured(log)).toContain(`evict session=${old}: closed 2 track(s)`);
+      expect(current.sessionId).not.toBe(old);
+    });
+
+    it('Cloudflare refusing the close is logged at ERROR and the new device is still seated', async () => {
+      const old = await seatAndPush('a', ['audio-a']);
+      const live = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation((url, init) =>
+        String(url).endsWith('/tracks/close')
+          ? Promise.resolve(cfAnswer(500, 'boom'))
+          : live(url, init)
+      );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      const current = await service.openSession('a', ROOM, 'token');
+
+      expect(redis.hashes.get(`call:room:${ROOM}:cf:seats`)!.get('a')).toBe(current.sessionId);
+      expect(redis.sets.has(`call:room:${ROOM}:cf:tracks:${old}`)).toBe(false);
+      expect(captured(error)).toContain(`evict session=${old}: its tracks were NOT closed`);
     });
   });
 });

@@ -16,18 +16,27 @@ import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
 import type { ReportedLive } from '$lib/moderation/api';
-import type { LiveCutResult, LiveStanding, LiveWithdrawalResult } from '$lib/live/types';
+import type {
+  LiveCutResult,
+  LiveStanding,
+  LiveWithdrawalLift,
+  LiveWithdrawalResult,
+} from '$lib/live/types';
 
-const { cutLive, withdrawBroadcaster } = vi.hoisted(() => ({
+const { cutLive, withdrawBroadcaster, liftBroadcasterWithdrawal, showConfirm } = vi.hoisted(() => ({
   cutLive: vi.fn(),
   withdrawBroadcaster: vi.fn(),
+  liftBroadcasterWithdrawal: vi.fn(),
+  showConfirm: vi.fn(),
 }));
 
 vi.mock('$lib/live/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/live/api')>()),
   cutLive,
   withdrawBroadcaster,
+  liftBroadcasterWithdrawal,
 }));
+vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
 vi.mock('$lib/utils/copyId', () => ({ copyId: vi.fn() }));
 
 import { LiveRefusalError } from '$lib/live/api';
@@ -47,6 +56,8 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   cutLive.mockReset();
   withdrawBroadcaster.mockReset();
+  liftBroadcasterWithdrawal.mockReset();
+  showConfirm.mockReset();
   // happy-dom's `Animation.cancel()` rejects the animation it is asked to cancel, which Svelte's
   // transition teardown does not expect (the modal's open/close transition is not this test's
   // subject): stubbed so closing the dialog never throws an unhandled rejection.
@@ -96,6 +107,7 @@ function render(live: ReportedLive, mayActOnBroadcaster = true) {
   const onCut = vi.fn<(r: LiveCutResult) => void>();
   const onWithdrawn = vi.fn<(r: LiveWithdrawalResult) => void>();
   const onStale = vi.fn<() => void>();
+  const onLifted = vi.fn<(r: LiveWithdrawalLift) => void>();
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(ModerationLiveBlock, {
@@ -108,12 +120,13 @@ function render(live: ReportedLive, mayActOnBroadcaster = true) {
       onCut,
       onWithdrawn,
       onStale,
+      onLifted,
       mayActOnBroadcaster,
     },
   });
   mounted.push(() => void unmount(app));
   flushSync();
-  return { onCut, onWithdrawn, onStale, target };
+  return { onCut, onWithdrawn, onStale, onLifted, target };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -430,6 +443,13 @@ describe("the broadcaster's standing and the withdrawal", () => {
       'refused',
       m.moderation_live_withdraw_account_invalid,
     ],
+    [
+      '403 out of scope',
+      403,
+      'MODERATION_OUT_OF_SCOPE',
+      'refused',
+      m.moderation_refusal_out_of_scope,
+    ],
     ['500 no code', 500, null, 'unavailable', m.moderation_live_withdraw_error],
   ] as const)('%s says its own sentence and stays open', async (_n, status, code, kind, key) => {
     withdrawBroadcaster.mockRejectedValue(
@@ -443,4 +463,114 @@ describe("the broadcaster's standing and the withdrawal", () => {
     expect(onWithdrawn).not.toHaveBeenCalled();
     expect(q('[data-live-withdraw-dialog]')).not.toBeNull();
   });
+});
+
+describe('lifting a withdrawal', () => {
+  const withdrawnLive = (over: Partial<ReportedLive> = {}) =>
+    openLive({
+      state: 'gone',
+      broadcasterStanding: standingOf({
+        withdrawnAt: '2026-10-20T08:00:00.000Z',
+        withdrawalDue: false,
+      }),
+      ...over,
+    });
+
+  it('is offered only on a withdrawn right, to a caller who moderates the broadcaster', () => {
+    const shown = render(withdrawnLive());
+    expect(shown.target.querySelector('[data-moderation-live-lift]')).not.toBeNull();
+    const notMine = render(withdrawnLive(), false);
+    expect(notMine.target.querySelector('[data-moderation-live-lift]')).toBeNull();
+    const notWithdrawn = render(openLive({ broadcasterStanding: standingOf() }));
+    expect(notWithdrawn.target.querySelector('[data-moderation-live-lift]')).toBeNull();
+  });
+
+  it('sends nothing when the confirmation is declined', async () => {
+    showConfirm.mockResolvedValue(false);
+    const { target, onLifted } = render(withdrawnLive());
+    target.querySelector<HTMLElement>('[data-moderation-live-lift]')!.click();
+    await settle();
+    expect(showConfirm).toHaveBeenCalledWith(
+      m.moderation_live_lift_prompt({ name: 'Claire' }),
+      expect.objectContaining({ confirmLabel: m.moderation_live_lift_button() })
+    );
+    expect(liftBroadcasterWithdrawal).not.toHaveBeenCalled();
+    expect(onLifted).not.toHaveBeenCalled();
+  });
+
+  it('lifts the broadcaster once confirmed and hands the answer, a repeat included, to the page', async () => {
+    showConfirm.mockResolvedValue(true);
+    liftBroadcasterWithdrawal.mockResolvedValue({ userId: 'u9', lifted: false });
+    const { target, onLifted } = render(withdrawnLive({ broadcasterName: null }));
+    target.querySelector<HTMLElement>('[data-moderation-live-lift]')!.click();
+    await settle();
+    await settle();
+    expect(showConfirm.mock.lastCall![0]).toBe(
+      m.moderation_live_lift_prompt({ name: m.moderation_live_withdraw_this_account() })
+    );
+    expect(liftBroadcasterWithdrawal).toHaveBeenCalledTimes(1);
+    expect(liftBroadcasterWithdrawal).toHaveBeenCalledWith('u9');
+    expect(onLifted).toHaveBeenCalledWith({ userId: 'u9', lifted: false });
+    expect(target.querySelector('[data-moderation-live-lift-error]')).toBeNull();
+  });
+
+  it('opens ONE confirmation for a double tap, and frees the button once it is declined', async () => {
+    let answer: (yes: boolean) => void = () => {};
+    showConfirm.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
+    const warn = vi.spyOn(console, 'warn');
+    const { target } = render(withdrawnLive());
+    const button = target.querySelector<HTMLButtonElement>('[data-moderation-live-lift]')!;
+    button.click();
+    button.click();
+    flushSync();
+    expect(showConfirm).toHaveBeenCalledTimes(1);
+    answer(false);
+    await settle();
+    expect(liftBroadcasterWithdrawal).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(target.querySelector<HTMLButtonElement>('[data-moderation-live-lift]')!.disabled).toBe(
+      false
+    );
+  });
+
+  it.each([
+    [
+      '403 forbidden',
+      403,
+      'LIVE_WITHDRAWAL_FORBIDDEN',
+      'refused',
+      m.moderation_live_lift_forbidden,
+    ],
+    [
+      '400 account',
+      400,
+      'LIVE_ACCOUNT_INVALID',
+      'refused',
+      m.moderation_live_withdraw_account_invalid,
+    ],
+    [
+      '403 out of scope',
+      403,
+      'MODERATION_OUT_OF_SCOPE',
+      'refused',
+      m.moderation_refusal_out_of_scope,
+    ],
+    ['500 no code', 500, null, 'unavailable', m.moderation_live_lift_error],
+  ] as const)(
+    '%s says its own sentence and tells the page nothing',
+    async (_n, status, code, kind, key) => {
+      showConfirm.mockResolvedValue(true);
+      liftBroadcasterWithdrawal.mockRejectedValue(
+        new LiveRefusalError(status, code, '', kind, null, null, null)
+      );
+      const { target, onLifted } = render(withdrawnLive());
+      target.querySelector<HTMLElement>('[data-moderation-live-lift]')!.click();
+      await settle();
+      await settle();
+      expect(target.querySelector('[data-moderation-live-lift-error]')!.textContent).toContain(
+        key()
+      );
+      expect(onLifted).not.toHaveBeenCalled();
+    }
+  );
 });

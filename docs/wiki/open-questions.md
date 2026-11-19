@@ -506,7 +506,13 @@ Two shapes, and the choice is the user's:
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
 
-### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+### ~~QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on~~
+
+**ANSWERED 2026-11-17, by a fourth option.** The agreeing responder acks only when the ask carries the
+asker's proof of incompleteness (`incomplete: true` on the probe, answered by `history_cannot_repair`),
+so the ack costs nothing on the common path and the walk past an agreeing member advances on an
+answer rather than on a silence ([history-reconciliation](protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+The text below is kept for why the other options were not taken.
 
 Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
 is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
@@ -761,3 +767,11 @@ published, so nothing under it is the BDE's to read on a comment's report alone 
 admin is the recourse. The other answer is that an open report on a comment opens that one comment
 (not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
 only the author's side can write one.
+
+## A Lydia Responsable who leaves the association: who takes over? (parked 2026-11-18)
+
+Since 1.7.1 a departed member's Tresorier and Vendeur numbers are removed at Lydia, but a departed
+Responsable keeps their current number (the Business needs one) and the card asks for a platform
+administrator, who has no step to name another person. Two answers, both owner-visible: an admin
+"replace the Responsable" step, or refusing the Responsable's own departure while their number is
+live. Entry: [backlog](backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md), item 7.

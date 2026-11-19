@@ -45,8 +45,12 @@ async function bootstrap() {
    * need it most: the app runs cross-origin under Tauri, so a response header it cannot read would
    * silently disable the history walk's upper bound on mobile ONLY - the shape of failure that
    * compiles, deploys green, and is wrong.
+   *
+   * `Date` exposed for the same reason: a group row read's `Date` is the server's clock the rename
+   * sweep bounds a re-send by (`GroupMeta.serverNow`, sealed-names.md), and a phone that cannot read
+   * it never re-sends a pending rename.
    */
-  app.enableCors(corsOptions(allowedOrigins, ['X-History-Head']));
+  app.enableCors(corsOptions(allowedOrigins, ['X-History-Head', 'Date']));
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT || 3010);

@@ -78,7 +78,12 @@
         conversationType: conv.conversationType,
         directPeerId: conv.directPeerId,
         metaName: baseline?.meta.name,
-        fallbackDisplayName: baseline?.displayName,
+        // ONLY A 1:1's PREVIOUS LABEL IS A FALLBACK. A group's baseline label may be a COMPUTED one
+        // (the generic word, drawn before its tree was read): fed back in as a name it would win
+        // over the members' first names for the whole session. `metaName` already carries the
+        // stored name of a named group.
+        fallbackDisplayName:
+          baseline?.conversationType === 'direct' ? baseline.displayName : undefined,
       },
       uid
     );

@@ -13,6 +13,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { clientAddress } from '../common/client-address';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import { GuestReceiptDto, GuestSubmitFormDto } from './dto/form.dto';
 import { CONFIRM_PAYMENT_PER_MINUTE } from './forms.controller';
@@ -70,6 +71,13 @@ export class PublicFormsController {
         guestLastName: dto.guestLastName,
         guestFirstName: dto.guestFirstName,
         guestEmail: dto.guestEmail,
+        // What the form asks a guest to declare (`respondent-identity.ts`), judged the same way.
+        declaredFormation: dto.declaredFormation,
+        declaredPromo: dto.declaredPromo,
+        declaredStatus: dto.declaredStatus,
+        declaredCampus: dto.declaredCampus,
+        // The build the page names: an older one cannot draw the declared questions.
+        clientVersion: clientVersionOf(req.headers[CLIENT_VERSION_HEADER]),
       },
       'guest',
       // The visitor a paid answer is counted against (PP5): the address the throttle counts too.

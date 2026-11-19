@@ -56,7 +56,8 @@ MANIFEST="$TAURI_DIR/Cargo.toml"
 readonly WATCHED="${VENDORED_WATCHED:-tauri-plugin-websocket
 wry
 tauri-plugin-system-components
-tauri-plugin-keystore}"
+tauri-plugin-keystore
+tauri-plugin-dialog}"
 
 # crates.io refuses an anonymous client (its crawler policy asks for a contact in the User-Agent).
 readonly USER_AGENT='canari-ci vendored-upstream-report (https://github.com/emse-students/canari)'

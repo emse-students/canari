@@ -1,3 +1,4 @@
+import type { NameSync } from '$lib/utils/chat/groupName';
 // ---------------------------------------------------------------------------
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
@@ -44,6 +45,13 @@ export interface ConversationMeta {
    * does not have to wait for a group sweep to learn that nothing older can exist.
    */
   startedAt?: number;
+  /**
+   * The server time of the MLS statement that set `name` (`Conversation.nameAt`, `groupName.ts`).
+   * Persisted beside the name so both are written by one save; absent reads as "never stated".
+   */
+  nameAt?: number;
+  /** `Conversation.nameSync`: what this device still owes about a rename it made. Absent: none. */
+  nameSync?: NameSync;
   /**
    * The group photo's media id. Persisted so the sidebar draws the photo from the local row at first
    * render: it used to be learned only from the server's group list, after the connection came up,
@@ -1134,11 +1142,19 @@ export interface IStorage {
    * in the same task that issues the put - and a `false` refuses the write with
    * {@link StoreWriteRefusedError}, nothing written. It is how a read-modify-write begun under a
    * condition (this tab leads) proves the condition held when its write was issued.
+   *
+   * `sentCountWas`, when given, makes the write a compare-and-swap in its own transaction: it lands
+   * only while the stored row still carries exactly that `sentCount` (the count the caller read
+   * before it reserved an index), and is otherwise refused with {@link StoreWriteRefusedError},
+   * nothing written. It is what makes an outbound index handed out once whatever two documents
+   * believe about who leads: a reservation resumed after another writer advanced (or removed) the
+   * row cannot write its older count back (channel-encryption, WP-30: the orderings of `reserveOutboundSlot`).
    */
   saveGraineSession(
     session: StoredGraineSession,
     deviceKeyB64: string,
-    onlyWhile?: () => boolean
+    onlyWhile?: () => boolean,
+    sentCountWas?: number
   ): Promise<void>;
   /**
    * Every session held for one channel, newest first. Undecryptable rows are skipped and reported

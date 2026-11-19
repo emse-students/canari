@@ -17,8 +17,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
 
 /**
- * THE LYDIA CASHIER ROUTE ONLY ANOTHER SERVICE CALLS (enrolment lot 3): the removal an account's
- * ERASURE asks for, from social-service. Under `/api/internal/`, which nginx does not route, and
+ * THE LYDIA CASHIER ROUTE ONLY ANOTHER SERVICE CALLS (enrolment lot 3): the removal social-service
+ * asks for when an account is ERASED, or when a cashier's membership of the association ENDED (review
+ * of the 1.7.1 flip). Under `/api/internal/`, which nginx does not route, and
  * `X-Internal-Secret` guarded before anything, like every internal route.
  */
 @Controller('internal/lydia-cashiers')
@@ -28,7 +29,8 @@ export class InternalLydiaCashiersController {
   constructor(private readonly paymentService: PaymentService) {}
 
   /**
-   * Removes one number for an account's erasure: the numbers come in the body - opened by
+   * Removes one number for an account's erasure or a cashier's departure (`reason`, absent = erasure,
+   * the only caller before 1.7.1): the numbers come in the body - opened by
    * social-service, which owns them, under the association's cashier claim - and nothing is recorded
    * here. The checks before the removal and the re-read after it are `LydiaPaymentProvider.removeCashier`'s; the answer is
    * the re-read (`{ verified, held }`). Phones are never logged.
@@ -43,6 +45,7 @@ export class InternalLydiaCashiersController {
       vendorToken?: unknown;
       contextPhone?: unknown;
       cashierPhone?: unknown;
+      reason?: unknown;
     }
   ): Promise<LydiaCashierRemoval> {
     assertInternalSecret(secret);
@@ -53,7 +56,16 @@ export class InternalLydiaCashiersController {
       this.logger.warn('Lydia cashier removal for an erasure refused: malformed body');
       throw new BadRequestException('associationId and vendorToken are required');
     }
-    this.logger.log(`Lydia cashiers of ${associationId}: removal asked by an account erasure`);
+    const reason = body?.reason === undefined ? 'erasure' : body.reason;
+    if (reason !== 'erasure' && reason !== 'departure') {
+      this.logger.warn('Lydia cashier removal for another service refused: unknown reason');
+      throw new BadRequestException('reason must be erasure or departure');
+    }
+    this.logger.log(
+      `Lydia cashiers of ${associationId}: removal asked by ${
+        reason === 'erasure' ? 'an account erasure' : "a cashier's departure"
+      }`
+    );
     return this.paymentService.removeLydiaCashier(
       associationId,
       vendorToken,

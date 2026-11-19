@@ -43,7 +43,11 @@ describe('ModerationController - admin paths refuse a non-moderator', () => {
     deleteCommentById: jest.fn(),
   };
   const assoc = { isContentModerator: jest.fn().mockResolvedValue(false) };
-  const controller = new ModerationController(service as never, assoc as never);
+  const controller = new ModerationController(
+    service as never,
+    assoc as never,
+    { announceReport: jest.fn() } as never
+  );
 
   it('accounts for every handler, either as open by intent or as an admin call', () => {
     const unaccounted = handlers.filter((h) => !OPEN_BY_INTENT[h] && !ADMIN_CALLS[h]);
@@ -104,11 +108,18 @@ describe('ModerationController - the BDE scope', () => {
       moderatedAssociationIds: jest.fn((_u: string, ids: string[]) =>
         Promise.resolve(new Set(ids))
       ),
+      // No institution in these fixtures: the post standing alone decides.
+      moderatedInstitutionIds: jest.fn(() => Promise.resolve(new Set<string>())),
+      mayModeratePost: jest.fn(() => Promise.resolve(true)),
     };
     return {
       service,
       assoc,
-      controller: new ModerationController(service as never, assoc as never),
+      controller: new ModerationController(
+        service as never,
+        assoc as never,
+        { announceReport: jest.fn() } as never
+      ),
     };
   }
 

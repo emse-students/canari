@@ -243,6 +243,24 @@ export interface LiveWithdrawalResult {
   cutsOnRecord: number;
 }
 
+/**
+ * `GET /api/lives/broadcasters/:userId/standing` and the rows of `GET /api/lives/broadcasters/withdrawn`
+ * - one account's standing as STAFF read it, with no report in between. `withdrawalReason` is the
+ * reason code of the withdrawal, null while the right is not withdrawn.
+ */
+export interface LiveBroadcasterStanding extends LiveStanding {
+  userId: string;
+  displayName: string;
+  withdrawalReason: LiveCutReason | null;
+}
+
+/** `DELETE /api/lives/broadcasters/:userId/withdrawal`: whether a withdrawal row was there to lift. */
+export interface LiveWithdrawalLift {
+  userId: string;
+  /** False when nothing was withdrawn (a repeat, or another moderator lifted it first). */
+  lifted: boolean;
+}
+
 /** `POST /api/lives/:id/removed-viewers`. */
 export interface LiveRemovedViewer {
   liveId: string;

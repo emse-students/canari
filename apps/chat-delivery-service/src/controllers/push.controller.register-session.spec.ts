@@ -69,12 +69,22 @@ describe('PushController - POST mls/push/register binds the registration to its 
     );
   });
 
-  it('writes null - not nothing - for a token minted before the claim, so a rewritten row never keeps an older session', async () => {
-    await controller.registerPushToken(body, 'user-1', '');
-    await controller.registerPushToken(body, 'user-1', undefined);
-    for (const [row] of pushTokenRepo.upsert.mock.calls) {
-      expect(row).toHaveProperty('sessionId', null);
+  /*
+   * Every access token has named its session since 2026-10-25 and verify answers one that does not
+   * as anonymous (#3764), so an authenticated registration with no session is no legitimate caller:
+   * refused, typed, never a 401/403, and nothing written.
+   */
+  it('refuses a registration naming no session, typed SESSION_UNNAMED, writing nothing', async () => {
+    for (const sid of ['', undefined]) {
+      const failure = await controller
+        .registerPushToken(body, 'user-1', sid)
+        .catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(BadRequestException);
+      expect((failure as BadRequestException).getResponse()).toMatchObject({
+        code: 'SESSION_UNNAMED',
+      });
     }
+    expect(pushTokenRepo.upsert).not.toHaveBeenCalled();
   });
 
   it('refuses a session header that is not a session id rather than storing it', async () => {

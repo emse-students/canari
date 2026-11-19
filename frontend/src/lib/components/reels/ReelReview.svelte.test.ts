@@ -108,3 +108,45 @@ it('offers no sound button for a photo', () => {
   });
   expect(target.querySelector('[data-reel-sound]')).toBeNull();
 });
+
+it('WITHOUT a second action the bar holds the one "Next", at its right edge, as before', () => {
+  const target = mountReview({ nextLabel: 'Suivant' });
+  const bar = target.querySelector('[data-reel-review-bar]')!;
+  expect(target.querySelector('[data-reel-secondary]')).toBeNull();
+  expect(bar.className).toContain('justify-end');
+  expect(target.querySelector('[data-reel-next]')!.textContent?.trim()).toBe('Suivant');
+});
+
+it('TWO ACTIONS (section 22): the secondary on the left, the primary on the right, each its own handler', () => {
+  const onnext = vi.fn();
+  const onsecondary = vi.fn();
+  const target = mountReview({
+    nextLabel: 'Send to...',
+    onnext,
+    secondaryLabel: 'Publier',
+    onsecondary,
+  });
+  const bar = target.querySelector('[data-reel-review-bar]')!;
+  const secondary = target.querySelector<HTMLButtonElement>('[data-reel-secondary]')!;
+  const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
+  expect(bar.className).toContain('justify-between');
+  expect(secondary.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(secondary.textContent?.trim()).toBe('Publier');
+  secondary.click();
+  expect(onsecondary).toHaveBeenCalledTimes(1);
+  expect(onnext).not.toHaveBeenCalled();
+  next.click();
+  expect(onnext).toHaveBeenCalledTimes(1);
+});
+
+it("a ONE-TAP SEND reads the conversation's name, carries an accessible sentence and the send glyph", () => {
+  const target = mountReview({
+    nextLabel: 'Paul',
+    nextAriaLabel: 'Send to Paul',
+    nextIcon: 'send',
+  });
+  const next = target.querySelector<HTMLButtonElement>('[data-reel-next]')!;
+  expect(next.textContent?.trim()).toBe('Paul');
+  expect(next.getAttribute('aria-label')).toBe('Send to Paul');
+  expect(next.querySelector('svg')!.getAttribute('class')).toContain('lucide-send');
+});

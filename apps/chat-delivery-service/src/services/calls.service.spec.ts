@@ -900,9 +900,73 @@ describe('CallsService', () => {
       expect(result.notified).toBe(2);
       const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
       expect(lookup).toContain('caller');
-      expect(fcmSend.mock.calls[0][0].data).toEqual(
-        expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
+      // Content-free push WP-W6 (owner, 2026-11-04, N2): Google and Apple read EXACTLY these three
+      // keys - no `groupId`, so a ring's end no longer names the conversation. Both receivers find
+      // the ring by `callId` alone (callsCompiled.test.ts, androidCallRing.test.ts).
+      const sent = fcmSend.mock.calls[0][0];
+      expect(sent.data).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
+      const { aps, ...apnsCustom } = sent.apns.payload;
+      expect(aps).toEqual({ 'content-available': 1 });
+      expect(apnsCustom).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
+    });
+
+    /**
+     * A dead token is told by the CODE Firebase Admin sets at the throw: its message ("Requested
+     * entity was not found.") never names it, so a decision read from `String(e)` never deleted one.
+     * And a generic `invalid-argument` (a payload fault too) never deletes a working device's row.
+     */
+    it.each([
+      ['messaging/registration-token-not-registered', true],
+      ['messaging/invalid-registration-token', true],
+      ['messaging/invalid-argument', false],
+      ['messaging/server-unavailable', false],
+    ])('ring-end on FCM code %s deletes the token row: %s', async (code, deleted) => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '7',
+          userId: 'callee-android',
+          deviceId: 'd7',
+          token: 'fcm-7',
+          platform: 'android',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('Requested entity was not found.'), { code })
       );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      const result = await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(result.notified).toBe(0);
+      expect(pushTokenRepo.delete.mock.calls).toEqual(deleted ? [[{ id: '7' }]] : []);
+      expect(captured(warn)).toContain(`code=${code}`);
+      warn.mockRestore();
+    });
+
+    it('ring-end reports a refused credential at ERROR as ours, and keeps the token', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '8',
+          userId: 'callee',
+          deviceId: 'd8',
+          token: 'fcm-8',
+          platform: 'ios',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('SenderId mismatch'), { code: 'messaging/mismatched-credential' })
+      );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(pushTokenRepo.delete).not.toHaveBeenCalled();
+      expect(captured(error)).toContain(
+        '[ring-end] FCM failed user=callee device=d8 code=messaging/mismatched-credential - OUR credentials'
+      );
+      error.mockRestore();
     });
   });
 
@@ -1800,6 +1864,24 @@ describe('CallsService', () => {
             service.assertCloudflareParticipant('c', roomId, 'test')
           ).rejects.toMatchObject({ response: { code: 'CALLS_DISABLED' } });
         });
+
+        it("answers the room's admitted members for the seat pruning, and null once the room is not Cloudflare's", async () => {
+          const { roomId } = await cloudflareRoom();
+          groupMemberRepo.find.mockResolvedValue(members('caller', 'c', 'c'));
+
+          await expect(service.cloudflareRoomMembers(roomId)).resolves.toEqual(
+            new Set(['caller', 'c'])
+          );
+          expect(groupMemberRepo.find).toHaveBeenLastCalledWith(
+            expect.objectContaining({ where: expect.objectContaining({ groupId: 'group-1' }) })
+          );
+          await expect(service.cloudflareRoomMembers('no-room')).resolves.toBeNull();
+          redisStore.set(
+            `call:room:${roomId}`,
+            JSON.stringify({ groupId: 'group-1', callerId: 'caller', maxSeats: 4, video: false })
+          );
+          await expect(service.cloudflareRoomMembers(roomId)).resolves.toBeNull();
+        });
       });
 
       it('rings only devices whose build speaks the SFU leg', async () => {
@@ -1896,6 +1978,86 @@ describe('CallsService', () => {
 
       expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
       expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('cancelled');
+    });
+
+    /**
+     * WP-GC7: `room-empty` is a reason the server accepts. From the caller it ends every ring, as
+     * any caller's ring-end does; from a participant it is that member's view of a mesh, never a
+     * fact about the room, so it stops only their own devices and marks nothing.
+     */
+    describe('an emptied room ends every ring (WP-GC7)', () => {
+      /** A mesh group call opened by `caller`, with `b` holding a room token for it. */
+      const openWithJoiner = async (): Promise<string> => {
+        groupCallsMode = 'mesh';
+        // Before `ringGroup`: its background fan-out reads the push tokens too.
+        pushTokenRepo.find.mockResolvedValue([]);
+        const { roomId } = await service.initiateCall('caller', 'group-1', false, 1);
+        await service.ringGroup('caller', 'group-1', roomId, false);
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'b' });
+        await service.requestRoomToken('b', 'group-1', roomId, '1');
+        return roomId;
+      };
+
+      it("a participant's room-empty stops only their own devices, marks nothing, in one line", async () => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+        log.mockClear();
+
+        await service.endRing('b', 'group-1', roomId, 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['b']);
+        expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
+        const lines = log.mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.includes('room-empty'));
+        expect(lines).toEqual([
+          `[ring] ring-end call=${roomId} reason=room-empty by a member of a group call - their own devices only`,
+        ]);
+      });
+
+      it("a participant's false room-empty never keeps a member still ringing from joining", async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        // `b`'s mesh links failed, so `b` saw nobody - the call is live for the caller and others.
+        await service.endRing('b', 'group-1', roomId, 'room-empty');
+
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+        const { roomToken } = await service.requestRoomToken('c', 'group-1', roomId, '1');
+        expect(typeof roomToken).toBe('string');
+      });
+
+      it("the caller's room-empty ends every member's ring and marks it ended", async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        await service.endRing('caller', 'group-1', roomId, 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
+        expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('room-empty');
+      });
+
+      it('a 1:1 room-empty reaches both sides, as every 1:1 ring-end does', async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        groupMemberRepo.find.mockResolvedValue(members('caller', 'callee'));
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        const { roomId } = await service.initiateCall('caller', 'group-1');
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'callee' });
+
+        await service.endRing('callee', 'group-1', roomId, 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['caller', 'callee']);
+      });
+
+      it('a room-empty naming no room of this conversation stops only the sender devices', async () => {
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        await openWithJoiner();
+
+        await service.endRing('b', 'group-1', 'no-such-room', 'room-empty');
+
+        expect(lastTokenLookup()).toEqual(['b']);
+      });
     });
   });
 });

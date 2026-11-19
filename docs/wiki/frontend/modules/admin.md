@@ -81,6 +81,147 @@ the flag could reach none of it, and the whole tier was reachable only by someon
 the URL. Whenever a permission is added to a server-side check, the matching screen is part of the
 same change.
 
+## Pending counts and the admin notices (owner, 2026-11-18)
+
+The owner: *"Quelqu'un a demande une correction de profil, mais je n'ai vu aucun
+indicateur/notification."* A request landed in `/admin/profile-corrections` and nothing said so.
+Decided: a count on every queue, and a notice to every global admin when an item arrives, cleared for
+all of them once one handles it. Principle 3 ("your attention is not for sale",
+[principes](../../../principes.md)) bounds both: a badge counts only work the reader can do, a notice
+names nobody and is sent once per item, and no queue that already tells its handlers is told twice.
+
+**The queues, enumerated from the code** (every `/admin` page that lists items waiting for an
+admin; the others - spaces, read access, cartography, platform, users, status, Cercle, storage,
+database, legacy cotisations - configure or inspect, nothing waits there):
+
+| Queue (`adminSections` key) | Pending means | Counted for | Scope primitive |
+| --- | --- | --- | --- |
+| `profile-corrections` | `profile_correction_requests.status = 'pending'` (an `applying` claim is in an admin's hands) | a global admin only | - |
+| `moderation` | `content_reports.status = 'pending'` (not reviewed, not dismissed) | a global admin (all) or a content moderator (`isContentModerator`) | `reportInBdeScopeSql` - what the queue page lists for that moderator |
+| `agenda` | `association_calendar_events.status = 'pending'` | a global admin (all) or an event validator (`isUserBdeAdmin`) | `holdsBdeAgendaRightOverSql` - each event's own `canValidate` |
+
+The predicates are one fragment each (`apps/social-service/src/admin-queues/admin-queue-sql.ts`),
+read by the counts, the bell gates and the announcement alike.
+
+**The counts: `GET /api/moderation/admin-queues`** (`AdminQueuesController`) answers
+`{ counts: { agenda?, moderation?, 'profile-corrections'? } }` from the queues' own rows in ONE
+statement, at every read - no counter is kept, so a count is right after a reload, on another device,
+and the moment another admin handles an item. Open to every signed-in caller; a queue the caller
+cannot act on is ABSENT (a member with no tier gets `{}`), never zero, so the route tells nobody the
+size of a queue they cannot open. `X-Global-Admin` is nginx's header, as on every admin route.
+Proved against PostgreSQL in `bde-moderation.integration.spec.ts` (a BDE moderator counts its own
+spaces' reports, a validator its governed events, a member nothing).
+
+**The notices** (`AdminQueuesService.announce*`): to every global admin (`users.admin`) but the
+person who filed the item, actor = the platform, no text, one bell row each and one push each.
+
+- `admin_profile_correction`: when core-service files a request (`ProfileCorrectionService.create` ->
+  `POST /internal/notifications/profile-correction-filed`). Opens `/admin/profile-corrections`.
+- `admin_report`: when a report is filed and NO notice about its subject is still owed
+  (`REPORT_ALREADY_ANNOUNCED_SQL`): five reports on one post are one notice. Decided from what was
+  WRITTEN - an `admin_report` row naming another report of the subject - never from "an older report
+  waits": a subject that already waited when this shipped, or whose announcement failed, is
+  announced by its next report (review of 2026-11-18). The read and the write run under the subject's
+  transaction-scoped advisory lock (`LOCK_REPORT_SUBJECT_SQL`), so two reports filed at once write
+  one notice. Opens `/admin/moderation`.
+- **The agenda is not announced here**: its validators are already told by `event_proposed` (and the
+  global admins when no BDE governs the event), so a second notice would say the same thing twice.
+
+**They clear for every admin at once, from state**: the bell gate (`BELL_ROW_GATE`,
+[posts](posts.md#the-bell-re-checks-what-a-row-points-at-audit-of-2026-11-14)) serves a row only
+while its reader is a global admin AND the item still waits; nothing deletes it, the 90-day sweep
+does. A notice that reached somebody who is not (or no longer) an admin is served to nobody. A
+report notice is owed while a report of its subject waits that is the announced one, older, or newer
+but filed before the subject's NEXT notice (`reportNoticeOwedSql`): each notice answers for its own
+stretch of reports, so a subject reported again after everything was handled gets a new notice and
+the old one never comes back. Rows written and only the push failed is logged as exactly that
+(`NotificationPushFailedError`, caught by type) - never as "not announced".
+**Not recalled**: a push already on a lock screen stays there; tapped, it opens the queue, which no
+longer lists the item.
+
+**The badges are told, never polled** (lead, 2026-11-18; `AdminQueueSignal`,
+`apps/social-service/src/admin-queues/admin-queue-signal.service.ts`): when an item enters or leaves
+a queue, the accounts that may act on it get ONE frame, `admin.queues.changed`, with an EMPTY `data`,
+over the socket the app already holds (`RedisService.publishChannelEvent` -> `chat:channel_events` ->
+the chat gateway's fan-out by user id). The client refetches the counts on it, and the count endpoint
+filters as always, so the frame names no queue, item or person. The recipients are read with the
+queue's own scope primitive: every global admin, plus - for a report - each staff member
+(`association_members.permissions <> 0`) for whom `reportInBdeScopeSql` holds, and - for an agenda
+item - each one for whom `holdsBdeAgendaRightOverSql` holds over the event's association; the
+corrections ping the global admins alone. A reported COMMENT is resolved to its post once per signal
+and each candidate tested against that one row: the queue's own comment branch is a set computed per
+moderator - a hash probe when the moderator is a parameter, a scan of every post per candidate when
+it is a column, as here. The integration spec checks, report by report, that the recipients are
+EXACTLY the global admins plus the staff `BDE_MODERATES_REPORT_SQL` admits. Like every social-service
+statement it runs with JIT off (`PG_SESSION_OPTIONS`): with JIT on it compiles for ~2 s whatever it
+reads (measured 2026-11-18). Sent AFTER the write committed, never awaited by the HTTP answer of the
+person who acted (they refetch by themselves), never throws, a failure said at ERROR. The paths that
+send it:
+
+| Queue | Enters | Leaves |
+| --- | --- | --- |
+| `moderation` | a report filed (`ModerationController.createReport`, through `announceReport`) | a review or dismissal (`PATCH /moderation/reports/:id`); a live cut closing the live's reports (`LivesService`, `RETURNING id`) |
+| `profile-corrections` | core files a request (`/internal/notifications/profile-correction-filed`) | core answers it (`/internal/notifications/profile-correction`, applied or refused) |
+| `agenda` | an event starts waiting - a proposal or a reopening (`notifyEventValidatorsOfProposal`, the one choke point) | validated, rejected, or deleted while pending (`AssociationsService`) |
+
+Not sent, and caught by the next refetch (app return, socket reopen, hub or dashboard open): an
+`applying` claim and its release (core does not tell social; net zero), an account erasure deleting
+reports about the erased account or a requester's pending correction, a report whose CONTENT is
+deleted (it leaves every scoped moderator's count, and its scope can no longer be read to name them),
+and a change of who governs what (an audience edit, a permission bit granted or revoked).
+
+**Only builds that route it receive it** (`requiresCapability: 'admin-queues-1'`): the client
+declares `admin-queues-1` in `caps=` on its socket, and the chat gateway delivers a
+`chat:channel_events` frame naming a capability only to the sessions that declared it
+(`ADMIN_QUEUES_CAPABILITY`, `apps/chat-gateway/src/addressing.rs`, edge-only - no hash in the shared
+store, since no publisher checks a device first). A build older than 1.7.1 never meets the frame,
+so it never logs `reached no handler` for it. An older gateway ignores the field and delivers to
+every session, which is what it did before; a gateway that does not know a capability named to it
+delivers to none and says so at ERROR, so the gateway ships with or before the social-service that
+names it - both are in the same release.
+
+**Content-free**: the push carries the key only (`social_admin_profile_correction`,
+`social_admin_report`), composed on the device from fixed sentences; the `full` mode's legacy title
+and body name nobody either, and the `wake` mode (`push_mode`) applies as to every push. No switch
+silences them (category `null`, never counted by the daily cap). Floor `1.7.1`
+(`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`): no older build is served or pushed either type.
+
+**The badges** (`frontend/src/lib/admin/adminQueueCounts.svelte.ts`, ONE store): the server's counts,
+never a count the client makes. Each queue's row on the hub carries its own count (`adminHubGroups`'s
+`pending`); the dashboard's Administration row (`DashboardFacts.adminPending`) and the dashboard
+place of the bottom bar, the iOS tab bar and the sidebar (`placeBadge`) carry the SUM of the queues
+the reader can act on. The hub's old agenda count is gone: it counted every pending event of the
+reader's associations, including those they cannot validate. Asked:
+
+- **on the server's word, never on a timer** (lead, 2026-11-18): for the session's account, from the
+  root layout, while it holds one of the four tiers `/admin` admits on - read from the REACTIVE tier
+  stores, so a tier published late (a membership probe retried after a failure) starts following and
+  a member is asked nothing. The layout warms the membership probe once per account
+  (`ensureMyAssociations`, memoized and shared by every page that needs it) so a BDE moderator's
+  tiers are published without visiting a page. Asked at once, then through ONE entry,
+  `adminQueuesChanged`, on every `admin.queues.changed` frame (above; routed by
+  `isChannelEventFrame`'s `admin.` family to `handleChannelEvent`; the socket declares
+  `admin-queues-1` in `caps=`) and on every socket (re)open (`syncConnectionAfterWsOpen`: a frame
+  sent while the socket was down is never replayed - the gateway restarting, an idle socket killed).
+  On the web only the leader tab holds the socket (`tabLeader.ts`), so that entry passes the word
+  on over a `BroadcastChannel` (`canari-admin-queues`, content-free) and every other tab that
+  follows asks for its own counts. A frame heard while the app is HIDDEN asks nothing: the return
+  to the foreground (`visibilitychange`) asks anyway, as does the link coming back
+  (`connectivity.onReconnect`). Nothing is asked for a reader who follows no badge. A reload or
+  another device is right from the server's answer, since nothing is kept;
+- afresh when the hub or the dashboard opens;
+- right after an item leaves a queue through this client: `reviewReport`, `deleteReportedComment`,
+  `validateAssociationCalendarEvent`, `rejectAssociationCalendarEvent`, `refuseCorrection`, and
+  `saveProfile` answering a request.
+
+A call made while one is on the wire sends ONE more after it (the first may have left before the
+caller's change committed), never a second in parallel. An answer for an account that has ended
+(sign-out, switch) is dropped. No answer or a refusal keeps the counts drawn (a wrong zero would hide
+waiting items); a sign-out empties them. The bottom bar's dot is spoken per place (the dashboard's as
+"N en attente"). Pinned by `adminQueueCounts.svelte.test.ts`, `adminSections.test.ts`,
+`dashboardSections.test.ts`, `placeBadge.svelte.test.ts`, `channelEventTypes.test.ts` and
+`channelEventHandler.adminQueues.test.ts`.
+
 ## Read access (`/admin/read-access`)
 
 Two unrelated access lists, one tab each (`SegmentedControl`, `?tab=readers|reviewers`). A BDE

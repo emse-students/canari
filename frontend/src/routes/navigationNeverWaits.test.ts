@@ -6,9 +6,16 @@
  * `load` must RESOLVE while its network call is still pending.
  */
 import { describe, expect, it, vi } from 'vitest';
+// Imported statically: the layout's module graph is large, and an `await import()` inside the test
+// is cold under load and spends the 5 s test timeout on module evaluation, not on the behaviour.
+import { load as layoutLoad } from './+layout';
+import { load as postLoad } from './posts/[postId]/+page';
 
-const pending = () => new Promise<never>(() => {});
-const fetchUserProfile = vi.fn(pending);
+// Hoisted: the static imports above evaluate the modules, so the mock factories read these first.
+const { pending, fetchUserProfile, getPost } = vi.hoisted(() => {
+  const pending = () => new Promise<never>(() => {});
+  return { pending, fetchUserProfile: vi.fn(pending), getPost: vi.fn(pending) };
+});
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => 'user-1',
   fetchUserProfile: () => fetchUserProfile(),
@@ -20,7 +27,6 @@ vi.mock('$app/paths', () => ({ resolve: (p: string) => (p.startsWith('/') ? p : 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: { isLoggedIn: false, isLoginInProgress: false },
 }));
-const getPost = vi.fn(pending);
 vi.mock('$lib/posts/api', () => ({ getPost: () => getPost() }));
 vi.mock('$lib/posts/feedAudience', () => ({ redirectIfNotFeedAudience: async () => false }));
 
@@ -31,15 +37,13 @@ async function settlesPromptly(p: Promise<unknown>): Promise<'done'> {
 
 describe('route loads', () => {
   it('the root layout does not wait for the profile check while the session is locked', async () => {
-    const { load } = await import('./+layout');
     const event = { url: new URL('http://x.test/posts'), fetch } as never;
-    expect(await settlesPromptly(Promise.resolve(load(event)))).toBe('done');
+    expect(await settlesPromptly(Promise.resolve(layoutLoad(event)))).toBe('done');
     expect(fetchUserProfile).toHaveBeenCalled();
   });
 
   it('the post page opens before its post has arrived', async () => {
-    const { load } = await import('./posts/[postId]/+page');
-    const out = load({ params: { postId: 'p1' } } as never);
+    const out = postLoad({ params: { postId: 'p1' } } as never);
     expect(await settlesPromptly(Promise.resolve(out))).toBe('done');
     const data = (await out) as unknown as { post: Promise<unknown>; seo: { path: string } };
     expect(data.post).toBeInstanceOf(Promise);

@@ -1,6 +1,7 @@
 import type { MessageReaction } from '$lib/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import type { DecodedChannelReaction } from './channelCrypto';
 
 /**
  * Reactions as a convergent set: one entry per `(user, emoji)` pair, each carrying the time it last
@@ -114,4 +115,33 @@ export function mergeReactions(
     changed = true;
   }
   return changed ? [...byPair.values()] : null;
+}
+
+/** The fields of a `ReactionMsg` a salon row is read from - as decoded, before any narrowing. */
+export interface ReactionFrameFields {
+  messageId?: string | null;
+  emoji?: string | null;
+  at?: number | { toString(): string } | null;
+  removed?: boolean | null;
+  targetAuthorId?: string | null;
+}
+
+/**
+ * A salon reaction row read into what the store and the trigger take - ONE reading for the live frame
+ * (`channelEventHandler`) and the history page (`decodeOpenedRow`), so the two cannot disagree on
+ * what a frame said. `senderId` is the ROW's, the author Graine proves, never a field of the body.
+ */
+export function channelReactionOf(
+  reaction: ReactionFrameFields,
+  senderId: string
+): DecodedChannelReaction {
+  return {
+    targetMessageId: String(reaction.messageId ?? ''),
+    senderId: senderId.toLowerCase(),
+    emoji: String(reaction.emoji ?? ''),
+    // An undated frame reads as 0 and loses to anything dated - it cannot be trusted to win.
+    at: Number(reaction.at ?? 0),
+    removed: reaction.removed === true,
+    targetAuthorId: reaction.targetAuthorId ? String(reaction.targetAuthorId) : null,
+  };
 }

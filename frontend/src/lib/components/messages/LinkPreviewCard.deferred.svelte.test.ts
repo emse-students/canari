@@ -18,7 +18,7 @@ const apiFetch = vi.fn(async (_url: string) => new Response('{}', { status: 200 
 const fetchCanariLinkPreview = vi.fn(async (_url: string) => null);
 
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (url: string) => apiFetch(url) }));
-vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari-emse.fr' }));
+vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari.emse.fr' }));
 vi.mock('$lib/utils/previewTicket.svelte', () => ({
   ensurePreviewTicket: async () => {},
   previewTicket: () => '',
@@ -90,7 +90,7 @@ describe('LinkPreviewCard defers its fetch', () => {
   });
 
   it('holds an in-app link back the same way', async () => {
-    mountCard('https://canari-emse.fr/posts/abc');
+    mountCard('https://canari.emse.fr/posts/abc');
 
     expect(fetchCanariLinkPreview).not.toHaveBeenCalled();
 

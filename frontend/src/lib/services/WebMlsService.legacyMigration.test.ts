@@ -86,6 +86,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // it delegates to. Stubbing either would test the rotation against a checkpoint that is not the
     // one production runs.
     persistCheckpoint: WebMlsService.prototype['persistCheckpoint'],
+    holdRowsForExport: WebMlsService.prototype['holdRowsForExport'],
+    bulkIngestObservers: [],
     writeCheckpoint: WebMlsService.prototype['writeCheckpoint'],
     ...overrides,
   };

@@ -31,9 +31,12 @@ export function fakeDepartureManager(
   decided: DecidedDepartures;
   /** Every community removal lock taken, in order. */
   locks: string[];
+  /** Every unread floor a grant raised (`floorUnreadAtGrant`), in order: the salon and its members. */
+  floors: { channelId: string; memberIds: string[] }[];
 } {
   const decided: DecidedDepartures = new Map();
   const locks: string[] = [];
+  const floors: { channelId: string; memberIds: string[] }[] = [];
   const keyOf = (params: unknown[]) => params.slice(0, 3).map(String).join(':');
   const query = jest.fn(async (sql: string, params: unknown[] = []) => {
     const key = keyOf(params);
@@ -57,6 +60,10 @@ export function fakeDepartureManager(
       const outcome = decided.get(key);
       return outcome ? [{ outcome }] : [];
     }
+    if (sql.includes('UPDATE channel_members') && sql.includes('"clearedMarks"')) {
+      floors.push({ channelId: String(params[0]), memberIds: [...(params[1] as string[])] });
+      return [];
+    }
     throw new Error(`fakeDepartureManager: unexpected query ${sql}`);
   });
   const getRepository = (entity: unknown) => {
@@ -71,13 +78,15 @@ export function fakeDepartureManager(
   // A callback that throws rolls back what it recorded, as the real transaction does.
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
     const before = new Map(decided);
+    const floorsBefore = floors.length;
     try {
       return await cb({ query, getRepository });
     } catch (e) {
       decided.clear();
       before.forEach((outcome, key) => decided.set(key, outcome));
+      floors.length = floorsBefore;
       throw e;
     }
   });
-  return { query, transaction, decided, locks };
+  return { query, transaction, decided, locks, floors };
 }

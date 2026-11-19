@@ -2,6 +2,7 @@ import {
   currentKeyboardInsetBottom,
   placeOnKeyboardMove,
 } from '$lib/stores/keyboardViewport.svelte';
+import { currentNativeTabBarInset } from '$lib/navigation/nativeTabBarState.svelte';
 import { Log } from '$lib/utils/Log';
 
 export type FixedPopoverSide = 'top' | 'bottom';
@@ -73,14 +74,18 @@ export const POPOVER_MARGIN = 8;
  * @param keyboardInset the band at the bottom of the layout viewport the on-screen keyboard covers
  *   (`currentKeyboardInsetBottom`). The panel is laid out in what is left above it: the layout
  *   viewport catches up with the keyboard late on Android, and never in a phone browser.
+ * @param barInset the band the iOS native tab bar covers (`currentNativeTabBarInset`): a UIKit view
+ *   above the WebView, so a panel ending inside it loses its last rows. Taken with the keyboard's
+ *   band, whichever is larger, since the keyboard replaces the bar on screen and the two never stack.
  */
 export function computeFixedPopoverPosition(
   anchor: HTMLElement,
   panel: HTMLElement,
   options: FixedPopoverLayoutOptions = {},
-  keyboardInset = 0
+  keyboardInset = 0,
+  barInset = 0
 ): FixedPopoverPosition {
-  const viewportHeight = window.innerHeight - keyboardInset;
+  const viewportHeight = window.innerHeight - Math.max(keyboardInset, barInset);
   const offset = options.offset ?? 8;
   const margin = options.margin ?? POPOVER_MARGIN;
   const estimatedHeight = options.estimatedHeight ?? 360;
@@ -204,7 +209,8 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
       anchor,
       panel,
       options,
-      keyboardInset
+      keyboardInset,
+      currentNativeTabBarInset()
     );
     if (keyboardInset !== lastKeyboardInset) {
       Log.d('popover', `keyboard band ${lastKeyboardInset} -> ${keyboardInset}px: top ${top}px`);

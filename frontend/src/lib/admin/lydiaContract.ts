@@ -2,6 +2,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 import { forgetLydiaFeeSchedule } from '$lib/payments/lydiaFees';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * The platform's Lydia contract terms and the counter of the contract year's flux, as the admin
@@ -83,9 +84,15 @@ export interface LydiaContractCounter {
   missing: Array<'anniversary' | 'target' | 'bands'>;
 }
 
-/** A refusal of the terms: the field core named (`LYDIA_CONTRACT_INVALID`), or none. */
+/**
+ * A refusal of the terms: the field core named (`LYDIA_CONTRACT_INVALID`), or none, and its typed
+ * `reason` when the field alone cannot tell (`BAND_ORDER`: two bands at the same threshold).
+ */
 export class LydiaContractRefused extends Error {
-  constructor(readonly field: string | null) {
+  constructor(
+    readonly field: string | null,
+    readonly reason: string | null = null
+  ) {
     super(`lydia contract refused${field ? ` (${field})` : ''}`);
     this.name = 'LydiaContractRefused';
   }
@@ -110,10 +117,14 @@ export async function saveLydiaContract(
     body: JSON.stringify(settings),
   });
   if (res.status === 400) {
-    const body = (await res.json().catch(() => null)) as { field?: unknown } | null;
+    const body = (await res.json().catch(() => null)) as {
+      field?: unknown;
+      reason?: unknown;
+    } | null;
     const field = typeof body?.field === 'string' ? body.field : null;
-    Log.w('admin.lydia', `terms refused field=${field ?? 'none'}`);
-    throw new LydiaContractRefused(field);
+    const reason = typeof body?.reason === 'string' ? body.reason : null;
+    Log.w('admin.lydia', `terms refused field=${field ?? 'none'} reason=${reason ?? 'none'}`);
+    throw new LydiaContractRefused(field, reason);
   }
   if (!res.ok) throw new Error(`lydia contract write answered ${res.status}`);
   // The payout estimates read the fee and the VAT from these terms.
@@ -193,10 +204,16 @@ export function emptyLydiaBand(): LydiaContractForm['bands'][number] {
   return { from: '', fees: feeInputs({}) };
 }
 
-/** Thrown by {@link fromLydiaContractForm}: the form field that is not a number. */
+/**
+ * Thrown by {@link fromLydiaContractForm}: the form field that is not a number, or two bands at the
+ * same threshold (`BAND_ORDER`, the reason core's own refusal carries).
+ */
 export class LydiaContractFormInvalid extends Error {
-  constructor(readonly field: string) {
-    super(`not a number: ${field}`);
+  constructor(
+    readonly field: string,
+    readonly reason: 'BAND_ORDER' | null = null
+  ) {
+    super(`${reason ?? 'not a number'}: ${field}`);
     this.name = 'LydiaContractFormInvalid';
   }
 }
@@ -220,8 +237,26 @@ function feesOf(inputs: Record<LydiaPaymentKind, LydiaFeeInputs>, field: string)
 }
 
 /**
- * The settings the form says, for `PUT`; a field that is not a number throws
- * {@link LydiaContractFormInvalid} - core refuses the rest (a band order, a bound) by field.
+ * The bands in ascending order of threshold, so the order an admin typed them in never matters
+ * (core requires them strictly ascending). Rows with an empty or unreadable threshold keep their
+ * relative place at the end; the save refuses them by field.
+ */
+export function sortLydiaBandRows(bands: LydiaContractForm['bands']): LydiaContractForm['bands'] {
+  const key = (b: LydiaContractForm['bands'][number]): number => {
+    const v = decimalToHundredths(b.from);
+    return v === null || Number.isNaN(v) ? Number.POSITIVE_INFINITY : v;
+  };
+  return [...bands].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    return ka === kb ? 0 : ka < kb ? -1 : 1;
+  });
+}
+
+/**
+ * The settings the form says, for `PUT`, bands sent ascending whatever order they were typed in.
+ * A field that is not a number, or two bands at one threshold, throws
+ * {@link LydiaContractFormInvalid}; core refuses the rest (a bound) by field.
  */
 export function fromLydiaContractForm(form: LydiaContractForm): LydiaContractSettings {
   return {
@@ -229,14 +264,55 @@ export function fromLydiaContractForm(form: LydiaContractForm): LydiaContractSet
     fluxTargetCents: number(form.target, 'fluxTargetCents'),
     vatBps: number(form.vat, 'vatBps'),
     fees: feesOf(form.fees, 'fees'),
-    bands: form.bands
-      .map((b, i) => ({
-        fromCents: number(b.from, `bands[${i}].fromCents`) ?? Number.NaN,
-        fees: feesOf(b.fees, `bands[${i}].fees`),
-      }))
-      .map((b, i) => {
-        if (Number.isNaN(b.fromCents)) throw new LydiaContractFormInvalid(`bands[${i}].fromCents`);
-        return b;
-      }),
+    bands: sortedBands(form.bands),
   };
+}
+
+function sortedBands(rows: LydiaContractForm['bands']): LydiaContractSettings['bands'] {
+  const bands = sortLydiaBandRows(rows).map((b, i) => {
+    const fromCents = number(b.from, `bands[${i}].fromCents`);
+    if (fromCents === null) throw new LydiaContractFormInvalid(`bands[${i}].fromCents`);
+    return { fromCents, fees: feesOf(b.fees, `bands[${i}].fees`) };
+  });
+  for (let i = 1; i < bands.length; i++) {
+    if (bands[i].fromCents === bands[i - 1].fromCents) {
+      throw new LydiaContractFormInvalid(`bands[${i}].fromCents`, 'BAND_ORDER');
+    }
+  }
+  return bands;
+}
+
+/**
+ * The sentence an admin reads for a refused field. The field is core's typed path (`bands[1].fromCents`,
+ * `fees.qr.percentBps`) or the form's own; `BAND_ORDER` is core's typed reason for two bands at one
+ * threshold. A field this does not know is logged at ERROR (a fallback is a signal) and gets the
+ * generic sentence, never the raw path.
+ */
+export function lydiaRefusalMessage(field: string | null, reason: string | null = null): string {
+  const band = field?.match(/^bands\[(\d+)\]/);
+  const n = band ? Number(band[1]) + 1 : 0;
+  if (reason === 'BAND_ORDER') return m.admin_lydia_err_band_duplicate();
+  if (field === 'fluxTargetCents') return m.admin_lydia_err_target();
+  if (field === 'vatBps') return m.admin_lydia_err_vat();
+  if (field === 'anniversary') return m.admin_lydia_err_anniversary();
+  if (field === 'bands') return m.admin_lydia_err_bands_count();
+  if (band && /^bands\[\d+\]\.fromCents$/.test(field!)) {
+    return m.admin_lydia_err_band_from({ n });
+  }
+  const fee = field?.match(
+    /^(?:bands\[\d+\]\.)?fees\.(remote|qr|tap_to_pay)\.(percentBps|fixedCents)$/
+  );
+  if (fee) {
+    const where = band ? m.admin_lydia_where_band({ n }) : m.admin_lydia_where_base();
+    const kind = {
+      remote: m.admin_lydia_kind_remote,
+      qr: m.admin_lydia_kind_qr,
+      tap_to_pay: m.admin_lydia_kind_tap_to_pay,
+    }[fee[1] as LydiaPaymentKind]();
+    return fee[2] === 'percentBps'
+      ? m.admin_lydia_err_fee_percent({ where, kind })
+      : m.admin_lydia_err_fee_fixed({ where, kind });
+  }
+  console.error(`[admin.lydia] terms refused on a field with no sentence: ${field ?? 'none'}`);
+  return m.admin_lydia_err_generic();
 }

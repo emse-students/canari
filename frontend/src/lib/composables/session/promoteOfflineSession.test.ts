@@ -228,7 +228,7 @@ describe('promoteOfflineSession', () => {
     const { ctx, state } = makeCtx();
     registerOfflinePromotion(ctx, makeCb(), makeDeps);
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await vi.waitFor(() => expect(state.offlineSession).toBe(false));
 
@@ -240,7 +240,7 @@ describe('promoteOfflineSession', () => {
     registerOfflinePromotion(ctx, makeCb(), makeDeps);
     unregisterOfflinePromotion();
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
 
     expect(getToken).not.toHaveBeenCalled();

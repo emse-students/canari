@@ -54,11 +54,21 @@ const CBOR_STRING_HEADER_BYTES = 5;
  */
 const SEEN_LEDGERS_BYTE_BUDGET = APP_LEDGERS_BYTE_BUDGET - 64 * 1024;
 
+/** No character from 0x80 up: every one is a single UTF-8 byte, so the length IS the byte count. */
+const NON_ASCII = /[\u0080-\uffff]/;
+
 /**
  * UTF-8 length of `s`, without allocating: the unit the state is written in (a lone surrogate counts
  * as the three bytes of the replacement character an encoder writes for it).
+ *
+ * PURE ASCII IS ANSWERED BY THE ENGINE, NOT BY A LOOP. A ledger value is JSON, whose control
+ * characters are escaped, so it is almost always ASCII, and the first checkpoint after a state opens
+ * weighs every ledger once: 255 of 256 kB is 65 million characters through the per-character loop,
+ * measured at 86 ms here and several times that on a phone. The native ASCII test is a single scan,
+ * about five times cheaper; any other string still takes the exact loop.
  */
 export function utf8Bytes(s: string): number {
+  if (!NON_ASCII.test(s)) return s.length;
   let n = 0;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);

@@ -49,7 +49,8 @@
   /* THE ONE ACCENT (owner, 2026-11-09, option B + rule C; docs/wiki/frontend/design-reference.md).
      `accent` is the FILL (bars, tabs, buttons, selected states) and always carries `on-accent`
      ink. Yellow cannot be text on a light surface (1.66:1 on white), so the same hue has three
-     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1), `accent-icon` (a glyph, a
+     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1; inside your own bubble a mention
+     takes `currentColor`, the bubble being filled with the accent), `accent-icon` (a glyph, a
      border, a focus ring that must read as yellow: 3:1) and `accent-hover`. The Tailwind amber
      scale is NOT an accent and `accentTokens.test.ts` counts it; amber survives as a warning only,
      through `amber-warn`. */
@@ -107,6 +108,9 @@
   --banner-height-thin: 1.5rem;
   --color-banner: var(--banner-bg);
   --color-banner-warn: var(--banner-warn-bg);
+  /* The ERROR twin of `banner-warn`, opaque for the same reason: an error toast is drawn over a
+     dialog, and the tinted `bg-red-500/10` it had let the dialog's title read through its red text. */
+  --color-banner-danger-soft: var(--banner-danger-bg);
   /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
      white or ink text and interrupt on purpose, so a theme flip must not soften them. */
   --color-banner-notice: #f59e0b;
@@ -1838,7 +1842,8 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    (`--keyboard-leaf-*`, written on the piece itself by the announcement) and the root's variable
    otherwise - the same length either way. */
 .chat-composer-footer,
-.chat-messages-scroll {
+.chat-messages-scroll,
+.chat-docked-banner {
   --chat-composer-floor: max(
     0.75rem,
     var(--keyboard-leaf-safe-area-inset-bottom, var(--safe-area-inset-bottom, 0px))
@@ -1930,6 +1935,28 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   padding-bottom: var(--chat-composer-floor);
   pointer-events: none;
   z-index: var(--z-page-overlay);
+}
+
+/* A BANNER IN THE COMPOSER'S PLACE STANDS ON THE COMPOSER'S FLOOR. The branches of the chat pane that
+   replace the composer (a deleted conversation, one unopenable here, a salon this person may not
+   write in) were docked at `bottom: 0` with a flat 12px, so on Android's 3-button navigation the bar
+   drew over the "Supprimer localement" button (user report on 1.6.12). The floor is the composer's
+   own (`--chat-composer-floor`: 12px, or the bottom safe area when it is larger), resolved on this
+   class with the composer's, so the two can never disagree. */
+.chat-docked-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--cn-border);
+  background: var(--color-surface);
+  padding: 0.75rem 1rem;
+  padding-bottom: var(--chat-composer-floor);
 }
 
 /* The chat composer is only visible when the BottomNav is unmounted (mobile-convo-open),

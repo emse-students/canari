@@ -33,24 +33,57 @@ describe('the iOS activation mirror of mls.bin', () => {
     expect(rust).toContain('pub unsafe extern "C" fn canari_ios_mirror_mls_bin_to_app_group(');
   });
 
-  it('hands mls.bin and the seed mirror to Rust, and copies neither itself', () => {
+  it('hands mls.bin to Rust and copies no seed mirror at all', () => {
     const start = push.indexOf('void CanariMirrorPushStateToAppGroup(void) {');
     const body = push.slice(start, push.indexOf('\n}\n', start));
     expect(body).toContain('canari_ios_mirror_mls_bin_to_app_group(src.UTF8String)');
-    // The seed mirror under the group copy's writers' lock (2026-11-07): an unlocked copy could
-    // bring back seeds an account's wipe had just removed from the group's copy.
-    expect(body).toContain('canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String)');
-    expect(body).not.toMatch(/@\[[^\]]*kGraineSeedsFileName/);
     expect(body).not.toMatch(/@\[[^\]]*kMlsBinFileName/);
-    expect(header).toContain(
-      'int canari_ios_mirror_graine_seeds_to_app_group(const char *data_dir);'
-    );
-    const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
-    expect(pushRs).toContain(
-      'pub unsafe extern "C" fn canari_ios_mirror_graine_seeds_to_app_group('
-    );
-    const sync = pushRs.slice(pushRs.indexOf('fn sync_seed_mirror_copy('));
-    expect(sync.slice(0, sync.indexOf('\n}\n'))).toContain('lock_seed_mirror(group)');
+    // THE SEED MIRROR IS NOT COPIED (2026-11-17, channel-encryption section 27): the byte copy made
+    // here erased every seed the extension had stored while the app was shut, and the next push of
+    // that session drew the generic banner. The file lives in the App Group, written by both.
+    expect(body).not.toMatch(/graine_seeds_to_app_group|kGraineSeedsFileName/);
+    expect(header).not.toContain('canari_ios_mirror_graine_seeds_to_app_group');
+  });
+});
+
+/**
+ * ONE SEED MIRROR ON iOS, IN THE APP GROUP (2026-11-17, channel-encryption section 27). Two copies -
+ * the app's and the extension's - were reconciled by a lifecycle byte copy that let the app's win,
+ * so a seed the extension opened from a frame was erased the moment the app came to the foreground.
+ * The foreground now writes the App Group's file (`seed_mirror_home`) and the app-alive push path
+ * reads it there; no CI compiles the Objective-C, so this reads the sources.
+ */
+describe('the iOS seed mirror', () => {
+  const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
+
+  it('is written by the foreground in the App Group, after folding the app copy an older build left', () => {
+    const appMirror = pushRs.slice(pushRs.indexOf('async fn with_app_mirror<'));
+    const body = appMirror.slice(0, appMirror.indexOf('\n}\n'));
+    expect(body).toContain('let home = seed_mirror_home(&data_dir, &key)?;');
+    // Background time held BEFORE any App Group lock is taken (the fold and the edit both take one):
+    // an app suspended holding a shared-container lock is killed, 0xdead10cc.
+    const held = body.indexOf('crate::app_group::BackgroundTime::begin(');
+    expect(held).toBeGreaterThan(0);
+    expect(held).toBeLessThan(body.indexOf('seed_mirror_home(&data_dir, &key)'));
+    expect(body).toContain('edit(&home, &key)');
+    const home = pushRs.slice(pushRs.indexOf('fn seed_mirror_home('));
+    const homeBody = home.slice(0, home.indexOf('\n}\n'));
+    expect(homeBody).toContain('crate::app_group::app_group_dir()');
+    expect(homeBody).toContain('fold_legacy_seed_mirror(data_dir, &group, key)');
+    expect(pushRs).not.toContain('fn sync_seed_mirror_copy(');
+  });
+
+  it('is read by the app-alive push path in the App Group', () => {
+    for (const fn of [
+      'static BOOL CanariGraineSeedHeld(',
+      'static void CanariHandleChannelMessage(',
+    ]) {
+      const start = push.indexOf(fn);
+      expect(start, fn).toBeGreaterThan(0);
+      const body = push.slice(start, push.indexOf('\n}\n', start));
+      expect(body, fn).toContain('CanariAppGroupPath()');
+      expect(body, fn).not.toContain('CanariTauriDataDir()');
+    }
   });
 });
 

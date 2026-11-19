@@ -38,7 +38,7 @@ function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> |
  * a number - for MANAGE_PAYOUT_ACCOUNT holders (the removal an account's erasure asks for is
  * `InternalLydiaCashiersController`, not routed by nginx). social-service holds the rows, the sealed numbers and the claim; Lydia is
  * called from here only. Adding and changing a role are behind {@link LYDIA_CASHIER_ADD_ENABLED}
- * (OFF until one production removal has been observed); removing is live.
+ * (ON since 1.7.1, owner 2026-11-18); removing is never gated.
  */
 @RouteParams({ associationId: 'uuid', cashierId: 'uuid' })
 @Controller('payments')
@@ -50,7 +50,7 @@ export class LydiaCashiersController {
     this.ops = new LydiaCashierOps(paymentService);
   }
 
-  /** The owner's gate, read through a method so a spec can open it. */
+  /** The owner's gate (ON since 1.7.1), read through a method so a spec can close it. */
   cashierAddEnabled(): boolean {
     return LYDIA_CASHIER_ADD_ENABLED;
   }

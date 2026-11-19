@@ -62,9 +62,6 @@ describe('sceneLayout', () => {
     const pip = sceneLayout('screen-camera', o, true);
     expect(pip.map((d) => d.kind === 'source' && d.source)).toEqual(['screen', 'camera']);
     expect(pip[1]).toMatchObject({ fit: 'cover', round: true, box: overlayBox(o) });
-    const side = sceneLayout('side-by-side', o, true);
-    expect(side[0]).toMatchObject({ source: 'screen', fit: 'contain', box: { x: 0, width: 896 } });
-    expect(side[1]).toMatchObject({ source: 'camera', fit: 'cover', box: { x: 896, width: 384 } });
     expect(sceneLayout('pause', o, true)).toEqual([
       { kind: 'card', card: 'pause', box: { x: 0, y: 0, width: 1280, height: 720 }, round: false },
     ]);
@@ -232,7 +229,7 @@ describe('planSceneChange - the scene state machine', () => {
   });
 
   it('asks for the screen ONLY when a scene needs it and none is held', () => {
-    for (const s of ['screen', 'screen-camera', 'side-by-side'] as const) {
+    for (const s of ['screen', 'screen-camera'] as const) {
       expect(planSceneChange('camera', s, false)).toEqual({ kind: 'ask-screen', scene: s });
       expect(planSceneChange('camera', s, true)).toEqual({ kind: 'switch', scene: s });
     }
@@ -247,7 +244,6 @@ describe('planSceneChange - the scene state machine', () => {
   it('a share that ended turns a screen scene into pause - never into the camera', () => {
     expect(sceneAfterScreenEnded('screen')).toBe('pause');
     expect(sceneAfterScreenEnded('screen-camera')).toBe('pause');
-    expect(sceneAfterScreenEnded('side-by-side')).toBe('pause');
     expect(sceneAfterScreenEnded('camera')).toBe('camera');
     expect(sceneAfterScreenEnded('pause')).toBe('pause');
   });

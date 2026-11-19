@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
@@ -177,7 +177,9 @@ enum TokenRejection {
 /// the check core-service makes on its own routes - a refresh token never opens a socket.
 fn decode_access_claims(token: &str, secret: &[u8]) -> Result<Claims, TokenRejection> {
     let validation = Validation::new(Algorithm::HS256);
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)
+    // jsonwebtoken 12 refuses an empty HMAC key here; `ws_handler` answers 500 before that.
+    let key = DecodingKey::from_secret(secret).map_err(TokenRejection::Invalid)?;
+    let claims = decode::<Claims>(token, &key, &validation)
         .map_err(TokenRejection::Invalid)?
         .claims;
     match claims.kind.as_deref() {
@@ -785,7 +787,9 @@ enum SignalMessage {
         #[serde(default, skip_serializing_if = "is_false")]
         resumed: bool,
         /// Mesh: the user this pairing is WITH - one `PeerReady` per other participant. Sent in a
-        /// two-seat room too; a client older than the mesh ignores the field.
+        /// two-seat room too; a client older than the mesh ignores the field. Always a USER id,
+        /// never a device: a user's replaced device is re-announced under the SAME `peer`, with
+        /// `resumed` false (one device per user, `p2p.rs`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         peer: Option<String>,
     },
@@ -2169,7 +2173,17 @@ fn authorize_join(
         );
         return None;
     };
-    let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
+    // `require_room_secret` refused an empty secret at startup, the only key jsonwebtoken rejects.
+    let key = match DecodingKey::from_secret(state.call_room_secret.as_bytes()) {
+        Ok(key) => key,
+        Err(e) => {
+            error!(
+                "[auth] Peer {} room key unusable: {} - CALL_ROOM_SECRET was checked at startup",
+                peer_id, e
+            );
+            return None;
+        }
+    };
     let validation = Validation::new(Algorithm::HS256);
     match decode::<RoomClaims>(token, &key, &validation) {
         Ok(data) if data.claims.room_id != room_id => {
@@ -2403,11 +2417,9 @@ fn mint_resume_token(
         // A resume token only ever names a p2p seat; its mode was the room's from its first Join.
         mode: None,
     };
-    match encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(state.call_room_secret.as_bytes()),
-    ) {
+    match EncodingKey::from_secret(state.call_room_secret.as_bytes())
+        .and_then(|key| encode(&Header::new(Algorithm::HS256), &claims, &key))
+    {
         Ok(token) => Some(token),
         Err(e) => {
             error!(
@@ -2736,71 +2748,81 @@ fn p2p_relay(
             }
         }
     };
-    let targets = match room.route(peer_id, to.as_deref(), broadcast) {
-        Route::To(p) => vec![p],
-        Route::Everyone(all) => all,
-        // An evicted device still trickling: its record already explains it.
-        Route::NotSeated => return,
-        Route::Away => {
-            // Expected while it reconnects: the sender was told `PeerAway`, and the pair
-            // renegotiates on its resume.
-            count_ice_lost();
-            info!(
-                "[call] {} sent {} in p2p room {} while the other party is away - dropped",
-                peer_id, name, room_id
-            );
-            return;
-        }
-        Route::Nobody => {
-            count_ice_lost();
-            warn!(
-                "[call] {} sent {} in p2p room {} with nobody to receive it (to={}) - dropped",
-                peer_id,
-                name,
-                room_id,
-                to.as_deref().unwrap_or("-")
-            );
-            return;
-        }
-        Route::Unaddressed => {
-            count_ice_lost();
-            warn!(
-                "[call] {} sent {} in mesh room {} naming no addressee - dropped (no mesh client sends one)",
-                peer_id, name, room_id
-            );
-            return;
-        }
-    };
-    for target in targets {
-        match p2p::deliver(&target.tx, frame.clone()) {
-            Ok(()) => {
-                if let Some(ledger) = &session.ledger {
-                    count_relayed(kind, ledger, &target.ledger);
+    // Delivered UNDER the room's lock: a replaced device's frame then precedes its successor's
+    // `PeerReady` or goes nowhere (see `P2pRoom::relay`).
+    room.relay(peer_id, to.as_deref(), broadcast, |route| {
+        let targets = match route {
+            Route::To(p) => vec![p],
+            Route::Everyone(all) => all,
+            // An evicted device still trickling: its record already explains it.
+            Route::NotSeated => {
+                debug!(
+                    "[call] {} sent {} in p2p room {} but holds no seat (replaced or expired) - dropped",
+                    peer_id, name, room_id
+                );
+                return;
+            }
+            Route::Away => {
+                // Expected while it reconnects: the sender was told `PeerAway`, and the pair
+                // renegotiates on its resume.
+                count_ice_lost();
+                info!(
+                    "[call] {} sent {} in p2p room {} while the other party is away - dropped",
+                    peer_id, name, room_id
+                );
+                return;
+            }
+            Route::Nobody => {
+                count_ice_lost();
+                warn!(
+                    "[call] {} sent {} in p2p room {} with nobody to receive it (to={}) - dropped",
+                    peer_id,
+                    name,
+                    room_id,
+                    to.as_deref().unwrap_or("-")
+                );
+                return;
+            }
+            Route::Unaddressed => {
+                count_ice_lost();
+                warn!(
+                    "[call] {} sent {} in mesh room {} naming no addressee - dropped (no mesh client sends one)",
+                    peer_id, name, room_id
+                );
+                return;
+            }
+        };
+        for target in targets {
+            match p2p::deliver(&target.tx, frame.clone()) {
+                Ok(()) => {
+                    if let Some(ledger) = &session.ledger {
+                        count_relayed(kind, ledger, &target.ledger);
+                    }
+                    if kind != RelayedKind::Ice {
+                        info!(
+                            "[call] p2p {} relayed room={} from={} to={}",
+                            name, room_id, peer_id, target.peer_id
+                        );
+                    }
                 }
-                if kind != RelayedKind::Ice {
-                    info!(
-                        "[call] p2p {} relayed room={} from={} to={}",
-                        name, room_id, peer_id, target.peer_id
+                Err(e) => {
+                    // Counted only for ICE, the one kind that column was written for; a dropped offer
+                    // or answer is rarer and fatal to the negotiation, and this line carries it.
+                    if kind == RelayedKind::Ice {
+                        bump(&target.ledger.ice_out_failed);
+                    }
+                    warn!(
+                        "[call] p2p {} DROPPED room={} from={} to={}: {}",
+                        name,
+                        room_id,
+                        peer_id,
+                        target.peer_id,
+                        e.as_str()
                     );
                 }
             }
-            Err(e) => {
-                // Counted only for ICE, the one kind that column was written for; a dropped offer
-                // or answer is rarer and fatal to the negotiation, and this line carries it.
-                if kind == RelayedKind::Ice {
-                    bump(&target.ledger.ice_out_failed);
-                }
-                warn!(
-                    "[call] p2p {} DROPPED room={} from={} to={}: {}",
-                    name,
-                    room_id,
-                    peer_id,
-                    target.peer_id,
-                    e.as_str()
-                );
-            }
         }
-    }
+    });
 }
 
 /// Removes a peer from its peer-to-peer room when its socket ends, tells the present others who
@@ -3669,9 +3691,18 @@ mod tests {
         encode(
             &Header::new(alg),
             &claims,
-            &EncodingKey::from_secret(secret),
+            &EncodingKey::from_secret(secret).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn an_empty_secret_accepts_nothing() {
+        let signed = user_token(None, b"test-secret", Algorithm::HS256);
+        assert!(matches!(
+            decode_access_claims(&signed, b""),
+            Err(TokenRejection::Invalid(_))
+        ));
     }
 
     #[test]

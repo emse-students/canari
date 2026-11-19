@@ -92,7 +92,7 @@ function rasterise(
 }
 
 /** The shape of link every call site encodes today: an absolute public form URL. */
-const FORM_URL = 'https://canari-emse.fr/forms/8f14e45f-ceea-467a-9d94-2b6c1ca1d7a9';
+const FORM_URL = 'https://canari.emse.fr/forms/8f14e45f-ceea-467a-9d94-2b6c1ca1d7a9';
 
 describe('logoBadge', () => {
   // Every QR version, from 21 modules to 177. A symbol's side is always odd.

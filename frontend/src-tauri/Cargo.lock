@@ -566,10 +566,11 @@ dependencies = [
 
 [[package]]
 name = "canari"
-version = "1.7.0-alpha.6"
+version = "1.7.1-alpha.3"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
+ "block2",
  "hkdf 0.12.4",
  "jni",
  "libc",
@@ -3491,7 +3492,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "1.7.0-alpha.6"
+version = "1.7.1-alpha.3"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -6236,8 +6237,6 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-dialog"
 version = "2.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7461aaacf1901915ea7b9f5cd74f8224a351ed96af0a62c07fce934003cb34b"
 dependencies = [
  "log",
  "raw-window-handle",

@@ -386,7 +386,7 @@ neither form is in this repository - and decide together with B5's wording, so t
 | Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
 | The peer and Cloudflare see each device's public IP, on every ANSWERED call (an unanswered call sends it to neither) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
 | The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
-| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+| The ring push carries ids only - conversation, call and caller ids, `hasVideo`, and on VoIP `ringUntil` - never a name (decision 6; C7, C21) | already covered by the messaging rows, if they name push content | same |
 
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
@@ -2045,11 +2045,44 @@ other participant, the tile grid, the start control in a group) is the
 - **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
   does not end the call; the call ends for a participant when the last other participant has left.
   On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
-  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
-  join (interim).
+  ended; only the caller's ends the ring for everyone, a participant's `room-empty` included
+  ([WP-GC7](#an-emptied-room-ends-every-ring-wp-gc7-server-half-2026-11-16)). A group call keeps the
+  60 s ring window to join (interim).
 - **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
+
+### An emptied room ends every ring (WP-GC7, server half, 2026-11-16)
+
+A non-caller's `ring-end` stops only its own devices (WP-C11), so when the last participant of an
+answered group call is not the caller, a member rung by CallKit or the Android full-screen ring
+keeps ringing until the 60 s window closes. The ring-end reasons are
+`'cancelled' | 'answered' | 'ended' | 'room-empty'` (`RingEndReason`, `calls.service.ts`). The
+caller's `room-empty` ends every member's ring and marks it ended, as any caller's ring-end does; a
+1:1's reaches both sides, as every 1:1 ring-end does.
+
+**A participant's `room-empty` stops only the sender's own devices and marks nothing** (decided by
+the lead 2026-11-19 on the review of #3705, reversible; principle 2, the essential is never lost).
+`room-empty` is the sender's view of a mesh, never a fact about the room: a member whose links all
+failed sees nobody in a call that is live for everyone else. Broadcasting `call_ring_end` on that
+word would stop C's CallKit or full-screen ring, and the app has NO control to join an ongoing call
+(`CallBanner` only returns to your own call), so C would miss a live call; writing `ring_ended` would
+also refuse every later `room-token` (410). So the participant path is the WP-C11 path, logged in
+one line (`reason=room-empty by a member of a group call - their own devices only`), and the other
+members' rings end with the answer window (`answer_by`, 60 s, `liveRingDeadline`). An earlier draft
+gated the broadcast on a per-call token mark (`call:room:<id>:tokened:<user>`); a mark proves a way
+in, not an empty room, and was removed with the broadcast it gated. **What lifts this**, each with
+its test: (1) an authoritative room-empty - call-service's seat query (the seats live only in its
+memory, `p2p.rs`, `sfu_seats.rs`), read by `endRing`, with a test that a `room-empty` against an
+occupied room reaches no other member; or (2) an in-app control to join an ongoing call, with a
+test that a member whose ring was ended can still reach a live room from the conversation.
+
+- **Pinned by** `calls.service.spec.ts` (`an emptied room ends every ring (WP-GC7)`).
+- **Owed:** the client line - `CallService.endCall` sending `room-empty` exactly when its hangup
+  says `roomEmpty` - after WP-GC6; until then no client sends it, and an older server reads an
+  unknown reason as `cancelled`. Reading: a three-way call with C's app killed, C's lock-screen ring
+  stops when the caller, last in the room, hangs up, on the Mi 9T and the iPhone 12; and when a
+  participant hangs up last, C's ring runs to the end of its window.
 
 ### The relay leg (WP-GC4, 2026-11-13)
 
@@ -2109,12 +2142,12 @@ server knows:
 
 | Route | Cloudflare call | The checks |
 | --- | --- | --- |
-| `POST calls/sfu/session` `{ roomId, roomToken }` | `POST sessions/new` | the room token verifies and signs `mode: cloudflare` for THIS user and room (`CallsService.admitToCloudflareRoom`: it was issued after every call gate - membership, review cohort, a block dropping the member, the ring window); calls open; still a member. Then the seat is claimed ATOMICALLY (a Lua script on `call:room:<id>:cf:seats`, `userId -> sessionId`): past the cap, 409 `GROUP_CALL_ROOM_FULL`; a second device of a seated user REPLACES its seat (one device per user, 2026-11-13). Answers `{ sessionId, others }` |
+| `POST calls/sfu/session` `{ roomId, roomToken }` | `POST sessions/new` | the room token verifies and signs `mode: cloudflare` for THIS user and room (`CallsService.admitToCloudflareRoom`: it was issued after every call gate - membership, review cohort, a block dropping the member, the ring window); calls open; still a member. Then the seat is claimed ATOMICALLY (a Lua script on `call:room:<id>:cf:seats`, `userId -> sessionId`): past the cap, the seats are read-repaired ONCE (below) and the claim retried, then 409 `GROUP_CALL_ROOM_FULL`; a second device of a seated user REPLACES its seat (one device per user, 2026-11-13) and the replaced session is EVICTED (below). Answers `{ sessionId, others }` |
 | `POST calls/sfu/tracks` `{ roomId, sessionId, sessionDescription?, tracks }` | `POST sessions/<id>/tracks/new` | `sessionId` is the caller's own seat; a `local` track needs the offer and is recorded as pullable (`call:room:<id>:cf:tracks:<session>`) unless Cloudflare refused it; a `remote` track must name ANOTHER session seated in this room and a track it pushed. Only the fields Cloudflare reads are forwarded |
 | `PUT calls/sfu/renegotiate` `{ roomId, sessionId, sessionDescription }` | `PUT sessions/<id>/renegotiate` | own seat |
 | `PUT calls/sfu/tracks/close` `{ roomId, sessionId, tracks: [{ mid }], force? }` | `PUT sessions/<id>/tracks/close` | own seat |
-| `GET calls/sfu/roster?roomId=` | none | the caller holds a seat; answers the OTHER seats and the tracks each pushed, and `others` |
-| `POST calls/sfu/leave` `{ roomId, sessionId }` | none | releases the seat only if it still holds THIS session (a replaced device's late leave unseats nobody), drops its tracks; answers `{ others }` - `0` is WP-GC6's empty room, owed on the relay as on the mesh. Not gated on membership: a member removed mid-call can still leave |
+| `GET calls/sfu/roster?roomId=` | `GET sessions/<id>` per other seat | the caller holds a seat; the other seats are read-repaired (below); answers the OTHER seats and the tracks each pushed, and `others` |
+| `POST calls/sfu/leave` `{ roomId, sessionId }` | `GET sessions/<id>` per other seat | releases the seat only if it still holds THIS session (a replaced device's late leave unseats nobody), drops its tracks, read-repairs the other seats; answers `{ others }` - `0` is WP-GC6's empty room, owed on the relay as on the mesh. Not gated on membership: a member removed mid-call can still leave |
 
 Every later step re-reads the room's binding (gone: 410; carried by another relay: 403), the kill
 switch and the membership (`CallsService.assertCloudflareParticipant`). Every key of the relay
@@ -2125,19 +2158,103 @@ back in the answer and logged at WARN. Media never crosses chat-delivery: only S
 clients' transforms encrypt before Cloudflare sees them (probe Q4, 2026-11-13,
 [revival plan](calls-revival-plan.md#14-probes-of-2026-10-16-clients)).
 
+**A seat's liveness is Cloudflare's, read at the moment it matters (review of #3751).** A seat
+used to be freed only by its holder's `leave` or the room's TTL, so a killed or offline phone kept
+it: it counted against the cap, stayed in `roster`, and the last real participant's `leave`
+answered `others >= 1`, so the room never read as empty. Neither a heartbeat the client writes nor
+a timer here was taken (a liveness clock must be written by the thing whose liveness it measures,
+and a timer would make correctness a matter of timing): the proxy holds the app secret, and
+Cloudflare's `GET sessions/<id>` lists each track of the session with a `status` the SFU writes
+from that session's OWN media - a track receiving no packets for 30 s is collected (Cloudflare's
+limits). So `roster`, `leave` and a refused `session` claim READ-REPAIR the ledger
+(`CloudflareSfuService.pruneSeats`): every other seat is released, through the same conditional
+script as a leave, when
+
+- its holder is no longer an admitted member of the conversation
+  (`CallsService.cloudflareRoomMembers`, the rows `assertMembership` reads) - and its session is
+  also EVICTED at Cloudflare, so a member removed mid-call stops sending and receiving, not only
+  being listed; or
+- Cloudflare proves its session over (`sessionLivenessOf`): a 404/410, or the session pushed tracks
+  (by the ledger) and Cloudflare lists none of its local tracks `active`.
+
+A seat nothing proves over is KEPT: a session not yet pushing (between `sessions/new` and
+`tracks/new`) is live, and an answer that proves nothing (a 5xx, an `errorCode`, no answer) keeps
+the seat with a WARN naming it - a destructive repair is gated on knowing the state is broken. One
+`try` per seat. **Owed: a dev reading of what Cloudflare answers for a session closed long ago**
+(404 is the documented-by-HTTP reading; if it answers otherwise the WARN says so, and the track
+statuses still prune the killed phone). The cost is one `GET` per other seat on each `roster`, at
+most seven.
+
+**A replaced device is evicted, not only unseated.** When a second device takes a user's seat, the
+proxy reads the replaced session's active tracks and closes them all at Cloudflare
+(`tracks/close`, `force: true` - no renegotiation with a client that is out), so subscribers stop
+receiving the old push, and deletes its pushed-tracks key. The replacement never waits on it: a
+close Cloudflare refuses is logged at ERROR (its media flows until Cloudflare collects the session),
+and nothing can pull from it again since its seat is gone.
+
 **What it does not do: announce.** The proxy pushes nothing to the other participants. The client
 half (WP-GC4) announces its session over the conversation's own channel and the others pull it
 through `roster` and `tracks`; the server authorises every pull against the seat ledger, so an
 announcement can name nothing the server would not serve.
 
-Pinned by `cloudflare-sfu.service.spec.ts` (the API calls and their secret, the cap, the replacement,
-every pull refusal, the forwarded fields, each upstream failure typed, the roster, the leave),
+Pinned by `cloudflare-sfu.service.spec.ts` (the API calls and their secret, the cap, the replacement
+and its eviction, every pull refusal, the forwarded fields, each upstream failure typed, the roster,
+the leave, the liveness classification and every read-repair: a killed phone, a forgotten session, an
+unknown answer kept, a removed member evicted, a full room freed by a dead seat),
 `cloudflare-sfu.redis.spec.ts` (the two seat scripts against a real Redis in CI's `boot-nest-apps`:
 twenty users racing for two seats seat exactly two), `calls.service.spec.ts` (the `cloudflare` rows
 and the two proxy gates) and `callRelaysAgree.test.ts` (the CHECK now read from 026). **Owed:** the
 scheduled SFU probe run through the proxy rather than straight at Cloudflare (it needs a signed-in
 caller and a bound room); the client's leg (WP-GC4); a five-way call on dev with `call_relay =
 cloudflare`, read on the bench.
+
+### One device per user: the relay's wire (WP-GC8, 2026-11-16)
+
+**The contract the client rebuilds on**, decided from
+[the one-device-per-user decision](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible)
+and pinned in call-service (`apps/call-service/src/p2p.rs`). A user holds ONE seat; a second device's
+`Join` (or a device that replaces another) takes it, in a 1:1 room as in a mesh. When bob's second
+device joins a call with alice and carol:
+
+| Who | Receives | Means |
+| --- | --- | --- |
+| bob's replaced device | `PeerLeft` with NO `peer`, then nothing | this device is out of the call; its later frames reach nobody |
+| bob's new device | `Joined`, then one `PeerReady { peer, initiator: false }` per PRESENT participant (no `resumed`), and `PeerAway { peer }` per away one | build every leg from nothing; the new device arrived LAST, so it is the polite side of every pair |
+| alice, carol (present) | exactly ONE `PeerReady { peer: "bob", resumed absent }` each - no `PeerLeft`, no `PeerAway` for bob | drop the leg held for `bob` and build one anew; the call goes on |
+| a participant AWAY then | nothing; on its resume, `PeerReady { peer: "bob" }` WITHOUT `resumed` (and `resumed: true` for the others) | the same rule: its leg to the old device is rebuilt |
+
+- **`peer` is always a USER id, never a device or seat id** - the same `peer` before and after
+  the replacement (and `from` on every relayed frame is the sender's user id too). A test that
+  re-announces a replaced device under another `peer` (`bob:seat-b2`) drives a wire the relay never
+  sends.
+- **`resumed` absent (false) is the whole signal: whatever leg the client holds for that `peer` is
+  dropped and a new one built.** There is no "replaced" flag: a replacement forgets every pair of
+  that user, so each of its pairings is a first one, and `resumed: true` is only ever sent for a
+  pair the same two devices formed before. No other case re-announces a user the client still holds
+  a leg for without `resumed` - a departure is a `PeerLeft { peer }` first, an expired grace too.
+- **Roles may flip.** The new seat is last in arrival order, so a pair the REPLACED device initiated
+  (carol, who joined after bob, now offers to bob's new device) changes sides; the leg is built anew,
+  so the role is read from this `PeerReady`, never kept from the old leg.
+- **No stale frame after the announcement.** call-service hands every relayed frame on UNDER the
+  room's lock (`P2pRoom::relay`), the lock the replacement and its `PeerReady` take, so a frame the
+  replaced device sent reaches a participant BEFORE the new `PeerReady` (it belongs to the old leg,
+  which the client is about to drop) or never. Every frame `from: "bob"` after that `PeerReady` is
+  the new device's.
+- **That guarantee runs ONE way: toward the participants, never toward the new device.** The new
+  seat routes `to: "bob"` from the moment it is taken, which is BEFORE its `Joined` and its
+  `PeerReady` frames are handed on, and alice or carol may still be sending what they meant for the
+  OLD leg (an answer, candidates) until they read their own `PeerReady`. No server lock can order
+  those: they were sent before the sender knew. So the new device MUST drop a frame from a `peer` it
+  holds no leg for yet, and must survive one the new leg cannot use (an answer while it is `stable`
+  and polite, a candidate of the old ICE session) as a logged, ignored error - never as a failed leg.
+
+Pinned by `tests/p2p_signalling.rs`
+(`a_second_device_in_a_mesh_replaces_the_first_with_one_peer_ready_per_participant`,
+`a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_the_new_device`, and the 1:1
+`a_second_device_replaces_the_first_and_both_ends_are_told`) and the `p2p.rs` unit tests (the
+pairings, the away resume, `a_relayed_frame_is_delivered_under_the_rooms_lock`). The client half -
+`onPeerReady` / `legForPeerReady` rebuilding on a re-announced `peer` without `resumed`, and its test
+driven by THIS wire - follows WP-GC6 ([backlog](../../backlog.d/group-calls-one-device-per-user.md)).
 
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
 

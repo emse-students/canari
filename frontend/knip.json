@@ -15,6 +15,7 @@
   ],
   "ignoreUnresolved": ["^\\$lib/(wasm|proto/canari)", "^\\$lib/paraglide/"],
   "ignoreIssues": {
+    "tsconfig.json": ["unlisted"],
     "src/lib/utils/users/visibleText.ts": ["exports", "types"],
     "src/lib/calendar/ics.ts": ["exports", "types"],
     "src/lib/minesweeper/game.ts": ["exports", "types", "duplicates"],

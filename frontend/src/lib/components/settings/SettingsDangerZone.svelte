@@ -4,7 +4,7 @@
   import { slide } from 'svelte/transition';
   import { currentUserId, deleteMyAccount } from '$lib/stores/user';
   import { globalSession, appendLog } from '$lib/stores/globalChatSingleton.svelte';
-  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
+  import { clearAuth, leaveSignedOut, noteAccountErasedOnServer } from '$lib/stores/auth';
   import {
     decideDeletedAccountWipe,
     markDeletedAccountWipePending,
@@ -30,6 +30,8 @@
       // account the server deleted.
       const displayedUserId = currentUserId();
       const { deletedSubject } = await deleteMyAccount();
+      // The sign-out below must not ask the server to deregister a push token it just erased.
+      noteAccountErasedOnServer();
       // THE SERVER ANSWERED 204: the account named by the token it accepted is gone. Only THAT
       // account's data may go - the token's subject, never the account on screen when the two
       // differ (`decideDeletedAccountWipe`).

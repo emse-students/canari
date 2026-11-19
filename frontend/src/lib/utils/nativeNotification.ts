@@ -118,12 +118,77 @@ export async function postNativeMessageNotification(
       covers: notification.covers,
       authorProven: notification.authorProven,
       isGroup: notification.isGroup,
+      reaction: false,
     });
   } catch (e) {
     // NOT a fallback to the plain builder: reaching here means the one path failed, and the fix
     // belongs there. Logged at a level that accuses, because the reader got nothing.
     console.error(
       `[NOTIF] The native builder threw for ${notification.conversationId}: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * What the native builder needs for a REACTION to one of this account's messages - the frame
+ * trigger of `reactionNotification.ts`. The push's own fields, no more: the push carries an id, an
+ * emoji and who reacted, never the message, and the builder composes the sentence itself from the
+ * string the push uses (`notif_reaction_body`), so both triggers read the same words.
+ */
+export type NativeReactionNotification = {
+  /** The conversation - the notification is filed under `reaction:<conversationId>`. */
+  conversationId: string;
+  /**
+   * The reacted-to message: with the actor, the notification slot of this reaction
+   * (`reactionCollapseKey`), which the push names too - so the two are one notification, and the
+   * actor's next reaction to the same message replaces it.
+   */
+  messageId: string;
+  /** Who reacted: whose face to draw, and whose nickname in this conversation to look up. */
+  actorId: string;
+  /** The actor's name as this device resolved it - the fallback behind their nickname. */
+  actorName: string;
+  emoji: string;
+  /**
+   * The reaction's own instant (`ReactionMsg.at`), the stamp of its line: the push carries the same
+   * one (`at`), so whichever trigger arrives second is recognised and adds no line (`alreadyPosted`).
+   */
+  at: number;
+};
+
+/**
+ * Asks the Android builder to post (or update) a conversation's REACTION notification, through the
+ * same command a message takes with its `reaction` flag set - `body` then carries the emoji.
+ *
+ * @returns whether the native side ACCEPTED the work, exactly as {@link postNativeMessageNotification};
+ *   always `false` off Android.
+ */
+export async function postNativeReactionNotification(
+  reaction: NativeReactionNotification
+): Promise<boolean> {
+  if (!isAndroidTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<boolean>('notifier_message_natif', {
+      groupId: reaction.conversationId,
+      senderId: reaction.actorId,
+      senderName: reaction.actorName,
+      // A reaction is drawn as the push draws it: no conversation title, no group shape.
+      groupName: '',
+      body: reaction.emoji,
+      mentionsMe: false,
+      sentAt: reaction.at,
+      serverAt: 0,
+      covers: 1,
+      authorProven: false,
+      isGroup: null,
+      reaction: true,
+    });
+  } catch (e) {
+    // NOT a fallback: in the foreground this is the only path to the reaction's notification.
+    console.error(
+      `[NOTIF] The native builder threw for the reaction in ${reaction.conversationId}: ${String(e)}`
     );
     return false;
   }
@@ -143,15 +208,43 @@ export async function postNativeMessageNotification(
  * `contactName` as the raw `channel_<uuid>` id - the key seed routing reads - and puts the
  * community's actual channel name in `name`. Preferring `contactName` there titled every channel
  * notification with its own conversation id.
+ *
+ * `groupTitle` is a GROUP's title as the list draws it (`resolveConversationListPresentation`),
+ * and wins when given: an unnamed group's row holds no name, or only its id, and the list names it
+ * by its members' first names (owner, 2026-11-17) - a notification titled otherwise would name the
+ * same conversation differently from the row it opens.
  */
 export function notificationGroupName(
   conversationType: 'direct' | 'group' | 'channel' | undefined,
   contactName: string,
-  name: string
+  name: string,
+  groupTitle?: string | null
 ): string {
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
-  return contactName || name;
+  return groupTitle || contactName || name;
+}
+
+/**
+ * The title and body of a message notification raised by the PLAIN plugin or the web API - iOS (a
+ * frame that arrives while the app is alive in the background), desktop and the browser, which have
+ * no native builder and no subtitle line.
+ *
+ * A group is titled by ITS name and the speaker leads the body ("Alice: [Media]"), exactly the
+ * hierarchy the iOS extension draws (group title, sender subtitle) and the Android builder draws
+ * from the same `groupName`. Handing the plugin the sender alone as the title lost the group, so a
+ * group message read "Alice / [Media]" on the lock screen whenever this path, not the extension,
+ * raised it (iPhone 12 sitting, 2026-11-16). A direct message, or a group with no name to show,
+ * keeps the sender as the title and the body untouched.
+ */
+export function composePlainNotificationText(
+  senderName: string,
+  body: string,
+  native?: Pick<NativeMessageNotification, 'groupName' | 'isGroup'>
+): { title: string; body: string } {
+  const groupName = native?.groupName.trim() ?? '';
+  if (native?.isGroup === false || groupName === '') return { title: senderName, body };
+  return { title: groupName, body: senderName ? `${senderName}: ${body}` : body };
 }
 
 /**
