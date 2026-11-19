@@ -3271,10 +3271,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // The broadcaster ended it themselves: they are not told moderators stopped it.
       expect(bell).toEqual([]);
 
+      // The broadcaster's retried end: ONE answer, the replay verdict included - false, written by
+      // the cut on the kept row and answered from the cut row once the row is gone.
+      const ANSWER = {
+        id: live.id,
+        endedAt: ended.endedAt,
+        endReason: 'broadcaster',
+        keepsReplay: false,
+      };
       // BEFORE the purge (the row is kept by the refused purge)...
       expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
       expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
-      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'broadcaster' });
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual(ANSWER);
       // ...and AFTER it, from the cut row: the same answer.
       store.failPurge = false;
       await sweeper.sweepOnce();
@@ -3282,11 +3290,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
       expect(await body(lives.manifest(CAROL, live.id))).toEqual(ENDED);
       expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
-      await expect(lives.end(ALICE, live.id)).resolves.toEqual({
-        id: live.id,
-        endedAt: ended.endedAt,
-        endReason: 'broadcaster',
-      });
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual(ANSWER);
       await expect(lives.cut(MOD, live.id, { reason: 'other' })).resolves.toMatchObject({
         endReason: 'broadcaster',
         newlyCut: false,
