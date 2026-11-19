@@ -95,7 +95,7 @@ shown() { case "$1" in "$dump_root"/*) printf '<dumps>/%s' "${1#"$dump_root"/}" 
 prune_copies() {
   local dir="$dump_root/$project" doomed name n=0
   [ -d "$dir" ] || { log "rollback copies: none kept for $project"; return 0; }
-  doomed="$(find "$dir" -maxdepth 1 -type f -printf '%f\n' | ak_prune_select "$now_stamp" "$keep_copies" "$max_copy_days")" ||
+  doomed="$(find "$dir" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | ak_prune_select "$now_stamp" "$keep_copies" "$max_copy_days")" ||
     { err "the rollback copies of $project could not be listed, so none was pruned"; return 1; }
   while IFS= read -r name; do
     [ -n "$name" ] || continue
@@ -126,6 +126,13 @@ label_of() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1"; }
 server_id="$(container_of server)"
 worker_id="$(container_of worker)"
 pg_id="$(container_of postgresql)"
+
+# DOCKER'S RestartCount IS CUMULATIVE over a container's life, so a restart weeks ago would fail every
+# later check. What judges THIS run is the increase from the count each container had when the run
+# began; a container this run creates has a new id, and starts from 0.
+declare -A restarts_at_start=()
+restart_count() { docker inspect -f '{{.RestartCount}}' "$1"; }
+for id in $server_id $worker_id; do restarts_at_start[$id]="$(restart_count "$id" || true)"; done
 
 # THE ONE PRECONDITION THE OWNER OWES, refused by name rather than skipped. The account is not named:
 # the log is public.
@@ -165,6 +172,14 @@ db_state() {
   docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT (SELECT count(*) FROM django_migrations)::text || chr(58) || COALESCE((SELECT max(id) FROM authentik_version_history), 0)::text"' 2>/dev/null | tr -d '[:space:]' || true
 }
 
+# restarts_since_start <id> - how many times the container restarted during this run, or `unreadable`
+# (which ak_health_verdict fails on, as it is not 0).
+restarts_since_start() {
+  local now base="${restarts_at_start[$1]:-0}"
+  now="$(restart_count "$1" || true)"
+  if [[ "$now" =~ ^[0-9]+$ ]] && [[ "$base" =~ ^[0-9]+$ ]]; then echo $((now - base)); else echo unreadable; fi
+}
+
 # wait_healthy <service> - Docker's verdict, polled until it is one (ak_health_verdict). The migration
 # count is read on every poll: while it still rises, `unhealthy` is a wait, not a verdict.
 wait_healthy() {
@@ -182,7 +197,7 @@ wait_healthy() {
       verdict="$(ak_health_verdict \
         "$(docker inspect -f '{{.State.Status}}' "$id")" \
         "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id")" \
-        "$(docker inspect -f '{{.RestartCount}}' "$id")" \
+        "$(restarts_since_start "$id")" \
         "$migrating")"
     fi
     case "$verdict" in
@@ -243,7 +258,7 @@ env_access_ok || { err "$env_access_refusal Nothing was changed."; exit 1; }
 old_server="$(image_of "$server_id")"
 old_worker="$(image_of "$worker_id")"
 old_tag="$(ak_tag_of "$old_server")"
-env_before="$(cat "$env_file")"
+env_before="$(cat -- "$env_file" 2>/dev/null)" || { err "the stack's .env could not be read - nothing was changed"; exit 1; }
 env_tag="$(printf '%s\n' "$env_before" | ak_env_tag)"
 decision="$(ak_decide "$pin" "$old_server" "$old_worker" "$env_tag")"
 log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env tag=${env_tag:-unset} -> $decision"
@@ -251,13 +266,14 @@ log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env ta
 # EVERY FILE THIS RUN WRITES (dump, `.env` backup, logs) is the runner's, mode 0600, in a 0700 tree.
 umask 077
 dump_dir="$dump_root/$project"
-mkdir -p "$dump_dir"
+mkdir -p -- "$dump_dir" 2>/dev/null || { err "the dump directory <dumps>/$project could not be created - nothing was changed"; exit 1; }
 stamp="$now_stamp"
 dump=""
 env_backup=""
 state_before=""
-# docker compose's own messages name the stack's files by their HOST path: they go here, 0600, and
-# the public log names this file as `<dumps>/...` (shown).
+# THE RUN'S PRIVATE LOG: docker compose's own messages and those of the file tools (cp, df, the
+# dump's redirection) name the stack's files by their HOST path: they go here, 0600, and the public
+# log names this file as `<dumps>/...` (shown).
 compose_log="$dump_dir/$stamp-compose.log"
 
 # WHAT AN INTERRUPTION LEAVES, said rather than discovered. `phase` is what a signal finds: before
@@ -279,6 +295,10 @@ on_signal() {
     err "interrupted ($1) before any change - nothing was changed. The dump, if taken: $(shown "$dump")"
     exit 1
   fi
+  if [ "$phase" = record ]; then
+    err "INTERRUPTED ($1) while the .env line was being set to the tag the stack already runs, nothing restarted: $(state_now). The .env as it was is $(shown "$env_backup"); check the stack answers (deploy-stack.sh health)."
+    exit 2
+  fi
   err "INTERRUPTED ($1) during $phase: $(state_now). $(manual_steps)"
   exit 2
 }
@@ -288,8 +308,8 @@ arm_traps
 # backup_env - a byte-for-byte copy of `.env`, 0600, beside the dumps; read back before it is trusted.
 backup_env() {
   env_backup="$dump_dir/$stamp-$project.env"
-  if ! cp -- "$env_file" "$env_backup" || ! cmp -s -- "$env_file" "$env_backup"; then
-    err "the .env could not be backed up to $(shown "$env_backup") - nothing was changed"
+  if ! cp -- "$env_file" "$env_backup" 2>>"$compose_log" || ! cmp -s -- "$env_file" "$env_backup"; then
+    err "the .env could not be backed up to $(shown "$env_backup") (the messages: $(shown "$compose_log")) - nothing was changed"
     exit 1
   fi
 }
@@ -306,7 +326,7 @@ backup_env() {
 write_env() {
   local tmp="" rc=0
   trap '' INT TERM
-  if tmp="$(mktemp "$dump_dir/.env-next.XXXXXX" 2>/dev/null)" &&
+  if tmp="$(mktemp "$dump_dir/$stamp-env-next.XXXXXX" 2>/dev/null)" &&
     { printf '%s\n' "$1" >"$tmp"; } 2>/dev/null &&
     { cat -- "$tmp" >"$env_file"; } 2>/dev/null &&
     cmp -s -- "$tmp" "$env_file"; then
@@ -327,8 +347,15 @@ case "$decision" in
     prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
     exit 0
     ;;
+  keep-newer:*)
+    echo "::warning title=MiConnect ($project)::$project runs authentik ${decision#keep-newer:}, NEWER than the pin $pin_tag of this release - left untouched (authentik's migrations do not run backwards; a rerun of an older release, or of one whose estate deploy failed, meets exactly this). The release goes on; pin ${decision#keep-newer:} or newer again on main."
+    after_checks "${decision#keep-newer:}" || { err "$project runs authentik ${decision#keep-newer:} (newer than the pin) and its checks fail - this run changed nothing"; exit 1; }
+    prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
+    exit 0
+    ;;
   record)
     backup_env
+    phase=record
     st=0
     write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$pin_tag")" || st=$?
     case "$st" in
@@ -402,7 +429,7 @@ state_before="$(db_state)"
 
 # 2. The dump: room for it first, then read back IN FULL before it is trusted.
 db_bytes="$(docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT pg_database_size(current_database())"' 2>/dev/null | tr -d '[:space:]' || true)"
-avail_kb="$(df -Pk "$dump_dir" | awk 'NR == 2 { print $4 }')"
+avail_kb="$(df -Pk "$dump_dir" 2>>"$compose_log" | awk 'NR == 2 { print $4 }')"
 if ! ak_space_ok "$db_bytes" "$avail_kb"; then
   err "no room for the dump: the database is ${db_bytes:-?} bytes and the dump directory has ${avail_kb:-?} KiB free (twice the database is asked) - nothing is changed"
   exit 1
@@ -410,15 +437,17 @@ fi
 dump="$dump_dir/$stamp-$old_tag-to-$pin_tag.dump"
 restore_log="$dump_dir/$stamp-pg.log"
 log "dumping the database to $(shown "$dump")"
-docker exec "$pg_id" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$dump" 2>"$restore_log" ||
+# THE REDIRECTIONS ARE INSIDE THE BRACES, so bash's own message when one fails (it names the host
+# path) reaches the private log too.
+{ docker exec "$pg_id" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$dump"; } 2>"$restore_log" ||
   { err "pg_dump failed (its messages: $(shown "$restore_log")) - nothing is changed"; exit 1; }
-entries="$(docker exec -i "$pg_id" pg_restore --list <"$dump" 2>>"$restore_log" | grep -c '^[0-9]' || true)"
+entries="$({ docker exec -i "$pg_id" pg_restore --list <"$dump"; } 2>>"$restore_log" | grep -c '^[0-9]' || true)"
 if [ ! -s "$dump" ] || [ "${entries:-0}" -eq 0 ]; then
   err "the dump $(shown "$dump") is empty or its table of contents unreadable ($entries entries) - nothing is changed"
   exit 1
 fi
 # The table of contents proves the header; this reads every data block, as a restore would.
-if ! docker exec -i "$pg_id" pg_restore -f /dev/null <"$dump" 2>>"$restore_log"; then
+if ! { docker exec -i "$pg_id" pg_restore -f /dev/null <"$dump"; } 2>>"$restore_log"; then
   err "the dump $(shown "$dump") does not read back in full (pg_restore's messages: $(shown "$restore_log")) - nothing is changed"
   exit 1
 fi
@@ -460,7 +489,7 @@ rollback() {
   if [ "$plan" = restore ]; then
     phase=restore
     trap '' INT TERM
-    docker exec -i "$pg_id" sh -c 'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' <"$dump" >>"$restore_log" 2>&1
+    { docker exec -i "$pg_id" sh -c 'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' <"$dump"; } >>"$restore_log" 2>&1
     st=$?
     arm_traps
     phase=rollback

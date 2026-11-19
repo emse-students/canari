@@ -278,6 +278,10 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+**Nor does it take MiConnect back**: its step runs first and finds authentik NEWER than the old
+release's pin, which it keeps as it is (`keep-newer`, a warning naming both versions, the checks on
+the running version, exit 0) so the estate's rollback goes on - authentik's migrations do not run
+backwards ([authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
 
 #### A migration the owner must approve is held (2026-11-01)
 

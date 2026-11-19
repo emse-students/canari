@@ -70,10 +70,15 @@ ak_version_gt() {
 #   noop      both containers run the pin and `.env` names it: nothing to do
 #   record    both run the pin, `.env` names another tag: write the line, restart nothing
 #   upgrade   at least one container runs something else, older: dump, retag, restart, check
-#   refuse:<why>  a stack that is not running, a version that cannot be ordered, or a DOWNGRADE -
-#             authentik's migrations do not run backwards, so going back is a restore by hand
+#   keep-newer:<tag>  both containers run the SAME version, NEWER than the pin: left untouched. It is
+#             what a rerun of an older release's deploy meets (the documented rollback of the estate,
+#             docs/wiki/cicd.md), and every rerun after a stable whose MiConnect step passed and whose
+#             estate deploy failed. authentik's migrations do not run backwards, so MiConnect is not
+#             taken back; the release goes on with the estate (the caller warns and checks the stack).
+#   refuse:<why>  a stack that is not running, a version that cannot be ordered, or the two
+#             containers on different versions with one newer than the pin
 ak_decide() {
-  local pin="$1" server="$2" worker="$3" env_tag="$4" pin_tag running running_tag
+  local pin="$1" server="$2" worker="$3" env_tag="$4" pin_tag running running_tag newer=no older=no
   pin_tag="$(ak_tag_of "$pin")"
   if [ "$server" = "$pin" ] && [ "$worker" = "$pin" ]; then
     if [ "$env_tag" = "$pin_tag" ]; then echo noop; else echo record; fi
@@ -93,11 +98,16 @@ ak_decide() {
       echo "refuse:the running image '$running' has no version tag, so a downgrade cannot be ruled out"
       return 0
     fi
-    if ak_version_gt "$running_tag" "$pin_tag"; then
-      echo "refuse:DOWNGRADE - '$running' runs and the repository pins '$pin'; authentik's migrations do not run backwards, so this is a database restore by hand"
-      return 0
-    fi
+    if ak_version_gt "$running_tag" "$pin_tag"; then newer=yes; else older=yes; fi
   done
+  if [ "$newer" = yes ]; then
+    if [ "$older" = yes ] || [ "$(ak_tag_of "$server")" != "$(ak_tag_of "$worker")" ]; then
+      echo "refuse:server runs '$server' and worker '$worker', one of them NEWER than the pin '$pin' - neither keeping nor upgrading is one version; align them by hand"
+    else
+      echo "keep-newer:$(ak_tag_of "$server")"
+    fi
+    return 0
+  fi
   echo upgrade
 }
 
@@ -154,7 +164,9 @@ ak_migrations_rising() {
   [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -gt "$1" ]
 }
 
-# ak_health_verdict <state> <health> <restart-count> [<migrating: yes|no>]
+# ak_health_verdict <state> <health> <restarts> [<migrating: yes|no>]
+# <restarts> is the INCREASE of Docker's RestartCount since this run first saw the container (the
+# count is cumulative over the container's life: a restart weeks ago is not this run's verdict).
 # Docker's own verdict on a recreated container, which is the image author's healthcheck (`ak
 # healthcheck`, its start period and retries) - a proof, not a timer of ours:
 #   healthy | waiting | failed:<why>
@@ -196,6 +208,9 @@ ak_space_ok() {
 # AN ALLOWLIST, NOT A DENYLIST: only the names deploy-stack.sh writes are candidates -
 # `<stamp>-*.dump`, `<stamp>-*.env`, `<stamp>-pg.log`, `<stamp>-compose.log`, the stamp being
 # `YYYYMMDDTHHMMSSZ` (UTC). Anything else in the directory is never touched.
+# `<stamp>-env-next.XXXXXX` is write_env's temporary copy of the `.env` (every secret in it): a run
+# killed mid-write leaves one, it is never needed again, so it is ALWAYS selected - at most one run
+# executes at a time (one runner), and the prune never runs during a write.
 # THE AGE IS THE STAMP IN THE NAME - the moment the copy was taken - never the file's mtime, which a
 # copy or a restore of the directory resets. <now-stamp> is an argument: nothing here reads the clock.
 ak_prune_select() {
@@ -222,6 +237,7 @@ ak_prune_select() {
     /\.env$/ { kind = "env" }
     /-pg\.log$/ { kind = "pg-log" }
     /-compose\.log$/ { kind = "compose-log" }
+    /-env-next\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$/ { print; next }
     kind == "" { next }
     { if (++seen[kind] > keep || epoch($0) < limit) print }
   '

@@ -57,7 +57,9 @@ eq "both on the pin, .env says another tag: record the line, restart nothing" "$
 eq "older running: upgrade" "$(ak_decide "$P" "$O" "$O" 2026.8.0)" upgrade
 eq "one of two behind: upgrade" "$(ak_decide "$P" "$P" "$O" 2026.8.5)" upgrade
 eq "another registry, same version: upgrade (the reference is the pin's)" "$(ak_decide "$P" docker.io/authentik/server:2026.8.5 "$P" 2026.8.5)" upgrade
-case "$(ak_decide "$O" "$P" "$P" 2026.8.5)" in refuse:DOWNGRADE*) pass "a newer running version is a refused DOWNGRADE" ;; *) fail "a downgrade is not refused" ;; esac
+eq "both on one version NEWER than the pin: kept as it is (a rerun of an older release must pass)" "$(ak_decide "$O" "$P" "$P" 2026.8.5)" keep-newer:2026.8.5
+case "$(ak_decide "$P" ghcr.io/goauthentik/server:2099.1.0 "$O" 2026.8.0)" in refuse:*) pass "one newer and one older than the pin: refused" ;; *) fail "a split newer/older stack is not refused" ;; esac
+case "$(ak_decide "$O" ghcr.io/goauthentik/server:2099.1.0 "$P" 2026.8.0)" in refuse:*) pass "both newer but on two versions: refused" ;; *) fail "two newer versions are kept as one" ;; esac
 case "$(ak_decide "$P" "" "" "")" in refuse:*) pass "a stack that is not running is refused, never created" ;; *) fail "an absent stack is not refused" ;; esac
 case "$(ak_decide "$P" ghcr.io/goauthentik/server:latest "$P" "")" in refuse:*) pass "a running tag that is not a version is refused" ;; *) fail "an unorderable running tag is not refused" ;; esac
 eq "versions order numerically, not as text" "$(ak_version_gt 2026.10.0 2026.8.5 && echo y)" y
@@ -97,6 +99,8 @@ eq "  the age crosses a month and a leap day correctly" \
   "$(printf '20280130T000000Z-a.dump\n20280131T000000Z-b.dump\n' | ak_prune_select 20280301T000000Z 3 30)" 20280130T000000Z-a.dump
 eq "  even the only copy expires (the bound is the owner's, not the release's)" \
   "$(printf '20260101T000000Z-a.dump\n' | ak_prune_select "$now" 3 30)" 20260101T000000Z-a.dump
+eq "  a temporary .env copy a killed run left (every secret in it) always goes, however new" \
+  "$(printf '20261119T115900Z-env-next.Ab12Cd\n.env-next.Ab12Cd\n20261119T115900Z-env-next.short\n' | ak_prune_select "$now" 3 30)" 20261119T115900Z-env-next.Ab12Cd
 if ak_prune_select 2026-11-19 3 30 </dev/null >/dev/null 2>&1; then fail "  a malformed now is accepted"; else pass "  a malformed now is refused, nothing selected"; fi
 
 echo "Docker's verdict decides health, and a crash loop is a failure, not a wait:"
@@ -215,7 +219,16 @@ case "$*" in
     elif grep -qx "$(sed 's/.*://' "$S/server")" "$S/broken"; then echo unhealthy
     else echo healthy; fi
     ;;
-  *RestartCount*) echo 0 ;;
+  *RestartCount*)
+    # Docker's count is cumulative: `restarts-<id>` is the count the container already had; with
+    # `crashloop` it grows on every read, as a crash-looping container's does.
+    id="${*: -1}"
+    if [ -f "$S/restarts-$id" ]; then
+      n="$(cat "$S/restarts-$id")"
+      if [ -f "$S/crashloop" ]; then echo $((n + 1)) >"$S/restarts-$id"; fi
+      echo "$n"
+    else echo 0; fi
+    ;;
   "port server-id 9000/tcp") echo 127.0.0.1:9000 ;;
   pull*) ;;
   *"compose"*"config --images"*)
@@ -266,15 +279,29 @@ case "$*" in
 esac
 EOF
 sed -i "s|__STATE__|'$S'|" "$tmp/bin/docker"
-printf '#!/usr/bin/env bash\ncase "$*" in *openid-configuration*) echo %s ;; esac\n' "'{\"issuer\":\"i\",\"authorization_endpoint\":\"a\"}'" >"$tmp/bin/curl"
+# curl, a command the deploy runs directly (not in a subshell): `signal-on` = `curl` signals the
+# deploy while it runs, which is how a test interrupts the after-checks.
+cat >"$tmp/bin/curl" <<EOF
+#!/usr/bin/env bash
+if [ "\$(cat '$S/signal-on' 2>/dev/null)" = curl ]; then rm -f '$S/signal-on'; kill -TERM "\$PPID"; fi
+case "\$*" in *openid-configuration*) echo '{"issuer":"i","authorization_endpoint":"a"}' ;; esac
+EOF
 # mktemp fails for the .env's temporary copy once the fake stack says so, and says where (as the
 # real one does), so the test also proves that path stays out of the public log.
 cat >"$tmp/bin/mktemp" <<EOF
 #!/usr/bin/env bash
-case "\$*" in *.env-next.*) [ -f '$S/mktemp-fails' ] && { echo "mktemp: failed to create file via template '\$1'" >&2; exit 1; } ;; esac
+case "\$*" in *env-next.*) [ -f '$S/mktemp-fails' ] && { echo "mktemp: failed to create file via template '\$1'" >&2; exit 1; } ;; esac
 exec '$(command -v mktemp)' "\$@"
 EOF
-chmod +x "$tmp/bin/docker" "$tmp/bin/curl" "$tmp/bin/mktemp"
+# cp and df fail on demand, saying where, as the real ones do - their host path must stay private.
+for tool in cp df; do
+  cat >"$tmp/bin/$tool" <<EOF
+#!/usr/bin/env bash
+[ -f '$S/$tool-fails' ] && { echo "$tool: cannot access '\${*: -1}': Permission denied" >&2; exit 1; }
+exec '$(command -v "$tool")' "\$@"
+EOF
+done
+chmod +x "$tmp/bin/docker" "$tmp/bin/curl" "$tmp/bin/mktemp" "$tmp/bin/cp" "$tmp/bin/df"
 
 fake_reset() {
   rm -rf "$S"
@@ -486,8 +513,60 @@ eq "  without asking docker anything" "$(grep -c . "$S/calls")" 0
 fake_reset "$pin" "$pin_tag"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
 run_deploy; st=$?
-eq "a newer version running: refused, exit 1" "$st" 1
+eq "a version NEWER than the pin running (a rerun of an older release): exit 0, the estate goes on" "$st" 0
 eq "  and nothing touched" "$(changed)" 0
+eq "  .env untouched" "$(ak_env_tag <"$S/dir/.env")" "$pin_tag"
+eq "  a warning names both versions" "$(grep -c '^::warning.*2099\.1\.0, NEWER than the pin '"$pin_tag" "$tmp/out")" 1
+eq "  and the stack's checks ran on the version it runs" "$(grep -c 'checks passed: server and worker healthy on 2099.1.0' "$tmp/out")" 1
+
+fake_reset "$pin" "$pin_tag"
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo 2099.1.0 >"$S/broken"
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
+run_deploy; st=$?
+eq "  a newer version whose checks fail: exit 1" "$st" 1
+
+fake_reset "$pin" "$pin_tag"
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"
+run_deploy; st=$?
+eq "server newer than the pin, worker on it: refused, exit 1" "$st" 1
+eq "  and nothing touched" "$(changed)" 0
+
+echo "Docker's restart count is cumulative: only this run's restarts count:"
+fake_reset "$pin" "$pin_tag"; echo 3 >"$S/restarts-worker-id"
+run_deploy; st=$?
+eq "a worker that restarted 3 times before this run: the no-op passes, exit 0" "$st" 0
+run_deploy health; st=$?
+eq "  and so does the health mode" "$st" 0
+fake_reset "$pin" "$pin_tag"; echo 3 >"$S/restarts-worker-id"; touch "$S/crashloop"
+run_deploy; st=$?
+eq "a worker restarting DURING this run: exit 1" "$st" 1
+eq "  saying it restarted" "$(grep -c 'worker: restarted 1 time' "$tmp/out")" 1
+
+echo "the file tools' messages, which name host paths, stay out of the public log:"
+fake_reset "$O" 2026.8.0; touch "$S/df-fails"
+run_deploy; st=$?
+eq "df fails: refused, exit 1" "$st" 1
+eq "  its host path is not in the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
+fake_reset "$pin" 2026.1.0; touch "$S/cp-fails"
+run_deploy; st=$?
+eq "the .env backup's cp fails: refused, exit 1" "$st" 1
+eq "  its host paths are not in the log" "$(grep -cF -e "$tmp/dumps" -e "$S/dir" "$tmp/out")" 0
+eq "  and the .env is untouched" "$(ak_env_tag <"$S/dir/.env")" 2026.1.0
+fake_reset "$O" 2026.8.0; mkdir -p "$tmp/dumps/miconnect/$now-2026.8.0-to-$pin_tag.dump"
+run_deploy; st=$?
+eq "the dump cannot be written (bash's own redirection error): refused, exit 1" "$st" 1
+eq "  its host path is not in the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
+
+echo "an interrupted record says what it changed:"
+fake_reset "$pin" 2026.1.0; echo curl >"$S/signal-on"
+run_deploy; st=$?
+eq "interrupted after the .env line was recorded: exit 2" "$st" 2
+eq "  saying so, never 'nothing was changed'" "$(grep -c 'while the .env line was being set' "$tmp/out")/$(grep -c 'nothing was changed' "$tmp/out")" 1/0
+
+echo "a temporary .env copy left by a killed run is pruned:"
+fake_reset "$pin" "$pin_tag"; mkdir -p "$tmp/dumps/miconnect"; echo SECRET >"$tmp/dumps/miconnect/20261119T110000Z-env-next.Qw3rTy"
+now=20261119T120000Z run_deploy prune; st=$?
+eq "  exit 0, and it is gone" "$st/$(find "$tmp/dumps/miconnect" -name '*env-next*' | wc -l | tr -d ' ')" 0/0
 
 echo "the workflows: MiConnect's version moves before any estate container, and the daily job mirrors the deploy:"
 # step_line <workflow> <step name> - the line of that step, empty when it is absent.

@@ -69,9 +69,11 @@ script runs compose under `env -i`):
    AUTHENTIK_TAG=` is read too, and its `export` kept). Both on the pin and the line agreeing:
    nothing restarts. Both on the pin, the line stale: the line is written (after a backup), nothing
    restarts. **Both no-restart outcomes still run the after-checks of step 6**, so a pre-release on an
-   unchanged version still proves the test stack answers. Anything older: an upgrade. A stack that is
-   not running, a running tag that is not a version, or a running version NEWER than the pin is
-   REFUSED (see "A refused downgrade" below). The pin must be a TAG: a digest is refused when the pin
+   unchanged version still proves the test stack answers. Anything older: an upgrade. **Both on one
+   version NEWER than the pin: kept** (`keep-newer`, see "A newer version than the pin" below) - a
+   `::warning` names both versions, the checks run on the version that runs, and the run exits 0. A
+   stack that is not running, a running tag that is not a version, or the two containers split with
+   one newer than the pin is REFUSED. The pin must be a TAG: a digest is refused when the pin
    is read, because the host's compose builds the reference from `AUTHENTIK_TAG` alone and could never
    run it - every release would stop at step 2.
 2. **Everything that can fail without touching the stack, first**, compose always run in a SCRUBBED
@@ -93,7 +95,11 @@ script runs compose under `env -i`):
    database's state is read** (`db_state`): `django_migrations`' row count AND the newest id of
    `authentik_version_history` - see step 7 for why both. Compose's own messages (from `config`, the
    dry run, `up`, `stop`) name the stack's files by their HOST path, so they go to a 0600
-   `<stamp>-compose.log` beside the dump; the public log names that file and never relays them.
+   `<stamp>-compose.log` beside the dump - the run's private log, which also takes the messages of
+   the file tools (`cp` of the `.env`, `df`, bash's own error when the dump's redirection fails:
+   every redirection sits inside braces whose stderr goes there); the public log names that file and
+   never relays them. A `.env` or dump directory that cannot be read or created is said in generic
+   words.
 3. **A dump** of that stack's database (`pg_dump -Fc` in its postgres container), after checking the
    dump directory has twice the database's size free (`pg_database_size`, `ak_space_ok`). It is read
    back twice before it is trusted: `pg_restore --list` (the table of contents) and `pg_restore -f
@@ -115,7 +121,10 @@ script runs compose under `env -i`):
    host path is configured in this public repository.
 6. **The checks**: Docker's own health verdict for both containers - the image's `ak healthcheck`,
    its start period and retries, a proof rather than a timer of ours; a restart counts as a failure,
-   because a crash loop resets the health to `starting` for ever. **`unhealthy` is NOT final while
+   because a crash loop resets the health to `starting` for ever. **A restart DURING THIS RUN**:
+   Docker's `RestartCount` is cumulative over a container's life, so the count each container had
+   when the run began is its baseline (`restarts_since_start`), and a container this run creates has
+   a new id and starts from 0 - a worker restarted once weeks ago no longer fails every later check. **`unhealthy` is NOT final while
    the migration count is still rising** between two polls and nothing restarted: a migration longer
    than the healthcheck's start period would otherwise be judged a failure and the dump restored over
    a good upgrade (`ak_health_verdict`'s fourth argument). Then both running the pin,
@@ -152,7 +161,9 @@ script runs compose under `env -i`):
    ago. The age is the `<stamp>` in the name (UTC, the moment the copy was taken), never the file's
    mtime, which a copy of the directory resets; `ak_prune_select` decides it with "now" as an
    argument, and only the names this script writes are candidates (an allowlist - anything else in
-   the directory is never touched). The deploy prunes on every outcome that keeps the stack (no-op,
+   the directory is never touched). `write_env`'s temporary copy, `<stamp>-env-next.XXXXXX`, holds
+   every secret of the `.env`; a run killed mid-write leaves one, so it is in the allowlist and ALWAYS
+   deleted, however new (one runner: no prune meets a write in progress). The deploy prunes on every outcome that keeps the stack (no-op,
    record, upgrade - a rollback keeps its dump), and the daily `drift` job runs `deploy-stack.sh
    prune` on both stacks, so a copy expires on time when no release comes. The register of
    processing lists them ([register](../compliance/register-of-processing.md)).
@@ -172,10 +183,16 @@ database and restore the dump with `pg_restore`; then `docker compose up -d --no
 The files are in `~/authentik-release-dumps/<project>/` of the runner account; the public log names
 them `<dumps>/<project>/...` and never names the account.
 
-**A refused downgrade** almost always means the pin went back on `main` (a revert of a Dependabot
-bump) while the stack already runs the newer version. The answer is to pin that version (or a newer
-one) again, not to restore anything. A real downgrade is a database restore by hand from the dump
-taken before the upgrade, then the `.env` line - authentik's Django migrations do not run backwards.
+**A newer version than the pin is kept, never taken back** (re-review of #3486, 2026-11-19). The
+step runs FIRST, so refusing here would block the estate's documented rollback - re-running an older
+release's deploy ([cicd](../cicd.md#there-is-no-baseline-every-service-is-built-every-release-and-production-deploys-by-vversion-2026-10-06))
+- and every rerun of a stable whose MiConnect step passed and whose estate deploy failed. So
+`ak_decide` answers `keep-newer:<tag>` when both containers run one version newer than the pin:
+nothing is touched (not even the `.env` line), a `::warning` names both versions, the after-checks
+run on the version that runs, and the run exits 0 so the estate goes on. Outside a rerun it means the
+pin went back on `main` (a revert of a Dependabot bump): pin that version or a newer one again. A real
+downgrade is a database restore by hand from the dump taken before the upgrade, then the `.env` line -
+authentik's migrations do not run backwards. Two containers split around the pin are still refused.
 
 **Known limits, accepted**: the rollback puts BOTH containers on the tag `server` ran, even when
 `worker` ran another - the stack has one `AUTHENTIK_TAG` line, and `server` is the one whose
