@@ -1217,6 +1217,26 @@ describe('ReplayPlayer', () => {
       expect(buffer().appends).toContain('m92');
     });
 
+    it('R10e: a seek onto a segment the probe downloaded uses the kept bytes', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 50 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-100').length).toBe(1); // the probe's hit
+      video.currentTime = 200.4; // segment 100
+      p.noteSeeking();
+      for (let i = 0; i < 30; i++) await flush();
+      expect(buffer().appends).toContain('m100');
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-100').length).toBe(1);
+    });
+
     it('R10d: a seek made during the probe does not wait for the whole probe', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
       skip404(Array.from({ length: 60 }, (_, i) => `seg-${40 + i}`));

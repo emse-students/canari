@@ -775,5 +775,5 @@ starts on a keyframe): landing there when the estimate was a little late stays i
 segment 50, 100-102 s) re-adds only `[100, 100.8]` when a seek re-takes it, so its measured end went from 102
 to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s of content (R16a, since #3860).
 A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
-new values; a new extent reaching OUTSIDE the old one by more than a frame (0.05 s) says the segment moved,
+new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
 which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).

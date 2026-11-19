@@ -244,8 +244,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
 const REPLAY_SEGMENT_LENGTH_S = 1.5;
-/** The most two measurements of one segment may differ by before it is said at warn, in seconds: one frame. */
-const MEASURE_FRAME_S = 0.05;
+/** The most two measurements of one segment may differ by before it is said at warn, in seconds: one frame at the slowest rate a camera runs at (15 fps). */
+const MEASURE_FRAME_S = 1 / 15;
 /** How many times a seek looks its segment up again after the one taken proved not to hold the target. */
 const REPLAY_SEEK_RELOOKUPS = 3;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
@@ -736,9 +736,7 @@ export class ReplayPlayer {
       this.cursor++;
       if (this.isBuffered(s.index) || this.missing.has(s.index)) continue;
       // The bytes a probe already downloaded for this segment are appended, not fetched again.
-      const pre = this.probed.get(s.index);
-      this.probed.delete(s.index);
-      await this.take(gen, s, undefined, pre);
+      await this.takeProbed(gen, s);
       // The fill's own walk over a purge is bounded like a seek's: this many requested 404s in a row
       // and the walk is replaced by a probe forward (doubling stride, then bisection) to the FIRST
       // existing segment after the gap; the fill goes on from there. The stream's end is declared only
@@ -844,8 +842,8 @@ export class ReplayPlayer {
   /**
    * THE SAMPLED VERDICT FOR `gone`: nothing was ever appended, the list is complete, and every segment was
    * either really tried and missing or lies in a probed gap - the probes found nothing across the whole
-   * list. The server releases a replay's segments whole, when its post is deleted (`LivesService.purgeEnded`
-   * in apps/social-service/src/lives/lives.service.ts: the folder goes with the live row), so a sampled
+   * list. The server releases a replay's segments only after the replay post is deleted, and then all of them
+   * (`LivesService.purgeEnded` in apps/social-service/src/lives/lives.service.ts), so a sampled
    * "nothing" is a sound verdict; walking every segment of it under a spinner (2000 requests) is not.
    */
   private noMediaAtAll(): boolean {
@@ -947,6 +945,25 @@ export class ReplayPlayer {
     return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000, this.placed)) + 1;
   }
 
+  /** {@link take}, from the bytes a probe already downloaded for this segment when it kept them. */
+  private takeProbed(
+    gen: number,
+    s: LiveReplaySegment,
+    ticket?: SeekTicket
+  ): Promise<number | null> {
+    const pre = this.probed.get(s.index);
+    this.probed.delete(s.index);
+    return this.take(gen, s, ticket, pre);
+  }
+
+  /** After a seek moved the cursor: bytes kept for segments at or behind it will not be asked for again. */
+  private dropProbedBehind(): void {
+    const ahead = this.segments[this.cursor]?.index;
+    for (const index of [...this.probed.keys()]) {
+      if (ahead === undefined || index < ahead) this.probed.delete(index);
+    }
+  }
+
   /**
    * The position of the segment a media-time target `ms` falls in: the one whose MEASURED extent holds it
    * when there is one, else the estimate of {@link segmentPositionAt}.
@@ -971,7 +988,7 @@ export class ReplayPlayer {
     let taken =
       heldStart !== undefined || this.skippedIdx.has(s.index)
         ? null
-        : await this.take(gen, s, ticket);
+        : await this.takeProbed(gen, s, ticket);
     // THE LOOKUP IS AN ESTIMATE past the last measured segment: once the segment is taken its measured
     // extent says whether the target is really inside it. If not, look up again with the new measurement
     // - at most REPLAY_SEEK_RELOOKUPS times (a count, never a clock), and only while it picks another one.
@@ -995,7 +1012,7 @@ export class ReplayPlayer {
       taken =
         heldStart !== undefined || this.skippedIdx.has(s.index)
           ? null
-          : await this.take(gen, s, ticket);
+          : await this.takeProbed(gen, s, ticket);
     }
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
@@ -1057,6 +1074,7 @@ export class ReplayPlayer {
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
     );
+    this.dropProbedBehind();
     this.resume();
   }
 
@@ -1199,7 +1217,7 @@ export class ReplayPlayer {
     const held = this.bufferedStart(segment.index);
     if (held !== undefined) return held;
     if (this.skippedIdx.has(segment.index)) return undefined;
-    const taken = await this.take(gen, segment, ticket);
+    const taken = await this.takeProbed(gen, segment, ticket);
     if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
     return taken ?? this.bufferedStart(segment.index);
   }

@@ -31,7 +31,7 @@ describe('segmentPositionAt', () => {
     expect(segmentPositionAt(list, 1e9)).toBe(3);
     expect(segmentPositionAt([], 5)).toBe(-1);
   });
-  it('P4 (a unit test of the guard): a later segment measured EARLIER in media time: the measured extent answers, the flattened estimate cannot', () => {
+  it('P5 (a unit test of the guard): a later segment measured EARLIER in media time: the measured extent answers, the flattened estimate cannot', () => {
     const segs = Array.from({ length: 20 }, (_, i) => seg(i, i * 2000));
     // Segment 5 begins at 50 s, then segment 8 is measured at 16 s (a rebase): out of order.
     const placed = new Map([
