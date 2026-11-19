@@ -103,6 +103,8 @@ beforeEach(() => {
   liveErrors = [];
   manifestErrors = [];
   viewerCount = 1;
+  // A hand mute, whatever the module held before (setMuted is a no-op when already muted).
+  videoSound.setMuted(false);
   videoSound.setMuted(true);
   chatDeps = {
     postMessage: vi.fn(),
@@ -384,6 +386,135 @@ describe('LiveViewer', () => {
     // The element's own `volumechange`, as a viewer forwards it, writes nothing either.
     video.dispatchEvent(new Event('volumechange'));
     expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  });
+
+  /** THE LIVE STARTS WITH SOUND (owner, 2026-11-19), a hand mute holds, a cold engine gets the button. */
+  describe('the sound at open', () => {
+    const activation = (hasBeenActive: boolean) =>
+      Object.defineProperty(navigator, 'userActivation', {
+        value: { hasBeenActive },
+        configurable: true,
+      });
+    afterEach(() => Reflect.deleteProperty(navigator, 'userActivation'));
+
+    it('opens audible with no button, and gives the app its answer back at close', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      const stored = localStorage.getItem(VIDEO_SOUND_KEY);
+      await render();
+      expect(videoSound.muted).toBe(false);
+      expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+      expect(localStorage.getItem(VIDEO_SOUND_KEY), 'opening a live writes nothing').toBe(stored);
+      unmount(mounted.pop()!);
+      expect(videoSound.muted, 'the audible feed is the answer after the live').toBe(false);
+      expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe(stored);
+    });
+
+    it('a hand mute inside the live stays inside it: the app answer is back at close', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      await render();
+      const stored = localStorage.getItem(VIDEO_SOUND_KEY);
+      document.querySelector<HTMLButtonElement>('[data-live-sound]')!.click();
+      flushSync();
+      expect(videoSound.muted).toBe(true);
+      expect(
+        localStorage.getItem(VIDEO_SOUND_KEY),
+        'the speaker inside a live writes nothing'
+      ).toBe(stored);
+      unmount(mounted.pop()!);
+      expect(videoSound.muted).toBe(false);
+    });
+
+    it('a play() rejected with another error than NotAllowedError is not retried muted', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const refusedBefore = videoSound.refusedStarts;
+      const play = vi
+        .mocked(HTMLMediaElement.prototype.play)
+        .mockRejectedValue(new DOMException('no decoder', 'NotSupportedError'));
+      await render();
+      expect(videoSound.muted).toBe(false);
+      expect(videoSound.refusedStarts).toBe(refusedBefore);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+      expect(play).toHaveBeenCalled();
+    });
+
+    it('stays muted for a viewer who muted by hand this session, from an audible feed', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      // A first live: the reader mutes inside it; closing puts the audible feed back, flag kept.
+      await render();
+      document.querySelector<HTMLButtonElement>('[data-live-sound]')!.click();
+      flushSync();
+      unmount(mounted.pop()!);
+      expect(videoSound.muted, 'the feed is audible again').toBe(false);
+      await render();
+      expect(videoSound.muted, 'the second live opens as the reader left it').toBe(true);
+      expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(true);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+    });
+
+    it('the feed never sees the live answer while the viewer tears down', async () => {
+      activation(true);
+      // A feed that is silent WITHOUT a hand mute (an engine-refused start), so the live opens audible.
+      videoSound.setMuted(false);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      videoSound.muteForRefusedStart();
+      const seen: boolean[] = [];
+      // `followVideoSound`'s teardown calls commitLevel, then the feed resumes: record the answer at
+      // that very moment.
+      vi.spyOn(videoSound, 'commitLevel').mockImplementation(() => {
+        seen.push(videoSound.muted);
+      });
+      await render();
+      expect(videoSound.muted, 'inside the live: audible').toBe(false);
+      unmount(mounted.pop()!);
+      expect(seen.length, 'the action teardown ran').toBeGreaterThan(0);
+      expect(seen, 'the feed answer was already back when the feed resumed').toEqual(
+        seen.map(() => true)
+      );
+    });
+
+    it('offers "Activer le son" when no gesture has happened, and the button turns it on', async () => {
+      activation(false);
+      videoSound.setMuted(false);
+      await render();
+      const button = document.querySelector<HTMLButtonElement>('[data-live-enable-sound]')!;
+      expect(button.textContent).toContain(m.live_viewer_enable_sound());
+      button.click();
+      flushSync();
+      expect(videoSound.muted).toBe(false);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+    });
+
+    it('a refused play() warns with the count, mutes, and offers the button', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(function (
+        this: HTMLMediaElement
+      ) {
+        return this.muted
+          ? Promise.resolve()
+          : Promise.reject(new DOMException('no gesture yet', 'NotAllowedError'));
+      });
+      const refusedBefore = videoSound.refusedStarts;
+      await render();
+      expect(videoSound.muted).toBe(true);
+      expect(videoSound.refusedStarts).toBe(refusedBefore + 1);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('NotAllowedError'))).toBe(true);
+      expect(document.querySelector('[data-live-enable-sound]')).not.toBeNull();
+    });
+
+    it('lays the reactions in a row in landscape, a column in portrait', async () => {
+      await render();
+      const bar = document.querySelector<HTMLElement>('[data-live-reactions]')!;
+      expect(bar.classList.contains('flex-col')).toBe(true);
+      expect(bar.classList.contains('landscape:flex-row')).toBe(true);
+    });
   });
 
   /** A TAP NEVER MUTES (owner, 2026-11-10): it turns a muted sound on, with its glyph. */

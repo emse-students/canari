@@ -52,7 +52,7 @@
   import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { shareLiveLink } from '$lib/live/shareLive';
-  import { replayFollows, replaysAvailable } from '$lib/live/replayAvailability';
+  import { replayEndText, replaysAvailable } from '$lib/live/replayAvailability';
   import { serverLiveReplaysMode, serverRetention } from '$lib/stores/appVersionCheck.svelte';
   import { retentionInForce } from '$lib/legal/retention';
   import { durationLabel } from '$lib/legal/retentionLabel';
@@ -182,8 +182,8 @@
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
     console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
-    // The promise of a replay is made only to a live long enough to leave one (`replayFollows`).
-    const keepsReplay = replayFollows(serverLiveReplaysMode(), broadcast.elapsedMs());
+    // Before the end the server has not judged the 30 s: a live it keeps is told the rule, not a promise.
+    const keepsReplay = broadcast.keepsReplay;
     const ok = await showConfirm(
       keepsReplay ? m.live_end_confirm_replay({ days: replayDaysLabel() }) : m.live_end_confirm(),
       {
@@ -363,13 +363,15 @@
   };
 
   /**
-   * What the broadcaster's own end says: "Rien n'en est gardé" is true only without a replay - with
-   * one (a live of at least 30 s while replays are on) it says how long the replay is visible. The
-   * length is the last second the screen counted on air.
+   * What the broadcaster's own end says, from the server's facts alone (`replayEndText`): "Rien n'en
+   * est gardé" for a live it does not keep or judged too short, how long the replay is visible once its
+   * end answered that it keeps one, and the rule (30 s) while that answer has not come.
    */
   function endedByBroadcasterText(): string {
-    return replayFollows(serverLiveReplaysMode(), elapsedMs)
-      ? m.live_ended_broadcaster_replay({ days: replayDaysLabel() })
+    const text = replayEndText(broadcast.keepsReplay, broadcast.replayVerdict);
+    if (text === 'kept') return m.live_ended_broadcaster_replay({ days: replayDaysLabel() });
+    return text === 'pending'
+      ? m.live_ended_broadcaster_replay_pending()
       : m.live_ended_broadcaster();
   }
 

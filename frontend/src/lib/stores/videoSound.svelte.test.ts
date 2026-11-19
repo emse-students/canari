@@ -170,3 +170,145 @@ describe('the volume level (owner, 2026-11-11)', () => {
     expect(videoSound.level).toBe(0.3);
   });
 });
+
+describe('what a live does at open (owner, 2026-11-19)', () => {
+  it('is audible unless muted by hand or the engine says no gesture has happened', async () => {
+    const { decideLiveStart } = await import('./videoSound.svelte');
+    expect(decideLiveStart({ mutedByHand: false, activation: 'active' })).toBe('audible');
+    expect(decideLiveStart({ mutedByHand: true, activation: 'active' })).toBe('muted-by-hand');
+    expect(decideLiveStart({ mutedByHand: false, activation: 'inactive' })).toBe('muted-engine');
+    expect(
+      decideLiveStart({ mutedByHand: false, activation: 'unknown' }),
+      'no userActivation: unknown, tried audible'
+    ).toBe('audible');
+    expect(
+      decideLiveStart({ mutedByHand: true, activation: 'inactive' }),
+      'a hand mute wins over an engine that is blocked'
+    ).toBe('muted-by-hand');
+  });
+});
+
+describe('a live and the sound of the app', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  const activation = (hasBeenActive: boolean | null) =>
+    vi.stubGlobal('navigator', hasBeenActive === null ? {} : { userActivation: { hasBeenActive } });
+
+  it('opens audible over a stored "off" and a feed video is muted again after it closes', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    expect(videoSound.muted, 'the feed before').toBe(true);
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('audible');
+    expect(videoSound.muted, 'inside the live').toBe(false);
+    live.release();
+    expect(videoSound.muted, 'the feed after: never made audible by a live').toBe(true);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY), 'nothing was written').toBe('off');
+  });
+
+  it('keeps a hand mute inside the live in memory only, and the next live opens muted', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'on');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    const first = videoSound.startForLive();
+    videoSound.setMuted(true);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY), 'a choice inside a live is not written').toBe(
+      'on'
+    );
+    first.release();
+    expect(videoSound.muted, 'the feed answer is back').toBe(false);
+    const second = videoSound.startForLive();
+    expect(second.verdict).toBe('muted-by-hand');
+    expect(videoSound.muted, 'the second live really is silent').toBe(true);
+    second.release();
+    expect(videoSound.muted, 'and the feed is back again').toBe(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  });
+
+  it('a hand unmute inside the live is not written either', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(false);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(videoSound.startBlocked).toBe(true);
+    videoSound.setMuted(false);
+    expect(videoSound.muted).toBe(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('off');
+    live.release();
+    expect(videoSound.muted, 'the feed answer is back').toBe(true);
+  });
+
+  it('release is idempotent', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    live.release();
+    videoSound.setMuted(false);
+    live.release();
+    expect(videoSound.muted, 'a second release changes nothing').toBe(false);
+  });
+
+  it('two lives overlapping keep the app answer from before the first', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const first = videoSound.startForLive();
+    const second = videoSound.startForLive();
+    first.release();
+    expect(videoSound.muted, 'the second live still plays').toBe(false);
+    second.release();
+    expect(videoSound.muted, 'the feed, not the first live, is what comes back').toBe(true);
+  });
+
+  it('counts and warns on an engine-blocked open apart from play() refusals', async () => {
+    activation(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('muted-engine');
+    expect(videoSound.startBlocked).toBe(true);
+    expect(videoSound.engineBlockedStarts).toBe(1);
+    expect(videoSound.refusedStarts).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    live.release();
+    expect(videoSound.startBlocked).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('with no userActivation the start is tried audible', async () => {
+    activation(null);
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('audible');
+    expect(videoSound.startBlocked).toBe(false);
+    live.release();
+  });
+
+  it('a level picked inside a live is not saved, and the feed level is back at close', async () => {
+    activation(true);
+    localStorage.setItem('canari-video-volume', '0.8');
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    videoSound.setLevel(0.3);
+    videoSound.commitLevel();
+    expect(localStorage.getItem('canari-video-volume'), 'nothing written inside a live').toBe(
+      '0.8'
+    );
+    live.release();
+    expect(videoSound.level, 'the feed level is back').toBe(0.8);
+    videoSound.commitLevel();
+    expect(localStorage.getItem('canari-video-volume')).toBe('0.8');
+  });
+});

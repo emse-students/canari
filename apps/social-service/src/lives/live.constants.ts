@@ -257,9 +257,11 @@ export const LIVE_REPORT_WORKING_ZONE = 'Europe/Paris';
  * least this version, or the start itself carries `acceptedRulesVersion` equal to it - which records
  * it. Raise it when the rules' TEXT changes, so every member accepts the new text once. Version 2
  * (2026-10-21): the sheet shows the posts' publication rules (owner, 2026-10-20), not the four
- * live-specific lines of version 1.
+ * live-specific lines of version 1. Version 3 (2026-11-19, WP-R6): the sheet and the terms it links
+ * name the replay (live-replays.md), so a broadcaster who accepted "nothing is kept" accepts once more
+ * before their next live; a member who never broadcasts is asked nothing.
  */
-export const LIVE_RULES_VERSION = 2;
+export const LIVE_RULES_VERSION = 3;
 
 /**
  * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
