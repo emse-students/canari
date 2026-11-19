@@ -251,22 +251,10 @@ function callRingEndedKey(roomId: string): string {
 }
 
 /**
- * Written when this service issues `userId` a room token for `roomId` - the caller's at `initiate`,
- * a callee's at `room-token` - with the binding's full TTL at the moment of issue, so a callee's
- * mark can outlive the binding by up to the ring window (60 s). Harmless: `endRing` reads the
- * binding FIRST, and an unbound room never consults the mark. It proves only that the user was
- * given a way INTO the room, never that the room is empty: a `ring-end` with reason `room-empty`
- * (WP-GC7) reaches every member's devices only from a user who held a token for THAT call, and
- * even then it never marks the ring ended (see `endRing`).
- */
-function callRoomTokenedKey(roomId: string, userId: string): string {
-  return `call:room:${roomId}:tokened:${userId}`;
-}
-
-/**
  * Why a ring ended, as `ring-end` carries it. `room-empty` (WP-GC7): the sender's hangup left the
- * room of an answered call with nobody in it, so every member's ring - CallKit and the Android
- * full-screen ring included - must stop, not only the sender's.
+ * room of an answered call with nobody in it, AS THE SENDER SEES IT. From the caller it ends every
+ * member's ring, as any caller's ring-end does; from a participant it stops only their own devices
+ * (see `endRing`).
  */
 export type RingEndReason = 'cancelled' | 'answered' | 'ended' | 'room-empty';
 
@@ -476,8 +464,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       'EX',
       CALL_ROOM_BINDING_TTL_SEC
     );
-    // The caller holds a token for this room from here on (see `callRoomTokenedKey`).
-    await this.redis.set(callRoomTokenedKey(roomId, userId), '1', 'EX', CALL_ROOM_BINDING_TTL_SEC);
 
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
@@ -588,10 +574,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       expiresIn: '5m',
       algorithm: 'HS256',
     });
-    // Recorded BEFORE the token leaves: a member must never hold a token this service cannot
-    // later read as theirs. Its TTL is the binding's full TTL from NOW, so it may outlive the
-    // binding by up to the ring window; `endRing` reads the binding first (see `callRoomTokenedKey`).
-    await this.redis.set(callRoomTokenedKey(roomId, userId), '1', 'EX', CALL_ROOM_BINDING_TTL_SEC);
 
     // The answer half: a callee asking for a token is a callee about to join the SFU. Paired
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
@@ -1074,12 +1056,11 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * call ended). Sent to ALL members including the sender's own user so sibling devices
    * stop ringing too; the device that is already in the call ignores its own callId.
    *
-   * On a GROUP call only the caller's ring-end reaches everyone - except `room-empty` (WP-GC7),
-   * which reaches everyone's DEVICES from any member this service issued a room token for THAT call
-   * (`callRoomTokenedKey`); from anyone else it stops only the sender's devices, at WARN. A
-   * participant's `room-empty` never marks the ring ended: it is the sender's view of a mesh, not a
-   * fact about the room (a member whose links all failed sees nobody in a live call), and the mark
-   * would refuse every later `room-token` - a member still ringing could no longer join.
+   * On a GROUP call only the caller's ring-end reaches everyone, `room-empty` (WP-GC7) included.
+   * A participant's `room-empty` stops only their own devices and marks nothing: it is the
+   * sender's view of a mesh, not a fact about the room (a member whose links all failed sees nobody
+   * in a live call), and the app has no control to join an ongoing call, so a member whose ring it
+   * stopped would miss that call. The others' rings end with the answer window (`answer_by`).
    */
   async endRing(
     userId: string,
@@ -1103,31 +1084,10 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
     // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
-    const memberOfGroupCall =
-      !unbound && binding.maxSeats !== undefined && binding.callerId !== userId;
-    // ...and a participant's `room-empty` (WP-GC7): nobody is left in the room to answer into. It
-    // speaks for the ROOM, so it is believed only from a user who was given a way into it - a token
-    // for THIS call. It only WIDENS that rule: the caller and a 1:1 never consult the mark.
-    const roomEmptyFromParticipant =
-      memberOfGroupCall && reason === 'room-empty' && (await this.heldRoomToken(callId, userId));
-    if (memberOfGroupCall && reason === 'room-empty' && !roomEmptyFromParticipant) {
-      this.logger.warn(
-        `[ring] ring-end call=${callId} room-empty REFUSED for every member: user=${userId} was never issued a token for this call - their own devices only`
-      );
-    } else if (roomEmptyFromParticipant) {
-      this.logger.log(
-        `[ring] ring-end call=${callId} room-empty from a participant - every member's ring ends (user=${userId})`
-      );
-    }
-    const ownOnly = unbound || (memberOfGroupCall && !roomEmptyFromParticipant);
-    if (roomEmptyFromParticipant) {
-      // Not marked: this service holds no fact about who is in the room (the seats live in
-      // call-service's memory), and the mark is what `requestRoomToken` refuses on. A member still
-      // ringing keeps the way in; only the ring display stops.
-      this.logger.log(
-        `[ring] ring-end call=${callId} room-empty from a participant is not marked ended - the room stays joinable`
-      );
-    } else if (!ownOnly) {
+    // `room-empty` (WP-GC7) included: this service holds no fact about who is in the room (the
+    // seats live in call-service's memory), so a participant's word cannot end anyone else's ring.
+    const ownOnly = unbound || (binding.maxSeats !== undefined && binding.callerId !== userId);
+    if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
       // a Redis failure here is logged and never keeps them from leaving.
       await this.markRingEnded(groupId, callId, reason).catch((e: unknown) =>
@@ -1417,11 +1377,6 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       '[ring] a callee device holds a VoIP token and APNS_VOIP_* is not configured - it is not rung'
     );
     return false;
-  }
-
-  /** Whether this service issued `userId` a room token for `roomId` (see `callRoomTokenedKey`). */
-  private async heldRoomToken(roomId: string, userId: string): Promise<boolean> {
-    return (await this.redis.get(callRoomTokenedKey(roomId, userId))) !== null;
   }
 
   /**
