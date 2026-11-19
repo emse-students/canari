@@ -82,7 +82,7 @@ earliest version, as a checklist.
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live's sound drifts ahead of its picture under 15 fps: fixed in the viewer, owed one reading](backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)
-- [P2 - a replay stalls for good at the first camera flip or background pause of its live (read 2026-11-19, S11)](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)
+- [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 
 **P3 - hygiene**
 
@@ -130,6 +130,10 @@ earliest version, as a checklist.
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
 - [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
+
+**P3 - hygiene**
+
+- [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
 
 ## 1.7.3
 
