@@ -3,6 +3,7 @@ import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { StoredMessagePatch } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { saveMessagesIfAbsentIsolated } from '$lib/db/rowWriteFailure';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
@@ -1480,9 +1481,12 @@ export async function replayConversationHistory(params: {
           deviceKey()
         );
       }
-      await storage.saveMessagesIfAbsent(
+      // A poison row costs itself, never the page (`saveMessagesIfAbsentIsolated`).
+      await saveMessagesIfAbsentIsolated(
+        storage,
         toStore.filter((row) => !stored.has(row.id)),
-        deviceKey()
+        deviceKey(),
+        'the archive replay'
       );
       // What reached this device before these messages lands with them now.
       await settlePendingFor(

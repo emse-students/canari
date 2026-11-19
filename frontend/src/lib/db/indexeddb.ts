@@ -1,3 +1,4 @@
+import { RowRefusedError } from './rowWriteFailure';
 import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
@@ -983,7 +984,17 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction('messages', 'readwrite');
       const store = tx.objectStore('messages');
       for (const row of rows) {
-        const req = store.add(row);
+        let req: IDBRequest;
+        try {
+          req = store.add(row);
+        } catch (e) {
+          // THE ROW ITSELF IS REFUSED (a key or a value the store cannot take): classified HERE, at
+          // the request, as a type (`RowRefusedError`) - and the whole write is aborted, so the rows
+          // added before it do not land half a batch (rows before ratchet, second review of #3851).
+          tx.abort();
+          reject(new RowRefusedError(row.id, e));
+          return;
+        }
         req.onsuccess = () => written.add(row.id);
         req.onerror = (event) => {
           if (req.error?.name === 'ConstraintError') {
@@ -1110,19 +1121,34 @@ export class IndexedDbStorage implements IStorage {
         await new Promise<void>((resolve, reject) => {
           const tx = db.transaction('messages', 'readwrite');
           const store = tx.objectStore('messages');
+          // The row whose own put was refused, if one was: what the abort below rejects with, so
+          // the writer can tell a row the store will never take from a transaction that failed.
+          let refused: RowRefusedError | null = null;
           for (const { rev, stamp, record } of sealed) {
             const req = store.get(record.id);
             req.onsuccess = () => {
               const current = req.result;
               if (!current || revisionOf(current) !== rev || ivStamp(current.iv) !== stamp) return;
               if (conversationId !== null && current.conversationId !== conversationId) return;
-              if (guardedPut(store, { ...record, rev: rev + 1 })) written.add(record.id);
+              try {
+                store.put({ ...record, rev: rev + 1 });
+                written.add(record.id);
+              } catch (e) {
+                console.error(
+                  `[IDB] the row ${String(record.id).slice(0, 8)} was refused - its transaction is aborted:`,
+                  e
+                );
+                refused ??= new RowRefusedError(record.id, e);
+                tx.abort();
+              }
             };
           }
           tx.oncomplete = () => resolve();
-          tx.onerror = () => reject(tx.error);
+          tx.onerror = () => reject(refused ?? tx.error);
           tx.onabort = () =>
-            reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
+            reject(
+              refused ?? tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError')
+            );
         });
         for (const { record } of sealed) {
           if (written.has(record.id)) invalidateHistoryStateKey(record.conversationId);

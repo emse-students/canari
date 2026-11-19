@@ -142,6 +142,14 @@ export interface AddMessageToChatOptions {
    * Absent is not proven.
    */
   authorProven?: boolean;
+  /**
+   * The server queue id (`queuedMessageId`) of the MLS frame this message was decrypted from. Its
+   * ack - the server deleting the frame - waits while THIS row is shown and not stored (rows before
+   * ratchet, review of #3851): carried with the row into a kept write, so only the frames whose rows
+   * are unstored are withheld, never every frame of the page. Absent for a message no queued frame
+   * produced (a send, a restore, a live frame without a queue id), which no ack waits on.
+   */
+  frameId?: string;
 }
 
 /**

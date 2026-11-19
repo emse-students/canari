@@ -130,6 +130,7 @@ import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
+import { settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
@@ -513,6 +514,42 @@ export function useConversations() {
   }
 
   /**
+   * Settles what waits for the rows a page just loaded (`settlePendingFor`), in the background: an
+   * edit, a deletion or a reaction parked against a row that STOOD - its write onto that row failed,
+   * and its frame was acknowledged - is written by nothing else until that row is written again,
+   * which a stored row never is (third review of #3851). One indexed read per page; settling twice
+   * changes nothing.
+   */
+  function settleLoadedRows(
+    contactName: string,
+    id: string,
+    ctx: ConversationContext,
+    rows: readonly { id: string }[]
+  ): void {
+    if (!ctx.storage || rows.length === 0) return;
+    void settlePendingFor(
+      {
+        storage: ctx.storage,
+        deviceKey: () => ctx.deviceKeyB64,
+        // The page is stored under the group id and shown under the conversation's key.
+        conversations: {
+          get: () => conversations.get(contactName),
+          set: (_key, value) => conversations.set(contactName, value),
+        },
+        messageReactions: ctx.messageReactions,
+        log: ctx.log,
+      },
+      id,
+      rows.map((row) => row.id)
+    ).catch((e: unknown) => {
+      console.error(
+        `[PENDING] settling what waits for ${rows.length} loaded row(s) of ${id.slice(0, 8)}... threw - it stays kept:`,
+        e
+      );
+    });
+  }
+
+  /**
    * Renders the newest STORED page of a conversation into the map, with nothing fetched.
    *
    * Three callers now, and two of them held this block copied out verbatim: the `limit=1` fast path
@@ -571,6 +608,7 @@ export function useConversations() {
     for (const m of msgs) {
       if (m.reactions && m.reactions.length > 0) ctx.messageReactions.set(m.id, m.reactions);
     }
+    settleLoadedRows(contactName, id, ctx, msgs);
     return msgs;
   }
 
@@ -1816,6 +1854,7 @@ export function useConversations() {
     const merged = [...mapped.filter((m) => !heldIds.has(m.id)), ...held].sort(compareMessageOrder);
 
     conversations.set(contactName, { ...current, messages: merged });
+    settleLoadedRows(contactName, convo.id, ctx, mapped);
     const below = before
       ? older.filter((m) => m.pageKey && comparePageKeys(m.pageKey, before) < 0).length
       : older.length;

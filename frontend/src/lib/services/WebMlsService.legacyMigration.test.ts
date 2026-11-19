@@ -14,6 +14,7 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 }));
 
 import { WebMlsService } from './WebMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 import { SavedStateUnopenedError } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import { MlsStateVerdictError } from '$lib/mls-client/mlsStateSeal';
@@ -87,6 +88,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // one production runs.
     persistCheckpoint: WebMlsService.prototype['persistCheckpoint'],
     holdRowsForExport: WebMlsService.prototype['holdRowsForExport'],
+    rowsOwed: new RowsOwedLedger(),
     bulkIngestObservers: [],
     writeCheckpoint: WebMlsService.prototype['writeCheckpoint'],
     ...overrides,
