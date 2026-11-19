@@ -134,12 +134,12 @@ class FakeSource extends EventTarget implements ReplayMediaSourceLike {
 }
 
 /** The replay on the server: `count` segments 2 s apart, pages of `pageSize`. */
-function makePages(count: number, pageSize = 200, first = 0) {
+function makePages(count: number, pageSize = 200, first = 0, atStepMs = 2000) {
   const all: LiveReplaySegment[] = Array.from({ length: count }, (_, i) => ({
     index: first + i,
     name: `seg-${first + i}`,
     bytes: 100,
-    atMs: i * 2000,
+    atMs: i * atStepMs,
   }));
   return (from?: number): LiveReplayPage => {
     const start = from ?? first;
@@ -353,6 +353,22 @@ describe('ReplayPlayer', () => {
     // The cursor follows the placed segment: the next segments are 51.., not 6..
     const mediaAppends = buffer().appends.filter((a) => a.startsWith('m'));
     expect(mediaAppends.slice(-1)[0]).toBe('m56');
+  });
+
+  it('S12: a replay whose media runs ahead of its live time still lands a seek inside the target segment', async () => {
+    // 1770 ms of live time per 2 s of media (61 s of media for 54 s of live): the bar's time is MEDIA time.
+    fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+      makePages(100, 200, 0, 1770)(from)
+    );
+    const p = makePlayer();
+    p.start();
+    await flush();
+    video.currentTime = 100.4; // media time: inside segment 50, which starts at 100 s of media
+    p.noteSeeking();
+    await flush();
+    expect(buffer().appends).toContain('m50');
+    expect(video.currentTime).toBeGreaterThanOrEqual(100);
+    expect(video.currentTime).toBeLessThan(102);
   });
 
   it('a seek into buffered media moves the cursor and fetches nothing it already holds', async () => {

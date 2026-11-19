@@ -659,3 +659,20 @@ known holes. When less than that was buffered, `positionAhead` fell back to the 
 "far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
 a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
 walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
+
+## A seek looks its segment up in media time (S12, 2026-11-19)
+
+**Symptom:** a seek landed up to 4 s after its target (S12). **Test first** (`S12: a replay whose media runs
+ahead of its live time...`): 100 segments at 1770 ms of arrival time per 2 s of media (61 s of media for 54 s
+of live), a seek to 100.4 s of media time. On main it requested segment 56 (starts at 112 s), never the target's
+segment 50: the defect was real.
+
+**Cause.** The bar and `currentTime` are media time; `segmentPositionAt` read each segment's `atMs`, its
+ARRIVAL time on the server (`durationMs` is arrival time too, until `endOfStream` sets the media's own).
+**Fix.** `mediaStartsMs` gives every segment's media start: the measured `placed` where known, else anchored on the
+nearest measured segment and advanced by the arrival gaps scaled by the replay's measured media-per-arrival rate
+(1 with fewer than two measurements, so before anything is measured it is the arrival time, the only statement
+there is). `segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
+is the target's media time held inside the segment (never before its start, never past
+`REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
+starts on a keyframe): landing there when the estimate was a little late stays inside the right segment.

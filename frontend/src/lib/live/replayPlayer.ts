@@ -41,7 +41,7 @@ import {
   type LiveVideoLike,
 } from './livePlayer';
 import { liveRetryDelayMs } from './liveViewerState';
-import { segmentPositionAt } from './replayTimeline';
+import { mediaStartsMs, segmentPositionAt } from './replayTimeline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveReplayPage, LiveReplaySegment } from './types';
 
@@ -666,7 +666,11 @@ export class ReplayPlayer {
 
   /** Lists pages until a segment at or past `ms` is known, or the list is whole. */
   private async listUntil(gen: number, ms: number): Promise<void> {
-    while (this.alive(gen) && this.nextFrom !== null && (this.segments.at(-1)?.atMs ?? -1) < ms) {
+    while (
+      this.alive(gen) &&
+      this.nextFrom !== null &&
+      (mediaStartsMs(this.segments, this.placed).at(-1) ?? -1) < ms
+    ) {
       await this.loadPage(gen);
     }
   }
@@ -717,7 +721,7 @@ export class ReplayPlayer {
     // fetched behind it.
     const reach = this.placedEnd.get(this.segments[k0].index);
     if (reach === undefined || reach < from - EDGE_TOL_S) {
-      k0 = Math.max(k0 + 1, segmentPositionAt(this.segments, from * 1000));
+      k0 = Math.max(k0 + 1, segmentPositionAt(this.segments, from * 1000, this.placed));
     }
     const spans = spansOf(this.buffer);
     for (let k = k0; k < this.segments.length; k++) {
@@ -808,7 +812,7 @@ export class ReplayPlayer {
       const pos = this.segments.findIndex((s) => s.index === last);
       if (pos >= 0) return pos + 1;
     }
-    return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000)) + 1;
+    return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000, this.placed)) + 1;
   }
 
   /**
@@ -818,7 +822,7 @@ export class ReplayPlayer {
   private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
     if (!this.alive(gen) || this.isStale(ticket)) return;
-    const pos = segmentPositionAt(this.segments, ms);
+    const pos = segmentPositionAt(this.segments, ms, this.placed);
     if (pos < 0) return;
     const s = this.segments[pos];
     this.seeks++;
@@ -840,8 +844,8 @@ export class ReplayPlayer {
     let start = taken ?? this.bufferedStart(s.index);
     let landing: number | undefined;
     if (start !== undefined) {
-      // Inside the segment by the share of it the target is past, never beyond its own length.
-      landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
+      // The target's media time, held inside the segment: not before its start, not past its length.
+      landing = Math.min(Math.max(start, ms / 1000), start + REPLAY_SEGMENT_LENGTH_S);
       const range = this.rangeOf(start);
       if (range && landing >= range[1] - HOLE_MIN_S) {
         // The target is past the segment's own end - in a hole of the live: land on the media after it.

@@ -29,6 +29,16 @@ describe('segmentPositionAt', () => {
     expect(segmentPositionAt(list, 1e9)).toBe(3);
     expect(segmentPositionAt([], 5)).toBe(-1);
   });
+  it('looks up in MEDIA time once segments are measured: media running ahead of arrival time', () => {
+    // 1770 ms of arrival per 2 s of media; segments 0 and 1 measured at 0 s and 2 s.
+    const segs = Array.from({ length: 100 }, (_, i) => seg(i, i * 1770));
+    const placed = new Map([
+      [0, 0],
+      [1, 2],
+    ]);
+    expect(segmentPositionAt(segs, 100_400, placed)).toBe(50); // by arrival time it would be 56
+    expect(segmentPositionAt(segs, 100_400)).toBe(56); // nothing measured: arrival time is the statement
+  });
 });
 
 describe('replayTimeLeft', () => {
