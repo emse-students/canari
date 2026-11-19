@@ -22,7 +22,7 @@ earliest version, as a checklist.
 - [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
-- [P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
+- [P1 - rows before ratchet: the orphan buffer, the last window once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
 
 **Chantiers, decisions and questions (no severity)**
@@ -82,6 +82,7 @@ earliest version, as a checklist.
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live's sound drifts ahead of its picture under 15 fps: fixed in the viewer, owed one reading](backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)
+- [P2 - a replay never reaches its end: the player halts about 0.1 s before the last frame, a spinner for good (read 2026-11-19, S12)](backlog.d/p2-a-replay-never-reaches-its-end-the-player-halts-0-1-s-before-the-last-frame.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 
 **P3 - hygiene**
@@ -187,6 +188,12 @@ _No entry planned beyond its readings._
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 - [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
+- [P2 - rows before ratchet: a device-key change re-seals the state without the holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-change-device-key.md)
+- [P2 - rows before ratchet: a community key frame is decrypted before its seed is stored (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-community-key-frames.md)
+- [P2 - rows before ratchet: a frame carrying no message whose dispatch threw is withheld, but its redelivery reads as a duplicate (reviews of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md)
+- [P2 - rows before ratchet: the history catch-up decrypt sessions take no mark (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)
+- [P2 - rows before ratchet: the Tauri resume's live-ahead persist bypasses both holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)
+- [P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)
 
 **P3 - hygiene**
 

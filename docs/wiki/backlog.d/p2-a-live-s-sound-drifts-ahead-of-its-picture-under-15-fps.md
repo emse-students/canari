@@ -10,3 +10,5 @@ frame the interval before it, on every append, live and replay
 under 15 fps), watched in desktop Chrome at the edge. **In sync at the end is the test**; the
 viewer's summary line counting `last frames held` only shows the rule acting (it counts the holds
 that more than double the written duration).
+
+**S12 (2026-11-19, `1.7.1-alpha.4`):** read for 6 min on the Mi at the stream level (audio ahead of video by 27 ms at the start and 28.6 ms at the end), but the camera held 29.9 fps and `0 last frames held`, so the under-15 fps path never ran. The reading stays owed with a starved camera ([S12](../device-verification.md#the-readings-of-2026-11-19-s12-171-alpha4-replays-texts-live-sound-and-the-controls)).

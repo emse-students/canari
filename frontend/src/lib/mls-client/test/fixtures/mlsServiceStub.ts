@@ -42,6 +42,8 @@ export function createMlsServiceStub(
       .fn()
       .mockResolvedValue({ sealed: new Uint8Array(), receivedAt: 1_700_000_000_040 }),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
+    // No checkpoint holds the ledger in a unit test: the mark is taken at once, its settle a no-op.
+    oweRow: vi.fn().mockResolvedValue(() => {}),
     createDecryptSession: vi.fn().mockResolvedValue({
       decryptPage: vi.fn().mockResolvedValue([]),
       finish: vi.fn().mockResolvedValue(undefined),

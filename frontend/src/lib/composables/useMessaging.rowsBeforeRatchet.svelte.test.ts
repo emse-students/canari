@@ -10,7 +10,7 @@
  * The kill is simulated by never closing the window: what the store holds when the hold resolves is
  * what a reload would find.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
 /**
@@ -49,9 +49,17 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+/** The poison metric is read by the tests that must - or must not - count a dropped row. */
+vi.mock('$lib/mls-client/mlsRecoveryMetrics', () => ({ logMlsMetric: vi.fn() }));
+
 const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
+const { logMlsMetric } = await import('$lib/mls-client/mlsRecoveryMetrics');
+const { RowRefusedError } = await import('$lib/db/rowWriteFailure');
+const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+const { keepPendingMutation } = await import('$lib/utils/chat/pendingMutationStore');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import type { PendingMutation } from '$lib/db/types';
 import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 
 const ME = 'me-user-id';
@@ -247,6 +255,564 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     );
     (await messaging.holdRowsForCheckpoint(ctx))();
     expect(storedIds(saveMessage)).toEqual(['in-8']);
+  });
+
+  it('THE LIVE PATH: a row whose write failed outside any window is kept, refuses the hold, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The live write and the first hold's retry fail; the second hold's retry lands.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // No window open: the ordinary path, whose handler writes the row itself.
+    await messaging.addMessageToChat(PEER, 'live', CONVO, ctx, {
+      messageId: 'in-live',
+      frameId: 'q-live',
+    });
+    expect(idsIn(conversations)).toEqual(['in-live']);
+    expect(storedIds(saveMessage)).toEqual([]);
+    // What an application frame's ack reads before it deletes the server's copy: THIS frame.
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-live']);
+
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-live']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('names the frames of the rows a window close could not store, for the ack, and none once a hold stored them', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-a', frameId: 'q-a' });
+    await messaging.addMessageToChat(PEER, 'b', CONVO, ctx, { messageId: 'in-b', frameId: 'q-b' });
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
+    expect([...observer.framesLeftUnstored()].sort()).toEqual(['q-a', 'q-b']);
+
+    (await observer.holdRowsForCheckpoint())();
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * PER FRAME (review of #3851, SF-1): a page-wide count let one unstored row withhold the ack of
+   * every frame of every conversation. Only the frame whose row is unstored waits.
+   */
+  it('PER FRAME: a row left unstored names ITS frame only - a row of another conversation stored meanwhile withholds nothing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    conversations.set('other-conversation', {
+      id: 'other-conversation',
+      name: 'other',
+      messages: [],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'stuck', CONVO, ctx, {
+      messageId: 'in-stuck',
+      frameId: 'q-stuck',
+    });
+    await messaging.addMessageToChat(PEER, 'fine', 'other-conversation', ctx, {
+      messageId: 'in-fine',
+      frameId: 'q-fine',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-stuck']);
+  });
+
+  /**
+   * A POISON ROW IS DROPPED, NEVER KEPT (review of #3851, SF-1): a row the store refuses for what it
+   * IS fails the same way at every retry and after every reload, so keeping it refused every
+   * checkpoint - commits and joins included - and withheld its frame for good.
+   */
+  it('POISON: a row the store refused at its own request (RowRefusedError, DataError) is dropped at ERROR - the hold is not refused and its frame is acknowledged', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(
+      new RowRefusedError('in-poison', new DOMException('bad key', 'DataError'))
+    );
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'poison', CONVO, ctx, {
+      messageId: 'in-poison',
+      frameId: 'q-poison',
+    });
+
+    // Shown, not kept: the frame's ack goes out and the checkpoint is not refused.
+    expect(idsIn(conversations)).toEqual(['in-poison']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('POISON ROW'), expect.anything());
+    // Tried once: a poison row is never retried.
+    expect(saveMessagesIfAbsent).toHaveBeenCalledTimes(1);
+    expect(logMlsMetric).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'row_write_poison', errorName: 'DataError' })
+    );
+  });
+
+  /**
+   * CLASSIFIED AT THE THROW, NOT BY NAME (second review of #3851, SF-B): `crypto.subtle.importKey`
+   * raises `DataError` for an empty device key, which sign-in paths hand the store on purpose. Read by
+   * name it was poison: every row of the page dropped and its frame acknowledged - the messages lost.
+   */
+  it('a BARE DataError (a key import with an empty device key) is transient: the row is KEPT, its frame withheld, nothing dropped', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('empty key', 'DataError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'sealed later', CONVO, ctx, {
+      messageId: 'in-key',
+      frameId: 'q-key',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-key']);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining('POISON ROW'),
+      expect.anything()
+    );
+    expect(logMlsMetric).not.toHaveBeenCalled();
+    // The key is there at the next hold: the kept row is stored.
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-key']);
+  });
+
+  it('a DataCloneError on the CONVERSATION row blames no message row that landed: no POISON line, no metric, the write kept', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    (ctx.saveConversation as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new DOMException('cannot clone', 'DataCloneError')
+    );
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'landed', CONVO, ctx, {
+      messageId: 'in-landed',
+      frameId: 'q-landed',
+    });
+
+    // The message row landed; the conversation row did not, so the write is kept - and its frame.
+    expect(storedIds(saveMessage)).toEqual(['in-landed']);
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-landed']);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining('POISON ROW'),
+      expect.anything()
+    );
+    expect(logMlsMetric).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SF-C (second review of #3851): a dispatch that threw was not acknowledged, but the next
+   * checkpoint still exported its spent generation - the frame left on the server could then never
+   * be decrypted. The message is kept, with its frame, for the checkpoint's hold to write.
+   */
+  /**
+   * THE ROW BEFORE ANY EFFECT THAT MAY THROW (third review of #3851, SF-1): the notification ran
+   * between the render and the write, so its throw left the message on screen and off the disk; the
+   * kept rerun met it in memory, called it stored, and the frame was acknowledged.
+   */
+  it('a NOTIFICATION that throws costs nothing: the row is stored before it runs, the add resolves, no frame is withheld', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    let storedWhenNotified: string[] | null = null;
+    // The node environment has no document, and `notifyInbound` asks nothing without one: a page
+    // put away, so the arrival is news.
+    vi.stubGlobal('document', { visibilityState: 'hidden', hidden: true, hasFocus: () => false });
+    vi.stubGlobal('window', {
+      location: { pathname: '/chat' },
+      matchMedia: () => ({ matches: false }),
+    });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    vi.spyOn(notificationPreferences, 'pushAllowed').mockImplementation(() => {
+      storedWhenNotified = storedIds(saveMessage);
+      throw new Error('notification store torn down');
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'notified', CONVO, ctx, {
+      messageId: 'in-notified',
+      frameId: 'q-notified',
+    });
+
+    expect(storedWhenNotified).toEqual(['in-notified']);
+    expect(storedIds(saveMessage)).toEqual(['in-notified']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('notifying the arrival threw'),
+      expect.anything()
+    );
+  });
+
+  it('a kept live add is rerun by the STORE, not memory: a row shown and not stored is written, one shown and stored is not', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const shown = (id: string) => ({
+      id,
+      senderId: PEER,
+      content: id,
+      timestamp: new Date(1_700_000_000_000),
+      isOwn: false,
+    });
+    conversations.set(CONVO, {
+      ...conversations.get(CONVO)!,
+      messages: [shown('in-memory-only'), shown('in-both')] as never,
+    });
+    const getMessagesByIds = (
+      ctx.storage as unknown as { getMessagesByIds: ReturnType<typeof vi.fn> }
+    ).getMessagesByIds;
+    getMessagesByIds.mockImplementation(async (_key: string, ids: string[]) => ({
+      rows: new Map(
+        ids
+          .filter((id) => id === 'in-both')
+          .map((id) => [id, { ...shown(id), conversationId: CONVO, timestamp: 1_700_000_000_000 }])
+      ),
+      unreadable: new Set(),
+    }));
+    const batch = ['in-memory-only', 'in-both'].map((id) => ({
+      senderId: PEER,
+      content: id,
+      messageId: id,
+      frameId: `q-${id}`,
+    }));
+
+    // Memory decides (an ordinary batch): both are shown, so both are called held.
+    await messaging.batchAddMessages(batch, CONVO, ctx, 'arrival');
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    // The store decides (the rerun of a live add that threw).
+    await messaging.batchAddMessages(batch, CONVO, ctx, 'arrival', { storeDecides: true });
+    expect(storedIds(saveMessage)).toEqual(['in-memory-only']);
+  });
+
+  it('a store-decided rerun shows the row as it WROTE it: what waited for it is settled onto the screen too, and nothing is announced', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...conversations.get(CONVO)!,
+      messages: [
+        {
+          id: 'in-memory-only',
+          senderId: PEER,
+          content: serializeEnvelope(mkTextEnvelope('said')),
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+        },
+      ] as never,
+    });
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // Its author deleted it while it stood shown and not stored: the deletion waits for it - read
+    // once, by the batch, and consumed by its write (the look after the write finds none).
+    storage.getPendingMutations.mockResolvedValueOnce({
+      entries: [
+        {
+          conversationId: CONVO,
+          messageId: 'in-memory-only',
+          sender: PEER,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          at: 1_700_000_001_000,
+        },
+      ],
+      removedUnreadable: 0,
+    });
+    const publish = vi.spyOn(ctx, 'playReceiveTone' as never);
+
+    await messaging.batchAddMessages(
+      [
+        {
+          senderId: PEER,
+          content: serializeEnvelope(mkTextEnvelope('said')),
+          messageId: 'in-memory-only',
+        },
+      ],
+      CONVO,
+      ctx,
+      'arrival',
+      { storeDecides: true }
+    );
+
+    expect(storedIds(saveMessage)).toEqual(['in-memory-only']);
+    expect(saveMessage.mock.calls[0][0]).toEqual(expect.objectContaining({ isDeleted: true }));
+    const shown = conversations.get(CONVO)!.messages.find((m) => m.id === 'in-memory-only')!;
+    expect(shown.isDeleted).toBe(true);
+    expect(publish).not.toHaveBeenCalled();
+    expect(ctx.sendSystemNotification).not.toHaveBeenCalled();
+  });
+
+  /**
+   * AGAINST THE ROW SHOWN NOW (fifth review of #3851): the batch decided what to show from the
+   * snapshot it read before its awaits, so a live edit landing meanwhile was overwritten by the older
+   * body until the settle after the write repaired it - a race that healed, which is still a defect.
+   */
+  it('a live EDIT landing during the batch is never overwritten by the pre-edit body it read', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const before = {
+      id: 'in-memory-only',
+      senderId: PEER,
+      content: serializeEnvelope(mkTextEnvelope('said')),
+      timestamp: new Date(1_700_000_000_000),
+      isOwn: false,
+    };
+    conversations.set(CONVO, { ...conversations.get(CONVO)!, messages: [before] as never });
+    const edited = 'said, then edited';
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // A reaction waited for the row; the batch reads it - and while it awaits that read, the
+    // author's live edit lands on the screen.
+    storage.getPendingMutations.mockImplementationOnce(async () => {
+      const convo = conversations.get(CONVO)!;
+      conversations.set(CONVO, {
+        ...convo,
+        messages: [
+          { ...before, content: serializeEnvelope(mkTextEnvelope(edited)), isEdited: true },
+        ] as never,
+      });
+      return {
+        entries: [
+          {
+            conversationId: CONVO,
+            messageId: 'in-memory-only',
+            sender: 'someone',
+            kind: 'reaction',
+            slot: '👍',
+            rank: 1_700_000_002_000,
+            at: 1_700_000_002_000,
+          },
+        ],
+        removedUnreadable: 0,
+      };
+    });
+    const shownAfterEdit: string[] = [];
+    const set = conversations.set.bind(conversations);
+    vi.spyOn(conversations, 'set').mockImplementation((key, value) => {
+      const row = value.messages.find((m) => m.id === 'in-memory-only');
+      if (row) shownAfterEdit.push(envelopeBodyText(row.content));
+      return set(key, value);
+    });
+
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: before.content, messageId: 'in-memory-only' }],
+      CONVO,
+      ctx,
+      'arrival',
+      { storeDecides: true }
+    );
+
+    expect(shownAfterEdit.length).toBeGreaterThan(0);
+    expect(shownAfterEdit.every((body) => body === edited)).toBe(true);
+    const shown = conversations.get(CONVO)!.messages.find((m) => m.id === 'in-memory-only')!;
+    expect(shown.reactions).toEqual([expect.objectContaining({ emoji: '👍' })]);
+  });
+
+  it('an inbound add that THREW keeps the message with its frame: rethrown, withheld, and the next hold writes it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const realGet = conversations.get.bind(conversations);
+    let thrown = false;
+    vi.spyOn(conversations, 'get').mockImplementation((key: string) => {
+      if (!thrown) {
+        thrown = true;
+        throw new Error('map torn down');
+      }
+      return realGet(key);
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await expect(
+      messaging.addMessageToChat(PEER, 'thrown', CONVO, ctx, {
+        messageId: 'in-thrown',
+        frameId: 'q-thrown',
+      })
+    ).rejects.toThrow('map torn down');
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-thrown']);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-thrown']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('a Welcome-replayed or bundle row (the batch path) whose write fails transiently withholds ITS frame', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The batch's write and the hold's one retry of it both fail.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // What `handleWelcome`'s replay hands the batch path, stamped by `framedRowWriters`.
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: 'replayed', messageId: 'in-replay', frameId: 'q-replay' }],
+      CONVO,
+      ctx,
+      'arrival'
+    );
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-replay']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+  });
+
+  it('POISON IN A BATCH: the rows are written one by one - the good one is stored, the poison one dropped, nothing kept', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    const realSave = saveMessagesIfAbsent.getMockImplementation() as (
+      rows: { id: string }[],
+      key: string
+    ) => Promise<Set<string>>;
+    // Any write holding the poison row is refused for it, as the store raises at that row's `add`.
+    saveMessagesIfAbsent.mockImplementation(async (rows: { id: string }[], key: string) => {
+      if (rows.some((row) => row.id === 'in-bad')) {
+        throw new RowRefusedError('in-bad', new DOMException('cannot clone', 'DataCloneError'));
+      }
+      return realSave(rows, key);
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'good', CONVO, ctx, {
+      messageId: 'in-good',
+      frameId: 'q-good',
+    });
+    await messaging.addMessageToChat(PEER, 'bad', CONVO, ctx, {
+      messageId: 'in-bad',
+      frameId: 'q-bad',
+    });
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
+
+    expect(storedIds(saveMessage)).toEqual(['in-good']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+  });
+
+  /**
+   * SF-2 (review of #3851): the two upgrade writes of the live path caught, logged and went on, so
+   * the frame was acknowledged while the stored row was still the notification's caption.
+   */
+  it('THE SHOWN-PREVIEW UPGRADE: a failed write is kept - it names its frame, refuses the hold, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    conversations.set(CONVO, {
+      id: CONVO,
+      name: CONVO,
+      messages: [
+        {
+          id: 'in-up',
+          senderId: PEER,
+          content: 'caption from the push',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.mergeMessages
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    const body = serializeEnvelope(mkTextEnvelope('the body'));
+    await messaging.addMessageToChat(PEER, body, CONVO, ctx, {
+      messageId: 'in-up',
+      frameId: 'q-up',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-up']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('THE STORED-PREVIEW UPGRADE: a failed write is kept - it names its frame and refuses the hold', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // The row is in the store as a push preview, and not shown.
+    storage.getMessagesByIds.mockImplementation(async (_c: string, ids: string[]) => ({
+      rows: new Map(
+        ids
+          .filter((id) => id === 'in-stored')
+          .map((id) => [
+            id,
+            {
+              id,
+              conversationId: CONVO,
+              senderId: PEER,
+              content: 'caption from the push',
+              timestamp: 1_700_000_000_000,
+              isFcmPreview: true,
+            },
+          ])
+      ),
+      unreadable: new Set(),
+    }));
+    storage.mergeMessages.mockRejectedValue(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    const body = serializeEnvelope(mkTextEnvelope('the body'));
+    await messaging.addMessageToChat(PEER, body, CONVO, ctx, {
+      messageId: 'in-stored',
+      frameId: 'q-stored',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-stored']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
   });
 
   it('builds ONE observer whose hold is the messaging hold (the wiring a page cannot half-do)', async () => {
@@ -540,5 +1106,168 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     }
     const lines = errors.mock.calls.map((call) => String(call[0]));
     expect(lines.filter((l) => l.includes('threw'))).toHaveLength(1);
+  });
+});
+
+/**
+ * A MUTATION PARKED AGAINST A ROW THAT STANDS IS RETRIED BY THE HOLD (third review of #3851, SF-3):
+ * its frame is acknowledged and its row is never written again, so before this nothing drained the
+ * parked entry - the act's only copy - until a reload happened to look.
+ */
+describe('a mutation parked against a stored row (rows before ratchet)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** A store holding row `m1` and a real list of parked entries; its merge fails while `refuse` says. */
+  function parkedWorld() {
+    const { ctx } = makeContext();
+    const entries: PendingMutation[] = [];
+    const row = {
+      id: 'm1',
+      conversationId: CONVO,
+      senderId: PEER,
+      content: serializeEnvelope(mkTextEnvelope('original')),
+      timestamp: 1_700_000_000_000,
+    };
+    const written: Array<Record<string, unknown>> = [];
+    const state = { refuse: true };
+    Object.assign(ctx.storage as object, {
+      putPendingMutation: vi.fn(async (entry: PendingMutation) => {
+        entries.push(entry);
+        return { written: true, kept: true, evicted: 0 };
+      }),
+      getPendingMutations: vi.fn(async (_c: string, ids: string[]) => ({
+        entries: entries.filter((e) => ids.includes(e.messageId)),
+        removedUnreadable: 0,
+      })),
+      deletePendingMutations: vi.fn(async (gone: PendingMutation[]) => {
+        for (const e of gone) entries.splice(entries.indexOf(e), 1);
+      }),
+      getMessagesByIds: vi.fn(async (_c: string, ids: string[]) => ({
+        rows: new Map(ids.includes('m1') ? [['m1', row]] : []),
+        unreadable: new Set(),
+      })),
+      mergeMessages: vi.fn(
+        async (
+          _c: string,
+          _ids: string[],
+          merge: (r: typeof row) => Record<string, unknown> | null
+        ) => {
+          if (state.refuse) throw new DOMException('full', 'QuotaExceededError');
+          const next = merge(row);
+          if (next) written.push(next);
+          return new Set(['m1']);
+        }
+      ),
+    });
+    const deps = {
+      storage: ctx.storage,
+      deviceKey: () => 'device-key',
+      conversations: ctx.conversations,
+      messageReactions: new SvelteMap(),
+      log: () => {},
+    };
+    return { ctx, entries, written, state, deps };
+  }
+
+  const edit = {
+    conversationId: CONVO,
+    messageId: 'm1',
+    sender: PEER,
+    kind: 'edit' as const,
+    slot: '',
+    rank: 1_700_000_002_000,
+    text: 'edited',
+  };
+
+  it('an EDIT parked against a stored row lands at the next hold, and the hold then resolves', async () => {
+    const messaging = useMessaging();
+    const { ctx, entries, written, state, deps } = parkedWorld();
+    // The edit's write onto its stored row failed: parked (its own look fails the same way).
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    expect(entries).toHaveLength(1);
+    expect(written).toHaveLength(0);
+
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
+    expect(written).toEqual([expect.objectContaining({ isEdited: true })]);
+    expect(envelopeBodyText(String(written[0].content))).toBe('edited');
+    expect(entries).toHaveLength(0);
+  });
+
+  /**
+   * NEVER A REFUSED CHECKPOINT (fourth review of #3851): the entry is durable before it is noted, so
+   * refusing would protect no copy - it would only stop commits, joins and sends for the session.
+   */
+  it('a parked mutation whose row stands and still refuses it lets the hold through, said at ERROR once under its own cause', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, entries, state, deps } = parkedWorld();
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    error.mockClear();
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
+    expect(entries).toHaveLength(1);
+    const stuckLines = error.mock.calls.filter(([line]) =>
+      String(line).includes('PARKED MUTATION CANNOT BE MERGED')
+    );
+    expect(stuckLines).toHaveLength(1);
+    expect(String(stuckLines[0][0])).toContain('(transient)');
+    expect(error.mock.calls.some(([line]) => String(line).includes('Rows of applied frames'))).toBe(
+      false
+    );
+
+    // Still retried: it lands once the store takes it.
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(entries).toHaveLength(0);
+  });
+
+  it('a target that settled and stalls AGAIN is said again: once per stall, not once per session', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, state, deps } = parkedWorld();
+    const stuckLines = () =>
+      error.mock.calls.filter(([line]) => String(line).includes('PARKED MUTATION CANNOT BE MERGED'))
+        .length;
+
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(stuckLines()).toBe(1);
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
+    // A later edit of the same row, whose write fails again.
+    state.refuse = true;
+    await keepPendingMutation(
+      deps as never,
+      { ...edit, rank: 1_700_000_003_000, text: 'edited again' },
+      1_700_000_003_000,
+      'could not be written'
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(stuckLines()).toBe(2);
+
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+  });
+
+  it('an entry whose message has NOT arrived does not refuse the hold: it waits for its body', async () => {
+    const messaging = useMessaging();
+    const { ctx, deps } = parkedWorld();
+    await keepPendingMutation(
+      deps as never,
+      { ...edit, messageId: 'not-here-yet' },
+      1_700_000_001_000
+    );
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
   });
 });

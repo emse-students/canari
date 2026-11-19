@@ -93,6 +93,8 @@ export const MLS_STATE_UNREADABLE_NOW_READS = 3;
 
 /** MLS service implementation for the browser (WASM via openmls). */
 export class WebMlsService extends BaseMlsService {
+  /** `save_state` runs synchronously in {@link writeCheckpoint}'s call: the export is taken there. */
+  protected override readonly checkpointCapturesAtCall = true;
   private client: any;
   private ws: WebSocket | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */

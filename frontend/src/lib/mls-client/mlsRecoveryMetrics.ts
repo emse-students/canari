@@ -24,6 +24,17 @@ export type MlsMetricEvent =
       isCommit?: boolean;
     }
   | {
+      /**
+       * A row the store refused for what it IS (`classifyRowWriteFailure`: `DataError`,
+       * `DataCloneError`), dropped from the rows kept for the next checkpoint so it stops refusing
+       * checkpoints and withholding its frame's ack - shown, and lost from this device at the next
+       * reload. `total` is this page's count so far: the rate against the population.
+       */
+      kind: 'row_write_poison';
+      errorName: string;
+      total: number;
+    }
+  | {
       kind: 'epoch_cache';
       platform: 'tauri';
       groupId: string;

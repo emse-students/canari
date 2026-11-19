@@ -93,7 +93,7 @@ export async function applyReactionFrame(
       log(`[REACTION] stored row of ${msgId.slice(0, 8)} could not be read: ${String(e)}`);
     }
   }
-  const keep = () =>
+  const keep = (why?: string) =>
     keepPendingMutation(
       deps,
       {
@@ -106,7 +106,8 @@ export async function applyReactionFrame(
         ...(removed ? { removed: true } : {}),
         ...(authorship ? { proof: authorship } : {}),
       },
-      serverAt
+      serverAt,
+      why
     );
 
   if (!shown && !stored) {
@@ -147,8 +148,8 @@ export async function applyReactionFrame(
   // flags, so reacting to an edited message resurrected the original body on the next reload.
   // Folded into the row as it stands AT THE WRITE (a compare-and-set): a reaction another frame
   // stored since the read above is kept, never overwritten by the copy read before it.
-  await storage
-    .mergeMessages(
+  try {
+    await storage.mergeMessages(
       convoKey,
       [msgId],
       (current) => {
@@ -163,9 +164,17 @@ export async function applyReactionFrame(
         return folded ? { ...current, reactions: folded } : null;
       },
       deviceKey()
-    )
-    .catch((e: unknown) =>
-      log(`[REACTION] reaction on ${msgId.slice(0, 8)} not persisted: ${String(e)}`)
     );
+  } catch (e) {
+    // KEPT, NEVER ONLY LOGGED (review of #3851): the frame is acknowledged and its generation spent,
+    // so a reaction shown and not written was lost at the next reload. Parked as a pending mutation,
+    // it is written onto its row at the next look; a store that refuses the park too says so at ERROR
+    // (`parkPendingMutation`).
+    console.error(
+      `[REACTION] reaction on ${msgId.slice(0, 8)} not written to its row - kept as a pending mutation:`,
+      e
+    );
+    await keep('could not be written onto its stored row');
+  }
   return outcome;
 }
