@@ -271,6 +271,18 @@ export const videoSound = {
    * is the reader's gesture but belongs to the live: held in memory, never written (`setMuted`).
    */
   startForLive(): { verdict: LiveStartDecision; release(): void } {
+    // EVERY CALL THAT CAN THROW COMES FIRST: the session is taken LAST, with plain assignments, so a
+    // throw above never leaves one held with no handle to release it.
+    const activation = readEngineActivation();
+    const verdict = decideLiveStart({ mutedByHand, activation });
+    Log.d('VIDEO', `a live opens: ${verdict} (engine activation: ${activation})`);
+    if (verdict === 'audible') {
+      primeLoudnessAudio();
+    } else if (verdict === 'muted-engine') {
+      console.warn(
+        `[VIDEO] a live opened with no user gesture on record (#${engineBlockedStarts + 1} this session) - muted, "enable sound" offered`
+      );
+    }
     if (liveSession) {
       liveSession.holders += 1;
       console.warn(
@@ -280,22 +292,15 @@ export const videoSound = {
       liveSession = { previousMuted: muted, previousLevel: level, holders: 1 };
     }
     const session = liveSession;
-    const activation = readEngineActivation();
-    const verdict = decideLiveStart({ mutedByHand, activation });
-    Log.d('VIDEO', `a live opens: ${verdict} (engine activation: ${activation})`);
     if (verdict === 'audible') {
       muted = false;
       startBlocked = false;
-      primeLoudnessAudio();
     } else if (verdict === 'muted-by-hand') {
       // The reader's mute of this session holds, whatever the app's answer was.
       muted = true;
       startBlocked = false;
     } else {
       engineBlockedStarts += 1;
-      console.warn(
-        `[VIDEO] a live opened with no user gesture on record (#${engineBlockedStarts} this session) - muted, "enable sound" offered`
-      );
       muted = true;
       startBlocked = true;
     }
