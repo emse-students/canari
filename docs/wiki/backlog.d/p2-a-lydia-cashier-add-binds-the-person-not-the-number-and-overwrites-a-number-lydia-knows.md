@@ -52,8 +52,11 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    contact a platform administrator", but a platform administrator cannot set another person as
    Responsable on the same Business (`LYDIA_RESPONSABLE_ALREADY_SET`). Either an admin "replace the
    Responsable" step (add the new holder, then remove the old number through the verified path), or
-   refusing a Responsable's own departure while their number is live. A design question, parked in
-   [open-questions](../open-questions.md).
+   refusing a Responsable's own departure while their number is live. **Decided by the owner,
+   2026-11-19: the departure is REFUSED while the person is Responsable** - *"il doit d'abord passer
+   la main lui-même. C'est pour ça qu'il est important de pouvoir gérer les caissiers sur Canari"*: the
+   Responsable hands over to another member through the cashier screens first (that hand-over step is
+   owed if the screens cannot do it yet), and only then may leave ([decisions](owner-decisions-of-2026-11-19.md)).
 8. **The claim fence is a clock.** social waits 30 s for core's removal and then records it NOT
    confirmed and releases the claim; core bounds its three Lydia calls to 24 s, but an axios timeout is
    per socket idle, not a total deadline. A late `removecashier` landing after a re-add of the same
