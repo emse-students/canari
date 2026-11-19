@@ -160,12 +160,14 @@ import {
   previewUpgradeOnto,
 } from '$lib/utils/chat/messageMerge';
 import type { PendingMutation, StoredRowsById } from '$lib/db/types';
-import {
-  settleAgainstPending,
-  type SettledFields,
-  type Settlement,
-} from '$lib/utils/chat/pendingMutations';
+import { settleAgainstPending, type SettledFields } from '$lib/utils/chat/pendingMutations';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import {
+  classifyRowWriteFailure,
+  RowRefusedError,
+  writeRowsIsolatingRefused,
+} from '$lib/db/rowWriteFailure';
+import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import {
   keepPendingMutation,
   keepPendingMutationForUnreadable,
@@ -174,6 +176,7 @@ import {
   settledChatMessage,
   settledStoredPatch,
   settlePendingFor,
+  retryParkedMutations,
   type PendingMutationDeps,
 } from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
@@ -199,6 +202,28 @@ interface KeptBatch {
   messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>;
   /** Ids its thread showed when it was kept: how a re-keyed thread is found again. */
   anchors: string[];
+  /**
+   * Kept by a live add that threw (`addMessageToChat`), possibly AFTER its render: its rerun asks
+   * the STORE whether each row stands, never memory - a message on screen proves nothing about
+   * the disk (third review of #3851).
+   */
+  storeDecides?: true;
+}
+
+/**
+ * A row a batch shows anew: decided against `from`, the snapshot the batch read before its loop, and
+ * decided AGAIN by `reshow` when the row shown at apply time is no longer that snapshot - a live edit,
+ * deletion or reaction landed on it during the loop's awaits.
+ */
+interface Reshown {
+  from: ChatMessage;
+  shown: ChatMessage;
+  reshow: (now: ChatMessage) => ChatMessage;
+}
+
+/** The row `reshown` shows over `now`, the row shown when its batch applies. */
+function reshowOnto(reshown: Reshown, now: ChatMessage): ChatMessage {
+  return now === reshown.from ? reshown.shown : reshown.reshow(now);
 }
 
 /** One batch's rows to write, kept whole so a failed write can be retried as it was. */
@@ -208,6 +233,12 @@ interface BatchRowWrite {
   newRows: StoredMessage[];
   /** The pending mutations each written row consumed, removed once the row is on disk. */
   consumedById: Map<string, PendingMutation[]>;
+  /**
+   * The queued frame(s) each row was decrypted from (`AddMessageToChatOptions.frameId`): while the
+   * write is kept, THESE frames' acks are withheld and no other (review of #3851). A row no queued
+   * frame produced has no entry.
+   */
+  framesByRow: Map<string, string[]>;
 }
 
 /**
@@ -621,7 +652,7 @@ export function useMessaging() {
     ctx: MessagingContext,
     contactName: string,
     messages: KeptBatch['messages'],
-    origin: 'hold' | 'close',
+    origin: 'hold' | 'close' | 'dispatch',
     e: unknown,
     already?: KeptBatch
   ): void {
@@ -642,7 +673,12 @@ export function useMessaging() {
       `[ADD_MSG] storing ${messages.length} buffered message(s) of "${contactName}" threw (${origin}) - kept, and run again by the next store (said once for this batch):`,
       e
     );
-    unstoredBatches.push({ contactName, messages, anchors });
+    unstoredBatches.push({
+      contactName,
+      messages,
+      anchors,
+      ...(origin === 'dispatch' ? { storeDecides: true as const } : {}),
+    });
   }
 
   /** How many messages {@link unstoredBatches} holds. */
@@ -653,6 +689,115 @@ export function useMessaging() {
   /** How many rows {@link unstoredRowWrites} holds. */
   function unstoredRowCount(): number {
     return unstoredRowWrites.reduce((sum, w) => sum + w.upgradeRows.length + w.newRows.length, 0);
+  }
+
+  /**
+   * THE FRAMES WHOSE ROWS STAND SHOWN AND NOT STORED - the kept writes' and the kept batches'. What
+   * an application frame's ack must not run ahead of, PER FRAME (review of #3851): counted across
+   * the page, one row that could not be written withheld every ack of every conversation.
+   */
+  function framesLeftUnstored(): ReadonlySet<string> {
+    const frames = new SvelteSet<string>();
+    for (const write of unstoredRowWrites) {
+      for (const ids of write.framesByRow.values()) for (const id of ids) frames.add(id);
+    }
+    for (const kept of unstoredBatches) {
+      for (const message of kept.messages) if (message.frameId) frames.add(message.frameId);
+    }
+    return frames;
+  }
+
+  /** The frames each row of `messages` was decrypted from, keyed by the row id they are written as. */
+  function framesByRowOf(
+    messages: ReadonlyArray<Pick<AddMessageToChatOptions, 'messageId' | 'frameId'>>
+  ): Map<string, string[]> {
+    const byRow = new SvelteMap<string, string[]>();
+    for (const message of messages) {
+      const id = normalizeMessageId(message.messageId);
+      if (!id || !message.frameId) continue;
+      byRow.set(id, [...(byRow.get(id) ?? []), message.frameId]);
+    }
+    return byRow;
+  }
+
+  /** Of `framesByRow`, the entries of the rows a write holds - the frames its failure withholds. */
+  function framesOfWrittenRows(
+    framesByRow: ReadonlyMap<string, string[]>,
+    ...rowSets: ReadonlyArray<readonly StoredMessage[]>
+  ): Map<string, string[]> {
+    const written = new SvelteMap<string, string[]>();
+    for (const rows of rowSets) {
+      for (const row of rows) {
+        const frames = framesByRow.get(row.id);
+        if (frames) written.set(row.id, frames);
+      }
+    }
+    return written;
+  }
+
+  /** How many poison rows this page dropped (`classifyRowWriteFailure`) - said with each one. */
+  let poisonRowsDropped = 0;
+
+  /**
+   * A row the store refused for what it IS: dropped, never kept. Said at ERROR with its frame, and
+   * counted - a row only memory holds, lost from this device at the next reload.
+   */
+  function dropPoisonRow(write: BatchRowWrite, row: StoredMessage, cause: unknown): void {
+    poisonRowsDropped += 1;
+    const errorName = cause instanceof RowRefusedError ? cause.domName : 'unknown';
+    console.error(
+      `[DB] POISON ROW ${row.id.slice(0, 8)} of "${write.conversationId}" (frame ${write.framesByRow.get(row.id)?.join(',') ?? 'none'}): the store refused it for what it is (${errorName}) and will at every retry - DROPPED from the rows kept, so it stops refusing checkpoints and withholding its frame's ack. Shown, and lost from this device at the next reload (#${poisonRowsDropped} this page):`,
+      cause
+    );
+    logMlsMetric({ kind: 'row_write_poison', errorName, total: poisonRowsDropped });
+  }
+
+  /**
+   * Writes `write` and, when it fails, decides by the failure's TYPE what it owes
+   * (`classifyRowWriteFailure`): a TRANSIENT failure keeps the write whole for the next checkpoint's
+   * hold ({@link unstoredRowWrites}); a POISON one is isolated - each row written on its own, once, so
+   * the rows the store does take are stored, the poison ones dropped ({@link dropPoisonRow}) and any
+   * that now fails transiently kept. One pass over the rows, no retry loop: it terminates.
+   *
+   * Resolves `null` when nothing is left kept, else the failure - for the caller's own line.
+   */
+  async function writeOrKeep(ctx: MessagingContext, write: BatchRowWrite): Promise<unknown> {
+    const failure = await writeBatchRows(ctx, write);
+    if (failure === null) return null;
+    if (classifyRowWriteFailure(failure) === 'transient') {
+      unstoredRowWrites.push(write);
+      return failure;
+    }
+    const rows = [
+      ...write.upgradeRows.map((row) => ({ row, upgrade: true })),
+      ...write.newRows.map((row) => ({ row, upgrade: false })),
+    ];
+    if (rows.length === 1) {
+      dropPoisonRow(write, rows[0].row, failure);
+      return null;
+    }
+    console.warn(
+      `[DB] a write of ${rows.length} row(s) of "${write.conversationId}" was refused for a row it holds - writing them one by one to find it`
+    );
+    const singles = rows.map(({ row, upgrade }): BatchRowWrite => {
+      const frames = write.framesByRow.get(row.id);
+      return {
+        conversationId: write.conversationId,
+        upgradeRows: upgrade ? [row] : [],
+        newRows: upgrade ? [] : [row],
+        consumedById: new SvelteMap([[row.id, write.consumedById.get(row.id) ?? []]]),
+        framesByRow: new SvelteMap(frames ? [[row.id, frames]] : []),
+      };
+    });
+    const { poison, transient } = await writeRowsIsolatingRefused(singles, async (single) => {
+      const alone = await writeBatchRows(ctx, single);
+      if (alone !== null) throw alone;
+    });
+    for (const { row: single, cause } of poison) {
+      dropPoisonRow(single, [...single.upgradeRows, ...single.newRows][0], cause);
+    }
+    for (const { row: single } of transient) unstoredRowWrites.push(single);
+    return transient[0]?.cause ?? null;
   }
 
   /**
@@ -706,12 +851,13 @@ export function useMessaging() {
             upgradeRows: kept.upgradeRows.map(moved),
             newRows: kept.newRows.map(moved),
             consumedById: kept.consumedById,
+            framesByRow: kept.framesByRow,
           };
         }
-        const failure = await writeBatchRows(ctx, write);
+        // Kept again when it fails transiently; a poison row met now is dropped (`writeOrKeep`).
+        const failure = await writeOrKeep(ctx, write);
         if (failure !== null) {
           firstCause ??= failure;
-          unstoredRowWrites.push(write);
           continue;
         }
         stored += 1;
@@ -782,7 +928,9 @@ export function useMessaging() {
               dropped += batch.messages.length;
               continue;
             }
-            await batchAddMessages(batch.messages, home, ctx, 'arrival');
+            await batchAddMessages(batch.messages, home, ctx, 'arrival', {
+              storeDecides: batch.storeDecides === true,
+            });
           } catch (e) {
             keepThrownBatch(ctx, home ?? batch.contactName, batch.messages, origin, e, batch);
           }
@@ -824,6 +972,10 @@ export function useMessaging() {
         // On a hold, ONE retry of every write that failed - this step's and any earlier close's.
         const writesLeft =
           origin === 'hold' ? await retryUnstoredRowWrites(ctx) : unstoredRowCount();
+        // And of every mutation parked this session against a row that STANDS: nothing else in this
+        // session writes it onto its row (`retryParkedMutations`). NOT counted below: the entry is
+        // durable in the pending store before it is noted, so a refusal would protect no copy.
+        if (origin === 'hold') await retryParkedMutations(pendingDeps(ctx));
         // The count is THIS step's, read before a store queued behind it can take the kept batches.
         const left = writesLeft + keptMessageCount();
         return { stored: left === 0, left };
@@ -878,9 +1030,12 @@ export function useMessaging() {
       if (!rowStoreBlockingSaid) {
         rowStoreBlockingSaid = true;
         // THE CAUSE, ONCE: while the store refuses these rows, every checkpoint is refused - commits
-        // and joins included - until a write lands or the page reloads.
+        // and joins included - until a write lands. A reload does NOT end it by itself (the frames
+        // are withheld, so they are decrypted again and their rows written again): only a failure a
+        // retry can pass is kept here - a row the store refuses for what it is was dropped
+        // (`writeOrKeep`).
         console.error(
-          '[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they are (a commit, a join, a send), or until a reload. Said once per page.'
+          '[ADD_MSG] Rows of applied frames cannot be stored (a transient failure) - every checkpoint is refused until they are (a commit, a join, a send). Said once per page.'
         );
       }
       throw new BufferedRowsNotStoredError(left);
@@ -897,6 +1052,7 @@ export function useMessaging() {
       onBulkIngestStart: (phase) => beginBulkMessageIngest(phase),
       onBulkIngestEnd: (phase) => endBulkMessageIngest(getCtx(), phase),
       holdRowsForCheckpoint: () => holdRowsForCheckpoint(getCtx()),
+      framesLeftUnstored: () => framesLeftUnstored(),
     };
   }
 
@@ -973,6 +1129,22 @@ export function useMessaging() {
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
     return canSeeArrivalNow(conversationKey, ctx.selectedContact);
+  }
+
+  /**
+   * Runs ONE side effect of a message whose row is already written or kept - an announcement, a read
+   * signal, a tone, a notification - on its own: a throw is said at ERROR and goes no further. The
+   * message must never be what a failed effect costs (rows before ratchet, third review of #3851).
+   */
+  function afterTheRow(what: string, messageId: string, effect: () => void): void {
+    try {
+      effect();
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] ${what} threw for ${messageId.slice(0, 8)} - the message is stored or kept all the same:`,
+        e
+      );
+    }
   }
 
   function notifyInbound(
@@ -1498,7 +1670,41 @@ export function useMessaging() {
     orphanBuffer.set(normalized, buffer);
   }
 
+  /**
+   * Shows and stores one message ({@link addMessageToChatOnce}), and KEEPS an inbound message whose
+   * add THREW (rows before ratchet, second review of #3851): its frame decrypted, so its generation is
+   * spent and the next checkpoint would make that durable - after which the frame the server still
+   * holds can never be decrypted again. Kept as a batch that threw (`unstoredBatches`, with its
+   * `frameId`), it withholds its frame's ack, the next store runs it again, and every checkpoint is
+   * refused while it cannot be written. Rethrown, so the caller still says its dispatch failed.
+   * Only a message a queued frame produced is kept: a send's own row is its outbox's to answer for
+   * (`MessagePairWriteError`), and a row no frame produced has no ratchet advance behind it.
+   */
   async function addMessageToChat(
+    senderId: string,
+    content: string,
+    contactName: string,
+    ctx: MessagingContext,
+    options: AddMessageToChatOptions & { skipDbSave?: boolean } = {}
+  ) {
+    try {
+      await addMessageToChatOnce(senderId, content, contactName, ctx, options);
+    } catch (e) {
+      if (options.frameId && !options.outboxEntry) {
+        keepThrownBatch(
+          ctx,
+          contactName.toLowerCase(),
+          [{ senderId, content, ...options }],
+          'dispatch',
+          e
+        );
+      }
+      throw e;
+    }
+  }
+
+  /** One add, as {@link addMessageToChat} describes; it may throw, and its caller keeps what threw. */
+  async function addMessageToChatOnce(
     senderId: string,
     content: string,
     contactName: string,
@@ -1686,10 +1892,14 @@ export function useMessaging() {
           );
         }
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
-          try {
-            // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
-            // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
-            const written = await writeShownUpgrades(ctx, normalized, [
+          // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+          // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
+          // THE BATCH'S OWN WRITE (review of #3851): logged and dropped, a failure left the stored
+          // row the notification's caption while the frame was acknowledged and its generation
+          // spent - kept now, as a new row's is, and its frame's ack waits for it.
+          const write: BatchRowWrite = {
+            conversationId: normalized,
+            upgradeRows: [
               {
                 id: upgraded.id,
                 conversationId: normalized,
@@ -1707,10 +1917,18 @@ export function useMessaging() {
                 ...proofFields,
                 ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
-            ]);
-            if (written.has(upgraded.id)) await removeSettled(ctx, settled.consumed);
-          } catch (e) {
-            console.error('[DB] Failed to upgrade message:', e);
+            ],
+            newRows: [],
+            // Removed by the write once the upgrade is on disk, as before.
+            consumedById: new SvelteMap([[upgraded.id, [...settled.consumed]]]),
+            framesByRow: framesByRowOf([{ messageId: upgraded.id, frameId: options.frameId }]),
+          };
+          const failure = await writeOrKeep(ctx, write);
+          if (failure !== null) {
+            console.error(
+              '[DB] Failed to upgrade message - kept, the next checkpoint stores it first:',
+              failure
+            );
           }
           await settlePendingFor(pendingDeps(ctx), normalized, [upgraded.id]);
         }
@@ -1749,7 +1967,12 @@ export function useMessaging() {
       const stored = await storedRowsFor(ctx, normalized, [newMsg.id]);
       const verdict = storedBodyVerdict(stored, newMsg.id, content);
       if (verdict.kind !== 'new') {
-        await settleStoredBodies([verdict], normalized, ctx);
+        await settleStoredBodies(
+          [verdict],
+          normalized,
+          ctx,
+          framesByRowOf([{ messageId: newMsg.id, frameId: options.frameId }])
+        );
         return;
       }
       // What reached this device before the body - its author's deletion or edit, everyone's
@@ -1783,84 +2006,6 @@ export function useMessaging() {
       lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
-
-    // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
-    // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.
-    if (!options.salonEcho) {
-      publishTabMessageUpdate({
-        type: 'message_added',
-        conversationId: normalized,
-        message: newMsg,
-        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
-        unreadCount: nextUnreadCount,
-        ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
-      });
-    }
-
-    // AND THE ONE ANNOUNCEMENT THAT TRAVELS THE OTHER WAY. The call above is leader-only, because
-    // only the leader receives inbound frames and only it can speak for the conversation's counts.
-    // A message composed HERE is the exception: whichever tab composed it is the only one that
-    // knows, and a follower composing one used to tell nobody - TAB-4b, 2026-09-05. `isOwn` is the
-    // discriminator and it is already computed above.
-    if (isOwn && !options.salonEcho) {
-      publishComposedMessage({
-        type: 'own_message_composed',
-        conversationId: normalized,
-        message: newMsg,
-        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
-      });
-    }
-
-    // READ ON ARRIVAL IS STILL READ. This is the case the unread counter cannot see: the salon is
-    // already open, so the message is read the instant it lands and `nextUnreadCount` stays 0 - and
-    // a sibling device holding its banner has been told nothing. See `channelReadSignal`.
-    if (
-      isConversationOpen &&
-      !isOwn &&
-      !isSystem &&
-      isChannelConversationId(normalized) &&
-      claimChannelReadSignal(normalized, newMsg.timestamp.getTime())
-    ) {
-      ctx.signalChannelRead?.(normalized);
-    }
-
-    // A TONE ONLY WHERE THE MESSAGE CAN BE SEEN LANDING. Unconditional, it was a ghost: a sound on
-    // a phone whose screen shows another conversation, or none, tells the reader something happened
-    // and gives them nothing to look at. Where this is false the OS notification is raised instead
-    // and carries its channel's own sound, so exactly one audible signal is produced either way.
-    if (
-      !isOwn &&
-      !isSystem &&
-      // A message deleted before it arrived says nothing: no tone, no notification.
-      !newMsg.isDeleted &&
-      // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
-      !isStaleInboundMessage(messageDate(newMsg)) &&
-      canSeeArrival(ctx, normalized)
-    ) {
-      if (ctx.playReceiveTone) {
-        ctx.playReceiveTone(mentionsUser(content, ctx.userId));
-      } else {
-        ctx.playNotificationTone();
-      }
-    }
-
-    // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    if (!newMsg.isDeleted) {
-      notifyInbound(
-        ctx,
-        normalized,
-        convo,
-        senderId,
-        content,
-        mentionsUser(content, ctx.userId),
-        isSystem,
-        isOwn,
-        resolvedTimestamp.getTime(),
-        newMsg.serverTimestamp,
-        1,
-        options.authorProven === true
-      );
-    }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     let pairWriteFailure: MessagePairWriteError | null = null;
@@ -1900,22 +2045,141 @@ export function useMessaging() {
               e
             );
           }
+          await ctx.saveConversation(normalized);
         } else {
           // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
           // outside the inbound drain) may have written the id since. Its row stands, and memory
-          // takes it.
-          const written = await ctx.storage.saveMessagesIfAbsent([row], ctx.deviceKeyB64);
-          if (written.has(row.id)) await removeSettled(ctx, settled.consumed);
-          else await showStoredInstead(ctx, normalized, [row.id]);
+          // takes it. THE BATCH'S OWN WRITE, so a failed one is KEPT as a batch's is: shown and not
+          // stored, this message's ratchet advance must not become durable before it - the next
+          // checkpoint's hold retries it and is refused while it stands (rows before ratchet).
+          const write: BatchRowWrite = {
+            conversationId: normalized,
+            upgradeRows: [],
+            newRows: [row],
+            consumedById: new SvelteMap([[row.id, [...settled.consumed]]]),
+            framesByRow: framesByRowOf([{ messageId: row.id, frameId: options.frameId }]),
+          };
+          const failure = await writeOrKeep(ctx, write);
+          if (failure !== null) {
+            console.error(
+              '[DB] Failed to persist message - kept, the next checkpoint stores it first:',
+              failure
+            );
+          }
         }
-        await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
+        // AN INBOUND ROW THAT WAS NEITHER WRITTEN NOR KEPT IS NOT SWALLOWED: rethrown, its caller
+        // keeps the message with its frame (`addMessageToChat`), and the rerun asks the store.
+        if (!options.outboxEntry) throw e;
       }
       // Kept between the read above and the write - or while the message was shown and not stored
-      // yet, whoever wrote it: settled now, against the row that stands.
-      await settlePendingFor(pendingDeps(ctx), normalized, [newMsg.id]);
+      // yet, whoever wrote it: settled now, against the row that stands. The row is written or
+      // kept by now, so a failure here is its own line, never a throw that keeps a stored message.
+      try {
+        await settlePendingFor(pendingDeps(ctx), normalized, [newMsg.id]);
+      } catch (e) {
+        console.error(
+          `[PENDING] the mutations kept for ${newMsg.id.slice(0, 8)} of "${normalized}" were not settled after its write - they stay kept:`,
+          e
+        );
+      }
     }
+
+    // THE ROW IS WRITTEN OR KEPT BEFORE ANYTHING THAT MAY THROW (third review of #3851). The
+    // effects below - the other tabs, the read signal, the tone, the notification - ran between the
+    // render and the write, so one that threw left a row only memory held: the message was kept for
+    // a rerun that met it on screen and called it stored, and its frame was acknowledged. Each now
+    // runs after the write, isolated: a failed tone or banner never costs the message.
+    //
+    // A salon echo has no server id yet: announced to the sibling tabs now, it would be a row they
+    // can never reconcile. `applySalonEchoChange` announces it once it is re-keyed.
+    if (!options.salonEcho) {
+      afterTheRow('announcing it to the other tabs', newMsg.id, () =>
+        publishTabMessageUpdate({
+          type: 'message_added',
+          conversationId: normalized,
+          message: newMsg,
+          ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
+          unreadCount: nextUnreadCount,
+          ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+        })
+      );
+    }
+
+    // AND THE ONE ANNOUNCEMENT THAT TRAVELS THE OTHER WAY. The call above is leader-only, because
+    // only the leader receives inbound frames and only it can speak for the conversation's counts.
+    // A message composed HERE is the exception: whichever tab composed it is the only one that
+    // knows, and a follower composing one used to tell nobody - TAB-4b, 2026-09-05. `isOwn` is the
+    // discriminator and it is already computed above.
+    if (isOwn && !options.salonEcho) {
+      afterTheRow('announcing the composed message', newMsg.id, () =>
+        publishComposedMessage({
+          type: 'own_message_composed',
+          conversationId: normalized,
+          message: newMsg,
+          ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
+        })
+      );
+    }
+
+    // READ ON ARRIVAL IS STILL READ. This is the case the unread counter cannot see: the salon is
+    // already open, so the message is read the instant it lands and `nextUnreadCount` stays 0 - and
+    // a sibling device holding its banner has been told nothing. See `channelReadSignal`.
+    afterTheRow('signalling the read on arrival', newMsg.id, () => {
+      if (
+        isConversationOpen &&
+        !isOwn &&
+        !isSystem &&
+        isChannelConversationId(normalized) &&
+        claimChannelReadSignal(normalized, newMsg.timestamp.getTime())
+      ) {
+        ctx.signalChannelRead?.(normalized);
+      }
+    });
+
+    // A TONE ONLY WHERE THE MESSAGE CAN BE SEEN LANDING. Unconditional, it was a ghost: a sound on
+    // a phone whose screen shows another conversation, or none, tells the reader something happened
+    // and gives them nothing to look at. Where this is false the OS notification is raised instead
+    // and carries its channel's own sound, so exactly one audible signal is produced either way.
+    afterTheRow('playing the arrival tone', newMsg.id, () => {
+      if (
+        !isOwn &&
+        !isSystem &&
+        // A message deleted before it arrived says nothing: no tone, no notification.
+        !newMsg.isDeleted &&
+        // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
+        !isStaleInboundMessage(messageDate(newMsg)) &&
+        canSeeArrival(ctx, normalized)
+      ) {
+        if (ctx.playReceiveTone) {
+          ctx.playReceiveTone(mentionsUser(content, ctx.userId));
+        } else {
+          ctx.playNotificationTone();
+        }
+      }
+    });
+
+    // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
+    if (!newMsg.isDeleted) {
+      afterTheRow('notifying the arrival', newMsg.id, () =>
+        notifyInbound(
+          ctx,
+          normalized,
+          convo,
+          senderId,
+          content,
+          mentionsUser(content, ctx.userId),
+          isSystem,
+          isOwn,
+          resolvedTimestamp.getTime(),
+          newMsg.serverTimestamp,
+          1,
+          options.authorProven === true
+        )
+      );
+    }
+
     if (pairWriteFailure) throw pairWriteFailure;
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
@@ -2000,6 +2264,13 @@ export function useMessaging() {
   }
 
   /** {@link settleWithPending} on entries already read. */
+  /** `msg` with `entries` settled in again - pure, and a no-op when they change nothing. */
+  function resettled(msg: ChatMessage, entries: readonly PendingMutation[]): ChatMessage {
+    if (entries.length === 0) return msg;
+    const settlement = settleAgainstPending(msg, entries);
+    return settlement.fields ? settledChatMessage(msg, settlement.fields) : msg;
+  }
+
   function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
     if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
     const settlement = settleAgainstPending(msg, waiting);
@@ -2096,9 +2367,12 @@ export function useMessaging() {
   async function settleStoredBodies(
     verdicts: ReadonlyArray<Exclude<StoredBodyVerdict, { kind: 'new' }>>,
     normalized: string,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    framesByRow: ReadonlyMap<string, string[]>
   ) {
     const touched: string[] = [];
+    const upgradeRows: StoredMessage[] = [];
+    const consumedById = new SvelteMap<string, PendingMutation[]>();
     for (const verdict of verdicts) {
       if (verdict.kind === 'unreadable') {
         console.warn(
@@ -2116,39 +2390,46 @@ export function useMessaging() {
       const waiting =
         (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
         [];
-      const { content } = verdict;
-      let settlement: Settlement | null = null;
-      try {
-        // A compare-and-set on the row as it stands AT THE WRITE: a row deleted, edited or upgraded
-        // since the read above is no longer a preview, and is left as it is.
-        const written = await ctx.storage.mergeMessages(
-          normalized,
-          [verdict.row.id],
-          (current) => {
-            if (!shouldUpgradeMessage(current, content)) return null;
-            const next =
-              waiting.length > 0 ? settleAgainstPending({ ...current, content }, waiting) : null;
-            settlement = next;
-            return mergeStoredMessage(current, {
-              content,
-              isFcmPreview: false,
-              ...(next?.fields ? settledStoredPatch(next.fields) : {}),
-            });
-          },
-          ctx.deviceKeyB64
+      const { row, content } = verdict;
+      // What waited for the row lands WITH the body, settled against the row as it was read; the
+      // write below is a compare-and-set that leaves a row no longer a preview as it is
+      // (`previewUpgradeOnto`), and what arrived since is settled after it (`settlePendingFor`).
+      const settlement =
+        waiting.length > 0 ? settleAgainstPending({ ...row, content }, waiting) : null;
+      if (settlement) logDiscarded(settlement, row.senderId);
+      upgradeRows.push({
+        id: row.id,
+        conversationId: normalized,
+        senderId: row.senderId,
+        content,
+        timestamp: row.timestamp,
+        ...(row.serverTimestamp !== undefined ? { serverTimestamp: row.serverTimestamp } : {}),
+        isFcmPreview: false,
+        ...(settlement?.fields ? settledStoredPatch(settlement.fields) : {}),
+      });
+      consumedById.set(row.id, settlement?.consumed ?? []);
+    }
+    if (upgradeRows.length > 0) {
+      // THE BATCH'S OWN WRITE (review of #3851): a failure was logged and dropped, so the stored row
+      // stayed the notification's caption while the frame was acknowledged - kept now, and the
+      // frames of its rows wait for it.
+      const write: BatchRowWrite = {
+        conversationId: normalized,
+        upgradeRows,
+        newRows: [],
+        consumedById,
+        framesByRow: framesOfWrittenRows(framesByRow, upgradeRows),
+      };
+      const failure = await writeOrKeep(ctx, write);
+      if (failure === null) {
+        console.log(
+          `[ADD_MSG] ✓ ${upgradeRows.length} stored preview(s) of "${normalized}" upgraded: ${upgradeRows.map((r) => r.id.slice(0, 8)).join(', ')}`
         );
-        const done = settlement as Settlement | null;
-        if (done) logDiscarded(done, verdict.row.senderId);
-        if (written.size > 0) {
-          console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
-          if (done) await removeSettled(ctx, done.consumed);
-        } else {
-          console.log(
-            `[ADD_MSG] ${verdict.row.id.slice(0, 8)} is no longer a stored preview - the arriving body leaves it as it is`
-          );
-        }
-      } catch (e) {
-        console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
+      } else {
+        console.error(
+          `[DB] ${upgradeRows.length} stored preview(s) of "${normalized}" were not upgraded - kept, the next checkpoint stores them first:`,
+          failure
+        );
       }
     }
     // A held row takes what waited for it; an upgrade, what was kept after its read.
@@ -2164,7 +2445,13 @@ export function useMessaging() {
     messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>,
     contactName: string,
     ctx: MessagingContext,
-    origin: MessageBatchOrigin
+    origin: MessageBatchOrigin,
+    /**
+     * `storeDecides`: whether a row stands is asked of the STORE for every message, shown or not -
+     * the rerun of a live add that threw ({@link KeptBatch.storeDecides}). A row shown and not
+     * stored is then written as it is shown.
+     */
+    { storeDecides = false }: { storeDecides?: boolean } = {}
   ): Promise<void> {
     if (messages.length === 0) return;
     const normalized = contactName.toLowerCase();
@@ -2199,7 +2486,7 @@ export function useMessaging() {
           .filter((id): id is string => id !== undefined)
       ),
     ];
-    const notShown = batchIds.filter((id) => !byId.has(id));
+    const notShown = storeDecides ? batchIds : batchIds.filter((id) => !byId.has(id));
     const stored =
       persisted && notShown.length > 0 ? await storedRowsFor(ctx, normalized, notShown) : null;
     const waiting = persisted
@@ -2211,7 +2498,11 @@ export function useMessaging() {
     const consumedById = new SvelteMap<string, PendingMutation[]>();
     const upgradeRows: StoredMessage[] = [];
     const newRows: StoredMessage[] = [];
-    const upgradedById = new SvelteMap<string, ChatMessage>();
+    // A row this batch shows anew, decided against the snapshot read before the loop, and how to
+    // decide it again against the row shown when the batch applies (see `reshowOnto`).
+    const upgradedById = new SvelteMap<string, Reshown>();
+    // Rows a store-decided rerun wrote with what waited for them settled in: shown as written.
+    const refreshedById = new SvelteMap<string, Reshown>();
     const brandNew: ChatMessage[] = [];
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
@@ -2250,7 +2541,22 @@ export function useMessaging() {
           waiting.get(id) ?? []
         );
         const upgraded = settled.message;
-        upgradedById.set(id, upgraded);
+        const upgrade = {
+          content: pm.content,
+          senderId: pm.senderId,
+          replyTo: pm.replyTo,
+          isSystem,
+          serverTimestamp: pm.serverTimestamp,
+        };
+        upgradedById.set(id, {
+          from: existingMsg,
+          shown: upgraded,
+          reshow: (now) =>
+            resettled(
+              shouldUpgradeMessage(now, pm.content) ? mergeMessageUpgrade(now, upgrade) : now,
+              settled.consumed
+            ),
+        });
         consumedById.set(id, settled.consumed);
         if (ctx.storage) {
           upgradeRows.push({
@@ -2270,7 +2576,43 @@ export function useMessaging() {
         }
         continue;
       }
-      if (existingMsg) continue;
+      if (existingMsg) {
+        // SHOWN IS NOT STORED on a rerun the store decides: a row memory holds and the store does
+        // not is written as it is shown, and shown as written once what waited for it is settled
+        // in. SILENT BY DESIGN: not new to the reader, so nothing announced and no second banner.
+        if (
+          storeDecides &&
+          ctx.storage &&
+          storedBodyVerdict(stored, id, pm.content).kind === 'new'
+        ) {
+          const settled = settledWith(existingMsg, waiting.get(id) ?? []);
+          consumedById.set(id, settled.consumed);
+          settledIds.add(id);
+          if (settled.fields) {
+            refreshedById.set(id, {
+              from: existingMsg,
+              shown: settled.message,
+              reshow: (now) => resettled(now, settled.consumed),
+            });
+          }
+          newRows.push({
+            id,
+            conversationId: normalized,
+            senderId: existingMsg.senderId,
+            content: pm.content,
+            timestamp: (existingMsg.timestamp instanceof Date
+              ? existingMsg.timestamp
+              : new SvelteDate(existingMsg.timestamp)
+            ).getTime(),
+            serverTimestamp: existingMsg.serverTimestamp ?? pm.serverTimestamp,
+            ...(isSystem ? { readBy: [] } : {}),
+            ...(pm.authorship ? { authorship: pm.authorship } : {}),
+            ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
+          });
+        }
+        continue;
+      }
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
@@ -2320,9 +2662,9 @@ export function useMessaging() {
         });
       }
     }
-    await settleStoredBodies(storedVerdicts, normalized, ctx);
+    await settleStoredBodies(storedVerdicts, normalized, ctx, framesByRowOf(messages));
 
-    if (upgradedById.size === 0 && brandNew.length === 0) {
+    if (upgradedById.size === 0 && brandNew.length === 0 && newRows.length === 0) {
       // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
       // difference between "the batch arrived and we had it all" and "the batch never arrived".
       console.log(
@@ -2358,7 +2700,12 @@ export function useMessaging() {
       : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
+    // AGAINST THE ROW SHOWN NOW, like `toAdd`: a live edit or reaction that landed on one of these
+    // during the loop's awaits is kept, never shown older for an instant (fifth review of #3851).
+    const withUpgrades = base.messages.map((m) => {
+      const reshown = upgradedById.get(m.id) ?? refreshedById.get(m.id);
+      return reshown ? reshowOnto(reshown, m) : m;
+    });
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
     if (current) {
@@ -2486,17 +2833,17 @@ export function useMessaging() {
         upgradeRows,
         newRows,
         consumedById,
+        framesByRow: framesOfWrittenRows(framesByRowOf(messages), upgradeRows, newRows),
       };
-      const failure = await writeBatchRows(ctx, write);
+      const failure = await writeOrKeep(ctx, write);
       if (failure !== null) {
         // SHOWN AND NOT STORED: kept for the next checkpoint's hold, which retries it and refuses
-        // the export while it fails (rows before ratchet). Said once, here; the retries say one
-        // line each.
+        // the export while it fails (rows before ratchet) - a poison row is dropped instead
+        // (`writeOrKeep`). Said once, here; the retries say one line each.
         console.error(
-          `[DB] batchAddMessages failed - ${upgradeRows.length + newRows.length} row(s) of "${normalized}" shown and NOT stored, kept for the next checkpoint's hold:`,
+          `[DB] batchAddMessages failed - row(s) of "${normalized}" shown and NOT stored, kept for the next checkpoint's hold:`,
           failure
         );
-        unstoredRowWrites.push(write);
       }
       // Kept between the read above and the writes: settled now, against the rows that stand. The
       // batch is rendered and written by now, so a failure here is ITS OWN line - never a throw

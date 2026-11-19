@@ -35,7 +35,16 @@ export type UnackedReason =
    * so the frame waits behind them instead of the gap healer jumping the epochs they live in. Taken
    * with `absent-conversation`, by the conversation existing - see {@link refusedBacklogIsQueued}.
    */
-  | 'behind-refused-backlog';
+  | 'behind-refused-backlog'
+  /**
+   * A frame that DECRYPTED and whose dispatch threw (`InboundDispatchError`): left on the server,
+   * the one copy outside memory, rather than acknowledged as a decrypt failure. No event discharges
+   * it - the next pull lists it again - so it is counted and never put on the work list.
+   */
+  | 'dispatch-failed';
+
+/** The reasons no event re-fetches for: counted in the report, kept off the work list. */
+const NOT_ON_THE_WORK_LIST: ReadonlySet<UnackedReason> = new Set(['dispatch-failed']);
 
 /** How many distinct groups a report names before it stops listing them. */
 const SAMPLE_LIMIT = 5;
@@ -78,6 +87,7 @@ export function noteUnackedFrame(groupId: string, reason: UnackedReason): void {
   }
   entry.count++;
   if (entry.groups.size < SAMPLE_LIMIT) entry.groups.add(groupId.slice(0, 8));
+  if (NOT_ON_THE_WORK_LIST.has(reason)) return;
 
   let waiting = awaiting.get(reason);
   if (!waiting) {

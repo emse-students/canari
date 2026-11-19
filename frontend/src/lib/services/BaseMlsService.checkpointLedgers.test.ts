@@ -33,6 +33,7 @@ import {
   type StateLedgerChanges,
 } from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 
 /**
  * ONE WRITE, AND THE LEDGERS THAT DESCRIBE THE STATE TRAVEL INSIDE IT (KILL-2, 2026-10-26).
@@ -63,6 +64,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
     // No bulk-ingest observer holds rows here (`BaseMlsService.rowsBeforeRatchet.test.ts` owns the hold).
     holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    rowsOwed: new RowsOwedLedger(),
     bulkIngestObservers: [],
     ...overrides,
   };

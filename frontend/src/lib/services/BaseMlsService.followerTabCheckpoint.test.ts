@@ -38,6 +38,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 import type * as HexModule from '$lib/utils/hex';
 import { MLS_STATE_VERSION_KEY as VERSION_KEY } from '$lib/utils/hex';
@@ -119,6 +120,7 @@ async function openTab(storedVersion: number) {
     emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
     // No bulk-ingest observer holds rows here (`BaseMlsService.rowsBeforeRatchet.test.ts` owns the hold).
     holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    rowsOwed: new RowsOwedLedger(),
     bulkIngestObservers: [],
     writeCheckpoint: vi.fn(async (_key: string, latch: HexModule.MlsStateWriteLatch) => {
       const outcome = await hex.saveMlsStateEncrypted(

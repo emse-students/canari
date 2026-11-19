@@ -6,8 +6,9 @@
  * hand-over or freeze, whose old leader's checkpoint is refused (#3371) - reloaded a state behind a
  * commit the server no longer had. Now:
  * - a commit or Welcome is acknowledged only once a LANDED checkpoint holds it;
- * - an application frame is acknowledged at once by the document that owns the state (the history
- *   archive is its second copy), and held like a commit by one that no longer does;
+ * - an application frame is acknowledged without a checkpoint by the document that owns the state,
+ *   once the window's close stored its row (rows before ratchet, 2026-11-19 - a row left unstored
+ *   withholds it), and held like a commit by one that no longer does;
  * - an id a landed checkpoint already holds is acknowledged whatever the lead, so the new leader
  *   never meets a frame its disk has already spent (`SecretReuseError`, a false loss).
  */
@@ -39,6 +40,7 @@ interface Hold {
   applied: Map<string, number>;
   structural: Set<string>;
   covered: () => Promise<void>;
+  rowsStored: () => Promise<void>;
 }
 
 const inner = (svc: BaseMlsService) =>
@@ -99,6 +101,7 @@ describe('a drain ack and the checkpoint that covers it', () => {
       ]),
       structural: new Set(['commit']),
       covered: cp.covered,
+      rowsStored: () => Promise.resolve(),
     };
     const acking = inner(svc).announceAck(['msg', 'commit'], hold);
     for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -121,6 +124,7 @@ describe('a drain ack and the checkpoint that covers it', () => {
       ]),
       structural: new Set(['commit']),
       covered: cp.covered,
+      rowsStored: () => Promise.resolve(),
     });
     cp.refuse(new Error('follower-tab'));
     await acking;
@@ -142,6 +146,7 @@ describe('a drain ack and the checkpoint that covers it', () => {
       ]),
       structural: new Set(),
       covered: cp.covered,
+      rowsStored: () => Promise.resolve(),
     });
     // The checkpoint of a document that no longer owns the state is refused (#3371).
     cp.refuse(new Error('follower-tab'));
@@ -157,9 +162,160 @@ describe('a drain ack and the checkpoint that covers it', () => {
       applied: new Map([['msg', 1]]),
       structural: new Set(),
       covered: cp.covered,
+      rowsStored: () => Promise.resolve(),
     });
     expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['msg']);
     expect(cp.covered).not.toHaveBeenCalled();
+  });
+
+  /** A row observer whose frames with rows shown and not stored the test sets by hand. */
+  const rowObserver = (left: { now: string[] }) => ({
+    onBulkIngestStart: vi.fn(),
+    onBulkIngestEnd: vi.fn(),
+    framesLeftUnstored: () => new Set(left.now),
+  });
+
+  it("ROWS BEFORE RATCHET: an application frame is acknowledged only once the window's close stored its row", async () => {
+    inner(svc).inboundApplied = 1;
+    svc.addBulkIngestObserver(rowObserver({ now: [] }));
+    let closeWindow!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      closeWindow = resolve;
+    });
+    const acking = inner(svc).announceAck(['msg'], {
+      applied: new Map([['msg', 1]]),
+      structural: new Set(),
+      covered: checkpointByHand(svc).covered,
+      rowsStored: () => closed,
+    });
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+    // The row is still in the window's buffer: the server keeps the frame.
+    expect(ackMessages).not.toHaveBeenCalled();
+    closeWindow();
+    await acking;
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['msg']);
+  });
+
+  it('ROWS BEFORE RATCHET: a row the close could not store withholds the application frames, and the repeat waits for the same', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    inner(svc).inboundApplied = 2;
+    const left = { now: ['msg'] };
+    svc.addBulkIngestObserver(rowObserver(left));
+    await inner(svc).announceAck(['msg', 'commit'], {
+      applied: new Map([
+        ['msg', 1],
+        ['commit', 2],
+      ]),
+      structural: new Set(['commit']),
+      covered: () => Promise.reject(new Error('rows')),
+      rowsStored: () => Promise.resolve(),
+    });
+    expect(ackMessages).not.toHaveBeenCalled();
+    expect([...inner(svc).unacknowledged].sort()).toEqual(['commit', 'msg']);
+
+    // Stored at last (a later hold retried it): the next ack of the frame goes through.
+    left.now = [];
+    await inner(svc).announceAck(['msg'], {
+      applied: new Map([['msg', 1]]),
+      structural: new Set(),
+      covered: () => Promise.reject(new Error('unused')),
+      rowsStored: () => Promise.resolve(),
+    });
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['msg']);
+  });
+
+  it('ROWS BEFORE RATCHET: withheld acks are said ONCE per episode, counted, and the episode end says the count', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    inner(svc).inboundApplied = 3;
+    const left = { now: ['a', 'b', 'c'] };
+    svc.addBulkIngestObserver(rowObserver(left));
+    const ack = (id: string, applied: number) =>
+      inner(svc).announceAck([id], {
+        applied: new Map([[id, applied]]),
+        structural: new Set(),
+        covered: () => Promise.reject(new Error('unused')),
+        rowsStored: () => Promise.resolve(),
+      });
+
+    // Three pulls re-listing withheld frames: one line, not three.
+    await ack('a', 1);
+    await ack('b', 2);
+    await ack('c', 3);
+    const withheldLines = warn.mock.calls.filter((c) => String(c[0]).includes('not acknowledged'));
+    expect(withheldLines).toHaveLength(1);
+    expect(ackMessages).not.toHaveBeenCalled();
+
+    left.now = [];
+    await ack('a', 1);
+    const released = info.mock.calls.filter((c) => String(c[0]).includes('stored again'));
+    expect(released).toHaveLength(1);
+    expect(String(released[0][0])).toContain('3 ack(s) had been withheld');
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['a']);
+
+    // A new episode is said again.
+    left.now = ['b'];
+    await ack('b', 2);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('not acknowledged'))).toHaveLength(
+      2
+    );
+  });
+
+  it('ROWS BEFORE RATCHET: an application frame a LANDED checkpoint holds is acknowledged whatever is left unstored', async () => {
+    inner(svc).inboundApplied = 1;
+    inner(svc).durableApplied = 1;
+    svc.addBulkIngestObserver(rowObserver({ now: ['msg'] }));
+    const rowsStored = vi.fn(() => Promise.resolve());
+    await inner(svc).announceAck(['msg'], {
+      applied: new Map([['msg', 1]]),
+      structural: new Set(),
+      covered: checkpointByHand(svc).covered,
+      rowsStored,
+    });
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['msg']);
+    expect(rowsStored).not.toHaveBeenCalled();
+  });
+
+  it('ROWS BEFORE RATCHET, PER FRAME (review of #3851): only the frame whose row is unstored is withheld - every other application frame is acknowledged', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    inner(svc).inboundApplied = 3;
+    svc.addBulkIngestObserver(rowObserver({ now: ['stuck'] }));
+    await inner(svc).announceAck(['before', 'stuck', 'after'], {
+      applied: new Map([
+        ['before', 1],
+        ['stuck', 2],
+        ['after', 3],
+      ]),
+      structural: new Set(),
+      covered: () => Promise.reject(new Error('unused')),
+      rowsStored: () => Promise.resolve(),
+    });
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['before', 'after']);
+    expect([...inner(svc).unacknowledged]).toEqual(['stuck']);
+  });
+
+  it('ROWS BEFORE RATCHET: an observer that cannot say which frames it left unstored withholds every application frame, at ERROR', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    inner(svc).inboundApplied = 1;
+    svc.addBulkIngestObserver({
+      onBulkIngestStart: vi.fn(),
+      onBulkIngestEnd: vi.fn(),
+      framesLeftUnstored: () => {
+        throw new Error('torn down');
+      },
+    });
+    await inner(svc).announceAck(['msg'], {
+      applied: new Map([['msg', 1]]),
+      structural: new Set(),
+      covered: () => Promise.reject(new Error('unused')),
+      rowsStored: () => Promise.resolve(),
+    });
+    expect(ackMessages).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('could not say which frames'),
+      expect.anything()
+    );
   });
 
   it('a checkpoint claims what was applied when it EXPORTED, not when it landed', async () => {
@@ -206,6 +362,7 @@ describe('a withheld commit listed again by a pull (second review of #3321)', ()
       applied: new Map([['commit', 1]]),
       structural: new Set(['commit']),
       covered: refused.covered,
+      rowsStored: () => Promise.resolve(),
     });
     refused.refuse(new Error('stale'));
     await drainAck;
