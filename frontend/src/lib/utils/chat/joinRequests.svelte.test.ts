@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   answerJoinRequest,
   beginJoinRequestSweep,
+  answerJoinRequestOutcome,
   canAnswerJoinRequests,
+  declinedJoinRequests,
   pendingJoinRequests,
   raiseJoinRequest,
   resetJoinRequests,
@@ -122,6 +124,37 @@ describe('joinRequests - a member answers', () => {
     expect(await answerJoinRequest(request, 'approve')).toBe(true);
     expect(approve).toHaveBeenCalledWith(request);
     expect(pendingJoinRequests()).toEqual([]);
+  });
+
+  it('a Decline that found the person already in: the ask leaves, and NO decline is recorded', async () => {
+    setJoinRequestHandlers({
+      approve: vi.fn(),
+      decline: vi.fn(async () => ({ done: true as const, settled: 'already-in' as const })),
+    });
+    raiseJoinRequest(ask('carol', 'c1'));
+    const [request] = pendingJoinRequests();
+
+    expect(await answerJoinRequestOutcome(request, 'decline')).toBe('done');
+    expect(pendingJoinRequests()).toEqual([]);
+    expect(declinedJoinRequests('g1')).toEqual([]);
+  });
+
+  it('a server too old for the answer is `unsupported`, and the ask stays', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setJoinRequestHandlers({
+      approve: vi.fn(),
+      decline: vi.fn(async () => ({
+        done: false as const,
+        reason: 'the server cannot remove a seat that is not an ask',
+        kind: 'unsupported' as const,
+      })),
+    });
+    raiseJoinRequest(ask('carol', 'c1'));
+    const [request] = pendingJoinRequests();
+
+    expect(await answerJoinRequestOutcome(request, 'decline')).toBe('unsupported');
+    expect(pendingJoinRequests()).toHaveLength(1);
+    expect(declinedJoinRequests('g1')).toEqual([]);
   });
 
   it('keeps the ask when the Add did not happen - no exception is not an Add', async () => {

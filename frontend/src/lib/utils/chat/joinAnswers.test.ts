@@ -22,6 +22,7 @@ import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { handleWelcomeRequest } from './actions';
 import type { BulkAdditionOutcome } from './groupCreation';
 import { admitJoinRequest, declineJoinRequest, type JoinAnswerDeps } from './joinAnswers';
+import type { TreeReading } from './confirmedTree';
 import {
   answerJoinRequest,
   answerJoinRequestOutcome,
@@ -136,6 +137,12 @@ function memberSide(
     conversations: conversations(),
     invite,
     collectStrayLeaves,
+    // The tree confirmed at the server's epoch: this member's own leaves, at epoch 3.
+    confirmedTree: vi.fn(async (): Promise<TreeReading> => ({
+      status: 'read',
+      identities: [...leaves],
+      epoch: 3,
+    })),
     log: vi.fn(),
   };
   return { mlsService, invite, deps, leaves, seat, collectStrayLeaves };
@@ -314,11 +321,16 @@ describe('admitJoinRequest - done only when the person is in the tree', () => {
 });
 
 describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
+  /** An invitation-link ask, as the server names it: with its identity. */
+  const linkAsk: JoinRequest = { ...request, askId: 'ask-1' };
+
   it('withdraws the seat of a person still awaiting a member', async () => {
     const m = memberSide();
 
-    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
-    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
+    expect(await declineJoinRequest(linkAsk, m.deps)).toEqual({ done: true });
+    // A link ask carries its flag on the server: no tree is read and no epoch is sent.
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER, undefined);
+    expect(m.deps.confirmedTree).not.toHaveBeenCalled();
     expect(m.seat.exists).toBe(false);
     // Never the generic removal: it does not re-check the ask, and records an eviction.
     expect(m.mlsService.removeMemberFromServer).not.toHaveBeenCalled();
@@ -330,20 +342,24 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
     const seat: FakeSeat = { ...linkSeat(), awaitingAdmission: false, welcomeQueued: true };
     const m = memberSide({ seat });
 
-    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    // The ask ends, but nothing was declined: no "you declined" line for someone who is in.
+    expect(await declineJoinRequest(linkAsk, m.deps)).toEqual({
+      done: true,
+      settled: 'already-in',
+    });
     expect(seat.exists).toBe(true);
     expect(m.deps.log).toHaveBeenCalledWith(expect.stringContaining('admitted them first'));
   });
 
   it("says the truth of a seat that was never an ask - not another member's Add", async () => {
-    // A seat older than the rule, or a member's invite between its roster write and its Add: the
-    // server answers `not-awaiting`, and the log must not claim an admission nothing records.
+    // A seat older than the rule, answered to a Decline that carried no tree epoch: the log must not
+    // claim an admission nothing records.
     const m = memberSide();
     m.mlsService.declineJoinRequest = vi.fn().mockResolvedValue('not-awaiting');
 
-    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(await declineJoinRequest(linkAsk, m.deps)).toEqual({ done: true });
     expect(m.deps.log).toHaveBeenCalledWith(
-      expect.stringContaining('not an invitation-link ask, so there is nothing to withdraw')
+      expect.stringContaining('no tree epoch proved them absent')
     );
     expect(m.deps.log).not.toHaveBeenCalledWith(expect.stringContaining('admitted them first'));
   });
@@ -352,7 +368,87 @@ describe('declineJoinRequest - the guarded withdrawal, never a removal', () => {
     const m = memberSide();
     m.mlsService.declineJoinRequest = vi.fn().mockRejectedValue(new Error('403'));
 
+    expect((await declineJoinRequest(linkAsk, m.deps)).done).toBe(false);
+  });
+});
+
+/**
+ * STEP 2 OF THE ADMISSION FIX-FORWARD: a person whose leaves are all gone while their seat stands
+ * is asked about like a link joiner, and a Decline REMOVES their seat (owner, 2026-11-17) - on the
+ * proof of a tree confirmed at the server's epoch, never on a tree that may be behind an Add.
+ */
+describe('declineJoinRequest - a seat that is not an invitation-link ask', () => {
+  const returning = (): FakeSeat => ({ ...linkSeat(), awaitingAdmission: false });
+
+  it("sends the epoch of the confirmed tree the person is absent from, and the server's removal is done", async () => {
+    const m = memberSide({ seat: returning() });
+    m.mlsService.declineJoinRequest = vi.fn().mockResolvedValue('removed');
+
+    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(m.deps.confirmedTree).toHaveBeenCalledWith(GROUP);
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER, 3);
+    expect(m.deps.log).toHaveBeenCalledWith(expect.stringContaining('is removed'));
+  });
+
+  it('reads the tree again ONCE when a commit landed since the reading (epoch-moved)', async () => {
+    const m = memberSide({ seat: returning() });
+    m.mlsService.declineJoinRequest = vi
+      .fn()
+      .mockResolvedValueOnce('epoch-moved')
+      .mockResolvedValueOnce('removed');
+
+    expect(await declineJoinRequest(request, m.deps)).toEqual({ done: true });
+    expect(m.deps.confirmedTree).toHaveBeenCalledTimes(2);
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('is `raced` when the epoch moved under both attempts - never a third', async () => {
+    const m = memberSide({ seat: returning() });
+    m.mlsService.declineJoinRequest = vi.fn().mockResolvedValue('epoch-moved');
+
+    const result = await declineJoinRequest(request, m.deps);
+
+    expect(result).toMatchObject({ done: false, kind: 'raced' });
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('a server older than the tree epoch is `unsupported`, accused, and declines nothing', async () => {
+    // It answers as it always did - `not-awaiting`, or `already-admitted` on a trace of an old Add -
+    // and removes nothing: a "done" here would bring the card back at every sweep.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const answer of ['not-awaiting', 'already-admitted'] as const) {
+      const m = memberSide({ seat: returning() });
+      m.mlsService.declineJoinRequest = vi.fn().mockResolvedValue(answer);
+
+      expect(await declineJoinRequest(request, m.deps)).toMatchObject({
+        done: false,
+        kind: 'unsupported',
+      });
+    }
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('a server older than the epoch'));
+    error.mockRestore();
+  });
+
+  it('sends nothing on a tree that cannot be confirmed: it proves no absence', async () => {
+    const m = memberSide({ seat: returning() });
+    m.deps.confirmedTree = vi.fn(async (): Promise<TreeReading> => ({ status: 'unconfirmed' }));
+
     expect((await declineJoinRequest(request, m.deps)).done).toBe(false);
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+  });
+
+  it('never declines a person the confirmed tree holds: a Decline is no Remove', async () => {
+    const m = memberSide({
+      seat: returning(),
+      leaves: ['me:self', `${JOINER}:${JOINER_DEVICE}`],
+    });
+
+    expect(await declineJoinRequest(request, m.deps)).toEqual({
+      done: true,
+      settled: 'already-in',
+    });
+    expect(m.mlsService.declineJoinRequest).not.toHaveBeenCalled();
+    expect(m.deps.log).toHaveBeenCalledWith(expect.stringContaining('a Decline is no Remove'));
   });
 });
 
@@ -422,7 +518,8 @@ describe('a join by invitation link, end to end', () => {
     const [ask] = pendingJoinRequests();
     expect(await answerJoinRequest(ask, 'decline')).toBe(true);
 
-    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER);
+    // The ask was raised from a roster row naming no identity, so the Decline carries its proof.
+    expect(m.mlsService.declineJoinRequest).toHaveBeenCalledWith(GROUP, JOINER, 3);
     expect(m.invite).not.toHaveBeenCalled();
     expect(pendingJoinRequests()).toEqual([]);
     // No seat any more, and the joiner READS it rather than learning it from a refusal (ADM-2,

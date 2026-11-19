@@ -1391,13 +1391,52 @@ The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
 (`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
-a DM ask's Add always failed and its Decline deleted the peer's own roster row. And only a seat the
-server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pending`) and the roster
-read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
-is not flagged - a member's invite between its roster write and its Add, a seat written before
-migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
-invitation-link ask"). A member's own invite brings such a person in. The line shows an ask only
-while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+a DM ask's Add always failed and its Decline deleted the peer's own roster row. The line shows an ask
+only while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+
+**A seat that is not an ask is asked about too (step 2 of the fix-forward, 2026-11-19).** The pending
+rows (`GET mls/invitations/pending`) and the roster read (`GET .../user-members`) carry
+`awaitingAdmission`; a person absent from the tree whose seat is NOT flagged - a peer whose key
+package was skipped at creation, a member whose only device was revoked and swept, an only leaf
+evicted while the seat stands, a link seat written before migration 038 - used to be neither added
+nor asked about, so their own external commit was their only door, and the emission side of the
+fix-forward (below) would have stranded them. Such a person is now raised as the same card (owner,
+2026-11-17: "X veut rejoindre la conversation", Accepter / Refuser, no wording of its own), with no
+`askId` (the server names one only for a link ask). Two facts make it safe:
+
+- *The ask is raised only on a tree CONFIRMED at the server's epoch* (`readConfirmedTree`; the sweep's
+  per-pass `pendingAddFacts`, a fresh read for a `welcome_request`). Such a seat carries no flag a
+  commit lifts, so a member whose tree is behind the Add that just brought the person in would read
+  "no leaf" and raise a card for someone already in. An unconfirmed tree raises nothing this pass
+  ("not confirmed at the server's epoch: nobody is asked this pass"); a confirmed tree that holds the
+  person says the local tree was behind. Since ADM-3 no member's invite writes a seat before its
+  commit, so no Add in flight looks like such a seat.
+- *A Decline REMOVES the seat, on the member's proof* (owner, 2026-11-17). The Decline of an ask with
+  no `askId` reads the tree confirmed at the server's epoch and sends `{ treeEpoch }`, the epoch of
+  the tree the person is absent from (`declineJoinRequest` in `joinAnswers.ts`). Under the seat lock
+  - which every advance takes first - the server removes the seat as a removal does (`removeSeat`:
+  seat generation moved, roster row gone and its stretch closed, queued Welcomes and device rows
+  gone, eviction recorded) ONLY while `activeEpoch` is still `treeEpoch` (`removed`); once a commit
+  landed since, nothing is touched (`epoch-moved`) - never a removal of someone who may have just
+  come back in (`declineSeat`, `utils/group-membership.ts`). The client then reads the tree again and
+  sends the Decline ONCE more; a second `epoch-moved` is `raced` (the conversation moved under the
+  tap, the card stays). A malformed epoch is a `400 tree_epoch_invalid`. A tree that cannot be
+  confirmed sends nothing, and a tree confirmed AHEAD of the server is not proof either
+  (`readConfirmedTree` answers `unconfirmed`). A tree that holds the person declines nothing (a
+  Decline is no Remove): the card leaves WITHOUT a "Vous avez refusé" line (`settled: 'already-in'`),
+  as it does when a link ask answers `already-admitted`. Other members' cards leave on the `declined`
+  settlement frame, sent under the seat's id, which clears an entry that holds no identity. A Decline
+  with no epoch (a client older than this) is answered as before, `not-awaiting` or
+  `already-admitted`, nothing touched; a Decline WITH an epoch answered that way came from a server
+  older than this, which cannot remove the seat - the client accuses it at ERROR and keeps the card
+  (`unsupported`, toast `join_request_unsupported`), never recording a decline that did not happen.
+  This gives no member a new power: any admitted member may already remove any seat
+  (`DELETE .../members/:userId`).
+
+Accept is the member's own Add, as for a link ask; the commit gate leaves an admitted seat as it is,
+so the Add only gives the person a leaf. Until the emission side ships, such a person may still enter
+by their own external commit first; the card then leaves at the next sweep, and an Accept finds them
+in the tree.
 
 **An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
 returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
@@ -1413,7 +1452,8 @@ accepted commit" below), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
-`gone`. All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
+`gone` - and, for a seat that is not an ask declined with its tree epoch, `removed` or `epoch-moved`
+(above). All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
 every Add decided before it, through every writer** (ADM-3, 2026-10-25): the gate orders it against
 the seat generation the inviting member READ (below), enrols nobody and lifts nothing for it, drops
 its admits, and the member-add route that used to undo it enrols nobody any more - see "The commit
@@ -1549,10 +1589,10 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
    measured before anything else is built. The count is durable since migration 053
    ([the count is a table](#the-count-is-a-table-uninvited_entries-migration-053-2026-11-17)).
-2. **The emission side**, and BEFORE it the member side (found 2026-11-17): a user with no leaf
-   whose seat is not an invitation-link ask is asked about to nobody (`askAMemberToAdmit` returns
-   "nobody is asked"), so an asker on any of the paths below would wait for ever until members raise
-   such a seat as an ask and that build is the client floor ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)).
+2. **The emission side**, and BEFORE it the member side (found 2026-11-17, BUILT 2026-11-19: such a
+   seat is raised as an ask and its Decline removes it, [above](#who-admits-a-new-person-2026-10-23)).
+   The emission side waits until that build is the client floor - before it, an older member asks
+   nobody and the asker would wait for ever ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)).
    A user holding no leaf ASKS a member and waits for that member's Add,
    never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
    device asks first but lets itself in when no member device can answer, because its user's leaf
@@ -1731,8 +1771,8 @@ nothing to remove - the lift by the accepted commit's `admits` is how every Add 
 
 **A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
 every existing row to `false`, so a person who accepted a link before the deploy and had not entered
-yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
-`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+yet holds an ORDINARY seat, not an ask. Since 2026-11-19 a member is asked about them like any seat
+with no leaf (above), and a Decline removes the seat. Neither the base nor the commit gate refuses them, so they may still enter by their
 own external commit exactly as before the rule, and the members then report it:
 `[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
 population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED

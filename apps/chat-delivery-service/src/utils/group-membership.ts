@@ -11,6 +11,7 @@ import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
   heldKeyPackages,
+  recordSeatEviction,
   takeSeatLock,
   takeSharedSeatLock,
   withSeatLock,
@@ -380,9 +381,10 @@ export type AwaitingSeatWithdrawal =
   | 'already-admitted'
   /**
    * The seat never awaited a member and no Add of the person is on record: not an invitation-link
-   * ask at all - a seat written before migration 038 (which defaults every row to `false`), a
-   * member's invite still between its roster write and its Add, or a member whose leaves were
-   * removed. Nothing was touched, and nothing here is a Decline's to withdraw.
+   * ask at all - a seat written before migration 038 (which defaults every row to `false`), or a
+   * person whose leaves are all gone while their seat stands (a skipped key package, a revoked only
+   * device swept, an evicted only leaf). Nothing was touched; a member's Decline of such a seat is
+   * {@link declineSeat}'s, which needs the epoch the member read the tree at.
    */
   | 'not-awaiting'
   /** No roster row: answered or withdrawn before. */
@@ -439,6 +441,86 @@ export async function withdrawAwaitingSeat(
   await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
   if (cause === 'declined') await recordDecline(m, groupId, userId);
   return { outcome: 'withdrawn', askId: seat.id };
+}
+
+/**
+ * REMOVES `userId`'s seat from `groupId` as a member's removal does: the group's seat generation
+ * moves first (so an Add decided before this departure enrols nobody after it), then the roster row
+ * goes and its open interval is closed (an exclusion a later re-add holds against), the queued
+ * Welcomes and the device rows go, and the eviction is recorded last - the one order of
+ * `utils/seat-eviction.ts`. `m` MUST hold the group's seat lock.
+ *
+ * THE ONE IMPLEMENTATION for the removal route (`MembersController.removeGroupMember`) and for a
+ * member's Decline of a seat that is not an invitation-link ask ({@link declineSeat}).
+ *
+ * @returns what each step touched, for the caller's log line.
+ */
+export async function removeSeat(
+  m: EntityManager,
+  groupId: string,
+  userId: string
+): Promise<{
+  ended: { deleted: number; closed: number };
+  devices: { memberships: number; queued: number };
+  generation: number;
+}> {
+  await bumpSeatGeneration(m, groupId);
+  const ended = await endGroupMembership(m, groupId, userId);
+  const devices = await endDeviceMemberships(m, { userId, groupId }, 'welcomes');
+  const generation = await recordSeatEviction(m, groupId, userId, false);
+  return { ended, devices, generation };
+}
+
+/**
+ * What a member's Decline did ({@link declineSeat}): every {@link AwaitingSeatWithdrawal}, plus the
+ * two answers for a seat that is NOT an invitation-link ask -
+ * - `removed`: the person held no leaf at the epoch the member read the tree at, which is still the
+ *   group's epoch - their seat is removed as a removal removes it;
+ * - `epoch-moved`: a commit landed since that reading, so the member's tree no longer says whether
+ *   the person holds a leaf - nothing was touched, and the member's next reading decides.
+ */
+export type JoinDecline = AwaitingSeatWithdrawal | 'removed' | 'epoch-moved';
+
+/**
+ * A MEMBER'S DECLINE OF A PERSON WHO HOLDS NO LEAF, under the group's seat lock (`m` MUST hold it).
+ *
+ * An invitation-link ask (`awaitingAdmission`) is withdrawn by {@link withdrawAwaitingSeat}, as it
+ * always was. A seat that is NOT an ask - a person whose leaves are all gone while their seat stands,
+ * raised to the members as an ask since 2026-11-19 (owner, 2026-11-17: "a Decline REMOVES the seat")
+ * - is REMOVED, but only on the member's proof that the person holds no leaf NOW: `treeEpoch`, the
+ * epoch of the tree the member read them absent from. Every advance takes this same lock first
+ * (`MessagingService.validateCommit`), so while the group's `activeEpoch` is still `treeEpoch` no
+ * commit has given them a leaf since, and once the seat is gone none can: an external commit of
+ * theirs is refused for want of a seat, and a member's Add decided before is ordered after this
+ * departure by the seat generation. Any other epoch is `epoch-moved`, and nothing is touched - never
+ * a removal of someone who may have just come back in. Without `treeEpoch` (a client older than
+ * this) the answer is the withdrawal's, as before.
+ *
+ * The `dm_groups` row is locked first, before the roster row the withdrawal reads: the one order of
+ * `utils/seat-eviction.ts`, so a group's end (which takes no seat lock) cannot deadlock with this.
+ *
+ * @returns the outcome, and the seat's id (the identity every member's screen settles the ask by),
+ *   or `null` when there was no seat.
+ */
+export async function declineSeat(
+  m: EntityManager,
+  groupId: string,
+  userId: string,
+  treeEpoch: number | null
+): Promise<{ outcome: JoinDecline; askId: string | null }> {
+  const [group] = (await m.query(`SELECT "activeEpoch" FROM dm_groups WHERE id = $1 FOR UPDATE`, [
+    groupId,
+  ])) as Array<{ activeEpoch: number | string }>;
+  const withdrawal = await withdrawAwaitingSeat(m, groupId, userId, 'declined');
+  if (withdrawal.outcome !== 'not-awaiting' && withdrawal.outcome !== 'already-admitted') {
+    return withdrawal;
+  }
+  if (treeEpoch === null) return withdrawal;
+  if (!group || Number(group.activeEpoch) !== treeEpoch) {
+    return { outcome: 'epoch-moved', askId: withdrawal.askId };
+  }
+  await removeSeat(m, groupId, userId);
+  return { outcome: 'removed', askId: withdrawal.askId };
 }
 
 /**

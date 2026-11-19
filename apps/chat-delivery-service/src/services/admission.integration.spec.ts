@@ -201,8 +201,17 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ds
     );
   /** A member's Decline of `target`'s ask through its route, as the member `who`. */
-  const decline = (who: { userId: string }, target: { userId: string } = JOINER) =>
-    members().declineJoinRequest(GROUP, target.userId, who.userId);
+  const decline = (
+    who: { userId: string },
+    target: { userId: string } = JOINER,
+    treeEpoch?: number
+  ) =>
+    members().declineJoinRequest(
+      GROUP,
+      target.userId,
+      who.userId,
+      treeEpoch === undefined ? undefined : { treeEpoch }
+    );
   /** How many rows `table` holds for `who` in the group. */
   const rowsOf = async (table: string, who: { userId: string }): Promise<number> => {
     const [row]: { n: string }[] = await q(
@@ -920,6 +929,100 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
     expect(await rowsOf('dm_group_members', OTHER)).toBe(1);
     expect(await rowsOf('dm_device_group_memberships', OTHER)).toBe(1);
+  });
+
+  /**
+   * A SEAT THAT IS NOT AN ASK IS DECLINED BY REMOVING IT, ON THE MEMBER'S PROOF (step 2 of the
+   * admission fix-forward, owner 2026-11-17: "a Decline REMOVES the seat"). A person whose leaves are
+   * all gone while their seat stands is raised to the members as an ask; the member's Decline carries
+   * the epoch of the tree it read them absent from, and while that is still the group's epoch the
+   * seat goes as a removal takes it - after which the person's own external commit is refused.
+   */
+  describe('the Decline of a seat that is not an invitation-link ask', () => {
+    /** JOINER on the roster as an ordinary seat (no flag), with a device still owed a Welcome. */
+    const seatNotAnAsk = async () => {
+      await q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`,
+        [GROUP, JOINER.userId]
+      );
+      await q(
+        `INSERT INTO dm_group_membership_intervals ("groupId", "userId", "joinedAt") VALUES ($1, $2, now())`,
+        [GROUP, JOINER.userId]
+      );
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status, "admittedAtEpoch")
+         VALUES ($1, $2, $3, 'pending', 1)`,
+        [JOINER.userId, JOINER.deviceId, GROUP]
+      );
+    };
+
+    it("removes the seat at the member's tree epoch, closes the stretch, and the person's own commit is refused", async () => {
+      await seatNotAnAsk();
+
+      await expect(decline(MEMBER, JOINER, 3)).resolves.toEqual({ outcome: 'removed' });
+
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
+      expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(0);
+      const [interval]: { leftAt: Date | null; leftAtSeatGeneration: number | null }[] = await q(
+        `SELECT "leftAt", "leftAtSeatGeneration" FROM dm_group_membership_intervals
+         WHERE "groupId" = $1 AND "userId" = $2`,
+        [GROUP, JOINER.userId]
+      );
+      // Stamped with the generation the removal moved the group to, which an Add decided before it
+      // is ordered by.
+      const [group]: { seatGeneration: number }[] = await q(
+        `SELECT "seatGeneration" FROM dm_groups WHERE id = $1`,
+        [GROUP]
+      );
+      expect(interval.leftAt).not.toBeNull();
+      expect(interval.leftAtSeatGeneration).toBe(Number(group.seatGeneration));
+      await expect(refusalOf(joinerExternalCommit(3))).resolves.toMatchObject({ status: 403 });
+    });
+
+    it('removes a seat that holds no trace of an Add at all (a link seat older than migration 038)', async () => {
+      // `not-awaiting` to a Decline with no epoch; with the member's tree epoch it is removed.
+      await q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`,
+        [GROUP, JOINER.userId]
+      );
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'pending')`,
+        [JOINER.userId, JOINER.deviceId, GROUP]
+      );
+      await expect(decline(MEMBER, JOINER)).resolves.toEqual({ outcome: 'not-awaiting' });
+
+      await expect(decline(MEMBER, JOINER, 3)).resolves.toEqual({ outcome: 'removed' });
+
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
+      expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(0);
+    });
+
+    it('touches nothing when a commit landed since the reading (epoch-moved)', async () => {
+      await seatNotAnAsk();
+
+      await expect(decline(MEMBER, JOINER, 2)).resolves.toEqual({ outcome: 'epoch-moved' });
+
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(1);
+      expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(1);
+      expect(await rowsOf('dm_seat_evictions', JOINER)).toBe(0);
+    });
+
+    it('without a tree epoch (an older client) answers as before and touches nothing', async () => {
+      await seatNotAnAsk();
+
+      await expect(decline(MEMBER, JOINER)).resolves.toEqual({ outcome: 'already-admitted' });
+
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(1);
+    });
+
+    it('an invitation-link ask is still withdrawn, never removed, whatever epoch it carries', async () => {
+      await acceptLink();
+
+      await expect(decline(MEMBER, JOINER, 0)).resolves.toEqual({ outcome: 'withdrawn' });
+
+      expect(await rowsOf('dm_group_membership_intervals', JOINER)).toBe(0);
+    });
   });
 
   it('a member reads which pending rows are asks', async () => {
