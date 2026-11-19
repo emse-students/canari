@@ -118,7 +118,7 @@ export function newMediaStart(
  * ends - at the next range the buffer already held, or at the end of the range it grew. Measured, so
  * the hole after a segment is known from the list whatever the buffer later forgets.
  */
-export function newMediaExtent(
+function newMediaExtent(
   before: readonly MediaSpan[],
   after: readonly MediaSpan[]
 ): MediaSpan | null {
@@ -226,7 +226,7 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * range - the last fragment - where a stopped playhead has run out of playable media at a hole's edge.
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
-export const REPLAY_SEGMENT_LENGTH_S = 1.5;
+const REPLAY_SEGMENT_LENGTH_S = 1.5;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
 const REBASE_THRESHOLD_S = 1;
 
