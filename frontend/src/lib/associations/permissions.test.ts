@@ -69,7 +69,7 @@ describe('mayActOnAssociation', () => {
   });
 
   // These two are the whole point of sharing one predicate: the edit page used to spell the
-  // Stripe exception out by hand, so the exception and the rule could drift apart.
+  // payout-account exception out by hand, so the exception and the rule could drift apart.
   it.each([
     ['MANAGE_PAYOUT_ACCOUNT', MANAGE_PAYOUT_ACCOUNT],
     ['POST_AS_ASSO', POST_AS_ASSO],

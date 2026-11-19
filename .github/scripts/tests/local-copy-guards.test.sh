@@ -57,7 +57,7 @@ else
     column_name=$({ grep -rhE -B1 "^[[:space:]]+${col}[?!]?[[:space:]]*:" --include='*.entity.ts' apps 2>/dev/null |
       grep -oE "name: '[a-z0-9_]+'" | tail -1 | sed -E "s/name: '([a-z0-9_]+)'/\1/"; } || true)
     # Matched as a FIXED string on the exact bytes the file contains: the column names appear
-    # escaped inside double-quoted shell strings, so it really holds `\"stripeCustomerId\"`.
+    # escaped inside double-quoted shell strings, so it really holds `\"lydiaAccountId\"`.
     # Restricting to the lines that CALL the guarded function is what stops the comment block above
     # them from satisfying this.
     #

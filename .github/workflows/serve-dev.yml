@@ -83,9 +83,8 @@ jobs:
   # value is visible in the run log: whether a second estate is being deployed is not a secret, and
   # a silent gate is one nobody can debug.
   #
-  # WHAT IS DELIBERATELY NOT HERE: no Stripe (dev has no payment credentials at all), and no
-  # separate BACKEND images - both estates deploy the same image by its commit sha, which is why
-  # `docker-compose.dev.yml` pins `TAG` exactly as production's does.
+  # WHAT IS DELIBERATELY NOT HERE: no separate BACKEND images - both estates deploy the same image
+  # by its commit sha, which is why `docker-compose.dev.yml` pins `TAG` exactly as production's does.
   # ════════════════════════════════════════════════════════════════════════════════════════════
 
   deploy-dev:

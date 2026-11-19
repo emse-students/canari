@@ -70,8 +70,8 @@ accepted word, not the value.
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de
 paiement" / "payment provider"; the neutral contract (`ConnectAccountStatusResponse`) lives in the
-interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the unmapped columns,
-the `stripe` deep-link host) are listed with
+interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the two columns that hold the
+live Lydia references, the return-URL placeholder) are listed with
 their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
 `PayoutFeeHint.svelte` shows the estimate only once `GET /api/payments/provider` has answered
 `lydia`, with the fees a global admin entered as the platform's Lydia contract terms, VAT included
@@ -441,7 +441,7 @@ expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
 
-Stripe and Lydia kept independent account ids and `*OnboardingComplete` flags (migration 037; only Lydia is read now), so
+Stripe and Lydia kept independent account ids and `*OnboardingComplete` flags (migration 037; the Stripe pair is dropped by the held migration 177), so
 "is this association ready" is a question about the ACTIVE provider. `isPaymentAccountReady(asso,
 provider)` in `lib/associations/api.ts` is the one answer; the provider comes from
 `activePaymentProvider.svelte.ts` (fetched once, `null` until known and on failure - which reads as

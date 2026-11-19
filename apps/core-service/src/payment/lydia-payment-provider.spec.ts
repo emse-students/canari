@@ -165,7 +165,7 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     expect(sent.get('type')).toBe('email');
     expect(sent.get('order_ref')).toBe('submission-42');
     // The receiver for these lives in webhook.controller.ts (lydia-request-callback) - registered
-    // per-request since Lydia has no global webhook config like Stripe's dashboard-configured one.
+    // per-request, since Lydia has no global webhook configuration.
     expect(sent.get('confirm_url')).toContain(
       '/api/payments/lydia-request-callback?outcome=confirm'
     );

@@ -34,7 +34,7 @@ export class UserTag {
   @Column({ type: 'timestamptz', nullable: true })
   expiresAt: Date | null;
 
-  /** Arbitrary metadata (e.g. stripe payment intent, form submission id). */
+  /** Arbitrary metadata (e.g. payment reference, form submission id). */
   @Column({ type: 'jsonb', default: '{}' })
   metadata: Record<string, unknown>;
 

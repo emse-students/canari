@@ -5553,8 +5553,7 @@ ${rejectionReason}`
   // ── Lydia helpers ────────────────────────────────────────────────────────
   // The payout account columns: `lydiaAccountId` and `lydiaOnboardingComplete` - THE ACTIVE
   // collecting Business. A bridge's other Business lives in `lydia_account_bridges`
-  // (lydia-account-bridge.ts). The historic `stripe*` pair is no longer mapped
-  // (docs/wiki/stripe-archive.md).
+  // (lydia-account-bridge.ts).
 
   /**
    * Links the Business `business/create` just made to an association: its vendor_token, its

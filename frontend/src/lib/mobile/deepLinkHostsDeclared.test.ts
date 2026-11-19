@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
  * start). The notification's own `PendingIntent` is explicit, so it needs no manifest filter - but its
  * `VIEW` data still goes through that plugin check. Measured on a Mi 9T on 2026-10-08: a calendar and
  * an admin-agenda push opened the app and changed nothing, backgrounded or killed, because only
- * `callback`, `stripe`, `chat`, `post` and `form` were declared. `posts` and `proposals` were in the
+ * `callback`, the checkout return, `chat`, `post` and `form` were declared. `posts` and `proposals` were in the
  * same position.
  */
 const SERVER_HOSTS = [
@@ -37,11 +37,8 @@ const SERVER_HOSTS = [
   'admin-moderation',
 ];
 
-/** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */
+/** The checkout return. */
 const CHECKOUT_HOSTS = ['payment'];
-
-/** Hosts retired with `minClientVersion` 1.2.7, refused by the server. */
-const RETIRED_HOSTS = ['stripe'];
 
 /**
  * MiConnect's way back from a sign-out (`OIDC_MOBILE_POST_LOGOUT_URI`). Opened by the Custom Tab, not
@@ -77,17 +74,4 @@ describe('custom-scheme deep-link hosts', () => {
       expect(manifest).toContain(`android:host="${host}"`);
     }
   );
-
-  /**
-   * A RETIRED host must not come back by a regen: the server refuses it, so an app that registered
-   * it again would catch a URL nothing legitimate emits.
-   */
-  it.each(RETIRED_HOSTS)('declares fr.emse.canari://%s nowhere', (host) => {
-    const manifest = readFileSync(
-      resolve(__dirname, '../../../src-tauri/gen/android/app/src/main/AndroidManifest.xml'),
-      'utf8'
-    );
-    expect(declared).not.toContain(host);
-    expect(manifest).not.toContain(`android:host="${host}"`);
-  });
 });

@@ -37,10 +37,6 @@ export class Association {
   @Column({ type: 'uuid', nullable: true })
   logoMediaId: string | null;
 
-  // The historic `stripeAccountId` / `stripeOnboardingComplete` columns are deliberately NOT mapped any
-  // more (2026-10-09): nothing reads or writes them, and they stay in the table until the drop step of
-  // docs/wiki/stripe-archive.md so a rollback to the previous release still finds them.
-
   /** Lydia Business `vendor_token`. */
   @Column({ type: 'varchar', nullable: true })
   lydiaAccountId: string | null;
@@ -103,8 +99,8 @@ export class Association {
   lydiaBusinessKeyCiphertext?: string | null;
 
   /**
-   * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable
-   * (unlike Stripe's Express dashboard link) - stored so the treasurer can still reach it after
+   * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable -
+   * stored so the treasurer can still reach it after
    * the creating session ends.
    */
   @Column({ type: 'varchar', nullable: true })

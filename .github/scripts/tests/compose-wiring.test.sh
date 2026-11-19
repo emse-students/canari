@@ -431,7 +431,7 @@ DEV_ABSENT_BY_DESIGN="adminer"
 # on dev is the defect this check exists for.
 #
 #   (Lydia IS wired: its credentials are a homologation pair and dev pins
-#   LYDIA_ENV=homologation. Stripe has left the product.)
+#   LYDIA_ENV=homologation.)
 #   SKY_API_*           Sky is a separate estate holding one API key.
 #   EXTERNAL_API_KEY    the credential external consumers present to production.
 #   TURN_*, CLOUDFLARE_CALLS_*, CLOUDFLARE_TURN_*

@@ -255,7 +255,7 @@
         <div class="border-cn-border space-y-3 border-t-2 pt-4">
           <p class="text-text-main text-sm font-bold">{m.form_payment_methods_heading()}</p>
           <!-- ONE non-selectable line: online payment is Lydia ("Paiement Canari"), there is no
-           provider to choose. Unavailable (a leftover stripe, or disabled) is said, not hidden. -->
+           provider to choose. Unavailable (disabled) is said, not hidden. -->
           <div
             data-testid="online-payment-line"
             data-state={onlineCopy.state}

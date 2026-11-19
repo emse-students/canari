@@ -1761,10 +1761,10 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls).toEqual([]);
     });
 
-    // A Stripe-era row still holds a `cs_...` id: core refuses it with a 400, so asking would only
-    // put a WARN in the log on every poll of the return page.
+    // A row holding an id that is not a Lydia `request_uuid` (a historic `cs_...` one): core refuses
+    // it with a 400, so asking would only put a WARN in the log on every poll of the return page.
     it.each([['pending'], ['expired'], ['cancelled']])(
-      'asks nothing about a Stripe-era id on a %s row, and says so once at INFO',
+      'asks nothing about a non-Lydia id on a %s row, and says so once at INFO',
       async (status) => {
         const { service, rows, core } = makeStore({
           maxSubmissions: 1,
