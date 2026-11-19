@@ -836,7 +836,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
 
     it('PUBLISHES ONE REPLAY at the end, the end plus three days, unannounced, never repostable; sweeps and retries add none', async () => {
       const live = await finishedLive();
-      await lives.end(ALICE, live.id);
+      // The end answers the verdict the publication then honours, and a repeat answers it again.
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
       const [replay, ...more] = await replays(live.id);
       expect(more).toEqual([]);
       expect(replay).toMatchObject({
@@ -888,10 +890,96 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     it('a live under 30 s keeps no replay and is purged as before (D4)', async () => {
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));
-      await lives.end(ALICE, live.id);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
       expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
       expect(store.countFor(live.id)).toBe(0);
+    });
+
+    it('THE END WRITES THE VERDICT: a short live judged at its end never publishes, whatever its row says later', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id); // a seat: the end drains instead of purging at once
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { keepsReplay: false },
+      ]);
+      // Stretch the span past 30 s AFTER the end: without the written verdict the publication's
+      // own predicate would now pass (one segment stored, span >= 30 s) and publish a replay.
+      await q(`UPDATE lives SET "startedAt" = "startedAt" - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      // Past the seat lease the purge reaches the publication step: it must find nothing to publish.
+      await q(
+        `UPDATE lives SET "endedAt" = now() - $2 * interval '1 millisecond' - interval '1 second'
+          WHERE id = $1`,
+        [live.id, LIVE_SEAT_LEASE_MS]
+      );
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('deleted');
+      expect(await replays(live.id)).toEqual([]);
+    });
+
+    it("A CUT WRITES THE VERDICT FALSE: the broadcaster's retried end then answers no replay", async () => {
+      const live = await finishedLive();
+      store.failPurge = true; // the row outlives the cut, so the retried end reads it
+      await lives.get(BOB, live.id);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect(await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { keepsReplay: false },
+      ]);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await replays(live.id)).toEqual([]);
+    });
+
+    it('AN ERASURE WRITES THE VERDICT FALSE on every live of the account', async () => {
+      const live = await finishedLive();
+      await lives.get(BOB, live.id);
+      await lives.end(ALICE, live.id); // drained by BOB's seat: ended, not yet published
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        )
+      );
+      expect(await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { keepsReplay: false },
+      ]);
+    });
+
+    it('THE SWEEP WRITES THE VERDICT when it ends a silent live, by the same 30 s rule', async () => {
+      const long = await finishedLive(); // ten minutes of span
+      const short = await start(BOB);
+      await lives.ingest(BOB, short.id, 0, segment(0));
+      await q(
+        `UPDATE lives SET "startedAt" = now() - interval '3 minutes',
+                          "lastSegmentAt" = now() - interval '2 minutes' - interval '50 seconds'
+          WHERE id = $1`,
+        [short.id]
+      );
+      await q(`UPDATE lives SET "lastSegmentAt" = now() - interval '2 minutes' WHERE id = $1`, [
+        long.id,
+      ]);
+      const ended = await lives.endDue();
+      expect(new Set(ended.map((r) => r.id))).toEqual(new Set([long.id, short.id]));
+      const verdict = async (id: string) =>
+        (await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [id])) as {
+          keepsReplay: boolean;
+        }[];
+      expect(await verdict(long.id)).toEqual([{ keepsReplay: true }]);
+      expect(await verdict(short.id)).toEqual([{ keepsReplay: false }]);
+    });
+
+    it('a live started with replays off answers no replay at its end', async () => {
+      await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
+      const live = await finishedLive();
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await replays(live.id)).toEqual([]);
     });
 
     it('a live that drained through the sweep publishes there, counted as a replay', async () => {
@@ -3183,10 +3271,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // The broadcaster ended it themselves: they are not told moderators stopped it.
       expect(bell).toEqual([]);
 
+      // The broadcaster's retried end: ONE answer, the replay verdict included - false, written by
+      // the cut on the kept row and answered from the cut row once the row is gone.
+      const ANSWER = {
+        id: live.id,
+        endedAt: ended.endedAt,
+        endReason: 'broadcaster',
+        keepsReplay: false,
+      };
       // BEFORE the purge (the row is kept by the refused purge)...
       expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
       expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
-      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'broadcaster' });
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual(ANSWER);
       // ...and AFTER it, from the cut row: the same answer.
       store.failPurge = false;
       await sweeper.sweepOnce();
@@ -3194,11 +3290,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
       expect(await body(lives.manifest(CAROL, live.id))).toEqual(ENDED);
       expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
-      await expect(lives.end(ALICE, live.id)).resolves.toEqual({
-        id: live.id,
-        endedAt: ended.endedAt,
-        endReason: 'broadcaster',
-      });
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual(ANSWER);
       await expect(lives.cut(MOD, live.id, { reason: 'other' })).resolves.toMatchObject({
         endReason: 'broadcaster',
         newlyCut: false,

@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="17/11/2026"
+  updated="19/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -195,8 +195,8 @@
           précédente (celle-ci est supprimée au remplacement suivant) : la carte du direct en haut
           du fil la montre, avec le titre et le nombre de spectateurs, aux membres autorisés à
           regarder, sans qu'ils rejoignent le direct. À votre arrivée sur un direct, le serveur
-          retient que vous êtes arrivé (votre compte, jusqu'à la suppression du direct, peu après sa
-          fin), et une ligne « X a rejoint », avec votre nom, apparaît dans le chat pour les autres
+          retient que vous êtes arrivé (votre compte, au plus six heures après la fin du direct), et
+          une ligne « X a rejoint », avec votre nom, apparaît dans le chat pour les autres
           spectateurs et pour la personne qui diffuse, sauf pour un compte avec lequel un blocage
           existe dans un sens ou dans l'autre, sauf pour les spectateurs que la personne qui diffuse
           a retirés, et sauf si le chat vous est masqué ; au plus trois noms à la fois, le reste est
@@ -204,14 +204,23 @@
           donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
           serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
           feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
-          réactions. Lorsque les rediffusions sont activées sur Canari, un direct d'au moins 30
-          secondes reste visible en rediffusion pendant la durée indiquée en section 6, par le même
-          public ; sinon, un direct n'est pas enregistré. Avant votre premier direct, vous acceptez
-          les règles de publication : la version acceptée et sa date sont conservées. Pour limiter
-          les abus, le serveur garde aussi l'heure de chacun de vos démarrages pendant une heure.
-          Les journaux techniques notent les débuts et fins de direct, les coupures et les retraits
-          de spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
-          requête, le serveur web journalise l'adresse IP de chaque lecture.
+          réactions. <strong>Rediffusion :</strong> un direct d'au moins 30 secondes devient une publication
+          de rediffusion, visible par le même public que le direct pendant la durée indiquée en section
+          6, avec le temps qu'il lui reste ; elle garde au plus les 3 dernières heures de la vidéo (les
+          mêmes segments chiffrés, avec la clé du direct et sa dernière image d'aperçu), son titre comme
+          texte, et reçoit commentaires et réactions comme une publication. Le chat et les réactions du
+          direct ne sont pas rediffusés : ils sont supprimés quand la rediffusion est publiée. Elle ne
+          peut être ni republiée ni repartagée dans un fil ; ceux qui peuvent la voir peuvent l'enregistrer
+          sur leur appareil, comme un CanaReel. Aucune notification ne l'annonce, et la regarder ne prend
+          pas de place de spectateur. Un direct coupé par la modération ou arrêté par la suppression du
+          compte n'en laisse pas, et la suppression du compte de la personne qui diffusait met fin à ses
+          rediffusions, y compris celles d'une association. Si l'Éditeur désactive les rediffusions, un
+          direct lancé ensuite n'est pas enregistré. Avant votre premier direct, et de nouveau quand elles
+          changent, vous acceptez les règles de publication : la version acceptée et sa date sont conservées.
+          Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos démarrages pendant une
+          heure. Les journaux techniques notent les débuts et fins de direct, les coupures et les retraits
+          de spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute requête,
+          le serveur web journalise l'adresse IP de chaque lecture.
         </dd>
       </div>
       <div>
@@ -920,10 +929,15 @@
             </td>
           </tr>
           <tr>
-            <td>Rediffusion d'un direct (lorsque les rediffusions sont activées)</td>
+            <td>
+              Rediffusion d'un direct d'au moins 30 secondes : ses 3 dernières heures de vidéo au
+              plus, son image d'aperçu, son titre, ses commentaires et réactions
+            </td>
             <td>
               {durationLabel(retention.days.liveReplayDays)} après la fin du direct, puis supprimée avec
-              sa vidéo ; ou avant, à sa suppression
+              sa vidéo (environ une heure plus tard) ; avant, à sa suppression par vous, par l'association
+              ou par la modération, à une coupure du direct, ou quand l'ensemble des rediffusions dépasse
+              20 Go (la plus ancienne d'abord). Sa vidéo n'est jamais dans les sauvegardes
             </td>
           </tr>
           <tr>
@@ -940,13 +954,18 @@
             <td>
               L'image d'aperçu est remplacée environ toutes les 16 secondes, et la précédente est
               conservée jusqu'au remplacement suivant : une image d'aperçu vit donc environ 32
-              secondes. Tout est supprimé à la fin du direct (par vous, après 60 secondes sans
-              vidéo, par une coupure de la modération ou à la suppression de votre compte). Après
-              une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
-              les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
-              ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
-              reprise toutes les 30 secondes. Un segment mis en cache par notre serveur web ou par
-              l'appareil d'un spectateur : deux minutes au plus après sa dernière lecture
+              secondes. Avec une rediffusion, le chat et les réactions sont supprimés quand elle est
+              publiée, peu après la fin du direct, et la vidéo et la dernière image d'aperçu sont
+              gardées avec elle (ligne précédente), tout comme la fiche du direct (titre, personne
+              qui diffuse, association, heures) et la liste des spectateurs retirés, jusqu'à la
+              suppression de la rediffusion. Un direct sans rediffusion est entièrement supprimé à
+              sa fin (par vous, après 60 secondes sans vidéo, par une coupure de la modération ou à
+              la suppression de votre compte). Après une coupure, la vidéo est supprimée aussitôt ;
+              après la suppression du compte, dans les 30 secondes ; à une autre fin, elle l'est une
+              fois que les derniers spectateurs ont fini de la recevoir, en principe dans la minute.
+              Une suppression qui échoue est reprise toutes les 30 secondes. Un segment mis en cache
+              par notre serveur web ou par l'appareil d'un spectateur : deux minutes au plus après
+              sa dernière lecture
             </td>
           </tr>
           <tr>
@@ -1136,10 +1155,13 @@
         quotidiennes, hebdomadaires et mensuelles : un fichier supprimé peut y subsister
         <strong>jusqu'à 6 mois</strong>. La plupart des fichiers sont chiffrés sur votre appareil
         avant l'envoi ; les fichiers déposés dans un formulaire et les logos des associations ne le
-        sont pas. Un direct en cours au moment d'une sauvegarde nocturne peut y laisser ses lignes
-        de base de données (dont le chat chiffré et la clé du direct, elle-même chiffrée par un
-        secret du serveur qui n'est pas dans la base) et des segments chiffrés, pour les durées
-        ci-dessus. Une sauvegarde n'est relue que pour restaurer le service.
+        sont pas. Un direct ou une rediffusion qui existe au moment d'une sauvegarde nocturne peut y
+        laisser ses lignes de base de données (dont le chat chiffré et la clé du direct, elle-même
+        chiffrée par un secret du serveur qui n'est pas dans la base), pour les durées ci-dessus :
+        une rediffusion supprimée peut ainsi subsister jusqu'à 14 jours dans les sauvegardes de la
+        base, sous la forme de sa publication (titre, auteur, durée, commentaires), jamais de sa
+        vidéo. Les segments vidéo des directs et des rediffusions ne sont jamais sauvegardés. Une
+        sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>
   </section>

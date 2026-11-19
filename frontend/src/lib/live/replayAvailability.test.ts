@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { replayFollows, replaysAvailable } from './replayAvailability';
+import { replayEndText, replaysAvailable } from './replayAvailability';
 import { LIVE_REPLAY_MIN_MS } from './constants';
 
 describe('replaysAvailable', () => {
@@ -12,11 +12,13 @@ describe('replaysAvailable', () => {
   });
 });
 
-describe('replayFollows', () => {
-  it('promises a replay only to a live of at least 30 s, with the switch on', () => {
-    expect(replayFollows('on', LIVE_REPLAY_MIN_MS)).toBe(true);
-    expect(replayFollows('on', LIVE_REPLAY_MIN_MS - 1)).toBe(false);
-    expect(replayFollows('off', 10 * LIVE_REPLAY_MIN_MS)).toBe(false);
+describe('replayEndText', () => {
+  it("says the server's verdict, the rule while it is unknown, and none for a live it does not keep", () => {
+    expect(replayEndText(true, true)).toBe('kept');
+    expect(replayEndText(true, false)).toBe('none');
+    expect(replayEndText(true, null)).toBe('pending');
+    expect(replayEndText(false, true)).toBe('none');
+    expect(replayEndText(false, null)).toBe('none');
   });
 });
 

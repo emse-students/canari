@@ -1,6 +1,18 @@
-## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)
+## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09; built, on since 2026-11-19, the readings owed)
 
-target: 1.8.0
+target: 1.7.1
+
+**Urgent (owner, 2026-11-19):** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en
+production"*. `live_replays_mode` went `on` in production and on dev on 2026-11-19, before the texts
+(*"Prod maintenant, textes juste après"*); the texts (WP-R6) and `LIVE_RULES_VERSION` 3 followed in the
+next pull request ([as built](../live-replays.md#wp-r6-as-built-the-texts)). What is left is the
+[readings](../live-replays.md#the-readings-owed); the entry is deleted once they are taken. **Not
+recorded, and owed in `1.7.1`, the WP-R3 readings** (shipped from `v1.6.9`, the switch on with none of
+them taken - [the list](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)): 1-4 on dev
+(a live's segments on the `live_segments` volume and none under `live/` in Garage; the folder gone after
+the end with `[LIVE_GC] remaining=0`; the `[LIVE_STORE] drained=N` boot line then `drained=0`; the admin
+storage panel's live line), 5 and the replay reading 7 on production (`restic ls latest` names no
+`live_segments` path, and `live/` is absent from Garage's listing) - read-only commands, by the lead.
 
 Asked by the owner on 2026-11-07, every question answered the same day:
 
