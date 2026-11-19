@@ -374,6 +374,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/release-notes-body.test.sh
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
+	@bash .github/scripts/tests/audit-trees.test.sh
 	@bash .github/scripts/tests/stream-json-premise.test.sh
 	@bash .github/scripts/tests/ignored-advisories-still-reported.test.sh
 	@bash .github/scripts/tests/image-scan-targets.test.sh

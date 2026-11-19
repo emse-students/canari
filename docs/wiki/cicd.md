@@ -3256,7 +3256,7 @@ knip, svelte-check and paraglide (frontend) and through `@nestjs/cli`, `@angular
 **One table, three readers.** `.github/scripts/lib/audit-trees.sh` holds every tree's install flags,
 level, closure and ignores. The pull-request audit reads it with `closure: production`
 (`ci.yml` passes it to `code-analysis.yml`). The nightly reads it with `full`. Gate 7 of
-`release-preflight.sh` reads it with `production`, stables only. `audit-dependencies.test.sh`
+`release-preflight.sh` reads it with `production`, stables only. `audit-trees.test.sh`
 pins the flags and asserts that the table's trees are exactly the directories of
 `git ls-files '*bun.lock'` (minus commented exclusions, none today) and the matrix's. That is how
 `libs/handoff` (its `jose`, audited by nothing until then) joined, as a sixth tree audited like a
