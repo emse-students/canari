@@ -173,7 +173,7 @@
       : m.live_card_is_live({ name });
   }
 
-  /** The poster's age as read at the list's fetch. Under a second it is "just now": "0 s ago" reads
+  /** The poster's age as read at the list's fetch. An age that rounds to 0 s (under 500 ms) is "just now": "0 s ago" reads
    *  as a glitch (owner, 2026-11-19). */
   function ageText(ms: number): string {
     const seconds = Math.max(0, Math.round(ms / 1000));

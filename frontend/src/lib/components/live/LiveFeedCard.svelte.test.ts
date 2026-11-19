@@ -147,6 +147,19 @@ describe('LiveFeedCard', () => {
     );
   });
 
+  it('a poster of 500 ms rounds to "1 s", the first age that is not "just now"', async () => {
+    const live = item('l1', 'u1', null, {
+      poster: { name: 'p1', ageMs: 500 },
+      posterKey: 'ab'.repeat(32),
+    });
+    render([{ kind: 'answered', lives: [live] }]);
+    await settle();
+    const [card] = cards();
+    expect(card.querySelector('[data-live-poster-age]')?.textContent).toBe(
+      m.live_card_preview_age_seconds({ seconds: 1 })
+    );
+  });
+
   it('a live with no title reads "X est en live", and no poster asks nothing', async () => {
     const { loadPoster } = render([{ kind: 'answered', lives: [item('l1', 'u1')] }]);
     await settle();
