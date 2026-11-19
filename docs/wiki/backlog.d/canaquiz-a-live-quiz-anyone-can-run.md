@@ -62,7 +62,7 @@ a player from the game. Hidden text never appears in the results.
 case, accents and small typos, **with no AI and no third party** (independence principle). The
 host can then fix the groups by hand.
 
-**Results.** The host sees the per-question detail and the full ranking, and can export them.
+**Results.** The host sees the per-question detail and the full ranking, and can export them as a summary PDF.
 **The results are deleted after 30 days**, through a retention sweep like the other retention
 durations. The quiz itself stays and can be run again. The Art. 30 register is updated for the new
 processing ([register](../compliance/register-of-processing.md)).
@@ -82,8 +82,10 @@ re-engagement push, and a player is notified only of a game they joined.
 
 - the live-state protocol: one authority, the server, holds the question and its timer, and every
   answer is idempotent by `(game, question, player)`;
-- the reconnect rule: a player who drops returns to the current question with their score kept;
-- the export format;
+- the reconnect rule: a player who drops returns to the current question with their score kept; one
+  who returns after a question's time is over gets 0 for it and nothing else (owner, 2026-11-19);
+- the export: **a summary PDF** (owner, 2026-11-19), built on the client like the other exports,
+  carrying the per-question detail and the ranking, with hidden text left out;
 - the load test.
 
 **Closed when** a game with each question type has been played end to end on dev:
