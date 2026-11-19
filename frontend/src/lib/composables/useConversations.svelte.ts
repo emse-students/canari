@@ -13,6 +13,7 @@ import {
   type JoinAnswerDeps,
 } from '$lib/utils/chat/joinAnswers';
 import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
+import { readConfirmedTree } from '$lib/utils/chat/confirmedTree';
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { foldForSearch } from '$lib/utils/textFold';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -2779,6 +2780,8 @@ export function useConversations() {
         ),
       collectStrayLeaves: async (groupId) =>
         (await removeStrayLeaves(mlsService, [groupId], ctx.userId, ctx.log)).includes(groupId),
+      confirmedTree: (groupId) =>
+        readConfirmedTree(mlsService, groupId, ctx.userId, '[JOIN_REQUEST]', () => false),
       log: ctx.log,
     };
   }
@@ -2800,8 +2803,9 @@ export function useConversations() {
   }
 
   /**
-   * A member DECLINES a new person who asked to join: their roster row and pending devices leave the
-   * server (`declineJoinRequest` in `joinAnswers.ts`), which is what stops the ask coming back.
+   * A member DECLINES a person with no leaf who asks to join: their roster row and pending devices
+   * leave the server (`declineJoinRequest` in `joinAnswers.ts`), which is what stops the ask coming
+   * back.
    */
   async function declineJoinRequest(
     request: JoinRequest,

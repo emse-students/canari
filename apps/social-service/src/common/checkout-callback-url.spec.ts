@@ -9,7 +9,7 @@ describe('isAllowedCheckoutCallbackUrl - the app deep link', () => {
     expect(isAllowedCheckoutCallbackUrl('fr.emse.canari://payment/cancel', FRONT)).toBe(true);
   });
 
-  it.each(['stripe', 'callback', 'chat', 'evil'])('refuses the host %s', (host) => {
+  it.each(['checkout', 'callback', 'chat', 'evil'])('refuses the host %s', (host) => {
     expect(isAllowedCheckoutCallbackUrl(`fr.emse.canari://${host}/success`, FRONT)).toBe(false);
   });
 
@@ -30,7 +30,7 @@ describe('resolveCheckoutCallbackUrl - a refused URL is a signal, not a silent f
   it('falls back AND warns when the client sent a URL it refuses, without its query', () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const got = resolveCheckoutCallbackUrl(
-      'fr.emse.canari://stripe/success?session_id=secret',
+      'fr.emse.canari://checkout/success?session_id=secret',
       FALLBACK,
       FRONT
     );
@@ -38,7 +38,7 @@ describe('resolveCheckoutCallbackUrl - a refused URL is a signal, not a silent f
     expect(warn).toHaveBeenCalledTimes(1);
     const line = String(warn.mock.calls[0][0]);
     expect(line).toContain('REFUSED');
-    expect(line).toContain('stripe/success');
+    expect(line).toContain('checkout/success');
     expect(line).not.toContain('secret');
   });
 

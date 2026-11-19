@@ -45,7 +45,7 @@ function isNonPublicWebViewOrigin(origin: string): boolean {
 }
 
 /**
- * Canonical HTTPS origin for links shared outside the app (clipboard, Stripe, etc.).
+ * Canonical HTTPS origin for links shared outside the app (clipboard, payment returns, etc.).
  * Never returns `tauri.localhost` on mobile/desktop Tauri builds.
  */
 export function publicAppOrigin(): string {
