@@ -1,10 +1,11 @@
 # Live replays - a finished live kept three days as a CanaReel
 
-**State (2026-11-09): DESIGNED, every question decided by the owner on 2026-11-09
-([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 (the switch and the schema) and WP-R2
-(the server, [as built](#wp-r2-as-built)) built, WP-R3 (out of the backup,
-[as built](#wp-r3-as-built-the-segments-outside-the-backup)) built and owed a dev pass, the client
-(WP-R4, WP-R5) and the texts (WP-R6) not built; `live_replays_mode` is `off` everywhere.**
+**State (2026-11-19): BUILT AND ON. Every question decided by the owner on 2026-11-09
+([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 to WP-R5 built and shipped (the client in
+the `1.7.0` stable); `live_replays_mode` turned `on` in production and on dev on 2026-11-19 at the
+owner's request, BEFORE the texts (*"Prod maintenant, textes juste après"*,
+[decision 19](backlog.d/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
+[built](#wp-r6-as-built-the-texts) in the pull request that followed. The phone readings are owed.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
 measured cost and the chosen mechanism, kept as the base) and #3133 (2026-11-07, closed; its
@@ -304,7 +305,7 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 | **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built in the repo, owed its dev pass ([as built](#wp-r3-as-built-the-segments-outside-the-backup)) |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet; the first-live rules raised to version 3 moved to WP-R6 ([why](#wp-r4-and-wp-r5-as-built)) | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R5** | the segment-by-segment save, a new part on an init change, the size first | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
-| **WP-R6** | the texts (below), then `live_replays_mode = on` on dev, the readings, then production | not built |
+| **WP-R6** | the texts (below) and `LIVE_RULES_VERSION` 3; the switch went `on` on both estates first, by the owner's decision | built ([as built](#wp-r6-as-built-the-texts)); the readings owed |
 
 ### WP-R2, as built
 
@@ -473,6 +474,46 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 - **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
 - **Broadcaster texts (part of WP-R6):** the audience rule, the end confirm and the broadcaster's own end screen name the replay only while the switch is on (and, for the last two, only for a live of at least 30 s: `replayFollows`). The legal pages (privacy `#directs`, CGU `#directs`, register C19) are NOT changed here: they say "pas de rediffusion" and change at the flip.
 
-**`LIVE_RULES_VERSION` stays 2 until the flip's texts ship (WP-R6).** Version 3 is the broadcaster accepting a text that names the replay, and the rules sheet points at the CGU, which says "pas de rediffusion" until the flip; raised now, every broadcaster would re-accept, with the switch off, either a sheet promising a replay that does not happen or the unchanged text under a new number. It is raised in the pull request that changes the CGU, the privacy policy, register C19-C20 and the pre-live texts, merged before `live_replays_mode` is turned on (the table above).
+**`LIVE_RULES_VERSION` stayed 2 until the flip's texts shipped (WP-R6, now 3).** Version 3 is the broadcaster accepting a text that names the replay, and the rules sheet points at the CGU, which says "pas de rediffusion" until the flip; raised now, every broadcaster would re-accept, with the switch off, either a sheet promising a replay that does not happen or the unchanged text under a new number. It is raised in the pull request that changes the CGU, the privacy policy, register C19-C20 and the pre-live texts, merged before `live_replays_mode` is turned on (the table above).
 
 Owed: the phone readings listed above (cover and time left on the card included).
+
+## WP-R6 as built: the texts
+
+Written 2026-11-19, after the switch went `on` on both estates (the owner's order, so no "switch off"
+production state was left to keep the texts true for). Each text says what the product does, from
+[the owner's decisions](#the-owners-decisions-of-2026-11-09): 3 days by default then deleted, never in
+a backup (the segments), the last 3 hours at most, 30 s of live at least, the live's own audience and
+no repost, saved like a CanaReel, the chat not replayed, the time left shown, a staff deletion with no
+strike, the 20 GB total cap evicting the oldest.
+
+| Text | What it says now |
+| --- | --- |
+| CGU `#directs`, the "Pas d'enregistrement" term | renamed **Rediffusion**; the "Coupure" term adds that an ended live can be cut while its replay exists (the cut deletes it) and that a staff deletion of the replay is no cut and no sanction. `updated` 19/11/2026 |
+| Privacy section 2 "Directs", section 6 rows, section 7 backups | the replay paragraph (what is kept, for whom, no repost, no push, no seat, the chat deleted at publication); the replay row (what it holds, when it goes, never in a backup); the live row (the chat goes at the end, the video stays with a replay); the backup paragraph (segments never backed up, WP-R3). `updated` 19/11/2026 |
+| Register C19, C20 | the purpose and retention of a replay; a cut reaches an ended live while its row is kept; D7 |
+| Pre-live screen | `live_rule_audience_*_replay`: the time left, the last 3 hours, no repost, saved like a CanaReel, the chat not replayed |
+| First-live rules | `LIVE_RULES_VERSION` **3** |
+
+**How the texts read while the switch is off.** The broadcaster's screen reads the switch: the
+`_replay` strings show only while `serverLiveReplaysMode()` is `on` (`replaysAvailable`, and
+`replayFollows` for the end texts), and the plain `live_rule_audience_member` /
+`_association` ("Rien n'en est gardé après la fin") are the OFF texts - true when off, so they are
+unchanged. The legal pages are static text and the repository's precedent for a runtime switch on
+them is a sentence true in both states, not a text that changes with a fetch (the lives paragraphs
+carry "quand la fonction est ouverte"; an offline page would otherwise show a different contract): they
+describe the replay as the product does today, and say that if the Editor turns replays off, a live
+started after that is not recorded. The privacy page's durations stay the server's values (section 6).
+
+**What version 3 costs.** `LIVE_RULES_VERSION` is read only at a live's START (`assertRulesAccepted`):
+a broadcaster whose acceptance is below 3 sees the rules sheet on the pre-live screen once more and
+taps Accept, which the start records; nobody else is asked anything. The client reads the version
+from the server (`/api/lives/limits`, `/rules`), so no build carries it.
+
+**What the legal edit does not do.** Canari has no terms version a member accepts: the CGU and the
+policy carry their `updated` date and nothing else, so this edit asks no member to re-accept anything.
+The one terms version that IS accepted, MiConnect's `cgu_version`, belongs to `/legal/miconnect`
+([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)),
+which this edit does not touch.
+CGU section 14 promises an in-app notice 15 days before a substantial change takes effect; no code
+sends such a notice, and none was sent for this one (the switch went on first, by the owner's order).

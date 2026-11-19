@@ -1,6 +1,12 @@
-## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)
+## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09; built, on since 2026-11-19, the readings owed)
 
-target: 1.8.0
+target: 1.7.1
+
+**Urgent (owner, 2026-11-19):** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en
+production"*. `live_replays_mode` went `on` in production and on dev on 2026-11-19, before the texts
+(*"Prod maintenant, textes juste après"*); the texts (WP-R6) and `LIVE_RULES_VERSION` 3 followed in the
+next pull request ([as built](../live-replays.md#wp-r6-as-built-the-texts)). What is left is the
+[readings](../live-replays.md#the-readings-owed); the entry is deleted once they are taken.
 
 Asked by the owner on 2026-11-07, every question answered the same day:
 
