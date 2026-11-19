@@ -32,8 +32,13 @@ pub(crate) const MAX_SFU_SEATS: usize = 8;
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Reservation {
     /// Seated. `replaced` is the peer id of a sibling device of the same user that held the seat:
-    /// the seat is now this peer's, and the sibling is evicted by the caller.
-    Seated { replaced: Option<String> },
+    /// the seat is now this peer's, and the sibling is evicted by the caller. `others` is how many
+    /// OTHER users hold a seat at this reservation, read under the same lock: the `Joined` of the
+    /// seat states it, so a client answering into an emptied room learns it from a fact.
+    Seated {
+        replaced: Option<String>,
+        others: usize,
+    },
     /// `max_seats` OTHER users already hold the room. Nothing changed.
     Full { max_seats: usize },
     /// The token names another seat count than the room was opened with. Nothing changed.
@@ -86,6 +91,7 @@ impl SfuSeats {
             let replaced = std::mem::replace(held, peer_id.to_string());
             return Reservation::Seated {
                 replaced: Some(replaced),
+                others: self.holders.len() - 1,
             };
         }
         if self.holders.len() >= self.max_seats {
@@ -95,7 +101,10 @@ impl SfuSeats {
         }
         self.holders
             .insert(user_id.to_string(), peer_id.to_string());
-        Reservation::Seated { replaced: None }
+        Reservation::Seated {
+            replaced: None,
+            others: self.holders.len() - 1,
+        }
     }
 
     /// Frees the seat of `user_id` if `peer_id` is the device holding it, and says whether it did.
@@ -133,10 +142,16 @@ mod tests {
     #[test]
     fn seats_up_to_the_cap_and_refuses_the_next_user() {
         let mut room = SfuSeats::new(3);
-        for (u, p) in [("a", "a:1"), ("b", "b:1"), ("c", "c:1")] {
+        for (others, (u, p)) in [("a", "a:1"), ("b", "b:1"), ("c", "c:1")]
+            .into_iter()
+            .enumerate()
+        {
             assert_eq!(
                 room.reserve(u, p, 3),
-                Reservation::Seated { replaced: None }
+                Reservation::Seated {
+                    replaced: None,
+                    others
+                }
             );
         }
         assert_eq!(
@@ -154,7 +169,8 @@ mod tests {
         assert_eq!(
             room.reserve("a", "a:2", 2),
             Reservation::Seated {
-                replaced: Some("a:1".to_string())
+                replaced: Some("a:1".to_string()),
+                others: 1
             }
         );
         assert_eq!(room.held(), 2);
@@ -181,7 +197,10 @@ mod tests {
         assert!(room.release("b", "b:1"));
         assert_eq!(
             room.reserve("c", "c:1", 2),
-            Reservation::Seated { replaced: None }
+            Reservation::Seated {
+                replaced: None,
+                others: 1
+            }
         );
     }
 

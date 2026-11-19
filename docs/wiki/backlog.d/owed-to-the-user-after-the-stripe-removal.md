@@ -1,6 +1,12 @@
 ## Owed to the user after the Stripe removal
 
-target: 1.8.0
+target: 1.7.2
+
+**Owner, 2026-11-19:** *"Tu peux tout supprimer en ce qui concerne Stripe, je m'occupe de l'administratif"*.
+The lead removes everything left of Stripe in the code and the database (the three columns, the
+permission's old name), in a held migration merged after the `1.7.1` stable; the Stripe webhook endpoint,
+the Lydia contract and the payer e-mail proof are the owner's. The three GitHub secrets were read gone on
+2026-11-19 ([decisions](owner-decisions-of-2026-11-19.md)).
 
 What is left is administrative, and no agent can do it ([stripe-archive](../stripe-archive.md#owed-by-the-user-one-off)):
 

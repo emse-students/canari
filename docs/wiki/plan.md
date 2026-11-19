@@ -46,6 +46,7 @@ earliest version, as a checklist.
 - [Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
 - [Campus trends and the daily cap, WP-8, WP-10 and the quieter batch: the iPhone's last rows, owed on the phone (a reading moved to 1.7.1)](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [Rotation on the video, live and camera screens, owed on both phones (a reading deferred to 1.7.1)](backlog.d/rotation-on-video-and-camera-screens.md)
+- [The owner's decisions of 2026-11-19](backlog.d/owner-decisions-of-2026-11-19.md)
 
 **P2 - correctness**
 
@@ -55,7 +56,6 @@ earliest version, as a checklist.
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
-- [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
@@ -119,6 +119,21 @@ earliest version, as a checklist.
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 - [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
 
+## 1.7.2
+
+**Chantiers, decisions and questions (no severity)**
+
+- [Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them](backlog.d/admin-view-feeds-as-a-member.md)
+- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
+
+**P2 - correctness**
+
+- [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
+
+## 1.7.3
+
+_No entry planned beyond its readings._
+
 ## 1.8.0
 
 **Chantiers, decisions and questions (no severity)**
@@ -126,7 +141,6 @@ earliest version, as a checklist.
 - [A SECOND campaign, for everything that is not chat - asked 2026-08-16](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
 - [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 - [The MLS audit items that are still real, with their verified counts (swept 2026-09-12)](backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md)
-- [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
 - [A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia](backlog.d/a-paid-public-form-user-2026-09-30-the-paid-half-waits-for-lydia.md)
 - [Audiences of associations, lists and institutions - built, in production since `v1.2.0`](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)
 - [A file question on a PUBLIC form needs an abuse design first (asked by the user 2026-10-15, re-read 2026-11-11)](backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md)
@@ -138,10 +152,10 @@ earliest version, as a checklist.
 - [The live viewer cap (24 seats for the whole host) lifted in measured steps - the owner's "no visible ceiling" (2026-10-21)](backlog.d/live-viewer-cap-lifted-in-measured-steps.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
-- [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
 - [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
-- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
+- [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
+- [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 
 **P2 - correctness**
 
@@ -206,6 +220,7 @@ earliest version, as a checklist.
 
 **Chantiers, decisions and questions (no severity)**
 
+- [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
 - [New-device notices: three decisions owed (built by #2278, 2026-10-22)](backlog.d/new-device-notices-three-decisions-owed.md)
 - [Three open items the CLAUDE.md queue alone carried (moved 2026-10-22)](backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md)
 - [Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md)
@@ -313,12 +328,10 @@ earliest version, as a checklist.
 - [P2 - MLS checkpoint and queue stalls of 30-54 s on web, with a worker timeout and an add-device failure on `lock_budget_spent` (web log, 2026-11-08)](backlog.d/p2-mls-queue-and-checkpoint-stalls-of-30-to-54-seconds-on-web.md)
 - [P2 - a CanaReel that never loads (owner, Android, 1.6.8, 2026-11-09): the outcome line is built, the cause is owed one reading](backlog.d/p2-a-canareel-that-never-loads.md)
 - [P2 - Native push: an unresolvable host reads as `Redis lock not acquired`, and the FCM token registration is retried into HTTP 429 (1.6.8 logs, 2026-11-09)](backlog.d/p2-native-push-lock-and-token-registration-noise.md)
-- [P2 - three public names are not watched from outside: the edge challenges GitHub's runners (a gap the lead decides)](backlog.d/p2-the-edge-challenges-the-upstream-monitor.md)
 - [P2 - `GET /api/posts/notifications` takes 1.1-3.6 s on every call (13.8 s and 12.8 s on one account), and the bell polls it every 60 s (1.6.8 logs, 2026-11-09)](backlog.d/p2-the-post-notifications-bell-read-takes-1-to-3-seconds-every-poll.md)
 - [P2 - a missing seed minted by our own other device is asked of it whether or not it is online](backlog.d/p2-a-seed-ask-to-our-own-other-device-ignores-its-presence.md)
 - [P2 - a seek ahead in a streamed video fetches every segment before its target](backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md)
 - [P2 - the repository holds GitHub's maximum of 100 secrets, so the next one is refused](backlog.d/p2-the-repository-holds-github-s-maximum-of-100-secrets.md)
-- [P2 - the tab-leader lock is one per browser, not one per account](backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)
 - [P2 - two vendored forks are behind upstream: `wry` 0.57.2 and `tauri-plugin-keystore` 2.1.0-alpha.2 (2026-11-11)](backlog.d/p2-two-vendored-forks-are-behind-upstream.md)
 - [P2 - a call started while another call holds the audio focus runs with a live microphone (review of #3395, 2026-11-12)](backlog.d/p2-a-call-started-during-a-phone-call-runs-with-a-live-microphone.md)
 - [P2 - a crossed 1:1 pair: what the 1.6.11 fix left (owner's decision of 2026-11-12)](backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md)

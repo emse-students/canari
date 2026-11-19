@@ -10,6 +10,11 @@
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
+   * AT A DOUBLED FONT THE LABELS WRAP INSTEAD OF RUNNING OFF (Mi 9T, `font_scale` 2.0, S9: "Campus"
+   * left the screen): a tab is `flex-1 min-w-0`, so it keeps its equal share at rest and shrinks
+   * with the row, its label hyphenating or breaking inside a word (`overflow-wrap: anywhere`) rather
+   * than overflowing; the pill grows in height (`min-h-11`). The text size is never reduced.
+   *
    * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
    * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and under
    * 24rem the text drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
@@ -165,7 +170,7 @@
      row floats over cards that scroll under it on desktop too. -->
 <div class="flex items-center gap-2" data-feed-tab-row>
   <div
-    class="glass-chrome flex h-11 min-w-0 flex-1 rounded-full p-1 md:pointer-fine:h-9.5"
+    class="glass-chrome flex min-h-11 min-w-0 flex-1 rounded-full p-1 md:pointer-fine:min-h-9.5"
     data-feed-pill
   >
     <div
@@ -197,7 +202,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 flex-1 shrink-0 rounded-full px-2.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-0 flex-1 rounded-full px-2.5 text-sm leading-tight [overflow-wrap:anywhere] hyphens-auto transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'

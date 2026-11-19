@@ -106,7 +106,7 @@ environment secret read by a job that does not declare that environment, fails `
 | `CERCLE_API_KEY` | production | serve-prod :: deploy-to-server |
 | `CHANNELS_ENCRYPTION_SECRET` | production | serve-prod :: deploy-to-server |
 | `CLOUDFLARE_ACCOUNT_ID` | production | serve-prod :: deploy-to-server |
-| `CLOUDFLARE_CACHE_PURGE_TOKEN` | repo | serve-prod :: deploy-to-server - its level belongs to `production`, and it moves there at its next rotation: GitHub never returns a value and no other copy exists |
+| `CLOUDFLARE_CACHE_PURGE_TOKEN` | production | serve-prod :: deploy-to-server |
 | `CLOUDFLARE_CALLS_API_TOKEN` | production | serve-prod :: deploy-to-server |
 | `CLOUDFLARE_SFU_APP_ID` | production | serve-prod :: deploy-to-server |
 | `CLOUDFLARE_SFU_APP_SECRET` | production | serve-prod :: deploy-to-server |
