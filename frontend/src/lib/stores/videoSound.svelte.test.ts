@@ -172,12 +172,82 @@ describe('the volume level (owner, 2026-11-11)', () => {
 });
 
 describe('what a live does at open (owner, 2026-11-19)', () => {
-  it('is audible unless muted by hand or the engine has seen no gesture', async () => {
+  it('is audible unless muted by hand or the engine says no gesture has happened', async () => {
     const { decideLiveStart } = await import('./videoSound.svelte');
-    expect(decideLiveStart({ mutedByHand: false, audibleStartAllowed: true })).toBe('audible');
-    expect(decideLiveStart({ mutedByHand: true, audibleStartAllowed: true })).toBe('muted-by-hand');
-    expect(decideLiveStart({ mutedByHand: false, audibleStartAllowed: false })).toBe(
-      'muted-engine'
-    );
+    expect(decideLiveStart({ mutedByHand: false, activation: 'active' })).toBe('audible');
+    expect(decideLiveStart({ mutedByHand: true, activation: 'active' })).toBe('muted-by-hand');
+    expect(decideLiveStart({ mutedByHand: false, activation: 'inactive' })).toBe('muted-engine');
+    expect(
+      decideLiveStart({ mutedByHand: false, activation: 'unknown' }),
+      'no userActivation: unknown, tried audible'
+    ).toBe('audible');
+    expect(
+      decideLiveStart({ mutedByHand: true, activation: 'inactive' }),
+      'a hand mute wins over an engine that is blocked'
+    ).toBe('muted-by-hand');
+  });
+});
+
+describe('a live and the sound of the app', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.resetModules();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  const activation = (hasBeenActive: boolean | null) =>
+    vi.stubGlobal('navigator', hasBeenActive === null ? {} : { userActivation: { hasBeenActive } });
+
+  it('opens audible over a stored "off" and a feed video is muted again after it closes', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    expect(videoSound.muted, 'the feed before').toBe(true);
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('audible');
+    expect(videoSound.muted, 'inside the live').toBe(false);
+    live.release();
+    expect(videoSound.muted, 'the feed after: never made audible by a live').toBe(true);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY), 'nothing was written').toBe('off');
+  });
+
+  it('keeps a hand mute inside the live, and the next live opens muted', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'on');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    const first = videoSound.startForLive();
+    videoSound.setMuted(true);
+    first.release();
+    expect(videoSound.muted, 'the feed answer is back').toBe(false);
+    const second = videoSound.startForLive();
+    expect(second.verdict).toBe('muted-by-hand');
+    second.release();
+  });
+
+  it('counts and warns on an engine-blocked open apart from play() refusals', async () => {
+    activation(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('muted-engine');
+    expect(videoSound.startBlocked).toBe(true);
+    expect(videoSound.engineBlockedStarts).toBe(1);
+    expect(videoSound.refusedStarts).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    live.release();
+    expect(videoSound.startBlocked).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('with no userActivation the start is tried audible', async () => {
+    activation(null);
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(live.verdict).toBe('audible');
+    expect(videoSound.startBlocked).toBe(false);
+    live.release();
   });
 });

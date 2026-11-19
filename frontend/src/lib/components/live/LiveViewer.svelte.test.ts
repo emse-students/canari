@@ -103,6 +103,8 @@ beforeEach(() => {
   liveErrors = [];
   manifestErrors = [];
   viewerCount = 1;
+  // A hand mute, whatever the module held before (setMuted is a no-op when already muted).
+  videoSound.setMuted(false);
   videoSound.setMuted(true);
   chatDeps = {
     postMessage: vi.fn(),
@@ -395,18 +397,39 @@ describe('LiveViewer', () => {
       });
     afterEach(() => Reflect.deleteProperty(navigator, 'userActivation'));
 
-    it('opens audible, even when a past session stored mute, with no button', async () => {
+    it('opens audible with no button, and gives the app its answer back at close', async () => {
       activation(true);
-      videoSound.setMuted(true);
-      localStorage.setItem(VIDEO_SOUND_KEY, 'off');
-      // A fresh page session has not muted by hand: setMuted(false) then restoring the stored "off".
       videoSound.setMuted(false);
-      localStorage.setItem(VIDEO_SOUND_KEY, 'off');
       await render();
       expect(videoSound.muted).toBe(false);
       expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
       expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
-      expect(localStorage.getItem(VIDEO_SOUND_KEY), 'opening writes no choice').toBe('off');
+    });
+
+    it('a hand mute inside the live stays inside it: the app answer is back at close', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      await render();
+      document.querySelector<HTMLButtonElement>('[data-live-sound]')!.click();
+      flushSync();
+      expect(videoSound.muted).toBe(true);
+      unmount(mounted.pop()!);
+      expect(videoSound.muted).toBe(false);
+    });
+
+    it('a play() rejected with another error than NotAllowedError is not retried muted', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const refusedBefore = videoSound.refusedStarts;
+      const play = vi
+        .mocked(HTMLMediaElement.prototype.play)
+        .mockRejectedValue(new DOMException('no decoder', 'NotSupportedError'));
+      await render();
+      expect(videoSound.muted).toBe(false);
+      expect(videoSound.refusedStarts).toBe(refusedBefore);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+      expect(play).toHaveBeenCalled();
     });
 
     it('stays muted for a viewer who muted by hand this session', async () => {

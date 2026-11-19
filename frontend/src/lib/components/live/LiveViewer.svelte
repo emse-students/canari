@@ -15,7 +15,7 @@
    * effort - the 30 s lease frees it anyway); a page restored from the back-forward cache starts
    * the live again.
    */
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import {
@@ -99,7 +99,9 @@
 
   // THE LIVE STARTS WITH SOUND (owner, 2026-11-19): decided here, before the `<video>` mounts, so
   // `followVideoSound` opens the element at the answer. A hand-muted session stays muted.
-  videoSound.startForLive();
+  const liveSound = videoSound.startForLive();
+  // A live's sound is the live's only: the app's previous answer returns when it closes.
+  onDestroy(liveSound.release);
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
