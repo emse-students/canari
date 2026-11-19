@@ -70,6 +70,8 @@ export interface FragmentSpec {
   videoDurations?: number[];
   /** Per-sample audio durations (48 kHz ticks), written in the audio `trun`. */
   audioDurations?: number[];
+  /** A `tfhd` default sample duration, written in BOTH tracks' `tfhd`. */
+  defaultDuration?: number;
   /** Which tracks the fragment carries (both by default). */
   tracks?: 'both' | 'video' | 'audio';
 }
@@ -84,9 +86,14 @@ export function fragment(spec: FragmentSpec = {}): Uint8Array<ArrayBuffer> {
     mediaBytes = 32,
     videoDurations,
     audioDurations,
+    defaultDuration,
     tracks = 'both',
   } = spec;
   const flags = keyframe ? SYNC : NON_SYNC;
+  const tfhd = (id: number) =>
+    defaultDuration === undefined
+      ? fullBox('tfhd', 0, 0x20000, u32(id))
+      : fullBox('tfhd', 0, 0x20000 | 0x8, u32(id), u32(defaultDuration));
   const videoTrun = videoDurations
     ? fullBox(
         'trun',
@@ -111,15 +118,10 @@ export function fragment(spec: FragmentSpec = {}): Uint8Array<ArrayBuffer> {
             u32(flags)
           )
         : fullBox('trun', 0, 0x1, u32(1), u32(0));
-  const videoTraf = box(
-    'traf',
-    fullBox('tfhd', 0, 0x20000, u32(1)),
-    fullBox('tfdt', 1, 0, u64(videoTime)),
-    videoTrun
-  );
+  const videoTraf = box('traf', tfhd(1), fullBox('tfdt', 1, 0, u64(videoTime)), videoTrun);
   const audioTraf = box(
     'traf',
-    fullBox('tfhd', 0, 0x20000, u32(2)),
+    tfhd(2),
     fullBox('tfdt', 0, 0, u32(audioTime)),
     audioDurations
       ? fullBox(
@@ -178,4 +180,23 @@ export function readVideoDurations(bytes: Uint8Array): number[] {
     }
   }
   return [];
+}
+
+/** Overwrites the `sample_count` of the `n`th `trun` (0: the video's) in place. */
+export function setTrunCount(bytes: Uint8Array, n: number, count: number): void {
+  let seen = 0;
+  for (let i = 0; i + 4 <= bytes.length; i++) {
+    if (
+      bytes[i] === 0x74 &&
+      bytes[i + 1] === 0x72 &&
+      bytes[i + 2] === 0x75 &&
+      bytes[i + 3] === 0x6e
+    ) {
+      if (seen++ === n) {
+        new DataView(bytes.buffer, bytes.byteOffset).setUint32(i + 8, count);
+        return;
+      }
+    }
+  }
+  throw new Error(`no trun ${n}`);
 }

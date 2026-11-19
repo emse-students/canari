@@ -404,17 +404,17 @@ export function holdLastFrameInterval(
         continue;
       }
       const scale = timescales.get(run.trackId);
-      if (!scale || run.durations === null) continue;
-      const end = (run.baseTime + run.durations.reduce((n, d) => n + d.value, 0)) / scale;
+      if (!scale || run.sum === null) continue;
+      const end = (run.baseTime + run.sum) / scale;
       othersEnd = Math.max(othersEnd ?? end, end);
     }
   }
-  // Durations stated per sample, and at least two of them to read an interval from.
-  const durations = video?.durations;
-  if (!video || !durations || durations.length < 2) return { bytes: fragment, held: null };
-  const last = durations[durations.length - 1];
-  const previous = durations[durations.length - 2].value;
-  if (!last.at || last.value >= previous) return { bytes: fragment, held: null };
+  // A last duration stated in the bytes (rewritable), and a sample before it to read an interval from.
+  if (!video || video.sum === null || !video.last || video.previous === null) {
+    return { bytes: fragment, held: null };
+  }
+  const { last, previous } = video;
+  if (last.at === null || last.value >= previous) return { bytes: fragment, held: null };
   // 0 when the init states no `mdhd` for the video: no cap can be read then, and only the log
   // line reads the value.
   const timescale = timescales.get(videoTrackId) ?? 0;
@@ -422,32 +422,40 @@ export function holdLastFrameInterval(
   if (othersEnd !== null && timescale > 0) {
     // The last frame never reaches past the fragment's own end (its audio): a long interval before
     // it (a stall) is not stretched over the next fragment.
-    const lastStart = video.baseTime + durations.reduce((n, d) => n + d.value, 0) - last.value;
+    const lastStart = video.baseTime + video.sum - last.value;
     to = Math.min(previous, Math.round(othersEnd * timescale) - lastStart);
   }
   if (to <= last.value) return { bytes: fragment, held: null };
+  const at = last.at;
   const out = b.slice();
-  new DataView(out.buffer).setUint32(last.at, to);
+  new DataView(out.buffer).setUint32(at, to);
   return { bytes: out, held: { from: last.value, to, timescale } };
 }
 
-/** One track's run in a fragment, as {@link holdLastFrameInterval} reads it. */
+/** One track's run in a fragment, as {@link holdLastFrameInterval} reads it - no per-sample array. */
 interface TrackRun {
   trackId: number;
   /** The `tfdt`, in the track's timescale (0 when absent). */
   baseTime: number;
   /**
-   * Every sample's duration, with the byte offset it is written at (null when it is a default),
-   * or null when a duration is neither stated nor defaulted in the `traf` (the `trex` default is
-   * not read: Chromium and WebKit state every duration).
+   * The sum of every sample's duration, or null when one is neither stated nor defaulted in the
+   * `traf` (the `trex` default is not read: Chromium and WebKit state every duration).
    */
-  durations: { value: number; at: number | null }[] | null;
+  sum: number | null;
+  /** The last sample's duration and the byte offset it is written at (null for a default). */
+  last: { value: number; at: number | null } | null;
+  /** The duration of the sample before the last, or null with fewer than two samples. */
+  previous: number | null;
 }
 
 /**
  * Reads a `traf`'s track, decode time and sample durations, over all its `trun`s (Chromium and
- * WebKit write ONE per track per fragment; several are read in order all the same).
- * @throws {Fmp4ParseError} when a `trun` claims more samples than its box holds.
+ * WebKit write ONE per track per fragment; several are read in order all the same). The work is
+ * bounded by the BYTES, never by a `sample_count`: per-sample durations are read only as far as the
+ * box holds them (checked first), and default durations are summed arithmetically, so a count of
+ * 2^32 - 1 costs nothing.
+ * @throws {Fmp4ParseError} when a `trun` claims more samples than its box holds, or a `tfdt` is
+ * shorter than its version's field.
  */
 function readTrackRun(b: Uint8Array, traf: Box): TrackRun | null {
   const kids = children(b, traf.start + 8, traf.start + traf.size);
@@ -462,31 +470,46 @@ function readTrackRun(b: Uint8Array, traf: Box): TrackRun | null {
   const tfdt = kids.find((k) => k.type === 'tfdt');
   let baseTime = 0;
   if (tfdt) {
-    baseTime =
-      b[tfdt.start + 8] === 1
-        ? u32(b, tfdt.start + 12) * 0x1_0000_0000 + u32(b, tfdt.start + 16)
-        : u32(b, tfdt.start + 12);
+    const v1 = b[tfdt.start + 8] === 1;
+    if (tfdt.size < (v1 ? 20 : 16)) throw new Fmp4ParseError(`a tfdt of ${tfdt.size} bytes`);
+    baseTime = v1
+      ? u32(b, tfdt.start + 12) * 0x1_0000_0000 + u32(b, tfdt.start + 16)
+      : u32(b, tfdt.start + 12);
   }
-  let durations: TrackRun['durations'] = [];
+  let sum = 0;
+  let last: TrackRun['last'] = null;
+  let previous: number | null = null;
   for (const trun of kids) {
     if (trun.type !== 'trun') continue;
     const flags = u32(b, trun.start + 8) & 0xffffff;
     const count = u32(b, trun.start + 12);
-    let at = trun.start + 16;
-    if (flags & 0x1) at += 4; // data-offset
-    if (flags & 0x4) at += 4; // first-sample-flags
-    // One record per sample: duration (0x100) first, then size, flags, composition offset.
-    const record = 4 * [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length;
-    if (at + count * record > trun.start + trun.size) {
-      throw new Fmp4ParseError(`a trun of ${count} samples overruns its box`);
-    }
-    for (let i = 0; i < count; i++) {
-      if (flags & 0x100) durations?.push({ value: u32(b, at + i * record), at: at + i * record });
-      else if (defaultDuration !== null) durations?.push({ value: defaultDuration, at: null });
-      else durations = null;
+    if (count === 0) continue;
+    if (flags & 0x100) {
+      let at = trun.start + 16;
+      if (flags & 0x1) at += 4; // data-offset
+      if (flags & 0x4) at += 4; // first-sample-flags
+      // One record per sample: duration first, then size, flags, composition offset - at least 4
+      // bytes, so the check below bounds the loop by the box.
+      const record = 4 * [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length;
+      if (at + count * record > trun.start + trun.size) {
+        throw new Fmp4ParseError(`a trun of ${count} samples overruns its box`);
+      }
+      for (let i = 0; i < count; i++) {
+        const value = u32(b, at + i * record);
+        previous = last ? last.value : null;
+        last = { value, at: at + i * record };
+        sum += value;
+      }
+    } else if (defaultDuration !== null) {
+      // Every sample the default: nothing to rewrite, so summed without a loop.
+      sum += count * defaultDuration;
+      previous = count >= 2 ? defaultDuration : last ? last.value : null;
+      last = { value: defaultDuration, at: null };
+    } else {
+      return { trackId, baseTime, sum: null, last: null, previous: null };
     }
   }
-  return { trackId, baseTime, durations };
+  return { trackId, baseTime, sum, last, previous };
 }
 
 /**

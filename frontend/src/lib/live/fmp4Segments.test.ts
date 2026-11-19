@@ -23,6 +23,7 @@ import {
   join,
   readTimes,
   readVideoDurations,
+  setTrunCount,
 } from './fmp4.test-helper';
 
 describe('Fmp4Splitter', () => {
@@ -284,6 +285,44 @@ describe('holdLastFrameInterval', () => {
       audioDurations: [48_000, 40_000],
     });
     expect(holdLastFrameInterval(initSegment(), early).held).toBeNull();
+  });
+
+  it('a sample_count of 2^32 - 1 with no per-sample record costs nothing: the bytes bound the work', () => {
+    // Without a default: the durations are unknown, so nothing is held.
+    const bare = fragment();
+    setTrunCount(bare, 0, 0xffffffff);
+    setTrunCount(bare, 1, 0xffffffff);
+    expect(holdLastFrameInterval(initSegment(), bare)).toEqual({ bytes: bare, held: null });
+    // With a tfhd default: every duration is the default - nothing to rewrite.
+    const defaulted = fragment({ defaultDuration: 3000 });
+    setTrunCount(defaulted, 0, 0xffffffff);
+    setTrunCount(defaulted, 1, 0xffffffff);
+    expect(holdLastFrameInterval(initSegment(), defaulted)).toEqual({
+      bytes: defaulted,
+      held: null,
+    });
+    // A defaulted audio of that count is summed, not walked: the video is held, the cap far away.
+    const audio = fragment({ videoDurations: run(25, GUESS), defaultDuration: 1024 });
+    setTrunCount(audio, 1, 0xffffffff);
+    expect(holdLastFrameInterval(initSegment(), audio).held).toEqual({
+      from: GUESS,
+      to: FRAME,
+      timescale: 90_000,
+    });
+  });
+
+  it('the cap reads a 64-bit tfdt past zero: a fragment 20 s into the live', () => {
+    const f = fragment({
+      videoTime: 1_800_000n,
+      audioTime: 960_000,
+      videoDurations: [...Array<number>(20).fill(FRAME), 30_000, GUESS],
+      audioDurations: [48_000, 48_000],
+    });
+    expect(holdLastFrameInterval(initSegment(), f).held).toEqual({
+      from: GUESS,
+      to: 6000,
+      timescale: 90_000,
+    });
   });
 
   it('a trun claiming more samples than its box holds cannot be framed', () => {
