@@ -866,7 +866,7 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(await service.listCotisationTiers('asso1')).toEqual([]);
     });
 
-    // `isActive` says a tier can be BOUGHT, not that it exists: an association whose Stripe
+    // `isActive` says a tier can be BOUGHT, not that it exists: an association whose payout
     // account is not onboarded has every tier inactive, and its cotisants must still be listed,
     // grantable and recognized.
     it('lists tiers that are not on sale', async () => {

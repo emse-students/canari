@@ -474,8 +474,7 @@ export function redactForLog(data: Record<string, unknown>): Record<string, unkn
 }
 
 /**
- * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Stripe left the product
- * (docs/wiki/stripe-archive.md); this is the only live provider.
+ * Lydia API implementation of PaymentProvider (WP-LYDIA-1), the only live provider.
  * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
  * `webhook.controller.ts`'s `lydia-request-callback` route) and session lookup (`request/state`).
  *
@@ -519,7 +518,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * URL Lydia calls back on a `request/do` outcome (`webhook.controller.ts`'s
    * `lydia-request-callback` route). Built from `FRONTEND_URL` because nginx is the single public
    * entry point - `/api/...` under it already reaches core-service, exactly like every
-   * success/cancel URL this controller already hands to Stripe and Lydia.
+   * success/cancel URL this controller already hands to Lydia.
    */
   private callbackUrl(outcome: 'confirm' | 'cancel' | 'expire'): string {
     return `${publicApiBase()}/api/payments/lydia-request-callback?outcome=${outcome}`;
@@ -632,9 +631,8 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   /**
    * Creates a payment request via `POST /api/request/do`. `connectAccountId` is the target
-   * Business's `vendor_token` (unchanged storage shape from Stripe's `stripeAccountId` - confirmed
-   * by the doc that `vendor_token` is a per-request field, so Canari's existing payment-delegation
-   * logic keeps choosing the destination exactly as it does today).
+   * Business's `vendor_token` (a per-request field, confirmed by the doc, so Canari's
+   * payment-delegation logic chooses the destination Business per request).
    *
    * `request/do` needs no signature (confirmed by the doc: "you can't sign a call to
    * api/request/do.json, it's reserved to another Lydia product"), so no private_token is needed
@@ -1187,11 +1185,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
   }
 
   /**
-   * Creates a Business via `POST /api/business/create`. Unlike Stripe's `accountLinks` (a hosted
-   * page the association fills in itself), Lydia needs the legal profile as request fields - the
-   * caller must collect it first (see the onboarding form, WP-LYDIA-1). `dashboard_url` is returned
-   * as `OnboardingResult.url` so the treasurer has somewhere to go manage the Business; there is no
-   * separate "finish onboarding" redirect step like Stripe's, the Business exists immediately.
+   * Creates a Business via `POST /api/business/create`. Lydia needs the legal profile as request
+   * fields, so the caller must collect it first (see the onboarding form, WP-LYDIA-1).
+   * `dashboard_url` is returned as `OnboardingResult.url` so the treasurer has somewhere to go
+   * manage the Business; there is no separate "finish onboarding" redirect step, the Business
+   * exists immediately.
    *
    * `api_token_id` IS the Business private token (homologation 2026-10-30, lydia-api.md section 1),
    * and it is answered ONCE. So it is captured here, but only after Lydia's own `auth/vendortoken`

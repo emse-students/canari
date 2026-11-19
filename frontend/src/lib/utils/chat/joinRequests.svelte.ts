@@ -36,7 +36,14 @@ export interface JoinRequest {
  * and the ask stays on screen.
  */
 export type JoinAnswerResult =
-  | { done: true }
+  | {
+      done: true;
+      /**
+       * `already-in`: the ask ended WITHOUT this answer - the person is in (another member's Add, or
+       * their own return). The card leaves and no "you declined" line is recorded.
+       */
+      settled?: 'already-in';
+    }
   | { done: false; reason: string; kind?: JoinRefusalKind };
 
 /**
@@ -45,8 +52,10 @@ export type JoinAnswerResult =
  * `busy` - another device holds the group's add lock, so someone is answering now; `raced` - the
  * ask was declined or removed under this member's tap. Either way
  * the settlement frame clears the card, so the member is told who answered, not that something broke.
+ * `unsupported` - the server is older than the answer this card needs (a Decline of a seat that is
+ * not a link ask, answered as before the tree epoch): retrying cannot help until it is deployed.
  */
-export type JoinRefusalKind = 'busy' | 'raced';
+export type JoinRefusalKind = 'busy' | 'raced' | 'unsupported';
 
 /** What running a member's answer came to, for the caller that tells the member. */
 export type JoinAnswerOutcome = 'done' | 'failed' | JoinRefusalKind;
@@ -345,6 +354,12 @@ export async function answerJoinRequestOutcome(
     return result.kind ?? 'failed';
   }
   forget(request);
+  if (result.settled === 'already-in') {
+    console.log(
+      `[JOIN_REQUEST] ${request.userId} is already in ${short(request.groupId)} - the ask leaves, no ${answer} recorded`
+    );
+    return 'done';
+  }
   if (answer === 'decline') {
     declined.set(keyOfEntry(request), {
       key: keyOfEntry(request),

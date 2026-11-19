@@ -205,9 +205,8 @@
 
   /** Maps a payment method identifier to its display label. */
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
-    if (method === 'cash') return m.asso_achats_payment_cash();
-    if (method === 'online' || method === 'stripe') return m.asso_achats_payment_online();
-    return method;
+    // Every non-cash value is an online payment: `online`, or the historic `stripe` kept at rest.
+    return method === 'cash' ? m.asso_achats_payment_cash() : m.asso_achats_payment_online();
   }
 
   /** The amount of a purchase as the table shows it. */

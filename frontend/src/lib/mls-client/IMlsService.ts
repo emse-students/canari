@@ -1711,10 +1711,16 @@ export interface IMlsService {
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /**
-   * A member's Decline of an invitation-link ask: withdraws the person's seat only while it still
-   * awaits a member, never the seat of someone another member's Add admitted (`JoinDeclineOutcome`).
+   * A member's Decline of a person who holds no leaf: withdraws an invitation-link ask only while it
+   * still awaits a member, never the seat of someone another member's Add admitted; removes a seat
+   * that is not an ask only while the group is still at `treeEpoch`, the epoch of the tree the member
+   * read the person absent from (`JoinDeclineOutcome`).
    */
-  declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome>;
+  declineJoinRequest(
+    groupId: string,
+    userId: string,
+    treeEpoch?: number
+  ): Promise<JoinDeclineOutcome>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /**

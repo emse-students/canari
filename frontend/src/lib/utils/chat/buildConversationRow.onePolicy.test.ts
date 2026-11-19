@@ -104,6 +104,8 @@ function mls(overrides: Record<string, unknown> = {}) {
     getGroupMemberIdentities: vi.fn(async () => [] as string[]),
     // The Add reads its tree under the MLS lock (`readConfirmedTree`).
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+    // The epoch a confirmed reading carries (`readConfirmedTree`).
+    getEpoch: vi.fn().mockReturnValue(0),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: [],
       skipped: [],

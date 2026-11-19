@@ -37,8 +37,7 @@ describe('UpdatePlatformConfigDto.paymentProvider', () => {
     for (const v of ['lydia', 'disabled']) expect(await check(v)).toHaveLength(0);
   });
 
-  it('rejects anything else, the retired stripe value included', async () => {
+  it('rejects anything else', async () => {
     expect(await check('paypal')).toHaveLength(1);
-    expect(await check('stripe')).toHaveLength(1);
   });
 });

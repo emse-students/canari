@@ -31,20 +31,33 @@ describe('pendingAddFactsOf', () => {
   });
 
   it('reads a confirmed tree once for every row of the pass', async () => {
-    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'] });
+    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     const facts = factsOf(service());
     await facts(false);
     await facts(false);
     expect(readConfirmedTree).toHaveBeenCalledTimes(1);
   });
 
+  it('`.tree()` is the pass tree alone: shared with the rows, and no pending list is read for it', async () => {
+    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'], epoch: 4 });
+    const getPendingInvitations = vi.fn(async () => []);
+    const facts = factsOf({
+      getEpoch: () => 4,
+      getPendingInvitations,
+    } as unknown as IMlsService);
+    await facts(false);
+    expect(await facts.tree()).toEqual({ status: 'read', identities: ['u1:d1'], epoch: 4 });
+    expect(readConfirmedTree).toHaveBeenCalledTimes(1);
+    expect(getPendingInvitations).toHaveBeenCalledTimes(1);
+  });
+
   it('never keeps an unconfirmed tree: the next row reads afresh and may confirm it', async () => {
     readConfirmedTree
       .mockResolvedValueOnce({ status: 'unconfirmed' })
-      .mockResolvedValueOnce({ status: 'read', identities: ['u1:d1'] });
+      .mockResolvedValueOnce({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     const facts = factsOf(service());
     expect((await facts(false)).tree).toEqual({ status: 'unconfirmed' });
-    expect((await facts(false)).tree).toEqual({ status: 'read', identities: ['u1:d1'] });
+    expect((await facts(false)).tree).toEqual({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     expect(readConfirmedTree).toHaveBeenCalledTimes(2);
     // The re-read is said once, on the sweep's own log, naming the group by 8 characters.
     expect(log).toHaveBeenCalledTimes(1);
