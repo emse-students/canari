@@ -67,8 +67,13 @@ function build() {
   const scores = {
     create: (row: Partial<MinesweeperScore>) => ({ id: 'score-1', ...row }) as MinesweeperScore,
     save: jest.fn(async (row: MinesweeperScore) => void storedScores.set(row.id, row)),
+    // By id, or - as `getPersonalBest` asks - a player's fastest score.
     findOne: jest.fn(async ({ where }: { where: { id?: string; userId?: string } }) =>
-      where.id ? (storedScores.get(where.id) ?? null) : null
+      where.id
+        ? (storedScores.get(where.id) ?? null)
+        : ([...storedScores.values()]
+            .filter((sc) => sc.userId === where.userId)
+            .sort((a, b) => a.durationMs - b.durationMs)[0] ?? null)
     ),
     query: jest.fn(async (sql: string) =>
       sql.includes('"displayName"') ? [{ displayName: ' Ada ' }] : [{ cnt: 0 }]
@@ -157,9 +162,11 @@ describe('submitting a timed log', () => {
 });
 
 describe('reading a replay', () => {
+  let readLog: jest.SpyInstance;
   let infoLog: jest.SpyInstance;
   beforeEach(() => {
     infoLog = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    readLog = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
   });
 
   const score = {
@@ -176,7 +183,7 @@ describe('reading a replay', () => {
     challenges.findOne.mockResolvedValue(challengeRow());
     const moves = winningLog().slice(0, 3);
     replays.findOne.mockResolvedValue({ scoreId: 'score-1', moves });
-    const replay = await service.replay('score-1', 'admin-1');
+    const replay = await service.replay('score-1', 'viewer-1', false);
     expect(replay).toEqual({
       scoreId: 'score-1',
       userId: 'user-1',
@@ -190,20 +197,34 @@ describe('reading a replay', () => {
     });
   });
 
-  it('leaves a trace of who read it', async () => {
+  it("leaves a trace of a member's read at debug only: it is routine traffic now", async () => {
     const { service, challenges, replays, storedScores } = build();
     storedScores.set('score-1', score);
     challenges.findOne.mockResolvedValue(challengeRow());
     replays.findOne.mockResolvedValue({ scoreId: 'score-1', moves: [] });
-    await service.replay('score-1', 'admin-1');
+    await service.replay('score-1', 'viewer-1', false);
+    expect(readLog).toHaveBeenCalledWith(
+      expect.stringContaining('replay read score=score-1 user=user-1 by=viewer-1')
+    );
+    expect(infoLog).not.toHaveBeenCalledWith(expect.stringContaining('replay read'));
+  });
+
+  it("keeps a trace production retains for a global admin's read, which can reach hidden games", async () => {
+    const { service, challenges, replays, storedScores } = build();
+    storedScores.set('score-1', score);
+    challenges.findOne.mockResolvedValue(challengeRow());
+    replays.findOne.mockResolvedValue({ scoreId: 'score-1', moves: [] });
+    await service.replay('score-1', 'admin-1', true);
     expect(infoLog).toHaveBeenCalledWith(
-      expect.stringContaining('replay read score=score-1 user=user-1 by=admin-1')
+      expect.stringContaining('replay read score=score-1 user=user-1 by=admin-1 admin')
     );
   });
 
   it('is a 404 for a score that does not exist', async () => {
     const { service } = build();
-    await expect(service.replay('nope', 'admin-1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.replay('nope', 'viewer-1', false)).rejects.toBeInstanceOf(
+      NotFoundException
+    );
   });
 
   it('is a 404 for a score won before replays were kept', async () => {
@@ -211,6 +232,79 @@ describe('reading a replay', () => {
     storedScores.set('score-1', score);
     challenges.findOne.mockResolvedValue(challengeRow());
     replays.findOne.mockResolvedValue(null);
-    await expect(service.replay('score-1', 'admin-1')).rejects.toThrow(/No replay was kept/);
+    await expect(service.replay('score-1', 'viewer-1', false)).rejects.toThrow(
+      /No replay was kept/
+    );
+  });
+
+  describe('who may read it', () => {
+    /** A viewer who is not the player, with the player banned or not. */
+    function setup(banned: boolean) {
+      const ctx = build();
+      ctx.storedScores.set('score-1', score);
+      ctx.challenges.findOne.mockResolvedValue(challengeRow());
+      ctx.replays.findOne.mockResolvedValue({ scoreId: 'score-1', moves: [] });
+      (ctx.service as unknown as { bans: { count: () => Promise<number> } }).bans = {
+        count: async () => (banned ? 1 : 0),
+      };
+      return ctx;
+    }
+
+    it("lets any member watch another player's win", async () => {
+      const { service } = setup(false);
+      await expect(service.replay('score-1', 'someone-else', false)).resolves.toMatchObject({
+        userId: 'user-1',
+      });
+    });
+
+    it('lets a member watch only the BEST win of another player: the one the ranking shows', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      // score-1 (61 s) is no longer user-1's best.
+      await expect(service.replay('score-1', 'someone-else', false)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      await expect(service.replay('score-fast', 'someone-else', false)).resolves.toMatchObject({
+        scoreId: 'score-fast',
+      });
+    });
+
+    it('lets the player watch any of their own, best or not', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      await expect(service.replay('score-1', 'user-1', false)).resolves.toMatchObject({
+        scoreId: 'score-1',
+      });
+    });
+
+    it('lets a global admin watch an earlier win too', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      await expect(service.replay('score-1', 'admin-1', true)).resolves.toMatchObject({
+        scoreId: 'score-1',
+      });
+    });
+
+    it('lets the player watch their own', async () => {
+      const { service } = setup(false);
+      await expect(service.replay('score-1', 'user-1', false)).resolves.toMatchObject({
+        scoreId: 'score-1',
+      });
+    });
+
+    it("hides a banned player's game from a member, as the ranking does: a 404", async () => {
+      const { service, replays } = setup(true);
+      await expect(service.replay('score-1', 'someone-else', false)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(replays.findOne).not.toHaveBeenCalled();
+    });
+
+    it('shows it to a global admin, who must be able to judge a cheat', async () => {
+      const { service } = setup(true);
+      await expect(service.replay('score-1', 'admin-1', true)).resolves.toMatchObject({
+        userId: 'user-1',
+      });
+    });
   });
 });
