@@ -3535,7 +3535,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(status).toEqual({ isCotisant: false, tier: null, expiresAt: null });
     });
 
-    // An association with no Stripe account has every tier product inactive, so filtering the
+    // An association with no payout account has every tier product inactive, so filtering the
     // lookup on `isActive` reported each of its cotisants as `isCotisant: false` - which locks
     // the whole Cercle out rather than degrading it.
     it('enumerates tiers that are not on sale, so their cotisants stay recognized', async () => {

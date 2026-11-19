@@ -89,3 +89,13 @@ apps/social-service/src/migrations/164_product_grid_required_off.sql 10be65fd7ff
 # review to take only Businesses carrying the business/create dashboard URL (an allowlist; read-only
 # on production: 3 associations taken, the 2 historical accounts left out). Any edit holds it again.
 apps/social-service/src/migrations/168_lydia_enrolled_businesses.sql 9c1494e18681f7539d03f7b27266140eb4f1903d05975722be8611a9252bc8f1
+# 176 (#3528, every video already posted becomes a CanaReel): approved by the OWNER on 2026-11-19
+# ("Oui, toutes", after reading production examples), relayed by the lead in session; adversarial review
+# passed. 177 and core 027 (#3852, the removal of what is left of Stripe, 'stripe' kept as a stored
+# value so refunds and the contract flux still read): approved by the OWNER on 2026-11-19 ("Tu peux
+# tout supprimer en ce qui concerne Stripe"; "Tout dans 1.7.1"), adversarial review passed with its
+# blocker fixed. All three run on dev (with a backup) through the next pre-release before the stable.
+# Any edit to a file holds it again.
+apps/social-service/src/migrations/176_gallery_videos_become_reels.sql bd0aa7dc069558ba6b7a330c322b1478592fa5e65e99a32459b80f3caee15980
+apps/social-service/src/migrations/177_drop_stripe_leftovers.sql 70f4d411e75fd364e420177ad1f082cb070480909264f7386741ceb859b5b6db
+apps/core-service/src/migrations/027_drop_users_stripe_customer_id.sql 10e03cc5ffb007bf0832d82a310496fa905fb922069a42519643e4854cd4449b

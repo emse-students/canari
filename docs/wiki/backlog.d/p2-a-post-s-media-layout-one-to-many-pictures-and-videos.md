@@ -1,6 +1,9 @@
 ## P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)
 
-target: 1.7.1
+target: 1.7.2
+
+**Owner, 2026-11-19:** a post with several pictures or videos shows a CAROUSEL with a counter (as
+Instagram); a single one shows at its own shape ([decisions](owner-decisions-of-2026-11-19.md)).
 
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 

@@ -2,6 +2,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
+import type { TreeReading } from './confirmedTree';
 import type { AnsweredJoinAsk, BulkAdditionOutcome, BulkAdditionRefusal } from './groupCreation';
 import type { JoinAnswerResult, JoinRefusalKind, JoinRequest } from './joinRequests.svelte';
 
@@ -37,6 +38,11 @@ export interface JoinAnswerDeps {
    * leaf whose holder has no admitted seat is taken out before the member's Add brings them in.
    */
   collectStrayLeaves: (groupId: string) => Promise<boolean>;
+  /**
+   * The group's tree read at the server's epoch (`readConfirmedTree`), with that epoch: the proof a
+   * Decline of a seat that is not an invitation-link ask carries ({@link declineJoinRequest}).
+   */
+  confirmedTree: (groupId: string) => Promise<TreeReading>;
   log: (message: string) => void;
 }
 
@@ -166,20 +172,47 @@ function refusalKindOf(reason: BulkAdditionRefusal): JoinRefusalKind | undefined
 const DECLINE_OUTCOME_LINE: Record<JoinDeclineOutcome, string> = {
   withdrawn: 'declined - their seat is withdrawn',
   'already-admitted': "not declined - another member's Add admitted them first",
-  // Never raised as an ask by a current client (`askAMemberToAdmit` asks only for a seat the server
-  // holds as one); reached when the seat changed between the ask and the answer.
+  // Answered to a Decline that carried no tree epoch: a link ask whose flag was lifted with no trace
+  // of an Add. With an epoch it is never this server's answer - see {@link serverCannotRemove}.
   'not-awaiting':
-    'not declined - their seat is not an invitation-link ask, so there is nothing to withdraw',
+    'not declined - their seat is not an invitation-link ask, and no tree epoch proved them absent',
+  removed: 'declined - their seat, not an invitation-link ask, is removed',
+  'epoch-moved': 'not declined - a commit landed since the tree was read',
   gone: '- the ask was already answered or expired',
 };
 
 /**
- * DECLINES the ask: the server withdraws the person's seat (`declineJoinRequest`), which is what
- * stops the ask from coming back. There is no leaf to remove - nobody added one - so no commit is
- * made. The server decides it under the group's seat lock and ONLY while the seat still awaits a
- * member: a person another member's Add admitted first - an epoch this device may not have processed
- * yet, so its own tree cannot say - is answered `already-admitted` and left whole, never half-removed
- * (seat gone, leaf in the tree). Every outcome answers the ask; a refusal of the server is not done.
+ * Whether the server answered a Decline that CARRIED a tree epoch as a server older than the field
+ * does: `not-awaiting` or `already-admitted` for a seat that is not a link ask. A server that reads
+ * the epoch answers such a seat `removed` or `epoch-moved` only, so either answer means this server
+ * cannot remove the seat - the card would come back at every sweep, and no Decline would ever end it.
+ */
+function serverCannotRemove(outcome: JoinDeclineOutcome, treeEpoch: number | undefined): boolean {
+  return treeEpoch !== undefined && (outcome === 'not-awaiting' || outcome === 'already-admitted');
+}
+
+/**
+ * DECLINES the ask: the server takes the person's seat away (`declineJoinRequest`), which is what
+ * stops the ask from coming back. There is no leaf to remove - the person holds none - so no commit
+ * is made.
+ *
+ * AN INVITATION-LINK ASK (it carries `askId`) is withdrawn under the group's seat lock ONLY while the
+ * seat still awaits a member: a person another member's Add admitted first - an epoch this device
+ * may not have processed yet, so its own tree cannot say - is answered `already-admitted` and left
+ * whole, never half-removed (seat gone, leaf in the tree). The ask then ends WITHOUT a decline
+ * (`settled: 'already-in'`): the member is never told they refused someone who is in.
+ *
+ * A SEAT THAT IS NOT AN ASK (no `askId`: a person whose leaves are all gone while their seat stands)
+ * holds no flag a commit lifts, so the Decline carries the PROOF instead: the epoch of a tree
+ * confirmed at the server's epoch in which the person holds no leaf. The server removes the seat
+ * only while the group is still at that epoch (`removed`), and touches nothing once a commit landed
+ * since (`epoch-moved`): the tree is then read again and the Decline sent ONCE more, and a second
+ * `epoch-moved` is `raced` - the conversation moved under the tap, nothing broke. A tree that cannot
+ * be confirmed proves nothing, so nothing is sent; one that holds the person says they came back in
+ * meanwhile - a Decline is never a Remove, and the ask ends without one (`settled: 'already-in'`).
+ * A server that answers as one older than the epoch is `unsupported`, accused at ERROR.
+ *
+ * Every other outcome answers the ask; a refusal of the server is not done.
  */
 export async function declineJoinRequest(
   request: JoinRequest,
@@ -187,12 +220,54 @@ export async function declineJoinRequest(
 ): Promise<JoinAnswerResult> {
   const convo = groupOf(request, deps.conversations);
   if (typeof convo === 'string') return { done: false, reason: convo };
-  let outcome: JoinDeclineOutcome;
-  try {
-    outcome = await deps.mlsService.declineJoinRequest(request.groupId, request.userId);
-  } catch (e) {
-    return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
+  const short = request.groupId.slice(0, 8);
+  // Two attempts at most: a commit landing between the reading and the server's lock is a race of
+  // this tap, read again once; a group committing faster than a tap can answer is `raced`.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let treeEpoch: number | undefined;
+    if (request.askId === undefined) {
+      const tree = await deps.confirmedTree(request.groupId);
+      if (tree.status === 'unconfirmed') {
+        return {
+          done: false,
+          reason: "the tree is not confirmed at the server's epoch, so it proves no absence",
+        };
+      }
+      if (treeHoldsUser(tree.identities, request.userId)) {
+        deps.log(
+          `[JOIN_REQUEST] ${request.userId} holds a leaf in ${short}... at epoch ${tree.epoch} - they came back in meanwhile, and a Decline is no Remove: the ask ends, nothing declined`
+        );
+        return { done: true, settled: 'already-in' };
+      }
+      treeEpoch = tree.epoch;
+    }
+    let outcome: JoinDeclineOutcome;
+    try {
+      outcome = await deps.mlsService.declineJoinRequest(
+        request.groupId,
+        request.userId,
+        treeEpoch
+      );
+    } catch (e) {
+      return { done: false, reason: `the server refused the decline: ${String(e).slice(0, 120)}` };
+    }
+    if (serverCannotRemove(outcome, treeEpoch)) {
+      console.error(
+        `[JOIN_REQUEST] decline of ${request.userId} in ${short}... carried tree epoch ${treeEpoch} and was answered '${outcome}' - a server older than the epoch, which cannot remove a seat that is not an ask; nothing declined`
+      );
+      return {
+        done: false,
+        reason: `the server cannot remove a seat that is not an ask (answered ${outcome})`,
+        kind: 'unsupported',
+      };
+    }
+    deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
+    if (outcome === 'already-admitted') return { done: true, settled: 'already-in' };
+    if (outcome !== 'epoch-moved') return { done: true };
   }
-  deps.log(`[JOIN_REQUEST] ${request.userId} ${DECLINE_OUTCOME_LINE[outcome]}`);
-  return { done: true };
+  return {
+    done: false,
+    reason: 'a commit landed between the tree reading and the decline, twice',
+    kind: 'raced',
+  };
 }

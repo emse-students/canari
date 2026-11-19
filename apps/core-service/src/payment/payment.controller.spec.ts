@@ -56,7 +56,7 @@ describe('SESSION_ID_RE', () => {
     expect(SESSION_ID_RE.test('')).toBe(false);
     // The dashed RFC 4122 shape it used to require: no Lydia request has ever had one.
     expect(SESSION_ID_RE.test('11111111-1111-1111-1111-111111111111')).toBe(false);
-    // The Stripe-era `cs_...` id is no longer a session this service can have issued.
+    // A prefixed id is not a Lydia `request_uuid`.
     expect(SESSION_ID_RE.test('cs_test_a1B2c3')).toBe(false);
   });
 });
@@ -408,7 +408,7 @@ describe('PaymentController.cancelRequest', () => {
  * Sixteen nginx locations carry `auth_request /internal/auth/verify`, and that sub-request answers
  * 200 for a logged-OUT caller too - it IDENTIFIES, it never refuses. So a payments route with no
  * guard is reachable by anybody, which is how four of them reached a LIVE payment account on
- * 2026-09-10 (Stripe, then; the processor has since left). The guard is the only thing standing
+ * 2026-09-10. The guard is the only thing standing
  * between the two facts, so its presence is asserted here rather than assumed from a decorator being visible in a diff.
  */
 describe('PaymentController - every money route is guarded', () => {

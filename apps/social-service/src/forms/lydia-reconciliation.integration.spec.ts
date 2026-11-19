@@ -272,10 +272,10 @@ RESET lock_timeout;`
     const formId = await paidForm();
     const ended = await pendingAnswer(formId, 1, 31);
     const live = await pendingAnswer(formId, 2, 10);
-    // A Stripe-era id core would refuse: never sent.
-    const stripe = await pendingAnswer(formId, 3, 40);
+    // A historic `cs_...` id core would refuse: never sent.
+    const foreignId = await pendingAnswer(formId, 3, 40);
     await ds.query(`UPDATE submissions SET "stripeSessionId" = 'cs_test_x' WHERE id = $1`, [
-      stripe,
+      foreignId,
     ]);
 
     await sweep.sweepFormPayments(await cutoffNow());
@@ -285,7 +285,7 @@ RESET lock_timeout;`
     expect(verifiedReads).toBe(1);
     expect(await status(ended)).toBe('paid');
     expect(await status(live)).toBe('pending');
-    expect(await status(stripe)).toBe('pending');
+    expect(await status(foreignId)).toBe('pending');
 
     // Idempotent from the row: the settled one left `pending`, so the next tick selects nothing.
     await sweep.sweepFormPayments(await cutoffNow());

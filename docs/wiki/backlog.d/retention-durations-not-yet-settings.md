@@ -17,7 +17,7 @@ A setting read by such a sweep would apply a lowered value to everything already
 needs its expiry stamped at creation first (a column per table, or a field per entry), then a column
 in `platform_config`, a row in the admin section and its rendering in the privacy policy.
 
-Proposed to stay constants, for the owner to confirm: the TTLs of seconds to hours (presence, call
+**Confirmed by the owner on 2026-11-19 to stay constants** ([decisions](owner-decisions-of-2026-11-19.md)): the TTLs of seconds to hours (presence, call
 state, upload sessions, pending uploads, restore challenges), the per-form and per-space durations
 already chosen by their organiser (form files, booking answers), and the backups (an infrastructure
 script, not a service).

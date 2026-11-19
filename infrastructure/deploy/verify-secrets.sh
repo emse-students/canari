@@ -8,7 +8,7 @@
 # `403 No such key` on every request for as long as nobody read the storage log.
 #
 # WHY IT IS DERIVED AND NOT A LIST. `serve-prod.yml` verified five keys in four services, by hand,
-# in five near-identical blocks - JWT, two Stripe, two Lydia. The other twenty-five secrets were
+# in five near-identical blocks - JWT, two for a former payment processor, two Lydia. The other twenty-five secrets were
 # verified nowhere, and dev verified nothing at all. The failure mode of a hand-written guard list
 # is the entity nobody added to it, which is the defect this file is written against. So the pairs
 # are DERIVED: the manifest says which keys this environment carries, the resolved compose file says

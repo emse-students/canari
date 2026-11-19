@@ -16,8 +16,9 @@ conflict: principle 1 (your messages are yours) outranks any engagement signal.
 a ranking, a suggestion or a notification that makes a reader's information harder to find is wrong
 whatever it does for engagement. That is why Campus and Associations are strictly chronological
 with nothing inserted, why Pour toi leads with the fresh posts of the people a reader follows before
-any suggestion, and why a global search is the next design question
-([backlog.d](backlog.d/global-search-to-design-after-1-6-9.md)). Also in
+any suggestion, and why the post search gains filters by person and by association
+([backlog.d](backlog.d/post-search-filters-by-person-and-by-association.md); the global search was
+dropped by the owner on 2026-11-19 in its favour). Also in
 [design-reference](frontend/design-reference.md#0-the-product-principle-above-every-choice-owner-2026-11-10).
 
 The owner's engagement chantier (2026-11-07): more people notified, following made easy, and
