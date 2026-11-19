@@ -255,10 +255,14 @@ export function mayOpenAdminPath(path: string, tiers: AdminTiers): boolean {
   return entry !== undefined && entry.may(tiers);
 }
 
-/** The groups the hub draws, each with only the rows `tiers` may open; empty groups vanish. */
+/**
+ * The groups the hub draws, each with only the rows `tiers` may open; empty groups vanish. A queue
+ * row carries its pending count from `pending` (the server's `adminQueueCounts`, keyed by the entry's
+ * key) as a badge, drawn above 0.
+ */
 export function adminHubGroups(
   tiers: AdminTiers,
-  summaries: Record<string, string> = {}
+  pending: Partial<Record<string, number>> = {}
 ): { key: AdminGroupKey; label: string; rows: HubLinkRow[] }[] {
   return GROUPS.map((g) => ({
     key: g.key,
@@ -267,10 +271,18 @@ export function adminHubGroups(
       key: e.key,
       href: e.href,
       label: e.label(),
-      summary: summaries[e.key] ?? e.summary?.(),
+      summary: e.summary?.(),
       icon: e.icon,
+      ...pendingBadge(pending[e.key]),
     })),
   })).filter((g) => g.rows.length > 0);
+}
+
+/** A queue's pending count as a row's badge and its spoken name; nothing for none. */
+function pendingBadge(count: number | undefined): { badge?: number; badgeLabel?: string } {
+  return count && count > 0
+    ? { badge: count, badgeLabel: m.admin_hub_pending_count({ count }) }
+    : {};
 }
 
 /**

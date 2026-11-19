@@ -12,6 +12,8 @@
     UserPlus,
     Cake,
     UserX,
+    UserPen,
+    ShieldAlert,
     CalendarCog,
     Newspaper,
     Repeat2,
@@ -105,6 +107,22 @@
       : null
   );
   const isInert = $derived(isUnknownNotif || isLiveModerationNotif);
+
+  /**
+   * A NEW ITEM IN A GLOBAL ADMIN'S QUEUE (owner, 2026-11-18): a profile correction asked for, a
+   * subject reported. The platform is the actor and the row carries no text - who asked and what
+   * was reported are the queue's to show - so the whole sentence is built here, and the row opens the
+   * queue (`notificationHref`). The server serves it only while the item waits, so it leaves this
+   * list for every admin once one of them handles it.
+   */
+  const ADMIN_QUEUE_TEXT: Readonly<Record<string, () => string>> = {
+    admin_profile_correction: m.notif_admin_profile_correction_text,
+    admin_report: m.notif_admin_report_text,
+  };
+  const adminQueueText = $derived(
+    Object.hasOwn(ADMIN_QUEUE_TEXT, notif.type) ? ADMIN_QUEUE_TEXT[notif.type]() : null
+  );
+  const isAdminQueueNotif = $derived(adminQueueText !== null);
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -428,11 +446,13 @@
                         ? 'bg-accent text-on-accent'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
-                          : isUnknownNotif
-                            ? 'bg-gray-500 text-white'
-                            : isLiveModerationNotif
-                              ? 'bg-red-500 text-white'
-                              : 'bg-green-600 text-white'
+                          : isAdminQueueNotif
+                            ? 'bg-accent text-on-accent'
+                            : isUnknownNotif
+                              ? 'bg-gray-500 text-white'
+                              : isLiveModerationNotif
+                                ? 'bg-red-500 text-white'
+                                : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -517,6 +537,10 @@
         <UserCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'profile_correction_refused'}
         <UserX size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'admin_profile_correction'}
+        <UserPen size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'admin_report'}
+        <ShieldAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_request'}
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}
@@ -575,12 +599,14 @@
         >
       {:else if isCampusTrend}
         <span class="font-semibold">{m.notif_campus_trend_text()}</span>
+      {:else if isAdminQueueNotif}
+        <span class="font-semibold">{adminQueueText}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif || isCampusTrend}
+      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif || isCampusTrend || isAdminQueueNotif}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -600,7 +626,7 @@
              from the type and the form's title - the only data the server stores on the row. -->
         {m.notif_form_paid_over_capacity_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
-      {:else if isLydiaPaymentsNotif || isLydiaRefundNotif}
+      {:else if isLydiaPaymentsNotif || isLydiaRefundNotif || isAdminQueueNotif}
         <!-- The whole sentence is the first span above; nothing follows it. -->
       {:else if isLiveModerationNotif}
         {#if liveModerationReason}&#8212; {liveModerationReason}{/if}

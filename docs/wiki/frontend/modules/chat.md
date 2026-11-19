@@ -449,6 +449,11 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
   each on its own mutation (joining allowed, the owed loop removed).
 - **Read on both phones:** the Mi on `1.7.0-alpha.6`, the iPhone's invite-then-burst branch 4 of 4 on
   `1.7.0-alpha.12` ([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+- **Its silent twin, a REACTION before its seed (2026-11-18).** The same unopened frame, when it is
+  silent, may be a reaction to one of MY messages, and the repair's history load raises none by
+  design - so the first reaction of a reactor's new seed session was announced by nobody in the
+  foreground. Its live decision is parked under the row id and taken by the reader that opens it
+  ([mobile](../mobile.md#the-frame-trigger-of-a-reaction-2026-11-17), `owedLiveFrames.ts`).
 
 ### A salon's badge starts at the grant (owner, 2026-11-16)
 

@@ -80,7 +80,7 @@ const proto = BaseMlsService.prototype as unknown as {
     aheadOfMailbox?: boolean
   ): Promise<boolean>;
   noteDistributionGroup(groupId: string): void;
-  forgetDistributionGroupById(groupId: string): Promise<boolean>;
+  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
   hydrateDistributionGroups(): Promise<void>;
   refetchFramesLeftBehind(
     reasons: UnackedReason | readonly UnackedReason[],
@@ -799,10 +799,30 @@ describe('the durable registry', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     proto.registerDistributionGroup.call(ctx, WS, 'g-1');
 
-    expect(await proto.forgetDistributionGroupById.call(ctx, 'g-1')).toBe(true);
+    expect(
+      await proto.forgetDistributionGroupById.call(ctx, 'g-1', 'distribution group left')
+    ).toBe(true);
 
     expect(store.deleteDistributionGroup).toHaveBeenCalledWith('g-1');
     expect(store.rows.has('g-1')).toBe(false);
+    log.mockRestore();
+  });
+
+  it('prints the reason its caller states, never a fixed one', async () => {
+    const { ctx } = wired([], {
+      getLocalGroups: vi.fn().mockReturnValue(['g-1', 'g-2']),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await proto.forgetDistributionGroupById.call(ctx, 'g-1', 'absent from server');
+    await proto.forgetDistributionGroupById.call(ctx, 'g-2', 'distribution group left');
+
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('g-1') && l.includes('(absent from server,'))).toBe(true);
+    expect(lines.some((l) => l.includes('g-2') && l.includes('(distribution group left,'))).toBe(
+      true
+    );
     log.mockRestore();
   });
 

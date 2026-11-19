@@ -79,6 +79,10 @@
 "notif.social.live_withdrawn.body" = "La modération vous a retiré le droit de lancer un live.";
 "notif.social.live_reinstated.title" = "Droit de lancer un live rétabli";
 "notif.social.live_reinstated.body" = "La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu'à sa fin.";
+"notif.social.admin_profile_correction.title" = "Demande de correction de profil";
+"notif.social.admin_profile_correction.body" = "Une personne demande une correction de son profil.";
+"notif.social.admin_report.title" = "Nouveau signalement";
+"notif.social.admin_report.body" = "Un contenu ou une personne a été signalé.";
 "notif.social.booking_cancelled.title" = "%@ a annulé une réservation";
 "notif.social.booking_cancelled.body" = "Elle n'aura pas lieu";
 "notif.social.booking_withdrawn.title" = "%@ a quitté votre réservation";

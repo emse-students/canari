@@ -81,6 +81,9 @@ maybe('an association member write against PostgreSQL', () => {
       unused,
       { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
+    // The Lydia cashiers' departure debt (registered at boot by `LydiaCashiersService`): not this
+    // spec's subject, so a removal asks nothing of it.
+    service.registerCashierDepartures({ settleDepartures: () => Promise.resolve() });
     // No budget here: every integration spec has one, `jest-integration-budget.cjs`.
   });
 

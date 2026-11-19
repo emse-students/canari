@@ -350,22 +350,49 @@ pub fn spawn_redis_subscriber(
                                 None => continue,
                             };
 
+                            // A frame naming `requiresCapability` (the admin badges') reaches only
+                            // the sessions that declared it; one naming nothing reaches every one.
+                            let required = match crate::addressing::required_capability(&json, true)
+                            {
+                                Ok(required) => required,
+                                Err(why) => {
+                                    tracing::error!(
+                                        "[PubSub] channel event {} NOT delivered - {}",
+                                        json.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+                                        why
+                                    );
+                                    continue;
+                                }
+                            };
+
                             let frame = serde_json::json!({
                                 "type": json.get("type").unwrap_or(&serde_json::Value::Null),
                                 "data": json.get("data").unwrap_or(&serde_json::Value::Null)
                             })
                             .to_string();
 
-                            // Find all map keys that start with the user ID.
+                            // Find all map keys that start with the user ID, keeping the sessions
+                            // the frame may reach.
+                            let mut not_declared = 0usize;
                             let senders_to_notify: Vec<(String, _)> = {
                                 let map = connected_users.lock().unwrap();
+                                let caps = session_caps.lock().unwrap();
                                 let mut temp = Vec::new();
                                 for u_id in user_ids {
                                     let prefix = format!("{}:", u_id);
                                     for (key, senders) in map.iter() {
                                         if key.starts_with(&prefix) {
-                                            for tx in senders.values() {
-                                                temp.push((key.clone(), tx.clone()));
+                                            let (deliver, refused) =
+                                                crate::addressing::deliverable_sessions(
+                                                    required,
+                                                    senders.keys().copied(),
+                                                    &caps,
+                                                );
+                                            not_declared += refused.len();
+                                            for conn_id in deliver {
+                                                if let Some(tx) = senders.get(&conn_id) {
+                                                    temp.push((key.clone(), tx.clone()));
+                                                }
                                             }
                                         }
                                     }
@@ -393,9 +420,13 @@ pub fn spawn_redis_subscriber(
                                 crate::state::prune_closed_senders(&connected_users, &key);
                             }
 
+                            // A session that did not declare is an older build of that account:
+                            // expected, so counted rather than named.
                             tracing::info!(
-                                "[Gateway] Channel event distributed to connected users (targets={}).",
-                                targets_count
+                                "[Gateway] Channel event distributed to connected users (targets={}, not declaring {}={}).",
+                                targets_count,
+                                required.unwrap_or("-"),
+                                not_declared
                             );
                         }
                     } else {

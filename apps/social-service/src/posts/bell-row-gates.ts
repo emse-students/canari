@@ -2,6 +2,11 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { holdsBdeAgendaRightOverSql } from '../spaces/bde';
 import { associationVisibleToViewerSql, eventVisibleToViewerSql } from '../spaces/reader-spaces';
 import type { NotificationType } from '../push/notification-client-floor';
+import {
+  isGlobalAdminSql,
+  profileCorrectionPendingSql,
+  reportNoticeOwedSql,
+} from '../admin-queues/admin-queue-sql';
 
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
 export const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
@@ -206,6 +211,14 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   live_suspended: 'reader',
   live_withdrawn: 'reader',
   live_reinstated: 'reader',
+  // A new item in a global admin's queue (owner, 2026-11-18): shown while its reader is STILL a
+  // global admin and the item STILL waits - so it clears for every admin the moment one of them
+  // handles it (applied, refused, reviewed, dismissed), from the queue's own state, nothing else.
+  admin_profile_correction: ({ reader, target }) => `(${isGlobalAdminSql(reader)}
+    AND EXISTS (SELECT 1 FROM profile_correction_requests bell_pcr
+      WHERE bell_pcr.id = ${target} AND ${profileCorrectionPendingSql('bell_pcr')}))`,
+  admin_report: ({ reader, target }) =>
+    `(${isGlobalAdminSql(reader)} AND ${reportNoticeOwedSql(target)})`,
 };
 
 /** The kinds whose row names something other than a post, re-asked by `targetBoundRowShownSql`. */

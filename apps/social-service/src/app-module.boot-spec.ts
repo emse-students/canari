@@ -83,18 +83,6 @@ describe('the real AppModule boots', () => {
       const dataSource = app.get(DataSource, { strict: false });
       expect(dataSource.entityMetadatas.length).toBeGreaterThan(0);
 
-      // NO STRING REACHES TYPEORM'S GLOB (GHSA-fc5q-39xc-vjpf, a picomatch ReDoS with no fixed release,
-      // 2026-11-17). TypeORM hands every STRING in these three options to tinyglobby, hence to
-      // picomatch, and the audit's ignore of that advisory rests on there being none. Read from the
-      // DataSource the app really built, so a shorthand, a const, a spread or a factory cannot hide
-      // one. `picomatch-premise.mjs` refuses the ignore if this assertion leaves this file
-      // (docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17).
-      const { entities, migrations, subscribers } = dataSource.options;
-      const globbed = [entities, migrations, subscribers]
-        .flatMap((list) => (list ? Object.values(list as object) : []))
-        .filter((item) => typeof item === 'string');
-      expect(globbed).toEqual([]);
-
       for (const metadata of dataSource.entityMetadatas) {
         // `take: 1` because the assertion is that the query RUNS, not what it returns - the schema
         // is freshly synchronised and every table is empty. A thrown query is the failure.

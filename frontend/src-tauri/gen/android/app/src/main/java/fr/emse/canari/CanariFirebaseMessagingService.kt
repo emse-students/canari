@@ -5945,6 +5945,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_reinstated_title),
                 res.getString(R.string.notif_social_live_reinstated_body)
             )
+            // A new item in a global admin's queue (owner, 2026-11-18): fixed sentences - who asked
+            // or what was reported stays in the queue (the content-free rule).
+            "social_admin_profile_correction" -> Pair(
+                res.getString(R.string.notif_social_admin_profile_correction_title),
+                res.getString(R.string.notif_social_admin_profile_correction_body)
+            )
+            "social_admin_report" -> Pair(
+                res.getString(R.string.notif_social_admin_report_title),
+                res.getString(R.string.notif_social_admin_report_body)
+            )
             // The bookings' notices (WP-N): who acted names the title - a person, or the
             // association of the space - and the body is the place, the organiser's word for a
             // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).

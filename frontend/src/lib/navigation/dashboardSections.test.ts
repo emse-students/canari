@@ -15,16 +15,18 @@ const org = (over: Partial<Association>): Association =>
     ...over,
   }) as Association;
 
-function groups(memberships: Association[]) {
+function groups(memberships: Association[], over: Partial<DashboardFacts> = {}) {
   const facts = {
     userId: 'u',
     displayName: null,
     unreadNotifications: 0,
     mayOpenAdmin: false,
+    adminPending: 0,
     adminScope: { title: () => 'Admin' },
     isReviewer: false,
     memberships,
     probesSettled: true,
+    ...over,
   } as unknown as DashboardFacts;
   return dashboardHubGroups(facts, { signOut: () => {} });
 }
@@ -75,5 +77,26 @@ describe('dashboard managed groups', () => {
     expect(
       rowsOf([org({ isAdmin: false }), org({ slug: 'old', archived: true })], 'managed')
     ).toBeUndefined();
+  });
+});
+
+describe('the Administration row badge (owner, 2026-11-18)', () => {
+  const adminRow = (over: Partial<DashboardFacts>) =>
+    groups([], {
+      mayOpenAdmin: true,
+      adminScope: { title: () => 'Admin', description: () => '' },
+      ...over,
+    })
+      .flatMap((g) => g.rows)
+      .find((r) => r.key === 'admin');
+
+  it('carries the sum of the queues the reader can act on, spoken', () => {
+    const row = adminRow({ adminPending: 4 });
+    expect(row?.badge).toBe(4);
+    expect(row?.badgeLabel).toBeTruthy();
+  });
+
+  it('draws nothing when nothing waits', () => {
+    expect(adminRow({ adminPending: 0 })?.badge).toBeUndefined();
   });
 });

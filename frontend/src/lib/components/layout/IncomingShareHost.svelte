@@ -12,7 +12,8 @@
    * chat page then stages the share in its composer (`incomingShare.takeFor`).
    *
    * It also keeps the phone's share-sheet SUGGESTIONS (lot S5: Android shortcuts, iOS intent
-   * donations) in line with the conversation list (`syncShareTargets`), and opens the picker on the
+   * donations) in line with the conversation list, sent when the member leaves the app
+   * (`followShareTargets`), and opens the picker on the
    * suggestion the member picked there - only when this account holds that conversation.
    * See `docs/wiki/frontend/sharing.md`.
    */
@@ -29,7 +30,7 @@
   import { landShareOn } from '$lib/sharing/shareLanding';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { drainNativeShare } from '$lib/mobile/incomingShareDrain';
-  import { syncShareTargets } from '$lib/sharing/shareTargets';
+  import { followShareTargets } from '$lib/sharing/shareTargetsFollow.svelte';
   import { suggestionIfHeld } from '$lib/sharing/shareDestinations';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -63,20 +64,22 @@
     );
   });
 
-  // The share sheet's suggestions follow the conversation list, the setting and the session.
-  $effect(() => {
-    // Phone apps only (Android shortcuts, iOS intent donations): elsewhere nothing is read, so
-    // nothing re-runs this.
-    if (!isMobileTauriRuntime()) return;
-    syncShareTargets({
-      enabled: settings.shareSuggestionsEnabled,
-      signedIn: globalSession.isLoggedIn,
-      conversationsReady: globalConvs.conversationSourcesSettled,
-      conversations: () => globalConvs.conversations.entries(),
-      currentUserId: globalSession.userId,
-      workspaces: () => globalChannels.channelWorkspaces,
+  // The share sheet's suggestions are sent when the member leaves the app and when the switch
+  // moves - never at each change of the list (`followShareTargets`). Phone apps only (Android
+  // shortcuts, iOS intent donations).
+  if (isMobileTauriRuntime()) {
+    followShareTargets({
+      enabled: () => settings.shareSuggestionsEnabled,
+      read: () => ({
+        enabled: settings.shareSuggestionsEnabled,
+        signedIn: globalSession.isLoggedIn,
+        conversationsReady: globalConvs.conversationSourcesSettled,
+        conversations: () => globalConvs.conversations.entries(),
+        currentUserId: globalSession.userId,
+        workspaces: () => globalChannels.channelWorkspaces,
+      }),
     });
-  });
+  }
 
   /**
    * Drains one waiting share (its text and file names, no bytes); says how many items the native

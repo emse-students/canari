@@ -1215,7 +1215,20 @@ against fakes and died on it with `flow executor answered HTTP 302`:
 
 The fake in `.github/scripts/tests/smoke-login.test.mjs` copies that shape, the CAS-only denial
 included. A different component named in a failure is the flow asking for a stage the account cannot
-answer.
+answer; the message names it, and says "second factor" only for an `ak-stage-authenticator-*`.
+
+**The smoke account accepts MiConnect's terms, as a person does (2026-11-18).** Since #3839 the dev
+provider names the terms flow (`miconnect-authorization`,
+[authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16))
+as its authorization flow, so an account whose `cgu_version` is not the current text gets one
+`ak-stage-prompt` after the sign-in flow. The `v1.7.1-alpha.1` deploy died on it ("a stage this account
+cannot answer: ak-stage-prompt"). The script now recognises THAT prompt and no other - an
+`ak-stage-prompt` whose only field asking for an answer is the `cgu_accept` checkbox, beside the
+hidden `attributes.cgu_version` - posts every field the browser posts (static text excluded) with the
+box ticked, and logs one line naming
+the version. That happens once per version of the text; the next deploy skips the page. Any other
+prompt fails at `flow` naming its fields. The test reads the two field names out of `45-consent.yaml`,
+so a renamed field fails the test rather than the next deploy.
 
 ### The store arms (`ios.yml`, `android.yml`)
 
@@ -2103,6 +2116,69 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
 - **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
+
+### The iOS toolchain is pinned: Xcode 27 since 1.7.1
+
+Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
+(the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with
+`maxim-lobanov/setup-xcode` and `xcode-version: '^27.0'`, which takes the newest 27.x on the image
+and **fails the run when there is none**. The pin is REQUIRED, never merely allowed, for two reasons:
+
+- **The store.** App Store Connect accepted builds `100700011` and `100700012` (built on `macos-15`
+  with the iOS 26.2 SDK) with warning ITMS-90725: from April 2027 it accepts only uploads built with
+  the iOS 27 SDK, Xcode 27 or later.
+- **Liquid Glass.** The native tab bar compiles its glass branch under `#if compiler(>=6.2)`; a
+  toolchain older than Xcode 26 builds the classic bar with no error.
+
+The image, read in `actions/runner-images` on 2026-11-18: the README lists "Xcode 27" (arm64,
+labels `xcode-27` or `xcode-27-xlarge`, still badged *preview*, runner-images issue 14404); its
+software list `images/macos/xcode-27-arm64-Readme.md` gives macOS 27.0.1, image `20261104.0337.1`,
+Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rust (both jobs install
+it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
+`ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
+request never compiles on another toolchain than the one the release archives with. The move and
+what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+
+**Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
+failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
+`_init_plugin_keystore`, `_init_plugin_system_components` - the entry point of every Swift plugin.
+`swift-rs` 1.0.9 promotes those symbols back to global with `llvm-objcopy` from rustup's
+`llvm-tools` component (Apple ships none), and when the tool is missing it only prints a
+`cargo:warning` and lets the link fail. `ios-libapp.sh`, the one script both jobs run, now
+`rustup component add llvm-tools` into the pinned toolchain beside the iOS target. The
+`compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
+carried its toolchain's link search paths into the first run.
+
+**macOS 27's dyld refuses a stripped proc-macro dylib.** The first COLD build on the runner (new
+cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
+LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
+profile that builds proc macros and build scripts included, and the stripped host dylib no longer
+loads; the cache from `macos-15` had hidden it in the first run. The fix is in the PROFILE, so no
+host build escapes it: `[profile.release.build-override] strip = false` in
+`frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
+same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
+archive strips the app. `build-mls-wasm` names the Xcode major on macOS in BOTH of its caches:
+the built-artefact key (`mls-wasm-macOS-xcode27-...`) and the `cache-key` of the Rust target cache
+that `setup-rust-toolchain` restores on a miss - the first version keyed only the former, and run
+44278923984 restored `frontend/mls-wasm/target` from another key on a "full match". A new Xcode major
+therefore finds neither entry and rebuilds both from source; no host dylib crosses an image.
+
+**What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
+plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
+`-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
+destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
+(`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`) and writes `xcodebuild -version`, the iOS SDK, the runner image and the `altool` it will
+upload with (`xcrun --find altool`, version printed; the step FAILS naming it when absent, so the
+first pre-release on a new Xcode proves the upload tool before the upload needs it) to the run summary.
+
+**The `xcode-27` label is a preview, and its queue time is not bounded.** `build-ios` carries
+`timeout-minutes: 90` (a clean signed run measured about 20 minutes), so a hung job cannot hold
+`release.yml`'s `release` concurrency group - and with it the next cut - for GitHub's default 360
+minutes. The timeout counts from the job's start, not from its wait for a runner. The proof that a
+runner is available before a STABLE is the iOS leg of that version's pre-release going green: a
+stable is cut only after it.
 
 ### A green run is not proof that *your* file compiled
 
@@ -3130,32 +3206,19 @@ into what ships.
   and `subscribers`. All three pass classes only (social uses `autoLoadEntities`), so no pattern is
   ever compiled, and a pattern would be ours anyway.
 
-So `--ignore=GHSA-fc5q-39xc-vjpf` is granted in the production closure of the frontend and the three
-TypeORM trees. `.github/scripts/picomatch-premise.mjs <tree> production` asserts the premise on each
-installed tree, and `tests/picomatch-premise.test.mjs` is its self-test:
+So `--ignore=GHSA-fc5q-39xc-vjpf` was granted in the production closure of the frontend and the
+three TypeORM trees, each on a premise asserted per installed tree (`picomatch-premise.mjs`, and a
+boot-spec assertion that no STRING reached TypeORM's glob), and in the full closure of all five trees
+on the premise that no fixed release existed.
 
-- frontend: picomatch is unreached. A new devDependency counts as shipped until declared build-only.
-- the three TypeORM trees: picomatch's only shipped parent is tinyglobby, and tinyglobby's is typeorm.
-  Inside typeorm only `util/DirectoryExportedClassesLoader.js` imports tinyglobby. **No string reaches
-  it, asserted at runtime**: each service's `app-module.boot-spec.ts` (the `boot-nest-apps` job) reads
-  `entities`, `migrations` and `subscribers` off the DataSource the real AppModule built and expects
-  no string, which a shorthand, a const, a spread or a factory cannot evade. The premise script
-  refuses the ignore if that assertion leaves the spec. It also keeps a grep for a LITERAL string in
-  every shipped `src` file, because it runs in the audit job of every pull request (the boot runs
-  only when a service changed) and reads a DataSource built outside the AppModule, which the boot
-  never constructs.
-
-**The nightly ignores it too, in all five trees that hold picomatch, on another premise (coordinator, 2026-11-17).** In
-the full closure the build tools DO hold picomatch, and the audit has reported it (every pull request of 2026-11-17). A
-nightly that stays red until upstream ships is noise: its reader learns to skip it, and it hides the
-next advisory. So the full closure carries the same ignore, and `picomatch-premise.mjs <tree> full`
-asserts that **no fixed release exists**. It reads GitHub's advisory record
-(`GET /advisories/GHSA-fc5q-39xc-vjpf`) and refuses the ignore when any picomatch entry has a
-`first_patched_version`, when the advisory is withdrawn, or when the record cannot be read after one
-retry five seconds later. The day a
-fix ships, the nightly goes red, which is exactly when there is something to do: upgrade.
-
-`Every ignored advisory is still reported` then retires the ignore once the upgrade has landed and nothing reports the advisory any more.
+**Retired 2026-11-18: GitHub WITHDREW the advisory** (`withdrawn_at` 2026-11-18T15:38Z on
+`GET /advisories/GHSA-fc5q-39xc-vjpf`). The lockfiles had not moved (`picomatch@4.0.7` in every tree,
+`4.0.4` in core-service by override, `2.3.2` beside it in social, media and chat-delivery), but
+`bun audit` stopped reporting it, `Every ignored advisory is still reported` failed as designed and
+turned every pull request and `main` red, and the ignore was deleted the same day with its premise
+script, its self-test, its workflow step and the three boot-spec assertions that existed only for it.
+Every tree then audits clean with no ignore but media-service's minio ones. The production-closure
+design above stands; it no longer carries any picomatch exception.
 
 **Gate 7 on an outage, and its evidence.** Every refusal prints the audit's whole output, indented:
 the package and path of an advisory, or what an unrecognised failure said. Once one tree's registry
@@ -3367,9 +3430,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### The frontend audit carries one ignore, picomatch's (2026-11-17)
+### The frontend audit carries no ignore (2026-11-18)
 
-`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. Since 2026-11-17 the frontend carries `GHSA-fc5q-39xc-vjpf` only, with its asserted premise ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It is audited at bun's default level.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. From 2026-11-17 the frontend carried `GHSA-fc5q-39xc-vjpf` (picomatch) on an asserted premise; GitHub withdrew that advisory on 2026-11-18, the same step failed, and the ignore was deleted that day ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It carries none now, and is audited at bun's default level.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 

@@ -6,13 +6,17 @@
  * receive a message (`lifecycle === 'active'`) and whose name is known, ordered by the sidebar's
  * ONE recency key (`compareConversationRecency`) - no second notion of "recent" is derived here.
  *
- * WHEN. `syncShareTargets` is called by `IncomingShareHost` whenever what it reads changes; the
- * list is sent only when the ordered ids and names differ from what the native side was last told
- * (`shareTargetsNative.ts`), so a new message reordering the top of the list republishes and one
- * that does not, sends nothing. No debounce, no clock. Setting off -> cleared. Sign-out -> cleared
- * by `stores/auth` (`eraseAccountShortcuts`). Both phone apps, through the same two commands:
- * Android sharing shortcuts, iOS `INSendMessageIntent` donations. See
- * `docs/wiki/frontend/sharing.md`.
+ * WHEN. The list is read by ONE kind of reader, and it lives outside the app: the system share
+ * sheet and the launcher. So it is computed and sent when the member LEAVES the app
+ * (`followShareTargets`, on `onAppScreenChange`), never on a change of the conversation map: a
+ * first sync rebuilds that map for many seconds from provisional inputs (a joined row seeded with
+ * its admission time until its history lands, a DM name resolved outside the reactive graph, a
+ * salon's community loading late), and following it republished every intermediate state - 23
+ * publishes in one sync, measured. Sent only when the ordered ids and names differ from what the
+ * native side was last told (`shareTargetsNative.ts`). No debounce, no clock. Setting off ->
+ * cleared at once, on -> published at once (the member's own act). Sign-out -> cleared by
+ * `stores/auth` (`eraseAccountShortcuts`). Both phone apps, through the same two commands: Android
+ * sharing shortcuts, iOS `INSendMessageIntent` donations. See `docs/wiki/frontend/sharing.md`.
  */
 import { compareConversationRecency } from '$lib/utils/chat/conversations';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -87,8 +91,8 @@ export interface ShareTargetsInput {
    */
   conversationsReady: boolean;
   /**
-   * Read only when a publish is due: called inside an effect, a disabled or signed-out state then
-   * does not subscribe to every change of the conversation map.
+   * Read only when a publish is due - at the moment the member leaves the app or turns the
+   * suggestions on, never by an effect following the map.
    */
   conversations: () => Iterable<[string, Conversation]>;
   currentUserId: string;
@@ -96,20 +100,18 @@ export interface ShareTargetsInput {
 }
 
 /**
- * Brings the share sheet's suggestions in line with `input`: cleared when the member turned them
+ * Brings the share sheet's suggestions in line with `input` NOW: cleared when the member turned them
  * off, the current top conversations once signed in and the list is read, nothing otherwise (a
  * locked or loading session neither publishes a partial list nor erases a good one - the sign-out
- * is what erases). Phone apps only.
+ * is what erases). Phone apps only. Resolves when the native side has answered (the queued call
+ * settled), so a caller that must keep the process alive - a departure on iOS - can await it.
  */
-export function syncShareTargets(input: ShareTargetsInput): void {
-  if (!isMobileTauriRuntime()) return;
-  if (!input.enabled) {
-    void clearShareTargets('suggestions turned off');
-    return;
-  }
-  if (!input.signedIn || !input.conversationsReady) return;
-  void publishShareTargets(
+export function syncShareTargets(input: ShareTargetsInput, reason: string): Promise<void> {
+  if (!isMobileTauriRuntime()) return Promise.resolve();
+  if (!input.enabled) return clearShareTargets('suggestions turned off');
+  if (!input.signedIn || !input.conversationsReady) return Promise.resolve();
+  return publishShareTargets(
     selectShareTargets(input.conversations(), input.currentUserId, input.workspaces()),
-    'conversations changed'
+    reason
   );
 }

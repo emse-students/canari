@@ -858,7 +858,8 @@ export async function forgetMlsGroupIfPresent(
   log?: (msg: string) => void
 ): Promise<boolean> {
   try {
-    if (!(await mlsService.forgetDistributionGroupById(groupId))) return false;
+    if (!(await mlsService.forgetDistributionGroupById(groupId, 'absent from server')))
+      return false;
     log?.(`[MLS] forgetGroup ${groupId} (absent from server)`);
     return true;
   } catch (e) {

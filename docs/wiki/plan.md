@@ -40,6 +40,7 @@ earliest version, as a checklist.
 - [A push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)](backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md)
 - [The owner's decisions of 2026-11-17](backlog.d/owner-decisions-of-2026-11-17.md)
 - [The background Welcome's warm-process refusal: two native changes](backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)
+- [The admin queue badges and notices, owed on both phones (a reading for 1.7.1; owner, 2026-11-18)](backlog.d/admin-queue-badges-and-notices-owed-on-both-phones.md)
 - [The owner's decisions of 2026-11-18](backlog.d/owner-decisions-of-2026-11-18.md)
 - [An institution chooses each post's spaces and public: the iPhone's change-and-save and the "Entre etudiants" chip in the viewer, owed on the phones (a reading deferred to 1.7.1)](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)
 - [Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
@@ -73,15 +74,16 @@ earliest version, as a checklist.
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 - [P2 - a live ended itself (`upload-too-slow`) after 256 s on the iPhone, cause unproven](backlog.d/p2-a-live-ended-itself-upload-too-slow-after-256-s-on-the-iphone.md)
+- [P2 - a Lydia cashier add binds the person and not the number, and overwrites a number Lydia already knows](backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)
 - [P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited](backlog.d/p2-a-new-device-refuses-the-join-push-of-groups-it-was-admitted-to-unsolicited.md)
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
+- [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the iPhone's photo picker kept every item of a multiple pick](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 
 **P3 - hygiene**
 
-- [P3 - a 1:1 dropped because the server no longer lists it is logged "distribution group left"](backlog.d/p3-a-dropped-1-1-is-logged-as-a-distribution-group-left.md)
 - [P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)](backlog.d/p3-two-call-resume-edges-the-second-review-of-2148-found-recorded-and-not-built.md)
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
 - [P3 - an object moved onto the idle window after upload carries no stamp, so the idle-file setting never governs it](backlog.d/p3-an-object-moved-onto-the-idle-window-carries-no-idle-stamp.md)
@@ -90,7 +92,6 @@ earliest version, as a checklist.
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the chips row of "Nouvelle discussion" holds its place](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
-- [P3 - a live that ends normally makes every viewer log a warning (2026-11-17)](backlog.d/p3-a-live-that-ends-normally-warns-on-every-viewer.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
@@ -99,14 +100,11 @@ earliest version, as a checklist.
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - an accepted but unannounced Add: audit the adder paths, then one rig row](backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md)
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
-- [P3 - A device's revocation reset logs a `\[seenHelps\]` read failure at error level](backlog.d/p3-a-device-revocation-reset-logs-seenhelps-at-error-level.md)
 - [P3 - a second reaction to the same message stacks on the iPhone, where Android replaces it](backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)
 - [P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns](backlog.d/p3-a-sent-file-s-bubble-that-failed-to-load-stays-failed-after-the-link-returns.md)
-- [P3 - deleting one's account logs a false error: the push deregistration "refused" with a 401](backlog.d/p3-an-account-deletion-logs-its-push-deregistration-as-refused.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the error toast over a dialog is opaque](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)](backlog.d/p3-hidden-post-row-names-the-author-not-the-association.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - the share targets are republished twenty-three times during an account's first sync](backlog.d/p3-the-share-targets-are-republished-twenty-three-times-in-the-first-sync.md)
 - [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 - [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
@@ -117,6 +115,8 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
+- [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
+- [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
 
 ## 1.8.0
 
@@ -167,7 +167,6 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
-- [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 
 **P3 - hygiene**
 

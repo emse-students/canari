@@ -49,6 +49,12 @@ export const HEADERLESS_CLIENT_VERSION = '1.6.9';
  */
 export const POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION = '1.7.0';
 
+/**
+ * The first build that draws and composes the two admin queue notices (owner, 2026-11-18): the bell
+ * types `admin_profile_correction` / `admin_report` and their push keys.
+ */
+export const ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION = '1.7.1';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 
@@ -112,6 +118,9 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // `1.6.9` knew the type and drew it as a PERSON ("Quelqu'un", an "UI" avatar, a colon followed by
   // nothing): the first build that draws it as a suggestion is the floor.
   campus_trend: CAMPUS_TREND_MIN_CLIENT_VERSION,
+  // A new item in a global admin's queue (owner, 2026-11-18): the first build that draws it.
+  admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */
@@ -181,6 +190,8 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_campus_trend: CAMPUS_TREND_MIN_CLIENT_VERSION,
   social_campus_trend_photo: CAMPUS_TREND_MIN_CLIENT_VERSION,
   social_campus_trend_video: CAMPUS_TREND_MIN_CLIENT_VERSION,
+  social_admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  social_admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
 };
 
 /**

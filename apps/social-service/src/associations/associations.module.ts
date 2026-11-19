@@ -136,6 +136,12 @@ import { RefundsController } from './refunds/refunds.controller';
     LydiaPaymentsNotifier,
     LydiaCashierNotifier,
     LydiaCashiersService,
+    // The admin queues' notices write through it (`AdminQueuesModule`), with the same mapping.
+    // Exported from HERE and not reached through `PostsModule`, because `PostsModule` imports
+    // `ModerationModule`, which imports `AdminQueuesModule` (a report is announced when filed): an
+    // edge back to `PostsModule` would be a cycle. `InternalModule` imports both modules, so it may
+    // be handed either instance - harmless, the service holds no state (see the provider above).
+    PostNotificationsService,
   ],
 })
 export class AssociationsModule {}

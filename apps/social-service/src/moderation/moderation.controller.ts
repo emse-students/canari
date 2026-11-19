@@ -14,6 +14,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ModerationService, receiptOf, type ReportReceipt } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
+import { AdminQueuesService } from '../admin-queues/admin-queues.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
 import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import { mayRemoveAsModerator, type CommentViewer } from '../posts/comment-identity';
@@ -35,7 +36,8 @@ import { RouteParams } from '../common/route-params';
 export class ModerationController {
   constructor(
     private readonly service: ModerationService,
-    private readonly assocService: AssociationsService
+    private readonly assocService: AssociationsService,
+    private readonly adminQueues: AdminQueuesService
   ) {}
 
   /** Guard helper - throws 403 unless caller is a global admin or holds MODERATE in a BDE or an institution. */
@@ -74,17 +76,18 @@ export class ModerationController {
     @Headers('x-user-id') userId: string,
     @Body() dto: CreateReportDto
   ): Promise<ReportReceipt> {
-    return receiptOf(
-      await this.service.createReport({
-        reporterId: userId,
-        contentType: dto.contentType,
-        contentId: dto.contentId,
-        reason: dto.reason,
-        details: dto.details,
-        liveId: dto.liveId,
-        message: dto.message,
-      })
-    );
+    const report = await this.service.createReport({
+      reporterId: userId,
+      contentType: dto.contentType,
+      contentId: dto.contentId,
+      reason: dto.reason,
+      details: dto.details,
+      liveId: dto.liveId,
+      message: dto.message,
+    });
+    // The global admins are told of a report no notice of its subject covers yet (never throws: logged).
+    await this.adminQueues.announceReport(report);
+    return receiptOf(report);
   }
 
   // ── Admin (BDE MODERATE or global admin) ─────────────────────────────────
@@ -133,7 +136,11 @@ export class ModerationController {
     if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
       await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
     }
-    return this.service.reviewReport(reportId, userId, dto.action);
+    const report = await this.service.reviewReport(reportId, userId, dto.action);
+    // It left the queue: whoever may act on it recounts. Not awaited - the actor's answer does not
+    // wait on who else is told, and the actor refetches by itself (`queueChanged` never throws).
+    void this.adminQueues.queueChanged({ queue: 'moderation', reportIds: [reportId] });
+    return report;
   }
 
   // ── Mute / unmute ─────────────────────────────────────────────────────────

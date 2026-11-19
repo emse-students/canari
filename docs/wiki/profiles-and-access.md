@@ -601,6 +601,13 @@ filters.
   (types `profile_correction_applied` / `profile_correction_refused`; the note rides in `text`; actor =
   the platform, never the admin). In-app only (`skipPush`): the native push tables have no sentence for
   the two types yet - the push is the follow-up.
+- **The admins are told (owner, 2026-11-18: "quelqu'un a demande une correction de profil, mais je
+  n'ai vu aucun indicateur")**: `create` posts `internal/notifications/profile-correction-filed` to
+  social-service, which writes an `admin_profile_correction` bell row and a push to every GLOBAL admin
+  but the requester. The row is served only while the request is `pending`, so one admin's answer
+  clears it for all; the push is content-free (a fixed sentence, no name). The queue's badge counts
+  the same rows. A failed announcement is logged at `error` and never undoes the filing.
+  [admin](frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)
 - **Not observed**: any of it against the real authentik (the token `MICONNECT_EDITOR_TOKEN` is not
   set yet); tests use mocks.
 

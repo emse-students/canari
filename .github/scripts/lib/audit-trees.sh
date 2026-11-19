@@ -17,8 +17,8 @@
 #   full        every tree, every dependency: the nightly pass.
 #
 # AN IGNORE IS AN ALLOWLIST OF ONE ADVISORY IN ONE TREE, and its proof is an ASSERTED premise in
-# `code-analysis.yml` (the minio ones: "The premises behind media-service's ignores"; picomatch:
-# `picomatch-premise.mjs`). Every one is retired by "Every ignored advisory is still reported".
+# `code-analysis.yml` ("The premises behind media-service's ignores"). Every one is retired by
+# "Every ignored advisory is still reported".
 
 # Every tree with a committed `bun.lock`. `audit-dependencies.test.sh` asserts this list against
 # `git ls-files '*bun.lock'` (minus its commented exclusions) and against the matrix in
@@ -43,17 +43,10 @@ audit_ignores() {
   case "$closure" in production | full) ;; *) echo "::error::audit_ignores: closure '$closure' is neither production nor full" >&2; return 1 ;; esac
   case "$tree" in
     # minio's edges, runtime dependencies: ignored in BOTH closures. code-analysis.yml carries why.
-    # media-service ships no picomatch, so only its FULL closure (the build tools) needs that one.
     apps/media-service)
-      ids+=(GHSA-vcc3-ghjq-m6fr GHSA-qr28-fpjm-wq7f GHSA-528h-pc64-c93x GHSA-hqr4-qq8f-hg3x GHSA-mjw6-4jj6-33hc)
-      [ "$closure" = full ] && ids+=(GHSA-fc5q-39xc-vjpf) ;;
-    # picomatch ReDoS (2026-11-17, no fixed release exists), in every tree that holds it. Two
-    # premises, one per closure (`picomatch-premise.mjs`): in `production`, it is unreachable in what
-    # ships (the services: `typeorm > tinyglobby`, which globs only string entity/migration/
-    # subscriber paths, and they pass classes; the frontend: not shipped at all). In `full`, the
-    # nightly has REPORTED it and there is nothing to upgrade to - so the nightly is red only on
-    # something new, and goes red again the day a fixed release exists, which is when there is work.
-    apps/core-service | apps/social-service | apps/chat-delivery-service | frontend) ids+=(GHSA-fc5q-39xc-vjpf) ;;
+      ids+=(GHSA-vcc3-ghjq-m6fr GHSA-qr28-fpjm-wq7f GHSA-528h-pc64-c93x GHSA-hqr4-qq8f-hg3x GHSA-mjw6-4jj6-33hc) ;;
+    # Nothing to ignore (picomatch's GHSA-fc5q-39xc-vjpf was withdrawn on 2026-11-18, cicd.md).
+    apps/core-service | apps/social-service | apps/chat-delivery-service | frontend) ;;
     # jose only, a runtime dependency: nothing to ignore.
     libs/handoff) ;;
     *) echo "::error::audit_ignores: $tree is not an audited tree" >&2; return 1 ;;

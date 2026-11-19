@@ -1,3 +1,7 @@
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
@@ -6,6 +10,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -73,8 +78,13 @@ import {
 } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
+import type {
+  LydiaCashierDeparturePort,
+  LydiaCashierDepartureTrigger,
+} from './lydia-cashier-departures.port';
 import {
   LYDIA_CASHIER_PHONE_IN_USE,
+  assertNoCashierOwed,
   claimLost,
   claimTokenOf,
   clearClaim,
@@ -140,7 +150,9 @@ import {
   EVERY_EVENT_STEWARDSHIP,
   eventStewardshipOf,
   isNeutralEvent,
+  neutralColourOfRow,
   NO_EVENT_STEWARDSHIP,
+  CALENDAR_NEUTRAL_ERROR_CODES,
   presentEventsForReader,
   type EventStewardship,
   type PresentableEventRow,
@@ -511,8 +523,8 @@ function lydiaBusinessChanged(): ConflictException {
 /** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
 export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
 
-/** What a cashier phone must look like when stored: E.164, as core-service validated it. */
-const E164_RE = /^\+[1-9]\d{7,14}$/;
+/** What a cashier phone must look like when stored: E.164, no French trunk `0`, as core-service validated it. */
+const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** Where a readiness change came from, for its log line. */
 export interface LydiaReadinessRef {
@@ -643,6 +655,21 @@ export function shownParentId(
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
+
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -679,6 +706,52 @@ export class AssociationsService {
     if (this.coOrganisers) throw new Error('co-organisers registered twice');
     this.coOrganisers = port;
     this.logger.log('[COORG] co-organisation registered');
+  }
+
+  /** The Lydia cashiers' departure debt, registered at boot by `LydiaCashiersService` - see its port. */
+  private cashierDepartures: LydiaCashierDeparturePort | null = null;
+
+  /** Called once, by `LydiaCashiersService`. A second registration is a wiring defect. */
+  registerCashierDepartures(port: LydiaCashierDeparturePort): void {
+    if (this.cashierDepartures) throw new Error('Lydia cashier departures registered twice');
+    this.cashierDepartures = port;
+    this.logger.log('[LYDIA-CASHIER] departure removals registered');
+  }
+
+  /**
+   * Asks the Lydia cashiers to settle association `associationId`'s departure debt, WITHOUT waiting:
+   * the membership write it follows has committed and is never held by a call to Lydia. The port
+   * never rejects; an unregistered one is a wiring defect, said at ERROR - the debt stays in the rows
+   * and the next payments-card read retries it.
+   */
+  private settleCashierDepartures(
+    associationId: string,
+    trigger: LydiaCashierDepartureTrigger,
+    departedUserId?: string
+  ): void {
+    const port = this.cashierDepartures;
+    if (!port) {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals are not ` +
+          `registered (LydiaCashiersService missing) - the debt stays owed (${trigger})`
+      );
+      return;
+    }
+    void port.settleDepartures(associationId, trigger, departedUserId).catch((err: unknown) => {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals threw ` +
+          `(${trigger}) - the debt stays owed`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    });
+  }
+
+  /**
+   * A step holding the association's cashier claim released it (the Responsable's): a departure
+   * that met it busy is owed now. Never waits, never throws.
+   */
+  afterCashierClaimReleased(associationId: string): void {
+    this.settleCashierDepartures(associationId, 'claim-released');
   }
 
   private coOrganiserPort(): CoOrganiserPort {
@@ -1343,6 +1416,41 @@ export class AssociationsService {
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
     }
+    if (dto.neutralEventColor !== undefined) {
+      // The colour of neutral events is a BDE's setting (owner, 2026-11-14): another association
+      // owns no neutral event, so a VALUE stored there would be dead and misleading - refused, typed
+      // at the throw. A CLEAR is let through, so an association that stopped being a BDE (the
+      // designation moved) can still drop the colour its past neutral events wear.
+      const colour = dto.neutralEventColor?.trim() ?? '';
+      if (!asso.isBDE && colour !== '') {
+        this.logger.warn(
+          `[ASSO] association=${id.slice(0, 8)} refused neutralEventColor: not a BDE`
+        );
+        throw new ForbiddenException({
+          code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_NOT_A_BDE,
+          message: 'Only a BDE chooses the colour of neutral events',
+        });
+      }
+      patch.neutralEventColor = colour === '' ? null : colour;
+      this.logger.log(
+        `[ASSO] association=${id.slice(0, 8)} neutralEventColor=${patch.neutralEventColor ?? 'default'}`
+      );
+    }
+    // THE MASK HOLDS ONLY IF THE TWO COLOURS DIFFER (review of #3539): `color` is in every member
+    // read and paints the BDE's own events, so a neutral colour equal to it names the BDE behind
+    // every masked event. Judged on the colours AFTER this write, so either field's change is caught.
+    const nextColour = patch.color !== undefined ? patch.color : asso.color;
+    const nextNeutral =
+      patch.neutralEventColor !== undefined ? patch.neutralEventColor : asso.neutralEventColor;
+    if (nextColour && nextNeutral && nextColour.toLowerCase() === nextNeutral.toLowerCase()) {
+      this.logger.warn(
+        `[ASSO] association=${id.slice(0, 8)} refused: the neutral events colour would equal the association colour`
+      );
+      throw new BadRequestException({
+        code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_IS_THE_BDE_COLOUR,
+        message: 'The colour of neutral events must differ from the association colour',
+      });
+    }
     if (
       dto.contactEmail !== undefined &&
       (dto.contactEmail === null || dto.contactEmail.trim() === '')
@@ -1517,19 +1625,13 @@ export class AssociationsService {
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
       await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
-      // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
-      // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
-      // phone.
-      const liveCashiers: Array<{ vendorToken: string }> = await manager.query(
-        `SELECT "vendorToken" FROM lydia_cashiers WHERE "associationId" = $1 AND "removedAt" IS NULL`,
-        [id]
-      );
-      for (const cashier of liveCashiers) {
-        this.logger.error(
-          `[AUDIT] [LYDIA] association ${sanitizeLog(id)} deleted with a LIVE cashier row: ` +
-            `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
-        );
-      }
+      // Its Lydia cashier rows go with it (ON DELETE CASCADE), and with them every membership: a
+      // Tresorier, a Vendeur or a Responsable's other number still live would keep its rights at
+      // Lydia with nothing left to remove them, and a cashier step in flight would record on a row
+      // the delete took - so the delete is refused, typed, until neither holds (review of the 1.7.1
+      // flip). Read under the association's lock, with the same rows the cascade would take.
+      const liveCashiers = await this.refuseOnCashierDebt(manager, id, 'DELETE');
+      this.sayCashiersKeptAtLydia(id, 'deleted', liveCashiers);
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
@@ -2142,6 +2244,10 @@ export class AssociationsService {
     }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
+    // A cashier of the association's Lydia Business who is no longer a member owes the removal of
+    // their numbers (review of the 1.7.1 flip): asked now, never holding this answer; the debt is
+    // the rows themselves, so a failure here is retried by the next payments-card read.
+    this.settleCashierDepartures(associationId, 'departure', targetUserId);
     return { ok: true };
   }
 
@@ -2697,6 +2803,7 @@ export class AssociationsService {
         associationSlug: owner?.slug ?? '',
         associationColor: owner?.color ?? null,
         associationLogoUrl: owner?.logoUrl ?? null,
+        neutralEventColor: neutralColourOfRow(e, owner?.neutralEventColor),
       };
     });
     // THIS association's own agenda: a neutral event of it is not listed to a non-steward at all.
@@ -2758,12 +2865,24 @@ export class AssociationsService {
    */
   private async batchLoadEventOwners(
     associationIds: string[]
-  ): Promise<Map<string, Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl'>>> {
+  ): Promise<
+    Map<
+      string,
+      Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl' | 'neutralEventColor'>
+    >
+  > {
     const unique = [...new Set(associationIds)];
     if (unique.length === 0) return new Map();
     const owners = await this.assoRepo.find({
       where: { id: In(unique) },
-      select: { id: true, name: true, slug: true, color: true, logoUrl: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        color: true,
+        logoUrl: true,
+        neutralEventColor: true,
+      },
     });
     return new Map(owners.map((a) => [a.id, a]));
   }
@@ -3734,6 +3853,7 @@ export class AssociationsService {
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .addSelect(opts?.isGlobalAdmin ? 'true' : governs, 'canValidate')
       .getRawMany();
@@ -3769,6 +3889,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
         // `=== true` and nothing looser: a driver answering 't' must not widen the button.
         canValidate: r.canValidate === true,
       };
@@ -4024,6 +4148,7 @@ export class AssociationsService {
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .getRawMany();
 
@@ -4066,6 +4191,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
       };
     });
     // The anonymous `.ics` passes no viewer and so reads every neutral event masked; a filter on one
@@ -4173,6 +4302,8 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      // Not announced, but the write that reopened it committed: the badges still recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     if (current?.status !== AssociationCalendarEventStatus.Pending) {
@@ -4194,6 +4325,7 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties could not be read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
@@ -4341,6 +4473,9 @@ ${rejectionReason}`
         err instanceof Error ? err.stack : String(err)
       );
       return [];
+    } finally {
+      // THE ONE PLACE AN EVENT STARTS WAITING (a proposal, a reopening): the agenda badges recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId });
     }
   }
 
@@ -4937,6 +5072,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -4965,6 +5101,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     void this.notifyAssocAdminsOfEventAction(
       saved.associationId,
       userId,
@@ -4994,6 +5131,9 @@ ${rejectionReason}`
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
+      // Told whatever the status READ above: the row was read unlocked, so a demotion committed
+      // since would make "it was not pending" a guess - and a deletion is rare.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: targetAssocId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -5016,6 +5156,8 @@ ${rejectionReason}`
         throw partnerOrganiserOnlyRefusal('delete');
       }
       await this.calendarRepo.delete({ id: eventId });
+      // Whatever the status read above, as for a cross-association deletion.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -5623,6 +5765,8 @@ ${rejectionReason}`
     const cashiers = business
       ? await listLydiaCashiers((sql, params) => this.assoRepo.query(sql, params), id, business)
       : [];
+    // The card draws a departure's debt; opening it retries the removal (idempotent, never awaited).
+    if (cashiers.some((c) => c.departureUntried)) this.settleCashierDepartures(id, 'payout-read');
     return {
       lydiaAccountId: business,
       lydiaDashboardUrl: historicalCollects ? row.standbyUrl : row.activeUrl,
@@ -5925,21 +6069,31 @@ ${rejectionReason}`
       );
       return { kind: 'replay', ...previous };
     }
-    const before = `${holder.cause ?? 'nothing recorded'} at ${previousAt ? previousAt.toISOString() : 'no date'}`;
-    const switchedOff = this.lydiaNotifier.enabled()
-      ? ''
-      : ' - managers NOT notified, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off';
+    // The state before this transition, said plainly: a holder never marked has no cause on record.
+    const before = holder.cause
+      ? `was marked by ${holder.cause} at ${previousAt ? previousAt.toISOString() : 'an unrecorded date'}`
+      : 'no earlier marking on record';
+    // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
+    // stated fact on the line, never a reason to raise its level.
+    // Written BEFORE the notice is attempted, so it says what is next, never that it was sent; a
+    // bridge switch tells the managers only at the first request Lydia issues (below).
+    const notices = !this.lydiaNotifier.enabled()
+      ? 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)'
+      : switched
+        ? 'managers told at the first request Lydia issues on it'
+        : 'managers told next';
     if (ready) {
-      this.logger.warn(
+      // The designed path (the webhook or an admin validation): INFO. An anomaly on this path is
+      // logged where it is decided - the held refusal and the bridge switch above, at WARN.
+      this.logger.log(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} marked READY by ${cause} ` +
-          `(${where}); before: ${before}${switchedOff}`
+          `(${where}); before: ${before}; ${notices}`
       );
     } else {
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
-          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
-          `by ${before}; ${withheld} on-sale product(s) withheld; ${admins} global admin(s) told` +
-          switchedOff
+          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); before: ${before}; ` +
+          `${withheld} on-sale product(s) withheld; ${admins} global admin(s) told; ${notices}`
       );
     }
     await this.invalidatePostListCaches();
@@ -6939,6 +7093,10 @@ ${rejectionReason}`
     const { delegates, withheld, byId, wasReady } = await this.assoRepo.manager.transaction(
       async (manager) => {
         const holder = await this.lockAssociation(manager, id);
+        // The cashier rows of THAT Business are closed below: refused while one still owes a
+        // removal at Lydia, or a cashier step is in flight (review of the 1.7.1 flip).
+        const kept = await this.refuseOnCashierDebt(manager, id, 'unlink');
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
         await manager.update(Association, id, {
           lydiaAccountId: null,
           lydiaOnboardingComplete: false,
@@ -7025,6 +7183,14 @@ ${rejectionReason}`
             message: 'This Lydia Business took payments that may still be confirmed or refunded',
           });
         }
+        // Its cashier rows are closed below: refused while one still owes a removal at Lydia.
+        const kept = await this.refuseOnCashierDebt(
+          manager,
+          id,
+          'unlink',
+          bridge.enrolledVendorToken
+        );
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
         await manager.query(
           `UPDATE lydia_account_bridges
               SET "enrolledVendorToken" = NULL, "standbyKeyCiphertext" = NULL,
@@ -7061,6 +7227,47 @@ ${rejectionReason}`
         `keeps collecting`
     );
     return true;
+  }
+
+  /**
+   * `assertNoCashierOwed` for the association's delete or unlink, the refusal said at INFO - an
+   * answer the global admin acts on (remove the cashiers, or clear a stuck claim), not a failure.
+   */
+  private async refuseOnCashierDebt(
+    manager: EntityManager,
+    id: string,
+    act: 'DELETE' | 'unlink',
+    vendorToken: string | null = null
+  ): Promise<Array<{ vendorToken: string }>> {
+    try {
+      return await assertNoCashierOwed(manager, id, vendorToken);
+    } catch (err: unknown) {
+      if (err instanceof ConflictException) {
+        const code = (err.getResponse() as { code?: unknown }).code;
+        this.logger.log(
+          `[ASSO] ${act} ${sanitizeLog(id)} refused: ${String(code)} - the Lydia cashiers first`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The Responsable's current number alone remained when association `id` was `act`: a cashier Lydia
+   * still lists on that Business, which nothing in Canari tracks afterwards - said at ERROR, never
+   * the phone.
+   */
+  private sayCashiersKeptAtLydia(
+    id: string,
+    act: 'deleted' | 'unlinked',
+    live: Array<{ vendorToken: string }>
+  ): void {
+    for (const cashier of live) {
+      this.logger.error(
+        `[AUDIT] [LYDIA] association ${sanitizeLog(id)} ${act} with a LIVE cashier row: ` +
+          `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
+      );
+    }
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
