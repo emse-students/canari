@@ -62,6 +62,8 @@ describe('preference rows with a control', () => {
       expect(segment.className.split(' ')).toContain('min-w-0');
       expect(segment.className.split(' ')).toContain('flex-1');
       expect(segment.querySelector('span')!.className).toContain('break-words');
+      // `break-words` alone never splits a lone word ("Automatique"); `anywhere` lowers its min-content.
+      expect(segment.querySelector('span')!.className).toContain('[overflow-wrap:anywhere]');
     }
   });
 
