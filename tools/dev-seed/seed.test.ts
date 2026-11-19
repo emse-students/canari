@@ -353,7 +353,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   // `kind` defaults to 'post'.
   posts_kind_shape: {
     sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL AND "liveId" IS NULL)
-       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+       OR (kind = 'reel' AND ("durationMs" IS NULL OR "durationMs" > 0) AND "expiresAt" IS NOT NULL
            AND "liveId" IS NULL)
        OR (kind = 'replay' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
            AND "liveId" IS NOT NULL)`,
@@ -361,7 +361,11 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
       const kind = r.kind ?? 'post';
       if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt) && !given(r.liveId);
       const timed = typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt);
-      if (kind === 'reel') return timed && !given(r.liveId);
+      // A reel may carry no length: the posts held migration 176 converted (nobody declared one).
+      if (kind === 'reel') {
+        const length = !given(r.durationMs) || (typeof r.durationMs === 'number' && r.durationMs > 0);
+        return length && given(r.expiresAt) && !given(r.liveId);
+      }
       return kind === 'replay' && timed && given(r.liveId);
     },
   },
