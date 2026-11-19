@@ -47,6 +47,6 @@ post, no new file written), the three days as `posts."expiresAt"`, the audience,
 the time left shown, 30 s at least, a 20 GB total cap that evicts the oldest and signals admins, no
 repost, a moderation deletion without strike, no "Entre étudiants" for now): the table is
 [on the page](../live-replays.md#the-owners-decisions-of-2026-11-09). Two drafts were reconciled into it
-(#3234 kept, #3133 closed). WP-R1 and WP-R2 (server) built; WP-R3 (out of the backup) next; the client
+(#3234 kept, #3133 closed). WP-R1 and WP-R2 (server) built; WP-R3 (out of the backup) built and owed a dev pass ([as built](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), `live_replays_mode` still `off`; the client
 (WP-R4, WP-R5) and the texts (WP-R6) owed. The CanaReel rule the owner decided on the way (every
 vertical video of 90 s or less, kept one year) is built apart; a replay keeps its own 3 days.

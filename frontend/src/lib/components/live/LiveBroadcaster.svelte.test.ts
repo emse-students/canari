@@ -157,7 +157,9 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-close]')).toBeNull();
   });
 
-  it('on air, the top bar wraps and End stays in the non-shrinking action group (390 pt, 360 px)', async () => {
+  it('on air, the controls are ONE column on the right edge, End first, and nothing wraps (390 pt, 360 px)', async () => {
+    // happy-dom has no layout: this pins the STRUCTURE and the classes that make the column (owner,
+    // 2026-11-19); the pixels are owed to the phone reading (iPhone 12 and Mi 9T, both orientations).
     const { broadcast } = screen();
     await settle();
     q<HTMLButtonElement>('[data-live-start]')!.click();
@@ -168,13 +170,33 @@ describe('LiveBroadcaster', () => {
     const actions = q('[data-live-top-actions]')!;
     expect(identity.parentElement).toBe(bar);
     expect(actions.parentElement).toBe(bar);
-    expect(bar.classList.contains('flex-wrap')).toBe(true);
-    expect(bar.classList.contains('justify-between')).toBe(false);
-    expect(identity.classList.contains('min-w-40')).toBe(true);
+    expect(bar.classList.contains('flex-wrap')).toBe(false);
+    expect(actions.classList.contains('ml-auto')).toBe(false);
+    expect(identity.classList.contains('min-w-0')).toBe(true);
+    expect(actions.classList.contains('flex-col')).toBe(true);
     expect(actions.classList.contains('shrink-0')).toBe(true);
-    for (const sel of ['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end']) {
-      expect(actions.querySelector(`[data-live-${sel}]`), sel).not.toBeNull();
-    }
+    expect(actions.classList.contains('flex-wrap')).toBe(false);
+    expect(actions.classList.contains('overflow-y-auto')).toBe(true);
+    const order = Array.from(actions.children).map((el) =>
+      ['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end'].find((sel) =>
+        el.hasAttribute(`data-live-${sel}`)
+      )
+    );
+    expect(order[0]).toBe('end');
+    expect(new Set(order)).toEqual(
+      new Set(['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end'])
+    );
+  });
+
+  it('before going live, the controls stay a ROW pushed to the right (ml-auto), not the on-air column', async () => {
+    // Structure only: happy-dom has no layout.
+    screen();
+    await settle();
+    const actions = q('[data-live-top-actions]')!;
+    expect(q('[data-live-end]')).toBeNull();
+    expect(actions.classList.contains('ml-auto')).toBe(true);
+    expect(actions.classList.contains('flex-col')).toBe(false);
+    expect(q('[data-live-top-bar]')!.classList.contains('flex-wrap')).toBe(true);
   });
 
   it('as an association: its name and the association audience rule', async () => {

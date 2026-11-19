@@ -8,4 +8,4 @@ Re-read 2026-11-11: all three still open; none is readable from the code alone.
 - **The identity-provider change of #1866 (signing out of Canari also ends the MiConnect session) is
   MERGED** and reaches production by an operator action tracked in the private operations notes.
 - **SEO, left from the `emse.fr` names pass:** the wiki has no sitemap and two pages carry placeholder
-  descriptions ([estate-migration](../infrastructure/estate-migration.md#the-old-name-of-miconnect-redirects-and-the-dsi-replaced-the-cas-callback-2026-10-06)).
+  descriptions ([estate-migration](../infrastructure/estate-migration.md#the-seo-pass-one-indexable-page-per-site-2026-10-06); Canari itself serves a per-request `sitemap.xml`, [seo](../frontend/seo.md)).

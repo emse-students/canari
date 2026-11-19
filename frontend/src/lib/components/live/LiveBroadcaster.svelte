@@ -72,6 +72,9 @@
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import {
+    LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS,
+    LIVE_BROADCASTER_ONAIR_BAR_CLASS,
+    LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS,
     LIVE_TOP_ACTIONS_CLASS,
     LIVE_TOP_BAR_CLASS,
     LIVE_TOP_IDENTITY_CLASS,
@@ -446,10 +449,16 @@
   {/if}
 
   <!-- The top row: close (never while on air: End is the way out) and the lens. -->
-  <div class={LIVE_TOP_BAR_CLASS} style={sideSafePadding('0.75rem')} data-live-top-bar>
+  <div
+    class={onAir ? LIVE_BROADCASTER_ONAIR_BAR_CLASS : LIVE_TOP_BAR_CLASS}
+    style={sideSafePadding('0.75rem')}
+    data-live-top-bar
+  >
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
       <div
-        class="{LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
+        class="{onAir
+          ? LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS
+          : LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
         role="status"
         data-live-top-identity
       >
@@ -486,7 +495,7 @@
               </Button>
             {:else}
               <form
-                class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
+                class="flex max-w-full flex-col gap-1.5 rounded-lg bg-black/60 p-2 sm:max-w-72"
                 onsubmit={(e) => {
                   e.preventDefault();
                   void saveTitleDraft();
@@ -524,7 +533,7 @@
               </form>
             {/if}
             {#if broadcast.titleProblem}
-              <span class="max-w-72 text-xs text-white/80" data-live-title-problem
+              <span class="max-w-full text-xs text-white/80 sm:max-w-72" data-live-title-problem
                 >{TITLE_TEXT[broadcast.titleProblem]()}</span
               >
             {/if}
@@ -549,7 +558,24 @@
       </CameraControlButton>
     {/if}
 
-    <div class={LIVE_TOP_ACTIONS_CLASS} data-live-top-actions>
+    <div
+      class={onAir ? LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS : LIVE_TOP_ACTIONS_CLASS}
+      data-live-top-actions
+    >
+      {#if onAir}
+        <!-- First of the column (owner, 2026-11-19), a compact X like the other controls, tinted red because it is destructive; its name is
+           "Terminer" and the confirmation stays. -->
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
+          aria-label={m.live_end_button()}
+          title={m.live_end_button()}
+          onclick={() => void confirmEnd()}
+          data-live-end
+        >
+          <X size={20} strokeWidth={2.75} />
+        </button>
+      {/if}
       {#if broadcast.phase === 'preview' && orientation.canRotate}
         <RotateButton onrotate={orientation.rotate} />
       {/if}
@@ -589,7 +615,7 @@
         </CameraControlButton>
       {/if}
       {#if onAir}
-        <!-- The on-air controls, together at the top right: share the link, show or hide the chat
+        <!-- The on-air controls, together in a column at the right edge: share the link, show or hide the chat
              (the old eye-off icon hid ONE LINE and is now in that line's tap menu), and the small
              End - destructive, so it asks (`confirmEnd`). -->
         {#if broadcast.liveId}
@@ -614,18 +640,6 @@
             <MessageCircleOff size={20} strokeWidth={2.25} />
           {/if}
         </CameraControlButton>
-        <!-- A compact X like the other controls, tinted red because it is destructive; its name is
-             "Terminer" and the confirmation stays. -->
-        <button
-          type="button"
-          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
-          aria-label={m.live_end_button()}
-          title={m.live_end_button()}
-          onclick={() => void confirmEnd()}
-          data-live-end
-        >
-          <X size={20} strokeWidth={2.75} />
-        </button>
       {/if}
     </div>
   </div>
