@@ -37,4 +37,11 @@ Recorded so that no question answered here is asked again. The owner took them i
 11. **The three public names not watched from outside: the gap is accepted.** *"Supprime cette entrée, on accepte le trou et on en parle plus avant que je remette le sujet sur la table."* The entry is deleted, and the question is not raised again until the owner reopens it. See [upstream-reachability](../infrastructure/upstream-reachability.md).
 12. **A guest's file on a public form:** one file, 5 MB, a limit per address, a global quota, and a 24 h purge of unlinked files. See [entry](a-file-question-on-a-public-form-needs-an-abuse-design.md).
 
+13. **A guest's file is never scanned.** The accepted types are images and PDF only, and the server never opens a guest's file.
+14. **WP5 (MiConnect decides the access to each application) ships in `1.9.0`.** Separately, arriving on the Cercle, Sky and the other MiConnect sites from Canari signs the user in automatically, through the one-time handoff MiGallery already uses ([entry](sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)).
+15. **A live viewer is never refused.** Past the lowest quality rung, a viewer waits on "Connexion au direct...".
+16. **The weekly image scan releases a digest bump by itself**, through the server-only release with its health check and rollback. Anything larger opens an issue.
+17. **Everything left of Stripe is removed by the lead** (`1.7.2`), and the owner handles the administrative side ([entry](owed-to-the-user-after-the-stripe-removal.md)).
+18. **The second campaign is closed.** The server specs cover the remaining case, so the entry is deleted.
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).

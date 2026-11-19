@@ -1,6 +1,8 @@
 ## The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)
 
-target: 1.8.0
+target: 1.9.0
+
+**Owner, 2026-11-19:** WP5 is built in `1.9.0`, behind the lives and the security work, with an adversarial review ([decisions](owner-decisions-of-2026-11-19.md)).
 
 Thirty-two decisions and the eleven-package plan are on [profiles-and-access](../profiles-and-access.md),
 the only copy. WP0, WPA, WP1, WP4 and WP6a-6b are in production (the spaces since `v1.2.0`).
