@@ -130,6 +130,9 @@ class FakeSource extends EventTarget implements ReplayMediaSourceLike {
   endOfStream() {
     this.ended++;
     this.readyState = 'ended';
+    // A real engine truncates the duration to the end of what is buffered.
+    const ends = this.buffers.flatMap((b) => b.ranges.map((r) => r[1]));
+    if (ends.length > 0) this.duration = Math.max(...ends);
   }
 }
 
@@ -992,13 +995,53 @@ describe('ReplayPlayer', () => {
       expect(missingRequests).toBeLessThanOrEqual(120); // 30 walked, then about 2 log2(900)
     });
 
-    it('R10a: segments the probe only presumed missing are requested before the replay is called gone', async () => {
+    it('R10a: a replay whose probes find nothing but one untried survivor is gone (the sampled verdict)', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
       skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`).filter((n) => n !== 'seg-45'));
       makePlayer().start();
       for (let i = 0; i < 30; i++) await flush();
-      expect(states.some((s) => s.kind === 'gone')).toBe(false);
-      expect(buffer().appends).toContain('m45');
+      // A purge job deletes whole replays: a sample that finds nothing is the verdict, not a walk of all.
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+    });
+
+    it('R11b: a fully purged replay of 2000 segments is gone after O(log n) requests', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(2000)(from));
+      skip404(Array.from({ length: 2000 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 60; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+      expect(fetchSegment.mock.calls.length).toBeLessThanOrEqual(120);
+    });
+
+    it('R11c: a 404 answer ends the reconnecting screen of an older retry', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const ok = deps.fetchSegment;
+      let mode: 'up' | 'down' | 'gone' = 'up';
+      deps.fetchSegment = ((id: string, name: string, signal?: AbortSignal) =>
+        mode === 'up'
+          ? ok(id, name, signal)
+          : mode === 'down'
+            ? Promise.reject(new TransportFailureError(new Error('net')))
+            : name === 'seg-81'
+              ? new Promise<ArrayBuffer>(() => {}) // never answers: only the 404 below can end the screen
+              : name === 'seg-80'
+                ? Promise.reject(
+                    new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null)
+                  )
+                : ok(id, name, signal)) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      mode = 'down';
+      video.currentTime = 120.2; // A: outside the buffer, transport failure
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'reconnecting' });
+      mode = 'gone';
+      video.currentTime = 160.2; // B: segment 80, answered 404
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
       expect(states.at(-1)).toEqual({ kind: 'playing' });
     });
 
@@ -1025,6 +1068,9 @@ describe('ReplayPlayer', () => {
       );
       expect(video.currentTime).toBeCloseTo(300.5, 1);
       expect(inRange(video.currentTime)).toBe(true);
+      // The fake truncates the duration at endOfStream, as a real engine does: it was never called.
+      expect(source.ended).toBe(0);
+      expect(source.duration).toBeGreaterThan(300);
     });
 
     it('R10c: the segment the probe finds is appended from the bytes it downloaded, not fetched again', async () => {
