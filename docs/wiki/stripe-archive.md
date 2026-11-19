@@ -50,20 +50,46 @@ its approval still tested the Stripe pair, so a parent onboarded on Lydia could 
 both read `lydiaOnboardingComplete` and `lydiaAccountId` now.
 
 **Deep-link host:** a checkout return is `fr.emse.canari://payment/...`. The `stripe` host of builds
-below 1.2.4 was declared, accepted and routed until `minClientVersion` reached 1.2.7, then removed.
-`deepLinkHostsDeclared.test.ts` pins `payment` in `tauri.conf.json` and the Android manifest.
+below 1.2.4 was declared, accepted and routed until `minClientVersion` reached 1.2.7, then removed;
+the test that pinned its absence went with the rest on 2026-11-19 (the host is no longer named
+anywhere, and `deepLinkHostsDeclared.test.ts` still pins `payment`).
 
-**Still in the database, on purpose, and the plan that removes them:**
+## The last removal (owner, 2026-11-19: "Tu peux tout supprimer en ce qui concerne Stripe")
 
-| Name | State | Step |
+**Dropped, by two held migrations** (`-- canari:hold-for-owner`, each with its count query, rollback
+and lock strategy in its header; the approval lines are the lead's to merge):
+
+| Name | Migration | Why it was safe |
 | --- | --- | --- |
-| Columns `associations."stripeAccountId"` and `"stripeOnboardingComplete"`, `users."stripeCustomerId"` | no longer mapped by any entity, read and written by nothing | **DROP** in a migration once the previous release (which still maps them) is no longer a rollback target; the strips in `copy-strips.sh` go in the same change. Dropping earlier gains nothing and a rollback would crash on the missing column |
-| `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` | LIVE: they hold the Lydia order reference | a rename is expand, then contract: add `paymentRef`, backfill by `UPDATE`, ship code reading and writing the new column, drop the old one a release later. No measured need to rename yet, so it is not started |
-| `paymentMethod: 'stripe'` on rows | data at rest, read as `online`, never written (the DTO refuses it since floor 1.2.7) | [legacy-compatibility](legacy-compatibility.md) |
+| `associations."stripeAccountId"`, `"stripeOnboardingComplete"` | `apps/social-service/src/migrations/177_drop_stripe_leftovers.sql` | unmapped by #1669, first shipped in `v1.2.4`: the rollback floor this sets is far below the one in force |
+| `users."stripeCustomerId"` | `apps/core-service/src/migrations/027_drop_users_stripe_customer_id.sql` | unmapped by #1589, first shipped in `v1.2.0` |
+| `paymentMethod = 'stripe'` on `purchase_records` (-> `online`) and `submissions` (-> NULL) | 177, the same file | read as `online` already; the type arm and the three client arms went with it ([legacy-compatibility](legacy-compatibility.md#removed-2026-11-19---a-stored-paymentmethod-of-stripe-written-before-the-stripe-removal)) |
 
-**The rule the columns follow** ([databases](infrastructure/databases.md)): additive first, destructive
-last, and a destructive migration is cut only when the release that stopped mapping the column has been
-in production through a rollback window. Nothing here drops data for a name.
+The three copy strips of the dropped columns (`infrastructure/lib/copy-strips.sh`) went in the same
+change. A dump taken before an estate has run 177 and 027 still carries the historic Stripe ids into
+the copy; no Stripe key exists anywhere (the three GitHub secrets were already gone when listed on
+2026-11-19), so nothing can address them. The legacy `dashboard/association` route stub, the CSP test
+naming Stripe, the retired-host test and every comment that named Stripe only as history went too.
+
+**The permission rename needs no data migration:** `MANAGE_STRIPE_CONNECT` became
+`MANAGE_PAYOUT_ACCOUNT` on 2026-10-09, and only the bit (`1 << 9`) is stored, never the name. The
+name survives only in the applied migration `004_manage_stripe_connect.sql`, which is history and is
+never edited.
+
+**What still says "stripe", and why** (a scoped grep of `apps/`, `frontend/src`, `libs/`,
+`infrastructure/` and `.github/`, 2026-11-19):
+
+| Mention | Why it stays |
+| --- | --- |
+| `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` and every read, write, test and copy strip of them | LIVE: they hold the Lydia `request_uuid` and order reference. Renaming is expand, then contract over two releases (add `paymentRef`, backfill, read and write it, drop the old column a release later), for no functional gain; not started |
+| `.github/scripts/tests/local-copy-guards.test.sh` (`(stripe\|lydia)` in its column parser) | it derives the copy strips from the entity properties, and the two live columns above are still named `stripe*` |
+| `submission.projection.spec.ts`'s leak regex | it asserts that no internal column name (the live `stripeSessionId` among them) reaches a member |
+| `paymentProviderCopy.test.ts`'s copy regex, `tools/store-listings/listings.mjs` and its test | they assert that member-facing copy and store texts name no removed processor or card brand |
+| `session_id={CHECKOUT_SESSION_ID}` in `checkoutCallbacks.ts` and `return-url-key.ts` (the comment points here) | the placeholder every client at the floor sends; the server swaps it for `submission_id`. Changing it is a client change plus a floor-gated shim |
+| The earlier migrations of social-service (004, 017, 037, 054, 057, 063, 084) and core-service (004, 011) | history: an applied migration is never edited (the ledger warns on a changed checksum) |
+| 177 and 027 themselves | they name what they drop |
+| `apps/core-service/README.md` | its pointer to this page |
+| "striped", "a stripe" in `ProductGridQuestion`, `MonthCalendarGridRich`, `CardTile`, `calendarExport` | the English word, not the processor |
 
 ## Notes for whoever reads this next
 
@@ -73,11 +99,13 @@ in production through a rollback window. Nothing here drops data for a name.
 - **Associations delegation.** `payment-delegation.util.ts` now reads only the Lydia columns and
   rejects a provider id it does not know, `stripe` included. An association whose delegation was
   onboarded on Stripe only is therefore not ready until it onboards on Lydia.
-- **Legal copy.** The CGU and privacy pages now name Lydia and drop the US-transfer entry. That text
-  is a legal statement and needs a human review before it is trusted.
+- **Legal copy.** The CGU and privacy pages now name Lydia and drop the US-transfer entry (approved
+  by the user on 2026-10-08).
 
 ## Owed by the user (one-off)
 
-- Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY`.
-- Delete the webhook endpoint and, when no refund can still be asked, close the Stripe account;
-  purging the Stripe-side customers is that account's closure, nothing in this repo does it.
+- The GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY`: DONE (none listed
+  on 2026-11-19, repository or environment).
+- Delete the webhook endpoint at Stripe and, when no refund can still be asked, close the Stripe
+  account; purging the Stripe-side customers is that account's closure, nothing in this repo does it
+  ([backlog](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).

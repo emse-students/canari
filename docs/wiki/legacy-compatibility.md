@@ -234,7 +234,7 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
+| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | REMOVED 2026-11-19 with the held migration 177 ([diary](#removed-2026-11-19---a-stored-paymentmethod-of-stripe-written-before-the-stripe-removal)) |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -276,8 +276,6 @@ REST: those rows need a count, then a migration.
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
 
 ```sql
-SELECT count(*) FROM purchase_records WHERE "paymentMethod" = 'stripe';
-SELECT count(*) FROM submissions WHERE "paymentMethod" = 'stripe';
 SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
 SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
 SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
@@ -1308,21 +1306,18 @@ registration pre-claim does NOT settle it: it skips devices idle for 30 days (ab
 list) and keys still "new" by `isNewToItsOwner`, so a legacy marker can outlive it; only the
 migration on a hit retires one. Data at rest, so the floor alone does not retire this.
 
-### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
+### Removed 2026-11-19 - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
-**Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
-`Submission.paymentMethod` in `apps/social-service/src/forms/entities/submission.entity.ts`, and the
-`'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
-`EditDelegationTab`, `account/purchases`).
-**Shim:** purchase rows AND form submissions written before 2026-10-08 hold `stripe`, read as
-`online`. Nothing writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the
-form input and the `fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
-**One known cost of the host's removal:** a checkout STARTED on a build from 1.2.0 to 1.2.3 (Lydia
-already, `stripe` host still) and finished after the phone updated returns to a host the new build
-no longer registers - the payment itself is recorded server-side, only the in-app landing is lost.
-The server's refusal of a `stripe` callback URL is logged (`[CHECKOUT] callback URL REFUSED`).
-**Removal condition:** data at rest, so a data migration of `purchase_records` AND `submissions`
-(`stripe` -> `online`), counted first, and no version: then the type and the client arms go.
+**Was:** purchase rows AND form submissions written before 2026-10-08 held `stripe`, read as
+`online` by a `'stripe'` arm of `PurchasePaymentMethod` and of the client's `paymentMethod` types
+and labels (`EditAchatsTab`, `EditDelegationTab`, `account/purchases`). Data at rest, so no floor
+could retire it.
+**Removed by** the held migration `apps/social-service/src/migrations/177_drop_stripe_leftovers.sql`
+(owner, 2026-11-19): `purchase_records` `stripe` -> `online`, `submissions` `stripe` -> NULL (the
+value an online answer carries), counted first per its header; the type arm and the three client
+arms went in the same change, which cannot ship before the migration is approved (a held migration
+stops the release). Every client at the floor reads `online` and NULL already, so an older build
+loses nothing ([stripe-archive](stripe-archive.md)).
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 

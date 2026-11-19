@@ -50,7 +50,7 @@ const GLOBAL_PREFIX = 'api';
  * Rejects a base URL that is not a plausible internal service origin.
  *
  * INHERITED FROM `payment/webhook.controller.ts`, WHICH GUARDED TWO CALLS OUT OF NINE. It lived
- * there as `parseSafeServiceOrigin`, applied to the Stripe and Lydia fulfilment paths and to
+ * there as `parseSafeServiceOrigin`, applied to the payment fulfilment paths and to
  * nothing else; here it applies to every internal URL this service builds, which is the point of a
  * seam. Both checks are about an OPERATOR's mistake in a compose file - a value that is not an
  * origin at all, or one carrying credentials that would then be logged with the URL - and both

@@ -447,8 +447,8 @@ export class FormsController {
   // `assertSubmissionAccess` let the SUBMITTER through it, so any authenticated user could POST
   // their own pending submission id, with no body, and receive: `paymentStatus='paid'`, the form's
   // cotisation tag granted through `grantOrRenew`, and a `purchase_record` written with
-  // `paymentMethod:'stripe'`, `status:'paid'` and the full amount - free goods plus revenue in an
-  // association's books that no money ever backed. No Stripe call verified anything; the optional
+  // an online `paymentMethod`, `status:'paid'` and the full amount - free goods plus revenue in an
+  // association's books that no money ever backed. No provider call verified anything; the optional
   // `sessionId` was stored unchecked. Nothing in our own client ever called it.
   //
   // The legitimate ways a submission becomes paid all still exist and none of them is this: Lydia,

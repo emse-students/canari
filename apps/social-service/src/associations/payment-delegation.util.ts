@@ -21,7 +21,7 @@ const logger = new Logger('PaymentDelegation');
  * parent's account both receives the funds and defines whether payments can be taken at all;
  * otherwise the association's own account is used. A platform that declares payments `disabled`
  * resolves to NOT ready with no account id, delegated or not (fail closed). Resolved against the platform's active
- * provider (Lydia, or `disabled`); the `stripe*` columns on `Association` are historic and never read.
+ * provider (Lydia, or `disabled`).
  */
 export interface PaymentTarget {
   /** Association whose account funds land in (this association, or its parent). */
@@ -281,8 +281,7 @@ export async function fetchActivePaymentProvider(
     httpService.get<{ provider: PaymentProviderId }>(coreUrl('payments/provider'))
   );
   // The REAL value: mapping an unknown answer to 'lydia' would route a disabled platform to
-  // Lydia. A value this service does not know (the retired 'stripe' included) is an error, never a
-  // guess.
+  // Lydia. A value this service does not know is an error, never a guess.
   if (data.provider === 'lydia' || data.provider === 'disabled') {
     return data.provider;
   }

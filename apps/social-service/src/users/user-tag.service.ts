@@ -298,7 +298,7 @@ export class UserTagService {
    *
    * Covers EVERY membership product, on sale or not: `isActive` says whether a tier can be bought
    * in the boutique right now, never whether it exists. A tier goes inactive on its own (a
-   * seasonal forfait) or because the association has no Stripe account yet - and in both cases its
+   * seasonal forfait) or because the association has no payout account yet - and in both cases its
    * cotisants still hold its tag, so hiding it here would make them invisible to the roster, to
    * the manual grant's validation, and to the XOR revoke that must drop the sibling tag.
    */

@@ -240,7 +240,7 @@ describe('payment-delegation util', () => {
       }
     });
 
-    it.each(['paypal', 'stripe'])(
+    it.each(['paypal', 'card'])(
       'throws on the unknown value %s instead of guessing',
       async (v) => {
         await expect(fetchActivePaymentProvider(http(v))).rejects.toThrow(

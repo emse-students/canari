@@ -19,9 +19,8 @@
     formId: string | null;
     productId: string | null;
     amountCents: number;
-    paymentMethod: 'online' | 'stripe' | 'cash';
+    paymentMethod: 'online' | 'cash';
     status: 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired' | 'refunded';
-    stripePaymentIntentId: string | null;
     associationId: string;
     productName: string;
     paidAt: string;

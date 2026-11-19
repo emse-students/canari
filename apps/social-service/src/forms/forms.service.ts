@@ -4008,8 +4008,9 @@ export class FormsService {
 
   /**
    * The Lydia `request_uuid` a row's payment can be read with, or null (logged) when there is
-   * nothing to ask the provider: a status that cannot become paid, no stored request, or a
-   * Stripe-era `cs_...` id that core would refuse with a 400 on every poll.
+   * nothing to ask the provider: a status that cannot become paid, no stored request, or an id
+   * that is not a Lydia `request_uuid` (a historic `cs_...` one), which core would refuse with a 400
+   * on every poll.
    */
   private lydiaRequestToRead(submission: Submission, by: string): string | null {
     const sessionId = submission.stripeSessionId;
@@ -4339,7 +4340,7 @@ export class FormsService {
   }
 
   /**
-   * Adds price modifiers for each selected option to the running total and pushes matching Stripe
+   * Adds price modifiers for each selected option to the running total and pushes matching
    * line-item entries.
    *
    * One modifier per option now, not one per audience: a submitter's audience is expressed by the

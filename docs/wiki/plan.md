@@ -128,7 +128,6 @@ earliest version, as a checklist.
 - [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
 - [A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia](backlog.d/a-paid-public-form-user-2026-09-30-the-paid-half-waits-for-lydia.md)
 - [Audiences of associations, lists and institutions - built, in production since `v1.2.0`](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)
-- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
 - [A file question on a PUBLIC form needs an abuse design first (asked by the user 2026-10-15, re-read 2026-11-11)](backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md)
 - [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
 - [Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem](backlog.d/decided-by-the-user-on-2026-10-16-the-gdpr-pass-over-the-whole-ecosystem.md)
@@ -141,6 +140,7 @@ earliest version, as a checklist.
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
 - [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
+- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
 
 **P2 - correctness**
 

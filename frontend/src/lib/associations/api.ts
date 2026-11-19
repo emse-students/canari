@@ -47,7 +47,7 @@ export enum AssociationPermissionFlag {
 }
 
 /**
- * Non-BDE flags granted to association admins (excludes Stripe Connect).
+ * Non-BDE flags granted to association admins (excludes the payout account).
  * Mirrors backend `ALL_CORE_FLAGS`.
  */
 export const ALL_CORE_FLAGS =
@@ -61,7 +61,7 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_BOOKINGS |
   AssociationPermissionFlag.EDIT_PROFILE;
 
-/** Default admin preset when adding a member (core flags + Stripe Connect). */
+/** Default admin preset when adding a member (core flags + payout account). */
 export const ASSOCIATION_ADMIN_PRESET =
   ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
 
@@ -2188,8 +2188,7 @@ export interface AssociationPurchase {
   submissionId?: string | null;
   productName: string;
   amountCents: number;
-  /** `stripe` is the historic value of rows written before the processor left: it means online. */
-  paymentMethod: 'online' | 'stripe' | 'cash';
+  paymentMethod: 'online' | 'cash';
   paidAt: string;
   firstName: string | null;
   lastName: string | null;

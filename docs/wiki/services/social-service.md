@@ -14,7 +14,7 @@ The social-service manages all community features:
   partnership cards (partner discounts, claimed by code, shared code, or a static instruction).
   Every association-scoped right goes through one predicate, `AssociationsService.mayAct` - see
   [Association permissions](../association-permissions.md).
-- **Forms**: dynamic form builder with optional Stripe payment, cash payment validation.
+- **Forms**: dynamic form builder with optional Lydia payment, cash payment validation.
 - **Cotisations**: membership dues as time-bounded `user_tags`, granted via boutique products, manual grants, or paid forms - see [Cotisations](../cotisations.md).
 
 ## Databases
@@ -799,7 +799,7 @@ then writes the badge from what remains — computed from the array already in h
 | POST | `/api/forms` | Create form |
 | GET | `/api/forms` | List caller's forms |
 | GET | `/api/forms/:id` | Get form definition |
-| POST | `/api/forms/:id/submit` | Submit form (with optional Stripe or cash payment) |
+| POST | `/api/forms/:id/submit` | Submit form (with optional Lydia or cash payment) |
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
@@ -1939,7 +1939,6 @@ where it applies: the declared question ids are an allowlist, so nothing else ca
 | `DATABASE_URL` | yes | PostgreSQL connection string |
 | `REDIS_URL` | yes | Redis connection string |
 | `JWT_SECRET` | yes | HS256 secret (shared with all services) |
-| `STRIPE_SECRET_KEY` | no | Stripe secret key (form/product payments) |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 | `MEDIA_SERVICE_URL` | yes | Internal URL for media-service (blob proxy) |
 | `CORE_SERVICE_URL` | yes | Internal URL for core-service (user/payment verification) |

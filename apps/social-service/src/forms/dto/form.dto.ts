@@ -78,7 +78,7 @@ export class FormOptionDto {
   label: string;
 
   /** The option's price supplement in CENTS (the client sends `Math.round(euros * 100)`, the service
-   * passes it straight to Stripe as a `unit_amount`), so a fractional value would be a fractional
+   * passes it straight to the provider as a line amount), so a fractional value would be a fractional
    * cent - integer only. Never negative: `calculateModifiers` ignores a value <= 0, so a negative one
    * would show the payer a discount the charge never applies. */
   @IsInt()
