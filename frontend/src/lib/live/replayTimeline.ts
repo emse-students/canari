@@ -16,10 +16,15 @@ export function isReplay(post: Pick<PostEntity, 'kind'>): boolean {
  * Where each segment begins in MEDIA time, in ms: the measured start (`placed`, seconds) where there is
  * one, and a stated estimate elsewhere. A segment's `atMs` is its ARRIVAL time on the server, and a replay
  * whose media is longer than its live (61 s of media for 54 s of live: a camera under its nominal rate)
- * runs AHEAD of it, while the player's bar reads media time. The estimate is therefore anchored on the
- * nearest measured segment and advances by the arrival-time gaps scaled by the replay's measured rate
- * (media seconds per arrival second between its first and last measured segments; 1 with fewer than two).
- * With nothing measured it IS the arrival time - the only statement there is.
+ * runs AHEAD of it, while the player's bar reads media time.
+ *
+ * BETWEEN two measured segments the estimate is piecewise-linear on arrival time: exact at both ends, so a
+ * stall or a pause between them is inside the interpolation. BEFORE the first and PAST the last measured
+ * segment it extrapolates from the nearest one at the measured media-per-arrival rate of the whole measured
+ * stretch (1 with fewer than two, clamped to [0.25, 4]) - an estimate the caller checks against the measured
+ * extent once it has taken the segment (`ReplayPlayer.seekTo`). With nothing measured it IS the arrival
+ * time, the only statement there is. The result is made MONOTONIC (a running maximum) so a binary search
+ * over it can never misread it, whatever order the measurements came in.
  */
 export function mediaStartsMs(
   segments: readonly LiveReplaySegment[],
@@ -33,18 +38,27 @@ export function mediaStartsMs(
   const first = measured[0];
   const last = measured[measured.length - 1];
   const live = segments[last.k].atMs - segments[first.k].atMs;
-  const rate =
-    measured.length >= 2 && live > 0 && last.at > first.at ? (last.at - first.at) / live : 1;
+  const raw = measured.length >= 2 && live > 0 ? (last.at - first.at) / live : 1;
+  const rate = Math.min(4, Math.max(0.25, raw));
   const out: number[] = [];
-  let anchor = -1;
+  let m = 0; // the measured segment at or before k
   for (let k = 0; k < segments.length; k++) {
-    if (anchor + 1 < measured.length && measured[anchor + 1].k === k) anchor++;
-    if (anchor >= 0 && measured[anchor].k === k) out.push(measured[anchor].at);
-    else if (anchor >= 0) {
-      out.push(measured[anchor].at + (segments[k].atMs - segments[measured[anchor].k].atMs) * rate);
+    while (m + 1 < measured.length && measured[m + 1].k <= k) m++;
+    const a = measured[m];
+    const atK = segments[k].atMs;
+    let v: number;
+    if (a.k > k) {
+      v = first.at - (segments[first.k].atMs - atK) * rate; // before the first measured
+    } else if (a.k === k) {
+      v = a.at;
+    } else if (m + 1 < measured.length) {
+      const b = measured[m + 1];
+      const span = segments[b.k].atMs - segments[a.k].atMs;
+      v = span > 0 ? a.at + ((atK - segments[a.k].atMs) / span) * (b.at - a.at) : a.at;
     } else {
-      out.push(first.at - (segments[first.k].atMs - segments[k].atMs) * rate);
+      v = a.at + (atK - segments[a.k].atMs) * rate; // past the last measured
     }
+    out.push(k > 0 ? Math.max(v, out[k - 1]) : v);
   }
   return out;
 }

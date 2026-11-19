@@ -236,6 +236,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
 const REPLAY_SEGMENT_LENGTH_S = 1.5;
+/** How many times a seek looks its segment up again after the one taken proved not to hold the target. */
+const REPLAY_SEEK_RELOOKUPS = 3;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
 const REBASE_THRESHOLD_S = 1;
 
@@ -822,15 +824,37 @@ export class ReplayPlayer {
   private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
     if (!this.alive(gen) || this.isStale(ticket)) return;
-    const pos = segmentPositionAt(this.segments, ms, this.placed);
+    let pos = segmentPositionAt(this.segments, ms, this.placed);
     if (pos < 0) return;
-    const s = this.segments[pos];
+    let s = this.segments[pos];
     this.seeks++;
-    const heldStart = this.bufferedStart(s.index);
-    const taken =
+    let heldStart = this.bufferedStart(s.index);
+    let taken =
       heldStart !== undefined || this.skippedIdx.has(s.index)
         ? null
         : await this.take(gen, s, ticket);
+    // THE LOOKUP IS AN ESTIMATE past the last measured segment: once the segment is taken its measured
+    // extent says whether the target is really inside it. If not, look up again with the new measurement
+    // - at most REPLAY_SEEK_RELOOKUPS times (a count, never a clock), and only while it picks another one.
+    for (let again = 0; again < REPLAY_SEEK_RELOOKUPS; again++) {
+      if (!this.alive(gen) || this.isStale(ticket)) break;
+      const from = this.placed.get(s.index);
+      const to = this.placedEnd.get(s.index);
+      const at = ms / 1000;
+      if (from === undefined || to === undefined || (at >= from - EDGE_TOL_S && at < to)) break;
+      const next = segmentPositionAt(this.segments, ms, this.placed);
+      if (next === pos || next < 0) break;
+      console.debug(
+        `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms missed segment ${s.index} (${from.toFixed(2)}-${to.toFixed(2)} s) - looking up again`
+      );
+      pos = next;
+      s = this.segments[pos];
+      heldStart = this.bufferedStart(s.index);
+      taken =
+        heldStart !== undefined || this.skippedIdx.has(s.index)
+          ? null
+          : await this.take(gen, s, ticket);
+    }
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
       console.debug(

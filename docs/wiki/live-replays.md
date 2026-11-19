@@ -669,10 +669,17 @@ segment 50: the defect was real.
 
 **Cause.** The bar and `currentTime` are media time; `segmentPositionAt` read each segment's `atMs`, its
 ARRIVAL time on the server (`durationMs` is arrival time too, until `endOfStream` sets the media's own).
-**Fix.** `mediaStartsMs` gives every segment's media start: the measured `placed` where known, else anchored on the
-nearest measured segment and advanced by the arrival gaps scaled by the replay's measured media-per-arrival rate
-(1 with fewer than two measurements, so before anything is measured it is the arrival time, the only statement
-there is). `segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
+**Fix.** `mediaStartsMs` gives every segment's media start: the measured `placed` where known;
+BETWEEN two measured segments a piecewise-linear interpolation on arrival time (exact at both ends, so a
+stall or a pause between them is inside it); before the first and past the last measured segment an
+extrapolation from the nearest one at the measured media-per-arrival rate of the whole measured stretch (1
+with fewer than two, clamped to [0.25, 4]). The result is made monotonic by a running maximum, so the
+binary search cannot misread it whatever order the measurements came in. Before anything is measured it
+is the arrival time, the only statement there is. The extrapolation is only an estimate (a 120 s pause
+after the last measurement is carried at the wrong rate): once the seek has taken the estimated segment,
+its MEASURED extent says whether the target is inside; if not it looks up again with the new measurement, at
+most `REPLAY_SEEK_RELOOKUPS` (3) times and only while that picks another segment - a count, never a clock.
+`segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
 is the target's media time held inside the segment (never before its start, never past
 `REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
 starts on a keyframe): landing there when the estimate was a little late stays inside the right segment.
