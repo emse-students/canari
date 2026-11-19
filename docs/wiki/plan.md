@@ -112,6 +112,7 @@ earliest version, as a checklist.
 ### Readings owed
 
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
+- [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)

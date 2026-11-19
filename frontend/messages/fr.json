@@ -3707,7 +3707,7 @@
   "minesweeper_admin_unban": "Débannir",
   "minesweeper_admin_confirm_unban": "Débannir {name} ? Ses scores et son rang reviendront.",
   "minesweeper_admin_failed": "L'action a échoué.",
-  "minesweeper_admin_replay": "Revoir cette partie",
+  "minesweeper_replay_open": "Revoir cette partie",
   "minesweeper_replay_title": "Partie de {name}",
   "minesweeper_replay_summary": "{time} - générateur {generator} - {moves} coups",
   "minesweeper_replay_loading": "Chargement de la partie...",

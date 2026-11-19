@@ -3675,7 +3675,7 @@
   "minesweeper_admin_unban": "Unban",
   "minesweeper_admin_confirm_unban": "Unban {name}? Their scores and rank come back.",
   "minesweeper_admin_failed": "The action failed.",
-  "minesweeper_admin_replay": "Replay this game",
+  "minesweeper_replay_open": "Replay this game",
   "minesweeper_replay_title": "{name}'s game",
   "minesweeper_replay_summary": "{time} - generator {generator} - {moves} moves",
   "minesweeper_replay_loading": "Loading the game...",

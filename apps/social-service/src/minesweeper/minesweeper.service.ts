@@ -589,14 +589,23 @@ export class MinesweeperService {
   }
 
   /**
-   * Everything a moderator needs to watch a won game back: the board's seed, generator and size (the
-   * board is regenerated from them, never stored), the timed move log, and whose game it was. 404 for
-   * a score with no stored replay (one won before replays were kept). Reading is logged: a replay shows
-   * a member's game to a moderator.
+   * Everything needed to watch a won game back: the board's seed, generator and size (the board is
+   * regenerated from them, never stored), the timed move log, and whose game it was.
+   *
+   * OPEN TO EVERY SIGNED-IN MEMBER (owner, 2026-11-18), on the same terms as the ranking it hangs off:
+   * a score the ranking hides is hidden here too - a banned player's, and the other side of the review
+   * cohort's boundary - and answers 404, as a score that does not exist. A global admin sees them all
+   * (a moderator judging a cheat must be able to open a banned player's game). 404 as well for a score
+   * with no stored replay (one won before replays were kept).
    */
-  async replay(scoreId: string, adminId: string) {
+  async replay(scoreId: string, viewerId: string, isAdmin: boolean) {
     const score = await this.scores.findOne({ where: { id: scoreId } });
     if (!score) throw new NotFoundException('Score not found');
+    if (!isAdmin) {
+      if (!sameSideOfReviewCohort(viewerId, score.userId) || (await this.isBanned(score.userId))) {
+        throw new NotFoundException('Score not found');
+      }
+    }
     const [replay, challenge] = await Promise.all([
       this.replays.findOne({ where: { scoreId } }),
       this.challenges.findOne({ where: { id: score.challengeId } }),
@@ -606,7 +615,9 @@ export class MinesweeperService {
       `SELECT "displayName" FROM users WHERE id = $1`,
       [score.userId]
     );
-    this.logger.log(`minesweeper replay read score=${scoreId} user=${score.userId} by=${adminId}`);
+    this.logger.debug(
+      `minesweeper replay read score=${scoreId} user=${score.userId} by=${viewerId}${isAdmin ? ' admin' : ''}`
+    );
     return {
       scoreId,
       userId: score.userId,
