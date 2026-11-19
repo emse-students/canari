@@ -11,7 +11,7 @@ import {
 /**
  * A product in an association's shop.
  * Products are inactive until the association's payments are ready (payout account onboarded
- * with the active provider, docs/wiki/stripe-archive.md).
+ * with the active provider, docs/wiki/frontend/modules/payments.md).
  */
 @Entity('association_products')
 export class AssociationProduct {
@@ -138,7 +138,7 @@ export class AssociationProduct {
    * created - not because anybody decided it should be off sale.
    *
    * `isActive` alone cannot answer that, and reading it as if it could is what left the BDE's
-   * cotisation unbuyable for as long as it existed: the product was forced inactive before Stripe
+   * cotisation unbuyable for as long as it existed: the product was forced inactive before payout-account
    * onboarding finished, onboarding finished, and nothing ever went back. A column is only
    * evidence for the question it was written to answer, so this is that question, written down.
    *

@@ -3400,8 +3400,7 @@ export class ProductsService {
         productName: p.productName,
         amount: p.amountCents / 100,
         // The sheet is French throughout, and this column says HOW rather than THROUGH WHOM:
-        // 'Stripe' named the processor of the day, and the app's own label for the same fact
-        // is `asso_achats_payment_online`.
+        // the app's own label for the same fact is `asso_achats_payment_online`.
         paymentMethod: p.paymentMethod === 'cash' ? 'Esp\u00e8ces' : 'En ligne',
         paidAt: new Date(p.paidAt),
         // A tier paid for and not granted is money received that a refund or a grant must settle.
@@ -3522,7 +3521,7 @@ export class ProductsService {
     if (!asso.cotisationMode) return { isCotisant: false, tier: null, expiresAt: null };
 
     // Deliberately not filtered on `isActive`: a tier withdrawn from sale (or never put on sale,
-    // an association with no Stripe account yet) still has cotisants, and answering `false` here
+    // an association with no payout account yet) still has cotisants, and answering `false` here
     // locks every one of them out of the Cercle.
     const tiers = await this.productRepo.find({
       where: { associationId: asso.id, type: 'membership' },
@@ -3837,7 +3836,7 @@ export class ProductsService {
     if (!product) throw new NotFoundException('Product not found');
 
     // A cash grant records a sale in Canari's books; it never credits the Cercle balance, because
-    // the outbound webhook is keyed by a Stripe PaymentIntent a cash sale does not have. Recording
+    // the outbound webhook is keyed by a provider payment reference a cash sale does not have. Recording
     // one against a top-up product therefore produces a line that reads as a recharge and is not
     // one - the confusion outweighs the accounting. The Cercle credits from its own till screen.
     if (product.type === 'balance_topup') {

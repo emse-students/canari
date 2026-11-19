@@ -234,7 +234,7 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
+| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | none | KEPT for good (2026-11-19): live readers tell it apart from `online` and NULL, and on a form-source purchase it is the only processor marker ([diary](#no-date-yet---a-stored-paymentmethod-of-stripe-written-before-the-stripe-removal)) |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -276,8 +276,6 @@ REST: those rows need a count, then a migration.
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
 
 ```sql
-SELECT count(*) FROM purchase_records WHERE "paymentMethod" = 'stripe';
-SELECT count(*) FROM submissions WHERE "paymentMethod" = 'stripe';
 SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
 SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
 SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
@@ -1321,8 +1319,13 @@ form input and the `fr.emse.canari://stripe` return host are gone ([stripe-archi
 already, `stripe` host still) and finished after the phone updated returns to a host the new build
 no longer registers - the payment itself is recorded server-side, only the in-app landing is lost.
 The server's refusal of a `stripe` callback URL is logged (`[CHECKOUT] callback URL REFUSED`).
-**Removal condition:** data at rest, so a data migration of `purchase_records` AND `submissions`
-(`stripe` -> `online`), counted first, and no version: then the type and the client arms go.
+**Removal condition: none - kept as historic data (review of #3852, 2026-11-19).** A rewrite was
+written and withdrawn: the refund target answers `not-online` for a `stripe` purchase, the Lydia
+contract flux (`lydia-contract-flux.ts`) counts only `online` and would log a rewritten row as an
+untraceable Lydia payment, the responses table shows a paid NULL submission without a method, and a
+form-source Stripe purchase has no `stripePaymentIntentId`, so `stripe` is its ONLY processor marker -
+a rewrite could not be rolled back. The type arm stays, and the client labels map every non-cash
+value to the online label, so no stored value ever renders raw.
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 

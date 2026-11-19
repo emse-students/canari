@@ -7,8 +7,7 @@ const logger = new Logger('CheckoutCallback');
  *
  * A URL the client SENT and this refuses falls back to the web return, which a phone cannot catch -
  * so the refusal is logged at warn, naming the scheme, host and path (never the query, which
- * carries session ids): a client sending one is a client to find, e.g. a build below 1.2.4 still
- * naming the retired `stripe` host.
+ * carries session ids): a client sending one is a client to find.
  */
 export function resolveCheckoutCallbackUrl(
   candidate: string | undefined,
@@ -38,7 +37,7 @@ export function isAllowedCheckoutCallbackUrl(url: string, frontendUrl: string): 
   try {
     const u = new URL(url);
     if (u.protocol === 'fr.emse.canari:') {
-      // `payment` is the only checkout return host: `stripe` went with the builds below 1.2.4.
+      // `payment` is the only checkout return host.
       return u.host === 'payment' && (u.pathname === '/success' || u.pathname === '/cancel');
     }
     const base = new URL(frontendUrl.endsWith('/') ? frontendUrl : `${frontendUrl}/`);

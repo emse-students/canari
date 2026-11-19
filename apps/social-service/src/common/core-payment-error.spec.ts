@@ -65,12 +65,12 @@ describe('mapCorePaymentError', () => {
 
   it('answers any other 4xx with its message as a 400, with no code', () => {
     const out = mapCorePaymentError(
-      coreAnswer(400, { message: 'Stripe error: bad amount' }),
+      coreAnswer(400, { message: 'Provider error: bad amount' }),
       logger(),
       'FORM'
     );
     expect(out).toBeInstanceOf(BadRequestException);
-    expect((out.getResponse() as { message: string }).message).toBe('Stripe error: bad amount');
+    expect((out.getResponse() as { message: string }).message).toBe('Provider error: bad amount');
   });
 
   it('keeps the typed code AND the bounds of an out-of-range amount, and logs the refusal', () => {

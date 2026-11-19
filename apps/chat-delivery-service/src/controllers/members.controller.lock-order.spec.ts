@@ -237,6 +237,16 @@ describe('MembersController - lock order of an add and a removal', () => {
       expect(statements).toEqual([]);
     });
 
+    it('refuses a malformed treeEpoch (400) before reading anything - never read as absent', async () => {
+      for (const treeEpoch of ['3', -1, 1.5, Number.MAX_SAFE_INTEGER + 1, {}]) {
+        const { controller, statements } = await declineAs({ awaitingAdmission: false });
+        await expect(
+          controller.declineJoinRequest('g-1', 'bob', 'alice', { treeEpoch })
+        ).rejects.toMatchObject({ status: 400, response: { error: 'tree_epoch_invalid' } });
+        expect(statements).toEqual([]);
+      }
+    });
+
     it('refuses the asker declining their own ask', async () => {
       const { controller } = await declineAs({ awaitingAdmission: false });
       await expect(controller.declineJoinRequest('g-1', 'bob', 'bob')).rejects.toMatchObject({

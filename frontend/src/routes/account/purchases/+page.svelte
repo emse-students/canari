@@ -21,7 +21,6 @@
     amountCents: number;
     paymentMethod: 'online' | 'stripe' | 'cash';
     status: 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired' | 'refunded';
-    stripePaymentIntentId: string | null;
     associationId: string;
     productName: string;
     paidAt: string;

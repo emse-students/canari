@@ -256,7 +256,7 @@ setup-env-prod:
 
 # ── Local mirroring production (décidé avec l'utilisateur le 2026-09-02) ──────
 # `setup-env` ci-dessus fabrique un environnement local avec des secrets GÉNÉRÉS : aucun tiers ne
-# répond (ni Stripe, ni FCM, ni MiGallery, ni Authentik). `local-env` fait l'autre chose : il
+# répond (ni Lydia, ni FCM, ni MiGallery, ni Authentik). `local-env` fait l'autre chose : il
 # reprend les identifiants tiers de la PRODUCTION, régénère les secrets d'authentification, et
 # localise la topologie. Les deux sont légitimes ; celui-ci sert à développer contre le vrai monde.
 #

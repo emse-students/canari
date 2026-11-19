@@ -7,9 +7,8 @@ import {
 } from './api';
 
 /**
- * THE FLAG IS LYDIA'S, AND ONLY LYDIA'S. The edit screens once read `stripeOnboardingComplete`, so
+ * THE FLAG IS LYDIA'S, AND ONLY LYDIA'S. The edit screens once read another provider's flag, so
  * an association whose Lydia onboarding was complete in the database showed as incomplete (2026-10-03).
- * Stripe has left the product and the server no longer sends its historic flag at all (2026-10-09).
  */
 const flags = (lydia: boolean) => ({ lydiaOnboardingComplete: lydia });
 
