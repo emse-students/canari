@@ -677,13 +677,10 @@ gap that reopens it is followed by a new declaration in the same step. No timer,
 stuck. Test: the fake buffer reopens an ended source on `remove`/`append`
 (`keeps the stream ended when the trim behind the playhead reopened it`).
 
-**The seek landing (S12's second question).** A seek lands INSIDE the segment its target falls in, at
-the measured start of that segment plus the share of it the target is past, capped at the segment length
-(`REPLAY_SEGMENT_LENGTH_S`): by design never a keyframe snap forward. What can still land later than the
-target is the segment LOOKUP: `segmentPositionAt` reads the segments' arrival time `atMs`, while the bar's
-time is media time, which runs ahead of arrival time on a replay whose media is longer than its live
-(61 s of media for 54 s). Read from the code, not measured on a real replay; owed a reading on the
-S12 replays.
+**The seek landing (S12's second question).** A seek lands INSIDE the segment its target falls in, never on a
+keyframe snap forward. What landed later than the target WAS a real defect, reproduced by a test on main (a
+replay with more media than live time: the lookup read arrival time, the bar is media time) and fixed in
+[a seek looks its segment up in media time](#a-seek-looks-its-segment-up-in-media-time-s12-2026-11-19).
 
 ### The far-ahead trim follows the walk, not media time (alpha.4 defect, 2026-11-19)
 
