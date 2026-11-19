@@ -19,7 +19,7 @@
     formId: string | null;
     productId: string | null;
     amountCents: number;
-    paymentMethod: 'online' | 'cash';
+    paymentMethod: 'online' | 'stripe' | 'cash';
     status: 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired' | 'refunded';
     associationId: string;
     productName: string;

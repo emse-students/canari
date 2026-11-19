@@ -67,7 +67,7 @@ export class Submission {
   @Column({ default: 'free' })
   paymentStatus: string;
 
-  /** `cash` once the submitter chose it; null otherwise. */
+  /** `cash` once the submitter chose it; null otherwise (`stripe` on rows written before the processor left). */
   @Column({ nullable: true })
   paymentMethod: string | null;
 

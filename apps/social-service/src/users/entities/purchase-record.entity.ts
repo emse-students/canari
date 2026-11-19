@@ -1,7 +1,13 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
-/** How a purchase was paid: `online` (Lydia) or `cash`. */
-export type PurchasePaymentMethod = 'online' | 'cash';
+/**
+ * How a purchase was paid. `online` is the current value for a card/Lydia payment; `stripe` is the
+ * value of every row written before the processor left (docs/wiki/stripe-archive.md) - data at rest,
+ * never written again, and kept on purpose: it is the only processor marker of a form-source row, and
+ * the readers that need a Lydia payment (the refund target, the contract flux) must not count it as
+ * `online`. Shown as an online payment.
+ */
+export type PurchasePaymentMethod = 'online' | 'stripe' | 'cash';
 
 /**
  * Where a purchase stands. `paid_not_granted` is money taken for something NOT delivered: a

@@ -63,7 +63,6 @@ and lock strategy in its header; the approval lines are the lead's to merge):
 | --- | --- | --- |
 | `associations."stripeAccountId"`, `"stripeOnboardingComplete"` | `apps/social-service/src/migrations/177_drop_stripe_leftovers.sql` | unmapped by #1669, first shipped in `v1.2.4`: the rollback floor this sets is far below the one in force |
 | `users."stripeCustomerId"` | `apps/core-service/src/migrations/027_drop_users_stripe_customer_id.sql` | unmapped by #1589, first shipped in `v1.2.0` |
-| `paymentMethod = 'stripe'` on `purchase_records` (-> `online`) and `submissions` (-> NULL) | 177, the same file | read as `online` already; the type arm and the three client arms went with it ([legacy-compatibility](legacy-compatibility.md#removed-2026-11-19---a-stored-paymentmethod-of-stripe-written-before-the-stripe-removal)) |
 
 The three copy strips of the dropped columns (`infrastructure/lib/copy-strips.sh`) went in the same
 change. A dump taken before an estate has run 177 and 027 still carries the historic Stripe ids into
@@ -81,6 +80,7 @@ never edited.
 
 | Mention | Why it stays |
 | --- | --- |
+| `paymentMethod = 'stripe'` stored on `purchase_records` and `submissions`, the `'stripe'` arm of `PurchasePaymentMethod` and of the client types | historic data, never written again. Live readers tell it apart: the refund target answers `not-online`, the Lydia contract flux counts only `online`, the responses table shows a paid NULL without a method; on a form-source purchase it is the only processor marker. A rewrite was written and withdrawn in review ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-stored-paymentmethod-of-stripe-written-before-the-stripe-removal)) |
 | `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` and every read, write, test and copy strip of them | LIVE: they hold the Lydia `request_uuid` and order reference. Renaming is expand, then contract over two releases (add `paymentRef`, backfill, read and write it, drop the old column a release later), for no functional gain; not started |
 | `.github/scripts/tests/local-copy-guards.test.sh` (`(stripe\|lydia)` in its column parser) | it derives the copy strips from the entity properties, and the two live columns above are still named `stripe*` |
 | `submission.projection.spec.ts`'s leak regex | it asserts that no internal column name (the live `stripeSessionId` among them) reaches a member |

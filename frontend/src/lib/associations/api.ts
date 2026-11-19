@@ -2188,7 +2188,8 @@ export interface AssociationPurchase {
   submissionId?: string | null;
   productName: string;
   amountCents: number;
-  paymentMethod: 'online' | 'cash';
+  /** `stripe` is the historic value of rows written before the processor left: it means online. */
+  paymentMethod: 'online' | 'stripe' | 'cash';
   paidAt: string;
   firstName: string | null;
   lastName: string | null;

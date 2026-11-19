@@ -2,7 +2,7 @@
 --
 -- Migration 027: the per-user Stripe customer id goes (owner, 2026-11-19: "Tu peux tout supprimer
 -- en ce qui concerne Stripe"; docs/wiki/stripe-archive.md, "the names that outlived the processor").
--- Its twin, social-service 177, drops the association pair and rewrites the retired `stripe` value.
+-- Its twin, social-service 177, drops the association pair.
 --
 -- WHY IT IS DEAD. It held the customer the saved-card flow charged. That flow, and the mapping of
 -- the column, went with Stripe in #1589 (2026-10-08, first shipped in `v1.2.0-alpha.1` and the stable
