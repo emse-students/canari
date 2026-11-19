@@ -42,6 +42,8 @@ const REFUSAL_WORDING: Readonly<Record<string, () => string>> = {
   CALLS_VIDEO_DISABLED: m.call_video_disabled,
   GROUP_CALLS_DISABLED: m.call_group_calls_disabled,
   GROUP_CALL_CLIENT_TOO_OLD: m.call_group_client_too_old,
+  GROUP_CALL_RELAY_UNAVAILABLE: m.call_group_relay_unavailable,
+  GROUP_CALL_ROOM_FULL: m.call_room_full,
 };
 
 /**

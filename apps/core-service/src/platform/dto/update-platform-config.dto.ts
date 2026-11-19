@@ -86,7 +86,10 @@ export class UpdatePlatformConfigDto {
   @IsIn(GROUP_CALLS_MODES)
   groupCallsMode?: GroupCallsMode;
 
-  /** Which relay carries a group call: `none` (the mesh only) or `call-service` (our SFU). */
+  /**
+   * Which relay carries a group call: `none` (the mesh only), `call-service` (our SFU) or
+   * `cloudflare` (Cloudflare Realtime, proxied by chat-delivery-service).
+   */
   @IsOptional()
   @IsIn(CALL_RELAYS)
   callRelay?: CallRelay;

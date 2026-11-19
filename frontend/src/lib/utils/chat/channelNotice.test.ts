@@ -7,7 +7,6 @@ vi.mock('$lib/utils/users/displayName', () => ({
 import { decodeAppMessage, encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { parseEnvelope } from '$lib/envelope';
 import {
-  CHANNEL_NOTICE_IDS_WRITER_ENABLED,
   channelMemberAddedData,
   channelNoticePayload,
   channelSystemEnvelope,
@@ -66,22 +65,11 @@ describe('channelSystemEnvelope', () => {
 });
 
 describe('channelMemberAddedData - what a salon invitation sends', () => {
-  // A build at the floor (1.6.6) draws `system.data` as the sentence it always was, so an id object
-  // would reach its screen as raw JSON text. The writer waits for the floor (legacy-compatibility).
-  it('ships OFF: no supported build below the reader may receive the id shape', () => {
-    expect(CHANNEL_NOTICE_IDS_WRITER_ENABLED).toBe(false);
-  });
-
-  it('sends the sentence while the writer is off, which every build reads', async () => {
-    const data = await channelMemberAddedData('bob', 'ana', false);
-    expect(channelNoticePayload(data)).toBeNull();
-    expect(data).toContain('Ana');
-    expect(data).toContain('Bob');
-  });
-
-  it('sends ids only once the writer is on', async () => {
-    expect(JSON.parse(await channelMemberAddedData('bob', 'ana', true))).toEqual({
-      newUsers: ['bob'],
-    });
+  // The floor (1.7.0) reads the id shape, so the sentence an older build needed is no longer sent
+  // (legacy-compatibility): the ids, which every reader draws in its own language with live names.
+  it('sends the ids, never a sentence', () => {
+    const data = channelMemberAddedData('bob');
+    expect(JSON.parse(data)).toEqual({ newUsers: ['bob'] });
+    expect(channelNoticePayload(data)).toEqual({ newUsers: ['bob'] });
   });
 });

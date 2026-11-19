@@ -8,6 +8,7 @@ import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vites
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { fitCellSize } from '$lib/minesweeper/replay';
 
 const api = vi.hoisted(() => ({ fetchReplay: vi.fn() }));
 vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
@@ -118,10 +119,10 @@ describe('MinesweeperReplay', () => {
     expect(text('replay-count')).toBe('Coup 1 / 4');
   });
 
-  it('says none was kept for a 404, as an answer and not as a failure', async () => {
+  it('says the game is not available for a 404 (removed, hidden, or never recorded), as an answer and not as a failure', async () => {
     api.fetchReplay.mockRejectedValue(new ApiRefusalError(404, null, 'not found'));
     await open();
-    expect(document.body.textContent).toContain("Aucun enregistrement n'a été conservé");
+    expect(document.body.textContent).toContain("Cette partie n'est pas disponible");
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -131,5 +132,99 @@ describe('MinesweeperReplay', () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain(
       'Impossible de charger la partie'
     );
+  });
+
+  it("follows the device's animation setting, as the game does", async () => {
+    localStorage.setItem(
+      'canari.minesweeper.settings',
+      JSON.stringify({ doubleTapZoom: true, longPressMs: 350, haptics: false, animations: 'off' })
+    );
+    api.fetchReplay.mockResolvedValue(GAME);
+    await open();
+    expect(document.querySelector('[data-testid="replay-root"]')?.getAttribute('style')).toContain(
+      '--ms-anim: 0'
+    );
+    localStorage.clear();
+  });
+
+  describe('fitting the grid to its stage', () => {
+    const sizes = { width: 0, height: 0 };
+    let observed: (() => void) | null = null;
+    const originals = {
+      width: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth'),
+      height: Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight'),
+    };
+    beforeEach(() => {
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+        configurable: true,
+        get: () => sizes.width,
+      });
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+        configurable: true,
+        get: () => sizes.height,
+      });
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: () => void) {
+            observed = cb;
+          }
+          observe() {}
+          disconnect() {}
+        }
+      );
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      observed = null;
+      for (const [key, desc] of [
+        ['clientWidth', originals.width],
+        ['clientHeight', originals.height],
+      ] as const) {
+        if (desc) Object.defineProperty(HTMLElement.prototype, key, desc);
+        else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[key];
+      }
+    });
+
+    const cellSize = () =>
+      document
+        .querySelector<HTMLElement>('[data-testid="replay-board"]')!
+        .style.getPropertyValue('--ms-cell');
+
+    it('draws the cells at the size that makes the whole grid fit the measured stage, padding and gap included', async () => {
+      sizes.width = 396;
+      sizes.height = 636;
+      api.fetchReplay.mockResolvedValue(GAME);
+      await open();
+      // The stage is 396 x 636; the viewer keeps 16 px of padding and 1 px between cells.
+      expect(cellSize()).toBe(`${fitCellSize(396 - 16, 636 - 16, 8, 8, 1)}px`);
+    });
+
+    it('refits when the stage changes (a rotation), and reaches the board with the new size', async () => {
+      sizes.width = 396;
+      sizes.height = 636;
+      api.fetchReplay.mockResolvedValue(GAME);
+      await open();
+      const before = cellSize();
+      sizes.width = 120;
+      sizes.height = 120;
+      observed?.();
+      flushSync();
+      expect(cellSize()).not.toBe(before);
+      expect(cellSize()).toBe(`${fitCellSize(120 - 16, 120 - 16, 8, 8, 1)}px`);
+    });
+
+    it('draws its padding and gap from the same numbers the fit uses', async () => {
+      sizes.width = 396;
+      sizes.height = 636;
+      api.fetchReplay.mockResolvedValue(GAME);
+      await open();
+      expect(
+        document.querySelector<HTMLElement>('[data-testid="replay-stage"]')!.style.padding
+      ).toBe('8px');
+      expect(document.querySelector<HTMLElement>('[data-testid="replay-board"]')!.style.gap).toBe(
+        '1px'
+      );
+    });
   });
 });

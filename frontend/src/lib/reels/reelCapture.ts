@@ -72,6 +72,14 @@ export interface ReelClip {
    * chat cap before anything is queued; absent means unknown, and the outbox still refuses a long one.
    */
   durationMs?: number;
+  /**
+   * The take's frame when it is KNOWN: the framed canvas of a filmed take (`FramedStream.size`, turn
+   * included), the frame the engine displayed for a gallery pick. "Envoyer a..." reads it to refuse a
+   * chat send of a frame that is not vertical (a conversation keeps vertical AND within its cap,
+   * `reelPickRefusal`); absent means unknown, which a chat refuses (not proven vertical).
+   */
+  width?: number;
+  height?: number;
 }
 
 /** Where a capture stands. */

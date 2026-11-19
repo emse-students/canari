@@ -5045,18 +5045,21 @@ always had: on iOS the foreground now writes the App Group's file (`seed_mirror_
 extension writes the same file, and every writer already holds its `graine_seeds.lock`
 (section 19's lock, which orders processes). The lifecycle copy of the seeds is gone, and the
 app-alive push path in `canari_push.mm` (`CanariGraineSeedHeld`, `CanariHandleChannelMessage`) reads
-the App Group's file. The copy an older build left in `app_data_dir` is folded in ONCE, at the first
-foreground edit (`fold_legacy_seed_mirror`): a UNION under both writers' locks, never an overwrite -
-a session the group holds keeps its entry, with both writers' labels; a session it lacks is added; a
-copy no key opens, or that is not JSON, is deleted unfolded (`MirrorReadError::Unopenable` /
-`Unparsable`), while a copy that merely failed to READ (`MirrorReadError::Io`) is kept and the edit
-fails, so the next one folds it. An account's wipe edits the one file
+the App Group's file. The copy an older build left in `app_data_dir` was folded in ONCE, at the first
+foreground edit, as a union under both writers' locks, until the floor reached `1.7.0`. **Since that
+floor it is deleted unread** (`remove_graine_mirror` in `seed_mirror_home`, under the mirror lock): a
+store update skips versions, so the floor does not prove every install folded, but the App Group's
+copy holds what the last lifecycle copy put there, and a failed delete is said at error and
+tried again at the next edit; `migrate_legacy_files` deletes it at the first start too. **Accepted
+loss:** a seed the older foreground stored after that last copy (a background task, a crash) was in
+the deleted file only, so that session's pushes show the generic banner until it rotates - the app
+itself still opens it. An account's wipe edits the one file
 ([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
 and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
 left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
-[legacy-compatibility](../legacy-compatibility.md).
+[legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170).
 
-**What the union cannot undo, stated.** A removal the older build made in its OWN copy only - a salon
+**What the union could not undo, stated (while it ran, before the `1.7.0` floor).** A removal the older build made in its OWN copy only - a salon
 left, a session the retention sweep forgot, after the last lifecycle copy and before the upgrade -
 is not in the app's file, while the group's still holds the entry, so the union keeps it. Nothing
 in the two files tells that entry from a seed the extension stored meanwhile, and the forgets were
@@ -5071,7 +5074,7 @@ suspended while it holds a lock on a shared-container file is killed (`0xdead10c
 Share Extension's capture already obeys under `performExpiringActivity`
 ([sharing](../frontend/sharing.md)). An edit can start in the seconds after the app leaves the
 screen (a frame the page absorbs on its way out), so `with_app_mirror` holds a
-`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the fold and the edit,
+`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the old copy's delete and the edit,
 and ends it when the edit returns; its expiry, never the expected path for a lock held milliseconds,
 is said at ERROR and the task ended as the API requires.
 
@@ -5079,11 +5082,11 @@ is said at ERROR and the task ended as the API requires.
 under `cfg(target_os = "ios")` (`seed_mirror_home`), and so is the background-time assertion: no
 host build or test compiles either. The ONLY proof that the foreground writes the App Group is the
 source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the release's iOS build,
-and first run on the iPhone reading below. The fold itself, the union, the refusals and the factory
+and first run on the iPhone reading below. The old copy's delete and the factory
 wipe's removal run in host tests.
 
-**What holds it.** `a_seed_the_extension_stored_survives_the_app_becoming_active` (`push.rs`, red
-against the byte copy), the fold's union, refusal and unreadable-copy cases, and
+**What holds it.** `deleting_the_apps_former_mirror_leaves_the_groups_seeds_whole` (`push.rs`, born red against the
+byte copy as `a_seed_the_extension_stored_survives_the_app_becoming_active`), and
 `iosMlsMirror.test.ts`, which reads the Objective-C no CI compiles: the activation mirror names no
 seed file, and the app-alive path reads `CanariAppGroupPath()`.
 

@@ -28,6 +28,8 @@ const ASKED_AT = 1_700_000_000_000;
 const ANSWERER = 'bob:bob-phone';
 
 const at = (id: string, timestamp: number) => ({ id, timestamp });
+/** A secret an ask keeps beside its `answerKey` - every ask carries one since option B. */
+const askSecret = () => crypto.getRandomValues(new Uint8Array(32)).map((b) => b | 1);
 
 describe('historyAddressing - the open asks', () => {
   beforeEach(() => forgetHistoryAsks());
@@ -43,7 +45,7 @@ describe('historyAddressing - the open asks', () => {
    * MAX_ANSWERERS_PER_ASK, and is gone once they all sent `last`.
    */
   it(`takes at most ${MAX_ANSWERERS_PER_ASK} answerers per ask, and closes once they are done`, () => {
-    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
     expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', false)).not.toBeNull();
     expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', false)).not.toBeNull();
@@ -53,12 +55,12 @@ describe('historyAddressing - the open asks', () => {
     expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', true)).not.toBeNull();
     // ...and once both answerers are done the ask is gone for everybody.
     expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false)).toBeNull();
-    noteHistoryAsk(GROUP, 'req-b', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    noteHistoryAsk(GROUP, 'req-b', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
     expect(openHistoryAskCount(GROUP)).toBe(1);
   });
 
   it('a second answerer is accepted after the first one closed the ask, the first is not', () => {
-    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
     expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.ask.kind).toBe('digest');
     expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false)?.ask.kind).toBe('digest');
@@ -68,7 +70,7 @@ describe('historyAddressing - the open asks', () => {
   });
 
   it('an ask is taken by its answer, and consumed only by the chunk marked last', () => {
-    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
     expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false)?.ask.kind).toBe('digest');
     expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.ask.kind).toBe('digest');
@@ -76,7 +78,7 @@ describe('historyAddressing - the open asks', () => {
   });
 
   it('an ask belongs to its conversation', () => {
-    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+    noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
     expect(takeAddressedAsk('other-group', 'req-a', ANSWERER, true)).toBeNull();
   });
@@ -95,7 +97,12 @@ describe('historyAddressing - the open asks', () => {
 
   it(`keeps at most ${MAX_OPEN_ASKS_PER_GROUP} asks per conversation - the oldest goes first, no clock`, () => {
     for (let i = 0; i <= MAX_OPEN_ASKS_PER_GROUP; i++) {
-      noteHistoryAsk(GROUP, `req-${i}`, { kind: 'digest', since: 0, askedAt: ASKED_AT }, null);
+      noteHistoryAsk(
+        GROUP,
+        `req-${i}`,
+        { kind: 'digest', since: 0, askedAt: ASKED_AT },
+        askSecret()
+      );
     }
 
     expect(takeAddressedAsk(GROUP, 'req-0', ANSWERER, false)).toBeNull();
@@ -333,7 +340,7 @@ describe('a kept answer secret is wiped when its ask lets it go', () => {
     const oldest = secret();
     noteHistoryAsk(GROUP, 'req-0', DIGEST, oldest);
     for (let i = 1; i <= MAX_OPEN_ASKS_PER_GROUP; i++)
-      noteHistoryAsk(GROUP, `req-${i}`, DIGEST, null);
+      noteHistoryAsk(GROUP, `req-${i}`, DIGEST, secret());
     expect(zeroed(oldest)).toBe(true);
   });
 

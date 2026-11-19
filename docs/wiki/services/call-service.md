@@ -287,6 +287,11 @@ throughout, so no clear frame ever crosses it. The SFU mode needed three things 
   dropped once the forward is done, never re-added after it (tests
   `a_track_arriving_after_its_publisher_left_is_never_registered`,
   `a_departure_during_a_forward_drops_the_track_once_the_forward_is_done`).
+- **`Joined` states `others`** - how many seats OTHER users hold at the reservation, read under the
+  seat lock (`Reservation::Seated { others }`) and logged `[call] sfu joined room=.. peer=.. others=N`
+  - the p2p `Joined` does not state it yet (`p2p_send_joined` sends `others: None`; WP-GC6 adds it),
+  so a client answering into a relay room everyone already left learns it from a fact (WP-GC4 client, 2026-11-16; test
+  `an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user` and the freed-seat test).
 - **A renegotiation never collides with a negotiation in flight.** One owed while the peer's
   connection is not `stable` (its own offer being answered) is recorded in `renegotiate_pending` and
   offered when that negotiation returns to `stable` (`renegotiate_if_owed`, after the answer to the
@@ -311,7 +316,7 @@ and, in `tests/p2p_signalling.rs`, `an_sfu_room_seats_up_to_its_cap_and_refuses_
 three seated), `an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked` and
 `a_token_signing_a_mode_refuses_a_join_in_the_other`; end to end by the `sfu-group` scenario below.
 
-**What chooses it** is `platform_config.call_relay` (`none` | `call-service`, core migration 023,
+**What chooses it** is `platform_config.call_relay` (`none` | `call-service` | `cloudflare`, core migrations 023 and 026 - `cloudflare` never reaches this service: Cloudflare Realtime carries the call through chat-delivery's [proxy](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16), and its `mode: cloudflare` token cannot seat here;
 `/admin/platform`, published as `calls.relay`), read by chat-delivery at a group call's `initiate`
 ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13)). Production stays `none`;
 the dev seed writes `call-service`.
@@ -565,7 +570,9 @@ opened per leg, the fourth user `room-full`, the negative leg 269 frames refused
 
 `run.mjs --scenario sfu-group` is the relay's group call, the job's third step on the same coturn:
 FIVE browsers (past the mesh cap of 4) in ONE SFU room whose tokens sign `max_seats: 5` and
-`mode: "sfu"`, each with one peer connection to the SFU - its microphone on a send-only transceiver,
+`mode: "sfu"`, each with one peer connection to the SFU, made and negotiated by THE APP'S OWN SFU LEG
+since 2026-11-16 (`frontend/src/lib/services/callSfuLeg.ts`,
+[calls](../frontend/modules/calls.md#the-apps-sfu-leg-wp-gc4-client-2026-11-16)) - its microphone on a send-only transceiver,
 its sender transform naming itself - and one receiver transform per forwarded track, naming the
 sender read from the track's stream id. Keys as in `mesh`: the app's `deriveGroupCallKeys`, the
 worker keyed with `setGroupKeys`; relay-only through coturn with `--turn`, the SFU relay-only too.
