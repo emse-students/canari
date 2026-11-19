@@ -68,6 +68,16 @@
 
 <style>
   /*
+   * Every `button` gets a 180 ms crossfade of its colours from the base layer of app.css, and a cell is
+   * a button: a dug cell faded from hidden to revealed whatever the player chose. Only the DURATION is
+   * taken here (the properties stay the base layer's), scaled by the animation speed the modal sets in
+   * `--ms-anim`, so "none" makes a dig instant.
+   */
+  button {
+    transition-duration: calc(180ms * var(--ms-anim, 1));
+  }
+
+  /*
    * The pressed first-dig cell pulses at Tailwind's own rhythm (2 s) scaled by the player's animation
    * speed (`--ms-anim`, set on the modal). A factor of 0 makes the duration zero, which ends the
    * infinite animation at once - the "off" setting.
