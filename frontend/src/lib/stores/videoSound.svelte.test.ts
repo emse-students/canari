@@ -214,17 +214,61 @@ describe('a live and the sound of the app', () => {
     expect(localStorage.getItem(VIDEO_SOUND_KEY), 'nothing was written').toBe('off');
   });
 
-  it('keeps a hand mute inside the live, and the next live opens muted', async () => {
+  it('keeps a hand mute inside the live in memory only, and the next live opens muted', async () => {
     localStorage.setItem(VIDEO_SOUND_KEY, 'on');
     activation(true);
     const { videoSound } = await import('./videoSound.svelte');
     const first = videoSound.startForLive();
     videoSound.setMuted(true);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY), 'a choice inside a live is not written').toBe(
+      'on'
+    );
     first.release();
     expect(videoSound.muted, 'the feed answer is back').toBe(false);
     const second = videoSound.startForLive();
     expect(second.verdict).toBe('muted-by-hand');
+    expect(videoSound.muted, 'the second live really is silent').toBe(true);
     second.release();
+    expect(videoSound.muted, 'and the feed is back again').toBe(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  });
+
+  it('a hand unmute inside the live is not written either', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(false);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    expect(videoSound.startBlocked).toBe(true);
+    videoSound.setMuted(false);
+    expect(videoSound.muted).toBe(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('off');
+    live.release();
+    expect(videoSound.muted, 'the feed answer is back').toBe(true);
+  });
+
+  it('release is idempotent', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    live.release();
+    videoSound.setMuted(false);
+    live.release();
+    expect(videoSound.muted, 'a second release changes nothing').toBe(false);
+  });
+
+  it('two lives overlapping keep the app answer from before the first', async () => {
+    localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+    activation(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { videoSound } = await import('./videoSound.svelte');
+    const first = videoSound.startForLive();
+    const second = videoSound.startForLive();
+    first.release();
+    expect(videoSound.muted, 'the second live still plays').toBe(false);
+    second.release();
+    expect(videoSound.muted, 'the feed, not the first live, is what comes back').toBe(true);
   });
 
   it('counts and warns on an engine-blocked open apart from play() refusals', async () => {

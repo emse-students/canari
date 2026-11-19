@@ -156,6 +156,12 @@ let startBlocked = $state(false);
 let refusedStarts = 0;
 /** How many live opens the engine SAID no to before any `play()` (`muted-engine`), counted apart. */
 let engineBlockedStarts = 0;
+/**
+ * The live now open, if any: the app's answer BEFORE it, to put back at close, and how many viewers
+ * hold it (two lives in a row overlap for a moment when a new one mounts before the old one is
+ * destroyed: the old answer is kept, never the first live's audible one).
+ */
+let liveSession: { previousMuted: boolean; holders: number } | null = null;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
@@ -203,15 +209,21 @@ export const videoSound = {
   /**
    * Sets the answer for every video and REMEMBERS it on this device - called from a reader's gesture
    * (a tap on a video, the speaker button, the `m` key, a viewer's own sound button). A no-op when it
-   * is already that.
+   * is already that. WHILE A LIVE IS OPEN the choice belongs to the live (owner, 2026-11-19): it is
+   * NOT written, only held in memory (`mutedByHand`, so the next lives of the session open as the
+   * reader left them), and `release` puts the feed's answer back - so memory and storage never
+   * diverge because of a live.
    */
   setMuted(next: boolean): void {
     if (next === muted) return;
-    Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video (remembered on this device)`);
+    Log.d(
+      'VIDEO',
+      `sound ${next ? 'off' : 'on'} for every video (${liveSession ? 'inside a live, not remembered' : 'remembered on this device'})`
+    );
     muted = next;
     mutedByHand = next;
     startBlocked = false;
-    writeStored(next ? 'off' : 'on');
+    if (!liveSession) writeStored(next ? 'off' : 'on');
     // INSIDE THE READER'S GESTURE: a measured video's AudioContext is resumed here, where WebKit
     // honours it - never later, from the element's `volumechange` (loudnessPlayback.ts).
     if (!next) primeLoudnessAudio();
@@ -254,11 +266,18 @@ export const videoSound = {
    * is the feed's, and a reader who muted before has not asked for a silent live. Returns the verdict
    * and `release`, which the viewer calls at unmount: it puts back the answer the app had (a feed
    * video is never made audible by a live), whatever the live did to it. A hand mute inside the live
-   * is still the reader's gesture and is remembered like any other (`setMuted`); only the in-memory
-   * answer of the feed comes back.
+   * is the reader's gesture but belongs to the live: held in memory, never written (`setMuted`).
    */
   startForLive(): { verdict: LiveStartDecision; release(): void } {
-    const previousMuted = muted;
+    if (liveSession) {
+      liveSession.holders += 1;
+      console.warn(
+        `[VIDEO] a live opened while another is still open (${liveSession.holders} holders) - the app's own answer is kept for the close`
+      );
+    } else {
+      liveSession = { previousMuted: muted, holders: 1 };
+    }
+    const session = liveSession;
     const activation = readEngineActivation();
     const verdict = decideLiveStart({ mutedByHand, activation });
     Log.d('VIDEO', `a live opens: ${verdict} (engine activation: ${activation})`);
@@ -266,7 +285,11 @@ export const videoSound = {
       muted = false;
       startBlocked = false;
       primeLoudnessAudio();
-    } else if (verdict === 'muted-engine') {
+    } else if (verdict === 'muted-by-hand') {
+      // The reader's mute of this session holds, whatever the app's answer was.
+      muted = true;
+      startBlocked = false;
+    } else {
       engineBlockedStarts += 1;
       console.warn(
         `[VIDEO] a live opened with no user gesture on record (#${engineBlockedStarts} this session) - muted, "enable sound" offered`
@@ -274,14 +297,20 @@ export const videoSound = {
       muted = true;
       startBlocked = true;
     }
+    let released = false;
     return {
       verdict,
       release() {
+        if (released) return;
+        released = true;
+        session.holders -= 1;
+        if (session.holders > 0 || liveSession !== session) return;
+        liveSession = null;
         Log.d(
           'VIDEO',
-          `a live closes: the app's sound answer is back to ${previousMuted ? 'off' : 'on'}`
+          `a live closes: the app's sound answer is back to ${session.previousMuted ? 'off' : 'on'}`
         );
-        muted = previousMuted;
+        muted = session.previousMuted;
         startBlocked = false;
       },
     };

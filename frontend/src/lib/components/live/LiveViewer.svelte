@@ -143,6 +143,8 @@
     () => true,
     () => {
       console.debug('[LIVE] viewer closed');
+      // Before the feed behind resumes (`onClose` unmounts us): its video must not read the live's answer.
+      liveSound.release();
       onClose();
     }
   );

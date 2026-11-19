@@ -400,19 +400,26 @@ describe('LiveViewer', () => {
     it('opens audible with no button, and gives the app its answer back at close', async () => {
       activation(true);
       videoSound.setMuted(false);
+      const stored = localStorage.getItem(VIDEO_SOUND_KEY);
       await render();
       expect(videoSound.muted).toBe(false);
       expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
       expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+      expect(localStorage.getItem(VIDEO_SOUND_KEY), 'opening a live writes nothing').toBe(stored);
     });
 
     it('a hand mute inside the live stays inside it: the app answer is back at close', async () => {
       activation(true);
       videoSound.setMuted(false);
       await render();
+      const stored = localStorage.getItem(VIDEO_SOUND_KEY);
       document.querySelector<HTMLButtonElement>('[data-live-sound]')!.click();
       flushSync();
       expect(videoSound.muted).toBe(true);
+      expect(
+        localStorage.getItem(VIDEO_SOUND_KEY),
+        'the speaker inside a live writes nothing'
+      ).toBe(stored);
       unmount(mounted.pop()!);
       expect(videoSound.muted).toBe(false);
     });
@@ -463,9 +470,10 @@ describe('LiveViewer', () => {
           ? Promise.resolve()
           : Promise.reject(new DOMException('no gesture yet', 'NotAllowedError'));
       });
+      const refusedBefore = videoSound.refusedStarts;
       await render();
       expect(videoSound.muted).toBe(true);
-      expect(videoSound.refusedStarts).toBeGreaterThan(0);
+      expect(videoSound.refusedStarts).toBe(refusedBefore + 1);
       expect(warn.mock.calls.some((c) => String(c[0]).includes('NotAllowedError'))).toBe(true);
       expect(document.querySelector('[data-live-enable-sound]')).not.toBeNull();
     });
