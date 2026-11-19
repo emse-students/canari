@@ -20,6 +20,9 @@ import { FakeMediaStream, studioOn } from '$lib/live/liveStudio.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
+import { retentionInForce } from '$lib/legal/retention';
+import { durationLabel } from '$lib/legal/retentionLabel';
+import { LIVE_REPLAY_MIN_MS } from '$lib/live/constants';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -401,6 +404,44 @@ describe('LiveBroadcaster', () => {
     await settle();
     expect(deps.endLive).toHaveBeenCalledTimes(1);
     expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('broadcaster');
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster());
+  });
+
+  it("the end texts follow the LIVE's keepsReplay, not the switch as read now", async () => {
+    // The server kept this live (switch on at its start); the switch reads off now (flipped mid-live).
+    const { deps, clock } = screen();
+    deps.startLive.mockImplementationOnce(async () => ({
+      ...(await fakeDeps().deps.startLive('k')),
+      keepsReplay: true,
+    }));
+    await settle();
+    // The screen's on-air counter ticks on a 1 s interval: fake that interval alone, so the end
+    // text reads the length the screen counted.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    clock.t += LIVE_REPLAY_MIN_MS + 1_000;
+    vi.advanceTimersByTime(1_000);
+    vi.useRealTimers();
+    q<HTMLButtonElement>('[data-live-end]')!.click();
+    await settle();
+    const days = durationLabel(retentionInForce(null).days.liveReplayDays);
+    expect(vi.mocked(showConfirm).mock.calls.at(-1)![0]).toBe(m.live_end_confirm_replay({ days }));
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster_replay({ days }));
+  });
+
+  it('a live the server does not keep, or one under 30 s, promises no replay', async () => {
+    const { deps } = screen();
+    deps.startLive.mockImplementationOnce(async () => ({
+      ...(await fakeDeps().deps.startLive('k')),
+      keepsReplay: true,
+    }));
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    q<HTMLButtonElement>('[data-live-end]')!.click();
+    await settle();
+    expect(vi.mocked(showConfirm).mock.calls.at(-1)![0]).toBe(m.live_end_confirm());
     expect(document.body.textContent).toContain(m.live_ended_broadcaster());
   });
 

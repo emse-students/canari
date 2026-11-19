@@ -31,6 +31,11 @@ export interface LiveView {
   /** The live's optional title (owner, 2026-11-07); absent from an older server. */
   title?: string | null;
   /**
+   * Whether this live becomes a replay at its end, fixed by the server at its START from
+   * `live_replays_mode` (docs/wiki/live-replays.md). Absent (an older server) reads as false.
+   */
+  keepsReplay?: boolean;
+  /**
    * On `GET /api/lives/:id` only: the reader moderates this live as a BDE (2026-11-02), as on the
    * list. Absent (the broadcaster's own view, an older server) reads as false.
    */

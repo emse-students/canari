@@ -4,7 +4,7 @@
 ([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 to WP-R5 built and shipped (the client in
 the `1.7.0` stable); `live_replays_mode` turned `on` in production and on dev on 2026-11-19 at the
 owner's request, BEFORE the texts (*"Prod maintenant, textes juste après"*,
-[decision 19](backlog.d/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
+[decision 42](backlog.d/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
 [built](#wp-r6-as-built-the-texts) in the pull request that followed. The phone readings are owed.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
@@ -302,7 +302,7 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 | --- | --- | --- |
 | **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start; the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
 | **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure ending the replay; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | built, inert while the switch is off ([as built](#wp-r2-as-built)) |
-| **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built in the repo, owed its dev pass ([as built](#wp-r3-as-built-the-segments-outside-the-backup)) |
+| **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built, shipped from the `v1.6.9` stable on; the switch went on 2026-11-19; **its dev and production readings (1-5 below, and reading 7) are NOT recorded and are owed** ([backlog](backlog.d/live-replays-kept-three-days-as-canareels.md)) |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet; the first-live rules raised to version 3 moved to WP-R6 ([why](#wp-r4-and-wp-r5-as-built)) | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R5** | the segment-by-segment save, a new part on an init change, the size first | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R6** | the texts (below) and `LIVE_RULES_VERSION` 3; the switch went `on` on both estates first, by the owner's decision | built ([as built](#wp-r6-as-built-the-texts)); the readings owed |
@@ -421,7 +421,7 @@ filesystem), so section 1's figures are unchanged. A restored host starts with n
 replay (`MIGRATION.md` section 6): the replay posts that come back with the database play nothing
 (every segment fetch 404s) until their `expiresAt` drops them, 3 days at most.
 
-**Owed on dev, before any production release carries it** (and before `live_replays_mode` moves):
+**Owed on dev** (written as owed before any production release; WP-R3 shipped from `v1.6.9` on and the switch went on 2026-11-19 with none of them recorded, so they are owed now, [backlog](backlog.d/live-replays-kept-three-days-as-canareels.md)):
 
 1. a live from a phone on dev: its segments under the dev estate's `live_segments` volume and NONE
    under `live/` in Garage (`garage` CLI or an S3 listing), the viewer plays, the poster shows;
@@ -474,7 +474,7 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 - **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
 - **Broadcaster texts (part of WP-R6):** the audience rule, the end confirm and the broadcaster's own end screen name the replay only while the switch is on (and, for the last two, only for a live of at least 30 s: `replayFollows`). The legal pages (privacy `#directs`, CGU `#directs`, register C19) are NOT changed here: they say "pas de rediffusion" and change at the flip.
 
-**`LIVE_RULES_VERSION` stayed 2 until the flip's texts shipped (WP-R6, now 3).** Version 3 is the broadcaster accepting a text that names the replay, and the rules sheet points at the CGU, which says "pas de rediffusion" until the flip; raised now, every broadcaster would re-accept, with the switch off, either a sheet promising a replay that does not happen or the unchanged text under a new number. It is raised in the pull request that changes the CGU, the privacy policy, register C19-C20 and the pre-live texts, merged before `live_replays_mode` is turned on (the table above).
+**`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](backlog.d/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
 
 Owed: the phone readings listed above (cover and time left on the card included).
 
@@ -490,7 +490,7 @@ strike, the 20 GB total cap evicting the oldest.
 | Text | What it says now |
 | --- | --- |
 | CGU `#directs`, the "Pas d'enregistrement" term | renamed **Rediffusion**; the "Coupure" term adds that an ended live can be cut while its replay exists (the cut deletes it) and that a staff deletion of the replay is no cut and no sanction. `updated` 19/11/2026 |
-| Privacy section 2 "Directs", section 6 rows, section 7 backups | the replay paragraph (what is kept, for whom, no repost, no push, no seat, the chat deleted at publication); the replay row (what it holds, when it goes, never in a backup); the live row (the chat goes at the end, the video stays with a replay); the backup paragraph (segments never backed up, WP-R3). `updated` 19/11/2026 |
+| Privacy section 2 "Directs", section 6 rows and its closing note on backups | the replay paragraph (what is kept, for whom, no repost, no push, no seat, the chat deleted at publication); the replay row (what it holds, when it goes, never in a backup); the live row (the chat goes at the end, the video stays with a replay); the backup paragraph (segments never backed up, WP-R3). `updated` 19/11/2026 |
 | Register C19, C20 | the purpose and retention of a replay; a cut reaches an ended live while its row is kept; D7 |
 | Pre-live screen | `live_rule_audience_*_replay`: the time left, the last 3 hours, no repost, saved like a CanaReel, the chat not replayed |
 | First-live rules | `LIVE_RULES_VERSION` **3** |
@@ -515,5 +515,7 @@ policy carry their `updated` date and nothing else, so this edit asks no member 
 The one terms version that IS accepted, MiConnect's `cgu_version`, belongs to `/legal/miconnect`
 ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)),
 which this edit does not touch.
-CGU section 14 promises an in-app notice 15 days before a substantial change takes effect; no code
-sends such a notice, and none was sent for this one (the switch went on first, by the owner's order).
+CGU section 14 and privacy section 12 both promise a notice 15 days before a substantial change
+takes effect; no code sends such a notice, and none was sent for the replays (the switch went on
+first, by the owner's order). **Owner's decision, 2026-11-19: handled by the owner, outside the app**
+(*"Je m'en occupe"*) - he writes the text and picks the channel; nothing is built for it.

@@ -206,11 +206,12 @@
     <p>
       Tout Utilisateur peut lancer un direct en son nom ; le lancer au nom d'une association demande
       le droit de publier en son nom. Un direct est visible des mêmes membres qu'une publication du
-      même auteur : ceux qui partagent un espace avec vous ou, au nom d'une association, ceux
-      qu'elle atteint. Quand il commence, une notification est envoyée : pour le direct d'une
-      association, à chaque membre que ses règles ou son adhésion atteignent (au plus un direct
-      annoncé par association toutes les six heures) ; pour le vôtre, à vos abonnés acceptés qui
-      peuvent le voir. L'Éditeur peut fermer la fonction à tout moment, pour tout le Service.
+      même auteur : ceux qui partagent un espace avec vous et vos abonnés acceptés ou, au nom d'une
+      association, ceux qu'elle atteint. Quand il commence, une notification est envoyée : pour le
+      direct d'une association, à chaque membre que ses règles ou son adhésion atteignent (au plus
+      un direct annoncé par association toutes les six heures) ; pour le vôtre, à vos abonnés
+      acceptés qui peuvent le voir. L'Éditeur peut fermer la fonction à tout moment, pour tout le
+      Service.
     </p>
     <dl class="legal-terms">
       <div>
@@ -218,8 +219,8 @@
         <dd>
           Les règles de la section 5 s'appliquent à l'image, au son et au chat d'un direct comme à
           une publication, et celles de la section 7 sans exception. Vous acceptez les règles de la
-          section 5 avant votre premier direct. En direct, il est en outre interdit de filmer une
-          personne qui n'a pas accepté d'y apparaître.
+          section 5 avant votre premier direct, et de nouveau quand elles changent. En direct, il
+          est en outre interdit de filmer une personne qui n'a pas accepté d'y apparaître.
         </dd>
       </div>
       <div>
@@ -241,9 +242,10 @@
           comme un CanaReel. Vous pouvez la supprimer à tout moment (au nom d'une association, toute personne
           qui peut publier en son nom). Si l'ensemble des rediffusions dépasse l'espace qui leur est réservé,
           les plus anciennes sont supprimées avant leur terme. Un direct coupé par la modération, ou arrêté
-          par la suppression de votre compte, n'en laisse pas. L'Éditeur peut désactiver les rediffusions
-          : un direct lancé ensuite n'est plus enregistré et tout est supprimé à sa fin. Rien n'empêche
-          toutefois un spectateur de filmer son écran.
+          par la suppression de votre compte, n'en laisse pas, et la suppression de votre compte met fin
+          à vos rediffusions, y compris celles diffusées au nom d'une association. L'Éditeur peut désactiver
+          les rediffusions : un direct lancé ensuite n'est plus enregistré et tout est supprimé à sa fin.
+          Rien n'empêche toutefois un spectateur de filmer son écran.
         </dd>
       </div>
       <div>

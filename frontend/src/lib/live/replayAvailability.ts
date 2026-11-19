@@ -17,11 +17,12 @@ export function replaysAvailable(mode: LiveReplaysMode): boolean {
 }
 
 /**
- * WHETHER A LIVE OF `elapsedMs` LEAVES A REPLAY when it ends: replays are available AND the live ran
- * at least {@link LIVE_REPLAY_MIN_MS} (owner, 2026-11-09: a false start shows nothing). The broadcaster's
- * texts promise "visible 3 jours" only when this holds. The server decides - this only keeps the
- * screen from promising what a 10-second live will not get.
+ * WHETHER A LIVE OF `elapsedMs` LEAVES A REPLAY when it ends: the live's OWN `keepsReplay`, which the
+ * server fixed at its start from `live_replays_mode` and answered with the live (`POST /api/lives`),
+ * AND the live ran at least {@link LIVE_REPLAY_MIN_MS} (owner, 2026-11-09: a false start shows
+ * nothing; the server's publication applies the same 30 s). Never the switch as read NOW: a switch
+ * flipped during the live changes nothing for it, so the broadcaster's end texts must not follow it.
  */
-export function replayFollows(mode: LiveReplaysMode, elapsedMs: number): boolean {
-  return replaysAvailable(mode) && elapsedMs >= LIVE_REPLAY_MIN_MS;
+export function replayFollows(keepsReplay: boolean, elapsedMs: number): boolean {
+  return keepsReplay && elapsedMs >= LIVE_REPLAY_MIN_MS;
 }

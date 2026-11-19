@@ -13,10 +13,10 @@ describe('replaysAvailable', () => {
 });
 
 describe('replayFollows', () => {
-  it('promises a replay only to a live of at least 30 s, with the switch on', () => {
-    expect(replayFollows('on', LIVE_REPLAY_MIN_MS)).toBe(true);
-    expect(replayFollows('on', LIVE_REPLAY_MIN_MS - 1)).toBe(false);
-    expect(replayFollows('off', 10 * LIVE_REPLAY_MIN_MS)).toBe(false);
+  it('promises a replay only to a live of at least 30 s that the server said keeps one', () => {
+    expect(replayFollows(true, LIVE_REPLAY_MIN_MS)).toBe(true);
+    expect(replayFollows(true, LIVE_REPLAY_MIN_MS - 1)).toBe(false);
+    expect(replayFollows(false, 10 * LIVE_REPLAY_MIN_MS)).toBe(false);
   });
 });
 

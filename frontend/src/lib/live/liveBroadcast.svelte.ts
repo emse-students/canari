@@ -275,6 +275,11 @@ export class LiveBroadcast {
    * air, the title the server last confirmed. Empty is "no title".
    */
   title = $state('');
+  /**
+   * Whether the server keeps THIS live as a replay (`keepsReplay`, fixed at its start). The end texts
+   * read it, never the switch as read now: a flip during the live does not change the live.
+   */
+  keepsReplay = $state(false);
   /** True while an on-air title edit is with the server. */
   titleSaving = $state(false);
   /** Why the last on-air title edit was not taken, or null. */
@@ -602,6 +607,8 @@ export class LiveBroadcast {
     this.liveId = live.id;
     // What the server holds (an older server ignores the field and answers none).
     this.title = live.title ?? '';
+    this.keepsReplay = live.keepsReplay === true;
+    console.debug(`[LIVE-BROADCAST] ${live.id} keeps a replay: ${this.keepsReplay}`);
     this.#startedAt = this.#deps.now();
     this.#lastStoredAt = this.#startedAt;
     this.#uploader = this.#deps.createUploader(live.id, {
