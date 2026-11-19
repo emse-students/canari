@@ -119,7 +119,7 @@ earliest version, as a checklist.
 **Chantiers, decisions and questions (no severity)**
 
 - [Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them](backlog.d/admin-view-feeds-as-a-member.md)
-- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
+- [Owed after the Stripe removal - what is left (audited 2026-11-19)](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
 
 **P2 - correctness**
 
@@ -136,14 +136,10 @@ _No entry planned beyond its readings._
 
 **Chantiers, decisions and questions (no severity)**
 
-- [A SECOND campaign, for everything that is not chat - asked 2026-08-16](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
 - [The MLS audit items that are still real, with their verified counts (swept 2026-09-12)](backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md)
-- [A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia](backlog.d/a-paid-public-form-user-2026-09-30-the-paid-half-waits-for-lydia.md)
 - [Audiences of associations, lists and institutions - built, in production since `v1.2.0`](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)
 - [A file question on a PUBLIC form needs an abuse design first (asked by the user 2026-10-15, re-read 2026-11-11)](backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md)
-- [Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem](backlog.d/decided-by-the-user-on-2026-10-16-the-gdpr-pass-over-the-whole-ecosystem.md)
-- [Decided by the user on 2026-10-18 - every design question answered](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
-- [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
+- [Decided by the user on 2026-10-18 - what is still open (trimmed 2026-11-19)](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [The live viewer cap (24 seats for the whole host) lifted in measured steps - the owner's "no visible ceiling" (2026-10-21)](backlog.d/live-viewer-cap-lifted-in-measured-steps.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
@@ -228,11 +224,10 @@ _No entry planned beyond its readings._
 - [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
 - [New-device notices: three decisions owed (built by #2278, 2026-10-22)](backlog.d/new-device-notices-three-decisions-owed.md)
 - [Three open items the CLAUDE.md queue alone carried (moved 2026-10-22)](backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md)
-- [Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md)
-- [Decided by the owner on 2026-10-24 - MiGallery faces: option C](backlog.d/decided-by-the-owner-on-2026-10-24-migallery-faces-option-c.md)
+- [Decided by the user on 2026-10-23 - what is still open, and the rules not written elsewhere (trimmed 2026-11-19)](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md)
 - [Authorization audit of the group routes, remainder tracked privately (2026-10-25)](backlog.d/authorization-audit-of-the-group-routes-remainder-tracked-privately-2026-10-25.md)
 - [Session liveness beyond the verifier, tracked privately (2026-10-25)](backlog.d/session-liveness-beyond-the-verifier-tracked-privately-2026-10-25.md)
-- [The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up](backlog.d/the-shop-screens-decided-by-the-user-on-2026-10-26-after-the-first-real-cercle.md)
+- [The shop screens - decided by the user on 2026-10-26: built, what is left (audited 2026-11-19)](backlog.d/the-shop-screens-decided-by-the-user-on-2026-10-26-after-the-first-real-cercle.md)
 - [History withheld from a member device that let itself in (built 2026-10-27): what is still owed](backlog.d/history-withheld-from-a-member-device-that-let-itself-in.md)
 - [A platform admin suspends an account, in Canari only (owner, 2026-11-19)](backlog.d/a-platform-admin-suspends-an-account-in-canari.md)
 
@@ -310,8 +305,8 @@ _No entry planned beyond its readings._
 
 - [`dev.canari-emse.fr` - the two things that outlived the chantier](backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)
 - [The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)](backlog.d/the-1-5-1-pixel-log-what-the-catch-up-fix-left-2026-10-30.md)
-- [The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
-- [Display follow-ups to the shop pricing (after the tier stack lands)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
+- [The Lydia enrolment and cashier chantier - decided 2026-10-30, lots 1-4 shipped, what is left (audited 2026-11-19)](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
+- [Display follow-ups to the shop pricing (the tier stack has landed)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
 - [The iOS rig adapter (#1284-#1286, #1290, #1291, #1303): no board row has a verdict on the iPhone yet](backlog.d/reading-owed-the-ios-rig-adapter-1284-1286-1290-1291-1303.md)
 
 **P2 - correctness**
