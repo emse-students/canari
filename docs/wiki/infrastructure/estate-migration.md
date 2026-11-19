@@ -100,6 +100,12 @@ a machine we own.
 The identity provider's stack is deployed by hand; its configuration is code and applied by the
 release ([authentik](authentik.md)).
 
+**Owner's decision, 2026-11-19: the MiConnect (authentik) containers are the project's own stack on
+the shared host.** The IT department's no-touch rule covers the HOST - its packages, accounts,
+firewall, cron and nginx - not our containers; so the release upgrades authentik's image and keeps
+its rollback copies in the runner account's dump directory (0700, files 0600), 3 copies and 30 days
+at most ([authentik](authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+
 ### `canari` - MOVED 2026-09-24: it was two estates and a CI runner, not one estate
 
 Production, dev and the self-hosted runner shared one box; they are now separated by compose project

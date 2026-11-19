@@ -254,6 +254,10 @@ jobs:
   #     it names the object and field that changed, never the values.
   #   - ACCESS: the runner can still write each MiConnect `.env`, the release's one precondition.
   #
+  # AND ONE WRITE, of the runner's own files only: the release's MiConnect rollback copies (dumps of
+  # every account, `.env` backups, logs) are expired every morning to the owner's bound (2026-11-19:
+  # "3 copies et 30 jours au plus"), so a copy does not outlive it when no release comes.
+  #
   # A RED RUN IS THE REPORT, for the reasons `hosts` gives. ON THE SELF-HOSTED RUNNER because the
   # containers are the local daemon's. docs/wiki/cicd.md, "The host runs what was released".
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -265,6 +269,9 @@ jobs:
       contains(fromJSON('["all", "drift"]'), inputs.job))
     runs-on: self-hosted
     timeout-minutes: 15
+    # THE ENVIRONMENT OF THE DEPLOY IT MIRRORS (`serve-prod.yml`, `deploy-to-server`): the same runner,
+    # the same stacks, and the same rules and secrets scope apply to what it reads and expires there.
+    environment: production
     # Its own group, at the job level, for the reason `hosts` gives. NOT `cd-deploy`, deliberately:
     # GitHub keeps one PENDING run per group and cancels the others, so a daily report queued in that
     # group could cancel a waiting deploy. What keeps it from overlapping a deploy - a recreate seen
@@ -313,6 +320,20 @@ jobs:
           status=0
           for project in miconnect miconnect-test; do
             bash infrastructure/authentik/deploy-stack.sh access --project "$project" || status=1
+          done
+          exit "$status"
+
+      # THE OWNER'S BOUND ON THE ROLLBACK COPIES (2026-11-19), held daily: per stack, the three newest
+      # of each kind and none taken more than 30 days ago, decided from the stamp in each name
+      # (`deploy-stack.sh prune`, release-lib.sh `ak_prune_select`, which touches only the names the
+      # release writes). A copy that cannot be deleted turns this run red.
+      - name: Expire MiConnect's rollback copies
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          status=0
+          for project in miconnect miconnect-test; do
+            bash infrastructure/authentik/deploy-stack.sh prune --project "$project" || status=1
           done
           exit "$status"
 

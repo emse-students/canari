@@ -11,7 +11,9 @@ LITTERAL dans `compose.yml` pour que Dependabot la suive. Un pre-release met la 
 `deploy-stack.sh` : rien ne redemarre si ce qui TOURNE est deja la version epinglee ; sinon dump de
 la base, ligne `AUTHENTIK_TAG` du `.env` reecrite, `server` et `worker` recrees seuls, puis
 verification (sante Docker, `/-/health/ready/`, decouverte OIDC) et retour arriere automatique en
-cas d echec. Le compte du runner doit pouvoir lire et ecrire le `.env` de chaque stack
+cas d echec. Ce pas passe AVANT le deploiement de l estate : un echec arrete la release entiere. Les
+copies de retour arriere (dump, `.env`, journaux) restent 3 par type et 30 jours au plus (le
+proprietaire, 2026-11-19), purgees par chaque release et par le job quotidien `drift`. Le compte du runner doit pouvoir lire et ecrire le `.env` de chaque stack
 ([MIGRATION](../MIGRATION.md)). Le detail et ses raisons : le
 [wiki](../../docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
 Ce qui suit decrit le RESTE de la stack, qui est toujours deploye a la main.

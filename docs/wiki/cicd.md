@@ -2181,13 +2181,14 @@ stack's own `.env` on the host, the image scan read this repository's `compose.y
 
 | Release | What it does to MiConnect | Where |
 | --- | --- | --- |
-| pre-release | puts the TEST stack (`miconnect-test`) on the pinned version, then dry-runs the blueprints against production | `serve-dev.yml` |
-| stable | puts PRODUCTION (`miconnect`) on the pinned version, applies the blueprints, checks both | `serve-prod.yml`, before `prod-released` moves |
+| pre-release | puts the TEST stack (`miconnect-test`) on the pinned version FIRST, before the dev estate, then dry-runs the blueprints against production | `serve-dev.yml` |
+| stable | puts PRODUCTION (`miconnect`) on the pinned version FIRST, before the estate (a failed upgrade stops the release whole, never half-shipped), then after the estate applies the blueprints and checks both | `serve-prod.yml`, before `prod-released` moves |
 
 ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container
 RUNS differs from the pin (durable state, never a clock), dumps the database first, checks Docker's
 health verdict, `/-/health/ready/` and the OIDC discovery after, and on a failure puts the old tag
-back - restoring the dump only when the schema provably moved - and FAILS the job (exit 2, with the
+back - restoring the dump only when the database provably moved (Django's migrations or authentik's
+own system migrations) - and FAILS the job (exit 2, with the
 hand procedure, when the rollback itself fails or cannot decide). No new secret and no new route: the
 runner already lives on the host, as for `Apply MiConnect's blueprints`; what it needs is read and
 write access to each stack's `.env` (granted 2026-11-13), and it refuses by name without it. The mechanism,
@@ -2199,7 +2200,9 @@ The third-party images every RELEASED compose file pins (production and MiConnec
 container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
 any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
 did to a provider on 2026-11-13 with nothing to say so beforehand; and whether the runner can still
-write each MiConnect `.env`. A drift with a known cause is a WARNING until the date written beside it
+write each MiConnect `.env`. And one write, of the runner's own files: the release's MiConnect
+rollback copies are expired to the owner's bound, 3 copies and 30 days at most (2026-11-19). The job
+runs in the `production` environment, as the deploy it mirrors. A drift with a known cause is a WARNING until the date written beside it
 in `infrastructure/deploy/image-drift-known.txt`, and red after. No fifth visible workflow: it is
 one more job on the 07:30 slot, and it cannot overlap a deploy because the one runner runs one job at
 a time (it does NOT join `cd-deploy`, where a queued report could cancel a waiting deploy)

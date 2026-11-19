@@ -125,15 +125,21 @@ ak_env_set_tag() {
   '
 }
 
-# ak_rollback_plan <migrations-before> <migrations-after>  - read with server and worker STOPPED, so
-# nothing can still be migrating while the count is read:
-#   retag    the failed version applied no migration: putting the old tag back is the whole rollback
-#   restore  it did: the old version cannot run on a newer schema, so the dump taken before the change
-#            is restored. Destructive, hence gated on a FAILED check AND a count that MOVED.
-#   unknown  either count is unreadable: nothing proves the schema moved, and a restore on a guess
+# ak_rollback_plan <state-before> <state-after>  - each state is `<django migrations>:<version row>`
+# (deploy-stack.sh, db_state), read with server and worker STOPPED, so nothing can still be migrating:
+#   retag    the database is where it was: putting the old tag back is the whole rollback
+#   restore  it moved - a Django migration ran, OR authentik's own system migrations did. Those run
+#            BEFORE Django's (lifecycle/migrate.py) and, on every new version, add a row to
+#            `authentik_version_history` (system_migrations/version_history_update.py, 2026.8.5), which
+#            is what the next start's `ensure_allowed_version` reads as the database's version. A release
+#            that got that far and no further left a database that says it is the new version, so the
+#            dump taken before the change is restored. Destructive, hence gated on a FAILED check AND a
+#            state that MOVED. The row is compared by its id (a BIGSERIAL, never reused): authentik
+#            trims the table to 1000 rows, so a count could stay flat while a row was added.
+#   unknown  either state is unreadable: nothing proves the database moved, and a restore on a guess
 #            would drop a database that may be fine - the rollback stops and hands over to a human.
 ak_rollback_plan() {
-  if ! [[ "$1" =~ ^[0-9]+$ ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+  if ! [[ "$1" =~ ^[0-9]+:[0-9]+$ ]] || ! [[ "$2" =~ ^[0-9]+:[0-9]+$ ]]; then
     echo unknown
   elif [ "$1" = "$2" ]; then
     echo retag
@@ -180,6 +186,45 @@ ak_health_verdict() {
 # above and leaves the host the rest. False when either number is unreadable.
 ak_space_ok() {
   [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [ "$(($2 * 1024))" -ge "$(($1 * 2))" ]
+}
+
+# ak_prune_select <now-stamp> <keep> <max-days>  - reads the basenames of one stack's dump directory on
+# stdin and prints those that must go (owner, 2026-11-19: "3 copies et 30 jours au plus"): per kind,
+# everything beyond the <keep> newest AND everything taken more than <max-days> before <now-stamp>.
+# THE COPIES HOLD EVERY MICONNECT ACCOUNT (emails, names, groups, password hashes), so they live no
+# longer than the owner's bound, even when no release comes to replace them.
+# AN ALLOWLIST, NOT A DENYLIST: only the names deploy-stack.sh writes are candidates -
+# `<stamp>-*.dump`, `<stamp>-*.env`, `<stamp>-pg.log`, `<stamp>-compose.log`, the stamp being
+# `YYYYMMDDTHHMMSSZ` (UTC). Anything else in the directory is never touched.
+# THE AGE IS THE STAMP IN THE NAME - the moment the copy was taken - never the file's mtime, which a
+# copy or a restore of the directory resets. <now-stamp> is an argument: nothing here reads the clock.
+ak_prune_select() {
+  local now="$1" keep="$2" days="$3"
+  if ! [[ "$now" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || ! [[ "$keep" =~ ^[0-9]+$ ]] || ! [[ "$days" =~ ^[0-9]+$ ]]; then
+    echo "ak_prune_select: expected <YYYYMMDDTHHMMSSZ> <keep> <max-days>, got '$now' '$keep' '$days'" >&2
+    return 1
+  fi
+  # Newest first: the stamp leads every candidate name, so a byte sort orders them by time.
+  LC_ALL=C sort -r | awk -v now="$now" -v keep="$keep" -v days="$days" '
+    # Seconds since 1970 of a stamp, by the civil-from-days arithmetic (no `date -d`, no locale).
+    function epoch(s,   y, m, d, era, yoe, doy, doe) {
+      y = substr(s, 1, 4) + 0; m = substr(s, 5, 2) + 0; d = substr(s, 7, 2) + 0
+      if (m <= 2) y--
+      era = int(y / 400); yoe = y - era * 400
+      doy = int((153 * (m > 2 ? m - 3 : m + 9) + 2) / 5) + d - 1
+      doe = yoe * 365 + int(yoe / 4) - int(yoe / 100) + doy
+      return (era * 146097 + doe - 719468) * 86400 + substr(s, 10, 2) * 3600 + substr(s, 12, 2) * 60 + substr(s, 14, 2)
+    }
+    BEGIN { limit = epoch(now) - days * 86400 }
+    !/^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z-/ { next }
+    { kind = "" }
+    /\.dump$/ { kind = "dump" }
+    /\.env$/ { kind = "env" }
+    /-pg\.log$/ { kind = "pg-log" }
+    /-compose\.log$/ { kind = "compose-log" }
+    kind == "" { next }
+    { if (++seen[kind] > keep || epoch($0) < limit) print }
+  '
 }
 
 # ak_dry_run_recreates  - reads `docker compose --dry-run up` output on stdin; true when compose

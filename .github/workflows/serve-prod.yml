@@ -186,6 +186,24 @@ jobs:
             --domain "$DOMAIN" \
             --out infrastructure/.env
 
+      # MICONNECT'S VERSION IS THE IMAGE THIS TREE PINS (owner, 2026-11-13), and it goes FIRST, before
+      # any application container changes: a failed authentik upgrade rolls MiConnect back and FAILS
+      # this job HERE, so the estate below is never deployed and the release stops whole rather than
+      # half-shipped. It also precedes the blueprints, because CI proved those blueprints on that
+      # version (`test-miconnect-blueprints` boots this compose.yml). Decided from what RUNS: a stack
+      # already on the pin restarts nothing. Otherwise the database is dumped, `server` and `worker`
+      # alone are recreated, and Docker's health verdict, `/-/health/ready/` and the OIDC discovery
+      # document must answer - or the old version is put back (the dump restored if the database
+      # moved) and `prod-released` does not move. infrastructure/authentik/deploy-stack.sh;
+      # docs/wiki/infrastructure/authentik.md, "The release deploys MiConnect's version".
+      - name: Put MiConnect on the pinned authentik version
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect
+
       # THE RELEASE'S OWN TAG, `v<version>`, AND NOT `latest` (2026-10-06). `latest` is whatever the
       # newest stable pushed, so re-running an OLD release's deploy passed twenty steps and
       # redeployed the NEWEST one (v0.16.1's rerun put v0.16.4 up on 2026-09-06): a version could be
@@ -308,22 +326,6 @@ jobs:
               exit 1
               ;;
           esac
-
-      # MICONNECT'S VERSION IS THE IMAGE THIS TREE PINS (owner, 2026-11-13), and it goes BEFORE the
-      # blueprints, because CI proved those blueprints on that version (`test-miconnect-blueprints`
-      # boots this compose.yml). Decided from what RUNS: a stack already on the pin restarts nothing.
-      # Otherwise the database is dumped, `server` and `worker` alone are recreated, and Docker's
-      # health verdict, `/-/health/ready/` and the OIDC discovery document must answer - or the old
-      # version is put back (the dump restored if the schema moved) and this job FAILS, so
-      # `prod-released` does not move. infrastructure/authentik/deploy-stack.sh;
-      # docs/wiki/infrastructure/authentik.md, "The release deploys MiConnect's version".
-      - name: Put MiConnect on the pinned authentik version
-        working-directory: ${{ env.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
-          # stack was left in, and it ignores them while the dump is restored.
-          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect
 
       # MICONNECT'S CONFIGURATION IS THE BLUEPRINTS IN THIS TREE, applied on every stable release.
       # The runner lives on the host MiConnect runs on, so it reaches the worker container directly;

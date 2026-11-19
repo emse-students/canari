@@ -8,7 +8,10 @@
 # and the `.env` line, never a clock), refuse a downgrade, retag or restore on a rollback, Docker's
 # health verdict, the drift verdicts. THE DEPLOY IS DRIVEN AGAINST A FAKE `docker` AND `curl` that
 # play a stack: a no-op, a recorded tag, a refused `.env`, an upgrade that passes, one that fails
-# before migrating (retag only) and one that fails after (the dump restored). No host, no network.
+# before migrating (retag only), one that fails after Django's migrations or after authentik's own
+# system migrations alone (the dump restored), a `.env` put back by its backup during a rollback,
+# compose messages that name host paths, and the retention of the copies. No host, no network, no
+# clock: "now" is injected (AK_NOW).
 #
 # Run by `make test-ci-scripts` and by CI.
 set -uo pipefail
@@ -68,12 +71,33 @@ eq "an 'export AUTHENTIK_TAG=' line is read" "$(printf 'A=1\nexport AUTHENTIK_TA
 eq "  and rewritten in place, its export kept, never duplicated" "$(printf 'A=1\nexport AUTHENTIK_TAG=2026.8.0\n' | ak_env_set_tag 2026.8.5 | tr '\n' '|')" "A=1|export AUTHENTIK_TAG=2026.8.5|"
 eq "a variable merely ending in AUTHENTIK_TAG is not the line" "$(printf 'OLD_AUTHENTIK_TAG=1\n' | ak_env_set_tag 2026.8.5 | tr '\n' '|')" "OLD_AUTHENTIK_TAG=1|AUTHENTIK_TAG=2026.8.5|"
 
-echo "a rollback restores the database only when the schema MOVED, and never on a guess:"
-eq "no migration ran: retag" "$(ak_rollback_plan 774 774)" retag
-eq "migrations ran: restore" "$(ak_rollback_plan 774 777)" restore
-eq "the count after is unreadable: unknown, never restore" "$(ak_rollback_plan 774 '')" unknown
-eq "the count before is unreadable: unknown" "$(ak_rollback_plan '' 774)" unknown
-eq "a count that is not a number: unknown" "$(ak_rollback_plan 774 'ERROR')" unknown
+echo "a rollback restores the database only when it MOVED, and never on a guess:"
+eq "no migration ran: retag" "$(ak_rollback_plan 774:12 774:12)" retag
+eq "Django migrations ran: restore" "$(ak_rollback_plan 774:12 777:13)" restore
+eq "only authentik's system migrations ran (a new version row): restore" "$(ak_rollback_plan 774:12 774:13)" restore
+eq "the state after is unreadable: unknown, never restore" "$(ak_rollback_plan 774:12 '')" unknown
+eq "the state before is unreadable: unknown" "$(ak_rollback_plan '' 774:12)" unknown
+eq "a state that is not two numbers: unknown" "$(ak_rollback_plan 774:12 'ERROR')" unknown
+eq "a bare Django count is not a state: unknown" "$(ak_rollback_plan 774 774)" unknown
+
+echo "the rollback copies: three of each kind and none older than 30 days, from the stamp in the name:"
+now=20261119T120000Z
+copies="$(printf '%s\n' \
+  20261119T110000Z-2026.8.0-to-2026.8.5.dump 20261115T000000Z-2026.8.0-to-2026.8.5.dump \
+  20261110T000000Z-2026.8.0-to-2026.8.5.dump 20261101T000000Z-2026.7.0-to-2026.8.0.dump \
+  20261020T120000Z-miconnect.env 20261020T115959Z-miconnect.env \
+  20260901T000000Z-pg.log 20261118T000000Z-pg.log 20260901T000000Z-compose.log \
+  notes.txt 20260901T000000Z-other.txt .env-next.abc123 20260901T000000Z-miconnect.env.keep)"
+eq "  the 4th newest dump goes, and every copy older than 30 days; nothing else is a candidate" \
+  "$(ak_prune_select "$now" 3 30 <<<"$copies" | LC_ALL=C sort | tr '\n' ' ')" \
+  "20260901T000000Z-compose.log 20260901T000000Z-pg.log 20261020T115959Z-miconnect.env 20261101T000000Z-2026.7.0-to-2026.8.0.dump "
+eq "  exactly 30 days old is kept, one second more is not" \
+  "$(printf '20261020T120000Z-a.dump\n20261020T115959Z-b.dump\n' | ak_prune_select "$now" 3 30)" 20261020T115959Z-b.dump
+eq "  the age crosses a month and a leap day correctly" \
+  "$(printf '20280130T000000Z-a.dump\n20280131T000000Z-b.dump\n' | ak_prune_select 20280301T000000Z 3 30)" 20280130T000000Z-a.dump
+eq "  even the only copy expires (the bound is the owner's, not the release's)" \
+  "$(printf '20260101T000000Z-a.dump\n' | ak_prune_select "$now" 3 30)" 20260101T000000Z-a.dump
+if ak_prune_select 2026-11-19 3 30 </dev/null >/dev/null 2>&1; then fail "  a malformed now is accepted"; else pass "  a malformed now is refused, nothing selected"; fi
 
 echo "Docker's verdict decides health, and a crash loop is a failure, not a wait:"
 eq "healthy" "$(ak_health_verdict running healthy 0)" healthy
@@ -170,6 +194,8 @@ cat >"$tmp/bin/docker" <<'EOF'
 S=__STATE__
 echo "$*" >>"$S/calls"
 envtag="$(sed -n 's/^AUTHENTIK_TAG=//p' "$S/dir/.env" | tail -n 1)"
+# compose lets its caller's AUTHENTIK_TAG override the .env line, as the real one does.
+tag="${AUTHENTIK_TAG:-$envtag}"
 if [ "${1:-}" = compose ]; then env | grep -E '^(PG_|POSTGRES_)' | cut -d= -f1 >>"$S/leak"; fi
 # the test's own "send a signal to the deploy while this call runs"
 if [ -f "$S/signal-on" ] && grep -qF -- "$(cat "$S/signal-on")" <<<"$*"; then rm -f "$S/signal-on"; kill -TERM "$PPID"; fi
@@ -192,21 +218,34 @@ case "$*" in
   *RestartCount*) echo 0 ;;
   "port server-id 9000/tcp") echo 127.0.0.1:9000 ;;
   pull*) ;;
-  *"compose"*"config --images"*) echo "ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-$envtag}"; echo postgres:18 ;;
+  *"compose"*"config --images"*)
+    if [ -f "$S/configfail" ]; then echo "open $S/dir/compose.yml: no such file or directory" >&2; exit 1; fi
+    echo "ghcr.io/goauthentik/server:$tag"; echo postgres:18
+    ;;
   *"compose"*"--dry-run up"*)
     svc="${*: -1}"
     if [ -f "$S/confdrift" ]; then echo " DRY-RUN MODE -  Container miconnect-$svc-1  Recreate"; else echo " DRY-RUN MODE -  Container miconnect-$svc-1  Running"; fi
     ;;
   *"compose"*"up -d --no-deps server worker"*)
+    # compose's own words name the stack's files by their host path
+    if [ -f "$S/upfail-once" ]; then rm -f "$S/upfail-once"; echo "error while interpolating $S/dir/compose.yml" >&2; exit 1; fi
     rm -f "$S/stopped"
     old="$(sed 's/.*://' "$S/server")"
-    echo "ghcr.io/goauthentik/server:$envtag" >"$S/server"
-    echo "ghcr.io/goauthentik/server:$envtag" >"$S/worker"
-    if [ -f "$S/migrate" ] && [ "$old" != "$envtag" ] && [ "$envtag" != 2026.8.0 ]; then echo 777 >"$S/migrations"; fi
+    echo "ghcr.io/goauthentik/server:$tag" >"$S/server"
+    echo "ghcr.io/goauthentik/server:$tag" >"$S/worker"
+    if [ -f "$S/migrate" ] && [ "$old" != "$tag" ] && [ "$tag" != 2026.8.0 ]; then echo 777 >"$S/migrations"; fi
+    # authentik's system migrations: a new version adds its row before any Django migration runs
+    if [ -f "$S/sysmigrate" ] && [ "$old" != "$tag" ] && [ "$tag" != 2026.8.0 ]; then echo $(($(cat "$S/vh") + 1)) >"$S/vh"; fi
     ;;
   *"compose"*"stop server worker"*)
     [ -f "$S/stopfail" ] && { echo "cannot stop" >&2; exit 1; }
     echo stopped >>"$S/events"; touch "$S/stopped"
+    # from here on, the rollback cannot write a temporary copy of the .env (the fake mktemp)
+    if [ -f "$S/envwritefail" ]; then touch "$S/mktemp-fails"; fi
+    ;;
+  *"exec pg-id"*authentik_version_history*)
+    if [ -f "$S/unreadable-after-stop" ] && [ -f "$S/events" ]; then exit 1; fi
+    echo "$(cat "$S/migrations"):$(cat "$S/vh")"
     ;;
   *"exec pg-id"*"django_migrations"*)
     if [ -f "$S/unreadable-after-stop" ] && [ -f "$S/events" ]; then exit 1; fi
@@ -221,14 +260,21 @@ case "$*" in
     ;;
   *"exec -i pg-id"*dropdb*)
     if [ -f "$S/restorefail" ]; then cat >/dev/null; echo "ERROR: duplicate key (secret-row)" >&2; exit 1; fi
-    cat >"$S/restored"; echo 774 >"$S/migrations"
+    cat >"$S/restored"; echo 774 >"$S/migrations"; echo 12 >"$S/vh"
     ;;
   *) echo "unexpected docker $*" >&2; exit 1 ;;
 esac
 EOF
 sed -i "s|__STATE__|'$S'|" "$tmp/bin/docker"
 printf '#!/usr/bin/env bash\ncase "$*" in *openid-configuration*) echo %s ;; esac\n' "'{\"issuer\":\"i\",\"authorization_endpoint\":\"a\"}'" >"$tmp/bin/curl"
-chmod +x "$tmp/bin/docker" "$tmp/bin/curl"
+# mktemp fails for the .env's temporary copy once the fake stack says so, and says where (as the
+# real one does), so the test also proves that path stays out of the public log.
+cat >"$tmp/bin/mktemp" <<EOF
+#!/usr/bin/env bash
+case "\$*" in *.env-next.*) [ -f '$S/mktemp-fails' ] && { echo "mktemp: failed to create file via template '\$1'" >&2; exit 1; } ;; esac
+exec '$(command -v mktemp)' "\$@"
+EOF
+chmod +x "$tmp/bin/docker" "$tmp/bin/curl" "$tmp/bin/mktemp"
 
 fake_reset() {
   rm -rf "$S"
@@ -237,6 +283,7 @@ fake_reset() {
   echo "$1" >"$S/server"
   echo "$1" >"$S/worker"
   echo 774 >"$S/migrations"
+  echo 12 >"$S/vh"
   : >"$S/calls"
   : >"$S/broken"
   : >"$S/leak"
@@ -247,7 +294,7 @@ fake_reset() {
 # never reach compose. `timeout` bounds a test whose fake would otherwise wait for ever.
 run_deploy() {
   PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient \
-    AK_POLL_SECONDS=0 AK_HEALTH_DEADLINE_SECONDS="${deadline:-0}" AK_DUMP_DIR="$tmp/dumps" \
+    AK_POLL_SECONDS=0 AK_HEALTH_DEADLINE_SECONDS="${deadline:-0}" AK_DUMP_DIR="$tmp/dumps" AK_NOW="${now:-}" \
     timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect --compose infrastructure/authentik/compose.yml >"$tmp/out" 2>&1
 }
 # changed - how many calls changed or dumped anything (reads of the migration count do not count).
@@ -387,11 +434,96 @@ run_deploy; st=$?
 eq "a signal during the restore is ignored: the rollback completes, exit 1" "$st" 1
 eq "  the dump was restored" "$(cat "$S/restored" 2>/dev/null)" DUMPDATA
 
+fake_reset "$O" 2026.8.0; echo "$pin_tag" >"$S/broken"; touch "$S/sysmigrate"
+run_deploy; st=$?
+eq "an upgrade that fails after authentik's SYSTEM migrations alone (Django count flat): exit 1" "$st" 1
+eq "  the dump was restored - the database says it is the new version" "$(cat "$S/restored" 2>/dev/null)" DUMPDATA
+eq "  back on the old tag" "$(cat "$S/server")" "$O"
+
+fake_reset "$O" 2026.8.0; echo "$pin_tag" >"$S/broken"; touch "$S/envwritefail"
+run_deploy; st=$?
+eq "a rollback whose .env line cannot be rewritten but whose backup is put back: exit 1, rolled back" "$st" 1
+eq "  the .env is the backup again, on the old tag" "$(ak_env_tag <"$S/dir/.env")" 2026.8.0
+eq "  its secrets intact" "$(grep -c '^PG_PASS=s3cret$' "$S/dir/.env")" 1
+eq "  back on the old tag" "$(cat "$S/server")" "$O"
+eq "  saying ROLLED BACK, not THE ROLLBACK FAILED" "$(grep -c 'ROLLED BACK' "$tmp/out")/$(grep -c 'THE ROLLBACK FAILED' "$tmp/out")" 1/0
+eq "  and mktemp's host path stays out of the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
+
+fake_reset "$O" 2026.8.0; touch "$S/upfail-once"
+run_deploy; st=$?
+eq "a compose up that fails: rolled back, exit 1" "$st" 1
+eq "  compose's messages, which name the stack's host path, stay out of the public log" "$(grep -cF "$S/dir" "$tmp/out")" 0
+eq "  they are in the 0600 compose log beside the dump" "$(cat "$tmp"/dumps/miconnect/*-compose.log 2>/dev/null | grep -cF "$S/dir")" 1
+eq "  which the log names relatively" "$(grep -c '<dumps>/miconnect/[0-9TZ]*-compose.log' "$tmp/out")" 1
+
+fake_reset "$O" 2026.8.0; touch "$S/configfail"
+run_deploy; st=$?
+eq "compose cannot read the stack's configuration: refused, exit 1" "$st" 1
+eq "  its host path stays out of the public log" "$(grep -cF "$S/dir" "$tmp/out")" 0
+
+# THE RETENTION RUNS ON A NO-OP TOO, so the copies expire without an upgrade. "now" is fixed.
+seed_copies() {
+  mkdir -p "$tmp/dumps/miconnect"
+  for f in 20261001T000000Z-2026.7.0-to-2026.8.0.dump 20261101T000000Z-a-to-b.dump 20261105T000000Z-a-to-b.dump \
+    20261110T000000Z-a-to-b.dump 20261115T000000Z-a-to-b.dump 20261020T115959Z-miconnect.env \
+    20261020T120000Z-miconnect.env 20261001T000000Z-pg.log 20261001T000000Z-compose.log notes.txt; do
+    echo x >"$tmp/dumps/miconnect/$f"
+  done
+}
+kept_copies() { find "$tmp/dumps/miconnect" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | tr '\n' ' '; }
+want_kept="20261020T120000Z-miconnect.env 20261105T000000Z-a-to-b.dump 20261110T000000Z-a-to-b.dump 20261115T000000Z-a-to-b.dump notes.txt "
+
+fake_reset "$pin" "$pin_tag"; seed_copies
+now=20261119T120000Z run_deploy; st=$?
+eq "a no-op run: exit 0" "$st" 0
+eq "  and it pruned: the 3 newest dumps, nothing older than 30 days, a foreign file untouched" "$(kept_copies)" "$want_kept"
+
+fake_reset "$pin" "$pin_tag"; seed_copies
+now=20261119T120000Z run_deploy prune; st=$?
+eq "the daily prune alone: exit 0, the same verdict" "$st/$(kept_copies)" "0/$want_kept"
+eq "  without asking docker anything" "$(grep -c . "$S/calls")" 0
+
 fake_reset "$pin" "$pin_tag"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
 run_deploy; st=$?
 eq "a newer version running: refused, exit 1" "$st" 1
 eq "  and nothing touched" "$(changed)" 0
+
+echo "the workflows: MiConnect's version moves before any estate container, and the daily job mirrors the deploy:"
+# step_line <workflow> <step name> - the line of that step, empty when it is absent.
+step_line() { grep -nF -- "- name: $2" "$1" | sed -n 1p | cut -d: -f1; }
+# before <workflow> <first step> <second step> - both present, the first above the second.
+before() {
+  local a b
+  a="$(step_line "$1" "$2")"
+  b="$(step_line "$1" "$3")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]
+}
+if before .github/workflows/serve-prod.yml "Put MiConnect on the pinned authentik version" "Deploy the production estate"; then
+  pass "a stable upgrades MiConnect BEFORE it deploys the estate, so a failed upgrade stops it whole"
+else fail "a stable deploys the estate before MiConnect's version: a failed upgrade leaves it half-shipped"; fi
+if before .github/workflows/serve-dev.yml "Put the test MiConnect on the pinned authentik version" "Deploy the dev estate"; then
+  pass "a pre-release upgrades the test MiConnect BEFORE it deploys dev"
+else fail "a pre-release deploys dev before the test MiConnect's version"; fi
+if before .github/workflows/serve-prod.yml "Put MiConnect on the pinned authentik version" "Apply MiConnect's blueprints"; then
+  pass "  and still before the blueprints CI proved on that version"
+else fail "  the blueprints are applied before the version they were proved on"; fi
+# job_env <workflow> <job> - the environment a job runs in (`environment: x` or its `name:`).
+job_env() {
+  awk -v job="  $2:" '
+    $0 == job { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit }
+    in_job && /^    environment:/ {
+      v = $0; sub(/^    environment:[[:space:]]*/, "", v)
+      if (v == "") { getline; v = $0; sub(/^[[:space:]]*name:[[:space:]]*/, "", v) }
+      print v; exit
+    }
+  ' "$1"
+}
+eq "the drift job runs in the environment of the production deploy it mirrors" \
+  "$(job_env .github/workflows/scheduled.yml drift)/$(job_env .github/workflows/serve-prod.yml deploy-to-server)" production/production
+eq "  and expires both stacks' rollback copies every day" \
+  "$(grep -cF "deploy-stack.sh prune --project \"\$project\"" .github/workflows/scheduled.yml)" 1
 
 echo "the blueprint drift report fails on a hand edit and passes on none:"
 cat >"$tmp/applier-drift" <<'EOF'

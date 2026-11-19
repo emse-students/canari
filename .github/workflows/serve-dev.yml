@@ -209,6 +209,22 @@ jobs:
           # was never applied and dev's .env asked for production's port 8080. They are `computed`
           # manifest rows now, upserted by render-env.sh, so one place decides per environment.
 
+      # THE TEST MICONNECT REHEARSES THE VERSION THE STABLE WILL PUT ON PRODUCTION (owner,
+      # 2026-11-13), and it goes FIRST, before any dev container changes: a failed upgrade rolls the
+      # test stack back and FAILS this job HERE, so the dev estate is never deployed half-way and
+      # `dev-deployed` stays where it was - gate 4 then refuses the stable that would carry that
+      # version. The same script the stable runs, on the test stack (`miconnect-test`): restarts only
+      # when what runs differs from this tree's pin, dumps first, checks Docker's health verdict,
+      # `/-/health/ready/` and the OIDC discovery after, rolls back and fails otherwise.
+      # Dev itself still signs in through PRODUCTION's MiConnect; nothing here touches it.
+      - name: Put the test MiConnect on the pinned authentik version
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test
+
       # `dev` IS DEV'S MOVING TAG, FOR EVERY SERVICE AND NOT JUST THE TWO FRONTENDS. It used to be
       # `TAG=latest` for the shared backends and `FRONTEND_TAG=dev` for the frontends, which worked
       # only while one push deployed both estates from one commit. A pre-release and a stable are
@@ -246,20 +262,6 @@ jobs:
             --registry "$REGISTRY" \
             --image-prefix "$IMAGE_PREFIX" \
             --pull-services "$pull"
-
-      # THE TEST MICONNECT REHEARSES THE VERSION THE STABLE WILL PUT ON PRODUCTION (owner,
-      # 2026-11-13). The same script the stable runs, on the test stack (`miconnect-test`): restarts
-      # only when what runs differs from this tree's pin, dumps first, checks Docker's health verdict,
-      # `/-/health/ready/` and the OIDC discovery after, rolls back and FAILS otherwise - which keeps
-      # `dev-deployed` where it was, so gate 4 refuses the stable that would carry that version.
-      # Dev itself still signs in through PRODUCTION's MiConnect; nothing here touches it.
-      - name: Put the test MiConnect on the pinned authentik version
-        working-directory: ${{ env.DEV_DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
-          # stack was left in, and it ignores them while the dump is restored.
-          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test
 
       # MICONNECT'S CONFIGURATION, TRIED AND NOT WRITTEN. Dev signs in through the PRODUCTION
       # MiConnect - there is no dev instance yet - so a pre-release must not change it. It applies
