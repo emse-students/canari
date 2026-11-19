@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   isTerminalReplayState,
+  knownHoles,
   newMediaStart,
   ReplayPlayer,
   replayFailureOutcome,
@@ -56,6 +57,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   mode = 'sequence';
   timestampOffset = 0;
   base = 0;
+  /** The length of the media one segment holds, in seconds. */
+  len = 2;
   appends: string[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
@@ -70,7 +73,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
       const i = indexOfMedia(data);
       this.appends.push(`m${i}`);
       const start = i * 2 + this.base + this.timestampOffset;
-      this.add(start, start + 2);
+      this.add(start, start + this.len);
     }
     this.settle();
   }
@@ -351,6 +354,680 @@ describe('ReplayPlayer', () => {
     await flush();
     expect(buffer().appends.length).toBe(before + 2); // 3 s: 9 s ahead, so m6 and m7 bring it past 12 s
     expect(buffer().appends.slice(before)).toEqual(['m6', 'm7']);
+  });
+
+  describe('holes the live itself had (a camera flip, a background pause)', () => {
+    /** A replay whose media has a gap of `gap` s after segment 7 (media [14, 16] ends at 16). */
+    async function withHole(gap: number) {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = gap;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10; // the lead (12 s across the hole) brings the media on both sides in
+      p.noteTime();
+      await flush();
+      return p;
+    }
+
+    for (const gap of [0.8, 17.6]) {
+      describe(`a ${gap} s hole`, () => {
+        it('is a known fact of the segment list, from the placements of the player', async () => {
+          const p = await withHole(gap);
+          expect(buffer().ranges.length).toBe(2);
+          const inner = p as unknown as {
+            segments: LiveReplaySegment[];
+            placed: Map<number, number>;
+            placedEnd: Map<number, number>;
+          };
+          expect(knownHoles(inner.segments, inner.placed, inner.placedEnd)).toEqual([
+            [16, 16 + gap],
+          ]);
+        });
+
+        it('a playhead stopped just before the edge is carried over it, with no timer', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 15.5; // 0.5 s before the edge, as read on the Mi
+          p.noteStall();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+          expect(timers.length).toBe(0);
+        });
+
+        it('a playhead that reaches the edge crosses it without waiting for a stall', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16.02;
+          p.noteTime();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+        });
+
+        it('a seek INTO the hole lands on the start of the next range', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16 + gap / 2;
+          p.noteSeeking();
+          await flush();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+        });
+
+        it('a wait with more than a segment of the range left is left to the engine', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 14.4; // 1.6 s left in [0, 16]: content still ahead
+          p.noteStall();
+          expect(video.currentTime).toBe(14.4);
+        });
+
+        it('crossing does nothing while the video is seeking', async () => {
+          const p = await withHole(gap);
+          video.seeking = true;
+          video.currentTime = 16.02;
+          p.noteTime();
+          p.noteStall();
+          expect(video.currentTime).toBe(16.02);
+        });
+
+        it('a position just before the next range is on it, not in the hole: no second jump', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16 + gap - 0.005; // inside the engine's start tolerance
+          p.noteTime();
+          expect(video.currentTime).toBeCloseTo(16 + gap - 0.005, 6);
+        });
+
+        it('a wait well inside a range is still left to the engine', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 12;
+          p.noteStall();
+          expect(video.currentTime).toBe(12);
+        });
+      });
+    }
+  });
+
+  describe('what is not a hole', () => {
+    const segs = Array.from({ length: 6 }, (_, i) => ({
+      index: i,
+      name: `s${i}`,
+      bytes: 1,
+      atMs: i * 2000,
+    }));
+    it('a region not loaded yet (neighbour not measured) is no hole', () => {
+      const placed = new Map([
+        [0, 0],
+        [4, 8],
+      ]);
+      expect(knownHoles(segs, placed, new Map([[0, 2]]))).toEqual([]);
+    });
+    it('a region never loaded between two measured segments is no hole', () => {
+      const placed = new Map([
+        [0, 0],
+        [2, 6],
+      ]);
+      expect(knownHoles(segs, placed, new Map([[0, 2]]))).toEqual([]);
+    });
+    it('a gap is a hole from the measures alone, whatever the buffer holds now', () => {
+      const placed = new Map([
+        [0, 0],
+        [1, 5],
+      ]);
+      const ends = new Map([
+        [0, 2],
+        [1, 7],
+      ]);
+      expect(knownHoles(segs, placed, ends)).toEqual([[2, 5]]);
+    });
+    it('the leading gap before the first segment is a hole', () => {
+      expect(knownHoles(segs, new Map([[0, 0.4]]), new Map([[0, 2.4]]))).toEqual([[0, 0.4]]);
+      expect(knownHoles(segs, new Map([[0, 0.02]]), new Map([[0, 2]]))).toEqual([]);
+    });
+    it('a single-segment range between two holes is crossed on both sides', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 0.8; // hole 1 after m7 (ends at 16)
+        if (index === 9) buffer().base = 1.6; // hole 2 after m8 alone ([16.8, 18.8])
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10;
+      p.noteTime();
+      await flush();
+      video.currentTime = 18.3;
+      p.noteStall();
+      expect(video.currentTime).toBeCloseTo(19.6, 5);
+    });
+  });
+
+  describe('the lead is counted across holes, and where a segment sits is never forgotten', () => {
+    const mediaCount = () => buffer().appends.filter((a) => a.startsWith('m')).length;
+
+    it('P1: a hole in the middle of the lead does not make the fill download the whole replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 0.8;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10;
+      p.noteTime();
+      for (let i = 0; i < 5; i++) await flush();
+      // 12 s of media ahead of 10 s across the hole: a handful of segments, never the 200.
+      expect(mediaCount()).toBeLessThanOrEqual(14);
+    });
+
+    it('P2: a first segment at 0.4 s does not make the start download the whole replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      const base = deps.openSegment;
+      let first = true;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (first) {
+          buffer().base = 0.4;
+          first = false;
+        }
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(mediaCount()).toBeLessThanOrEqual(8);
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('P3: an 80 s pause is still crossed after the media beyond it was trimmed', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 80;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (const t of [4, 8, 12, 15.5]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 5; i++) await flush();
+      }
+      // Whatever the buffer dropped, the hole is known from the measures: 16 -> 96.
+      video.currentTime = 15.5;
+      p.noteStall();
+      expect(video.currentTime).toBeCloseTo(96, 5);
+      // And the media there is fetched again when the engine's seek reports it.
+      p.noteSeeking();
+      await flush();
+      expect(buffer().ranges.some(([s, e]) => 96 >= s - 0.01 && 96 < e)).toBe(true);
+    });
+
+    it('the fill re-fetches media the buffer dropped ahead of the playhead', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const before = mediaCount();
+      buffer().remove(4, 100); // the engine evicted everything past 4 s, the cursor is at 6
+      await flush();
+      video.currentTime = 2;
+      p.noteTime();
+      await flush();
+      expect(mediaCount()).toBeGreaterThan(before);
+      expect(buffer().ranges[0][1]).toBeGreaterThan(8);
+    });
+  });
+
+  describe('a seek past the end of its segment, into a hole of the live', () => {
+    /** Segments hold 1 s of media 2 s apart: every landing 1.5 s in is past the segment's end. */
+    async function started(setup?: () => void) {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      setup?.();
+      const p = makePlayer();
+      p.start();
+      await flush();
+      buffer().len = 1;
+      return p;
+    }
+    const inRange = (t: number) => buffer().ranges.some(([s, e]) => t >= s - 0.01 && t < e);
+
+    it('lands on the start of the next segment', async () => {
+      const p = await started();
+      video.currentTime = 101.7; // segment 50 holds [100, 101]; the target is 0.7 s past its end
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('never writes a position in no range when the next segment is a 404 skip', async () => {
+      const ok = deps.fetchSegment;
+      const p = await started(() => {
+        deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+          if (name === 'seg-51')
+            throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+          return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+        }) as never;
+      });
+      video.currentTime = 101.7;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      expect(video.currentTime).toBeCloseTo(104, 1); // over the skipped 51, onto the media after it
+    });
+
+    it('never writes a position in no range when the next segment does not open', async () => {
+      const ok = deps.openSegment;
+      const p = await started(() => {
+        deps.openSegment = vi.fn(async (k: string, id: string, index: number, sealed: unknown) => {
+          if (index === 51) throw new LiveSegmentOpenError('unauthentic', 51, 1);
+          return (ok as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+        }) as never;
+      });
+      video.currentTime = 101.7;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      expect(video.currentTime).toBeCloseTo(104, 1); // over the skipped 51, onto the media after it
+    });
+
+    it('P4: a target segment already buffered is landed on from its measured place', async () => {
+      const p = await started();
+      video.currentTime = 101.2; // segment 50 is [100, 101]: past its end, 51 is taken and landed on
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      // The engine's start tolerance puts the position outside every range, with 50 buffered and no
+      // known hole after it (its end is forgotten here): take(50) reports null.
+      const inner = p as unknown as { placedEnd: Map<number, number> };
+      inner.placedEnd.delete(50);
+      video.currentTime = 101.4;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('lands on the next segment when it is already buffered (take reports null)', async () => {
+      const p = await started();
+      video.currentTime = 102.2; // segment 51 first: [102, 103] is buffered
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 101.7; // 50 is not placed: no known hole, a seek to segment 50
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+  });
+
+  describe('a segment skipped for good (404, does not open) is a hole like any other', () => {
+    const mediaCount = () => buffer().appends.filter((a) => a.startsWith('m')).length;
+    const skip404 = (names: string[]) => {
+      const ok = deps.fetchSegment;
+      deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+        if (names.includes(name))
+          throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+    };
+    const inRange = (t: number) => buffer().ranges.some(([s, e]) => t >= s - 0.01 && t < e);
+
+    it('knownHoles pairs over a skipped segment, and a region not loaded still breaks the pairing', () => {
+      const segs = Array.from({ length: 5 }, (_, i) => ({
+        index: i,
+        name: `s${i}`,
+        bytes: 1,
+        atMs: i * 2000,
+      }));
+      const placed = new Map([
+        [0, 0],
+        [2, 4],
+        [4, 12],
+      ]);
+      const ends = new Map([
+        [0, 2],
+        [2, 6],
+        [4, 14],
+      ]);
+      // 1 skipped: [2, 4] is a hole; 3 is neither measured nor skipped: nothing is known across it.
+      expect(knownHoles(segs, placed, ends, new Set([1]))).toEqual([[2, 4]]);
+    });
+
+    it('Q1: one 404 inside the lead does not make the fill download the replay, nor again on each timeupdate', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(['seg-3']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      expect(mediaCount()).toBeLessThanOrEqual(8);
+      const counts: number[] = [];
+      for (const t of [1, 2, 3, 4]) {
+        video.currentTime = t;
+        p.noteTime();
+        await flush();
+        counts.push(mediaCount());
+      }
+      expect(counts.at(-1)).toBeLessThanOrEqual(10);
+    });
+
+    it('Q8: a segment that does not open (twice) ahead of the playhead keeps the fill bounded', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 3) throw new LiveSegmentOpenError('malformed', 3, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      await flush();
+      expect(mediaCount()).toBeLessThanOrEqual(8);
+    });
+
+    it('a segment that opens on its second download is not skipped', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const base = deps.openSegment;
+      let fails = 1;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 2 && fails-- > 0) throw new LiveSegmentOpenError('malformed', 2, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      await flush();
+      expect(buffer().appends).toContain('m2');
+    });
+
+    it('Q13: a stale seek during the second download of an open failure does not end the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const ok = deps.fetchSegment;
+      let calls30 = 0;
+      deps.fetchSegment = vi.fn((id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-30' && ++calls30 === 2) {
+          return new Promise<ArrayBuffer>((_resolve, reject) =>
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            )
+          );
+        }
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 30) throw new LiveSegmentOpenError('malformed', 30, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 60.2; // seek A: segment 30, its open fails, the second download hangs
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 3; // seek B, buffered: supersedes A, aborting the second download
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(video.currentTime).toBe(3);
+    });
+
+    it('Q14: a 404 on the second download of an open failure skips the segment, not the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const ok = deps.fetchSegment;
+      let calls2 = 0;
+      deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-2' && ++calls2 === 2)
+          throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 2) throw new LiveSegmentOpenError('malformed', 2, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      await flush();
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+      expect(buffer().appends).toContain('m3');
+    });
+
+    it('Q10: a seek whose target and everything after it is skipped lands on the last existing segment before it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(50)(from));
+      skip404(Array.from({ length: 10 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 90.2; // segment 45
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(78, 1); // segment 39
+    });
+
+    it('Q15: skipped segments at the end of a page: the landing follows onto the next page', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(100, 50)(from)
+      );
+      skip404(['seg-48', 'seg-49', 'seg-50']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 97; // segment 48, the last listed page ends at 49
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1); // segment 51, on the next page
+    });
+
+    it('the leading gap is read from the first MEASURED segment when the first ones are skipped', () => {
+      const segs = Array.from({ length: 3 }, (_, i) => ({
+        index: i,
+        name: `s${i}`,
+        bytes: 1,
+        atMs: i * 2000,
+      }));
+      expect(knownHoles(segs, new Map([[2, 4]]), new Map([[2, 6]]), new Set([0, 1]))).toEqual([
+        [0, 4],
+      ]);
+    });
+
+    it('a skipped or held segment is not downloaded again by a seek', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(['seg-50']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100.2;
+      p.noteSeeking();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const calls = () => fetchSegment.mock.calls.filter((c) => c[1] === 'seg-50').length;
+      const before = calls();
+      video.currentTime = 100.4;
+      p.noteSeeking();
+      await flush();
+      expect(calls()).toBe(before);
+    });
+
+    it("Q2/Q3: a stall before a skipped segment's gap is carried over it", async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      skip404(['seg-3']); // media [6, 8] never arrives
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 5.5;
+      p.noteStall();
+      expect(video.currentTime).toBeCloseTo(8, 5);
+    });
+
+    it('Q7: nothing is downloaded behind the playhead after a seek into skipped segments', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(['seg-50', 'seg-51']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100.5;
+      p.noteSeeking();
+      await flush();
+      const inner = p as unknown as { placed: Map<number, number> };
+      const behind = [...inner.placed].filter(([i]) => i > 5 && i < 50);
+      expect(behind).toEqual([]);
+      expect(video.currentTime).toBeCloseTo(104, 1);
+    });
+
+    it('a seek whose target and next segments are all skipped to the end lands on the last existing segment before it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const names = Array.from({ length: 50 }, (_, i) => `seg-${50 + i}`);
+      skip404(names);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 150; // 404s from 50 to the last segment
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush(); // ~50 sequential 404s
+      // Never left unanswered: a position inside a range was written.
+      expect(inRange(video.currentTime)).toBe(true);
+      expect(video.currentTime).toBeCloseTo(98, 1); // segment 49, the last one that exists
+    });
+  });
+
+  describe('the latest seek is the single source of truth', () => {
+    /** Holds every segment fetch named in `held` until the test resolves (or the signal aborts) it. */
+    function holdFetches(held: Set<string>) {
+      const pending = new Map<string, () => void>();
+      const signals = new Map<string, AbortSignal | undefined>();
+      deps.fetchSegment = vi.fn((_id: string, name: string, signal?: AbortSignal) => {
+        const bytes = new TextEncoder().encode(name).buffer as ArrayBuffer;
+        if (!held.has(name)) return Promise.resolve(bytes);
+        signals.set(name, signal);
+        return new Promise<ArrayBuffer>((resolve, reject) => {
+          pending.set(name, () => resolve(bytes));
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        });
+      }) as never;
+      return { pending, signals };
+    }
+
+    async function started(held: string[]) {
+      const fetches = holdFetches(new Set(held));
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      return { p, ...fetches };
+    }
+
+    it('seek to A, seek to B while A loads, A resolves late: the playhead stays at B', async () => {
+      const { p, pending } = await started(['seg-30', 'seg-60']);
+      video.currentTime = 60.2; // A: segment 30
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 120.2; // B: segment 60
+      p.noteSeeking();
+      await flush();
+      pending.get('seg-30')?.(); // a late answer for the older target (a no-op once aborted)
+      await flush();
+      expect(video.currentTime).toBeCloseTo(120.2, 1);
+      pending.get('seg-60')?.();
+      await flush();
+      expect(buffer().appends).not.toContain('m30');
+      expect(buffer().appends).toContain('m60');
+      expect(video.currentTime).toBeCloseTo(120.2, 1);
+    });
+
+    it('cancels the download of the superseded seek', async () => {
+      const { p, signals } = await started(['seg-30', 'seg-60']);
+      video.currentTime = 60.2;
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 120.2;
+      p.noteSeeking();
+      await flush();
+      expect(signals.get('seg-30')?.aborted).toBe(true);
+      expect(signals.get('seg-60')?.aborted).toBe(false);
+    });
+
+    it('a seek back into buffered media while an older seek loads is not overwritten by it', async () => {
+      const { p, pending } = await started(['seg-30']);
+      video.currentTime = 60.2; // A: far, not buffered
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 3; // B: inside the first buffered range
+      p.noteSeeking();
+      await flush();
+      pending.get('seg-30')?.();
+      await flush();
+      expect(video.currentTime).toBe(3);
+      expect(buffer().appends).not.toContain('m30');
+    });
+
+    it('rapid repeated seeks: only the last target is served and the playhead is its own', async () => {
+      const { p, pending } = await started(['seg-20', 'seg-30', 'seg-40', 'seg-50']);
+      for (const t of [40.2, 60.2, 80.2, 100.2]) {
+        video.currentTime = t;
+        p.noteSeeking();
+        await flush();
+      }
+      for (const n of ['seg-20', 'seg-30', 'seg-40', 'seg-50']) pending.get(n)?.();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(100.2, 1);
+      const appended = buffer().appends.filter((a) => a.startsWith('m'));
+      for (const stale of ['m20', 'm30', 'm40']) expect(appended).not.toContain(stale);
+      expect(appended).toContain('m50');
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('works on an engine without AbortSignal.any (iOS 16 WKWebView)', async () => {
+      const saved = (AbortSignal as { any?: unknown }).any;
+      delete (AbortSignal as { any?: unknown }).any;
+      try {
+        const { p, signals, pending } = await started(['seg-30', 'seg-60']);
+        video.currentTime = 60.2;
+        p.noteSeeking();
+        await flush();
+        video.currentTime = 120.2;
+        p.noteSeeking();
+        await flush();
+        expect(signals.get('seg-30')?.aborted).toBe(true);
+        pending.get('seg-60')?.();
+        await flush();
+        expect(buffer().appends).toContain('m60');
+        expect(video.currentTime).toBeCloseTo(120.2, 1);
+        expect(states.at(-1)).toEqual({ kind: 'playing' });
+      } finally {
+        (AbortSignal as { any?: unknown }).any = saved;
+      }
+    });
+
+    it('a retryable failure of seek A then a seek B into buffered media does not leave reconnecting stuck', async () => {
+      let failing = false;
+      const ok = deps.fetchSegment;
+      deps.fetchSegment = ((id: string, name: string, signal?: AbortSignal) =>
+        failing
+          ? Promise.reject(new TransportFailureError(new Error('net')))
+          : ok(id, name, signal)) as never;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      failing = true;
+      video.currentTime = 60.2; // A: outside the buffer, fails retryably
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'reconnecting' });
+      video.currentTime = 0; // B: buffered, with a full lead: no fetch needed
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(video.currentTime).toBe(0);
+    });
+
+    it('loads the target segment first, then the ones ahead of it', async () => {
+      const { p } = await started([]);
+      video.currentTime = 100.4;
+      p.noteSeeking();
+      await flush();
+      const after = buffer().appends.slice(buffer().appends.indexOf('m50'));
+      expect(after.filter((a) => a.startsWith('m'))[0]).toBe('m50');
+      expect(after).toContain('m51');
+    });
   });
 
   it('rebases a replay trimmed to its last hours to zero under a timestampOffset', async () => {
