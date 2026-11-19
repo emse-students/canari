@@ -20,7 +20,7 @@
 # `code-analysis.yml` ("The premises behind media-service's ignores"). Every one is retired by
 # "Every ignored advisory is still reported".
 
-# Every tree with a committed `bun.lock`. `audit-dependencies.test.sh` asserts this list against
+# Every tree with a committed `bun.lock`. `audit-trees.test.sh` asserts this list against
 # `git ls-files '*bun.lock'` (minus its commented exclusions) and against the matrix in
 # `code-analysis.yml`. `libs/handoff` (2026-11-17) holds the source copies of the vendored sign-in
 # handoff modules and their `jose`; nothing audited it before.
