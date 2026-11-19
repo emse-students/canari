@@ -74,11 +74,17 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   data: Uint8Array[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
+  /** The source this buffer belongs to: a write on an ended one reopens it, as the specification says. */
+  source: { readyState: string } | null = null;
+  private reopen() {
+    if (this.source?.readyState === 'ended') this.source.readyState = 'open';
+  }
   get buffered() {
     const r = this.ranges;
     return { length: r.length, start: (i: number) => r[i][0], end: (i: number) => r[i][1] };
   }
   appendBuffer(data: Uint8Array<ArrayBuffer>): void {
+    this.reopen();
     const type = String.fromCharCode(...data.subarray(4, 8));
     this.data.push(data.slice());
     if (type === 'ftyp') this.appends.push(`init${generationOfInit(data)}`);
@@ -105,6 +111,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
     this.ranges = next.sort((a, b) => a[0] - b[0]);
   }
   remove(start: number, end: number): void {
+    this.reopen();
     this.removed.push([start, end]);
     this.ranges = this.ranges.flatMap(([s, e]) => {
       const out: [number, number][] = [];
@@ -130,6 +137,7 @@ class FakeSource extends EventTarget implements ReplayMediaSourceLike {
   buffers: FakeBuffer[] = [];
   addSourceBuffer(): FakeBuffer {
     const b = new FakeBuffer();
+    b.source = this;
     this.buffers.push(b);
     return b;
   }
@@ -350,6 +358,27 @@ describe('ReplayPlayer', () => {
     await flush();
     expect(buffer().appends.filter((a) => a.startsWith('m')).length).toBe(10);
     expect(source.ended).toBe(1);
+  });
+
+  it('keeps the stream ended when the trim behind the playhead reopened it (S12: a halt before the last frame)', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(24)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    for (const t of [6, 12, 18, 24, 30, 36]) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+    }
+    expect(source.ended).toBe(1); // the end is declared with everything in
+    video.currentTime = 47; // the playhead runs on: the trim drops what is far behind it
+    p.noteTime();
+    for (let i = 0; i < 10; i++) await flush();
+    // The trim removed what lies behind the playhead - on a real engine that reopens an ended source,
+    // and an open one waits for more data for ever: the end must have been declared again.
+    expect(buffer().removed.length).toBeGreaterThan(0);
+    expect(source.ended).toBeGreaterThan(1);
+    expect(source.readyState).toBe('ended');
   });
 
   it('seeks outside the buffer to the LAST segment at or before the target and puts the playhead where it landed', async () => {

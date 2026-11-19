@@ -317,8 +317,6 @@ export class ReplayPlayer {
   private seekId = 0;
   /** Cancels the downloads of the latest seek when the next one supersedes it. */
   private seekAbort: AbortController | null = null;
-  /** The end of the stream was declared (the last segment is in): said once per arrival at the end. */
-  private ended = false;
 
   constructor(opts: ReplayPlayerOptions) {
     this.opts = opts;
@@ -509,7 +507,6 @@ export class ReplayPlayer {
     this.seekPending = false;
     this.seekAbort?.abort();
     this.seekAbort = null;
-    this.ended = false;
   }
 
   /** A seek that no longer waits on the network ends the reconnecting screen of an older one's retry. */
@@ -737,12 +734,20 @@ export class ReplayPlayer {
     return this.segments.length;
   }
 
-  /** The last segment is in: the stream ends, and the engine's `ended` closes the picture. Once. */
+  /**
+   * The last segment is in: the stream ends, and the engine's `ended` closes the picture.
+   *
+   * THE ENGINE'S OWN STATE IS THE ONLY MEMORY OF "ended" (measured on desktop Chrome, S12): the
+   * specification reopens an ended source to `open` on ANY `appendBuffer` or `remove`, and an open
+   * source waits for more data forever - the playhead then halts before the last frame with a
+   * spinner. A flag kept here would stay true after the trim behind the playhead (or a refill of a
+   * gap) reopened it. So this runs at every arrival at the end of the list and declares whenever the
+   * source is open: idempotent through `readyState`, never through a flag of ours.
+   */
   private declareEnd(gen: number): void {
     const source = this.source;
-    if (this.ended || !source || !this.alive(gen) || source.readyState !== 'open') return;
+    if (!source || !this.alive(gen) || source.readyState !== 'open') return;
     if (this.buffer?.updating) return;
-    this.ended = true;
     try {
       source.endOfStream();
       console.debug(
@@ -910,7 +915,6 @@ export class ReplayPlayer {
       console.error(
         `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media at all to land on`
       );
-    this.ended = false;
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
     );
