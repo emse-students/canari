@@ -316,7 +316,8 @@ fi
 if has '^apps/call-service/' || \
    has '^tools/headless-chrome/' || \
    has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
-   has '^frontend/src/lib/utils/(callAudio|callKeys|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
+   has '^frontend/src/lib/utils/(callAudio|callKeys|opusPacket|callVideoFrame|callFrameAad|callE2eReport|sessionLog)\.ts$' || \
+   has '^frontend/src/lib/services/callSfuLeg\.ts$' || \
    has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
   echo "call_e2e=true"
 else

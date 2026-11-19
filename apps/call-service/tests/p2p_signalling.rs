@@ -1385,9 +1385,13 @@ async fn join_sfu(svc: &Service, user: &str, room: &str, seats: usize) -> Ws {
     ws
 }
 
-/// The SFU's `Joined`, which carries no resume token (the SFU has no seat to resume).
-async fn sfu_joined(ws: &mut Ws, room: &str) {
-    assert_eq!(recv(ws).await, json!({ "type": "Joined", "room_id": room }));
+/// The SFU's `Joined`, which carries no resume token (the SFU has no seat to resume) and, like a p2p
+/// one, how many seats OTHER users hold (`others`, WP-GC4 client).
+async fn sfu_joined(ws: &mut Ws, room: &str, others: usize) {
+    assert_eq!(
+        recv(ws).await,
+        json!({ "type": "Joined", "room_id": room, "others": others })
+    );
 }
 
 /// The cap is the server's in the relay too: a room of 3 seats seats three users and refuses the
@@ -1397,9 +1401,9 @@ async fn an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user() {
     let svc = start().await;
     let room = "room-sfu-cap";
     let mut seated = Vec::new();
-    for user in ["u0", "u1", "u2"] {
+    for (others, user) in ["u0", "u1", "u2"].into_iter().enumerate() {
         let mut ws = join_sfu(&svc, user, room, 3).await;
-        sfu_joined(&mut ws, room).await;
+        sfu_joined(&mut ws, room, others).await;
         seated.push(ws);
     }
     let mut late = join_sfu(&svc, "late", room, 3).await;
@@ -1413,8 +1417,9 @@ async fn an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user() {
         "all 3 seat(s) are held by other users",
     ])
     .await;
+    // The sibling takes u1's seat: the two OTHER users are u0 and u2.
     let mut sibling = join_sfu(&svc, "u1", room, 3).await;
-    sfu_joined(&mut sibling, room).await;
+    sfu_joined(&mut sibling, room, 2).await;
     svc.logged(&["[multi-device] SFU room", room, "takes the seat of u1:"])
         .await;
 }
@@ -1457,13 +1462,14 @@ async fn an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked() {
     let svc = start().await;
     let room = "room-sfu-free";
     let mut a = join_sfu(&svc, "a", room, 2).await;
-    sfu_joined(&mut a, room).await;
+    sfu_joined(&mut a, room, 0).await;
     let mut b = join_sfu(&svc, "b", room, 2).await;
-    sfu_joined(&mut b, room).await;
+    sfu_joined(&mut b, room, 1).await;
     b.close(None).await.unwrap();
     svc.logged(&["seat freed", room, "held=1/2"]).await;
+    // B's freed seat is not counted: the one other user is A.
     let mut c = join_sfu(&svc, "c", room, 2).await;
-    sfu_joined(&mut c, room).await;
+    sfu_joined(&mut c, room, 1).await;
 
     let mut other = join_sfu(&svc, "d", room, 3).await;
     assert_eq!(

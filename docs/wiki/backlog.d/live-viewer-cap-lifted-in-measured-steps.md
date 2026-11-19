@@ -2,6 +2,8 @@
 
 target: 1.8.0
 
+**Owner, 2026-11-19:** a viewer is NEVER refused. Quality steps down to the lowest rung; a viewer past what that rung carries waits on "Connexion au direct..." until a seat frees ([decisions](owner-decisions-of-2026-11-19.md)).
+
 Split on 2026-11-17 from the WP-L8 moderation entry, which is closed in code: the cap is not
 moderation, and no code can lift it before the owner's decisions and the measurements below. The
 design, the bounds and their arithmetic are on [live-scaling](../frontend/modules/live-scaling.md);

@@ -297,7 +297,7 @@ describe('CreatePostForm - a picked vertical short video is said to be a CanaRee
   it('a landscape video, a longer one or an unreadable one stays a post: no notice', async () => {
     for (const metadata of [
       { durationMs: 30_000, width: 1920, height: 1080 },
-      { durationMs: 90_001, width: 1080, height: 1920 },
+      { durationMs: 90_501, width: 1080, height: 1920 },
       { durationMs: null, width: null, height: null },
     ]) {
       pickedVideo.metadata = metadata;

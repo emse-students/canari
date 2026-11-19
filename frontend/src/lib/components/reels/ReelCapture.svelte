@@ -64,7 +64,7 @@
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { readVideoMetadata } from '$lib/reels/videoDuration';
-  import { isReelFrame, reelRuleOf } from '$lib/reels/reelRule';
+  import { reelPickRefusal, reelPickRefusalText, reelRuleOf } from '$lib/reels/reelRule';
   import { attachCapturePoster } from '$lib/reels/capturePoster';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
@@ -765,11 +765,13 @@
     }
     const poster = takePoster;
     takePoster = null;
+    // The frame the canvas drew, read before `stopFraming` drops it: "Envoyer a..." decides on it.
+    const size = framed?.size ?? null;
     try {
       const blob = await ending.stop();
       send({
         type: 'stopped',
-        clip: { blob, source: 'camera', poster, durationMs: elapsedMs },
+        clip: { blob, source: 'camera', poster, durationMs: elapsedMs, ...size },
       });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';
@@ -871,23 +873,31 @@
       return;
     }
     const { durationMs, width, height } = await readVideoMetadata(file);
-    if (durationMs !== null && durationMs > capMs) {
-      console.warn(`[reel-capture] picked ${durationMs} ms, over ${capMs}`);
-      showToast(m.reels_capture_too_long({ seconds: Math.round(capMs / 1000) }), 'error');
-      return;
-    }
-    // A CanaReel is VERTICAL (owner, 2026-11-09, `reels/reelRule.ts`): a landscape or square pick is
-    // a post video, refused here with where to publish it. A frame the engine cannot read is let
-    // through: the publish reads the PREPARED frame, the one the server is told, and decides there.
+    // A CanaReel is VERTICAL OR SHORT (owner, 2026-11-14, `reels/reelRule.ts`): only a long landscape
+    // pick is a post video, refused here with where to publish it. A length or a frame the engine
+    // cannot read is let through: the publish reads the PREPARED file and decides there.
     const rule = limits ? reelRuleOf(limits) : null;
-    if (rule && width !== null && height !== null && !isReelFrame(width, height, rule)) {
-      console.warn(`[reel-capture] picked a ${width}x${height} video, not vertical`);
-      showToast(m.reels_capture_not_vertical(), 'error');
+    const refusal = reelPickRefusal(
+      { durationMs, width, height },
+      rule,
+      capMs,
+      destination === 'chat' ? 'chat' : 'feed'
+    );
+    if (refusal) {
+      console.warn(
+        `[reel-capture] picked ${width ?? '?'}x${height ?? '?'}, ${durationMs ?? '?'} ms: refused (${refusal.reason}, ${destination})`
+      );
+      showToast(reelPickRefusalText(refusal, destination === 'chat' ? 'chat' : 'feed'), 'error');
       return;
     }
     send({
       type: 'picked',
-      clip: { blob: file, source: 'gallery', ...(durationMs !== null ? { durationMs } : {}) },
+      clip: {
+        blob: file,
+        source: 'gallery',
+        ...(durationMs !== null ? { durationMs } : {}),
+        ...(width !== null && height !== null ? { width, height } : {}),
+      },
     });
   }
 
@@ -1084,6 +1094,7 @@
         host={sendHost}
         cap={sendTargetCap}
         {chatCapMs}
+        rule={limits ? reelRuleOf(limits) : null}
         preticked={sendPreticked}
         onclose={() => (sendOpen = false)}
         sending={sendingTake}

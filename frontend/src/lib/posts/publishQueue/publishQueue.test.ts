@@ -843,7 +843,9 @@ describe('PublishQueue - every vertical video of 90 s or less is a CanaReel (own
     };
     expect(await at({ width: 1080, height: 1350, durationMs: 90_000 })).toBe('reel');
     expect(await at({ width: 1081, height: 1350, durationMs: 30_000 })).toBeUndefined();
-    expect(await at({ width: 720, height: 1280, durationMs: 90_001 })).toBeUndefined();
+    // The half-second grace is the camera's too (`reelDeclaredDurationMs`): 90.5 s is the cap, 90.501 s is not.
+    expect(await at({ width: 720, height: 1280, durationMs: 90_500 })).toBe('reel');
+    expect(await at({ width: 720, height: 1280, durationMs: 90_501 })).toBeUndefined();
   });
 
   it.each([

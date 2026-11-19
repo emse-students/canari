@@ -95,8 +95,12 @@ it('at a narrow width the TABS scroll and the icon stays: the row never wraps', 
   expect(tabs.classList).toContain('min-w-0');
   expect(tabs.classList).toContain('overflow-x-auto');
   for (const pill of tabs.querySelectorAll('button')) {
-    expect(pill.classList).toContain('shrink-0');
-    expect(pill.classList).toContain('whitespace-nowrap');
+    // A tab shrinks with the row and wraps its label (S9: "Campus" ran off at a doubled font).
+    expect(pill.classList).toContain('min-w-0');
+    expect(pill.classList).toContain('flex-1');
+    expect(pill.classList).not.toContain('flex-auto');
+    expect(pill.classList).toContain('[overflow-wrap:anywhere]');
+    expect(pill.classList).not.toContain('whitespace-nowrap');
   }
   // The app's icon-button box (`ui-icon-button`: 44 px touch, 38 px pointer, never shrinks).
   expect(icon.classList).toContain('ui-icon-button');

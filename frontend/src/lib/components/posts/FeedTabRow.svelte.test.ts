@@ -180,5 +180,10 @@ it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step d
   expect(tab.className).toContain('px-2.5');
   expect(tab.className).not.toContain('px-3.5');
   expect(tab.className).toContain('max-[24rem]:text-xs');
-  expect(tab.className).toContain('whitespace-nowrap');
+  // A doubled font wraps the label inside the tab; it never runs off the row.
+  expect(tab.className).not.toContain('whitespace-nowrap');
+  expect(tab.className).toContain('min-w-0');
+  expect(tab.className.split(' ')).toContain('flex-1');
+  expect(tab.className).not.toContain('flex-auto');
+  expect(tab.className).toContain('[overflow-wrap:anywhere]');
 });

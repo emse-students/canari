@@ -256,7 +256,9 @@
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
-            <span class="min-w-0 break-words">{opt.label}</span>
+            <span class="min-w-0 [overflow-wrap:anywhere] break-words hyphens-auto"
+              >{opt.label}</span
+            >
           </button>
         {/each}
       </div>

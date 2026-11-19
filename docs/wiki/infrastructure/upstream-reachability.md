@@ -80,8 +80,9 @@ about how it reads.
 them is only what runs in the estate and the apps: the gallery's avatar path logs `is DOWN` / `is back`
 ([below](#the-app-does-not-keep-asking-a-gallery-known-to-be-down-2026-11-07)), which is a log line and
 alerts nobody; dev's deploy checks its containers when it deploys, not afterwards; the legacy name has
-nothing. This is a gap, filed in [the backlog entry](../backlog.d/p2-the-edge-challenges-the-upstream-monitor.md)
-for the lead to decide.
+nothing. **The owner accepted this gap on 2026-11-19** (*"on accepte le trou et on en parle plus avant que
+je remette le sujet sur la table"*): nothing is built for it and the question is not raised again until the
+owner reopens it ([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
 
 ## Who watches the monitor
 

@@ -412,6 +412,14 @@ export interface ReelLimits {
    * server - read through `reelRuleOf` (`reels/reelRule.ts`), the one classifier.
    */
   maxAspectRatio?: number;
+  /**
+   * The rule the server's door applies, `'vertical-or-short'` since 2026-11-14 (owner: every
+   * vertical video, and every video of 90 s or less, is a CanaReel) and absent from an older server,
+   * which refuses a landscape reel - read through `reelRuleOf`, the version-skew gate.
+   */
+  rule?: 'vertical-or-short';
+  /** The longest VERTICAL reel (3 min, owner 2026-11-14), served with `rule`. */
+  maxVerticalDurationMs?: number;
   retentionDays: number;
   warningWindowDays: number;
 }
@@ -522,7 +530,7 @@ export interface CreatePostPayload {
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
-  /** A reel's length in ms, 1 to `ReelLimits.maxDurationMs`; required on a reel, absent otherwise. */
+  /** A reel's length in ms, within `isReelVideo`'s cap for its frame; required on a reel, absent otherwise. */
   durationMs?: number;
 }
 
