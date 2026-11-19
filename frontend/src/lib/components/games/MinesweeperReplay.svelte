@@ -221,9 +221,7 @@
         </div>
       </div>
 
-      <div
-        class="border-cn-border shrink-0 space-y-3 border-t px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-      >
+      <div class="border-cn-border shrink-0 space-y-3 border-t px-4 pt-3 pb-3">
         <div class="flex items-center gap-3">
           <Button
             icon
