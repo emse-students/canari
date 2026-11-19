@@ -1,6 +1,6 @@
 # Paid public forms - the chantier, decisions as taken
 
-**Status: BUILT (opened 2026-10-15; WP-P0 to WP-P4 merged by 2026-10-22, #2229-#2232), one reading owed: a guest payment observed on dev, [its entry](backlog.d/reading-owed-a-guest-pays-a-priced-public-form.md).** Parallel to [bookings-chantier](bookings-chantier.md).
+**Status: BUILT (opened 2026-10-15; WP-P0 to WP-P4 merged by 2026-10-22, #2229-#2232), and CLOSED: the guest-payment reading on dev was waived by the owner on 2026-11-19 (*"tout fonctionne"*).** Parallel to [bookings-chantier](bookings-chantier.md).
 
 ## The need, and its scope (user, 2026-10-15)
 

@@ -117,7 +117,6 @@ earliest version, as a checklist.
 - [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 - [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
-- [ ] [a guest with no account pays a priced public form through Lydia, on dev (audited 2026-11-19)](backlog.d/reading-owed-a-guest-pays-a-priced-public-form.md)
 
 ## 1.8.0
 
