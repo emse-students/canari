@@ -127,6 +127,10 @@ earliest version, as a checklist.
 - [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
 - [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
 
+**P3 - hygiene**
+
+- [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
+
 ## 1.7.3
 
 _No entry planned beyond its readings._

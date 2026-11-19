@@ -511,3 +511,27 @@ Pinned in `replayPlayer.test.ts` with deferred fetches (late answer, rapid repea
 into buffered media, abort of the stale download). **Owed:** a reading on a desktop browser and on
 both bench phones on dev (dragging the bar repeatedly while loading), listed in
 [the backlog entry](backlog.d/replay-seek-decoupled-from-loading.md).
+
+### Holes in the replay timeline: crossed by construction (S11, 2026-11-19)
+
+A replay is NOT contiguous media. The live itself has holes: a camera flip (a new generation and init,
+about 0.8 s on the bench) and a background pause (the broadcaster's app stopped sending, 17.6 s on the
+bench) leave a forward gap between one segment's end and the next one's start. Read on the Mi 9T on a
+live with both: buffered `[0,16.6] [17.4,27.6] [45.2,76.1]`; the playhead stopped 0.5 s before the first
+hole and never moved, because `noteStall` took a stop inside a buffered range for the engine's own wait.
+Every earlier fixture was contiguous, which is why no test saw it.
+
+The rule: **a hole is a fact of the segment list, never something detected by a stall.**
+`knownHoles(segments, placed, spans)` returns the gap after the range holding a placed segment when its
+list neighbour is also placed, later than that range's end; a region merely not loaded yet is not a
+hole. The player then:
+
+- on `timeupdate`, a playhead at a hole's start jumps to the start of the media after it;
+- on `waiting`, a playhead within `REPLAY_HOLE_TAIL_S` (1.5 s, a segment's own length) before the edge
+  - the engine ran out of playable media there - does the same; a wait deeper in a range stays the
+  engine's;
+- a seek whose target is INSIDE a hole lands on the next range's start; a seek past its segment's own
+  end with the next segment not yet loaded takes that segment and lands on its start.
+
+No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in
+`replayPlayer.test.ts`. Owed: the same reading on both phones with a live that flipped and paused.

@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   isTerminalReplayState,
+  knownHoles,
   newMediaStart,
   ReplayPlayer,
   replayFailureOutcome,
@@ -351,6 +352,75 @@ describe('ReplayPlayer', () => {
     await flush();
     expect(buffer().appends.length).toBe(before + 2); // 3 s: 9 s ahead, so m6 and m7 bring it past 12 s
     expect(buffer().appends.slice(before)).toEqual(['m6', 'm7']);
+  });
+
+  describe('holes the live itself had (a camera flip, a background pause)', () => {
+    /** A replay whose media has a gap of `gap` s after segment 7 (media [14, 16] ends at 16). */
+    async function withHole(gap: number) {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = gap;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10; // brings m6..m9 in: both sides of the hole are placed
+      p.noteTime();
+      await flush();
+      return p;
+    }
+
+    for (const gap of [0.8, 17.6]) {
+      describe(`a ${gap} s hole`, () => {
+        it('is a known fact of the segment list', async () => {
+          await withHole(gap);
+          expect(buffer().ranges.length).toBe(2);
+          const holes = knownHoles(
+            Array.from({ length: 40 }, (_, i) => ({
+              index: i,
+              name: `seg-${i}`,
+              bytes: 1,
+              atMs: i * 2000,
+            })),
+            new Map(buffer().ranges.flatMap(([s], i) => (i === 0 ? [[7, 14]] : [[8, s]]))),
+            buffer().ranges
+          );
+          expect(holes).toEqual([[16, 16 + gap]]);
+        });
+
+        it('a playhead stopped just before the edge is carried over it, with no timer', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 15.5; // 0.5 s before the edge, as read on the Mi
+          p.noteStall();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+          expect(timers.length).toBe(0);
+        });
+
+        it('a playhead that reaches the edge crosses it without waiting for a stall', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16.02;
+          p.noteTime();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+        });
+
+        it('a seek INTO the hole lands on the start of the next range', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16 + gap / 2;
+          p.noteSeeking();
+          await flush();
+          expect(video.currentTime).toBeCloseTo(16 + gap, 5);
+        });
+
+        it('a wait well inside a range is still left to the engine', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 12;
+          p.noteStall();
+          expect(video.currentTime).toBe(12);
+        });
+      });
+    }
   });
 
   describe('the latest seek is the single source of truth', () => {
