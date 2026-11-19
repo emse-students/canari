@@ -155,6 +155,8 @@ const HELD = `debug: [LIVE] viewer ${S}: waiting at 55.56 with 2.63 s buffered a
 const HELD_END_MS = (ms) => `debug: [LIVE] viewer ${S}: the engine's own wait at 55.56 ended by itself after 309 ms, now at 55.74: held about ${ms} ms (budget 500 ms)`;
 const HELD_END = HELD_END_MS(129);
 const VIEWER_SUMMARY = (why) => `log: [LIVE] viewer ${S} (${why}): 30 segments played, 0 skipped, 2 seeks, at 29`;
+const FIRST_HOLD = (level) => `${level}: [LIVE] viewer ${S}: a last video frame written 999/30000 s, appended 7200/90000 s`;
+ok('the first held last frame (#3862) is forgiven on a viewer at debug, NOT at warn', forgiven('LIVE-STALL-1', 'W2', FIRST_HOLD('debug')) && !forgiven('LIVE-STALL-1', 'W2', FIRST_HOLD('warn')));
 const VIEWER_SUMMARY_HOLDS = (why) => `log: [LIVE] viewer ${S} (${why}): 30 segments played, 0 skipped, 2 seeks, 7 last frames held, at 29`;
 ok('the 1.7.1 summary with its held last frames (#3862) is forgiven too, the earlier form still is', forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY_HOLDS('playing')) && forgiven('LIVE-STALL-1', 'W4', VIEWER_SUMMARY_HOLDS('ended')) && !forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY_HOLDS('stopped')));
 ok('the summary while playing and at the end is forgiven on a viewer (LIVE-STALL-1, 1.5.1-alpha.9)', forgiven('LIVE-STALL-1', 'W2', VIEWER_SUMMARY('playing')) && forgiven('LIVE-STALL-1', 'W4', VIEWER_SUMMARY('ended')));

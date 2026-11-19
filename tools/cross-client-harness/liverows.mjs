@@ -325,6 +325,9 @@ const VIEWER = [
   // (#3862, the A/V drift fix); a build before it writes the line without that clause.
   at(L, String.raw`\[LIVE\] viewer ${S} \((?:playing|ended)\): ${N} segments played, ${N} skipped, ${N} seeks(?:, ${N} last frames held)?, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
+  // The A/V drift fix acting (#3862): once per run, at the first last frame lengthened to more than
+  // twice its written duration - a broadcaster's camera under 15 fps. Narration, not a fault.
+  at(D, String.raw`\[LIVE\] viewer ${S}: a last video frame written ${N}/${N} s, appended ${N}/${N} s`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
 ];
 
