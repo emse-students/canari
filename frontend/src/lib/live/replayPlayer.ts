@@ -314,6 +314,7 @@ export class ReplayPlayer {
     this.enqueue(gen, async () => {
       if (this.isStale(ticket)) {
         console.debug(`[LIVE_REPLAY] seek ${ticket.id} to ${at.toFixed(2)} superseded - dropped`);
+        this.endReconnecting();
         return;
       }
       this.seekPending = false;
@@ -322,6 +323,8 @@ export class ReplayPlayer {
       );
       if (span) {
         this.cursor = this.cursorAfter(span);
+        // The older seek's retry (if any) is void: the playhead is on media, nothing is being waited for.
+        this.endReconnecting();
         console.debug(
           `[LIVE_REPLAY] seek to ${at.toFixed(2)}: buffered, next segment ${this.cursor}`
         );
@@ -379,8 +382,15 @@ export class ReplayPlayer {
     this.seekPending = false;
     this.seekAbort?.abort();
     this.seekAbort = null;
-    this.seekId = 0;
     this.ended = false;
+  }
+
+  /** A seek that no longer waits on the network ends the reconnecting screen of an older one's retry. */
+  private endReconnecting(): void {
+    if (this.state.kind !== 'reconnecting') return;
+    this.cancelTimer?.();
+    this.cancelTimer = null;
+    this.setState({ kind: 'playing' });
   }
 
   /** Whether a newer seek has replaced `ticket`: its results must not touch the playhead. */
@@ -402,6 +412,8 @@ export class ReplayPlayer {
   }
 
   private teardownMedia(): void {
+    this.seekAbort?.abort();
+    this.seekAbort = null;
     this.downloads?.abort();
     this.downloads = null;
     this.cancelTimer?.();
@@ -642,13 +654,11 @@ export class ReplayPlayer {
     ticket?: SeekTicket
   ): Promise<Uint8Array<ArrayBuffer> | null> {
     let sealed: ArrayBuffer;
-    const signals = [this.downloads?.signal, ticket?.signal].filter((x): x is AbortSignal => !!x);
+    // A seek's download has its own controller (no AbortSignal.any: absent before iOS 17.4 / Chrome 116);
+    // `teardownMedia` aborts it with the rest, so it needs no chaining.
+    const signal = ticket ? ticket.signal : this.downloads?.signal;
     try {
-      sealed = await this.deps.fetchSegment(
-        this.liveId,
-        s.name,
-        signals.length > 1 ? AbortSignal.any(signals) : signals[0]
-      );
+      sealed = await this.deps.fetchSegment(this.liveId, s.name, signal);
     } catch (e) {
       // A cancelled stale seek is not a failure: its target is gone, and the newer seek serves its own.
       if (ticket && this.isStale(ticket)) return null;
@@ -662,6 +672,8 @@ export class ReplayPlayer {
     try {
       const media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
       this.openFailures = 0;
+      // Decrypted for a target that has since moved: not worth an append.
+      if (ticket && this.isStale(ticket)) return null;
       return media;
     } catch (e) {
       if (!(e instanceof LiveSegmentOpenError)) throw e;

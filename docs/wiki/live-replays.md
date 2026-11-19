@@ -490,11 +490,16 @@ back into buffered media (which writes nothing itself) was simply overwritten.
 **The rule.** The user's LATEST seek is the single source of truth; only it may write the playhead.
 
 - Every seek takes a ticket `{id, signal}` (`seekId`, a counter - never a clock). A newer seek bumps
-  `seekId` and aborts the older ticket's signal, so its in-flight fetch is cancelled rather than
-  waited for, and its queued step returns at once.
+  `seekId` (monotonic, never reset) and aborts the older ticket's controller, so its in-flight fetch
+  is cancelled rather than waited for, and its queued step returns at once. The seek's download has
+  its OWN controller, aborted with the rest by `teardownMedia`: never `AbortSignal.any`, which iOS 16
+  WKWebView lacks (pinned by a test that deletes it).
 - After every `await` of a seek (page listing, fetch, decrypt, append) the ticket is compared with
   `seekId`; a stale one stops and logs. A cancelled stale fetch is not a failure (no retry, no
-  "reconnecting").
+  "reconnecting"), and a dropped stale step or a seek into buffered media ends a "reconnecting"
+  left by an older seek's retry.
+- Known and pre-existing: a seek still queues behind ONE untracked step already running (a fill's
+  segment download or a page listing), which is not cancelled by a seek.
 - Appends never set `currentTime`: the seek step's final write is the ONLY write, and it is
   ticket-guarded. Background fills only append; they were never a writer.
 - Loading serves the target first: the seek step takes the segment holding the target, then `fill`

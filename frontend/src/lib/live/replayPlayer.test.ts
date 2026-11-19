@@ -441,6 +441,51 @@ describe('ReplayPlayer', () => {
       expect(states.at(-1)).toEqual({ kind: 'playing' });
     });
 
+    it('works on an engine without AbortSignal.any (iOS 16 WKWebView)', async () => {
+      const saved = (AbortSignal as { any?: unknown }).any;
+      delete (AbortSignal as { any?: unknown }).any;
+      try {
+        const { p, signals, pending } = await started(['seg-30', 'seg-60']);
+        video.currentTime = 60.2;
+        p.noteSeeking();
+        await flush();
+        video.currentTime = 120.2;
+        p.noteSeeking();
+        await flush();
+        expect(signals.get('seg-30')?.aborted).toBe(true);
+        pending.get('seg-60')?.();
+        await flush();
+        expect(buffer().appends).toContain('m60');
+        expect(video.currentTime).toBeCloseTo(120.2, 1);
+        expect(states.at(-1)).toEqual({ kind: 'playing' });
+      } finally {
+        (AbortSignal as { any?: unknown }).any = saved;
+      }
+    });
+
+    it('a retryable failure of seek A then a seek B into buffered media does not leave reconnecting stuck', async () => {
+      let failing = false;
+      const ok = deps.fetchSegment;
+      deps.fetchSegment = ((id: string, name: string, signal?: AbortSignal) =>
+        failing
+          ? Promise.reject(new TransportFailureError(new Error('net')))
+          : ok(id, name, signal)) as never;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      failing = true;
+      video.currentTime = 60.2; // A: outside the buffer, fails retryably
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'reconnecting' });
+      video.currentTime = 0; // B: buffered, with a full lead: no fetch needed
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(video.currentTime).toBe(0);
+    });
+
     it('loads the target segment first, then the ones ahead of it', async () => {
       const { p } = await started([]);
       video.currentTime = 100.4;
