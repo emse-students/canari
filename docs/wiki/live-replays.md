@@ -449,7 +449,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -480,6 +480,107 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 **`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](backlog.d/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
 
 Owed: the phone readings listed above (cover and time left on the card included).
+
+## A replay seek: the latest target alone moves the playhead (owner, 2026-11-19)
+
+Reported on a desktop browser: drag the bar, the player loads; drag again while it loads and the
+playhead is thrown back to the earlier position ("il faut decorreler la lecture et le chargement").
+
+**Root cause.** `ReplayPlayer.noteSeeking` queued one serial step per `seeking` event, and each step
+ended by WRITING `video.currentTime` where ITS segment landed. A step for an older target still held
+the queue (its fetch pending), so when it completed it moved the playhead to the old target; a seek
+back into buffered media (which writes nothing itself) was simply overwritten.
+
+**The rule.** The user's LATEST seek is the single source of truth; only it may write the playhead.
+
+- Every seek takes a ticket `{id, signal}` (`seekId`, a counter - never a clock). A newer seek bumps
+  `seekId` (monotonic, never reset) and aborts the older ticket's controller, so its in-flight fetch
+  is cancelled rather than waited for, and its queued step returns at once. The seek's download has
+  its OWN controller, aborted with the rest by `teardownMedia`: never `AbortSignal.any`, which iOS 16
+  WKWebView lacks (pinned by a test that deletes it).
+- After every `await` of a seek (page listing, fetch, decrypt, append) the ticket is compared with
+  `seekId`; a stale one stops and logs. A cancelled stale fetch is not a failure (no retry, no
+  "reconnecting"), and a dropped stale step or a seek into buffered media ends a "reconnecting"
+  left by an older seek's retry.
+- Known and pre-existing: a seek still queues behind ONE untracked step already running (a fill's
+  segment download or a page listing), which is not cancelled by a seek.
+- Appends never set `currentTime`; background fills only append. **The invariant: every playhead write
+  of the replay player is a seek, and the newest seek wins.** The writers are three: the seek step's
+  landing (`seekTo`, ticket-guarded), the seek step's landing on the edge of a hole (`noteSeeking`),
+  and the hole crossing of `crossHole` (itself a seek, which the engine reports as `seeking` and a newer
+  seek supersedes like any other). A position inside no buffered range is never written: every
+  landing is checked against the ranges.
+- Loading serves the target first: the seek step takes the segment holding the target, then `fill`
+  continues from its cursor ahead of it.
+- `LivePlayer` (the live edge) has no user seek: its only playhead write is `seekToEdge`, forward
+  only, from its own state, so it shares none of this.
+
+Pinned in `replayPlayer.test.ts` with deferred fetches (late answer, rapid repeated seeks, seek back
+into buffered media, abort of the stale download). **Owed:** a reading on a desktop browser and on
+both bench phones on dev (dragging the bar repeatedly while loading), listed in
+[the backlog entry](backlog.d/replay-seek-decoupled-from-loading.md).
+
+### Holes in the replay timeline: crossed by construction (S11, 2026-11-19)
+
+A replay is NOT contiguous media. The live itself has holes: a camera flip (a new generation and init,
+about 0.8 s on the bench) and a background pause (the broadcaster's app stopped sending, 17.6 s on the
+bench) leave a forward gap between one segment's end and the next one's start. Read on the Mi 9T on a
+live with both: buffered `[0,16.6] [17.4,27.6] [45.2,76.1]`; the playhead stopped 0.5 s before the first
+hole and never moved, because `noteStall` took a stop inside a buffered range for the engine's own wait.
+Every earlier fixture was contiguous, which is why no test saw it.
+
+The design separates two things. **Where a segment sits in media time** is MEASURED when it is appended
+(`placed` start, `placedEnd` end), kept for the whole session and never forgotten by a trim or an engine
+eviction. **What the SourceBuffer holds now** is read from `buffered`. Holes come from the first, the lead
+and eviction from the second.
+
+The rule: **a hole is a fact of the segment list, never something detected by a stall.**
+`knownHoles(segments, placed, placedEnd, skipped)` returns the gap between where a segment was measured to end and
+where its list neighbour begins (and the leading gap before the first segment, above 0.05 s); a region
+not loaded yet has no measure and is no hole, while a segment skipped for good is transparent (below). The leading gap is read from the first MEASURED segment when only skipped ones precede it. A range holding a single segment
+between two holes is crossed on both sides. **A segment skipped for good (404, or one that does not open)
+is transparent**: each measured segment is paired with the NEXT measured one, so the media the skipped
+one would have held is a hole like any other, and the lead, the far-ahead trim, the crossing and the seek
+landing all follow (a 404 inside the lead used to make the fill download the replay, and again on every
+`timeupdate`). A region not loaded yet, neither measured nor skipped, breaks the pairing. A segment that
+does not open is downloaded once more before it is skipped (a corrupted transfer). The player then:
+
+- **counts its lead across the holes** (`mediaAhead`, leading gap included). A lead that stopped at the
+  hole opened a new range and was never met: the fill downloaded the WHOLE replay (200 of 200 segments in
+  the probe), which on iOS hits the quota. The far-ahead trim is measured the same way, in media seconds
+  across holes, so the media right after an 80 s pause is not "far". Pinned by P1 (hole mid-lead) and P2
+  (first segment at 0.4 s): about 12 s ahead, no more. The fill also never keeps its cursor past a
+  segment the buffer no longer holds ahead of the playhead (`firstGapAhead`): it is fetched again;
+- on `timeupdate`, a playhead at a hole's start jumps to the start of the media after it;
+- on `waiting`, a playhead whose CURRENT range ends at a hole with at most `REPLAY_SEGMENT_LENGTH_S`
+  (1.5 s) of media left does the same - the engine ran out of playable media there. With more left it is
+  the engine's own wait and content still ahead is never skipped. The 0.5 s stop that sets the tail was
+  read on the Mi 9T ONLY and never on iOS. That one constant is also the most a seek lands inside its
+  segment;
+- a seek whose target is INSIDE a hole lands on the next range's start; a seek past its segment's own
+  end with the next segment not yet loaded takes that segment and lands on its start. `take` answers
+  null both for a skipped segment and for one already buffered, so a TARGET or next segment already
+  buffered is landed on from its measured place (the engine would otherwise hang in `seeking`).
+
+A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with ONE shared tolerance
+(0.01 s), so a position is never both and the jump cannot repeat. THE RULE of a landing is: always write
+a position inside a range - the segment after the hole, else the target segment's own start, else
+nothing (logged) - never a position in no range, which hangs the engine's seek and blocks the crossing
+(`video.seeking`). **A user seek is never left unanswered.** When the target's segment is skipped the landing walks
+FORWARD to the first segment that gives media (listing the next page when the walk reaches the end of
+the pages already listed), and BACK to the LAST EXISTING segment before the target when none does - never
+an arbitrary range the buffer happens to hold; only a replay with no media at all logs an error and writes
+nothing. Held and skipped segments are answered from what is known, never downloaded again. The second
+download after an open failure goes through the same handling as the first: a stale seek or a 404 skips
+that segment and never ends the replay.
+`firstGapAhead` starts from the last measured segment only when its end reaches the playhead, else from
+the playhead's own list position, so nothing is fetched behind it.
+
+A hole whose far side the engine evicted is still a hole: the crossing lands there and
+the engine's `seeking` fetches the media again.
+
+No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in
+`replayPlayer.test.ts`. Owed: the same reading on both phones with a live that flipped and paused.
 
 ## WP-R6 as built: the texts
 

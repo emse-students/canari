@@ -82,7 +82,7 @@ earliest version, as a checklist.
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - a replay stalls for good at the first camera flip or background pause of its live (read 2026-11-19, S11)](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)
+- [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 
 **P3 - hygiene**
 
@@ -134,6 +134,7 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - the release deploys MiConnect's version, not its compose file; the test stack is on PostgreSQL 16](backlog.d/miconnect-compose-file-is-not-deployed.md)
+- [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
 
 ## 1.7.3
 
