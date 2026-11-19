@@ -57,6 +57,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   mode = 'sequence';
   timestampOffset = 0;
   base = 0;
+  /** The length of the media one segment holds, in seconds. */
+  len = 2;
   appends: string[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
@@ -71,7 +73,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
       const i = indexOfMedia(data);
       this.appends.push(`m${i}`);
       const start = i * 2 + this.base + this.timestampOffset;
-      this.add(start, start + 2);
+      this.add(start, start + this.len);
     }
     this.settle();
   }
@@ -374,20 +376,16 @@ describe('ReplayPlayer', () => {
 
     for (const gap of [0.8, 17.6]) {
       describe(`a ${gap} s hole`, () => {
-        it('is a known fact of the segment list', async () => {
-          await withHole(gap);
+        it('is a known fact of the segment list, from the placements of the player', async () => {
+          const p = await withHole(gap);
           expect(buffer().ranges.length).toBe(2);
-          const holes = knownHoles(
-            Array.from({ length: 40 }, (_, i) => ({
-              index: i,
-              name: `seg-${i}`,
-              bytes: 1,
-              atMs: i * 2000,
-            })),
-            new Map(buffer().ranges.flatMap(([s], i) => (i === 0 ? [[7, 14]] : [[8, s]]))),
-            buffer().ranges
-          );
-          expect(holes).toEqual([[16, 16 + gap]]);
+          const inner = p as unknown as {
+            segments: LiveReplaySegment[];
+            placed: Map<number, number>;
+          };
+          expect(knownHoles(inner.segments, inner.placed, buffer().ranges)).toEqual([
+            [16, 16 + gap],
+          ]);
         });
 
         it('a playhead stopped just before the edge is carried over it, with no timer', async () => {
@@ -413,6 +411,29 @@ describe('ReplayPlayer', () => {
           expect(video.currentTime).toBeCloseTo(16 + gap, 5);
         });
 
+        it('a wait with more than a segment of the range left is left to the engine', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 14.4; // 1.6 s left in [0, 16]: content still ahead
+          p.noteStall();
+          expect(video.currentTime).toBe(14.4);
+        });
+
+        it('crossing does nothing while the video is seeking', async () => {
+          const p = await withHole(gap);
+          video.seeking = true;
+          video.currentTime = 16.02;
+          p.noteTime();
+          p.noteStall();
+          expect(video.currentTime).toBe(16.02);
+        });
+
+        it('a position just before the next range is on it, not in the hole: no second jump', async () => {
+          const p = await withHole(gap);
+          video.currentTime = 16 + gap - 0.005; // inside the engine's start tolerance
+          p.noteTime();
+          expect(video.currentTime).toBeCloseTo(16 + gap - 0.005, 6);
+        });
+
         it('a wait well inside a range is still left to the engine', async () => {
           const p = await withHole(gap);
           video.currentTime = 12;
@@ -421,6 +442,116 @@ describe('ReplayPlayer', () => {
         });
       });
     }
+  });
+
+  describe('what is not a hole', () => {
+    const segs = Array.from({ length: 6 }, (_, i) => ({
+      index: i,
+      name: `s${i}`,
+      bytes: 1,
+      atMs: i * 2000,
+    }));
+    it('a region not loaded yet (neighbour not placed) is no hole', () => {
+      const placed = new Map([
+        [0, 0],
+        [4, 8],
+      ]);
+      expect(
+        knownHoles(segs, placed, [
+          [0, 2],
+          [8, 10],
+        ])
+      ).toEqual([]);
+    });
+    it('a skipped neighbour (no placement) is no hole', () => {
+      const placed = new Map([
+        [0, 0],
+        [2, 6],
+      ]);
+      expect(
+        knownHoles(segs, placed, [
+          [0, 2],
+          [6, 8],
+        ])
+      ).toEqual([]);
+    });
+    it('a neighbour whose range the engine evicted is no hole to jump to', () => {
+      const placed = new Map([
+        [0, 0],
+        [1, 5],
+      ]);
+      expect(knownHoles(segs, placed, [[0, 2]])).toEqual([]);
+    });
+    it('the leading gap before the first segment is a hole', () => {
+      expect(knownHoles(segs, new Map([[0, 0.4]]), [[0.4, 2.4]])).toEqual([[0, 0.4]]);
+      expect(knownHoles(segs, new Map([[0, 0.02]]), [[0.02, 2]])).toEqual([]);
+    });
+  });
+
+  describe('a seek past the end of its segment, into a hole of the live', () => {
+    /** Segments hold 1 s of media 2 s apart: every landing 1.5 s in is past the segment's end. */
+    async function started(setup?: () => void) {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      setup?.();
+      const p = makePlayer();
+      p.start();
+      await flush();
+      buffer().len = 1;
+      return p;
+    }
+    const inRange = (t: number) => buffer().ranges.some(([s, e]) => t >= s - 0.01 && t < e);
+
+    it('lands on the start of the next segment', async () => {
+      const p = await started();
+      video.currentTime = 101.7; // segment 50 holds [100, 101]; the target is 0.7 s past its end
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('never writes a position in no range when the next segment is a 404 skip', async () => {
+      const ok = deps.fetchSegment;
+      const p = await started(() => {
+        deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+          if (name === 'seg-51')
+            throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+          return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+        }) as never;
+      });
+      video.currentTime = 101.7;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      expect(video.currentTime).toBeCloseTo(100, 1);
+    });
+
+    it('never writes a position in no range when the next segment does not open', async () => {
+      const ok = deps.openSegment;
+      const p = await started(() => {
+        deps.openSegment = vi.fn(async (k: string, id: string, index: number, sealed: unknown) => {
+          if (index === 51) throw new LiveSegmentOpenError('unauthentic', 51, 1);
+          return (ok as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+        }) as never;
+      });
+      video.currentTime = 101.7;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      expect(video.currentTime).toBeCloseTo(100, 1);
+    });
+
+    it('lands on the next segment when it is already buffered (take reports null)', async () => {
+      const p = await started();
+      video.currentTime = 102.2; // segment 51 first: [102, 103] is buffered
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 101.7; // 50 is not placed: no known hole, a seek to segment 50
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
   });
 
   describe('the latest seek is the single source of truth', () => {

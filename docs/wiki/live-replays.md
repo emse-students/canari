@@ -500,8 +500,11 @@ back into buffered media (which writes nothing itself) was simply overwritten.
   left by an older seek's retry.
 - Known and pre-existing: a seek still queues behind ONE untracked step already running (a fill's
   segment download or a page listing), which is not cancelled by a seek.
-- Appends never set `currentTime`: the seek step's final write is the ONLY write, and it is
-  ticket-guarded. Background fills only append; they were never a writer.
+- Appends never set `currentTime`; background fills only append. **The invariant: every playhead write
+  of the replay player is a seek, and the newest seek wins.** The writers are three: the seek step's
+  landing (`seekTo`, ticket-guarded), the seek step's landing on the edge of a hole (`noteSeeking`),
+  and the hole crossing of `crossHole` (itself a seek, which the engine reports as `seeking` and a newer
+  seek supersedes like any other). A position that lies in no buffered range is never written.
 - Loading serves the target first: the seek step takes the segment holding the target, then `fill`
   continues from its cursor ahead of it.
 - `LivePlayer` (the live edge) has no user seek: its only playhead write is `seekToEdge`, forward
@@ -527,11 +530,21 @@ list neighbour is also placed, later than that range's end; a region merely not 
 hole. The player then:
 
 - on `timeupdate`, a playhead at a hole's start jumps to the start of the media after it;
-- on `waiting`, a playhead within `REPLAY_HOLE_TAIL_S` (1.5 s, a segment's own length) before the edge
-  - the engine ran out of playable media there - does the same; a wait deeper in a range stays the
-  engine's;
+- on `waiting`, a playhead whose CURRENT range ends at a hole with at most `REPLAY_SEGMENT_LENGTH_S`
+  (1.5 s) of media left does the same - the engine ran out of playable media there. With more left it is
+  the engine's own wait and content still ahead is never skipped. The 0.5 s stop that sets the tail was
+  read on the Mi 9T ONLY and never on iOS. That one constant is also the most a seek lands inside its
+  segment;
 - a seek whose target is INSIDE a hole lands on the next range's start; a seek past its segment's own
   end with the next segment not yet loaded takes that segment and lands on its start.
+
+A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with ONE shared tolerance
+(0.01 s), so a position is never both and the jump cannot repeat. A seek landing is passed through the
+ranges and falls back to the target segment's own start when the segment after the hole was skipped
+(404, did not open) - never a position in no range, which would hang the engine's seek and block the
+crossing (`video.seeking`). The leading gap before the first segment (above 0.05 s) is a hole too. The
+engine may evict ranges under its quota without `placed` hearing of it: a hole is only reported when
+the segment after it is still inside a buffered range, so an evicted one is re-fetched by a seek.
 
 No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in
 `replayPlayer.test.ts`. Owed: the same reading on both phones with a live that flipped and paused.
