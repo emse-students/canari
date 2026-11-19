@@ -250,6 +250,14 @@ function callRingEndedKey(roomId: string): string {
   return `call:room:${roomId}:ring_ended`;
 }
 
+/**
+ * Why a ring ended, as `ring-end` carries it. `room-empty` (WP-GC7): the sender's hangup left the
+ * room of an answered call with nobody in it, AS THE SENDER SEES IT. From the caller it ends every
+ * member's ring, as any caller's ring-end does; from a participant it stops only their own devices
+ * (see `endRing`).
+ */
+export type RingEndReason = 'cancelled' | 'answered' | 'ended' | 'room-empty';
+
 /** What `prepareRing` hands the background fan-out. */
 interface RingPlan {
   callerId: string;
@@ -1047,12 +1055,18 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Stops the ring on every member device (caller cancelled, someone answered, or the
    * call ended). Sent to ALL members including the sender's own user so sibling devices
    * stop ringing too; the device that is already in the call ignores its own callId.
+   *
+   * On a GROUP call only the caller's ring-end reaches everyone, `room-empty` (WP-GC7) included.
+   * A participant's `room-empty` stops only their own devices and marks nothing: it is the
+   * sender's view of a mesh, not a fact about the room (a member whose links all failed sees nobody
+   * in a live call), and the app has no control to join an ongoing call, so a member whose ring it
+   * stopped would miss that call. The others' rings end with the answer window (`answer_by`).
    */
   async endRing(
     userId: string,
     groupId: string,
     callId: string,
-    reason: 'cancelled' | 'answered' | 'ended'
+    reason: RingEndReason
   ): Promise<{ notified: number }> {
     this.logger.debug(
       `[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`
@@ -1070,6 +1084,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
     // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
+    // `room-empty` (WP-GC7) included: this service holds no fact about who is in the room (the
+    // seats live in call-service's memory), so a participant's word cannot end anyone else's ring.
     const ownOnly = unbound || (binding.maxSeats !== undefined && binding.callerId !== userId);
     if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
