@@ -28,6 +28,9 @@ export async function answerJoinRequestOrToast(
     case 'raced':
       showToast(m.join_request_other_member_answered(), 'info');
       return false;
+    case 'unsupported':
+      showToast(m.join_request_unsupported(), 'error');
+      return false;
     case 'failed':
       showToast(m.join_request_failed(), 'error');
       return false;

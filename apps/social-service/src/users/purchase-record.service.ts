@@ -104,7 +104,7 @@ export class PurchaseRecordService {
     });
   }
 
-  /** Returns the most recent purchase record matching a Stripe payment intent (for idempotency). */
+  /** Returns the most recent purchase record matching a provider payment reference (for idempotency). */
   async findByPaymentIntent(paymentIntentId: string): Promise<PurchaseRecord | null> {
     return this.repo.findOne({ where: { stripePaymentIntentId: paymentIntentId } });
   }

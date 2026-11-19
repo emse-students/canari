@@ -64,6 +64,8 @@ function chatPage(signedIn = ME) {
     releaseAddLock: vi.fn(async () => {}),
     getGroupMemberIdentities: vi.fn(async () => [] as string[]),
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+    // The epoch a confirmed reading carries (`readConfirmedTree`).
+    getEpoch: vi.fn().mockReturnValue(0),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: ['peer-dev'],
       skipped: [],

@@ -464,7 +464,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 ### Payments (Stripe + Lydia)
 
 Only the Lydia pair of columns on `associations` (`lydiaAccountId`/`lydiaOnboardingComplete`,
-migration 037) is read; the `stripe*` pair is kept at rest for rollback ([stripe-archive](../stripe-archive.md)).
+migration 037) exists now; the `stripe*` pair and `users."stripeCustomerId"` are dropped by the held
+migrations social 177 and core 027 ([stripe-archive](../stripe-archive.md)).
 `/api/payments/onboarding` writes to whichever pair matches the platform's currently active
 provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
 created the account, so the two always agree on which provider actually issued the id.

@@ -159,10 +159,14 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
     error.mockRestore();
   });
 
-  it("asks nobody about a person whose seat is not an invitation link's ask", async () => {
-    // A member's invite between its roster write and its Add, or a seat older than the rule: the
-    // server does not name it an ask, so nobody is asked in that person's name - and a Decline would
-    // have found nothing to withdraw.
+  /**
+   * STEP 2 OF THE ADMISSION FIX-FORWARD: a person whose leaves are all gone while their seat stands
+   * (a skipped key package, a revoked only device swept, an evicted only leaf) used to be asked about
+   * to nobody, so their own external commit was their only door. They are asked about now - on a
+   * tree confirmed at the server's epoch, so a tree behind an Add never raises an ask for someone
+   * that Add just brought in.
+   */
+  it("asks a member about a person whose seat is not an invitation link's ask, on a confirmed tree", async () => {
     const onJoinApprovalRequested = vi.fn();
     const log = vi.fn();
     const mlsService = serverVouches({
@@ -172,9 +176,37 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
 
     await run('g-adm-not-an-ask', mlsService, 'stranger', { onJoinApprovalRequested, log });
 
+    // No identity: the seat is not an ask the server holds, and the Decline will carry its proof.
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g-adm-not-an-ask',
+      requesterUserId: 'stranger',
+      requesterDeviceId: 'dev-1',
+    });
+    expect(mlsService.fetchCommitsSince).toHaveBeenCalled();
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('not an invitation-link ask - not added automatically')
+    );
+  });
+
+  it('asks nobody about such a seat while the tree cannot be confirmed at the server epoch', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const mlsService = serverVouches({
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'me' }, { userId: 'stranger' }]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self']),
+      fetchCommitsSince: vi.fn().mockRejectedValue(new Error('offline')),
+    });
+
+    await run('g-adm-unconfirmed', mlsService, 'stranger', { onJoinApprovalRequested, log });
+
     expect(onJoinApprovalRequested).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('not an invitation-link ask'));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("not confirmed at the server's epoch: nobody is asked this pass")
+    );
+    vi.mocked(console.warn).mockRestore();
   });
 
   it('asks nobody about a 1:1 conversation or a channel - only a group takes a join ask', async () => {
@@ -400,7 +432,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
     expect(mlsService.updateInvitationStatus).not.toHaveBeenCalled();
   });
 
-  it('raises no ask for a pending row the server does not name an ask, and leaves it alone', async () => {
+  it('raises an ask for a pending row the server does not name an ask, on a confirmed tree, and leaves it alone', async () => {
     const onJoinApprovalRequested = vi.fn();
     const log = vi.fn();
     const mlsService = makeMls({
@@ -410,10 +442,35 @@ describe('processPendingInvitations - a new user is never added automatically', 
 
     await sweep(mlsService, { onJoinApprovalRequested, log });
 
-    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(onJoinApprovalRequested).toHaveBeenCalledWith({
+      groupId: 'g1',
+      requesterUserId: 'stranger',
+      requesterDeviceId: 's1',
+    });
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('not an invitation-link ask'));
+  });
+
+  it('raises no ask for such a row when the tree confirmed at the server epoch holds the person: an Add just admitted them', async () => {
+    // The first, local read predates the Add that brought `stranger` in; by the confirmed read the
+    // tree holds them, so nobody is asked.
+    const onJoinApprovalRequested = vi.fn();
+    const log = vi.fn();
+    const mlsService = makeMls({
+      ...pendingFor('stranger', 's1', false),
+      getGroupMemberIdentities: vi
+        .fn()
+        .mockResolvedValueOnce(['self:self-device'])
+        .mockResolvedValue(['self:self-device', 'stranger:s1']),
+    });
+
+    await sweep(mlsService, { onJoinApprovalRequested, log });
+
+    expect(onJoinApprovalRequested).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('the local tree was behind, a member: nobody is asked')
+    );
   });
 
   it('raises no ask for a 1:1 conversation, and leaves its row alone', async () => {

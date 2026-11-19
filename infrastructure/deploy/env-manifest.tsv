@@ -29,8 +29,8 @@
 #
 # WHAT `skip` IS FOR, AND WHAT IT IS NOT FOR - corrected 2026-09-02 after the user asked why dev
 # could not test push. `skip` is for a credential whose USE would reach a third party that believes
-# it is talking to production: Stripe moves real money, and CERCLE_API_KEY makes the bar's
-# own checks pass against a copy of the database. No guard inside this repository can undo either.
+# it is talking to production: CERCLE_API_KEY makes the bar's own checks pass against a copy of
+# the database. No guard inside this repository can undo that.
 #
 # LYDIA IS NOT THAT EITHER, SINCE 2026-10-04. The pair Lydia issued is a HOMOLOGATION pair (their
 # sandbox: no real money moves), and dev's compose pins `LYDIA_ENV=homologation` so core-service can

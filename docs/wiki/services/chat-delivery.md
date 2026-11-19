@@ -1338,8 +1338,10 @@ rows and the roster rows of an awaiting seat carry it too.
 
 - `group.join_ask` from `acceptGroupInvite`, after the seat is written, beside the existing
   `welcome_request` to ONE elected device (that election now only answers a member's own devices);
-- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only
-  and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
+- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn`, and on
+  `removed` (a seat that is not an ask, removed on the member's tree epoch - `askId` is then the seat's
+  id, which clears the entries that hold no identity;
+  [mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)), and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
   removes their own awaiting seat; `expired` for each seat `expireUnansweredAsks` deletes; and
   `admitted` after the transaction in which `liftAwaitingAdmission` cleared a flag commits - the
   commit door and the Welcome door, which return the asks they lifted, so a second Add announces

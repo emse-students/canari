@@ -35,11 +35,11 @@ import type {
 export type { ConnectBalanceSummary };
 
 /**
- * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`; Stripe
- * left the product, see docs/wiki/stripe-archive.md). Selection is an admin-editable platform_config
- * field (`paymentProvider`, PATCH /api/users/admin/platform), not an env var - PlatformService reads
- * straight from Postgres on every call with no caching (same pattern as maintenanceEnabled /
- * minClientVersion), so flipping the switch in the admin UI takes effect immediately, no restart.
+ * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`).
+ * Selection is an admin-editable platform_config field (`paymentProvider`, PATCH
+ * /api/users/admin/platform), not an env var - PlatformService reads straight from Postgres on
+ * every call with no caching (same pattern as maintenanceEnabled / minClientVersion), so flipping
+ * the switch in the admin UI takes effect immediately, no restart.
  * The Lydia provider is built once at startup from its env-held secrets
  * (LYDIA_PROVIDER_TOKEN) - only the choice of WHETHER it is live moves to the DB. Callbacks verify
  * with each association's own Business key, never a platform secret (`verifyLydiaRequestCallback`).

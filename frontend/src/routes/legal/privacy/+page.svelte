@@ -1157,8 +1157,10 @@
         avant l'envoi ; les fichiers déposés dans un formulaire et les logos des associations ne le
         sont pas. Un direct ou une rediffusion qui existe au moment d'une sauvegarde nocturne peut y
         laisser ses lignes de base de données (dont le chat chiffré et la clé du direct, elle-même
-        chiffrée par un secret du serveur qui n'est pas dans la base), pour les durées ci-dessus ;
-        les segments vidéo des directs et des rediffusions ne sont jamais sauvegardés. Une
+        chiffrée par un secret du serveur qui n'est pas dans la base), pour les durées ci-dessus :
+        une rediffusion supprimée peut ainsi subsister jusqu'à 14 jours dans les sauvegardes de la
+        base, sous la forme de sa publication (titre, auteur, durée, commentaires), jamais de sa
+        vidéo. Les segments vidéo des directs et des rediffusions ne sont jamais sauvegardés. Une
         sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>

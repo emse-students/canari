@@ -2,6 +2,9 @@
 
 target: 1.9.0
 
+**Owner, 2026-11-19:** the lift of a seal is built ONLY once the seals are counted and honest users are
+shown to reach them (the weekly rate below); the user guide does not mention seals (*"trop technique"*) ([decisions](owner-decisions-of-2026-11-19.md)).
+
 The device ask of the 2026-10-27 interim is DELETED (owner, 2026-10-31: the gate is on the user,
 never the device - [the decision](../protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 What stays from it, NARROWED on 2026-11-01 (review of #2832): a further device of a member asks

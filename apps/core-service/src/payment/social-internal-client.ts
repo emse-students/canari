@@ -46,7 +46,7 @@ export function internalUserAssociationsUrl(userId: string): string {
   return socialUrl(`internal/users/${encodeURIComponent(userId)}/associations`);
 }
 
-/** Internal route reading an association's payment-account fields (Stripe and Lydia ids and flags). */
+/** Internal route reading an association's payment-account fields (the Lydia ids and flags). */
 export function internalPaymentAccountUrl(associationId: string): string {
   return socialUrl(`internal/associations/${encodeURIComponent(associationId)}/payment-account`);
 }
