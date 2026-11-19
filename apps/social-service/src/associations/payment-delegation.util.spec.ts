@@ -240,13 +240,8 @@ describe('payment-delegation util', () => {
       }
     });
 
-    it.each(['paypal', 'card'])(
-      'throws on the unknown value %s instead of guessing',
-      async (v) => {
-        await expect(fetchActivePaymentProvider(http(v))).rejects.toThrow(
-          /unknown payment provider/
-        );
-      }
-    );
+    it.each(['paypal', 'card'])('throws on the unknown value %s instead of guessing', async (v) => {
+      await expect(fetchActivePaymentProvider(http(v))).rejects.toThrow(/unknown payment provider/);
+    });
   });
 });

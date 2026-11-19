@@ -14,7 +14,10 @@ describe('withSubmissionReturnKey', () => {
 
   it('replaces it on a mobile deep link too', () => {
     expect(
-      withSubmissionReturnKey('fr.emse.canari://payment/cancel?session_id={CHECKOUT_SESSION_ID}', id)
+      withSubmissionReturnKey(
+        'fr.emse.canari://payment/cancel?session_id={CHECKOUT_SESSION_ID}',
+        id
+      )
     ).toBe(`fr.emse.canari://payment/cancel?submission_id=${id}`);
   });
 
