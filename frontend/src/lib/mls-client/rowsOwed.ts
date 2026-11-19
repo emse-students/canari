@@ -51,7 +51,11 @@ export class RowsOwedLedger {
    */
   async owe(): Promise<RowOwed> {
     if (this.holds > 0) {
-      console.debug(`[ROWS_OWED] a decrypt waits for ${this.holds} checkpoint(s) to export first`);
+      // AT LOG, ONCE PER WAIT (review of #3851): the attribution of a drain that stalls behind a
+      // checkpoint - at debug, the one line naming the cause of a stopped drain was filtered out.
+      console.log(
+        `[ROWS_OWED] A decrypt waits for ${this.holds} checkpoint(s) to take their export first`
+      );
     }
     // RE-READ AFTER EVERY WAKE: a checkpoint taken between the release that woke this waiter and
     // its turn closes the gate again, and a mark taken then would be outside that hold's set.

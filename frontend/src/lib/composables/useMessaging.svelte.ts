@@ -160,12 +160,10 @@ import {
   previewUpgradeOnto,
 } from '$lib/utils/chat/messageMerge';
 import type { PendingMutation, StoredRowsById } from '$lib/db/types';
-import {
-  settleAgainstPending,
-  type SettledFields,
-  type Settlement,
-} from '$lib/utils/chat/pendingMutations';
+import { settleAgainstPending, type SettledFields } from '$lib/utils/chat/pendingMutations';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { classifyRowWriteFailure } from '$lib/db/rowWriteFailure';
+import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import {
   keepPendingMutation,
   keepPendingMutationForUnreadable,
@@ -208,6 +206,12 @@ interface BatchRowWrite {
   newRows: StoredMessage[];
   /** The pending mutations each written row consumed, removed once the row is on disk. */
   consumedById: Map<string, PendingMutation[]>;
+  /**
+   * The queued frame(s) each row was decrypted from (`AddMessageToChatOptions.frameId`): while the
+   * write is kept, THESE frames' acks are withheld and no other (review of #3851). A row no queued
+   * frame produced has no entry.
+   */
+  framesByRow: Map<string, string[]>;
 }
 
 /**
@@ -656,6 +660,116 @@ export function useMessaging() {
   }
 
   /**
+   * THE FRAMES WHOSE ROWS STAND SHOWN AND NOT STORED - the kept writes' and the kept batches'. What
+   * an application frame's ack must not run ahead of, PER FRAME (review of #3851): counted across
+   * the page, one row that could not be written withheld every ack of every conversation.
+   */
+  function framesLeftUnstored(): ReadonlySet<string> {
+    const frames = new SvelteSet<string>();
+    for (const write of unstoredRowWrites) {
+      for (const ids of write.framesByRow.values()) for (const id of ids) frames.add(id);
+    }
+    for (const kept of unstoredBatches) {
+      for (const message of kept.messages) if (message.frameId) frames.add(message.frameId);
+    }
+    return frames;
+  }
+
+  /** The frames each row of `messages` was decrypted from, keyed by the row id they are written as. */
+  function framesByRowOf(
+    messages: ReadonlyArray<Pick<AddMessageToChatOptions, 'messageId' | 'frameId'>>
+  ): Map<string, string[]> {
+    const byRow = new SvelteMap<string, string[]>();
+    for (const message of messages) {
+      const id = normalizeMessageId(message.messageId);
+      if (!id || !message.frameId) continue;
+      byRow.set(id, [...(byRow.get(id) ?? []), message.frameId]);
+    }
+    return byRow;
+  }
+
+  /** Of `framesByRow`, the entries of the rows a write holds - the frames its failure withholds. */
+  function framesOfWrittenRows(
+    framesByRow: ReadonlyMap<string, string[]>,
+    ...rowSets: ReadonlyArray<readonly StoredMessage[]>
+  ): Map<string, string[]> {
+    const written = new SvelteMap<string, string[]>();
+    for (const rows of rowSets) {
+      for (const row of rows) {
+        const frames = framesByRow.get(row.id);
+        if (frames) written.set(row.id, frames);
+      }
+    }
+    return written;
+  }
+
+  /** How many poison rows this page dropped (`classifyRowWriteFailure`) - said with each one. */
+  let poisonRowsDropped = 0;
+
+  /**
+   * A row the store refused for what it IS: dropped, never kept. Said at ERROR with its frame, and
+   * counted - a row only memory holds, lost from this device at the next reload.
+   */
+  function dropPoisonRow(write: BatchRowWrite, row: StoredMessage, cause: unknown): void {
+    poisonRowsDropped += 1;
+    const errorName = String((cause as { name?: unknown } | null)?.name ?? 'unknown');
+    console.error(
+      `[DB] POISON ROW ${row.id.slice(0, 8)} of "${write.conversationId}" (frame ${write.framesByRow.get(row.id)?.join(',') ?? 'none'}): the store refused it for what it is (${errorName}) and will at every retry - DROPPED from the rows kept, so it stops refusing checkpoints and withholding its frame's ack. Shown, and lost from this device at the next reload (#${poisonRowsDropped} this page):`,
+      cause
+    );
+    logMlsMetric({ kind: 'row_write_poison', errorName, total: poisonRowsDropped });
+  }
+
+  /**
+   * Writes `write` and, when it fails, decides by the failure's TYPE what it owes
+   * (`classifyRowWriteFailure`): a TRANSIENT failure keeps the write whole for the next checkpoint's
+   * hold ({@link unstoredRowWrites}); a POISON one is isolated - each row written on its own, once, so
+   * the rows the store does take are stored, the poison ones dropped ({@link dropPoisonRow}) and any
+   * that now fails transiently kept. One pass over the rows, no retry loop: it terminates.
+   *
+   * Resolves `null` when nothing is left kept, else the failure - for the caller's own line.
+   */
+  async function writeOrKeep(ctx: MessagingContext, write: BatchRowWrite): Promise<unknown> {
+    const failure = await writeBatchRows(ctx, write);
+    if (failure === null) return null;
+    if (classifyRowWriteFailure(failure) === 'transient') {
+      unstoredRowWrites.push(write);
+      return failure;
+    }
+    const rows = [
+      ...write.upgradeRows.map((row) => ({ row, upgrade: true })),
+      ...write.newRows.map((row) => ({ row, upgrade: false })),
+    ];
+    if (rows.length === 1) {
+      dropPoisonRow(write, rows[0].row, failure);
+      return null;
+    }
+    console.warn(
+      `[DB] a write of ${rows.length} row(s) of "${write.conversationId}" was refused for a row it holds - writing them one by one to find it`
+    );
+    let keptFailure: unknown = null;
+    for (const { row, upgrade } of rows) {
+      const frames = write.framesByRow.get(row.id);
+      const single: BatchRowWrite = {
+        conversationId: write.conversationId,
+        upgradeRows: upgrade ? [row] : [],
+        newRows: upgrade ? [] : [row],
+        consumedById: new SvelteMap([[row.id, write.consumedById.get(row.id) ?? []]]),
+        framesByRow: new SvelteMap(frames ? [[row.id, frames]] : []),
+      };
+      const alone = await writeBatchRows(ctx, single);
+      if (alone === null) continue;
+      if (classifyRowWriteFailure(alone) === 'poison') {
+        dropPoisonRow(single, row, alone);
+        continue;
+      }
+      unstoredRowWrites.push(single);
+      keptFailure ??= alone;
+    }
+    return keptFailure;
+  }
+
+  /**
    * Where a kept write's rows live NOW: its own conversation while it is in the map; else the one
    * that SHOWS them - a 1:1 re-keyed onto the group it joined carries its rows under the new key
    * (`setupMessageHandler`, the Welcome's re-key); else nowhere - deleted or purged since.
@@ -706,12 +820,13 @@ export function useMessaging() {
             upgradeRows: kept.upgradeRows.map(moved),
             newRows: kept.newRows.map(moved),
             consumedById: kept.consumedById,
+            framesByRow: kept.framesByRow,
           };
         }
-        const failure = await writeBatchRows(ctx, write);
+        // Kept again when it fails transiently; a poison row met now is dropped (`writeOrKeep`).
+        const failure = await writeOrKeep(ctx, write);
         if (failure !== null) {
           firstCause ??= failure;
-          unstoredRowWrites.push(write);
           continue;
         }
         stored += 1;
@@ -878,9 +993,12 @@ export function useMessaging() {
       if (!rowStoreBlockingSaid) {
         rowStoreBlockingSaid = true;
         // THE CAUSE, ONCE: while the store refuses these rows, every checkpoint is refused - commits
-        // and joins included - until a write lands or the page reloads.
+        // and joins included - until a write lands. A reload does NOT end it by itself (the frames
+        // are withheld, so they are decrypted again and their rows written again): only a failure a
+        // retry can pass is kept here - a row the store refuses for what it is was dropped
+        // (`writeOrKeep`).
         console.error(
-          '[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they are (a commit, a join, a send), or until a reload. Said once per page.'
+          '[ADD_MSG] Rows of applied frames cannot be stored (a transient failure) - every checkpoint is refused until they are (a commit, a join, a send). Said once per page.'
         );
       }
       throw new BufferedRowsNotStoredError(left);
@@ -897,7 +1015,7 @@ export function useMessaging() {
       onBulkIngestStart: (phase) => beginBulkMessageIngest(phase),
       onBulkIngestEnd: (phase) => endBulkMessageIngest(getCtx(), phase),
       holdRowsForCheckpoint: () => holdRowsForCheckpoint(getCtx()),
-      rowsLeftUnstored: () => unstoredRowCount() + keptMessageCount(),
+      framesLeftUnstored: () => framesLeftUnstored(),
     };
   }
 
@@ -1687,10 +1805,14 @@ export function useMessaging() {
           );
         }
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
-          try {
-            // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
-            // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
-            const written = await writeShownUpgrades(ctx, normalized, [
+          // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+          // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
+          // THE BATCH'S OWN WRITE (review of #3851): logged and dropped, a failure left the stored
+          // row the notification's caption while the frame was acknowledged and its generation
+          // spent - kept now, as a new row's is, and its frame's ack waits for it.
+          const write: BatchRowWrite = {
+            conversationId: normalized,
+            upgradeRows: [
               {
                 id: upgraded.id,
                 conversationId: normalized,
@@ -1708,10 +1830,18 @@ export function useMessaging() {
                 ...proofFields,
                 ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
-            ]);
-            if (written.has(upgraded.id)) await removeSettled(ctx, settled.consumed);
-          } catch (e) {
-            console.error('[DB] Failed to upgrade message:', e);
+            ],
+            newRows: [],
+            // Removed by the write once the upgrade is on disk, as before.
+            consumedById: new SvelteMap([[upgraded.id, [...settled.consumed]]]),
+            framesByRow: framesByRowOf([{ messageId: upgraded.id, frameId: options.frameId }]),
+          };
+          const failure = await writeOrKeep(ctx, write);
+          if (failure !== null) {
+            console.error(
+              '[DB] Failed to upgrade message - kept, the next checkpoint stores it first:',
+              failure
+            );
           }
           await settlePendingFor(pendingDeps(ctx), normalized, [upgraded.id]);
         }
@@ -1750,7 +1880,12 @@ export function useMessaging() {
       const stored = await storedRowsFor(ctx, normalized, [newMsg.id]);
       const verdict = storedBodyVerdict(stored, newMsg.id, content);
       if (verdict.kind !== 'new') {
-        await settleStoredBodies([verdict], normalized, ctx);
+        await settleStoredBodies(
+          [verdict],
+          normalized,
+          ctx,
+          framesByRowOf([{ messageId: newMsg.id, frameId: options.frameId }])
+        );
         return;
       }
       // What reached this device before the body - its author's deletion or edit, everyone's
@@ -1913,10 +2048,10 @@ export function useMessaging() {
             upgradeRows: [],
             newRows: [row],
             consumedById: new SvelteMap([[row.id, [...settled.consumed]]]),
+            framesByRow: framesByRowOf([{ messageId: row.id, frameId: options.frameId }]),
           };
-          const failure = await writeBatchRows(ctx, write);
+          const failure = await writeOrKeep(ctx, write);
           if (failure !== null) {
-            unstoredRowWrites.push(write);
             console.error(
               '[DB] Failed to persist message - kept, the next checkpoint stores it first:',
               failure
@@ -2110,9 +2245,12 @@ export function useMessaging() {
   async function settleStoredBodies(
     verdicts: ReadonlyArray<Exclude<StoredBodyVerdict, { kind: 'new' }>>,
     normalized: string,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    framesByRow: ReadonlyMap<string, string[]>
   ) {
     const touched: string[] = [];
+    const upgradeRows: StoredMessage[] = [];
+    const consumedById = new SvelteMap<string, PendingMutation[]>();
     for (const verdict of verdicts) {
       if (verdict.kind === 'unreadable') {
         console.warn(
@@ -2130,39 +2268,46 @@ export function useMessaging() {
       const waiting =
         (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
         [];
-      const { content } = verdict;
-      let settlement: Settlement | null = null;
-      try {
-        // A compare-and-set on the row as it stands AT THE WRITE: a row deleted, edited or upgraded
-        // since the read above is no longer a preview, and is left as it is.
-        const written = await ctx.storage.mergeMessages(
-          normalized,
-          [verdict.row.id],
-          (current) => {
-            if (!shouldUpgradeMessage(current, content)) return null;
-            const next =
-              waiting.length > 0 ? settleAgainstPending({ ...current, content }, waiting) : null;
-            settlement = next;
-            return mergeStoredMessage(current, {
-              content,
-              isFcmPreview: false,
-              ...(next?.fields ? settledStoredPatch(next.fields) : {}),
-            });
-          },
-          ctx.deviceKeyB64
+      const { row, content } = verdict;
+      // What waited for the row lands WITH the body, settled against the row as it was read; the
+      // write below is a compare-and-set that leaves a row no longer a preview as it is
+      // (`previewUpgradeOnto`), and what arrived since is settled after it (`settlePendingFor`).
+      const settlement =
+        waiting.length > 0 ? settleAgainstPending({ ...row, content }, waiting) : null;
+      if (settlement) logDiscarded(settlement, row.senderId);
+      upgradeRows.push({
+        id: row.id,
+        conversationId: normalized,
+        senderId: row.senderId,
+        content,
+        timestamp: row.timestamp,
+        ...(row.serverTimestamp !== undefined ? { serverTimestamp: row.serverTimestamp } : {}),
+        isFcmPreview: false,
+        ...(settlement?.fields ? settledStoredPatch(settlement.fields) : {}),
+      });
+      consumedById.set(row.id, settlement?.consumed ?? []);
+    }
+    if (upgradeRows.length > 0) {
+      // THE BATCH'S OWN WRITE (review of #3851): a failure was logged and dropped, so the stored row
+      // stayed the notification's caption while the frame was acknowledged - kept now, and the
+      // frames of its rows wait for it.
+      const write: BatchRowWrite = {
+        conversationId: normalized,
+        upgradeRows,
+        newRows: [],
+        consumedById,
+        framesByRow: framesOfWrittenRows(framesByRow, upgradeRows),
+      };
+      const failure = await writeOrKeep(ctx, write);
+      if (failure === null) {
+        console.log(
+          `[ADD_MSG] ✓ ${upgradeRows.length} stored preview(s) of "${normalized}" upgraded: ${upgradeRows.map((r) => r.id.slice(0, 8)).join(', ')}`
         );
-        const done = settlement as Settlement | null;
-        if (done) logDiscarded(done, verdict.row.senderId);
-        if (written.size > 0) {
-          console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
-          if (done) await removeSettled(ctx, done.consumed);
-        } else {
-          console.log(
-            `[ADD_MSG] ${verdict.row.id.slice(0, 8)} is no longer a stored preview - the arriving body leaves it as it is`
-          );
-        }
-      } catch (e) {
-        console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
+      } else {
+        console.error(
+          `[DB] ${upgradeRows.length} stored preview(s) of "${normalized}" were not upgraded - kept, the next checkpoint stores them first:`,
+          failure
+        );
       }
     }
     // A held row takes what waited for it; an upgrade, what was kept after its read.
@@ -2334,7 +2479,7 @@ export function useMessaging() {
         });
       }
     }
-    await settleStoredBodies(storedVerdicts, normalized, ctx);
+    await settleStoredBodies(storedVerdicts, normalized, ctx, framesByRowOf(messages));
 
     if (upgradedById.size === 0 && brandNew.length === 0) {
       // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
@@ -2500,17 +2645,17 @@ export function useMessaging() {
         upgradeRows,
         newRows,
         consumedById,
+        framesByRow: framesOfWrittenRows(framesByRowOf(messages), upgradeRows, newRows),
       };
-      const failure = await writeBatchRows(ctx, write);
+      const failure = await writeOrKeep(ctx, write);
       if (failure !== null) {
         // SHOWN AND NOT STORED: kept for the next checkpoint's hold, which retries it and refuses
-        // the export while it fails (rows before ratchet). Said once, here; the retries say one
-        // line each.
+        // the export while it fails (rows before ratchet) - a poison row is dropped instead
+        // (`writeOrKeep`). Said once, here; the retries say one line each.
         console.error(
-          `[DB] batchAddMessages failed - ${upgradeRows.length + newRows.length} row(s) of "${normalized}" shown and NOT stored, kept for the next checkpoint's hold:`,
+          `[DB] batchAddMessages failed - row(s) of "${normalized}" shown and NOT stored, kept for the next checkpoint's hold:`,
           failure
         );
-        unstoredRowWrites.push(write);
       }
       // Kept between the read above and the writes: settled now, against the rows that stand. The
       // batch is rendered and written by now, so a failure here is ITS OWN line - never a throw

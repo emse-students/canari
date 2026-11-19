@@ -1165,19 +1165,38 @@ interface KnownGroupArgs {
 
 /**
  * THE SYSTEM EVENTS THAT KEEP THEIR ROW OWED THROUGH THEIR DISPATCH (rows before ratchet, review of
- * #3851): each writes rows - an edit, a deletion, a history bundle's messages - and its path awaits
- * the store and nothing else, never a checkpoint (read 2026-11-19: `applyEdit`, `applyDeletion`, the
- * `history_bundle` branch and what they call). AN ALLOWLIST, NOT A DENYLIST: every other event
- * settles its mark BEFORE its dispatch, because one may drop the group's state (`memberRemoved`,
- * `groupDeleted` await a checkpoint, which waits for every owed row) or wait on the network (a
- * notice resolves display names) - and an event added later is safe by default. Adding one here
- * means reading its whole path for a checkpoint first.
+ * #3851): each writes a row - an edit, a deletion - and its path awaits the store and nothing else:
+ * never a checkpoint, never the network (read 2026-11-19: `applyEdit`, `applyDeletion` and what they
+ * call). AN ALLOWLIST, NOT A DENYLIST: every other event settles its mark BEFORE its dispatch,
+ * because one may drop the group's state (`memberRemoved`, `groupDeleted` await a checkpoint, which
+ * waits for every owed row) or wait on the network (a notice resolves display names) - and an event
+ * added later is safe by default. Adding one here means reading its whole path for a checkpoint AND
+ * for a request first: while a mark stands, every checkpoint waits, and a checkpoint's closed gate
+ * holds every inbound decrypt behind it.
+ *
+ * `history_bundle` IS NOT ON IT (second review of #3851): its messages are written only after HTTP
+ * lookups (`dropOwnExcludedMessages` reads the group's withheld windows and exclusions, an author
+ * proof may be checked against the server), so a hung request would have held every checkpoint and
+ * every decrypt. Its mark settles before the dispatch; what a kill between an export and its rows'
+ * write costs is said in docs/wiki/frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19.
  */
 export const SYSTEM_EVENTS_OWING_THEIR_ROW: ReadonlySet<string> = new Set([
   'edit_message',
   'delete_message',
-  'history_bundle',
 ]);
+
+/**
+ * A throw from the DISPATCH of a frame that decrypted (`handleKnownGroup`): classified at the throw,
+ * by where it happened, so the handler's `catch` - written for decrypt failures - never reads it as
+ * one (review of #3851: it re-added a healthy group and acknowledged the frame, so the message was
+ * lost). The original error is its `cause`.
+ */
+export class InboundDispatchError extends Error {
+  constructor(cause: unknown) {
+    super(`the dispatch of a decrypted frame threw: ${String(cause)}`, { cause });
+    this.name = 'InboundDispatchError';
+  }
+}
 
 /** Whether the decoded frame carries something that keeps its row owed until it is written. */
 function keepsRowOwed(msg: IAppMessage): boolean {
@@ -1189,7 +1208,9 @@ function keepsRowOwed(msg: IAppMessage): boolean {
  * Decrypts and dispatches a message for a known group.
  *
  * Always ACKed: if decryption fails, we request a re-add
- * rather than keeping the message in the queue indefinitely.
+ * rather than keeping the message in the queue indefinitely. EXCEPT a frame that decrypted and whose
+ * DISPATCH threw ({@link InboundDispatchError}): not a decrypt failure, so neither a re-add nor an
+ * ack - the server keeps the frame.
  */
 async function handleKnownGroup({
   sender,
@@ -1428,116 +1449,125 @@ async function handleKnownGroup({
     // prove the message, edit, deletion or reaction to a reader that never saw the frame.
     const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
-    // NO ROW, OR A DISPATCH THAT MAY AWAIT A CHECKPOINT: settled BEFORE it ({@link keepsRowOwed}).
-    if (!keepsRowOwed(msg)) settleRow();
+    // THE DISPATCH HAS ITS OWN CATCH (review of #3851): a throw from here on is NOT a decrypt
+    // failure - the frame decrypted and its generation is spent - so the arms below that read one
+    // (a re-add, an ack) must never see it. Classified HERE, by position, as a type.
+    try {
+      // NO ROW, OR A DISPATCH THAT MAY AWAIT A CHECKPOINT: settled BEFORE it ({@link keepsRowOwed}).
+      if (!keepsRowOwed(msg)) settleRow();
 
-    if (msg.text || msg.reply || msg.media) {
-      const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
-      if (envelope) {
-        const stableId =
-          normalizeMessageId(msg.messageId) ?? normalizeMessageId(deliveryMeta?.queuedMessageId);
-        if (stableId) envelope.options.messageId = stableId;
-        log(`[MLS] Message decrypted for ${convoKey.slice(0, 8)}… → addMessageToChat`);
+      if (msg.text || msg.reply || msg.media) {
+        const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
+        if (envelope) {
+          const stableId =
+            normalizeMessageId(msg.messageId) ?? normalizeMessageId(deliveryMeta?.queuedMessageId);
+          if (stableId) envelope.options.messageId = stableId;
+          log(`[MLS] Message decrypted for ${convoKey.slice(0, 8)}… → addMessageToChat`);
+          try {
+            await addMessageToChat(sender, envelope.content, convoKey, {
+              ...envelope.options,
+              serverTimestamp: deliveryMeta?.queuedCreatedAt,
+              ...(authorship ? { authorship } : {}),
+              // The frame whose ack waits while this row is shown and not stored.
+              ...(deliveryMeta?.queuedMessageId ? { frameId: deliveryMeta.queuedMessageId } : {}),
+            });
+          } finally {
+            // Stored, buffered for the window's close (which the checkpoint's hold stores next), or
+            // kept as a failed write the hold retries: either way no longer between decrypt and row.
+            settleRow();
+          }
+        } else {
+          log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
+        }
+      } else if (msg.reaction) {
+        let outcome: Awaited<ReturnType<typeof applyReactionFrame>>;
         try {
-          await addMessageToChat(sender, envelope.content, convoKey, {
-            ...envelope.options,
-            serverTimestamp: deliveryMeta?.queuedCreatedAt,
+          outcome = await applyReactionFrame(
+            {
+              storage,
+              deviceKey,
+              conversations,
+              messageReactions,
+              log,
+            },
+            convoKey,
+            sender,
+            msg.reaction,
+            authorship,
+            deliveryMeta?.queuedCreatedAt
+          );
+        } finally {
+          // A reaction is what this frame leaves on disk: stored (or kept pending) by now.
+          settleRow();
+        }
+        // The frame trigger of a reaction notification: the decision is the caller's
+        // (`reactionNotification.ts`), this only says what the frame was and how it arrived.
+        deps.onInboundReaction?.({
+          conversationKey: convoKey,
+          messageId: msg.reaction.messageId ?? '',
+          reactorId: sender,
+          emoji: msg.reaction.emoji ?? '',
+          at: Number(msg.reaction.at ?? 0),
+          removed: msg.reaction.removed === true,
+          changed: outcome.changed,
+          // The row this device holds, else the author the frame states (`target_author_id`).
+          messageAuthorId: outcome.messageAuthorId ?? (msg.reaction.targetAuthorId || null),
+          authorLookupFailed: outcome.storeFailed,
+          live: isLiveDelivery(deliveryMeta),
+        });
+      } else if (msg.call || msg.groupCall) {
+        // A GROUP call's signal travels under its own kind (`group_call`, WP-GC2), which a build
+        // older than group calls drops as a kind it does not know; this build hands both to the call
+        // service, saying which one it is.
+        // The call service logs the arrival (`[Call] signal from ...`), naming the kind.
+        const group = !msg.call;
+        onCallSignal?.(
+          sender,
+          groupId,
+          msg.call ?? msg.groupCall,
+          receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt),
+          group
+        );
+      } else if (msg.system) {
+        const event = msg.system.event ?? '';
+        let data: any = {};
+        try {
+          data = msg.system.data ? JSON.parse(msg.system.data) : {};
+        } catch (e) {
+          // NEVER SILENT. This used to be `catch { /* noop */ }`, so a system event whose payload did
+          // not parse was handled as an event with NO data - which every branch below reads as "not
+          // for me" and answers by returning true. An unparseable payload and an event nobody wanted
+          // are opposite findings and were indistinguishable.
+          log(
+            `[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}… carries unparseable data - handling it with none: ${String(e).slice(0, 120)}`
+          );
+        }
+        // EVERY OTHER MESSAGE KIND LOGS ITS ARRIVAL AND THIS ONE DID NOT, which is how a delivered
+        // frame came to leave no trace at all: COMM-4 watched an invitation reach the invitee's
+        // device, decrypt, and produce nothing, and no log on any machine could say whether the event
+        // had been dispatched, refused, or addressed to somebody else. A branch reached through this
+        // dispatch may still decline the event - most of them are addressed - but the dispatch itself
+        // is a fact, and a fact nobody records is one the next reader has to reproduce.
+        log(`[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}…`);
+        try {
+          await handleSystemEvent(event, data, {
+            ...deps,
+            convo: conversations.get(convoKey) ?? convo,
+            convoKey,
+            senderNorm: sender,
+            messageId: normalizeMessageId(msg.messageId),
+            sentAt: appMessageSentAtMs(msg.sentAt),
+            deliveryMeta,
             ...(authorship ? { authorship } : {}),
           });
         } finally {
-          // Stored, buffered for the window's close (which the checkpoint's hold stores next), or
-          // kept as a failed write the hold retries: either way no longer between decrypt and row.
+          // An event that writes rows ({@link SYSTEM_EVENTS_OWING_THEIR_ROW}) wrote them by now; any
+          // other was settled before its dispatch.
           settleRow();
         }
-      } else {
-        log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
-    } else if (msg.reaction) {
-      let outcome: Awaited<ReturnType<typeof applyReactionFrame>>;
-      try {
-        outcome = await applyReactionFrame(
-          {
-            storage,
-            deviceKey,
-            conversations,
-            messageReactions,
-            log,
-          },
-          convoKey,
-          sender,
-          msg.reaction,
-          authorship,
-          deliveryMeta?.queuedCreatedAt
-        );
-      } finally {
-        // A reaction is what this frame leaves on disk: stored (or kept pending) by now.
-        settleRow();
-      }
-      // The frame trigger of a reaction notification: the decision is the caller's
-      // (`reactionNotification.ts`), this only says what the frame was and how it arrived.
-      deps.onInboundReaction?.({
-        conversationKey: convoKey,
-        messageId: msg.reaction.messageId ?? '',
-        reactorId: sender,
-        emoji: msg.reaction.emoji ?? '',
-        at: Number(msg.reaction.at ?? 0),
-        removed: msg.reaction.removed === true,
-        changed: outcome.changed,
-        // The row this device holds, else the author the frame states (`target_author_id`).
-        messageAuthorId: outcome.messageAuthorId ?? (msg.reaction.targetAuthorId || null),
-        authorLookupFailed: outcome.storeFailed,
-        live: isLiveDelivery(deliveryMeta),
-      });
-    } else if (msg.call || msg.groupCall) {
-      // A GROUP call's signal travels under its own kind (`group_call`, WP-GC2), which a build
-      // older than group calls drops as a kind it does not know; this build hands both to the call
-      // service, saying which one it is.
-      // The call service logs the arrival (`[Call] signal from ...`), naming the kind.
-      const group = !msg.call;
-      onCallSignal?.(
-        sender,
-        groupId,
-        msg.call ?? msg.groupCall,
-        receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt),
-        group
-      );
-    } else if (msg.system) {
-      const event = msg.system.event ?? '';
-      let data: any = {};
-      try {
-        data = msg.system.data ? JSON.parse(msg.system.data) : {};
-      } catch (e) {
-        // NEVER SILENT. This used to be `catch { /* noop */ }`, so a system event whose payload did
-        // not parse was handled as an event with NO data - which every branch below reads as "not
-        // for me" and answers by returning true. An unparseable payload and an event nobody wanted
-        // are opposite findings and were indistinguishable.
-        log(
-          `[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}… carries unparseable data - handling it with none: ${String(e).slice(0, 120)}`
-        );
-      }
-      // EVERY OTHER MESSAGE KIND LOGS ITS ARRIVAL AND THIS ONE DID NOT, which is how a delivered
-      // frame came to leave no trace at all: COMM-4 watched an invitation reach the invitee's
-      // device, decrypt, and produce nothing, and no log on any machine could say whether the event
-      // had been dispatched, refused, or addressed to somebody else. A branch reached through this
-      // dispatch may still decline the event - most of them are addressed - but the dispatch itself
-      // is a fact, and a fact nobody records is one the next reader has to reproduce.
-      log(`[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}…`);
-      try {
-        await handleSystemEvent(event, data, {
-          ...deps,
-          convo: conversations.get(convoKey) ?? convo,
-          convoKey,
-          senderNorm: sender,
-          messageId: normalizeMessageId(msg.messageId),
-          sentAt: appMessageSentAtMs(msg.sentAt),
-          deliveryMeta,
-          ...(authorship ? { authorship } : {}),
-        });
-      } finally {
-        // An event that writes rows ({@link SYSTEM_EVENTS_OWING_THEIR_ROW}) wrote them by now; any
-        // other was settled before its dispatch.
-        settleRow();
-      }
+    } catch (cause) {
+      throw new InboundDispatchError(cause);
     }
 
     return true;
@@ -1545,6 +1575,18 @@ async function handleKnownGroup({
     // FIRST: no row comes out of a frame that threw, and the arms below may await a checkpoint (an
     // eviction drops the group's state), which would wait for this very mark.
     settleRow();
+    // THE FRAME DECRYPTED, ITS DISPATCH THREW (`addMessageToChat`, a reaction, a system event): not a
+    // decrypt failure, so no re-add - the group is healthy - and NO ACK: the frame stays on the
+    // server, the one copy outside memory, for as long as its spent generation is not on disk.
+    // Said at ERROR: nothing on this path should throw, and what did is named.
+    if (e instanceof InboundDispatchError) {
+      console.error(
+        `[MLS] Frame ${deliveryMeta?.queuedMessageId ?? 'without a queue id'} of ${convoKey.slice(0, 8)}… decrypted, and its dispatch THREW - not a decrypt failure, so no re-add; NOT acknowledged:`,
+        e.cause
+      );
+      noteUnackedFrame(groupId, 'dispatch-failed');
+      return false;
+    }
     const err = String(e);
     const kind = classifyIncomingDecryptError(e);
 

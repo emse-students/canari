@@ -527,7 +527,7 @@ interface DrainAckHold {
   /**
    * Resolves once the rows these ids' frames left in memory had their store attempted: the drain's
    * window closed (its close stores the buffer). Never rejects - what the store left unstored is
-   * read afterwards ({@link BaseMlsService.appliedRowsLeftUnstored}).
+   * read afterwards ({@link BaseMlsService.framesWithUnstoredRows}).
    */
   rowsStored: () => Promise<void>;
 }
@@ -1979,16 +1979,22 @@ export abstract class BaseMlsService implements IMlsService {
     // AN APPLICATION FRAME IS ACKNOWLEDGED ONLY ONCE ITS ROW IS STORED (the second window of the rows
     // before ratchet). Its row was buffered for the window's close, so the ack waits for that close
     // to have stored it, as a structural id waits for a checkpoint; a row the close could not store
-    // (kept for the next checkpoint's hold) withholds the ids, and the server keeps the only copy
-    // that is not in memory. An id a LANDED checkpoint covers needs neither: that checkpoint stored
+    // (kept for the next checkpoint's hold) withholds ITS frame's id, and the server keeps the only
+    // copy that is not in memory. An id a LANDED checkpoint covers needs neither: that checkpoint stored
     // every row before it exported.
-    let rowsLeft = 0;
+    // PER FRAME (review of #3851): only the ids whose OWN rows stand unstored are withheld - a
+    // page-wide count let one row the store would never take withhold every ack of every
+    // conversation, for good.
+    let framesLeft: ReadonlySet<string> | 'unknown' = new Set();
     if (ids.some((id) => !covered(id) && !needsDisk(id))) {
       await hold.rowsStored();
-      rowsLeft = this.appliedRowsLeftUnstored();
-      if (rowsLeft === 0) this.noteAcksReleasedForRows();
+      framesLeft = this.framesWithUnstoredRows();
+      if (framesLeft !== 'unknown' && framesLeft.size === 0) this.noteAcksReleasedForRows();
     }
-    const heldForRows = new Set(ids.filter((id) => !covered(id) && !needsDisk(id) && rowsLeft > 0));
+    const rowUnstored = (id: string) => framesLeft === 'unknown' || framesLeft.has(id);
+    const heldForRows = new Set(
+      ids.filter((id) => !covered(id) && !needsDisk(id) && rowUnstored(id))
+    );
     const heldForCheckpoint = ids.filter((id) => !covered(id) && needsDisk(id));
     const withheld = new Set([...heldForCheckpoint, ...heldForRows]);
     for (const id of ids) {
@@ -2016,7 +2022,7 @@ export abstract class BaseMlsService implements IMlsService {
           ') - the rows stay on the server for the tab that writes the state'
       );
     }
-    if (heldForRows.size > 0) this.noteAcksWithheldForRows(heldForRows.size, rowsLeft);
+    if (heldForRows.size > 0) this.noteAcksWithheldForRows(heldForRows.size, framesLeft);
     return ids.filter((id) => !withheld.has(id));
   }
 
@@ -5542,7 +5548,7 @@ export abstract class BaseMlsService implements IMlsService {
    * behind those frames, and a reload repairs it from what still holds them - a frame the server
    * still lists (a commit or a Welcome, held by {@link DrainAckHold}, or one not yet acknowledged) is
    * decrypted again; and an APPLICATION frame is acknowledged only once its row is stored
-   * ({@link appliedRowsLeftUnstored}), so a refused checkpoint leaves it on the server too.
+   * ({@link framesWithUnstoredRows}), so a refused checkpoint leaves it on the server too.
    *
    * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
    * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
@@ -5587,11 +5593,18 @@ export abstract class BaseMlsService implements IMlsService {
   private acksWithheldForRows: number | null = null;
 
   /** Counts acks withheld for unstored rows, saying it at the first of an episode only. */
-  private noteAcksWithheldForRows(withheld: number, rowsLeft: number): void {
+  private noteAcksWithheldForRows(
+    withheld: number,
+    framesLeft: ReadonlySet<string> | 'unknown'
+  ): void {
     if (this.acksWithheldForRows === null) {
       this.acksWithheldForRows = withheld;
+      const what =
+        framesLeft === 'unknown'
+          ? 'a row observer could not say which frames left rows unstored'
+          : `${framesLeft.size} frame(s) have rows shown and not stored`;
       console.warn(
-        `[ACK] ${withheld} id(s) not acknowledged: ${rowsLeft} row(s) of applied frames are shown and not stored - the frames stay on the server until a checkpoint stores them. Further withheld acks are counted until then, not said one by one.`
+        `[ACK] ${withheld} id(s) not acknowledged: ${what} - those frames stay on the server until a checkpoint stores their rows. Further withheld acks are counted until then, not said one by one.`
       );
       return;
     }
@@ -5608,27 +5621,27 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * How many rows of frames already applied stand shown and NOT stored, across the observers that
-   * hold rows (a write that failed, a batch that threw): what an application frame's ack must not
-   * run ahead of ({@link idsDurableEnoughToAck}). An observer that cannot answer counts as one row
-   * left, said at the level that accuses - withholding an ack costs a re-listing, acking past an
-   * unstored row costs the message.
+   * The queued ids of the frames whose rows stand shown and NOT stored, across the observers that
+   * hold rows (a write kept after a transient failure, a batch that threw): what an application
+   * frame's ack must not run ahead of ({@link idsDurableEnoughToAck}). An observer that cannot answer
+   * makes it `'unknown'` - every application id is then withheld - said at the level that accuses:
+   * withholding an ack costs a re-listing, acking past an unstored row costs the message.
    */
-  private appliedRowsLeftUnstored(): number {
-    let left = 0;
+  private framesWithUnstoredRows(): ReadonlySet<string> | 'unknown' {
+    const frames = new Set<string>();
     for (const observer of this.bulkIngestObservers) {
-      if (!observer.rowsLeftUnstored) continue;
+      if (!observer.framesLeftUnstored) continue;
       try {
-        left += observer.rowsLeftUnstored();
+        for (const id of observer.framesLeftUnstored()) frames.add(id);
       } catch (e) {
         console.error(
-          '[ACK] a row observer could not say what it left unstored - the application ids are withheld:',
+          '[ACK] a row observer could not say which frames it left unstored - the application ids are withheld:',
           e
         );
-        left += 1;
+        return 'unknown';
       }
     }
-    return left;
+    return frames;
   }
 
   /**

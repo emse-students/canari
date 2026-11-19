@@ -24,8 +24,17 @@ vi.mock('./systemMessageHandler', async (original) => ({
   }),
 }));
 
+/** A re-add is what a decrypt failure asks; a dispatch that threw must never ask one. */
+vi.mock('$lib/utils/chat/recovery', () => ({
+  requestReAdd: vi.fn().mockResolvedValue(undefined),
+  cancelReAdd: vi.fn(),
+  reAddIsInFlight: vi.fn(() => false),
+  resetReAddCooldowns: vi.fn(),
+}));
+
 import { setupMessageHandler, SYSTEM_EVENTS_OWING_THEIR_ROW } from './setupMessageHandler';
-import { encodeAppMessage, mkReaction, mkSystem, mkText } from '$lib/proto/codec';
+import { requestReAdd } from '$lib/utils/chat/recovery';
+import { encodeAppMessage, mkCallHangup, mkReaction, mkSystem, mkText } from '$lib/proto/codec';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { RowsOwedLedger } from '../rowsOwed';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
@@ -167,7 +176,20 @@ describe('an application frame owes its row from its decrypt to its write', () =
     expect(ledger.owedCount).toBe(0);
   });
 
-  it.each(['some_event', 'memberRemoved', 'groupDeleted', 'memberAdded'])(
+  it('a message carries its frame id to the row, so only ITS ack waits while the row is unstored', async () => {
+    const { d } = deps(ledger, app(mkText('hello')));
+
+    await deliver(d);
+
+    expect(d.addMessageToChat).toHaveBeenCalledWith(
+      'peer-user',
+      expect.any(String),
+      groupId,
+      expect.objectContaining({ frameId: 'q1' })
+    );
+  });
+
+  it.each(['some_event', 'memberRemoved', 'groupDeleted', 'memberAdded', 'history_bundle'])(
     'a system event outside the allowlist (%s): settled BEFORE its dispatch, which may await a checkpoint',
     async (event) => {
       const { d } = deps(ledger, app(mkSystem(event, '{}')));
@@ -179,25 +201,21 @@ describe('an application frame owes its row from its decrypt to its write', () =
     }
   );
 
-  it.each(['edit_message', 'delete_message', 'history_bundle'])(
+  it.each(['edit_message', 'delete_message'])(
     'a system event that writes rows (%s): owed THROUGH its dispatch, settled once it returned',
     async (event) => {
       const { d } = deps(ledger, app(mkSystem(event, '{}')));
 
       expect(await deliver(d)).toBe(true);
 
-      // The edit, deletion or bundle is written inside the dispatch: a checkpoint waits for it.
+      // The edit or deletion is written inside the dispatch: a checkpoint waits for it.
       expect(seen.owedAtSystemDispatch).toBe(1);
       expect(ledger.owedCount).toBe(0);
     }
   );
 
-  it('the allowlist is exactly the events read for a checkpoint-free path - adding one means reading it first', () => {
-    expect([...SYSTEM_EVENTS_OWING_THEIR_ROW].sort()).toEqual([
-      'delete_message',
-      'edit_message',
-      'history_bundle',
-    ]);
+  it('the allowlist is exactly the events read for a checkpoint-free AND request-free path - a history bundle makes HTTP calls before its rows, so it is not on it', () => {
+    expect([...SYSTEM_EVENTS_OWING_THEIR_ROW].sort()).toEqual(['delete_message', 'edit_message']);
   });
 
   it('a frame whose decrypt throws settles its mark', async () => {
@@ -210,14 +228,37 @@ describe('an application frame owes its row from its decrypt to its write', () =
     expect(ledger.owedCount).toBe(0);
   });
 
-  it('a frame whose add throws settles its mark', async () => {
+  it('a frame whose add throws settles its mark, is NOT acknowledged and asks NO re-add - it decrypted, the group is healthy', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(requestReAdd).mockClear();
     const { d } = deps(ledger, app(mkText('hello')));
     d.addMessageToChat = vi.fn().mockRejectedValue(new Error('store closed'));
 
-    await deliver(d);
+    // `false` is the handler's "do not acknowledge": the server keeps the frame.
+    expect(await deliver(d)).toBe(false);
 
+    expect(ledger.owedCount).toBe(0);
+    expect(requestReAdd).not.toHaveBeenCalled();
+    expect(d.log).not.toHaveBeenCalledWith(expect.stringContaining('Out-of-sync'));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('its dispatch THREW'),
+      expect.objectContaining({ message: 'store closed' })
+    );
+  });
+
+  it('any dispatch that throws after the decrypt (a call signal here) is withheld the same way, never read as a decrypt failure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(requestReAdd).mockClear();
+    const { d } = deps(ledger, app(mkCallHangup('call-1')));
+    const withSignal = d as typeof d & { onCallSignal: () => void };
+    withSignal.onCallSignal = () => {
+      throw new Error('call service torn down');
+    };
+
+    expect(await deliver(withSignal)).toBe(false);
+    expect(requestReAdd).not.toHaveBeenCalled();
     expect(ledger.owedCount).toBe(0);
   });
 
@@ -227,5 +268,106 @@ describe('an application frame owes its row from its decrypt to its write', () =
     await deliver(d, true);
 
     expect(d.mlsService.oweRow).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Welcome's replay of the frames buffered before it owes each row the same way", () => {
+  let ledger: RowsOwedLedger;
+  beforeEach(() => {
+    localStorage.clear();
+    ledger = new RowsOwedLedger();
+    seen.owedAtSystemDispatch = -1;
+    seen.owedCount = () => ledger.owedCount;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A group this device does not hold yet: a frame is buffered, then its Welcome replays it. */
+  function welcomeWorld(frame: Parameters<typeof encodeAppMessage>[0]) {
+    let held = false;
+    const order: string[] = [];
+    const mlsService = createMlsServiceStub({
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
+      getLocalGroups: vi.fn(() => (held ? [groupId] : [])),
+      oweRow: vi.fn(async () => {
+        const settle = await ledger.owe();
+        order.push('owed');
+        return settle;
+      }),
+      processIncomingMessage: vi.fn(async () => {
+        order.push(`decrypt (owed=${ledger.owedCount})`);
+        return { plaintext: encodeAppMessage(frame), author: 'unsigned' };
+      }),
+      processWelcome: vi.fn(async () => {
+        held = true;
+        return groupId;
+      }),
+      getDeviceId: vi.fn().mockReturnValue('phone'),
+    });
+    const d = {
+      mlsService,
+      storage: null,
+      userId: 'user-a',
+      deviceKey: () => 'device-key',
+      historyBaseUrl: 'https://hist',
+      conversations: createTestConversations([]),
+      messageReactions: createTestMessageReactions(),
+      recoveryTimers: new Map(),
+      getSelectedContact: () => null,
+      setSelectedContact: vi.fn(),
+      saveConversation: vi.fn().mockResolvedValue(undefined),
+      addMessageToChat: vi.fn(async () => {
+        order.push(`add (owed=${ledger.owedCount})`);
+      }),
+      loadHistoryForConversation: vi.fn().mockResolvedValue(undefined),
+      onGroupReady: vi.fn(),
+      log: vi.fn(),
+    };
+    setupMessageHandler(d as never);
+    const onMsg = (mlsService as never as { onMessage: { mock: { calls: unknown[][] } } }).onMessage
+      .mock.calls[0][0] as (...args: unknown[]) => Promise<boolean>;
+    return { onMsg, order, mlsService };
+  }
+
+  it('a buffered message: marked right before its replayed decrypt, owed through its add, settled after', async () => {
+    const { onMsg, order } = welcomeWorld(mkText('hello'));
+
+    // Unknown group: buffered and kept in the server queue - no mark, no decrypt yet.
+    await onMsg(
+      'Peer-User',
+      new Uint8Array([7, ++nextFrame]),
+      groupId,
+      false,
+      undefined,
+      false,
+      LIVE
+    );
+    expect(order).toEqual([]);
+
+    await onMsg('Peer-User', new Uint8Array([8, ++nextFrame]), groupId, true, undefined, false);
+
+    expect(order).toEqual(['owed', 'decrypt (owed=1)', 'add (owed=1)']);
+    expect(ledger.owedCount).toBe(0);
+  });
+
+  it('a buffered system event outside the allowlist: settled BEFORE its replayed dispatch', async () => {
+    const { onMsg, order } = welcomeWorld(mkSystem('memberRemoved', '{}'));
+
+    await onMsg(
+      'Peer-User',
+      new Uint8Array([7, ++nextFrame]),
+      groupId,
+      false,
+      undefined,
+      false,
+      LIVE
+    );
+    await onMsg('Peer-User', new Uint8Array([8, ++nextFrame]), groupId, true, undefined, false);
+
+    expect(order).toEqual(['owed', 'decrypt (owed=1)']);
+    expect(seen.owedAtSystemDispatch).toBe(0);
+    expect(ledger.owedCount).toBe(0);
   });
 });

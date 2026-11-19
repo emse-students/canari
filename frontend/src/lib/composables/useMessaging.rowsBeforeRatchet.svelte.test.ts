@@ -258,44 +258,228 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     ).saveMessagesIfAbsent;
     // The live write and the first hold's retry fail; the second hold's retry lands.
     saveMessagesIfAbsent
-      .mockRejectedValueOnce(new Error('QuotaExceededError'))
-      .mockRejectedValueOnce(new Error('QuotaExceededError'));
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
     const observer = messaging.bulkIngestObserver(() => ctx);
 
     // No window open: the ordinary path, whose handler writes the row itself.
-    await messaging.addMessageToChat(PEER, 'live', CONVO, ctx, { messageId: 'in-live' });
+    await messaging.addMessageToChat(PEER, 'live', CONVO, ctx, {
+      messageId: 'in-live',
+      frameId: 'q-live',
+    });
     expect(idsIn(conversations)).toEqual(['in-live']);
     expect(storedIds(saveMessage)).toEqual([]);
-    // What an application frame's ack reads before it deletes the server's copy.
-    expect(observer.rowsLeftUnstored()).toBe(1);
+    // What an application frame's ack reads before it deletes the server's copy: THIS frame.
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-live']);
 
     await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
       BufferedRowsNotStoredError
     );
     (await messaging.holdRowsForCheckpoint(ctx))();
     expect(storedIds(saveMessage)).toEqual(['in-live']);
-    expect(observer.rowsLeftUnstored()).toBe(0);
+    expect(observer.framesLeftUnstored().size).toBe(0);
   });
 
-  it('counts the rows a window close could not store for the ack, and nothing once a hold stored them', async () => {
+  it('names the frames of the rows a window close could not store, for the ack, and none once a hold stored them', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const messaging = useMessaging();
     const { ctx } = makeContext();
     const saveMessagesIfAbsent = (
       ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
     ).saveMessagesIfAbsent;
-    saveMessagesIfAbsent.mockRejectedValueOnce(new Error('AbortError'));
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
     const observer = messaging.bulkIngestObserver(() => ctx);
 
     observer.onBulkIngestStart(LIVE_DRAIN);
-    await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-a' });
-    await messaging.addMessageToChat(PEER, 'b', CONVO, ctx, { messageId: 'in-b' });
-    expect(observer.rowsLeftUnstored()).toBe(0);
+    await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-a', frameId: 'q-a' });
+    await messaging.addMessageToChat(PEER, 'b', CONVO, ctx, { messageId: 'in-b', frameId: 'q-b' });
+    expect(observer.framesLeftUnstored().size).toBe(0);
     await observer.onBulkIngestEnd(LIVE_DRAIN);
-    expect(observer.rowsLeftUnstored()).toBe(2);
+    expect([...observer.framesLeftUnstored()].sort()).toEqual(['q-a', 'q-b']);
 
     (await observer.holdRowsForCheckpoint())();
-    expect(observer.rowsLeftUnstored()).toBe(0);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * PER FRAME (review of #3851, SF-1): a page-wide count let one unstored row withhold the ack of
+   * every frame of every conversation. Only the frame whose row is unstored waits.
+   */
+  it('PER FRAME: a row left unstored names ITS frame only - a row of another conversation stored meanwhile withholds nothing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    conversations.set('other-conversation', {
+      id: 'other-conversation',
+      name: 'other',
+      messages: [],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'stuck', CONVO, ctx, {
+      messageId: 'in-stuck',
+      frameId: 'q-stuck',
+    });
+    await messaging.addMessageToChat(PEER, 'fine', 'other-conversation', ctx, {
+      messageId: 'in-fine',
+      frameId: 'q-fine',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-stuck']);
+  });
+
+  /**
+   * A POISON ROW IS DROPPED, NEVER KEPT (review of #3851, SF-1): a row the store refuses for what it
+   * IS fails the same way at every retry and after every reload, so keeping it refused every
+   * checkpoint - commits and joins included - and withheld its frame for good.
+   */
+  it('POISON: a row refused with a DataError is dropped at ERROR - the hold is not refused and its frame is acknowledged', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('bad key', 'DataError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'poison', CONVO, ctx, {
+      messageId: 'in-poison',
+      frameId: 'q-poison',
+    });
+
+    // Shown, not kept: the frame's ack goes out and the checkpoint is not refused.
+    expect(idsIn(conversations)).toEqual(['in-poison']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('POISON ROW'), expect.anything());
+    // Tried once: a poison row is never retried.
+    expect(saveMessagesIfAbsent).toHaveBeenCalledTimes(1);
+  });
+
+  it('POISON IN A BATCH: the rows are written one by one - the good one is stored, the poison one dropped, nothing kept', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    const realSave = saveMessagesIfAbsent.getMockImplementation() as (
+      rows: { id: string }[],
+      key: string
+    ) => Promise<Set<string>>;
+    // Any write holding the poison row is refused for it, as IndexedDB's `add` throws synchronously.
+    saveMessagesIfAbsent.mockImplementation(async (rows: { id: string }[], key: string) => {
+      if (rows.some((row) => row.id === 'in-bad')) {
+        throw new DOMException('cannot clone', 'DataCloneError');
+      }
+      return realSave(rows, key);
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'good', CONVO, ctx, {
+      messageId: 'in-good',
+      frameId: 'q-good',
+    });
+    await messaging.addMessageToChat(PEER, 'bad', CONVO, ctx, {
+      messageId: 'in-bad',
+      frameId: 'q-bad',
+    });
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
+
+    expect(storedIds(saveMessage)).toEqual(['in-good']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+  });
+
+  /**
+   * SF-2 (review of #3851): the two upgrade writes of the live path caught, logged and went on, so
+   * the frame was acknowledged while the stored row was still the notification's caption.
+   */
+  it('THE SHOWN-PREVIEW UPGRADE: a failed write is kept - it names its frame, refuses the hold, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    conversations.set(CONVO, {
+      id: CONVO,
+      name: CONVO,
+      messages: [
+        {
+          id: 'in-up',
+          senderId: PEER,
+          content: 'caption from the push',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    storage.mergeMessages
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    const body = serializeEnvelope(mkTextEnvelope('the body'));
+    await messaging.addMessageToChat(PEER, body, CONVO, ctx, {
+      messageId: 'in-up',
+      frameId: 'q-up',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-up']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('THE STORED-PREVIEW UPGRADE: a failed write is kept - it names its frame and refuses the hold', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // The row is in the store as a push preview, and not shown.
+    storage.getMessagesByIds.mockImplementation(async (_c: string, ids: string[]) => ({
+      rows: new Map(
+        ids
+          .filter((id) => id === 'in-stored')
+          .map((id) => [
+            id,
+            {
+              id,
+              conversationId: CONVO,
+              senderId: PEER,
+              content: 'caption from the push',
+              timestamp: 1_700_000_000_000,
+              isFcmPreview: true,
+            },
+          ])
+      ),
+      unreadable: new Set(),
+    }));
+    storage.mergeMessages.mockRejectedValue(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    const body = serializeEnvelope(mkTextEnvelope('the body'));
+    await messaging.addMessageToChat(PEER, body, CONVO, ctx, {
+      messageId: 'in-stored',
+      frameId: 'q-stored',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-stored']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
   });
 
   it('builds ONE observer whose hold is the messaging hold (the wiring a page cannot half-do)', async () => {

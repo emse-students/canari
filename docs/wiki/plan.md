@@ -181,7 +181,12 @@ _No entry planned beyond its readings._
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
 - [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
-- [P2 - rows before ratchet: tell a poison row from a transient write failure, and measure the acks withheld on unstored rows (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-poison-rows-and-withheld-ack-metric.md)
+- [P2 - rows before ratchet: a device-key change re-seals the state without the holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-change-device-key.md)
+- [P2 - rows before ratchet: a community key frame is decrypted before its seed is stored (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-community-key-frames.md)
+- [P2 - rows before ratchet: a frame whose dispatch threw is withheld, but its redelivery reads as a duplicate (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md)
+- [P2 - rows before ratchet: the history catch-up decrypt sessions take no mark (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)
+- [P2 - rows before ratchet: the Tauri resume's live-ahead persist bypasses both holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)
+- [P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)
 
 **P3 - hygiene**
 

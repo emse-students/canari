@@ -3276,7 +3276,10 @@ run again first by the next store of EITHER kind - a close shows it without wait
 each on its own, so a later message of that conversation never joins a batch that keeps failing; it
 is said once per batch, and replayed under the key that shows its thread now (the ids it showed when
 kept anchor it across a re-key). **A batch that always throws blocks every checkpoint - commits,
-joins and sends - until a reload**, said once per page as the cause.
+joins and sends - and a reload does not end it** (its frames are withheld, so they are decrypted
+again after the reload and the same batch is built again); said once per page as the cause. Only a
+WRITE failure is classified (a poison row is dropped, [below](#a-poison-row-is-dropped-not-kept-2026-11-19));
+a batch that throws before its write carries no store error to classify.
 **The chain never rejects:** a step that throws resolves `false` with one line, and the hold gives
 its counter back in a `finally` - one exception costs one store, never every later checkpoint and
 close of the page.
@@ -3293,10 +3296,15 @@ never clears, so no later checkpoint starts either. No timeout, deliberately - e
 write that has not answered is the loss this order exists to prevent; the hung store is the defect,
 and every other write to it hangs too.
 
-**A store that keeps refusing the rows blocks every checkpoint too** - commits and joins included
-(`externalJoin` awaits one), until a write lands or the page reloads; said once per page as the
-cause (`[ADD_MSG] Rows of applied frames cannot be stored - every checkpoint is refused until they
-are ...`). Accepted for the same reason: a checkpoint that lands past them is the loss.
+**A store that keeps refusing the rows TRANSIENTLY blocks every checkpoint too** - commits and joins
+included (`externalJoin` awaits one), until a write lands; said once per page as the cause (`[ADD_MSG]
+Rows of applied frames cannot be stored (a transient failure) - every checkpoint is refused until they
+are ...`). Accepted for the same reason: a checkpoint that lands past them is the loss. **A reload
+does not end it** (corrected 2026-11-19, review of #3851 - this page said "or the page reloads"):
+since the ack waits for the row, the frame is still on the server, so the reload decrypts it again
+and writes the same row again; a failure a retry can pass ends when the store takes it, and a row the
+store refuses for what it IS no longer reaches this state at all - it is dropped
+([a poison row](#a-poison-row-is-dropped-not-kept-2026-11-19)).
 
 **One observer, every hook required.** Each page hands the session ONE object,
 `useMessaging.bulkIngestObserver(msgCtx)` (`SessionCallbacks.messageIngestObserver`,
@@ -3324,8 +3332,9 @@ is in the [backlog entry](../../backlog.d/p1-rows-before-ratchet.md).
 
 #### Rows before ratchet: the decrypt half and the ack (2026-11-19)
 
-The step above stores what the BUFFERS hold. Its follow-ups (a poison row told from a transient
-failure, a metric for the withheld acks) are [a backlog entry](../../backlog.d/p2-rows-before-ratchet-poison-rows-and-withheld-ack-metric.md). Two windows of the same class were left (the
+The step above stores what the BUFFERS hold. Its first follow-up, a poison row told from a
+transient failure, is built [below](#a-poison-row-is-dropped-not-kept-2026-11-19); the other, a metric
+for the withheld acks, is [a backlog entry](../../backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md). Two windows of the same class were left (the
 [backlog entry](../../backlog.d/p1-rows-before-ratchet.md), raised by the review of #3786), each
 milliseconds long - and the [charter](../../../principes.md)'s second principle does not count in
 milliseconds.
@@ -3339,7 +3348,11 @@ earlier** (`RowsOwedLedger`, `frontend/src/lib/mls-client/rowsOwed.ts`):
 
 - the handler marks the row OWED (`IMlsService.oweRow`) immediately before the decrypt, with nothing
   awaited between the mark and the decrypt's call, and settles it once the row is stored, buffered
-  or kept as a failed write - or at once when the frame carries no row;
+  or kept as a failed write - or at once when the frame carries no row. **Whether a frame is marked
+  at all is the SERVER's word**: the delivery's `isCommit` flag (a commit takes no mark, since it
+  carries no row and awaits checkpoints of its own). A frame flagged a commit that is in fact an
+  application message would carry its row outside the ledger; one flagged an application message
+  that is a commit takes a mark it settles at once (no payload);
 - `persistCheckpoint` holds the ledger FIRST: from that instant no new mark is taken (a decrypt that
   has not marked waits at the gate, BEFORE it decrypts), and the hold resolves when every mark taken
   before it settled. THEN the observers' hold stores the buffers those handlers may just have filled,
@@ -3354,18 +3367,36 @@ takes no mark (it carries no row, and awaits checkpoints of its own); a call sig
 event OUTSIDE an allowlist settle BEFORE their dispatch (a removal or a group deletion drops the
 group's state, which awaits a checkpoint; a notice resolves display names over the network); the
 `catch` settles FIRST (an eviction does the same); a message settles when `addMessageToChat`
-returned, a reaction when it is applied, and the system events that WRITE rows - `edit_message`,
-`delete_message`, `history_bundle` (`SYSTEM_EVENTS_OWING_THEIR_ROW`, review of #3851) - once their
-dispatch returned: their paths were read for a checkpoint and await the store only. An allowlist, so
-an event added later settles early by default; adding one means reading its path first. The only things inside a mark are the decrypt and the row's
+returned, a reaction when it is applied, and the system events that WRITE a row - `edit_message`,
+`delete_message` (`SYSTEM_EVENTS_OWING_THEIR_ROW`, review of #3851) - once their dispatch returned:
+their paths were read for a checkpoint AND for a request, and await the store only. An allowlist, so
+an event added later settles early by default; adding one means reading its path first.
+
+**`history_bundle` is NOT on it** (second review of #3851, which first listed it): its messages are
+written only after HTTP lookups - `dropOwnExcludedMessages` reads the group's withheld windows and
+exclusions (`getGroupWithheld`, `getGroupExclusions`), and `vetBundle` may check an author proof
+against the server (`checkRecordedAuthorship`). Held through them, one hung request held every
+checkpoint, and every checkpoint's closed gate every inbound decrypt. Its mark settles before the
+dispatch, like any event outside the list. What that costs, stated: a kill between a checkpoint that
+exports the bundle frame's advance and the write of the messages it carries loses those messages from
+this device until the next history exchange for the conversation asks for them again - a bundle
+answers a diff of what the device HOLDS, so what it did not store is what the next one carries. Their
+order (the lookups need the decrypted bundle) leaves no way to do the network part first. The only things inside a mark are the decrypt and the row's
 store, neither of which awaits a checkpoint. The checkpoint itself takes no MLS lock, so a decrypt
 waiting at the gate while its drain holds the frame's lock blocks nothing the checkpoint needs. The
 Welcome's replay of the frames it buffered (`handleWelcome`) marks each the same way.
 
 **And a live-path write that FAILS is kept.** `addMessageToChat` wrote the row and only logged a
 failure, so the row was shown, not stored, and the next export went through. It now writes through
-the batch's own seam (`writeBatchRows`) and keeps a failed write in `unstoredRowWrites`, which the
-next hold retries and refuses on, exactly as a batch's. **A reaction whose write onto its stored row
+the batch's own seam (`writeBatchRows`, via `writeOrKeep`) and keeps a failed write in
+`unstoredRowWrites`, which the next hold retries and refuses on, exactly as a batch's. **So do the two
+UPGRADE writes of the live path** (review of #3851): the upgrade of a SHOWN push preview in
+`addMessageToChat` and the upgrade of a STORED one in `settleStoredBodies` caught, logged and went on,
+so the frame was acknowledged while the stored row was still the notification's caption. Both are
+`upgradeRows` of a `BatchRowWrite` now (a compare-and-set, `writeShownUpgrades`), kept on failure. **A
+failed CONVERSATION-row write withholds too**: `writeBatchRows` ends with `saveConversation`, and a
+write is stored only once that landed, so a refused conversation row keeps its rows' frames on the
+server like a refused message row. **A reaction whose write onto its stored row
 fails is kept too** (`applyReactionFrame`): parked as a pending mutation, which the next look writes
 onto the row, instead of a log line and a reaction gone at the next reload (review of #3851).
 
@@ -3374,22 +3405,28 @@ application frame at the drain's end - `announceAck` runs in `onDrainEnd` BEFORE
 stores the window's rows - and a kill between the two left the row nowhere on the device and the
 frame gone from the server; only the history archive brought it back. **Now the ack chain waits on
 the close's store as it waits on a checkpoint** (`DrainAckHold.rowsStored`, the drain's `closed`),
-then reads what the observers left shown and not stored (`BulkIngestObserver.rowsLeftUnstored`: the
-failed writes and the batches that threw). While that is not zero, the drain's application ids are
-withheld (`[ACK] N id(s) not acknowledged: M row(s) of applied frames are shown and not stored`,
-said ONCE per episode; the acks withheld after it are counted, and the first read that finds every
-row stored ends the episode with one line carrying the count - a repeat re-listed by every pull used
-to print a line per frame per pull, review of #3851): they stay on the server, and the repeat a
-later pull brings is re-acknowledged under the same rule (`reAckHold`). An id a LANDED checkpoint already holds is acknowledged whatever is left - that
-checkpoint stored every row before it exported. The count is the whole page's, not the drain's: a
-store that refuses rows withholds every application ack until a write lands, the same condition
-that already refuses every checkpoint. The ack's request now leaves after the window's close (a few
-ms later than before), and the owed pull still chains behind it.
+then reads WHICH FRAMES the observers left with rows shown and not stored
+(`BulkIngestObserver.framesLeftUnstored`: the queued ids of the failed writes' and the thrown
+batches' rows). **Per frame** (review of #3851): each row carries the queued id of the frame it was
+decrypted from (`AddMessageToChatOptions.frameId`, set by `handleKnownGroup`, kept in
+`BatchRowWrite.framesByRow` and in a kept batch's messages), and only the ids in that set are withheld
+(`[ACK] N id(s) not acknowledged: M frame(s) have rows shown and not stored`, said ONCE per episode;
+the acks withheld after it are counted, and the first read that finds no such frame ends the episode
+with one line carrying the count - a repeat re-listed by every pull used to print a line per frame per
+pull): they stay on the server, and the repeat a later pull brings is re-acknowledged under the same
+rule (`reAckHold`). Every other application frame is acknowledged. The first build counted rows across
+the PAGE, so one row that could not be written withheld every ack of every conversation - and since the
+frame survives a reload (it is withheld), the reload rebuilt the same row and the same stall. An
+observer that cannot answer withholds every application id, at ERROR. An id a LANDED checkpoint
+already holds is acknowledged whatever is left - that checkpoint stored every row before it exported.
+The ack's request now leaves after the window's close (a few ms later than before), and the owed pull
+still chains behind it.
 
 **What it costs.** A checkpoint that meets a frame mid-handler waits for its row (`[ROWS_OWED] A
 checkpoint waits for N decrypted frame(s) to store their rows before it exports`, said only when it
-waits), and the drain's next application frame waits for the capture (`console.debug`) - on native,
-for the whole write (~1.7 s on the phone). Two widenings, stated (review of #3851): the send counts
+waits), and the drain's next application frame waits for the capture (`[ROWS_OWED] A decrypt waits
+for N checkpoint(s) to take their export first`, at log once per wait - at debug, the one line naming
+the cause of a stalled drain was filtered out) - on native, for the whole write (~1.7 s on the phone). Two widenings, stated (review of #3851): the send counts
 a checkpoint declares durable are read BEFORE these holds, so the wait widens the window in which a
 send lands after the read - which costs one burnt generation too many at the next load, never too
 few; and a FOLLOWER tab's checkpoints are refused before any hold is taken, so it never retries its
@@ -3405,12 +3442,69 @@ the drain. No timeout, deliberately: exporting past a row not stored is the loss
 a waiter re-reading the gate), `BaseMlsService.rowsBeforeRatchet.test.ts` (owed row, then buffered
 rows, then export; a decrypt asked during the write waits for it; a refused checkpoint reopens the
 gate; on the web the decrypts resume at the capture), `setupMessageHandler.rowsOwed.test.ts` (marked
-before the decrypt and owed through the add; a checkpoint during the add waits; an event outside the
-allowlist settles before its dispatch, an edit, a deletion or a bundle after it; a throw settles; a
-commit takes none), `reactionFrame.unstoredWrite.test.ts` (a failed reaction write is kept), `BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; a row left
-unstored withholds, said once per episode; a landed checkpoint acknowledges) and
-`useMessaging.rowsBeforeRatchet.svelte.test.ts` (a failed live write is kept, refuses the hold, and
-the next stores it; the count the ack reads).
+before the decrypt and owed through the add; the frame id reaches the row; a checkpoint during the
+add waits; an event outside the allowlist - a history bundle included - settles before its dispatch,
+an edit or a deletion after it; a decrypt throw settles; a dispatch throw settles, is NOT acknowledged
+and asks no re-add; a commit takes none; the Welcome's replay marks each buffered frame the same way),
+`reactionFrame.unstoredWrite.test.ts` (a failed reaction write is kept),
+`BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; only the frame whose row is
+unstored is withheld, said once per episode; an observer that cannot answer withholds all; a landed
+checkpoint acknowledges), `useMessaging.rowsBeforeRatchet.svelte.test.ts` (a failed live write is
+kept, refuses the hold, and the next stores it; the frames the ack reads, per frame; a poison row is
+dropped, alone or isolated in a batch; both upgrade writes are kept on failure),
+`rowWriteFailure.test.ts` (the classes, never a message) and `tabMessageSync.test.ts` (a refused post
+never throws into its caller).
+
+#### A poison row is dropped, not kept (2026-11-19)
+
+**The defect (review of #3851).** A kept write is retried by every checkpoint's hold, and while it
+fails every checkpoint is refused - commits and joins included - and its frame's ack withheld. That is
+right for a failure a retry can pass (a full disk, an aborted or inactive transaction, a store closing
+under a reload) and wrong for a row the store refuses for WHAT IT IS: such a row fails at every retry
+and after every reload, so it stalled the device for good.
+
+**Classified at the throw, by type** (`classifyRowWriteFailure`, `frontend/src/lib/db/rowWriteFailure.ts`):
+a `DOMException` named `DataError` (a key the store cannot take) or `DataCloneError` (a value it
+cannot clone) is POISON - IndexedDB raises both synchronously from `add`/`put`, so the exception
+itself reaches the writer with its name. Everything else is TRANSIENT, deliberately: an error whose
+type says nothing (the string a failed transaction rejects with, a native SQLite refusal) is kept,
+because withholding costs a re-listing and acking past a row a retry could store costs the message. A
+message is never read.
+
+**What a poison row owes instead of a retry** (`writeOrKeep`, `useMessaging`): a single-row write is
+dropped; a multi-row write is ISOLATED - each row written on its own, once, so the rows the store takes
+are stored, the poison ones dropped, and one that now fails transiently is kept on its own. One pass,
+no retry loop. Each drop is said at ERROR with its frame (`[DB] POISON ROW ... DROPPED from the rows
+kept`), counted on the page (`#N this page`, and `logMlsMetric({ kind: 'row_write_poison' })`), and
+the row leaves the rows kept: it no longer refuses checkpoints, and its frame's ack goes out.
+
+**What is lost, and why it is accepted.** The row is shown in memory and nowhere else: its frame is
+acknowledged and the next checkpoint makes its generation durable and marks it seen, so the message
+is lost FROM THIS DEVICE at the next reload. The sender and every other device still hold it, and a
+history exchange for the conversation that names what this device holds would carry it again - and
+meet the same refusal. The alternative was the stall: no checkpoint (no commit, no join, no send's
+durable state) and a frame never acknowledged, for good, for one row nothing on this device can ever
+store. A poison row is a defect in the row's construction, so it is said where a reader sees it, and
+its rate is owed ([the metric](../../backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)).
+
+**A frame that decrypted and whose DISPATCH threw is not a decrypt failure** (review of #3851).
+`handleKnownGroup`'s `catch` was written for decrypt failures; a throw from `addMessageToChat`,
+`applyReactionFrame` or `handleSystemEvent` reached it, was classified `unknown`, asked a re-add of a
+healthy group and acknowledged the frame - the message lost. The dispatch now has its own `try`, which
+rethrows as `InboundDispatchError` (classified at the throw, by position): the `catch` says it at ERROR,
+asks NO re-add, and does NOT acknowledge (`dispatch-failed` in the unacked tally, kept off the work
+list - no event discharges it). The reachable trigger the review named is closed at its source: the
+cross-tab announcement `addMessageToChat` makes between showing a row and storing it
+(`tabMessageSync.post`, a `BroadcastChannel.postMessage` that can throw `DataCloneError` or
+`InvalidStateError`) never throws into its caller any more. What withholding does NOT give back is
+[a backlog entry](../../backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md):
+the generation is spent, so the next pull's copy reads as a duplicate.
+
+**Left outside the ledger, filed** (review of #3851): a community key frame's seed
+([entry](../../backlog.d/p2-rows-before-ratchet-community-key-frames.md)), the Tauri resume's
+live-ahead persist ([entry](../../backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)),
+`changeDeviceKey` ([entry](../../backlog.d/p2-rows-before-ratchet-change-device-key.md)) and the history
+catch-up decrypt sessions ([entry](../../backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)).
 
 ### Forwarding
 
