@@ -879,10 +879,15 @@ export class ReplayPlayer {
     return this.walkAhead(this.video.currentTime, Number.POSITIVE_INFINITY).media;
   }
 
-  /** The media time reached after `media` buffered seconds ahead of `at`, crossing known holes. */
+  /**
+   * The media time where the walk ahead of `at` stops: after `media` buffered seconds, or where the
+   * buffer runs out - never `at` itself. Everything the walk passed (a known hole included) is
+   * reachable, so the trim must not drop it: with less than `media` seconds buffered, falling back to
+   * `at` made the media just after a long pause "far" and it was removed and fetched again on every
+   * timeupdate.
+   */
   private positionAhead(at: number, media: number): number {
-    const walk = this.walkAhead(at, media);
-    return walk.position;
+    return this.walkAhead(at, media).position;
   }
 
   /**

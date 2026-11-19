@@ -694,3 +694,12 @@ value, the server's:
   (the requests are O(log n) now). The accepted cost: a replay with ONE surviving segment among 99 deleted ones, which the
   probes did not land on, is `gone` (a case that cannot come from the purge job). A purge in front of existing media is never this. Never a black picture with a spinner
   and a seek stuck in `seeking`.
+
+### The far-ahead trim follows the walk, not media time (alpha.4 defect, 2026-11-19)
+
+`trim` drops what lies beyond `far`, the position `REPLAY_FAR_AHEAD_S` of buffered media ahead across the
+known holes. When less than that was buffered, `positionAhead` fell back to the playhead, so `far` became
+`at + 60 s` of MEDIA time and ignored the hole: the media right after a pause longer than about 48 s was
+"far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
+a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
+walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
