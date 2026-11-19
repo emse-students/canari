@@ -41,7 +41,7 @@ import {
   type LiveVideoLike,
 } from './livePlayer';
 import { liveRetryDelayMs } from './liveViewerState';
-import { segmentPositionAt } from './replayTimeline';
+import { mediaStartsMs, segmentPositionAt } from './replayTimeline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveReplayPage, LiveReplaySegment } from './types';
 
@@ -244,6 +244,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
 const REPLAY_SEGMENT_LENGTH_S = 1.5;
+/** How many times a seek looks its segment up again after the one taken proved not to hold the target. */
+const REPLAY_SEEK_RELOOKUPS = 3;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
 const REBASE_THRESHOLD_S = 1;
 
@@ -699,7 +701,11 @@ export class ReplayPlayer {
 
   /** Lists pages until a segment at or past `ms` is known, or the list is whole. */
   private async listUntil(gen: number, ms: number): Promise<void> {
-    while (this.alive(gen) && this.nextFrom !== null && (this.segments.at(-1)?.atMs ?? -1) < ms) {
+    while (
+      this.alive(gen) &&
+      this.nextFrom !== null &&
+      (mediaStartsMs(this.segments, this.placed).at(-1) ?? -1) < ms
+    ) {
       await this.loadPage(gen);
     }
   }
@@ -789,7 +795,7 @@ export class ReplayPlayer {
     // fetched behind it.
     const reach = this.placedEnd.get(this.segments[k0].index);
     if (reach === undefined || reach < from - EDGE_TOL_S) {
-      k0 = Math.max(k0 + 1, segmentPositionAt(this.segments, from * 1000));
+      k0 = Math.max(k0 + 1, segmentPositionAt(this.segments, from * 1000, this.placed));
     }
     const spans = spansOf(this.buffer);
     for (let k = k0; k < this.segments.length; k++) {
@@ -929,7 +935,7 @@ export class ReplayPlayer {
       const pos = this.segments.findIndex((s) => s.index === last);
       if (pos >= 0) return pos + 1;
     }
-    return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000)) + 1;
+    return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000, this.placed)) + 1;
   }
 
   /**
@@ -939,15 +945,43 @@ export class ReplayPlayer {
   private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
     if (!this.alive(gen) || this.isStale(ticket)) return;
-    const pos = segmentPositionAt(this.segments, ms);
+    let pos = segmentPositionAt(this.segments, ms, this.placed);
     if (pos < 0) return;
-    const s = this.segments[pos];
+    let s = this.segments[pos];
     this.seeks++;
-    const heldStart = this.bufferedStart(s.index);
-    const taken =
+    let heldStart = this.bufferedStart(s.index);
+    let taken =
       heldStart !== undefined || this.skippedIdx.has(s.index)
         ? null
         : await this.take(gen, s, ticket);
+    // THE LOOKUP IS AN ESTIMATE past the last measured segment: once the segment is taken its measured
+    // extent says whether the target is really inside it. If not, look up again with the new measurement
+    // - at most REPLAY_SEEK_RELOOKUPS times (a count, never a clock), and only while it picks another one.
+    const visited = new Set<number>([pos]);
+    for (let again = 0; again < REPLAY_SEEK_RELOOKUPS; again++) {
+      if (!this.alive(gen) || this.isStale(ticket)) break;
+      const from = this.placed.get(s.index);
+      const to = this.placedEnd.get(s.index);
+      const at = ms / 1000;
+      if (from === undefined || to === undefined || (at >= from - EDGE_TOL_S && at < to)) break;
+      let next = segmentPositionAt(this.segments, ms, this.placed);
+      // A run the monotonic estimate flattened (measurements out of order) picks its LAST member: when the
+      // target lies before that one's start, step back to the run's previous member.
+      if (next === pos && at < from - EDGE_TOL_S && pos > 0) next = pos - 1;
+      // A segment already visited is never looked at again (no A -> B -> A).
+      if (next < 0 || visited.has(next)) break;
+      visited.add(next);
+      console.debug(
+        `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms missed segment ${s.index} (${from.toFixed(2)}-${to.toFixed(2)} s) - looking up again`
+      );
+      pos = next;
+      s = this.segments[pos];
+      heldStart = this.bufferedStart(s.index);
+      taken =
+        heldStart !== undefined || this.skippedIdx.has(s.index)
+          ? null
+          : await this.take(gen, s, ticket);
+    }
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
       console.debug(
@@ -961,8 +995,8 @@ export class ReplayPlayer {
     let start = taken ?? this.bufferedStart(s.index);
     let landing: number | undefined;
     if (start !== undefined) {
-      // Inside the segment by the share of it the target is past, never beyond its own length.
-      landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
+      // The target's media time, held inside the segment: not before its start, not past its length.
+      landing = Math.min(Math.max(start, ms / 1000), start + REPLAY_SEGMENT_LENGTH_S);
       const range = this.rangeOf(start);
       if (range && landing >= range[1] - HOLE_MIN_S) {
         // The target is past the segment's own end - in a hole of the live: land on the media after it.
