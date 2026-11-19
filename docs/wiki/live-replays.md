@@ -742,3 +742,12 @@ target is the segment LOOKUP: `segmentPositionAt` reads the segments' arrival ti
 time is media time, which runs ahead of arrival time on a replay whose media is longer than its live
 (61 s of media for 54 s). Read from the code, not measured on a real replay; owed a reading on the
 S12 replays.
+
+### The far-ahead trim follows the walk, not media time (alpha.4 defect, 2026-11-19)
+
+`trim` drops what lies beyond `far`, the position `REPLAY_FAR_AHEAD_S` of buffered media ahead across the
+known holes. When less than that was buffered, `positionAhead` fell back to the playhead, so `far` became
+`at + 60 s` of MEDIA time and ignored the hole: the media right after a pause longer than about 48 s was
+"far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
+a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
+walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
