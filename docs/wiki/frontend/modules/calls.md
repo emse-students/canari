@@ -2047,7 +2047,7 @@ other participant, the tile grid, the start control in a group) is the
   On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
   ended; only the caller's ends the ring for everyone - and, since
   [WP-GC7](#an-emptied-room-ends-every-ring-wp-gc7-server-half-2026-11-16), a participant's
-  `room-empty`. A group call keeps the 60 s ring window to join (interim).
+  `room-empty` stops every member's ring display, without marking the ring ended. A group call keeps the 60 s ring window to join (interim).
 - **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
@@ -2058,18 +2058,29 @@ A non-caller's `ring-end` stops only its own devices (WP-C11), so when the last 
 answered group call is not the caller, a member rung by CallKit or the Android full-screen ring kept
 ringing until the 60 s window closed. Decided 2026-11-16 (reversible): the ring-end reasons are
 `'cancelled' | 'answered' | 'ended' | 'room-empty'` (`RingEndReason`, `calls.service.ts`), and
-`endRing` honours `room-empty` for EVERY member - marks the ring ended (`ring_ended = room-empty`,
-so no late VoIP push and no later token) and fans `call_ring_end` out to all - but only from a user
-this service issued a room token for THAT call: `call:room:<id>:tokened:<user>`, written for the
-caller at `initiate` and for a callee at `room-token`, before the token leaves, with the binding's
-TTL. From anyone else, `room-empty` stops only the sender's devices and logs
+`endRing` fans a `room-empty` out to EVERY member's devices (`call_ring_end` to all) - but only from
+a user this service issued a room token for THAT call: `call:room:<id>:tokened:<user>`, written for
+the caller at `initiate` and for a callee at `room-token`, before the token leaves, with the
+binding's full TTL at that moment (so a callee's mark may outlive the binding by up to the 60 s ring
+window - harmless, `endRing` reads the binding first and an unbound ring-end never reads the mark).
+From anyone else, `room-empty` stops only the sender's devices and logs
 `room-empty REFUSED for every member` at WARN; a `room-empty` naming no room of the conversation is
 the sender's own devices, as every unbound ring-end. The other three reasons are unchanged, and
 `room-empty` only WIDENS the rule: the caller's ring-end and a 1:1's already reach everyone, so
-neither reads the mark. The mark is per call by construction (the room id is a fresh UUID at
-`initiate`), and its TTL is never the one that decides: once the binding expires the ring-end is
-unbound anyway. What it cannot prove is that the room IS empty - neither the mesh nor the server
-sees occupancy - so a participant's `room-empty` is trusted as far as their membership.
+neither reads the mark, and the caller's still marks the ring ended.
+
+**A participant's `room-empty` stops the ring DISPLAY and never marks the ring ended** (review of
+#3705, 2026-11-19). The token mark proves the sender was given a way INTO the room, never that the
+room is empty: `room-empty` is the sender's view of a mesh, and a member whose links all failed sees
+nobody in a call that is live for everyone else. Marking `ring_ended` on that word would refuse
+every later `room-token` (410), so a member still ringing could no longer join a live call - a
+client's belief locking the room for everyone (principle 2, the essential is never lost). The fact
+that would decide it - who holds a seat - exists only in call-service's memory (`p2p.rs`,
+`sfu_seats.rs`) and no path carries it to this service; until one does, the room stays joinable and
+the log says so (`not marked ended - the room stays joinable`). A late VoIP push for that room is
+then bounded by the answer window, as before WP-GC7. **What would lift it:** an internal seat query
+from call-service read by `endRing`, with a test that a `room-empty` against an occupied room
+leaves `requestRoomToken` open.
 
 - **Pinned by** `calls.service.spec.ts` (`an emptied room ends every ring (WP-GC7)`).
 - **Owed:** the client line - `CallService.endCall` sending `room-empty` exactly when its hangup

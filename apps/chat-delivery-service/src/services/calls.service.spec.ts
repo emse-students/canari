@@ -1726,15 +1726,38 @@ describe('CallsService', () => {
         return roomId;
       };
 
-      it("a tokened member's room-empty ends every member's ring", async () => {
+      it("a tokened member's room-empty stops every member's ring, and never marks it ended", async () => {
         const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
         const roomId = await openWithJoiner();
 
         await service.endRing('b', 'group-1', roomId, 'room-empty');
 
         expect(lastTokenLookup()).toEqual(['caller', 'b', 'c', 'd']);
-        expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('room-empty');
+        expect(redisStore.has(`call:room:${roomId}:ring_ended`)).toBe(false);
         expect(captured(log)).toContain('room-empty from a participant - every member');
+        expect(captured(log)).toContain('not marked ended - the room stays joinable');
+      });
+
+      it("a participant's room-empty never locks out a member still ringing: they still get a token", async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        // `b`'s mesh links failed, so `b` saw nobody - the call is live for the caller and others.
+        await service.endRing('b', 'group-1', roomId, 'room-empty');
+
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+        const { roomToken } = await service.requestRoomToken('c', 'group-1', roomId, '1');
+        expect(typeof roomToken).toBe('string');
+      });
+
+      it("the caller's room-empty still marks the ring ended", async () => {
+        jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const roomId = await openWithJoiner();
+
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+        await service.endRing('caller', 'group-1', roomId, 'room-empty');
+
+        expect(redisStore.get(`call:room:${roomId}:ring_ended`)).toBe('room-empty');
       });
 
       it('the caller, tokened at initiate, may end every ring with room-empty too', async () => {
