@@ -98,6 +98,8 @@ describe('CloudflareSfuService', () => {
   let fetchMock: jest.SpyInstance;
   let sessionCounter = 0;
   let maxSeats = 8;
+  /** The status Cloudflare gives a track `tracks/new` just accepted (`initializing` until ICE/DTLS). */
+  let pushStatus: 'active' | 'initializing' | 'inactive' = 'active';
 
   const captured = (spy: jest.SpyInstance): string =>
     spy.mock.calls.map((c: unknown[]) => c.map(String).join(' ')).join('\n');
@@ -108,6 +110,7 @@ describe('CloudflareSfuService', () => {
     sessionCounter = 0;
     maxSeats = 8;
     cfSessions = new Map();
+    pushStatus = 'active';
     process.env.CLOUDFLARE_SFU_APP_ID = 'app-id';
     process.env.CLOUDFLARE_SFU_APP_SECRET = 'app-secret';
     calls = {
@@ -155,7 +158,7 @@ describe('CloudflareSfuService', () => {
             location: t.location,
             mid: t.mid ?? `r${i}`,
             trackName: t.trackName,
-            status: 'active',
+            status: pushStatus,
           });
         }
         return Promise.resolve(
@@ -502,8 +505,8 @@ describe('CloudflareSfuService', () => {
       cfSessions.get(sessionId)!.forEach((t) => (t.status = 'inactive'));
 
     it('sessionLivenessOf: gone only on a 404/410 or when every track it pushed is inactive', () => {
-      const local = (status: string) =>
-        JSON.stringify({ tracks: [{ location: 'local', mid: '0', status }] });
+      const local = (status: string, trackName = 'audio') =>
+        JSON.stringify({ tracks: [{ location: 'local', mid: '0', trackName, status }] });
       expect(sessionLivenessOf(404, '', []).state).toBe('gone');
       expect(sessionLivenessOf(410, '', ['audio']).state).toBe('gone');
       expect(sessionLivenessOf(200, local('inactive'), ['audio']).state).toBe('gone');
@@ -512,6 +515,13 @@ describe('CloudflareSfuService', () => {
         state: 'live',
         activeMids: ['0'],
       });
+      // Still joining: the answer is applied, ICE/DTLS not yet connected.
+      expect(sessionLivenessOf(200, local('initializing'), ['audio'])).toEqual({
+        state: 'live',
+        activeMids: ['0'],
+      });
+      // The pushed track is no longer listed (collected), another one is: gone.
+      expect(sessionLivenessOf(200, local('active', 'other'), ['audio']).state).toBe('gone');
       // Opened, nothing pushed yet: nothing says it is dead.
       expect(sessionLivenessOf(200, JSON.stringify({ tracks: [] }), []).state).toBe('live');
       expect(sessionLivenessOf(500, 'boom', ['audio']).state).toBe('unknown');
@@ -640,6 +650,52 @@ describe('CloudflareSfuService', () => {
       expect(redis.hashes.get(`call:room:${ROOM}:cf:seats`)!.get('a')).toBe(current.sessionId);
       expect(redis.sets.has(`call:room:${ROOM}:cf:tracks:${old}`)).toBe(false);
       expect(captured(error)).toContain(`evict session=${old}: its tracks were NOT closed`);
+    });
+  });
+
+  describe('a participant still joining, and an outsider leaving (re-review of #3751)', () => {
+    const seatsOf = () => Object.fromEntries(redis.hashes.get(`call:room:${ROOM}:cf:seats`) ?? []);
+    const stateReads = () =>
+      fetchMock.mock.calls.filter(([, init]) => (init as RequestInit)?.method === 'GET').length;
+
+    it('an initializing joiner keeps its seat through another member roster', async () => {
+      await seatAndPush('a', ['audio-a']);
+      pushStatus = 'initializing';
+      const b = await seatAndPush('b', ['audio-b']);
+
+      expect((await service.roster('a', ROOM)).participants).toEqual([
+        { userId: 'b', sessionId: b, tracks: ['audio-b'] },
+      ]);
+      expect(await service.roster('b', ROOM)).toMatchObject({ others: 1 });
+    });
+
+    it('an inactive one loses it', async () => {
+      await seatAndPush('a', ['audio-a']);
+      pushStatus = 'inactive';
+      await seatAndPush('b', ['audio-b']);
+
+      expect((await service.roster('a', ROOM)).others).toBe(0);
+      expect(seatsOf()).toEqual({ a: 's1' });
+    });
+
+    it('a pushed track Cloudflare no longer lists (garbage-collected) loses it', async () => {
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      cfSessions.set(b, []);
+
+      expect((await service.roster('a', ROOM)).others).toBe(0);
+      expect(seatsOf()).toEqual({ a: 's1' });
+    });
+
+    it("an outsider's leave asks Cloudflare nothing and unseats nobody", async () => {
+      await seatAndPush('a', ['audio-a']);
+      const b = await seatAndPush('b', ['audio-b']);
+      cfSessions.set(b, []);
+      const before = stateReads();
+
+      expect(await service.leave('mallory', ROOM, 's-forged')).toEqual({ others: 2 });
+      expect(stateReads()).toBe(before);
+      expect(Object.keys(seatsOf()).sort()).toEqual(['a', 'b']);
     });
   });
 });

@@ -2166,27 +2166,46 @@ a timer here was taken (a liveness clock must be written by the thing whose live
 and a timer would make correctness a matter of timing): the proxy holds the app secret, and
 Cloudflare's `GET sessions/<id>` lists each track of the session with a `status` the SFU writes
 from that session's OWN media - a track receiving no packets for 30 s is collected (Cloudflare's
-limits). So `roster`, `leave` and a refused `session` claim READ-REPAIR the ledger
-(`CloudflareSfuService.pruneSeats`): every other seat is released, through the same conditional
-script as a leave, when
+limits). So `roster`, a `leave` that released the caller's own seat, and a refused `session` claim
+READ-REPAIR the ledger (`CloudflareSfuService.pruneSeats`): every other seat is released, through
+the same conditional script as a leave, when
 
 - its holder is no longer an admitted member of the conversation
   (`CallsService.cloudflareRoomMembers`, the rows `assertMembership` reads) - and its session is
   also EVICTED at Cloudflare, so a member removed mid-call stops sending and receiving, not only
   being listed; or
 - Cloudflare proves its session over (`sessionLivenessOf`): a 404/410, or the session pushed tracks
-  (by the ledger) and Cloudflare lists none of its local tracks `active`.
+  (by the ledger) and EVERY one of them is explicitly `inactive` or no longer listed at all
+  (collected).
 
 A seat nothing proves over is KEPT: a session not yet pushing (between `sessions/new` and
-`tracks/new`) is live, and an answer that proves nothing (a 5xx, an `errorCode`, no answer) keeps
+`tracks/new`) is live; so is one whose pushed track is still `initializing` - the ledger records a
+push as soon as `tracks/new` answers, before the joiner has applied the answer and ICE/DTLS has
+connected, and the first draft (live only on `active`) unseated every participant still joining
+(re-review of #3751); and an answer that proves nothing (a 5xx, an `errorCode`, no answer) keeps
 the seat with a WARN naming it - a destructive repair is gated on knowing the state is broken. One
 `try` per seat. **Owed: a dev reading of what Cloudflare answers for a session closed long ago**
 (404 is the documented-by-HTTP reading; if it answers otherwise the WARN says so, and the track
 statuses still prune the killed phone). The cost is one `GET` per other seat on each `roster`, at
-most seven.
+most seven. A `leave` is not gated on membership (a member removed mid-call must still leave), so
+it read-repairs only when it released the caller's OWN seat: anyone else's leave asks Cloudflare
+nothing and unseats nobody - otherwise any signed-in user could spend the room's Cloudflare budget
+in a loop.
+
+**The client contract this liveness rests on (owed by WP-GC4's client half).**
+
+- **A seated client keeps every pushed sender SENDING.** Mute with `track.enabled = false` (the
+  sender keeps sending silence or black frames), never `replaceTrack(null)` and never a
+  non-sending transceiver direction (`recvonly`, `inactive`): those send nothing, Cloudflare
+  collects the track after 30 s, and the seat is pruned as a dead phone's would be.
+- **iOS stopping the microphone in the background is a departure after 30 s**, by the same rule:
+  the seat is released and the client re-opens a session (and re-claims its seat) when it comes
+  back.
+- **`roster` polling is bounded.** Each `roster` costs up to seven Cloudflare `GET`s; the client
+  reads it on an announcement or a join, never on a short fixed loop.
 
 **A replaced device is evicted, not only unseated.** When a second device takes a user's seat, the
-proxy reads the replaced session's active tracks and closes them all at Cloudflare
+proxy reads the replaced session's tracks not yet `inactive` and closes them all at Cloudflare
 (`tracks/close`, `force: true` - no renegotiation with a client that is out), so subscribers stop
 receiving the old push, and deletes its pushed-tracks key. The replacement never waits on it: a
 close Cloudflare refuses is logged at ERROR (its media flows until Cloudflare collects the session),

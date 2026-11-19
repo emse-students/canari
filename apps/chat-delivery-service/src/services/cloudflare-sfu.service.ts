@@ -66,7 +66,12 @@ export interface RosterEntry {
  * WHAT CLOUDFLARE SAYS OF A SEATED SESSION (`GET sessions/<id>`), the seat ledger's liveness: the
  * SFU writes each track's `status` from that session's own media, so it is a liveness written by
  * the thing whose liveness it measures - never a clock the client keeps, never a timer here.
- * `live` carries the mids of its active tracks (what an eviction closes).
+ * `live` carries the mids of its tracks not yet `inactive` (what an eviction closes).
+ *
+ * It holds only while a seated client keeps every pushed sender SENDING: a mute is
+ * `track.enabled = false`, never `replaceTrack(null)` or a non-sending direction, which send
+ * nothing and are collected after 30 s like a dead phone (the client contract of WP-GC4,
+ * `docs/wiki/frontend/modules/calls.md`).
  */
 export type SessionLiveness =
   | { state: 'live'; activeMids: string[] }
@@ -77,11 +82,13 @@ export type SessionLiveness =
  * Classifies Cloudflare's answer about one session, against what the ledger says it pushed.
  *
  * - `gone`: Cloudflare answers 404/410 (no such session), or the session pushed tracks (`pushed`,
- *   from `call:room:<id>:cf:tracks:<session>`) and Cloudflare lists NONE of its local tracks as
- *   `active` - a track receiving no media for 30 s is collected by the SFU (Cloudflare's limits),
- *   which is what a killed or offline phone leaves.
- * - `live`: anything else Cloudflare answers with a readable 2xx - a session that has not pushed
- *   yet included (it is between `sessions/new` and `tracks/new`, and nothing says it is dead).
+ *   the track names in `call:room:<id>:cf:tracks:<session>`) and EVERY one of them is either
+ *   explicitly `inactive` or no longer listed at all - a track receiving no media for 30 s is
+ *   collected by the SFU (Cloudflare's limits), which is what a killed or offline phone leaves.
+ * - `live`: anything else Cloudflare answers with a readable 2xx. A pushed track still
+ *   `initializing` is live: the ledger records it as soon as `tracks/new` answers, before the
+ *   joiner has applied the answer and ICE/DTLS has connected, and pruning it then would unseat
+ *   every participant still joining. A session that has not pushed yet is live too.
  * - `unknown`: any other status, an `errorCode`, an unreadable body. The seat is KEPT (a destructive
  *   repair is gated on knowing the state is broken) and the caller logs it at WARN.
  */
@@ -107,18 +114,24 @@ export function sessionLivenessOf(status: number, text: string, pushed: string[]
   const tracks = (Array.isArray(body.tracks) ? body.tracks : []) as {
     location?: unknown;
     mid?: unknown;
+    trackName?: unknown;
     status?: unknown;
   }[];
-  const active = tracks.filter((t) => t?.status === 'active');
-  if (pushed.length > 0 && !active.some((t) => t.location === 'local')) {
+  // Only an explicit `inactive` is an ending; `active`, `initializing` (or a status this code does
+  // not know) proves nothing over.
+  const open = tracks.filter((t) => t && t.status !== 'inactive');
+  const openLocal = new Set(
+    open.filter((t) => t.location === 'local').map((t) => String(t.trackName))
+  );
+  if (pushed.length > 0 && !pushed.some((name) => openLocal.has(name))) {
     return {
       state: 'gone',
-      why: `none of the ${pushed.length} track(s) it pushed is active at Cloudflare`,
+      why: `every one of the ${pushed.length} track(s) it pushed is inactive or no longer listed at Cloudflare`,
     };
   }
   return {
     state: 'live',
-    activeMids: active.map((t) => t.mid).filter((m): m is string => typeof m === 'string'),
+    activeMids: open.map((t) => t.mid).filter((m): m is string => typeof m === 'string'),
   };
 }
 
@@ -448,9 +461,11 @@ export class CloudflareSfuService {
       sessionId
     )) as [number, number];
     let others = left;
-    if (others > 0) {
+    if (released === 1 && others > 0) {
       // Read-repair before answering: a dead phone's seat must not keep the room from reading as
-      // empty to the last real participant (`others: 0` is WP-GC6's empty room).
+      // empty to the last real participant (`others: 0` is WP-GC6's empty room). Only for a caller
+      // who just released a seat: `leave` is not gated on membership, so anyone else's leave must
+      // cost Cloudflare nothing and unseat nobody.
       others -= await this.pruneSeats(roomId, `leave room=${roomId} user=${userId}`, userId);
     }
     if (released !== 1) {
@@ -546,8 +561,8 @@ export class CloudflareSfuService {
 
   /**
    * EVICTS A SESSION that no longer holds a seat (a replaced device's, a removed member's): closes
-   * every track Cloudflare still lists as active on it - its push, so subscribers stop receiving
-   * it, and its pulls - with `force` (no renegotiation with a client that is out), and forgets the
+   * every track Cloudflare still lists as not `inactive` on it - its push, so subscribers stop
+   * receiving it, and its pulls - with `force` (no renegotiation with a client that is out), and forgets the
    * tracks it pushed. The seat is already gone, so nothing can pull from it again whatever
    * Cloudflare answers; a failure to close is logged at ERROR (its media flows until Cloudflare
    * collects the session), never thrown into the call that caused the eviction.
@@ -569,7 +584,7 @@ export class CloudflareSfuService {
         return;
       }
       if (liveness.activeMids.length === 0) {
-        this.logger.log(`[sfu] ${scope} evict session=${sessionId}: no active track to close`);
+        this.logger.log(`[sfu] ${scope} evict session=${sessionId}: no open track to close`);
         return;
       }
       await this.realtime<RealtimeAnswer>(
