@@ -921,6 +921,58 @@ still sent (the ingest is gapless) and logged - WP-L1 measured none.
 The [viewer](#the-viewer-as-built-2026-10-19) appends a segment's init only when it differs from the last one
 appended; MSE would accept a repeated init, so that is economy, not correctness.
 
+### Audio drifts ahead of the video under 15 fps (2026-11-19)
+
+**The report** (owner, 2026-11-19, a desktop browser): in sync on arrival, then the sound runs further
+and further ahead of the picture the longer one watches. A join or a seek puts it back.
+
+**The cause is one guessed duration and MSE's discontinuity rule.** Chromium's MediaRecorder MP4
+muxer writes each video sample's duration from the next frame's timestamp; the LAST frame of a
+fragment has no next frame yet, so it is written as **999/30000 s (1/30 s) whatever the camera runs
+at**. Audio's last sample is written short by 1.6 ms only. MSE's coded frame processing calls a frame
+a DISCONTINUITY when its decode time lies more than **twice the previous frame's duration** after
+that frame - so once the camera runs **under 15 fps** (an Android camera in a dim room drops to
+12.5), every fragment boundary is a discontinuity: the next frame comes 80 ms after the last one,
+against a stated 33 ms. MSE then restarts every track's coded frame group; Chromium's recorder writes
+the AUDIO track first, so part of the audio already appended is dropped and the audio renderer plays
+what remains back to back. **The sound gains about one frame gap per fragment, ~23 ms a second**,
+cumulative until a seek or a join empties the buffer.
+
+**Measured** on dev, with a content-agnostic meter (the played sound cross-correlated against the
+segment's own audio at the presented video frame) and with a known-sync source (a flash and a beep on
+the same clock): a Mi 9T broadcast at 12.5 fps drifts **+23 ms/s** in both the live and the replay
+append paths; the beep led the flash by a further **~520 ms over 61 s**. The same segments with the
+rule below: **flat, -32..+31 ms over 80 s**. iPhone segments (WebKit's recorder writes real
+durations, video timescale 600) and Chromium segments at 30 fps measured flat over 300 s. **Camera
+flips are not the cause**: a generation boundary is a gap the live player's `time-gap` seek crosses
+(or an overlap MSE trims), and gaps of 0.7 s and overlaps of 0.3 s measured flat.
+
+**The rule, applied by the viewer to every fragment it appends** (`holdLastFrameInterval` in
+`fmp4Segments.ts`, both `LivePlayer.take` and `ReplayPlayer.appendMedia`): when the last video sample
+is SHORTER than the one before it, it takes that one's duration - the interval the camera was
+actually running at - capped at the fragment's own end (where its audio ends, `tfdt` plus its
+durations, read from the same fragment), so a stall before the last frame is never stretched over the
+next fragment. The duration appended is at most the previous interval and never past the fragment;
+the error stays inside one fragment and never accumulates, and the gap to the next fragment stays
+under MSE's threshold, so no discontinuity is declared. On the Mi 9T's 12.5 fps output the audio
+ends 127-149 ms after the last frame starts, against a 78-83 ms interval: the cap does not bind on
+ordinary output. A last sample as long or
+longer is a frame really held and is left alone. It is **stateless, one fragment at a time**: nothing
+is carried from the previous fragment, so no interval crosses a recorder generation, and a fragment
+with ONE video sample (no interval of its own) is left as written. No periodic re-anchor: the cause is
+in the bytes we append, not inside the engine, so it is removed there. The players count in their summary line
+(`N last frames held`) the corrections that more than DOUBLE the written duration - the ones that
+remove a discontinuity, under 15 fps - and log the first of a run at debug, with the values; the
+millisecond nudges at 30 fps are applied and not counted. The rule assumes nothing about the number
+of `trun`s (Chromium and WebKit write one per track per fragment; several are read in order).
+
+**Why the viewer and not the broadcaster**: the viewer is the only place that also fixes the replays
+already stored (three days) and lives from app versions already installed; a second copy at the
+broadcaster would be duplication. **A replay saved to the gallery** (`replaySave.ts`) is a file of the
+recorder's bytes and is NOT corrected - and does not drift: a native player places each fragment by
+its `tfdt` and has no MSE discontinuity rule to drop audio by. Owed: one reading, the Mi 9T broadcasting 5+ min in a dark room
+watched in desktop Chrome, in sync at the end - the real test; the counter only shows the rule acting ([backlog](../../backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)).
+
 ### Background, a lens taken, and the same live
 
 The camera is **given back when the app is hidden, on both platforms** (the reel camera's rule), the

@@ -49,7 +49,7 @@ import {
   isLiveRefusal,
 } from './api';
 import { LiveSegmentOpenError, openLiveSegment } from './liveCrypto';
-import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
+import { Fmp4ParseError, LastFrameHolds, initSegmentEnd } from './fmp4Segments';
 import { liveViewerCount } from './liveViewerCount';
 import {
   classifyLiveWait,
@@ -304,6 +304,8 @@ export class LivePlayer {
   private state: LiveViewerState = { kind: 'connecting' };
 
   private appended = 0;
+  /** The last video frames lengthened on append (the audio-ahead drift), for the summary. */
+  private readonly holds = new LastFrameHolds();
   private skipped = 0;
   private seeks = 0;
 
@@ -461,6 +463,7 @@ export class LivePlayer {
     this.broadcasterQuiet = false;
     this.policy.reset();
     this.appended = 0;
+    this.holds.reset();
     this.skipped = 0;
     this.seeks = 0;
   }
@@ -775,8 +778,13 @@ export class LivePlayer {
     this.last = Math.max(this.last, s.index);
     if (!media) return;
     let end: number;
+    let body: Uint8Array<ArrayBuffer>;
     try {
       end = initSegmentEnd(media);
+      // The fragment as appended: its last video frame given the interval the camera ran at.
+      const init = end > 0 ? media.subarray(0, end) : this.lastInit;
+      body = media.subarray(end);
+      if (init) body = this.holds.apply(`[LIVE] viewer ${this.liveId}`, init, body);
     } catch (e) {
       if (!(e instanceof Fmp4ParseError)) throw e;
       // The seal opened, so these bytes are the broadcaster's own: its recorder wrote a box no
@@ -798,7 +806,6 @@ export class LivePlayer {
       console.warn(`[LIVE] viewer ${this.liveId}: segment ${s.index} carries no init to start on`);
       throw new StopOn({ kind: 'unavailable', reason: 'playback' });
     }
-    const body = media.subarray(end);
     if (body.byteLength > 0) await this.append(gen, body);
     this.appended++;
     if (this.appended % SUMMARY_EVERY === 0) this.summarise('playing');
@@ -1083,7 +1090,7 @@ export class LivePlayer {
   private summarise(why: string): void {
     if (this.appended === 0 && this.skipped === 0) return;
     console.log(
-      `[LIVE] viewer ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks, at ${this.last}`
+      `[LIVE] viewer ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks, ${this.holds.count} last frames held, at ${this.last}`
     );
   }
 }
