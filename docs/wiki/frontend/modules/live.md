@@ -1694,7 +1694,7 @@ does is untouched).
 
 **Short screens (a phone turned, about 390 pt high).** Six 44 pt buttons and their gaps need about 310
 pt, which would reach the comment bar. The column is capped to the height between the top and bottom
-insets (minus the keyboard occlusion and 6 rem) and scrolls inside the cap (`overflow-y-auto`), so a
+insets (minus the keyboard occlusion and 6 rem, which leaves 5.25 rem free at the bottom once the bar's 0.75 rem top padding is counted; the desktop studio's scene bar is the other right-edge column, at the bottom) and scrolls inside the cap (`overflow-y-auto`), so a
 control is never pushed under the comment bar; End, first in the column, is always in view. Horizontally
 the comment box is on the left in landscape (`landscape:max-w-sm`), so the column never covers it.
 

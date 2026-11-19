@@ -34,8 +34,10 @@ export const LIVE_BROADCASTER_ONAIR_BAR_CLASS = `${LIVE_TOP_BAR_BASE_CLASS} gap-
 export const LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS = 'min-w-0 flex-1';
 
 /**
- * The on-air control column. The cap leaves the bottom 6 rem free: the chat's bottom padding
- * (0.75 rem) plus its last lines, which are what a lower control would cover on a short screen (a
+ * The on-air control column. The cap leaves 5.25 rem free at the bottom (6 rem minus the bar's
+ * 0.75 rem top padding), plus the insets: the chat's bottom padding (0.75 rem) and its last lines,
+ * and, with the studio on, the scene bar, the second right-edge column at the bottom
+ * (`data-live-onair-scenes`), are what a lower control would cover on a short screen (a
  * phone turned: about 390 pt of height for six 44 pt buttons). The column scrolls inside the cap
  * instead of overflowing; `p-1` keeps the focus rings from being clipped by `overflow-y-auto`;
  * `pointer-events-auto` keeps it tappable over the picture.

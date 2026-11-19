@@ -13,3 +13,5 @@ Also read: before going live the controls are still ONE row on the right (the co
 clear of the pre-live sheet and the rules sheet; with the keyboard up in portrait the column may sit
 over the top of the chat box (chat lines stack from the bottom, so it matters only with many lines);
 the title editor at 360 px (it is `max-w-full` below `sm`) stays clear of the column.
+
+Also read: a short screen with the studio on (the scene bar is the second right-edge column, at the bottom): the control column scrolls inside its cap and never meets it.
