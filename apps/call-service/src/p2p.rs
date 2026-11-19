@@ -37,11 +37,35 @@
 //! sender's user id on what it forwards (`from`), so no client can speak as another. A two-seat
 //! room still routes an unaddressed frame to the one other party, which is how a client older than
 //! the mesh speaks; a larger room refuses one, which no mesh client sends.
+//!
+//! ONE DEVICE PER USER (WP-GC8, 2026-11-16). Group-call keys are per USER, so a user holds ONE
+//! seat: a second device's `Join` REPLACES the first, in a 1:1 room as in a mesh. The wire, which
+//! the client rebuilds on (docs/wiki/frontend/modules/calls.md, "One device per user: the relay's
+//! wire"):
+//!
+//! - the replaced device gets `PeerLeft` naming NOBODY (it is the one out), then nothing;
+//! - every other PRESENT participant gets exactly ONE `PeerReady { peer: <user id>, resumed: false }`
+//!   for that user - the SAME `peer` as before, since `peer` is always a user id and never a device -
+//!   and no `PeerLeft` or `PeerAway` for it: the call goes on, only that one leg is rebuilt;
+//! - an AWAY participant is told nothing then, and its resume pairs it with the new device with
+//!   `resumed: false` (the replacement forgot every pair of that user);
+//! - the new device is paired with everyone from nothing, LAST in arrival order, so it is the
+//!   polite side of each of its pairs - a pair whose initiator was the replaced device flips.
+//!
+//! So `resumed: false` alone tells a client to drop whatever leg it holds for `peer` and build one
+//! anew; there is no "replaced" flag to read. And every relayed frame is handed on UNDER the room's
+//! lock ([`P2pRoom::relay`]), the lock the replacement and its `PeerReady` take: a frame the replaced
+//! device sent reaches a participant BEFORE that `PeerReady`, or never - so every frame `from` a
+//! user after a `PeerReady` naming them was sent by the device that `PeerReady` announced. The
+//! converse does not hold: the new seat routes from the moment it is taken, before its `Joined`,
+//! and a participant may still send what it meant for the old leg until it reads its `PeerReady`,
+//! so the new device drops or survives such frames (the wiki section above).
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
+use tracing::debug;
 
 use crate::{bump, CallLedger, PeerId};
 
@@ -341,6 +365,8 @@ impl P2pRoom {
             }
         });
         if !evicted.is_empty() {
+            // Forgetting the pairs is what makes every re-announcement of this user a FIRST
+            // pairing (`resumed: false`), including the one an away participant meets on resume.
             room.forget_pairs_of(&peer.user_id);
         }
         room.seats.push(Seat {
@@ -349,6 +375,20 @@ impl P2pRoom {
         });
         let idx = room.seats.len() - 1;
         let (pairings, away) = room.pair_up(idx);
+        if !evicted.is_empty() {
+            debug!(
+                "[multi-device] p2p seat of user {} replaced ({} -> {}): {} present participant(s) re-paired from nothing, {} away one(s) re-paired on resume",
+                room.seats[idx].peer.user_id,
+                evicted
+                    .iter()
+                    .map(|p| p.peer_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                room.seats[idx].peer.peer_id,
+                pairings.len(),
+                away.len()
+            );
+        }
         JoinOutcome::Seated {
             evicted,
             pairings,
@@ -438,16 +478,43 @@ impl P2pRoom {
         })
     }
 
-    /// Where a frame from `peer_id` goes. `to` is the addressee's user id. `None` routes to the one
-    /// other party of a two-seat room (the 1:1 wire, which names nobody); in a larger room it is
-    /// `Unaddressed`, unless `broadcast`, which sends it to every other present seat.
+    /// Where a frame from `peer_id` goes, without delivering it. The relay itself goes through
+    /// [`P2pRoom::relay`], which delivers under the lock.
+    #[cfg(test)]
     pub(crate) fn route(&self, peer_id: &str, to: Option<&str>, broadcast: bool) -> Route {
+        self.relay(peer_id, to, broadcast, |route| route)
+    }
+
+    /// Routes a frame from `peer_id` and runs `deliver` on the answer UNDER the room's lock.
+    ///
+    /// `to` is the addressee's user id. `None` routes to the one other party of a two-seat room
+    /// (the 1:1 wire, which names nobody); in a larger room it is `Unaddressed`, unless
+    /// `broadcast`, which sends it to every other present seat.
+    ///
+    /// WHY UNDER THE LOCK. A seat replaced by a sibling device is removed under this lock, and the
+    /// new device's `PeerReady` is delivered under it ([`P2pRoom::announce_if_present`]). Routed
+    /// under the lock and delivered after it, a frame of the replaced device could land in a
+    /// participant's queue AFTER the `PeerReady` of its successor, and that participant would apply
+    /// the old device's answer or candidates to the new leg. Holding the lock across the hand-off
+    /// orders the two: the frame precedes the `PeerReady`, or the sender is no longer seated and it
+    /// goes nowhere. `deliver` must only `try_send` ([`deliver`]) and log - never await.
+    pub(crate) fn relay<R>(
+        &self,
+        peer_id: &str,
+        to: Option<&str>,
+        broadcast: bool,
+        deliver: impl FnOnce(Route) -> R,
+    ) -> R {
         // A poisoned lock means a thread panicked mid-change: the seats cannot be trusted, and
         // answering `Nobody` would read as an ordinary empty room. It is propagated as the panic.
         let room = self
             .inner
             .lock()
             .expect("p2p room lock poisoned: a thread panicked while holding it");
+        deliver(Self::route_locked(&room, peer_id, to, broadcast))
+    }
+
+    fn route_locked(room: &Seats, peer_id: &str, to: Option<&str>, broadcast: bool) -> Route {
         let Some(me) = room.seats.iter().find(|s| s.peer.peer_id == peer_id) else {
             return Route::NotSeated;
         };
@@ -1180,5 +1247,98 @@ mod tests {
             }
             ResumeOutcome::Unknown => panic!("bob's seat must resume"),
         }
+    }
+
+    // ---- One device per user (WP-GC8) ----
+
+    /// A seated user's second device in a mesh: the first is evicted, and the newcomer is paired
+    /// from nothing (`resumed: false`) with every other present participant - ONE pairing each,
+    /// naming the same user - and is the polite side of all of them, having arrived last.
+    #[test]
+    fn a_second_device_in_a_mesh_is_paired_anew_with_each_participant_once() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b1, _rb1) = peer("bob", "phone");
+        let (c, _rc) = peer("carol", "pc");
+        room.join(a, 4);
+        room.join(b1, 4);
+        room.join(c, 4);
+        let (b2, _rb2) = peer("bob", "pc");
+        let outcome = room.join(b2, 4);
+        assert_eq!(
+            pairs(&outcome),
+            vec![
+                ("alice:pc".into(), "bob:pc".into(), false),
+                // Bob's phone initiated toward carol; the new device arrived last and is polite.
+                ("carol:pc".into(), "bob:pc".into(), false),
+            ]
+        );
+        let JoinOutcome::Seated { evicted, away, .. } = outcome else {
+            panic!("the second device must be seated")
+        };
+        let evicted: Vec<_> = evicted.iter().map(|p| p.peer_id.as_str()).collect();
+        assert_eq!(evicted, vec!["bob:phone"]);
+        assert!(away.is_empty());
+        assert!(matches!(
+            room.route("bob:phone", Some("alice"), false),
+            Route::NotSeated
+        ));
+        assert_eq!(
+            routed_to(room.route("carol:pc", Some("bob"), false)).as_deref(),
+            Some("bob:pc")
+        );
+    }
+
+    /// A participant AWAY when the replacement happens is told nothing then; its resume pairs it
+    /// with the new device from nothing (`resumed: false`) - so it drops its leg to the old one -
+    /// and with everyone else as a resume (`resumed: true`).
+    #[test]
+    fn a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_the_new_device() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b1, _rb1) = peer("bob", "phone");
+        let (c, _rc) = peer("carol", "pc");
+        room.join(a, 4);
+        room.join(b1, 4);
+        room.join(c, 4);
+        room.mark_absent("alice:pc");
+        let (b2, _rb2) = peer("bob", "pc");
+        let JoinOutcome::Seated { pairings, away, .. } = room.join(b2, 4) else {
+            panic!("the second device must be seated")
+        };
+        assert_eq!(pairings.len(), 1, "only carol is present to pair with");
+        assert_eq!(away[0].peer_id, "alice:pc");
+        let (a2, _ra2) = peer("alice", "pc-again");
+        let ResumeOutcome::Resumed { others, .. } = room.resume("alice:pc", a2) else {
+            panic!("alice's seat must resume")
+        };
+        let mut seen: Vec<(String, bool)> = others
+            .iter()
+            .map(|o| match o {
+                OtherSeat::Present(p) => (p.polite.user_id.clone(), p.resumed),
+                OtherSeat::Away(p) => panic!("{} is not away", p.peer_id),
+            })
+            .collect();
+        seen.sort();
+        assert_eq!(seen, vec![("bob".into(), false), ("carol".into(), true)]);
+    }
+
+    /// A relayed frame is handed on WHILE the room's lock is held - the lock a replacement and its
+    /// `PeerReady` take - so a replaced device's frame can never land after its successor's
+    /// `PeerReady`.
+    #[test]
+    fn a_relayed_frame_is_delivered_under_the_rooms_lock() {
+        let room = P2pRoom::default();
+        let (a, _ra) = peer("alice", "pc");
+        let (b, _rb) = peer("bob", "phone");
+        let (c, _rc) = peer("carol", "pc");
+        room.join(a, 4);
+        room.join(b, 4);
+        room.join(c, 4);
+        let held = room.relay("bob:phone", Some("alice"), false, |route| {
+            assert!(matches!(route, Route::To(ref p) if p.peer_id == "alice:pc"));
+            room.inner.try_lock().is_err()
+        });
+        assert!(held, "the delivery must run under the room's lock");
     }
 }
