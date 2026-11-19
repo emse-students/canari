@@ -459,7 +459,7 @@ describe('ReplayPlayer', () => {
       ]);
       expect(knownHoles(segs, placed, new Map([[0, 2]]))).toEqual([]);
     });
-    it('a skipped neighbour (no measure) is no hole', () => {
+    it('a region never loaded between two measured segments is no hole', () => {
       const placed = new Map([
         [0, 0],
         [2, 6],
@@ -736,6 +736,114 @@ describe('ReplayPlayer', () => {
       expect(buffer().appends).toContain('m2');
     });
 
+    it('Q13: a stale seek during the second download of an open failure does not end the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const ok = deps.fetchSegment;
+      let calls30 = 0;
+      deps.fetchSegment = vi.fn((id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-30' && ++calls30 === 2) {
+          return new Promise<ArrayBuffer>((_resolve, reject) =>
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            )
+          );
+        }
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 30) throw new LiveSegmentOpenError('malformed', 30, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 60.2; // seek A: segment 30, its open fails, the second download hangs
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 3; // seek B, buffered: supersedes A, aborting the second download
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(video.currentTime).toBe(3);
+    });
+
+    it('Q14: a 404 on the second download of an open failure skips the segment, not the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const ok = deps.fetchSegment;
+      let calls2 = 0;
+      deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-2' && ++calls2 === 2)
+          throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 2) throw new LiveSegmentOpenError('malformed', 2, 1);
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      await flush();
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+      expect(buffer().appends).toContain('m3');
+    });
+
+    it('Q10: a seek whose target and everything after it is skipped lands on the last existing segment before it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(50)(from));
+      skip404(Array.from({ length: 10 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 90.2; // segment 45
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(78, 1); // segment 39
+    });
+
+    it('Q15: skipped segments at the end of a page: the landing follows onto the next page', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(100, 50)(from)
+      );
+      skip404(['seg-48', 'seg-49', 'seg-50']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 97; // segment 48, the last listed page ends at 49
+      p.noteSeeking();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(102, 1); // segment 51, on the next page
+    });
+
+    it('the leading gap is read from the first MEASURED segment when the first ones are skipped', () => {
+      const segs = Array.from({ length: 3 }, (_, i) => ({
+        index: i,
+        name: `s${i}`,
+        bytes: 1,
+        atMs: i * 2000,
+      }));
+      expect(knownHoles(segs, new Map([[2, 4]]), new Map([[2, 6]]), new Set([0, 1]))).toEqual([
+        [0, 4],
+      ]);
+    });
+
+    it('a skipped or held segment is not downloaded again by a seek', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(['seg-50']);
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100.2;
+      p.noteSeeking();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const calls = () => fetchSegment.mock.calls.filter((c) => c[1] === 'seg-50').length;
+      const before = calls();
+      video.currentTime = 100.4;
+      p.noteSeeking();
+      await flush();
+      expect(calls()).toBe(before);
+    });
+
     it("Q2/Q3: a stall before a skipped segment's gap is carried over it", async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
       skip404(['seg-3']); // media [6, 8] never arrives
@@ -762,7 +870,7 @@ describe('ReplayPlayer', () => {
       expect(video.currentTime).toBeCloseTo(104, 1);
     });
 
-    it('a seek whose target and next segments are all skipped to the end falls back to held media', async () => {
+    it('a seek whose target and next segments are all skipped to the end lands on the last existing segment before it', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
       const names = Array.from({ length: 50 }, (_, i) => `seg-${50 + i}`);
       skip404(names);
@@ -771,10 +879,10 @@ describe('ReplayPlayer', () => {
       await flush();
       video.currentTime = 150; // 404s from 50 to the last segment
       p.noteSeeking();
-      await flush();
+      for (let i = 0; i < 10; i++) await flush(); // ~50 sequential 404s
       // Never left unanswered: a position inside a range was written.
       expect(inRange(video.currentTime)).toBe(true);
-      expect(video.currentTime).toBeLessThan(20);
+      expect(video.currentTime).toBeCloseTo(98, 1); // segment 49, the last one that exists
     });
   });
 

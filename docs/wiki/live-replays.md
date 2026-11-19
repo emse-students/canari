@@ -535,9 +535,9 @@ eviction. **What the SourceBuffer holds now** is read from `buffered`. Holes com
 and eviction from the second.
 
 The rule: **a hole is a fact of the segment list, never something detected by a stall.**
-`knownHoles(segments, placed, placedEnd)` returns the gap between where a segment was measured to end and
+`knownHoles(segments, placed, placedEnd, skipped)` returns the gap between where a segment was measured to end and
 where its list neighbour begins (and the leading gap before the first segment, above 0.05 s); a region
-not loaded yet or a skipped neighbour has no measure and is no hole. A range holding a single segment
+not loaded yet has no measure and is no hole, while a segment skipped for good is transparent (below). The leading gap is read from the first MEASURED segment when only skipped ones precede it. A range holding a single segment
 between two holes is crossed on both sides. **A segment skipped for good (404, or one that does not open)
 is transparent**: each measured segment is paired with the NEXT measured one, so the media the skipped
 one would have held is a hole like any other, and the lead, the far-ahead trim, the crossing and the seek
@@ -567,8 +567,12 @@ A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with O
 a position inside a range - the segment after the hole, else the target segment's own start, else
 nothing (logged) - never a position in no range, which hangs the engine's seek and blocks the crossing
 (`video.seeking`). **A user seek is never left unanswered.** When the target's segment is skipped the landing walks
-FORWARD to the first segment that gives media, and BACK to the last held one when none does (every
-segment to the end skipped); only a replay with no media at all logs an error and writes nothing.
+FORWARD to the first segment that gives media (listing the next page when the walk reaches the end of
+the pages already listed), and BACK to the LAST EXISTING segment before the target when none does - never
+an arbitrary range the buffer happens to hold; only a replay with no media at all logs an error and writes
+nothing. Held and skipped segments are answered from what is known, never downloaded again. The second
+download after an open failure goes through the same handling as the first: a stale seek or a 404 skips
+that segment and never ends the replay.
 `firstGapAhead` starts from the last measured segment only when its end reaches the playhead, else from
 the playhead's own list position, so nothing is fetched behind it.
 

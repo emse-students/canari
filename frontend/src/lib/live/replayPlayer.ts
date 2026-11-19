@@ -171,7 +171,16 @@ export function knownHoles(
 ): MediaSpan[] {
   const holes: MediaSpan[] = [];
   // The leading gap: the first segment of the list begins after zero (the playhead starts at 0).
-  const first = segments.length > 0 ? placed.get(segments[0].index) : undefined;
+  // The first MEASURED segment, when only skipped ones precede it.
+  let first: number | undefined;
+  for (const { index } of segments) {
+    const start = placed.get(index);
+    if (start !== undefined) {
+      first = start;
+      break;
+    }
+    if (!skipped.has(index)) break;
+  }
   if (first !== undefined && first > HOLE_MIN_S) holes.push([0, first]);
   // Each measured segment is paired with the NEXT measured one, a segment skipped for good (404, did not
   // open) being transparent: the media it would have held is a gap like any other. A region not loaded
@@ -677,7 +686,7 @@ export class ReplayPlayer {
       if (this.mediaAhead() >= REPLAY_AHEAD_S) return;
       const s = this.segments[this.cursor];
       this.cursor++;
-      if (this.isBuffered(s.index)) continue;
+      if (this.isBuffered(s.index) || this.skippedIdx.has(s.index)) continue;
       await this.take(gen, s);
     }
   }
@@ -805,7 +814,11 @@ export class ReplayPlayer {
     if (pos < 0) return;
     const s = this.segments[pos];
     this.seeks++;
-    const taken = await this.take(gen, s, ticket);
+    const heldStart = this.bufferedStart(s.index);
+    const taken =
+      heldStart !== undefined || this.skippedIdx.has(s.index)
+        ? null
+        : await this.take(gen, s, ticket);
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
       console.debug(
@@ -822,7 +835,7 @@ export class ReplayPlayer {
       // Inside the segment by the share of it the target is past, never beyond its own length.
       landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
       const range = this.rangeOf(start);
-      if (range && landing >= range[1] - HOLE_MIN_S && pos + 1 < this.segments.length) {
+      if (range && landing >= range[1] - HOLE_MIN_S) {
         // The target is past the segment's own end - in a hole of the live: land on the media after it.
         const after = await this.landForward(gen, pos + 1, ticket);
         if (after === 'stale') return;
@@ -843,10 +856,13 @@ export class ReplayPlayer {
         start = landing = after.start;
         this.cursor = after.pos + 1;
       } else {
-        for (let k = pos - 1; k >= 0 && landing === undefined; k--) {
-          landing = this.bufferedStart(this.segments[k].index);
+        // Nothing after: the LAST EXISTING segment before the target, never an arbitrary held range.
+        const before = await this.landBackward(gen, pos - 1, ticket);
+        if (before === 'stale') return;
+        if (before) {
+          start = landing = before.start;
+          this.cursor = before.pos + 1;
         }
-        start = landing;
       }
     }
     // THE RULE: only a position INSIDE a range is ever written.
@@ -881,11 +897,29 @@ export class ReplayPlayer {
     from: number,
     ticket: SeekTicket
   ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
-    for (let j = from; j < this.segments.length; j++) {
-      if (this.skippedIdx.has(this.segments[j].index)) continue;
+    for (let j = from; ; j++) {
+      // The list is paged: the next segment may be on a page not listed yet.
+      while (j >= this.segments.length && this.nextFrom !== null) {
+        await this.loadPage(gen);
+        if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
+      }
+      if (j >= this.segments.length) return undefined;
       const start = await this.landOn(gen, this.segments[j], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: j };
+    }
+  }
+
+  /** The nearest segment BEFORE list position `from` that gives media to land on (walking backwards). */
+  private async landBackward(
+    gen: number,
+    from: number,
+    ticket: SeekTicket
+  ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    for (let k = from; k >= 0; k--) {
+      const start = await this.landOn(gen, this.segments[k], ticket);
+      if (start === 'stale') return 'stale';
+      if (start !== undefined) return { start, pos: k };
     }
     return undefined;
   }
@@ -896,24 +930,29 @@ export class ReplayPlayer {
     segment: LiveReplaySegment,
     ticket: SeekTicket
   ): Promise<number | undefined | 'stale'> {
+    // Held or skipped segments are answered from what is known, never downloaded again.
+    const held = this.bufferedStart(segment.index);
+    if (held !== undefined) return held;
+    if (this.skippedIdx.has(segment.index)) return undefined;
     const taken = await this.take(gen, segment, ticket);
     if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
     return taken ?? this.bufferedStart(segment.index);
   }
 
   /**
-   * Fetches and opens one segment. A segment the server no longer has (`404`) is skipped; one that
-   * does not open is skipped up to {@link MAX_CONSECUTIVE_FAILURES} in a row.
+   * Downloads the sealed bytes of one segment: null when the segment is skipped (`404`), when the
+   * player is gone, or when the seek that asked for it was superseded. Every download goes through
+   * here, the retry of an open failure included.
    */
-  private async openOne(
+  private async download(
     gen: number,
     s: LiveReplaySegment,
     ticket?: SeekTicket
-  ): Promise<Uint8Array<ArrayBuffer> | null> {
-    let sealed: ArrayBuffer;
+  ): Promise<ArrayBuffer | null> {
     // A seek's download has its own controller (no AbortSignal.any: absent before iOS 17.4 / Chrome 116);
     // `teardownMedia` aborts it with the rest, so it needs no chaining.
     const signal = ticket ? ticket.signal : this.downloads?.signal;
+    let sealed: ArrayBuffer;
     try {
       sealed = await this.deps.fetchSegment(this.liveId, s.name, signal);
     } catch (e) {
@@ -927,19 +966,36 @@ export class ReplayPlayer {
     }
     if (!this.alive(gen) || this.keyHex === null) return null;
     if (ticket && this.isStale(ticket)) return null;
+    return sealed;
+  }
+
+  /**
+   * Fetches and opens one segment. A segment the server no longer has (`404`) is skipped; one that
+   * does not open is skipped up to {@link MAX_CONSECUTIVE_FAILURES} in a row.
+   */
+  private async openOne(
+    gen: number,
+    s: LiveReplaySegment,
+    ticket?: SeekTicket
+  ): Promise<Uint8Array<ArrayBuffer> | null> {
+    let sealed = await this.download(gen, s, ticket);
+    const key = this.keyHex;
+    if (sealed === null || key === null) return null;
     try {
       let media: Uint8Array<ArrayBuffer>;
       try {
-        media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
+        media = await this.deps.openSegment(key, this.liveId, s.index, sealed);
       } catch (e) {
         if (!(e instanceof LiveSegmentOpenError)) throw e;
         // A corrupted transfer opens on the second download: one more try before it is skipped.
         console.warn(
           `[LIVE_REPLAY] ${this.liveId}: segment ${s.index} did not open - downloading it again`
         );
-        sealed = await this.deps.fetchSegment(this.liveId, s.name, signal);
-        if (!this.alive(gen) || this.keyHex === null) return null;
-        media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
+        // The same handling as the first download: a stale seek and a 404 are not failures here either.
+        const again = await this.download(gen, s, ticket);
+        if (again === null) return null;
+        sealed = again;
+        media = await this.deps.openSegment(key, this.liveId, s.index, sealed);
       }
       this.openFailures = 0;
       // Decrypted for a target that has since moved: not worth an append.
