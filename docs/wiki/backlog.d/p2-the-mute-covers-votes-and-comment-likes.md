@@ -5,7 +5,7 @@ target: 1.9.0
 **Owner, 2026-11-15** ([moderation-authority](../moderation-authority.md#sanctions), decision 9): the
 mute extends to votes, comment likes and nicknames. Community and group messages stay outside it,
 because each place regulates itself. Account suspension is a
-[question](../open-questions.md#should-canari-suspend-an-account-asked-2026-11-15), not this entry.
+[the suspension, decided 2026-11-19](a-platform-admin-suspends-an-account-in-canari.md), not this entry.
 
 **Today.** `assertNotMuted` (`apps/social-service/src/posts/posts.controller.ts`) guards a post, a
 reaction, a comment, republications, reposts and follow requests, and lives and their chat check the

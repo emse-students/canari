@@ -5942,6 +5942,7 @@
   "live_card_is_live_titled": "{name} is live: {title}",
   "live_card_badge": "LIVE",
   "live_card_preview_alt": "Preview of {name}'s live",
+  "live_card_preview_age_now": "Preview from just now",
   "live_card_preview_age_seconds": "Preview from {seconds} s ago",
   "live_card_preview_age_minutes": "Preview from {minutes} min ago",
   "live_card_carousel_label": "Live now",
