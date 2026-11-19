@@ -28,7 +28,7 @@
  */
 import { fetchLiveReplay, fetchLiveSegment, isLiveRefusal, LiveRefusalError } from './api';
 import { LiveSegmentOpenError, openLiveSegment } from './liveCrypto';
-import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
+import { Fmp4ParseError, LastFrameHolds, initSegmentEnd } from './fmp4Segments';
 import { LIVE_PLAYER_KEEP_BEHIND_MS } from './constants';
 import {
   browserMediaSource,
@@ -215,6 +215,8 @@ export class ReplayPlayer {
   private appendFailures = 0;
   private skipped = 0;
   private appended = 0;
+  /** The last video frames lengthened on append (the audio-ahead drift), for the summary. */
+  private readonly holds = new LastFrameHolds();
   private seeks = 0;
   private state: ReplayState = { kind: 'connecting' };
 
@@ -351,6 +353,7 @@ export class ReplayPlayer {
     this.appendFailures = 0;
     this.skipped = 0;
     this.appended = 0;
+    this.holds.reset();
     this.seeks = 0;
     this.tail = Promise.resolve();
     this.fillQueued = false;
@@ -680,8 +683,17 @@ export class ReplayPlayer {
         this.lastInit = init.slice();
       }
     }
-    const body = media.subarray(end);
-    if (body.byteLength > 0) await this.append(gen, body);
+    let body = media.subarray(end);
+    if (body.byteLength === 0 || !this.lastInit) return;
+    try {
+      // The last video frame given the interval the camera ran at (the audio-ahead drift).
+      body = this.holds.apply(`[LIVE_REPLAY] ${this.liveId}`, this.lastInit, body);
+    } catch (e) {
+      if (!(e instanceof Fmp4ParseError)) throw e;
+      console.error(`[LIVE_REPLAY] ${this.liveId}: a fragment is not framable (${e.message})`);
+      throw new StopOn({ kind: 'unavailable', reason: 'playback' });
+    }
+    await this.append(gen, body);
   }
 
   /**
@@ -771,7 +783,7 @@ export class ReplayPlayer {
   private summarise(why: string): void {
     if (this.appended === 0 && this.skipped === 0) return;
     console.log(
-      `[LIVE_REPLAY] ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks`
+      `[LIVE_REPLAY] ${this.liveId} (${why}): ${this.appended} segments played, ${this.skipped} skipped, ${this.seeks} seeks, ${this.holds.count} last frames held`
     );
   }
 }

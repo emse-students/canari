@@ -43,7 +43,14 @@ function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   }
   return out;
 }
-const init = (generation: number) => concat(box('ftyp', 4), box('moov', 16 + generation));
+/** A box holding `children` - a `moov` the players read the tracks of must frame. */
+function parent(type: string, ...children: Uint8Array[]): Uint8Array {
+  const b = concat(box(type), ...children);
+  new DataView(b.buffer).setUint32(0, b.length);
+  return b;
+}
+const init = (generation: number) =>
+  concat(box('ftyp', 4), parent('moov', box('free', 8 + generation)));
 const media = (index: number) => concat(box('moof', index), box('mdat', 8));
 const indexOfMedia = (bytes: Uint8Array) =>
   new DataView(bytes.buffer, bytes.byteOffset).getUint32(0) - 8;

@@ -28,6 +28,7 @@ import {
 } from './livePlayer';
 import { LIVE_PLAYER_HELD_WAIT_BUDGET_MS } from './constants';
 import { LiveRefusalError } from './api';
+import { fragment, initSegment, join, readVideoDurations } from './fmp4.test-helper';
 import { LiveSegmentOpenError, openLiveSegment, sealLiveSegment } from './liveCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { liveFailureOutcome, type LiveViewerState } from './liveViewerState';
@@ -53,7 +54,14 @@ function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 /** The recorder's init; `generation` is a camera acquisition (its `moov` differs). */
-const init = (generation: number) => concat(box('ftyp', 4), box('moov', 16 + generation));
+/** A box holding `children` - a `moov` the players read the tracks of must frame. */
+function parent(type: string, ...children: Uint8Array[]): Uint8Array {
+  const b = concat(box(type), ...children);
+  new DataView(b.buffer).setUint32(0, b.length);
+  return b;
+}
+const init = (generation: number) =>
+  concat(box('ftyp', 4), parent('moov', box('free', 8 + generation)));
 /** A media fragment; its size carries its index so an append can be read back. */
 const media = (index: number) => concat(box('moof', index), box('mdat', 8));
 const indexOfMedia = (bytes: Uint8Array) =>
@@ -69,6 +77,8 @@ class FakeBuffer extends EventTarget implements LiveSourceBufferLike {
   updating = false;
   mode = 'sequence';
   appends: string[] = [];
+  /** Every append's bytes, as given. */
+  data: Uint8Array[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
   gapNext = 0;
@@ -84,6 +94,7 @@ class FakeBuffer extends EventTarget implements LiveSourceBufferLike {
   appendBuffer(data: Uint8Array<ArrayBuffer>): void {
     if (this.failing) throw new DOMException('closed', 'InvalidStateError');
     const type = String.fromCharCode(...data.subarray(4, 8));
+    this.data.push(data.slice());
     if (type === 'ftyp') this.appends.push(`init${generationOfInit(data)}`);
     else {
       this.appends.push(`m${indexOfMedia(data)}`);
@@ -365,6 +376,20 @@ describe('the join', () => {
     await joined(2);
     expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
     expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
+  });
+
+  it('appends a fragment with its last video frame given the interval the camera ran at', async () => {
+    // Chromium's recorder at 12.5 fps (7200 ticks at 90 kHz) writes the last frame as 1/30 s.
+    const written = [...Array<number>(24).fill(7200), 3000];
+    deps.openSegment = vi.fn(async () =>
+      join(initSegment(), fragment({ videoDurations: written }))
+    );
+    await joined(1);
+    const appended = buffer().data.filter(
+      (d) => String.fromCharCode(...d.subarray(4, 8)) === 'moof'
+    );
+    expect(appended.length).toBeGreaterThan(0);
+    for (const f of appended) expect(readVideoDurations(f).at(-1)).toBe(7200);
   });
 
   it('a segment with a box no reader can frame stops the viewer on playback', async () => {

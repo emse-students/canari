@@ -10,10 +10,19 @@ import {
   Fmp4ParseError,
   Fmp4Splitter,
   composeSegment,
+  holdLastFrameInterval,
   initSegmentEnd,
   rebaseFragment,
 } from './fmp4Segments';
-import { SYNC, box, fragment, initSegment, join, readTimes } from './fmp4.test-helper';
+import {
+  SYNC,
+  box,
+  fragment,
+  initSegment,
+  join,
+  readTimes,
+  readVideoDurations,
+} from './fmp4.test-helper';
 
 describe('Fmp4Splitter', () => {
   it('Android: the first chunk is the init alone, then one fragment per chunk', () => {
@@ -196,5 +205,105 @@ describe('the two halves agree', () => {
     const segment = composeSegment(init!, fragments[0]);
     expect(initSegmentEnd(segment)).toBe(initSegment().byteLength);
     expect(segment.subarray(initSegment().byteLength)).toEqual(fragment());
+  });
+});
+
+describe('holdLastFrameInterval', () => {
+  // 12.5 fps at 90 kHz: 7200 ticks a frame; Chromium writes the last one as 1/30 s (3000).
+  const FRAME = 7200;
+  const GUESS = 3000;
+  const run = (n: number, last: number) => [...Array<number>(n - 1).fill(FRAME), last];
+
+  it('a last frame written SHORTER than the one before it takes that interval', () => {
+    const f = fragment({ videoDurations: run(25, GUESS) });
+    const out = holdLastFrameInterval(initSegment(), f);
+    expect(out.held).toEqual({ from: GUESS, to: FRAME, timescale: 90_000 });
+    expect(readVideoDurations(out.bytes)).toEqual(run(25, FRAME));
+    // A copy: the input is untouched, and only the one duration differs.
+    expect(readVideoDurations(f)).toEqual(run(25, GUESS));
+    expect(out.bytes.byteLength).toBe(f.byteLength);
+  });
+
+  it('the track times are left alone: the fragment lands where it was written', () => {
+    const f = fragment({
+      videoTime: 1_800_000n,
+      audioTime: 960_000,
+      videoDurations: run(25, GUESS),
+    });
+    expect(readTimes(holdLastFrameInterval(initSegment(), f).bytes)).toEqual(readTimes(f));
+  });
+
+  it('a last frame as long as, or LONGER than, the one before is a frame really held: unchanged', () => {
+    for (const last of [FRAME, FRAME * 3]) {
+      const f = fragment({ videoDurations: run(25, last) });
+      const out = holdLastFrameInterval(initSegment(), f);
+      expect(out.held).toBeNull();
+      expect(out.bytes).toBe(f);
+    }
+  });
+
+  it('ONE video sample has no interval of its own, and none is borrowed: unchanged', () => {
+    const f = fragment({ videoDurations: [GUESS] });
+    const out = holdLastFrameInterval(initSegment(), f);
+    expect(out.held).toBeNull();
+    expect(out.bytes).toBe(f);
+  });
+
+  it('an audio-only fragment, or durations stated only by default, are unchanged', () => {
+    for (const f of [fragment({ tracks: 'audio' }), fragment({ flagsIn: 'first' })]) {
+      const out = holdLastFrameInterval(initSegment(), f);
+      expect(out.held).toBeNull();
+      expect(out.bytes).toBe(f);
+    }
+  });
+
+  it('a video-only fragment is corrected the same way', () => {
+    const out = holdLastFrameInterval(
+      initSegment(),
+      fragment({ tracks: 'video', videoDurations: run(10, GUESS) })
+    );
+    expect(readVideoDurations(out.bytes)).toEqual(run(10, FRAME));
+  });
+
+  it('an init with no moov cannot be read against', () => {
+    expect(() => holdLastFrameInterval(box('ftyp', [0, 0, 0, 0]), fragment())).toThrow(
+      Fmp4ParseError
+    );
+  });
+
+  it('across a GENERATION boundary nothing is carried: each fragment is read on its own intervals', () => {
+    // The last fragment of a 12.5 fps recorder, then the first of a re-acquired one at 30 fps
+    // (a camera flip), rebased 0.8 s after it as the broadcaster ships them: each fragment gets
+    // ITS OWN previous interval.
+    const init = initSegment();
+    const parsed = new Fmp4Splitter().push(init).init!;
+    const shipped = (durations: number[], offsetMs: number) =>
+      rebaseFragment(
+        { bytes: fragment({ videoDurations: durations }), startsOnKeyframe: true },
+        parsed,
+        offsetMs
+      ).bytes as Uint8Array<ArrayBuffer>;
+    const before = holdLastFrameInterval(init, shipped(run(25, GUESS), 10_000));
+    const after = holdLastFrameInterval(init, shipped(Array<number>(60).fill(3000), 12_800));
+    expect(readVideoDurations(before.bytes).at(-1)).toBe(FRAME);
+    expect(after.held).toBeNull();
+    expect(readVideoDurations(after.bytes)).toEqual(Array<number>(60).fill(3000));
+    // The order of the calls changes nothing: the function holds no state between fragments.
+    const again = holdLastFrameInterval(init, fragment({ videoDurations: run(25, GUESS) }));
+    expect(again.held).toEqual(before.held);
+  });
+
+  it('closes the gap MSE reads as a discontinuity: the next fragment starts within 2 frames', () => {
+    // 25 frames at 12.5 fps span 2 s; the next fragment starts at 180_000 ticks.
+    const f = fragment({ videoTime: 0n, videoDurations: run(25, GUESS) });
+    const nextStart = 180_000;
+    const lastStart = 24 * FRAME;
+    const gap = (durations: number[]) => nextStart - lastStart - durations.at(-1)!;
+    // As written: the next frame comes 7200 ticks after the last one starts, over twice its
+    // stated 3000 - a discontinuity.
+    expect(nextStart - lastStart).toBeGreaterThan(2 * GUESS);
+    const held = readVideoDurations(holdLastFrameInterval(initSegment(), f).bytes);
+    expect(gap(held)).toBe(0);
+    expect(nextStart - lastStart).toBeLessThanOrEqual(2 * held.at(-1)!);
   });
 });

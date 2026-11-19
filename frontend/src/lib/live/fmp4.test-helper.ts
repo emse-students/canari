@@ -63,20 +63,38 @@ export interface FragmentSpec {
   keyframe?: boolean;
   /** `mdat` payload size. */
   mediaBytes?: number;
+  /**
+   * Per-sample video durations (90 kHz ticks), written in a `trun` with sample durations and sizes
+   * as Chromium's recorder writes them; overrides `flagsIn`.
+   */
+  videoDurations?: number[];
+  /** Which tracks the fragment carries (both by default). */
+  tracks?: 'both' | 'video' | 'audio';
 }
 
 /** One `moof` + `mdat`. */
-export function fragment(spec: FragmentSpec = {}): Uint8Array {
+export function fragment(spec: FragmentSpec = {}): Uint8Array<ArrayBuffer> {
   const {
     videoTime = 0n,
     audioTime = 0,
     flagsIn = 'first',
     keyframe = true,
     mediaBytes = 32,
+    videoDurations,
+    tracks = 'both',
   } = spec;
   const flags = keyframe ? SYNC : NON_SYNC;
-  const videoTrun =
-    flagsIn === 'first'
+  const videoTrun = videoDurations
+    ? fullBox(
+        'trun',
+        0,
+        0x1 | 0x4 | 0x100 | 0x200,
+        u32(videoDurations.length),
+        u32(0),
+        u32(flags),
+        ...videoDurations.map((d) => [...u32(d), ...u32(10)])
+      )
+    : flagsIn === 'first'
       ? fullBox('trun', 0, 0x1 | 0x4, u32(1), u32(0), u32(flags))
       : flagsIn === 'per-sample'
         ? fullBox(
@@ -102,13 +120,15 @@ export function fragment(spec: FragmentSpec = {}): Uint8Array {
     fullBox('tfdt', 0, 0, u32(audioTime)),
     fullBox('trun', 0, 0x1, u32(1), u32(0))
   );
-  const moof = box('moof', fullBox('mfhd', 0, 0, u32(1)), videoTraf, audioTraf);
+  const trafs =
+    tracks === 'video' ? [videoTraf] : tracks === 'audio' ? [audioTraf] : [videoTraf, audioTraf];
+  const moof = box('moof', fullBox('mfhd', 0, 0, u32(1)), ...trafs);
   const mdat = box('mdat', new Uint8Array(mediaBytes));
   return new Uint8Array([...moof, ...mdat]);
 }
 
 /** Concatenation, for building chunks. */
-export function join(...parts: Uint8Array[]): Uint8Array {
+export function join(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   return new Uint8Array(parts.flatMap((p) => Array.from(p)));
 }
 
@@ -128,4 +148,22 @@ export function readTimes(bytes: Uint8Array): { video: bigint; audio: number } {
   }
   const [v, a] = times;
   return { video: view.getBigUint64(v + 12), audio: view.getUint32(a + 12) };
+}
+
+/** The per-sample video durations of a fragment built with `videoDurations`, read back. */
+export function readVideoDurations(bytes: Uint8Array): number[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let i = 0; i + 4 <= bytes.length; i++) {
+    // The first `trun` is the video's: data-offset, first-sample-flags, then (duration, size) pairs.
+    if (
+      bytes[i] === 0x74 &&
+      bytes[i + 1] === 0x72 &&
+      bytes[i + 2] === 0x75 &&
+      bytes[i + 3] === 0x6e
+    ) {
+      const count = view.getUint32(i + 8);
+      return Array.from({ length: count }, (_, k) => view.getUint32(i + 20 + k * 8));
+    }
+  }
+  return [];
 }

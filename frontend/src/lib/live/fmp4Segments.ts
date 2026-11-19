@@ -337,3 +337,120 @@ export function rebaseFragment(
   }
   return { bytes: b, startsOnKeyframe: fragment.startsOnKeyframe };
 }
+
+/** What {@link holdLastFrameInterval} did to one fragment. */
+export interface HeldFragment {
+  /** The fragment to append: the input itself when nothing changed, else a corrected copy. */
+  bytes: Uint8Array<ArrayBuffer>;
+  /**
+   * The last video sample's duration as written and as appended, in the video track's timescale,
+   * or null when it was left as written.
+   */
+  held: { from: number; to: number; timescale: number } | null;
+}
+
+/**
+ * GIVES A FRAGMENT'S LAST VIDEO SAMPLE THE FRAME INTERVAL IT ACTUALLY RAN AT - the duration of the
+ * sample before it - when the recorder wrote a SHORTER one. The viewer applies it to every fragment
+ * it appends (live and replay), in a copy.
+ *
+ * WHY (docs/wiki/frontend/modules/live.md, "Audio drifts ahead of the video"): Chromium's
+ * MediaRecorder MP4 muxer writes each video sample's duration from the NEXT frame's timestamp, and
+ * the last frame of a fragment has none yet, so it is written as 1/30 s whatever the camera runs
+ * at. Under 15 fps (an Android camera in a dim room drops to 12.5) the next fragment's first frame
+ * then lies more than twice that duration after the last one, which MSE's coded frame processing
+ * reads as a DISCONTINUITY: every track's coded frame group restarts, part of the audio already
+ * appended is dropped, and the audio renderer plays the rest back to back - so the audio runs one
+ * frame gap AHEAD per fragment, about 23 ms a second, until a seek or a join resets it.
+ *
+ * THE RULE, and its bound: when the last sample is shorter than the one before it, it takes that
+ * one's duration. The error is at most one frame interval, never cumulative, and the gap to the next
+ * fragment then stays under MSE's threshold. A last sample that is as long or LONGER is a frame the
+ * camera really held: left as written. STATELESS, one fragment at a time: nothing is carried from
+ * the previous fragment, so no interval ever crosses a recorder generation (a camera flip or a
+ * re-acquired camera); a video run of ONE sample has no interval of its own and is left as written
+ * for the same reason. A fragment with no video, a duration stated only by default (every sample the
+ * same) or an init declaring no video track is returned unchanged.
+ *
+ * @param init The init the fragment decodes with (`ftyp` + `moov`).
+ * @param fragment The `moof` + `mdat` (and boxes between them) to append.
+ * @throws {Fmp4ParseError} on a box this reader cannot frame.
+ */
+export function holdLastFrameInterval(
+  init: Uint8Array,
+  fragment: Uint8Array<ArrayBuffer>
+): HeldFragment {
+  const moov = children(init, 0, init.byteLength).find((k) => k.type === 'moov');
+  if (!moov) throw new Fmp4ParseError('an init with no moov');
+  const { videoTrackId, timescales } = readInit(init, moov);
+  if (videoTrackId === null) return { bytes: fragment, held: null };
+  const timescale = timescales.get(videoTrackId) ?? 0;
+  const b = fragment;
+  for (const top of children(b, 0, b.byteLength)) {
+    if (top.type !== 'moof') continue;
+    for (const traf of children(b, top.start + 8, top.start + top.size)) {
+      if (traf.type !== 'traf') continue;
+      const kids = children(b, traf.start + 8, traf.start + traf.size);
+      const tfhd = kids.find((k) => k.type === 'tfhd');
+      if (!tfhd || u32(b, tfhd.start + 12) !== videoTrackId) continue;
+      // The track's last sample is the last sample of its last `trun`.
+      const trun = kids.findLast((k) => k.type === 'trun');
+      if (!trun) continue;
+      const flags = u32(b, trun.start + 8) & 0xffffff;
+      const count = u32(b, trun.start + 12);
+      // Durations stated per sample (0x100), and at least two of them to read an interval from.
+      if (!(flags & 0x100) || count < 2) return { bytes: fragment, held: null };
+      let at = trun.start + 16;
+      if (flags & 0x1) at += 4; // data-offset
+      if (flags & 0x4) at += 4; // first-sample-flags
+      // One record per sample: duration (0x100) first, then size, flags, composition offset.
+      const record = 4 * [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length;
+      const lastAt = at + (count - 1) * record;
+      if (lastAt + 4 > trun.start + trun.size) {
+        throw new Fmp4ParseError(`a trun of ${count} samples overruns its box`);
+      }
+      const previous = u32(b, lastAt - record);
+      const last = u32(b, lastAt);
+      if (last >= previous) return { bytes: fragment, held: null };
+      const out = b.slice();
+      new DataView(out.buffer).setUint32(lastAt, previous);
+      return { bytes: out, held: { from: last, to: previous, timescale } };
+    }
+  }
+  return { bytes: fragment, held: null };
+}
+
+/**
+ * {@link holdLastFrameInterval} on a player's append path, COUNTED: one per playback run, shared by
+ * the live and the replay player so both read and report the correction the same way. The count
+ * goes into the player's summary line; only the run's first correction is logged, with its values,
+ * so a phone reading sees it act without a line per fragment.
+ */
+export class LastFrameHolds {
+  /** Fragments of this run whose last video frame was lengthened. */
+  count = 0;
+
+  /**
+   * The fragment to append (see {@link holdLastFrameInterval}).
+   * @param tag The player's log prefix (its tag and the live id).
+   * @throws {Fmp4ParseError} on a box this reader cannot frame.
+   */
+  apply(tag: string, init: Uint8Array, fragment: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
+    const out = holdLastFrameInterval(init, fragment);
+    if (out.held) {
+      if (this.count === 0) {
+        const { from, to, timescale } = out.held;
+        console.debug(
+          `${tag}: a last video frame written ${from}/${timescale} s, appended ${to}/${timescale} s`
+        );
+      }
+      this.count++;
+    }
+    return out.bytes;
+  }
+
+  /** A new run: the count starts again. */
+  reset(): void {
+    this.count = 0;
+  }
+}
