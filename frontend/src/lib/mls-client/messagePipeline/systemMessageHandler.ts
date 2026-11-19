@@ -82,7 +82,11 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
-import { clearRegisterOwed, noteRegisterDeclined } from '$lib/utils/chat/registerOwed';
+import {
+  clearRegisterOwed,
+  noteRegisterDeclined,
+  type RegisterDecline,
+} from '$lib/utils/chat/registerOwed';
 import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -645,27 +649,6 @@ function probeSender(
   return from;
 }
 
-/** Whether this session has already said that an answerer answered a keyed ask in clear. */
-let unsealedAnswerSaid = false;
-
-/**
- * [LEGACY] Says ONCE per session, at error, that an answerer predating sealing answered our keyed
- * ask in clear (docs/wiki/legacy-compatibility.md). Once, because the population is what matters,
- * and every later one of a session would say the same thing.
- */
-function noteUnsealedAnswerOnce(convoKey: string, senderNorm: string): void {
-  if (unsealedAnswerSaid) return;
-  unsealedAnswerSaid = true;
-  console.error(
-    `[HISTORY_ADDRESSED] [LEGACY] ${senderNorm.slice(0, 8)} answered a keyed ask in ${convoKey.slice(0, 8)}… unsealed - an answerer older than sealed answers; accepted until the floor passes it (said once per session)`
-  );
-}
-
-/** Lets the next unsealed answer be said again - a sign-out, and the tests. */
-export function forgetUnsealedAnswerNotice(): void {
-  unsealedAnswerSaid = false;
-}
-
 /**
  * The `requestId` of a history ask (`history_digest`, `history_pull`, `history_range`), or `null`
  * when it carries none usable - and then the ask is MALFORMED, never an older client: every build
@@ -684,6 +667,30 @@ function historyAskId(
   log(
     `[${tag}] No request id from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since step A mints one, so the ask is malformed - ignored`
   );
+  return null;
+}
+
+/**
+ * The `answerKey` of a history ask, or `null` when it carries none usable - and then the ask is
+ * MALFORMED, never an older client: every build since option B (#3775, first in the stable `v1.7.0`)
+ * mints one, and the floor is past it (docs/wiki/legacy-compatibility.md history). An answer must be
+ * sealed to the asker's key, so an ask without one is answered nothing, as one with no id is (D211).
+ */
+function historyAskKey(
+  data: any,
+  senderNorm: string,
+  convoKey: string,
+  log: (msg: string) => void,
+  tag: string
+): string | null {
+  const answerKey = parseHistoryAnswerKey(data?.answerKey);
+  if (answerKey !== undefined) return answerKey;
+  // At error: every build at the floor (`1.7.0`) mints a key for each ask, so a keyless one is a
+  // defect or a forgery, never an older client (docs/wiki/legacy-compatibility.md).
+  console.error(
+    `[${tag}] No answer key from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since option B mints one, so the ask is malformed - ignored`
+  );
+  log(`[${tag}] ask without a well-formed answer key ignored`);
   return null;
 }
 
@@ -845,7 +852,8 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
     if (requestId === null) return true;
-    const answerKey = parseHistoryAnswerKey(data?.answerKey);
+    const answerKey = historyAskKey(data, senderNorm, convoKey, log, 'HISTORY_DIGEST');
+    if (answerKey === null) return true;
     const incomplete = data?.incomplete === true;
     const register = data?.register === true;
     const takenByAWaiter = noteProbeReceived(convoKey, from, {
@@ -853,7 +861,7 @@ export async function handleSystemEvent(
       digest,
       since,
       requestId,
-      ...(answerKey !== undefined ? { answerKey } : {}),
+      answerKey,
       ...(incomplete ? { incomplete: true } : {}),
       ...(register ? { register: true as const } : {}),
     });
@@ -950,14 +958,15 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_RANGE');
     if (requestId === null) return true;
-    const answerKey = parseHistoryAnswerKey(data?.answerKey);
+    const answerKey = historyAskKey(data, senderNorm, convoKey, log, 'HISTORY_RANGE');
+    if (answerKey === null) return true;
     noteProbeReceived(convoKey, from, {
       kind: 'range',
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
       since,
       requestId,
-      ...(answerKey !== undefined ? { answerKey } : {}),
+      answerKey,
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -1058,7 +1067,8 @@ export async function handleSystemEvent(
     }
     const requestId = historyAskId(data, senderNorm, convoKey, log, 'HISTORY_PULL');
     if (requestId === null) return true;
-    const answerKey = parseHistoryAnswerKey(data?.answerKey);
+    const answerKey = historyAskKey(data, senderNorm, convoKey, log, 'HISTORY_PULL');
+    if (answerKey === null) return true;
 
     // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
     // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
@@ -1093,7 +1103,7 @@ export async function handleSystemEvent(
         to: puller,
         since,
         requestId,
-        ...(answerKey !== undefined ? { seal: { answerKey, answerer: me } } : {}),
+        seal: { answerKey, answerer: me },
       }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     });
     return true;
@@ -1448,37 +1458,45 @@ export async function handleSystemEvent(
       // OPENED BEFORE THE ASK IS TAKEN (review of #3775): bytes that do not open take no answerer
       // slot, so a member relaying garbage cannot crowd out the honest answer.
       const sealed = typeof data?.sealed === 'string' ? (data.sealed as string) : undefined;
-      if (
-        sealed !== undefined &&
-        addressee.toLowerCase() === me &&
-        answeringDevice &&
-        requestId !== undefined
-      ) {
-        const secret = answerSecretOf(convoKey, requestId);
-        if (secret) {
-          try {
-            const content = await openHistoryContent(
-              mlsService.historySealEngine(),
-              secret,
-              historySealAad(convoKey, requestId, me, digestIdentity(senderNorm, answeringDevice)),
-              sealed
-            );
-            incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
-            bundleState = content;
-          } catch (e) {
-            const code = e instanceof HistorySealError ? e.code : 'contract';
-            // At error, never ingested, and the two causes said apart: OUR engine failing is a
-            // defect of this build; bytes that do not open under our ask were sealed to another key
-            // or another context (a member relaying another's answer), or are no answer at all.
-            console.error(
-              code === 'contract'
-                ? `[HISTORY_SEAL] OUR engine failed to open a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - not ingested: ${String(e).slice(0, 160)}`
-                : `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it does not open under our ask (${code})`
-            );
-            return true;
-          } finally {
-            secret.fill(0);
-          }
+      // The secret of OUR keyed ask this answer names, read once: it decides both refusals below.
+      const secret =
+        addressee.toLowerCase() === me && answeringDevice && requestId !== undefined
+          ? answerSecretOf(convoKey, requestId)
+          : undefined;
+      if (secret && sealed === undefined) {
+        // REFUSED BEFORE THE ASK IS TAKEN, like bytes that do not open: every build at the floor
+        // (`1.7.0`) seals an answer to a keyed ask (option B), so one in clear is a defect or a
+        // forgery - and taken first, a member who read the ask's id (or a build below the floor)
+        // could fill the answerer slots with clear `last` chunks and crowd out the honest answer.
+        secret.fill(0);
+        console.error(
+          `[HISTORY_ADDRESSED] REFUSED an unsealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it answers an ask that carried a key (${incoming.length} message(s) not ingested)`
+        );
+        return true;
+      }
+      if (secret && sealed !== undefined && requestId !== undefined && answeringDevice) {
+        try {
+          const content = await openHistoryContent(
+            mlsService.historySealEngine(),
+            secret,
+            historySealAad(convoKey, requestId, me, digestIdentity(senderNorm, answeringDevice)),
+            sealed
+          );
+          incoming = Array.isArray(content.messages) ? (content.messages as BundleMsg[]) : [];
+          bundleState = content;
+        } catch (e) {
+          const code = e instanceof HistorySealError ? e.code : 'contract';
+          // At error, never ingested, and the two causes said apart: OUR engine failing is a
+          // defect of this build; bytes that do not open under our ask were sealed to another key
+          // or another context (a member relaying another's answer), or are no answer at all.
+          console.error(
+            code === 'contract'
+              ? `[HISTORY_SEAL] OUR engine failed to open a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - not ingested: ${String(e).slice(0, 160)}`
+              : `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it does not open under our ask (${code})`
+          );
+          return true;
+        } finally {
+          secret.fill(0);
         }
       }
       const taken =
@@ -1509,12 +1527,6 @@ export async function handleSystemEvent(
           `[HISTORY_ADDRESSED] REFUSED a sealed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - it answers a ${ask.kind} ask that carried no key`
         );
         return true;
-      } else if (sealed === undefined && taken.keyed) {
-        // [LEGACY] An answerer that predates sealing answers our keyed ask in clear - still routed
-        // to us alone (step A). Accepted until the floor passes the first stable that seals
-        // (docs/wiki/legacy-compatibility.md, "an unsealed answer to a keyed ask"), said once per
-        // session at error so the population that still does it is counted, never assumed.
-        noteUnsealedAnswerOnce(convoKey, senderNorm);
       }
       const bounded = boundAddressedMessages(ask, incoming);
       if (bounded.outOfBound > 0) {
@@ -1534,7 +1546,9 @@ export async function handleSystemEvent(
         bundleState !== data &&
         bundleState?.register === true;
       if (!registerAnswer && sealed === undefined && data?.register === true) {
-        // Nothing honest says `register` in clear: the flag rides the sealed content only.
+        // Nothing honest says `register` in clear: the flag rides the sealed content only. Only the
+        // join push (an unkeyed ask) reaches here unsealed - an unsealed answer to a keyed ask was
+        // refused above.
         console.error(
           `[HISTORY_ADDRESSED] an unsealed history_bundle from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}… claims to answer a register ask - taken as an ordinary answer, its state ignored`
         );
@@ -1552,14 +1566,20 @@ export async function handleSystemEvent(
         );
         incoming = [];
       }
-      // A DECLINE (`register: 'none'`, sealed under our register ask): the elected device never took
-      // a register either. It carries nothing to take; it gives the ask back and rules that device
-      // out (`noteRegisterDeclined`), against the group's OTHER devices as the TREE lists them.
+      // A DECLINE (sealed under our register ask): the elected device never took a register either
+      // (`register: 'none'`), or withholds history from this unvouched device (`'withheld'`). It
+      // carries nothing to take; it gives the ask back and rules that device out
+      // (`noteRegisterDeclined`, which names the cause), against the group's OTHER devices as the
+      // TREE lists them.
+      const decline: RegisterDecline | undefined =
+        bundleState?.register === 'none' || bundleState?.register === 'withheld'
+          ? bundleState.register
+          : undefined;
       if (
         ask.kind === 'digest' &&
         ask.register === true &&
         bundleState !== data &&
-        bundleState?.register === 'none'
+        decline !== undefined
       ) {
         if (incoming.length > 0) {
           console.error(
@@ -1581,7 +1601,8 @@ export async function handleSystemEvent(
           userId,
           convoKey,
           digestIdentity(senderNorm, answeringDevice ?? '').toLowerCase(),
-          others
+          others,
+          decline
         );
         return true;
       }

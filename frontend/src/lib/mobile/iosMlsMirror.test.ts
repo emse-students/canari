@@ -56,11 +56,11 @@ describe('the iOS activation mirror of mls.bin', () => {
 describe('the iOS seed mirror', () => {
   const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
 
-  it('is written by the foreground in the App Group, after folding the app copy an older build left', () => {
+  it('is written by the foreground in the App Group, after deleting the app copy an older build left', () => {
     const appMirror = pushRs.slice(pushRs.indexOf('async fn with_app_mirror<'));
     const body = appMirror.slice(0, appMirror.indexOf('\n}\n'));
     expect(body).toContain('let home = seed_mirror_home(&data_dir, &key)?;');
-    // Background time held BEFORE any App Group lock is taken (the fold and the edit both take one):
+    // Background time held BEFORE any App Group lock is taken (the edit takes one):
     // an app suspended holding a shared-container lock is killed, 0xdead10cc.
     const held = body.indexOf('crate::app_group::BackgroundTime::begin(');
     expect(held).toBeGreaterThan(0);
@@ -69,8 +69,17 @@ describe('the iOS seed mirror', () => {
     const home = pushRs.slice(pushRs.indexOf('fn seed_mirror_home('));
     const homeBody = home.slice(0, home.indexOf('\n}\n'));
     expect(homeBody).toContain('crate::app_group::app_group_dir()');
-    expect(homeBody).toContain('fold_legacy_seed_mirror(data_dir, &group, key)');
+    // The former app copy is deleted unread since the floor reached 1.7.0 (legacy-compatibility).
+    expect(homeBody).toContain('remove_former_seed_mirror(data_dir, &group)');
+    expect(pushRs).not.toContain('fn fold_legacy_seed_mirror(');
     expect(pushRs).not.toContain('fn sync_seed_mirror_copy(');
+    // ...and at the first start too, rather than resealed: on iOS nothing reads that copy.
+    const cacheRs = read(resolve(TAURI, 'src/native_cache.rs'));
+    const migrate = cacheRs.slice(cacheRs.indexOf('fn migrate_legacy_files('));
+    const migrateBody = migrate.slice(0, migrate.indexOf('\n}\n'));
+    expect(migrateBody).toMatch(
+      /#\[cfg\(target_os = "ios"\)\]\s*if let Some\(group\) = group\.as_deref\(\) \{\s*match crate::commands::push::remove_former_seed_mirror\(data_dir, group\)/
+    );
   });
 
   it('is read by the app-alive push path in the App Group', () => {

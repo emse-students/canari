@@ -64,6 +64,18 @@ export const RefusalCode = {
    * (`groupCallVersion`): an old build, which would join as a 1:1 call and break the others' legs.
    */
   GROUP_CALL_CLIENT_TOO_OLD: 'GROUP_CALL_CLIENT_TOO_OLD',
+  /**
+   * 503 or 502 - the relay `call_relay` names cannot carry this group call: a `cloudflare` relay on
+   * a server without the Realtime app's pair (503, `reason: 'unconfigured'`), or Cloudflare refused
+   * or did not answer the proxied request (502, `reason: 'upstream'`). Never answered by carrying
+   * the call on the mesh instead (WP-GC3).
+   */
+  GROUP_CALL_RELAY_UNAVAILABLE: 'GROUP_CALL_RELAY_UNAVAILABLE',
+  /**
+   * 409 - every seat of a relayed group call is taken (`RELAY_SEATS`), told by the Cloudflare
+   * proxy when a session claims one: the HTTP twin of call-service's `Refused { room-full }`.
+   */
+  GROUP_CALL_ROOM_FULL: 'GROUP_CALL_ROOM_FULL',
   /** 429 - a per-user rate limit (`UserThrottlerGuard`); `retryAfterMs` says how long to wait. */
   RATE_LIMITED: 'RATE_LIMITED',
   /**
