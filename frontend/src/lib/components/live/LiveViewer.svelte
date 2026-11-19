@@ -15,7 +15,7 @@
    * effort - the 30 s lease frees it anyway); a page restored from the back-forward cache starts
    * the live again.
    */
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import {
@@ -100,8 +100,13 @@
   // THE LIVE STARTS WITH SOUND (owner, 2026-11-19): decided here, before the `<video>` mounts, so
   // `followVideoSound` opens the element at the answer. A hand-muted session stays muted.
   const liveSound = videoSound.startForLive();
-  // A live's sound is the live's only: the app's previous answer returns when it closes.
-  onDestroy(liveSound.release);
+  // A live's sound is the live's only: the app's previous answer returns when it closes. The release
+  // is the TEARDOWN OF AN EFFECT created here, at init - so it exists even if the rest of the init or
+  // the template throws (an `onDestroy` is a deferred effect that would never exist then, and "a live
+  // is open" would stay true for good), and it is created BEFORE the template's `followVideoSound`
+  // action, so it is destroyed first: the feed that action's teardown resumes never reads the live's
+  // answer. Idempotent, shared with the close callback below.
+  $effect.pre(() => liveSound.release);
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */

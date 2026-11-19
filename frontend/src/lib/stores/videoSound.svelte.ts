@@ -161,7 +161,7 @@ let engineBlockedStarts = 0;
  * hold it (two lives in a row overlap for a moment when a new one mounts before the old one is
  * destroyed: the old answer is kept, never the first live's audible one).
  */
-let liveSession: { previousMuted: boolean; holders: number } | null = null;
+let liveSession: { previousMuted: boolean; previousLevel: number; holders: number } | null = null;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
@@ -184,7 +184,9 @@ export const videoSound = {
    * wheel notch, a viewer closing). A no-op when what is stored is already the level.
    */
   commitLevel(): void {
-    if (level === persistedLevel) return;
+    // A level picked INSIDE a live belongs to the live: held in memory, never written, and put back
+    // at `release` (owner, 2026-11-19).
+    if (liveSession || level === persistedLevel) return;
     Log.d(
       'VIDEO',
       `volume level ${Math.round(level * 100)}% for every video (remembered on this device)`
@@ -275,7 +277,7 @@ export const videoSound = {
         `[VIDEO] a live opened while another is still open (${liveSession.holders} holders) - the app's own answer is kept for the close`
       );
     } else {
-      liveSession = { previousMuted: muted, holders: 1 };
+      liveSession = { previousMuted: muted, previousLevel: level, holders: 1 };
     }
     const session = liveSession;
     const activation = readEngineActivation();
@@ -301,11 +303,15 @@ export const videoSound = {
     return {
       verdict,
       release() {
-        if (released) return;
+        if (released) {
+          Log.d('VIDEO', 'a live release was asked again - nothing to put back');
+          return;
+        }
         released = true;
         session.holders -= 1;
-        if (session.holders > 0 || liveSession !== session) return;
+        if (session.holders > 0) return;
         liveSession = null;
+        level = session.previousLevel;
         Log.d(
           'VIDEO',
           `a live closes: the app's sound answer is back to ${session.previousMuted ? 'off' : 'on'}`

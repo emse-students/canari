@@ -406,6 +406,9 @@ describe('LiveViewer', () => {
       expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
       expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
       expect(localStorage.getItem(VIDEO_SOUND_KEY), 'opening a live writes nothing').toBe(stored);
+      unmount(mounted.pop()!);
+      expect(videoSound.muted, 'the audible feed is the answer after the live').toBe(false);
+      expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe(stored);
     });
 
     it('a hand mute inside the live stays inside it: the app answer is back at close', async () => {
@@ -439,12 +442,40 @@ describe('LiveViewer', () => {
       expect(play).toHaveBeenCalled();
     });
 
-    it('stays muted for a viewer who muted by hand this session', async () => {
+    it('stays muted for a viewer who muted by hand this session, from an audible feed', async () => {
       activation(true);
-      videoSound.setMuted(true);
+      videoSound.setMuted(false);
+      // A first live: the reader mutes inside it; closing puts the audible feed back, flag kept.
       await render();
-      expect(videoSound.muted).toBe(true);
+      document.querySelector<HTMLButtonElement>('[data-live-sound]')!.click();
+      flushSync();
+      unmount(mounted.pop()!);
+      expect(videoSound.muted, 'the feed is audible again').toBe(false);
+      await render();
+      expect(videoSound.muted, 'the second live opens as the reader left it').toBe(true);
+      expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(true);
       expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+    });
+
+    it('the feed never sees the live answer while the viewer tears down', async () => {
+      activation(true);
+      // A feed that is silent WITHOUT a hand mute (an engine-refused start), so the live opens audible.
+      videoSound.setMuted(false);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      videoSound.muteForRefusedStart();
+      const seen: boolean[] = [];
+      // `followVideoSound`'s teardown calls commitLevel, then the feed resumes: record the answer at
+      // that very moment.
+      vi.spyOn(videoSound, 'commitLevel').mockImplementation(() => {
+        seen.push(videoSound.muted);
+      });
+      await render();
+      expect(videoSound.muted, 'inside the live: audible').toBe(false);
+      unmount(mounted.pop()!);
+      expect(seen.length, 'the action teardown ran').toBeGreaterThan(0);
+      expect(seen, 'the feed answer was already back when the feed resumed').toEqual(
+        seen.map(() => true)
+      );
     });
 
     it('offers "Activer le son" when no gesture has happened, and the button turns it on', async () => {

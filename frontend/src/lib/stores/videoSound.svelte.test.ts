@@ -194,6 +194,7 @@ describe('a live and the sound of the app', () => {
     vi.resetModules();
   });
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     localStorage.clear();
   });
@@ -293,5 +294,21 @@ describe('a live and the sound of the app', () => {
     expect(live.verdict).toBe('audible');
     expect(videoSound.startBlocked).toBe(false);
     live.release();
+  });
+
+  it('a level picked inside a live is not saved, and the feed level is back at close', async () => {
+    activation(true);
+    localStorage.setItem('canari-video-volume', '0.8');
+    const { videoSound } = await import('./videoSound.svelte');
+    const live = videoSound.startForLive();
+    videoSound.setLevel(0.3);
+    videoSound.commitLevel();
+    expect(localStorage.getItem('canari-video-volume'), 'nothing written inside a live').toBe(
+      '0.8'
+    );
+    live.release();
+    expect(videoSound.level, 'the feed level is back').toBe(0.8);
+    videoSound.commitLevel();
+    expect(localStorage.getItem('canari-video-volume')).toBe('0.8');
   });
 });
