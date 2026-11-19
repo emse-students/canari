@@ -6,7 +6,14 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { CHALLENGE, createBoard, revealCell, type MinesweeperBoard } from './game';
-import { createReplay, type ReplaySource, type TimedMove } from './replay';
+import {
+  createReplay,
+  fitCellSize,
+  REPLAY_CELL_MAX_PX,
+  REPLAY_CELL_MIN_PX,
+  type ReplaySource,
+  type TimedMove,
+} from './replay';
 
 const seed = '8601e326fcef5ef936a1c69d6ab6ac41';
 const [x, y] = [9, 16];
@@ -111,5 +118,29 @@ describe('movesAt', () => {
     [10_000, 4],
   ])('at %i ms, %i moves have been made', (ms, count) => {
     expect(replay().movesAt(ms)).toBe(count);
+  });
+});
+
+describe('fitCellSize', () => {
+  it('fits the whole board on a phone, limited by whichever side runs out first', () => {
+    // 18 x 32 in 374 x 600: width allows 20 (374 - 17 gaps = 357 / 18 = 19.8), height 18 (600 - 31 = 569 / 32 = 17.8).
+    expect(fitCellSize(374, 600, 18, 32)).toBe(17);
+    // A wide, short area is limited by its height (800 - 31 gaps = 769 / 32 = 24); a tall, narrow one by its width.
+    expect(fitCellSize(2000, 800, 18, 32)).toBe(24);
+    expect(fitCellSize(300, 2000, 18, 32)).toBe(15);
+  });
+
+  it('never draws a cell larger than the readable maximum, however much room there is', () => {
+    expect(fitCellSize(4000, 4000, 18, 32)).toBe(REPLAY_CELL_MAX_PX);
+  });
+
+  it('never draws one smaller than the minimum, even in a space too small to hold the board', () => {
+    expect(fitCellSize(50, 50, 18, 32)).toBe(REPLAY_CELL_MIN_PX);
+    expect(fitCellSize(100, 100, 0, 0)).toBe(REPLAY_CELL_MIN_PX);
+  });
+
+  it('counts the gaps between cells, so the grid is never wider than its space', () => {
+    const size = fitCellSize(400, 4000, 10, 10, 2);
+    expect(size * 10 + 2 * 9).toBeLessThanOrEqual(400);
   });
 });

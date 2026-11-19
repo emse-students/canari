@@ -138,7 +138,6 @@ describe('Games page - moderation', () => {
     await openLeaderboard();
     expect(button('Retirer ce score')).toHaveLength(0);
     expect(button('Bannir ce joueur')).toHaveLength(0);
-    expect(button('Revoir cette partie')).toHaveLength(0);
     expect(api.bans).not.toHaveBeenCalled();
   });
 
@@ -150,6 +149,15 @@ describe('Games page - moderation', () => {
     expect(confirmAnswer.asked[0]).toContain('Bob');
     expect(api.remove).toHaveBeenCalledExactlyOnceWith('s2');
     expect(api.leaderboard).toHaveBeenCalled();
+  });
+
+  it('lets any member watch a game: the replay button is on every row for a non-admin too', async () => {
+    admin.value = false;
+    await openLeaderboard();
+    expect(button('Revoir cette partie')).toHaveLength(2);
+    button('Revoir cette partie')[0].click();
+    await settle();
+    expect(replayOpened).toEqual(['s1']);
   });
 
   it('opens the replay of the row it was pressed on, without asking anything', async () => {
