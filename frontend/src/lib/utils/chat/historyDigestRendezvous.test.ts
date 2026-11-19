@@ -13,12 +13,16 @@ const PEER = digestIdentity('USER-A', 'device-a');
 const digest: HistoryDigest = { mode: 'ids', ids: ['m1'] };
 const other: HistoryDigest = { mode: 'ids', ids: ['m2'] };
 
+/** A well-formed `answerKey` (32 bytes, base64): every ask carries one since option B. */
+const ANSWER_KEY = 'a'.repeat(43) + '=';
+
 /** What a resolved wait looks like: the peer's digest and the window it asked over, together. */
 const solicited = (d: HistoryDigest, since = 0) => ({
   kind: 'digest' as const,
   digest: d,
   since,
   requestId: 'ask-00000001',
+  answerKey: ANSWER_KEY,
 });
 
 /** Records a digest probe, which is the shape every case below used before probes had kinds. */
@@ -230,6 +234,7 @@ describe('historyDigestRendezvous', () => {
       limit: 50,
       since: 1000,
       requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
     };
 
     it('carries a state key through, waiting or not', async () => {

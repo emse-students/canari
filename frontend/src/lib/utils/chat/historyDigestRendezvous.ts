@@ -56,8 +56,8 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
-      /** The key the ask carried (`parseHistoryAnswerKey`), if any - the answer is sealed to it. */
-      answerKey?: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`) - the answer is sealed to it. */
+      answerKey: string;
       /**
        * The asker is owed the conversation's STATE (`registerOwed.ts`): the responder sends it one
        * sealed register frame before the diff (`sendRegisterAnswer`). Absent from older builds.
@@ -79,8 +79,8 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
-      /** The key the ask carried (`parseHistoryAnswerKey`), if any - the answer is sealed to it. */
-      answerKey?: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`) - the answer is sealed to it. */
+      answerKey: string;
     };
 
 type StoredProbe = { probe: SolicitedProbe; at: number };

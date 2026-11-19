@@ -65,6 +65,8 @@ const DIGEST_FRAME = {
   digest: { mode: 'ids', ids: ['m1', 'm2'] },
   since: 0,
   requestId: 'ask-00000001',
+  // Every ask carries its answer key since option B (the 1.7.0 floor); a keyless one is ignored.
+  answerKey: 'a'.repeat(43) + '=',
 };
 
 /** Lets the `void`-ed chain behind `answerAfterMailboxDrained` run. */

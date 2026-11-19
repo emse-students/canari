@@ -592,7 +592,7 @@ describe('the group calls switch of /api/version (calls.groupMode)', () => {
 });
 
 describe('the call relay of /api/version (calls.relay)', () => {
-  it.each(['none', 'call-service'] as const)('reads %s', (relay) => {
+  it.each(['none', 'call-service', 'cloudflare'] as const)('reads %s', (relay) => {
     expect(
       parseServerVersionInfo({
         version: '1.2.3',
@@ -600,7 +600,7 @@ describe('the call relay of /api/version (calls.relay)', () => {
       })?.callRelay
     ).toBe(relay);
   });
-  it.each([undefined, 'call-service', { mode: 'audio' }, { relay: 'cloudflare' }, { relay: 1 }])(
+  it.each([undefined, 'call-service', { mode: 'audio' }, { relay: 'livekit' }, { relay: 1 }])(
     'reads %j as none - a server without the setting has no relay',
     (raw) => {
       expect(parseServerVersionInfo({ version: '1.2.3', calls: raw })?.callRelay).toBe('none');

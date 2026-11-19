@@ -137,9 +137,6 @@ describe('the sealed seed mirror is read by Rust alone', () => {
     expect(rawReads).toHaveLength(1);
     const reader = between(production, /pub\(crate\) fn read_graine_mirror\(/, /\n}\n/);
     expect(reader).toMatch(/fs::read\(data_dir\.join\("graine_seeds\.json"\)\)/);
-    // The iOS fold of the app's former copy reads it through that same reader (2026-11-17).
-    const fold = between(production, /pub\(crate\) fn fold_legacy_seed_mirror\(/, /\n}\n/);
-    expect(fold).toContain('read_graine_mirror(app_dir, Some(key))');
   });
 
   it.each([

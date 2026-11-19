@@ -1686,13 +1686,221 @@ describe('CallsService', () => {
 
     it('an unknown call_relay value is never guessed: initiate throws and binds no room', async () => {
       groupCallsMode = 'mesh';
-      callRelay = 'cloudflare';
+      callRelay = 'livekit';
       jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
 
       await expect(service.initiateCall('caller', 'group-1', false, 1)).rejects.toThrow(
-        'platform_config.call_relay holds an unknown value: cloudflare'
+        'platform_config.call_relay holds an unknown value: livekit'
       );
       expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    describe('call_relay=cloudflare (WP-GC3)', () => {
+      beforeEach(() => {
+        groupCallsMode = 'mesh';
+        callRelay = 'cloudflare';
+        process.env.CLOUDFLARE_SFU_APP_ID = 'app-id';
+        process.env.CLOUDFLARE_SFU_APP_SECRET = 'app-secret';
+      });
+      afterEach(() => {
+        delete process.env.CLOUDFLARE_SFU_APP_ID;
+        delete process.env.CLOUDFLARE_SFU_APP_SECRET;
+      });
+
+      it.each([false, true])(
+        'a caller whose build speaks the SFU leg goes through Cloudflare (video=%s): mode cloudflare and the relay cap, signed for every member',
+        async (video) => {
+          const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+          const answer = await service.initiateCall('caller', 'group-1', video, 2);
+
+          expect(answer.mode).toBe('cloudflare');
+          expect(claimsOf(answer.roomToken)).toMatchObject({ max_seats: 8, mode: 'cloudflare' });
+          expect(JSON.parse(redisStore.get(`call:room:${answer.roomId}`)!)).toMatchObject({
+            maxSeats: 8,
+            mode: 'cloudflare',
+          });
+          expect(captured(log)).toContain('path=cloudflare');
+
+          groupMemberRepo.find.mockResolvedValue(members('caller'));
+          await service.ringGroup('caller', 'group-1', answer.roomId, video);
+          groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+          groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c', 'd'));
+          const joined = await service.requestRoomToken('c', 'group-1', answer.roomId, '2');
+
+          expect(joined.mode).toBe('cloudflare');
+          expect(claimsOf(joined.roomToken)).toMatchObject({
+            sub: 'c',
+            max_seats: 8,
+            mode: 'cloudflare',
+          });
+
+          // A mesh-only joiner of a Cloudflare room is refused like one of call-service's.
+          const refusal = await service
+            .requestRoomToken('c', 'group-1', answer.roomId, '1')
+            .catch((e: unknown) => e);
+          expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+            code: 'GROUP_CALL_CLIENT_TOO_OLD',
+          });
+        }
+      );
+
+      it.each([
+        ['CLOUDFLARE_SFU_APP_ID', 'CLOUDFLARE_SFU_APP_ID'],
+        ['CLOUDFLARE_SFU_APP_SECRET', 'CLOUDFLARE_SFU_APP_SECRET'],
+      ])(
+        'without %s the relay is MISCONFIGURED: a typed 503, no room bound, never a silent mesh',
+        async (unset, named) => {
+          delete process.env[unset];
+          const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+          jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+          const refusal = await service
+            .initiateCall('caller', 'group-1', false, 2)
+            .catch((e: unknown) => e);
+
+          expect(refusal).toBeInstanceOf(ServiceUnavailableException);
+          expect((refusal as ServiceUnavailableException).getResponse()).toMatchObject({
+            code: 'GROUP_CALL_RELAY_UNAVAILABLE',
+            reason: 'unconfigured',
+          });
+          expect(redis.set).not.toHaveBeenCalled();
+          expect(captured(error)).toContain(`call_relay=cloudflare but ${named} is not set`);
+          // The secret's VALUE never reaches a log line, only the names of what is missing.
+          expect(captured(error)).not.toContain('app-secret');
+        }
+      );
+
+      it('a MESH-ONLY caller stays on the mesh, and it is logged', async () => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+        const answer = await service.initiateCall('caller', 'group-1', false, 1);
+
+        expect(answer).not.toHaveProperty('mode');
+        expect(claimsOf(answer.roomToken)).toMatchObject({ max_seats: 4 });
+        expect(captured(log)).toContain(
+          "stays on the mesh although call_relay=cloudflare - the caller's build has no SFU leg (groupCallVersion=1)"
+        );
+      });
+
+      describe('the proxy gates', () => {
+        /** A Cloudflare room opened by `caller`, rung, and `c`'s token for it. */
+        async function cloudflareRoom(): Promise<{ roomId: string; token: string }> {
+          jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+          const { roomId } = await service.initiateCall('caller', 'group-1', false, 2);
+          groupMemberRepo.find.mockResolvedValue(members('caller'));
+          await service.ringGroup('caller', 'group-1', roomId, false);
+          groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+          groupMemberRepo.find.mockResolvedValue(members('caller', 'b', 'c'));
+          const { roomToken } = await service.requestRoomToken('c', 'group-1', roomId, '2');
+          return { roomId, token: roomToken };
+        }
+
+        it('admits the holder of a cloudflare token for THIS room, and answers its binding', async () => {
+          const { roomId, token } = await cloudflareRoom();
+
+          await expect(service.admitToCloudflareRoom('c', roomId, token)).resolves.toMatchObject({
+            groupId: 'group-1',
+            maxSeats: 8,
+            mode: 'cloudflare',
+          });
+        });
+
+        it.each([
+          ['another user', (t: string) => ({ user: 'b', room: undefined, token: t })],
+          ['another room', (t: string) => ({ user: 'c', room: 'room-x', token: t })],
+          ['a forged token', () => ({ user: 'c', room: undefined, token: jwt.sign({}, 'nope') })],
+        ])('refuses a token presented by %s', async (_what, make) => {
+          const { roomId, token } = await cloudflareRoom();
+          const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+          const { user, room, token: presented } = make(token);
+
+          await expect(
+            service.admitToCloudflareRoom(user, room ?? roomId, presented)
+          ).rejects.toBeInstanceOf(ForbiddenException);
+          expect(captured(warn)).toContain('REFUSED');
+        });
+
+        it("refuses a token of call-service's relay: its mode is not cloudflare", async () => {
+          callRelay = 'call-service';
+          jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+          const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+          const { roomId, roomToken } = await service.initiateCall('caller', 'group-1', false, 2);
+
+          await expect(
+            service.admitToCloudflareRoom('caller', roomId, roomToken)
+          ).rejects.toBeInstanceOf(ForbiddenException);
+          expect(captured(warn)).toContain('mode=sfu');
+        });
+
+        it('a later step is refused once the room is gone, or carried by another relay', async () => {
+          const { roomId } = await cloudflareRoom();
+          jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+          await expect(
+            service.assertCloudflareParticipant('c', 'no-room', 'test')
+          ).rejects.toBeInstanceOf(GoneException);
+          redisStore.set(
+            `call:room:${roomId}`,
+            JSON.stringify({ groupId: 'group-1', callerId: 'caller', maxSeats: 4, video: false })
+          );
+          await expect(
+            service.assertCloudflareParticipant('c', roomId, 'test')
+          ).rejects.toBeInstanceOf(ForbiddenException);
+        });
+
+        it('a later step is refused to a member removed since, and while calls are off', async () => {
+          const { roomId } = await cloudflareRoom();
+          jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+          groupMemberRepo.findOne.mockResolvedValue(null);
+
+          await expect(
+            service.assertCloudflareParticipant('c', roomId, 'test')
+          ).rejects.toBeInstanceOf(ForbiddenException);
+
+          groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'c' });
+          callsMode = 'off';
+          await expect(
+            service.assertCloudflareParticipant('c', roomId, 'test')
+          ).rejects.toMatchObject({ response: { code: 'CALLS_DISABLED' } });
+        });
+
+        it("answers the room's admitted members for the seat pruning, and null once the room is not Cloudflare's", async () => {
+          const { roomId } = await cloudflareRoom();
+          groupMemberRepo.find.mockResolvedValue(members('caller', 'c', 'c'));
+
+          await expect(service.cloudflareRoomMembers(roomId)).resolves.toEqual(
+            new Set(['caller', 'c'])
+          );
+          expect(groupMemberRepo.find).toHaveBeenLastCalledWith(
+            expect.objectContaining({ where: expect.objectContaining({ groupId: 'group-1' }) })
+          );
+          await expect(service.cloudflareRoomMembers('no-room')).resolves.toBeNull();
+          redisStore.set(
+            `call:room:${roomId}`,
+            JSON.stringify({ groupId: 'group-1', callerId: 'caller', maxSeats: 4, video: false })
+          );
+          await expect(service.cloudflareRoomMembers(roomId)).resolves.toBeNull();
+        });
+      });
+
+      it('rings only devices whose build speaks the SFU leg', async () => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        const { roomId } = await service.initiateCall('caller', 'group-1', false, 2);
+        fcmSend.mockResolvedValue('msg-id');
+        groupMemberRepo.find.mockResolvedValue(
+          ['b', 'c'].map((userId) => ({ userId, notifLevel: 'all', callsAllowed: null }))
+        );
+        pushTokenRepo.find.mockResolvedValue([
+          { userId: 'b', deviceId: 'b1', token: 'tb', platform: 'android', groupCallVersion: 2 },
+          { userId: 'c', deviceId: 'c1', token: 'tc', platform: 'android', groupCallVersion: 1 },
+        ]);
+
+        const { rang } = await ringAndSettle(service, 'caller', 'group-1', roomId, false);
+
+        expect(rang).toBe(1);
+        expect(captured(log)).toContain('skipped=1 device(s)');
+      });
     });
 
     it('signs the same cap into a joining member token', async () => {

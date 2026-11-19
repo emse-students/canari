@@ -52,7 +52,6 @@ vi.mock('$lib/paraglide/messages', () => ({
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
     ),
-    chat_system_member_added: vi.fn(() => 'notice'),
     chat_send_error_seal_no_session: vi.fn(() => 'seal: no-session'),
     chat_send_error_seal_unknown_channel: vi.fn(() => 'seal: unknown-channel'),
     chat_send_error_seal_key_group_missing: vi.fn(() => 'seal: key-group-missing'),
@@ -2195,10 +2194,9 @@ describe('useChannelWorkspaces - the membership notice', () => {
     expect(options).toEqual({ silent: true });
   });
 
-  // The id shape (`{ newUsers }`) is read by this build, but a build at the floor draws `system.data`
-  // as text: until `minClientVersion` passes the reader, the frame stays the sentence every supported
-  // build draws (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, legacy-compatibility).
-  it('sends the sentence every supported build reads, never raw ids, while the writer is off', async () => {
+  // Every build at the floor (1.7.0) reads the id shape (`channelSystemEnvelope`), so the invitation
+  // sends the ids, drawn by each reader in its own language (legacy-compatibility history).
+  it('sends the ids of the newcomer, never a localized sentence', async () => {
     await useChannelWorkspaces().inviteMemberToChannel(
       'channel_c1',
       'newcomer',
@@ -2209,7 +2207,7 @@ describe('useChannelWorkspaces - the membership notice', () => {
     const bytes = sendEncryptedChannelMessage.mock.calls[0][1] as Uint8Array;
     const sent = decodeAppMessage(bytes)!;
     expect(sent.system?.event).toBe('memberAdded');
-    expect(sent.system?.data).toBe('notice');
+    expect(JSON.parse(sent.system?.data ?? '')).toEqual({ newUsers: ['newcomer'] });
   });
 
   // A member hands the newcomer the past only on a proof it can check: the admission this device
