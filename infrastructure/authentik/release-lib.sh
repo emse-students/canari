@@ -20,29 +20,30 @@ ak_service_image() {
 # ak_pin_image <compose-file>
 # The ONE authentik image the repository pins: server and worker must name the same LITERAL
 # reference, because a literal is what Dependabot can read and what the release can compare.
-# Prints it, or a reason on stderr and status 1.
+# Prints it, or a reason on stderr and status 1 - the reason never names the file's path, which the
+# caller prints repository-relative (the job log is public).
 ak_pin_image() {
   local server worker
   server="$(ak_service_image "$1" server)"
   worker="$(ak_service_image "$1" worker)"
   if [ -z "$server" ] || [ -z "$worker" ]; then
-    echo "no server or worker image in $1" >&2
+    echo "no server or worker image in the compose file" >&2
     return 1
   fi
   # shellcheck disable=SC2016 # the literal `${` is what is searched for, not an expansion.
   case "$server$worker" in *'${'*)
-    echo "the server or worker image of $1 interpolates a variable ($server); the pin must be literal" >&2
+    echo "the server or worker image interpolates a variable ($server); the pin must be literal" >&2
     return 1
     ;;
   esac
   if [ "$server" != "$worker" ]; then
-    echo "server ($server) and worker ($worker) pin different images in $1" >&2
+    echo "server ($server) and worker ($worker) pin different images" >&2
     return 1
   fi
   # A DIGEST CAN NEVER BE DEPLOYED: the host's compose builds the reference from AUTHENTIK_TAG alone,
   # so `config --images` would never name a pin carrying `@sha256:` and every release would stop.
   case "$server" in *@*)
-    echo "the authentik pin of $1 carries a digest ($server); the host's compose builds the image from AUTHENTIK_TAG alone and can never run it - pin a tag" >&2
+    echo "the authentik pin carries a digest ($server); the host's compose builds the image from AUTHENTIK_TAG alone and can never run it - pin a tag" >&2
     return 1
     ;;
   esac
@@ -64,21 +65,33 @@ ak_version_gt() {
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
 }
 
-# ak_decide <pinned-image> <running-server-image> <running-worker-image> <env-tag>
+# ak_repo_of <image-reference>  - the repository, tag and digest dropped (`reg:5000/a/b:1@sha256:x` ->
+# `reg:5000/a/b`).
+ak_repo_of() {
+  local ref="${1%%@*}" last
+  last="${ref##*/}"
+  case "$last" in *:*) printf '%s\n' "${ref%:*}" ;; *) printf '%s\n' "$ref" ;; esac
+}
+
+# ak_decide <pinned-image> <running-server-image> <running-worker-image> <env-tag> [<newer: keep|refuse>]
 # What the release does to one stack, from durable state only - the images its containers RUN and
 # the tag line of its `.env` - never from a clock or from what the last run believed:
 #   noop      both containers run the pin and `.env` names it: nothing to do
 #   record    both run the pin, `.env` names another tag: write the line, restart nothing
 #   upgrade   at least one container runs something else, older: dump, retag, restart, check
-#   keep-newer:<tag>  both containers run the SAME version, NEWER than the pin: left untouched. It is
+#   keep-newer:<tag>  ONLY with <newer> = keep (production's stable; the default is refuse): both
+#             containers run the SAME image of the pin's own repository, NEWER than the pin: left
+#             untouched. It is
 #             what a rerun of an older release's deploy meets (the documented rollback of the estate,
 #             docs/wiki/cicd.md), and every rerun after a stable whose MiConnect step passed and whose
 #             estate deploy failed. authentik's migrations do not run backwards, so MiConnect is not
 #             taken back; the release goes on with the estate (the caller warns and checks the stack).
-#   refuse:<why>  a stack that is not running, a version that cannot be ordered, or the two
-#             containers on different versions with one newer than the pin
+#   refuse:<why>  a stack that is not running, a version that cannot be ordered, the two containers
+#             on different versions with one newer than the pin, a newer image of ANOTHER repository,
+#             or any newer version under <newer> = refuse - a PRE-RELEASE refuses it, so the test stack
+#             never silently skips rehearsing the upgrade the stable will make (gate 4 relies on it)
 ak_decide() {
-  local pin="$1" server="$2" worker="$3" env_tag="$4" pin_tag running running_tag newer=no older=no
+  local pin="$1" server="$2" worker="$3" env_tag="$4" policy="${5:-refuse}" pin_tag running running_tag newer=no older=no
   pin_tag="$(ak_tag_of "$pin")"
   if [ "$server" = "$pin" ] && [ "$worker" = "$pin" ]; then
     if [ "$env_tag" = "$pin_tag" ]; then echo noop; else echo record; fi
@@ -101,8 +114,12 @@ ak_decide() {
     if ak_version_gt "$running_tag" "$pin_tag"; then newer=yes; else older=yes; fi
   done
   if [ "$newer" = yes ]; then
-    if [ "$older" = yes ] || [ "$(ak_tag_of "$server")" != "$(ak_tag_of "$worker")" ]; then
+    if [ "$policy" != keep ]; then
+      echo "refuse:DOWNGRADE - '$server' / '$worker' run and the repository pins '$pin'; authentik's migrations do not run backwards, and this stack refuses a newer version (--newer refuse: a pre-release must rehearse the stable's upgrade, never skip it). Pin that version or a newer one again"
+    elif [ "$older" = yes ] || [ "$server" != "$worker" ]; then
       echo "refuse:server runs '$server' and worker '$worker', one of them NEWER than the pin '$pin' - neither keeping nor upgrading is one version; align them by hand"
+    elif [ "$(ak_repo_of "$server")" != "$(ak_repo_of "$pin")" ]; then
+      echo "refuse:'$server' runs, a newer version from ANOTHER repository than the pin's '$(ak_repo_of "$pin")' - it is not kept as the same image"
     else
       echo "keep-newer:$(ak_tag_of "$server")"
     fi

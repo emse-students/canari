@@ -279,9 +279,13 @@ release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 **Nor does it take MiConnect back**: its step runs first and finds authentik NEWER than the old
-release's pin, which it keeps as it is (`keep-newer`, a warning naming both versions, the checks on
-the running version, exit 0) so the estate's rollback goes on - authentik's migrations do not run
-backwards ([authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+release's pin. Production's stable passes `--newer keep`, so it keeps it (`keep-newer`: a warning
+naming both versions, the `.env` line set to the running tag, the checks on the running version,
+exit 0) and the estate's rollback goes on - authentik's migrations do not run backwards. **The OLD
+release's blueprints are then NOT applied** onto the newer authentik: the step's output is
+`outcome=kept-newer`, and "Apply MiConnect's blueprints" is skipped on it (the health check after
+still runs). A pre-release passes `--newer refuse`, so the test stack never skips rehearsing the
+upgrade the stable will make ([authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
 
 #### A migration the owner must approve is held (2026-11-01)
 

@@ -196,13 +196,17 @@ jobs:
       # document must answer - or the old version is put back (the dump restored if the database
       # moved) and `prod-released` does not move. infrastructure/authentik/deploy-stack.sh;
       # docs/wiki/infrastructure/authentik.md, "The release deploys MiConnect's version".
+      # `--newer keep`, PRODUCTION ONLY: a stack already NEWER than this tree's pin (a rerun of an
+      # older release - the estate's rollback - or of one whose estate deploy failed) is left on its
+      # version, with a warning, and the release goes on; its `outcome` output is then `kept-newer`.
       - name: Put MiConnect on the pinned authentik version
+        id: miconnect-version
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
           # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
           # stack was left in, and it ignores them while the dump is restored.
-          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect --newer keep
 
       # THE RELEASE'S OWN TAG, `v<version>`, AND NOT `latest` (2026-10-06). `latest` is whatever the
       # newest stable pushed, so re-running an OLD release's deploy passed twenty steps and
@@ -333,7 +337,12 @@ jobs:
       # a blueprint that fails leaves MiConnect exactly as it was, and fails this job - so
       # `prod-released` below does not move. Re-applying every release is also what reverts an edit
       # made by hand in the admin UI. The pre-release ran the same thing as a dry run first.
+      #
+      # NOT ON A KEPT NEWER VERSION: CI proved this tree's blueprints on this tree's pin, and an OLDER
+      # release's blueprints applied onto a newer authentik would write an old configuration over a
+      # newer one. The health check below still runs.
       - name: Apply MiConnect's blueprints
+        if: ${{ steps.miconnect-version.outputs.outcome != 'kept-newer' }}
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail

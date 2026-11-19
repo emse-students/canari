@@ -6,6 +6,7 @@
 # production ran 2026.8.0 while this repository said 2026.8.5.
 #
 #   deploy-stack.sh deploy --project <compose project> [--compose <pinning compose.yml>] [--oidc-slug canari]
+#                          [--newer keep|refuse]
 #   deploy-stack.sh health --project <compose project> [--compose <pinning compose.yml>] [--oidc-slug canari]
 #   deploy-stack.sh access --project <compose project>
 #   deploy-stack.sh prune  --project <compose project>
@@ -21,6 +22,12 @@
 #   `/-/health/ready/` and the OIDC discovery document. A failure rolls back - server and worker
 #   stopped, the state read again, the old tag, the dump restored only when the state MOVED - and
 #   exits non-zero. The same after-checks also close the no-restart outcomes.
+#   --newer: what a stack already NEWER than the pin gets. `refuse` (the default, the pre-release):
+#   refused, so the test stack always rehearses the stable's upgrade. `keep` (production's stable):
+#   left on its version - a rerun of an older release is the estate's rollback, and authentik's
+#   migrations do not run backwards - its `.env` line set to what runs, a warning, the checks.
+#   Under GitHub Actions the outcome is a step output, `outcome` = noop | recorded | upgraded |
+#   kept-newer, which the stable reads to skip the OLD release's blueprints on a kept newer version.
 # health: the same after-checks alone, changing nothing (serve-prod runs it after the blueprints).
 # access: is the stack's `.env` readable and writable by this account - the precondition, probed
 #   read-only by the daily `drift` job so a lost permission is seen before a release meets it.
@@ -55,11 +62,13 @@ shift || true
 project=""
 compose="$here/compose.yml"
 oidc_slug="canari"
+newer_policy="refuse"
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) project="$2"; shift 2 ;;
     --compose) compose="$2"; shift 2 ;;
     --oidc-slug) oidc_slug="$2"; shift 2 ;;
+    --newer) newer_policy="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -69,6 +78,21 @@ case "$mode" in deploy | health | access | prune) ;; *)
   ;;
 esac
 [ -n "$project" ] || { echo "::error::--project is required" >&2; exit 64; }
+case "$newer_policy" in keep | refuse) ;; *) echo "::error::--newer is keep or refuse, not '$newer_policy'" >&2; exit 64 ;; esac
+
+# THE COMPOSE FILE AS THE PUBLIC LOG MAY NAME IT: relative to the repository, or not at all - an
+# absolute path names the runner's work directory.
+repo_root="$(cd "$here/../.." && pwd)"
+case "$compose" in
+  "$repo_root"/*) compose_shown="${compose#"$repo_root"/}" ;;
+  /*) compose_shown="the --compose file" ;;
+  *) compose_shown="$compose" ;;
+esac
+
+# set_outcome <outcome> - the step output the stable's blueprint step reads (nothing outside Actions).
+set_outcome() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "outcome=$1" >>"$GITHUB_OUTPUT"; fi
+}
 
 poll_seconds="${AK_POLL_SECONDS:-10}"
 # A FLOOR UNDER THE WORST CASE, never the verdict: Docker's healthcheck answers within its start
@@ -132,7 +156,12 @@ pg_id="$(container_of postgresql)"
 # began; a container this run creates has a new id, and starts from 0.
 declare -A restarts_at_start=()
 restart_count() { docker inspect -f '{{.RestartCount}}' "$1"; }
-for id in $server_id $worker_id; do restarts_at_start[$id]="$(restart_count "$id" || true)"; done
+# A count that cannot be read is stored as `unreadable` and judged so - never taken as 0.
+for id in $server_id $worker_id; do
+  count="$(restart_count "$id" 2>/dev/null || true)"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=unreadable
+  restarts_at_start[$id]="$count"
+done
 
 # THE ONE PRECONDITION THE OWNER OWES, refused by name rather than skipped. The account is not named:
 # the log is public.
@@ -152,7 +181,7 @@ if [ "$mode" = access ]; then
   exit 0
 fi
 
-pin="$(ak_pin_image "$compose")" || { err "cannot read the pinned image from $compose"; exit 1; }
+pin="$(ak_pin_image "$compose" 2>&1)" || { err "cannot read the pinned image from $compose_shown: $pin"; exit 1; }
 pin_tag="$(ak_tag_of "$pin")"
 
 # migrations - django_migrations' row count, or empty when it cannot be read. What the health wait
@@ -175,8 +204,8 @@ db_state() {
 # restarts_since_start <id> - how many times the container restarted during this run, or `unreadable`
 # (which ak_health_verdict fails on, as it is not 0).
 restarts_since_start() {
-  local now base="${restarts_at_start[$1]:-0}"
-  now="$(restart_count "$1" || true)"
+  local now base="${restarts_at_start[$1]-0}"
+  now="$(restart_count "$1" 2>/dev/null || true)"
   if [[ "$now" =~ ^[0-9]+$ ]] && [[ "$base" =~ ^[0-9]+$ ]]; then echo $((now - base)); else echo unreadable; fi
 }
 
@@ -260,7 +289,7 @@ old_worker="$(image_of "$worker_id")"
 old_tag="$(ak_tag_of "$old_server")"
 env_before="$(cat -- "$env_file" 2>/dev/null)" || { err "the stack's .env could not be read - nothing was changed"; exit 1; }
 env_tag="$(printf '%s\n' "$env_before" | ak_env_tag)"
-decision="$(ak_decide "$pin" "$old_server" "$old_worker" "$env_tag")"
+decision="$(ak_decide "$pin" "$old_server" "$old_worker" "$env_tag" "$newer_policy")"
 log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env tag=${env_tag:-unset} -> $decision"
 
 # EVERY FILE THIS RUN WRITES (dump, `.env` backup, logs) is the runner's, mode 0600, in a 0700 tree.
@@ -298,6 +327,10 @@ on_signal() {
   if [ "$phase" = record ]; then
     err "INTERRUPTED ($1) while the .env line was being set to the tag the stack already runs, nothing restarted: $(state_now). The .env as it was is $(shown "$env_backup"); check the stack answers (deploy-stack.sh health)."
     exit 2
+  fi
+  if [ "$phase" = recorded ]; then
+    err "interrupted ($1) during the checks: the .env line already names the tag the stack runs, and nothing was restarted ($(state_now)). Check the stack answers (deploy-stack.sh health)."
+    exit 1
   fi
   err "INTERRUPTED ($1) during $phase: $(state_now). $(manual_steps)"
   exit 2
@@ -340,30 +373,44 @@ write_env() {
   return "$rc"
 }
 
+# record_line <tag> - the `.env` line set to <tag>, which BOTH containers already run: backed up,
+# written, nothing restarted. Called only when the line differs, so nothing is backed up for nothing.
+record_line() {
+  local st=0
+  backup_env
+  phase=record
+  write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$1")" || st=$?
+  case "$st" in
+    0) ;;
+    1) err "the .env line could not be written; the file is as it was - nothing was changed"; exit 1 ;;
+    *) err "the .env could not be written NOR put back: compose will misread the stack's secrets on its next start. Put $(shown "$env_backup") back by hand."; exit 2 ;;
+  esac
+  # WRITTEN: from here an interrupt meets the checks, not the write.
+  phase=recorded
+  log "the stack already runs $1; the .env line now says so too (nothing restarted)"
+}
+
 case "$decision" in
   noop)
     log "nothing to restart"
+    set_outcome noop
     after_checks "$pin_tag" || { err "$project runs $pin, but its checks fail - this run changed nothing"; exit 1; }
     prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
     exit 0
     ;;
   keep-newer:*)
-    echo "::warning title=MiConnect ($project)::$project runs authentik ${decision#keep-newer:}, NEWER than the pin $pin_tag of this release - left untouched (authentik's migrations do not run backwards; a rerun of an older release, or of one whose estate deploy failed, meets exactly this). The release goes on; pin ${decision#keep-newer:} or newer again on main."
-    after_checks "${decision#keep-newer:}" || { err "$project runs authentik ${decision#keep-newer:} (newer than the pin) and its checks fail - this run changed nothing"; exit 1; }
+    kept="${decision#keep-newer:}"
+    echo "::warning title=MiConnect ($project)::$project runs authentik $kept, NEWER than the pin $pin_tag of this release - left on its version (authentik's migrations do not run backwards; a rerun of an older release, or of one whose estate deploy failed, meets exactly this), and this release's blueprints are NOT applied to it. The release goes on; pin $kept or newer again on main."
+    set_outcome kept-newer
+    # .env ALWAYS NAMES WHAT RUNS: a line on another tag is set to the running one, as `record` does.
+    if [ "$env_tag" != "$kept" ]; then record_line "$kept"; fi
+    after_checks "$kept" || { err "$project runs authentik $kept (newer than the pin) and its checks fail - nothing was restarted"; exit 1; }
     prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
     exit 0
     ;;
   record)
-    backup_env
-    phase=record
-    st=0
-    write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$pin_tag")" || st=$?
-    case "$st" in
-      0) ;;
-      1) err "the .env line could not be written; the file is as it was - nothing was changed"; exit 1 ;;
-      *) err "the .env could not be written NOR put back: compose will misread the stack's secrets on its next start. Put $(shown "$env_backup") back by hand."; exit 2 ;;
-    esac
-    log "the stack already runs $pin; the .env line now says so too (nothing restarted)"
+    record_line "$pin_tag"
+    set_outcome recorded
     after_checks "$pin_tag" || { err "$project runs $pin, but its checks fail - this run restarted nothing"; exit 1; }
     prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
     exit 0
@@ -516,6 +563,7 @@ log "recreating server and worker on $pin (postgres keeps running)"
 compose_cmd --log up -d --no-deps server worker || rollback "compose up failed (its messages: $(shown "$compose_log"))"
 after_checks "$pin_tag" || rollback "the checks after the restart failed"
 phase=finished
+set_outcome upgraded
 
 # 4. The owner's bound: three of each kind and none older than 30 days. The dump exists for THIS
 # change's rollback, and the nightly backup is what keeps history.

@@ -57,9 +57,13 @@ eq "both on the pin, .env says another tag: record the line, restart nothing" "$
 eq "older running: upgrade" "$(ak_decide "$P" "$O" "$O" 2026.8.0)" upgrade
 eq "one of two behind: upgrade" "$(ak_decide "$P" "$P" "$O" 2026.8.5)" upgrade
 eq "another registry, same version: upgrade (the reference is the pin's)" "$(ak_decide "$P" docker.io/authentik/server:2026.8.5 "$P" 2026.8.5)" upgrade
-eq "both on one version NEWER than the pin: kept as it is (a rerun of an older release must pass)" "$(ak_decide "$O" "$P" "$P" 2026.8.5)" keep-newer:2026.8.5
-case "$(ak_decide "$P" ghcr.io/goauthentik/server:2099.1.0 "$O" 2026.8.0)" in refuse:*) pass "one newer and one older than the pin: refused" ;; *) fail "a split newer/older stack is not refused" ;; esac
-case "$(ak_decide "$O" ghcr.io/goauthentik/server:2099.1.0 "$P" 2026.8.0)" in refuse:*) pass "both newer but on two versions: refused" ;; *) fail "two newer versions are kept as one" ;; esac
+eq "both on one version NEWER than the pin, --newer keep (production): kept (a rerun of an older release must pass)" "$(ak_decide "$O" "$P" "$P" 2026.8.5 keep)" keep-newer:2026.8.5
+case "$(ak_decide "$O" "$P" "$P" 2026.8.5 refuse)" in refuse:DOWNGRADE*) pass "  the same under --newer refuse (the pre-release): refused, so the upgrade is always rehearsed" ;; *) fail "  a pre-release keeps a newer version" ;; esac
+case "$(ak_decide "$O" "$P" "$P" 2026.8.5)" in refuse:DOWNGRADE*) pass "  and refuse is the default" ;; *) fail "  keep is the default" ;; esac
+case "$(ak_decide "$O" docker.io/authentik/server:2026.8.5 docker.io/authentik/server:2026.8.5 2026.8.5 keep)" in refuse:*) pass "  a newer image of ANOTHER repository than the pin's: refused, even under keep" ;; *) fail "  another repository's newer image is kept" ;; esac
+eq "the repository of a reference: tag and digest dropped, a registry port kept" "$(ak_repo_of 'reg:5000/a/b:2026.8.5@sha256:ab')" reg:5000/a/b
+case "$(ak_decide "$P" ghcr.io/goauthentik/server:2099.1.0 "$O" 2026.8.0 keep)" in refuse:*) pass "one newer and one older than the pin: refused" ;; *) fail "a split newer/older stack is not refused" ;; esac
+case "$(ak_decide "$O" ghcr.io/goauthentik/server:2099.1.0 "$P" 2026.8.0 keep)" in refuse:*) pass "both newer but on two versions: refused" ;; *) fail "two newer versions are kept as one" ;; esac
 case "$(ak_decide "$P" "" "" "")" in refuse:*) pass "a stack that is not running is refused, never created" ;; *) fail "an absent stack is not refused" ;; esac
 case "$(ak_decide "$P" ghcr.io/goauthentik/server:latest "$P" "")" in refuse:*) pass "a running tag that is not a version is refused" ;; *) fail "an unorderable running tag is not refused" ;; esac
 eq "versions order numerically, not as text" "$(ak_version_gt 2026.10.0 2026.8.5 && echo y)" y
@@ -223,6 +227,8 @@ case "$*" in
     # Docker's count is cumulative: `restarts-<id>` is the count the container already had; with
     # `crashloop` it grows on every read, as a crash-looping container's does.
     id="${*: -1}"
+    # `restart-unreadable-once`: the first read fails (the baseline the run takes at its start)
+    if [ -f "$S/restart-unreadable-once" ]; then rm -f "$S/restart-unreadable-once"; echo "Error: no such object" >&2; exit 1; fi
     if [ -f "$S/restarts-$id" ]; then
       n="$(cat "$S/restarts-$id")"
       if [ -f "$S/crashloop" ]; then echo $((n + 1)) >"$S/restarts-$id"; fi
@@ -315,15 +321,23 @@ fake_reset() {
   : >"$S/broken"
   : >"$S/leak"
   rm -rf "$tmp/dumps"
+  rm -f "$tmp/gh-output"
 }
 
 # run_deploy [mode] - the real script, the fakes first on PATH, an ambient PG_*/POSTGRES_* that must
-# never reach compose. `timeout` bounds a test whose fake would otherwise wait for ever.
+# never reach compose. `timeout` bounds a test whose fake would otherwise wait for ever. `newer`
+# (keep|refuse) is passed when set; `compose_file` replaces the repository's compose file; the step
+# output lands in $tmp/gh-output, as under GitHub Actions.
 run_deploy() {
-  PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient \
+  local extra=()
+  if [ -n "${newer:-}" ]; then extra=(--newer "$newer"); fi
+  PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient GITHUB_OUTPUT="$tmp/gh-output" \
     AK_POLL_SECONDS=0 AK_HEALTH_DEADLINE_SECONDS="${deadline:-0}" AK_DUMP_DIR="$tmp/dumps" AK_NOW="${now:-}" \
-    timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect --compose infrastructure/authentik/compose.yml >"$tmp/out" 2>&1
+    timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect \
+    --compose "${compose_file:-infrastructure/authentik/compose.yml}" "${extra[@]}" >"$tmp/out" 2>&1
 }
+# outcome - the step output the run wrote, empty when none.
+outcome() { sed -n 's/^outcome=//p' "$tmp/gh-output" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'; }
 # changed - how many calls changed or dumped anything (reads of the migration count do not count).
 changed() { grep -vF -- '--dry-run' "$S/calls" | grep -cE '^(pull|compose .*(up|stop))|pg_dump|dropdb'; }
 
@@ -512,24 +526,64 @@ eq "  without asking docker anything" "$(grep -c . "$S/calls")" 0
 
 fake_reset "$pin" "$pin_tag"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
-run_deploy; st=$?
-eq "a version NEWER than the pin running (a rerun of an older release): exit 0, the estate goes on" "$st" 0
-eq "  and nothing touched" "$(changed)" 0
-eq "  .env untouched" "$(ak_env_tag <"$S/dir/.env")" "$pin_tag"
+newer=keep run_deploy; st=$?
+eq "--newer keep, a version NEWER than the pin running (a rerun of an older release): exit 0, the estate goes on" "$st" 0
+eq "  and nothing pulled, dumped or restarted" "$(changed)" 0
+eq "  .env set to what RUNS, not left on the pin" "$(ak_env_tag <"$S/dir/.env")" 2099.1.0
+eq "  its secrets intact" "$(grep -c '^PG_PASS=s3cret$' "$S/dir/.env")" 1
 eq "  a warning names both versions" "$(grep -c '^::warning.*2099\.1\.0, NEWER than the pin '"$pin_tag" "$tmp/out")" 1
 eq "  and the stack's checks ran on the version it runs" "$(grep -c 'checks passed: server and worker healthy on 2099.1.0' "$tmp/out")" 1
+eq "  the step output says kept-newer (the stable skips the old blueprints on it)" "$(outcome)" kept-newer
+
+fake_reset "$pin" 2099.1.0
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
+newer=keep run_deploy; st=$?
+eq "  a kept newer version whose .env line already says so: exit 0" "$st" 0
+eq "  and NO .env backup is taken for a line that is not written" "$(find "$tmp/dumps" -name '*.env' 2>/dev/null | wc -l | tr -d ' ')" 0
+
+fake_reset "$pin" "$pin_tag"
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
+newer=refuse run_deploy; st=$?
+eq "--newer refuse (the pre-release), the same newer stack: refused, exit 1" "$st" 1
+eq "  nothing touched, .env included" "$(changed)/$(ak_env_tag <"$S/dir/.env")" "0/$pin_tag"
+eq "  no step output" "$(outcome)" ""
 
 fake_reset "$pin" "$pin_tag"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo 2099.1.0 >"$S/broken"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
-run_deploy; st=$?
-eq "  a newer version whose checks fail: exit 1" "$st" 1
+newer=keep run_deploy; st=$?
+eq "  a kept newer version whose checks fail: exit 1" "$st" 1
+
+fake_reset "$pin" "$pin_tag"
+echo docker.io/authentik/server:2099.1.0 >"$S/server"; echo docker.io/authentik/server:2099.1.0 >"$S/worker"
+newer=keep run_deploy; st=$?
+eq "a newer version from ANOTHER repository, even under keep: refused, exit 1" "$st" 1
+eq "  and nothing touched" "$(changed)" 0
 
 fake_reset "$pin" "$pin_tag"
 echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"
-run_deploy; st=$?
+newer=keep run_deploy; st=$?
 eq "server newer than the pin, worker on it: refused, exit 1" "$st" 1
 eq "  and nothing touched" "$(changed)" 0
+
+echo "the step output the stable reads:"
+fake_reset "$pin" "$pin_tag"
+run_deploy; st=$?
+eq "a no-op: outcome=noop" "$st/$(outcome)" 0/noop
+fake_reset "$O" 2026.8.0
+run_deploy; st=$?
+eq "an upgrade: outcome=upgraded" "$st/$(outcome)" 0/upgraded
+fake_reset "$pin" 2026.1.0
+run_deploy; st=$?
+eq "a record: outcome=recorded" "$st/$(outcome)" 0/recorded
+
+echo "the compose file's path stays out of the public log:"
+fake_reset "$pin" "$pin_tag"
+printf 'services:\n  server:\n    image: a:1\n  worker:\n    image: a:2\n' >"$tmp/bad-compose.yml"
+compose_file="$tmp/bad-compose.yml" run_deploy; st=$?
+eq "an unreadable pin: refused, exit 1" "$st" 1
+eq "  saying why" "$(grep -c 'pin different images' "$tmp/out")" 1
+eq "  never naming the absolute path" "$(grep -cF "$tmp" "$tmp/out")" 0
 
 echo "Docker's restart count is cumulative: only this run's restarts count:"
 fake_reset "$pin" "$pin_tag"; echo 3 >"$S/restarts-worker-id"
@@ -541,6 +595,10 @@ fake_reset "$pin" "$pin_tag"; echo 3 >"$S/restarts-worker-id"; touch "$S/crashlo
 run_deploy; st=$?
 eq "a worker restarting DURING this run: exit 1" "$st" 1
 eq "  saying it restarted" "$(grep -c 'worker: restarted 1 time' "$tmp/out")" 1
+fake_reset "$pin" "$pin_tag"; touch "$S/restart-unreadable-once"
+run_deploy; st=$?
+eq "a restart count unreadable when the run begins: judged unreadable, never 0 - exit 1" "$st" 1
+eq "  saying so" "$(grep -c 'server: restarted unreadable time' "$tmp/out")" 1
 
 echo "the file tools' messages, which name host paths, stay out of the public log:"
 fake_reset "$O" 2026.8.0; touch "$S/df-fails"
@@ -560,8 +618,9 @@ eq "  its host path is not in the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
 echo "an interrupted record says what it changed:"
 fake_reset "$pin" 2026.1.0; echo curl >"$S/signal-on"
 run_deploy; st=$?
-eq "interrupted after the .env line was recorded: exit 2" "$st" 2
-eq "  saying so, never 'nothing was changed'" "$(grep -c 'while the .env line was being set' "$tmp/out")/$(grep -c 'nothing was changed' "$tmp/out")" 1/0
+eq "interrupted during the checks after the .env line was recorded: exit 1 (the stack runs what it ran)" "$st" 1
+eq "  saying the line is written, never that it was being written nor that nothing changed" \
+  "$(grep -c 'during the checks: the .env line already names' "$tmp/out")/$(grep -c 'was being set' "$tmp/out")/$(grep -c 'nothing was changed' "$tmp/out")" 1/0/0
 
 echo "a temporary .env copy left by a killed run is pruned:"
 fake_reset "$pin" "$pin_tag"; mkdir -p "$tmp/dumps/miconnect"; echo SECRET >"$tmp/dumps/miconnect/20261119T110000Z-env-next.Qw3rTy"
@@ -603,6 +662,10 @@ eq "the drift job runs in the environment of the production deploy it mirrors" \
   "$(job_env .github/workflows/scheduled.yml drift)/$(job_env .github/workflows/serve-prod.yml deploy-to-server)" production/production
 eq "  and expires both stacks' rollback copies every day" \
   "$(grep -cF "deploy-stack.sh prune --project \"\$project\"" .github/workflows/scheduled.yml)" 1
+eq "a stable keeps a newer MiConnect (--newer keep), a pre-release refuses it (--newer refuse)" \
+  "$(grep -c 'deploy-stack.sh deploy --project miconnect --newer keep$' .github/workflows/serve-prod.yml)/$(grep -c 'deploy-stack.sh deploy --project miconnect-test --newer refuse$' .github/workflows/serve-dev.yml)" 1/1
+eq "  and the stable applies no blueprint onto a kept newer version (the deploy step's outcome)" \
+  "$(grep -A1 -F -- "- name: Apply MiConnect's blueprints" .github/workflows/serve-prod.yml | grep -cF "if: \${{ steps.miconnect-version.outputs.outcome != 'kept-newer' }}")/$(grep -A1 -F -- '- name: Put MiConnect on the pinned authentik version' .github/workflows/serve-prod.yml | grep -c 'id: miconnect-version$')" 1/1
 
 echo "the blueprint drift report fails on a hand edit and passes on none:"
 cat >"$tmp/applier-drift" <<'EOF'

@@ -223,7 +223,9 @@ jobs:
           set -euo pipefail
           # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
           # stack was left in, and it ignores them while the dump is restored.
-          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test
+          # `--newer refuse`: a test stack NEWER than the pin is refused, never kept - the pre-release
+          # exists to rehearse the very upgrade the stable will make, and gate 4 relies on it.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test --newer refuse
 
       # `dev` IS DEV'S MOVING TAG, FOR EVERY SERVICE AND NOT JUST THE TWO FRONTENDS. It used to be
       # `TAG=latest` for the shared backends and `FRONTEND_TAG=dev` for the frontends, which worked

@@ -52,7 +52,7 @@ update is gated by `test-miconnect-blueprints`, which boots this file.
 | Release | Stack (compose project) | Step |
 | --- | --- | --- |
 | pre-release (`serve-dev.yml`) | `miconnect-test`, its own instance and database on its own loopback port | "Put the test MiConnect on the pinned authentik version", FIRST - before "Deploy the dev estate" and the blueprints' dry run against production; a failure stops the job before dev changes and keeps `dev-deployed` where it was, so the stable carrying that version is refused (gate 4) |
-| stable (`serve-prod.yml`) | `miconnect`, production | "Put MiConnect on the pinned authentik version", FIRST - before "Deploy the production estate"; then, after the estate, "Apply MiConnect's blueprints" and "Check MiConnect after its version and its blueprints"; a failure stops the job before any application container changes and keeps `prod-released` where it was |
+| stable (`serve-prod.yml`) | `miconnect`, production | "Put MiConnect on the pinned authentik version" (`--newer keep`), FIRST - before "Deploy the production estate"; then, after the estate, "Apply MiConnect's blueprints" (skipped when the first step's `outcome` is `kept-newer`) and "Check MiConnect after its version and its blueprints"; a failure stops the job before any application container changes and keeps `prod-released` where it was |
 
 **Why first** (review of #3486, 2026-11-19): it ran after the estate's deploy until then, so a failed
 authentik upgrade (rolled back, job red) left a release HALF-SHIPPED - the new application on
@@ -70,10 +70,13 @@ script runs compose under `env -i`):
    nothing restarts. Both on the pin, the line stale: the line is written (after a backup), nothing
    restarts. **Both no-restart outcomes still run the after-checks of step 6**, so a pre-release on an
    unchanged version still proves the test stack answers. Anything older: an upgrade. **Both on one
-   version NEWER than the pin: kept** (`keep-newer`, see "A newer version than the pin" below) - a
-   `::warning` names both versions, the checks run on the version that runs, and the run exits 0. A
-   stack that is not running, a running tag that is not a version, or the two containers split with
-   one newer than the pin is REFUSED. The pin must be a TAG: a digest is refused when the pin
+   version NEWER than the pin: kept on production only** (`--newer keep`, `keep-newer`, see "A newer
+   version than the pin" below), REFUSED on the test stack (`--newer refuse`, the default). A stack
+   that is not running, a running tag that is not a version, or the two containers split with one
+   newer than the pin is REFUSED. Under GitHub Actions the run writes a step output, `outcome` =
+   `noop`, `recorded`, `upgraded` or `kept-newer`. The compose file is named in the public log
+   relative to the repository, never by its absolute path, and `ak_pin_image`'s reasons name no
+   path. The pin must be a TAG: a digest is refused when the pin
    is read, because the host's compose builds the reference from `AUTHENTIK_TAG` alone and could never
    run it - every release would stop at step 2.
 2. **Everything that can fail without touching the stack, first**, compose always run in a SCRUBBED
@@ -181,18 +184,28 @@ a restore can still leave a half-restored database; the hand procedure below cov
 names (`count:id`) - stop `server` and `worker`, drop and recreate the
 database and restore the dump with `pg_restore`; then `docker compose up -d --no-deps server worker`.
 The files are in `~/authentik-release-dumps/<project>/` of the runner account; the public log names
-them `<dumps>/<project>/...` and never names the account.
+them `<dumps>/<project>/...` and never names the account. **Copy the dump and the `.env` backup
+aside FIRST** (out of that directory): every later run, and the daily `drift` job, prunes it to the
+three newest copies of each kind and 30 days, so a backup a human still needs can be deleted under
+them.
 
-**A newer version than the pin is kept, never taken back** (re-review of #3486, 2026-11-19). The
-step runs FIRST, so refusing here would block the estate's documented rollback - re-running an older
-release's deploy ([cicd](../cicd.md#there-is-no-baseline-every-service-is-built-every-release-and-production-deploys-by-vversion-2026-10-06))
-- and every rerun of a stable whose MiConnect step passed and whose estate deploy failed. So
-`ak_decide` answers `keep-newer:<tag>` when both containers run one version newer than the pin:
-nothing is touched (not even the `.env` line), a `::warning` names both versions, the after-checks
-run on the version that runs, and the run exits 0 so the estate goes on. Outside a rerun it means the
-pin went back on `main` (a revert of a Dependabot bump): pin that version or a newer one again. A real
-downgrade is a database restore by hand from the dump taken before the upgrade, then the `.env` line -
-authentik's migrations do not run backwards. Two containers split around the pin are still refused.
+**A newer version than the pin is kept on production, never taken back** (re-reviews of #3486,
+2026-11-19). The step runs FIRST, so refusing there would block the estate's documented rollback -
+re-running an older release's deploy ([cicd](../cicd.md#there-is-no-baseline-every-service-is-built-every-release-and-production-deploys-by-vversion-2026-10-06))
+- and every rerun of a stable whose MiConnect step passed and whose estate deploy failed. So with
+`--newer keep` (`serve-prod.yml` only) `ak_decide` answers `keep-newer:<tag>` when both containers
+run the SAME image of the pin's own repository, newer than the pin: nothing is pulled, dumped or
+restarted; the `.env` line is set to the RUNNING tag when it names another (the record path, its
+backup taken only then), so `.env` always names what runs; a `::warning` names both versions; the
+after-checks run on the version that runs; and the run exits 0 with `outcome=kept-newer`, on which
+the stable SKIPS "Apply MiConnect's blueprints" - an older release's blueprints were proved on an
+older authentik and would write an old configuration over a newer one. **The pre-release passes
+`--newer refuse`** (also the default): its test stack must rehearse the exact upgrade the stable will
+make, and gate 4 relies on that; a newer test stack is refused. Outside a rerun, a newer version
+means the pin went back on `main` (a revert of a Dependabot bump): pin that version or a newer one
+again. A real downgrade is a database restore by hand from the dump taken before the upgrade, then
+the `.env` line - authentik's migrations do not run backwards. Two containers split around the pin,
+or a newer image from another repository, are refused.
 
 **Known limits, accepted**: the rollback puts BOTH containers on the tag `server` ran, even when
 `worker` ran another - the stack has one `AUTHENTIK_TAG` line, and `server` is the one whose
