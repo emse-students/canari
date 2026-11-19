@@ -24,7 +24,7 @@ none a year old, so nothing is deleted before about November 2027. **The owner c
 day** (*"Oui, toutes"*), having seen production examples of what it converts, horizontal clips
 included: EVERY already-posted single-video post, whatever its frame and length.
 
-**The owner's answers of 2026-11-14** ([open-questions](../open-questions.md#decided-2026-11-14---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09)):
+**The owner's answers of 2026-11-14** ([reels](../services/reels.md#the-rule-what-is-a-canareel), [decisions of 2026-11-19](owner-decisions-of-2026-11-19.md) item 8):
 multi-media posts with a video, *"Rester des posts"*; the longest vertical CanaReel, *"3 minutes"*.
 
 **Numbered 176** (2026-11-18; 172 on 2026-11-14): `main` reached social 175 while this pull request

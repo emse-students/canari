@@ -616,28 +616,6 @@ case (one person, two devices, one call) nobody asked for. Recorded in
 to end is [a backlog entry](backlog.d/group-calls-one-device-per-user.md). Reopen only if two devices
 of one user in one group call becomes a wanted case.
 
-## Which account a SECOND phone would carry, the day one is attached again
-
-**Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
-temporarily on 2026-09-04; `adb devices` has listed only the Mi 9T (A1) since, which is what
-`state.mjs` reports as `A2 (9335) UNREACHABLE` - **that line is explained and is not a defect, so no
-session should spend time chasing the forward.**
-
-The question it leaves: A2 is bound and addressable on port 9335, and **no account is assigned**. The
-peer's, or a third one? One line in the out-of-tree `names.mjs` decides it, and guessing is an
-identity invented by a tool rather than chosen by the person who owns the accounts.
-
-**It is worth answering BEFORE the hardware returns**, because it now overlaps something concrete:
-the third test account owed for first contact (NOTIF-17) would also be the obvious occupant of A2, so
-the two asks are one decision rather than two. See the table of what is owed to the user in
-[backlog](backlog.md).
-
-**Where it came from.** Item C1 of the harness tidy, which is otherwise complete and was deleted on
-2026-09-08 - its A and B sections shipped, its D items are the campaign order that
-[cross-client-campaign-resume](cross-client-campaign-resume.md) carries, and its E items are the
-standing bar now in `CLAUDE.md`. This was the only thing on the page that was neither done nor a
-duplicate.
-
 ## Whether the three legal documents should be localized at all
 
 **Parked because it is a legal question wearing a coding rule's clothes.** This repo's standing rule
@@ -662,47 +640,6 @@ binding text. Only the first costs nothing.
 **What must NOT happen is a session "fixing the lint" by machine-translating them.** That is the
 failure mode this entry exists to prevent.
 
-## Should a device that dropped a frame say so?
-
-Parked 2026-10-09 when the "twelve of sixteen messages fetched and dropped" entry was closed as a defect
-([campaign-measured-defects](protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02)).
-Every cause that dropped frames silently is fixed, and the loss that remains is reported where it can be
-acted on (the hourly commit-log hole report on the server, the shortfall report on a partial restore on the
-client). The question is whether the USER should ever see that a frame was dropped on their device: the
-"SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
-machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
-
-## DECIDED 2026-11-14 - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
-
-**Decided by the owner, 2026-11-14:** *"Toute vidéo verticale et/ou inférieure à 90 s est un
-CanaReel, y compris depuis la galerie"* - a video is a CanaReel when it is vertical OR 90 s or
-shorter, from the camera or the gallery - and for the videos already posted, *"Oui, toutes"*: each
-becomes a CanaReel expiring one year after its publication, the owner knowing that a video older
-than a year then goes at once. The lifetime itself is the admin setting `retention_reel_days` (a
-year by default, [retention-settings](retention-settings.md)). Built: the rule
-([reels](services/reels.md#the-rule-what-is-a-canareel)) and held migration 176. **The two follow-up
-questions, answered by the owner the same day:**
-
-- **A post with several media that include a video:** *"Rester des posts"* - it stays a post
-  (migration 176 converts only a post whose ONLY content is one video).
-- **The longest vertical CanaReel:** *"3 minutes"* (`REEL_VERTICAL_MAX_DURATION_MS` = 180 000 ms). A
-  longer vertical video stays a post.
-
-What follows is the question as it was asked, kept for its history:
-
-
-Asked by the owner on 2026-11-09 while deciding the live replays ([live-replays](live-replays.md)):
-*"un truc général pour toutes les vidéos du genre ? 90 s et vidéos verticales ?"* - whether camera
-CanaReels should move from 30 days to one year, or whether every vertical video of 90 s or less posted
-in the feed should become a CanaReel (and expire like one).
-
-**No such decision exists in the repository.** What holds today: a camera reel is at most 90 s
-([reels C4](services/reels.md)) and is kept **30 days** (`REEL_RETENTION_DAYS`, C6); a video posted
-from the gallery is a feed post and never expires, even when it is drawn full screen in CanaReels. An
-earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the owner's 2026-11-09
-question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
-is written until the owner answers. Live replays are not part of the question: they are 3 days.
-
 ## DECIDED 2026-11-14 by the owner ("Oui, par campus") - an institution's Personnel public reaches every staff account of its campuses
 
 **The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" POST
@@ -710,12 +647,12 @@ of an institution also opens to every staff account (a campus, no cursus) whose 
 of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
 in `postVisibleToUserSql`, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
 
-**Not decided, so not built - the agenda.** The owner's answer is for POSTS. An institution's
+**Decided for the agenda too (owner, 2026-11-19, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)):** an institution's calendar event with the public "Personnel" or "Tous" opens to every staff account whose campus is the campus of a TICKED space - the same door as posts, so an event for Saint-Etienne only reaches Saint-Etienne's staff only; entry [institution-events-reach-staff-by-campus](backlog.d/institution-events-reach-staff-by-campus.md). **What it replaced - the agenda.** The owner's answer is for POSTS. An institution's
 calendar event with "Personnel" still reaches only the staff who already have a door
 (`eventVisibleToUserSql` unchanged), although the question below said one answer would settle both:
 whether the same door opens on events waits for the owner.
 
-**Not decided either - the institution as a whole.** The door is per ITEM: it needs a chosen
+**Decided 2026-11-19 for the institution as a whole too** (*"Oui, par campus"*, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)): the shop, the partnerships, the directory and an institution's lives open to the staff of the campuses its rules reach - [entry](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md). **What it was:** The door is per ITEM: it needs a chosen
 public. The association-level readers that the audiences audit of 2026-11-14 found with the same
 dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
 (`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
@@ -747,21 +684,6 @@ account with no membership, grant or follow.
 has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
 so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.
 
-## Should Canari suspend an account? (asked 2026-11-15)
-
-**Parked by the owner on 2026-11-15**, while deciding the [moderation grid](moderation-authority.md#sanctions):
-the strongest sanction today is the mute (one platform-wide row: no post, reaction, comment, live or
-chat line; votes, comment likes and nicknames to be added) and the withdrawal of the right to
-broadcast. **No route suspends or bans an account** - core-service and social-service have none, and
-an account is deactivated only by its owner's own erasure
-(`apps/core-service/src/account-erasure/`).
-
-**Why it is a question and not a work package**: signing in is MiConnect's (the School's identity
-provider), so a suspension either lives in Canari alone (a refused session, which every service must
-honour, encrypted conversations included) or is asked of the identity provider - and which, and who
-may decide it (the platform admin alone, or a BDE for its spaces), touches the [charter](../principes.md)'s
-first principle as much as moderation. No code until it is answered.
-
 ## Should the privacy policy describe named readers? (parked 2026-11-15)
 
 The privacy policy (`frontend/src/routes/legal/privacy/+page.svelte`) does not describe named readers at
@@ -770,25 +692,3 @@ C5 already says what they read ([register](compliance/register-of-processing.md)
 policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
 owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
 
-## Should a BDE moderator read a reported COMMENT under a post that is not out yet? (asked 2026-11-15)
-
-**Today**: a BDE moderator's read of a post scheduled later opens only once it is published, or while
-an OPEN report targets the POST (owner, 2026-11-15: *"Exclure les posts programmes"*;
-[the moderation read](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
-A comment reported under such a post is listed in the moderator's queue, in scope, WITHOUT its text
-until then; the platform admin reads it.
-
-**Why it is a question**: the report is theirs to handle and they cannot read what it is about. The
-reading taken, reversible: the [charter](../principes.md)'s first principle wins - the post is not
-published, so nothing under it is the BDE's to read on a comment's report alone - and the platform
-admin is the recourse. The other answer is that an open report on a comment opens that one comment
-(not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
-only the author's side can write one.
-
-## A Lydia Responsable who leaves the association: who takes over? (parked 2026-11-18)
-
-Since 1.7.1 a departed member's Tresorier and Vendeur numbers are removed at Lydia, but a departed
-Responsable keeps their current number (the Business needs one) and the card asks for a platform
-administrator, who has no step to name another person. Two answers, both owner-visible: an admin
-"replace the Responsable" step, or refusing the Responsable's own departure while their number is
-live. Entry: [backlog](backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md), item 7.
