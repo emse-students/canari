@@ -130,6 +130,7 @@ earliest version, as a checklist.
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
+- [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
 
 ## 1.7.3
 

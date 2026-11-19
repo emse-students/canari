@@ -72,5 +72,6 @@ Recorded so that no question answered here is asked again. The owner took them i
 38. **`1.8.0` ships in blocks** (`1.8.0`, `1.8.1`, `1.8.2`...), each a stable as soon as its block is ready, in the order of item 6. Nothing waits for the last chantier.
 39. **CanaQuiz:** the results export is a summary PDF. A player who returns after a question's time is over gets 0 for it ([entry](canaquiz-a-live-quiz-anyone-can-run.md)).
 40. **The usage dashboard is for platform admins only** ([entry](usage-dashboard-who-uses-canari-anonymously.md)).
+41. **The live card follows the feed tab:** under "Organisations", association lives only. "Pour toi" and "Campus" keep every live the reader may watch. Who may watch is unchanged (`1.7.2`, [entry](the-live-card-follows-the-feed-tab.md)).
 
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).
