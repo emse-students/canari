@@ -703,3 +703,37 @@ known holes. When less than that was buffered, `positionAhead` fell back to the 
 "far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
 a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
 walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
+
+## A replay reaches its end: the engine's state is the memory of "ended" (2026-11-19)
+
+**Symptom (S12, desktop Chrome):** a replay played from 0 halted about 0.12 s before its last frame
+(`readyState` 2, `ended` false, a spinner for good, `loop` never looping) although the log said
+`end of stream declared`.
+
+**Hypothesis refuted by measurement.** The reader's guess was two tracks ending 20 ms apart. It was
+measured with a real `MediaRecorder` (`video/mp4;codecs=avc1.42E01F,mp4a.40.2`, 15 fps, 2 s timeslice)
+fed to the real `ReplayPlayer` in desktop Chrome, and with ffmpeg files whose audio ends 30 ms after the
+video: audio and video ends differ by 15-30 ms in every case, and Chrome extends `buffered` to the
+`duration` once the source is ended, so a replay played to its end with the end declared plays on and
+fires `ended` in every one of them.
+
+**Cause.** `source.readyState` read `open` at the halt. The specification reopens an ended
+`MediaSource` on ANY `appendBuffer` or `remove` on its buffer; an open source waits for more data. The
+fill declares the end when the last segment is in, then the playhead moves on and `trim` removes what lies
+more than 10 s behind it: `remove(0, 10.17)` with `readyState` `ended` is the line that reopened it
+(logged in the page). The player had kept a flag `ended` to say it was done, and the flag stayed true.
+
+**Fix.** The flag is gone. The engine's `readyState` is the only memory of the end: `declareEnd` runs at
+every arrival at the end of the list (after each trim and fill) and calls `endOfStream()` whenever the
+source is `open` - idempotent through the engine's state, never through ours, so a trim or a refill of a
+gap that reopens it is followed by a new declaration in the same step. No timer, no seek to the end when
+stuck. Test: the fake buffer reopens an ended source on `remove`/`append`
+(`keeps the stream ended when the trim behind the playhead reopened it`).
+
+**The seek landing (S12's second question).** A seek lands INSIDE the segment its target falls in, at
+the measured start of that segment plus the share of it the target is past, capped at the segment length
+(`REPLAY_SEGMENT_LENGTH_S`): by design never a keyframe snap forward. What can still land later than the
+target is the segment LOOKUP: `segmentPositionAt` reads the segments' arrival time `atMs`, while the bar's
+time is media time, which runs ahead of arrival time on a replay whose media is longer than its live
+(61 s of media for 54 s). Read from the code, not measured on a real replay; owed a reading on the
+S12 replays.
