@@ -157,6 +157,16 @@ function fake(mode) {
           if (s.accepted) return Response.json({ component: 'xak-flow-redirect', to: s.back });
           return Response.json({ component: 'xak-flow-redirect', to: next });
         }
+        // As authentik's Django CSRF check does on HTTPS: a POST without the flow page as its
+        // Referer and the IdP as its Origin is refused with a 500 (observed on dev, 2026-11-19).
+        if (
+          req.headers.get('referer') !== `${url.origin}/if/flow/${slug}/` ||
+          req.headers.get('origin') !== url.origin
+        ) {
+          return new Response('CSRF Failed: Referer checking failed - no Referer.', {
+            status: 500,
+          });
+        }
         const body = await req.json();
         const again = new Response(null, {
           status: 302,
