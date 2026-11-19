@@ -129,6 +129,7 @@ earliest version, as a checklist.
 
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
+- [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
 
 ## 1.7.3
 
@@ -156,6 +157,7 @@ _No entry planned beyond its readings._
 - [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 - [An institution's "Personnel" calendar event reaches the staff of its ticked campuses (owner, 2026-11-19)](backlog.d/institution-events-reach-staff-by-campus.md)
+- [An institution reaches the staff of its campuses beyond posts: shop, partnerships, directory, lives (owner, 2026-11-19)](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md)
 - [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
 - [The post search filters by person and by association (owner, 2026-11-19)](backlog.d/post-search-filters-by-person-and-by-association.md)
 - [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)

@@ -64,4 +64,9 @@ Recorded so that no question answered here is asked again. The owner took them i
 32. **An institution's "Personnel" calendar event reaches the staff of its ticked campuses**, as posts do, in `1.8.0` ([entry](institution-events-reach-staff-by-campus.md)).
 33. **A device that dropped a frame does not tell its user.** The server reports the drop to the team.
 
+34. **A post that is not published yet takes no comment** (`1.7.2`, [entry](a-scheduled-post-takes-no-comment.md)).
+35. **An institution reaches the staff of its campuses beyond posts:** its shop, partnerships, directory and lives (`1.8.0`, [entry](institution-reaches-staff-by-campus-beyond-posts.md)).
+36. **The short technical durations and the backups stay constants**, and only the long retentions become settings ([entry](retention-durations-not-yet-settings.md)).
+37. **Everything goes into `1.7.1`, the two held migrations included:** the CanaReels conversion (176) and the removal of Stripe. Each runs on dev through a pre-release before the stable.
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).
