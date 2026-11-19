@@ -75,24 +75,17 @@ apply_copy_strips() {
   "$sql" "TRUNCATE TABLE push_token;" "$database"
   printf '%s   push_token truncated\n' "$prefix"
 
-  # (b) ALL NINE payment-provider columns, across four tables (the ninth, the encrypted Business key,
-  # is below) - eight rather than five because
-  # `associations` carries a Lydia trio beside the Stripe pair (WP-LYDIA coexistence):
-  # `lydiaAccountId`/`lydiaOnboardingComplete` plus `lydiaDashboardUrl`, added alongside them
-  # because it is the SAME kind of live identifier - Lydia hands it out once, at business/create,
-  # and never re-issues it. Measured on production 2026-09-01: 5 associations hold a real
-  # `stripeAccountId`; every Lydia column is empty so far, which is exactly why they are stripped
-  # now rather than when they are not.
+  # (b) EVERY payment-provider column. `associations` carries the Lydia trio
+  # `lydiaAccountId`/`lydiaOnboardingComplete` plus `lydiaDashboardUrl`, the last because it is the
+  # SAME kind of live identifier - Lydia hands it out once, at business/create, and never re-issues
+  # it. The guarded ones below arrived with later migrations.
   #
-  # In a local stack the key is production's LIVE key (user, 2026-09-02), so a copied identifier is
-  # a real customer, a real connected account or a real payment intent that a local mistake could
-  # act on. Stripping makes nothing real ADDRESSABLE by accident.
+  # In a local stack the provider keys may be production's LIVE ones (user, 2026-09-02), so a copied
+  # identifier is a real connected account or a real payment request that a local mistake could act
+  # on. Stripping makes nothing real ADDRESSABLE by accident.
   #
-  # The two `*OnboardingComplete` columns are NOT NULL booleans, so they are set false rather than
-  # nulled - an association is not onboarded on an account the environment cannot reach.
-  "$sql" "UPDATE users SET \"stripeCustomerId\" = NULL WHERE \"stripeCustomerId\" IS NOT NULL;" "$database"
-  "$sql" "UPDATE associations SET \"stripeAccountId\" = NULL WHERE \"stripeAccountId\" IS NOT NULL;" "$database"
-  "$sql" "UPDATE associations SET \"stripeOnboardingComplete\" = false WHERE \"stripeOnboardingComplete\";" "$database"
+  # `lydiaOnboardingComplete` is a NOT NULL boolean, so it is set false rather than nulled - an
+  # association is not onboarded on an account the environment cannot reach.
   "$sql" "UPDATE associations SET \"lydiaAccountId\" = NULL WHERE \"lydiaAccountId\" IS NOT NULL;" "$database"
   "$sql" "UPDATE associations SET \"lydiaOnboardingComplete\" = false WHERE \"lydiaOnboardingComplete\";" "$database"
   "$sql" "UPDATE associations SET \"lydiaDashboardUrl\" = NULL WHERE \"lydiaDashboardUrl\" IS NOT NULL;" "$database"
@@ -141,14 +134,12 @@ apply_copy_strips() {
   # The platform's Lydia flux ledger (migration 168, lydia-contract-flux.ts): the vendor tokens of the
   # Businesses Canari enrolled, the same live identifiers. Emptied with them. Guarded on the table.
   "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_enrolled_businesses') IS NOT NULL THEN DELETE FROM lydia_enrolled_businesses; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 26 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds; lydia_account_bridges and lydia_enrolled_businesses emptied\n' "$prefix"
+  printf '%s   payment identifiers cleared: 23 columns across associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds; lydia_account_bridges and lydia_enrolled_businesses emptied\n' "$prefix"
 
-  # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
-  # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say
-  # "payments are off" - writing anything else would contradict what the code asserts about the
-  # column. The consequence is that a copy presents Stripe as the live provider. That the platform
-  # cannot declare payments disabled is a real gap, recorded in the backlog.
-  printf '%s   platform_config.payment_provider left as-is (no "disabled" value exists - see backlog)\n' "$prefix"
+  # (c) platform_config.payment_provider is left ALONE: it is `lydia` or `disabled`, and the copy
+  # keeps the source's choice. With the identifiers above stripped no association is onboarded, so
+  # no checkout can start on the copy whichever value it holds.
+  printf '%s   platform_config.payment_provider left as-is (no association is onboarded on the copy)\n' "$prefix"
   # The platform's Lydia contract terms (core migration 024, docs/wiki/lydia-contract-flux.md): a
   # CONFIDENTIAL contract, entered by a global admin on the estate it governs. A copy carries no
   # partner's terms, its anniversary included - its counter and its payout estimate say "not

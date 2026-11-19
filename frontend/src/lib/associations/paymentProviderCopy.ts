@@ -5,7 +5,7 @@ import type { PaymentProviderId } from '$lib/associations/api';
  * WHAT A SCREEN MAY SAY ABOUT HOW A PAYMENT IS TAKEN, BY THE PROVIDER THAT IS KNOWN.
  *
  * Canari has two payment ways: Lydia, shown to members as "Paiement Canari", and cash (user,
- * 2026-10-07). Stripe has left the product (`docs/wiki/stripe-archive.md`), so there is no Stripe
+ * 2026-10-07), so there is no other provider's
  * wording and no provider choice: the form editor shows ONE non-selectable online line. When the
  * platform's active provider is `disabled` the line says explicitly that online payment is
  * unavailable - never a default. While the provider is still

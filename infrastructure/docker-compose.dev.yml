@@ -486,10 +486,6 @@ services:
       DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
-      # The copy procedure CLEARS `stripe_customer_id` (a column kept until the Stripe removal
-      # migration drops it, docs/wiki/stripe-archive.md): a live-mode id from a processor that has
-      # left can only mislead.
-      #
       # LYDIA IS PRESENT, AND ONLY EVER THE SANDBOX (2026-10-04). The credentials Lydia issued are a
       # homologation pair, and `LYDIA_ENV` is a LITERAL here rather than `${LYDIA_ENV:-...}`: nothing
       # in the environment can point dev's core-service at Lydia's production base URL.

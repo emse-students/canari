@@ -45,21 +45,29 @@ import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils
 import { isUnavailableStatus } from '$lib/utils/unavailableAnswer';
 
 /**
- * What the server did with a member's Decline of an invitation-link ask
+ * What the server did with a member's Decline of a person who holds no leaf
  * (`POST mls/groups/:groupId/join-requests/:userId/decline`):
  *
- * - `withdrawn`: the seat still awaited a member; it is gone, the ask with it.
+ * - `withdrawn`: the seat was an invitation-link ask still awaiting a member; it is gone, the ask
+ *   with it.
  * - `already-admitted`: a member's Add came first - the person is in, and nothing was touched (the
  *   generic removal used to delete that admitted person's seat and leave their leaf with none).
+ *   Answered for a seat that is not an ask only when the Decline carried no tree epoch.
  * - `not-awaiting`: the seat never awaited a member and the server holds no trace of an Add of
- *   theirs - not an invitation-link ask at all (a seat older than the rule, a member's invite between
- *   its roster write and its Add, a member whose leaves were removed). Nothing was touched.
+ *   theirs, and the Decline carried no tree epoch. Nothing was touched.
+ * - `removed`: the seat was NOT an invitation-link ask - a person whose leaves are all gone while
+ *   their seat stands - and the group was still at the tree epoch the Decline carried: the seat is
+ *   removed as a removal removes it.
+ * - `epoch-moved`: the same kind of seat, but a commit landed since the tree epoch the Decline
+ *   carried, so its reading no longer proves the person holds no leaf. Nothing was touched.
  * - `gone`: no seat - answered or expired before.
  */
 export const JOIN_DECLINE_OUTCOMES = [
   'withdrawn',
   'already-admitted',
   'not-awaiting',
+  'removed',
+  'epoch-moved',
   'gone',
 ] as const;
 export type JoinDeclineOutcome = (typeof JOIN_DECLINE_OUTCOMES)[number];
@@ -2720,14 +2728,24 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * A member's Decline of a person who asked to join by invitation link: the server withdraws their
-   * seat ONLY while it still awaits a member's admission, under the group's seat lock. Every outcome
-   * is an answer (200) - see {@link JoinDeclineOutcome}; a non-2xx (not an admitted member) throws.
+   * A member's Decline of a person who holds no leaf: the server withdraws an invitation-link ask
+   * ONLY while it still awaits a member's admission, and removes a seat that is not an ask only while
+   * the group is still at `treeEpoch` - the epoch of the tree this member read the person absent from
+   * - under the group's seat lock. Every outcome is an answer (200) - see {@link JoinDeclineOutcome};
+   * a non-2xx (not an admitted member, a malformed epoch) throws.
    */
-  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
+  async declineJoinRequest(
+    groupId: string,
+    userId: string,
+    treeEpoch?: number
+  ): Promise<JoinDeclineOutcome> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/groups/${groupId}/join-requests/${userId}/decline`,
-      { method: 'POST', headers: await this.auth() }
+      {
+        method: 'POST',
+        headers: await this.auth({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(treeEpoch === undefined ? {} : { treeEpoch }),
+      }
     );
     if (!res.ok) throw await refusalFromResponse(res, 'declineJoinRequest failed');
     const body = (await res.json()) as { outcome?: unknown };

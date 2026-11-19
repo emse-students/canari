@@ -147,7 +147,7 @@
    * membership.
    *
    * Creating a form for an association requires MANAGE_FORMS in it (owner, 2026-11-14), so listing
-   * any other offered a choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
+   * any other offered a choice the save would then refuse: pick, save, 403. The list is not filtered on payment
    * readiness either, because a FREE form may be linked to any association it belongs to; the
    * payment section says so when a chosen association cannot take money yet.
    */

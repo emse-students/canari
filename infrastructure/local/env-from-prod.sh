@@ -94,8 +94,6 @@ TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES COMMUNITY_OWNED_MAX"
 # mean nothing. MICONNECT_EDITOR_TOKEN is different in one respect that decides it: it WRITES to the
 # production MiConnect, and the local stack signs in through that very instance, so a token here would
 # let a local mistake edit a real person. Local gets the typed "not configured" refusal instead.
-# (STRIPE_SECRET_KEY was the other member of this list until Stripe left the product,
-# docs/wiki/stripe-archive.md.)
 #
 # THE TWO LYDIA PROVIDER TOKENS ARE THE SECOND REASON, since 2026-10-23: production's pair is Lydia's
 # PRODUCTION pair, and Lydia moves real money with it. A laptop holding a production dump would hold
@@ -196,7 +194,7 @@ NEW_SECRETS=""
 # than warnings:
 #
 #   * A LOCAL ACTION CAN REACH A REAL THIRD PARTY. a production dump restore removed every Lydia
-#     identifier (and the historic Stripe customer ids) from the copied database, so nothing real is
+#     identifier from the copied database, so nothing real is
 #     ADDRESSABLE by accident - but the keys themselves are live. LYDIA IS THE EXCEPTION: its two
 #     Provider tokens are empty here and `LYDIA_ENV` is `homologation`, because production's pair
 #     moves real money.

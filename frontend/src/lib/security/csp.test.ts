@@ -169,8 +169,8 @@ describe('the served Content-Security-Policy', () => {
   });
 
   it('names no payment processor host: checkout is a navigation to the provider, never an embed', () => {
-    // Stripe left the product (docs/wiki/stripe-archive.md); its hosts must not linger in the policy.
-    for (const [, policy] of ALL_POLICIES) expect(policy()).not.toMatch(/stripe/i);
+    // Lydia's checkout is a page the payer is sent to, so no Lydia host belongs in the policy.
+    for (const [, policy] of ALL_POLICIES) expect(policy()).not.toMatch(/lydia/i);
   });
 
   it("names the estate's own wss:// origins, not only 'self' (older Safari)", () => {

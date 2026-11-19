@@ -8,6 +8,12 @@ permission's old name), in a held migration merged after the `1.7.1` stable; the
 the Lydia contract and the payer e-mail proof are the owner's. The three GitHub secrets were read gone on
 2026-11-19 ([decisions](owner-decisions-of-2026-11-19.md)).
 
-Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY` and the Stripe webhook endpoint (the CGU and privacy text naming Lydia was APPROVED by the user on 2026-10-08). Three later items: the unsigned Lydia partnership contract, proof the payer e-mail is not kept, and association enrolment with conditions and uploaded documents. Later, once the previous release is no longer a rollback target: drop the three Stripe columns and rename the permission with a data migration ([stripe-archive](../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays)).
+What is left is administrative, and no agent can do it ([stripe-archive](../stripe-archive.md#owed-by-the-user-one-off)):
 
-_Context, from the former backlog section "Payments":_ Lydia ("Paiement Canari") and cash are the only payments since Stripe was removed (#1589, [stripe-archive](../stripe-archive.md), which lists the names kept for rollback and old clients). `payment_provider` is `lydia | disabled`, default `disabled`; mechanism in [payments](../frontend/modules/payments.md) and [core-service](../services/core-service.md#payments-stripe--lydia).
+- delete the webhook endpoint in the Stripe dashboard and, when no refund can still be asked, close the Stripe account (its closure is what purges the Stripe-side customers);
+- the unsigned Lydia partnership contract;
+- proof that the payer e-mail is not kept.
+
+Association enrolment with conditions and uploaded documents is DROPPED (owner, 2026-11-19): Lydia Pro collects the documents.
+
+The code and the database are done (owner, 2026-11-19: *"Tu peux tout supprimer en ce qui concerne Stripe"*): the three dead columns go with the held migrations social 177 and core 027 (the stored `stripe` payment method stays as historic data), the GitHub secrets were already deleted, and the permission rename never needed a data migration (only its bit is stored). The two columns still named `stripe*` hold the LIVE Lydia references and stay ([stripe-archive](../stripe-archive.md#the-last-removal-owner-2026-11-19-tu-peux-tout-supprimer-en-ce-qui-concerne-stripe)).

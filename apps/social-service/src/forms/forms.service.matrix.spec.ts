@@ -6,8 +6,8 @@ import { OTHERS_BUCKET_ID } from '../pricing/audience';
  *
  * The unit tests next door prove the matrix resolves correctly; these prove the service charges what
  * it resolved, refuses what it cannot resolve, and stopped doing two things it used to do wrong on
- * hidden questions. Every case takes the cash path, which returns before Stripe - the figure under
- * test is `totalPaid` on the stored submission, which is also the amount Stripe would be asked for.
+ * hidden questions. Every case takes the cash path, which returns before the provider - the figure under
+ * test is `totalPaid` on the stored submission, which is also the amount the provider would be asked for.
  */
 describe('FormsService pricing, through submit', () => {
   const MENU_QUESTION = {

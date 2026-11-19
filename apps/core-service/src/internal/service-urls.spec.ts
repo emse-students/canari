@@ -10,7 +10,7 @@ import { chatDeliveryUrl, mediaUrl, socialUrl } from './service-urls';
  *
  * This service needed it most. It had the seam AND a second address for the same callee -
  * `getSocialServiceBase()` in `payment/social-internal-client.ts` - plus a third environment name,
- * `SOCIAL_SERVICE_URL`, on the Stripe and Lydia fulfilment paths, which **production has never set
+ * `SOCIAL_SERVICE_URL`, on the payment fulfilment paths, which **production has never set
  * for core-service**. Every call took the literal default beside it. Nothing was broken and
  * nothing could be: three ways to say the same hostname all said it.
  */
