@@ -11,7 +11,7 @@
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
    * AT A DOUBLED FONT THE LABELS WRAP INSTEAD OF RUNNING OFF (Mi 9T, `font_scale` 2.0, S9: "Campus"
-   * left the screen): a tab is `flex-auto min-w-0`, so it keeps its natural width at rest and shrinks
+   * left the screen): a tab is `flex-1 min-w-0`, so it keeps its equal share at rest and shrinks
    * with the row, its label hyphenating or breaking inside a word (`overflow-wrap: anywhere`) rather
    * than overflowing; the pill grows in height (`min-h-11`). The text size is never reduced.
    *
@@ -202,7 +202,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-0 flex-auto rounded-full px-2.5 text-sm leading-tight [overflow-wrap:anywhere] hyphens-auto transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-0 flex-1 rounded-full px-2.5 text-sm leading-tight [overflow-wrap:anywhere] hyphens-auto transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'
