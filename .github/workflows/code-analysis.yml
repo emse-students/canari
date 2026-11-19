@@ -248,7 +248,7 @@ jobs:
       matrix:
         # THE TREES ONLY. How each is installed and audited - level, closure, ignores - is ONE table,
         # `.github/scripts/lib/audit-trees.sh`, read by this job, the nightly and the stable gate of
-        # `release-preflight.sh`; `audit-dependencies.test.sh` asserts this list is that table's.
+        # `release-preflight.sh`; `audit-trees.test.sh` asserts this list is that table's.
         # Ignores stay keyed PER TREE there: an `--ignore` spread across every tree would hide an
         # advisory where nobody measured whether it is reachable.
         tree: [frontend, apps/core-service, apps/social-service, apps/media-service, apps/chat-delivery-service, libs/handoff]
