@@ -1074,11 +1074,9 @@ describe('ReplayPlayer', () => {
       expect(states.at(-1)).toEqual({ kind: 'playing' });
     });
 
-    it('R10b: a survivor inside a purge is requested by a seek into it, and the stream end is not a verdict on it', async () => {
+    it('R10b: a purged tail is judged empty by the sampled rule: playback reaches the last media and the stream ends', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
-      skip404(
-        Array.from({ length: 160 }, (_, i) => `seg-${40 + i}`).filter((n) => n !== 'seg-150')
-      );
+      skip404(Array.from({ length: 160 }, (_, i) => `seg-${40 + i}`));
       const p = makePlayer();
       p.start();
       await flush();
@@ -1087,19 +1085,11 @@ describe('ReplayPlayer', () => {
         p.noteTime();
         for (let i = 0; i < 30; i++) await flush();
       }
-      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
-      const before = fetchSegment.mock.calls.filter((c) => c[1] === 'seg-150').length;
-      video.currentTime = 300.5; // inside segment 150, never requested by the probe
-      p.noteSeeking();
-      for (let i = 0; i < 30; i++) await flush();
-      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-150').length).toBeGreaterThan(
-        before
-      );
-      expect(video.currentTime).toBeCloseTo(300.5, 1);
-      expect(inRange(video.currentTime)).toBe(true);
-      // The fake truncates the duration at endOfStream, as a real engine does: it was never called.
-      expect(source.ended).toBe(0);
-      expect(source.duration).toBeGreaterThan(300);
+      // Declared once the media before the tail is in; the fake truncates the duration as an engine does.
+      expect(source.ended).toBeGreaterThanOrEqual(1);
+      expect(source.readyState).toBe('ended');
+      expect(source.duration).toBeLessThan(90);
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
     });
 
     it('R10c: the segment the probe finds is appended from the bytes it downloaded, not fetched again', async () => {

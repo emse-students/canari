@@ -820,14 +820,8 @@ export class ReplayPlayer {
       );
       throw new StopOn({ kind: 'gone' });
     }
-    // A probed gap running to the end of the list may hide survivors, and a real engine truncates the
-    // duration at `endOfStream`: the bar would no longer reach them. The stream stays open then.
-    if (this.gaps.some(([, to]) => to === Number.POSITIVE_INFINITY)) {
-      console.debug(
-        `[LIVE_REPLAY] ${this.liveId}: a probed gap runs to the end - the stream is not ended`
-      );
-      return;
-    }
+    // A probed gap running to the end of the list was judged EMPTY by the same sampled rule as `gone`:
+    // the stream ends after the last placed media (the duration follows it, see `declareEnd`).
     this.declareEnd(gen);
   }
 

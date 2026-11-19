@@ -679,10 +679,14 @@ value, the server's:
   `[from, to)` of segment indexes per probed purge (`to` is infinite when the probe found no media up to
   the end of the list). The positions inside a gap were sampled, not read: they are holes of the list for
   crossing and for the fill cursor, never an entry per index, and a seek into one still REQUESTS its target.
-  The stream is NEVER ended while a gap runs to the end of the list: a real engine truncates the duration at
-  `endOfStream`, which would take the bar away from any survivor inside it (a seek still finds one by
-  requesting its target). When the end is declared with nothing hidden after the last media, the duration is
-  set to the last measured end first, so the bar's total is the media that was really placed. There is no
+  ONE RULE, the sampled verdict, decides both ends of a replay: a probe that found nothing across the whole
+  list is `gone` (nothing was ever played), and a probed gap running to the END of the list is judged empty
+  the same way - playback reaches the last placed media and the stream ends there (`endOfStream`, the duration
+  set to the last measured end first, so the bar's total is the media that was really placed). The end is
+  deferred only while a gap is not yet probed: the fill's cursor has not reached the end of the list, so the
+  end is not declared inside a purge in the middle. The accepted cost, as for `gone`: a lone survivor deep
+  inside a purged tail, which the probe did not land on, is cut off by the end (the purge job deletes whole
+  tails, not single segments). There is no
   backfill and no budget: the probe's verdict is the verdict. A probe is dropped, to be redone by a later
   fill, the moment a newer seek is pending, so a seek never waits for it. An earlier version stopped the
   fill at a limit: it called a replay whose first 40 segments are purged `gone`, and declared the end
