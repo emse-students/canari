@@ -28,7 +28,7 @@
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}
-  updated="07/11/2026"
+  updated="19/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -206,11 +206,12 @@
     <p>
       Tout Utilisateur peut lancer un direct en son nom ; le lancer au nom d'une association demande
       le droit de publier en son nom. Un direct est visible des mêmes membres qu'une publication du
-      même auteur : ceux qui partagent un espace avec vous ou, au nom d'une association, ceux
-      qu'elle atteint. Quand il commence, une notification est envoyée : pour le direct d'une
-      association, à chaque membre que ses règles ou son adhésion atteignent (au plus un direct
-      annoncé par association toutes les six heures) ; pour le vôtre, à vos abonnés acceptés qui
-      peuvent le voir. L'Éditeur peut fermer la fonction à tout moment, pour tout le Service.
+      même auteur : ceux qui partagent un espace avec vous et vos abonnés acceptés ou, au nom d'une
+      association, ceux qu'elle atteint. Quand il commence, une notification est envoyée : pour le
+      direct d'une association, à chaque membre que ses règles ou son adhésion atteignent (au plus
+      un direct annoncé par association toutes les six heures) ; pour le vôtre, à vos abonnés
+      acceptés qui peuvent le voir. L'Éditeur peut fermer la fonction à tout moment, pour tout le
+      Service.
     </p>
     <dl class="legal-terms">
       <div>
@@ -218,8 +219,8 @@
         <dd>
           Les règles de la section 5 s'appliquent à l'image, au son et au chat d'un direct comme à
           une publication, et celles de la section 7 sans exception. Vous acceptez les règles de la
-          section 5 avant votre premier direct. En direct, il est en outre interdit de filmer une
-          personne qui n'a pas accepté d'y apparaître.
+          section 5 avant votre premier direct, et de nouveau quand elles changent. En direct, il
+          est en outre interdit de filmer une personne qui n'a pas accepté d'y apparaître.
         </dd>
       </div>
       <div>
@@ -230,12 +231,22 @@
         </dd>
       </div>
       <div>
-        <dt>Pas d'enregistrement</dt>
+        <dt>Rediffusion</dt>
         <dd>
-          Canari n'enregistre pas les directs et n'en propose aucune rediffusion : la vidéo et le
-          chat sont supprimés à la fin du direct, dans les conditions de la
-          <a href="/legal/privacy#retention">{m.legal_privacy_link()} §6</a>. Rien n'empêche
-          toutefois un spectateur de filmer son écran.
+          Un direct d'au moins 30 secondes devient une rediffusion : ses 3 dernières heures au plus
+          restent visibles, par le même public que le direct, pendant la durée indiquée dans la
+          <a href="/legal/privacy#retention">{m.legal_privacy_link()} §6</a> (3 jours par défaut), puis
+          elle est supprimée, avec ses commentaires. Le temps qu'il lui reste est affiché. Le chat n'est
+          pas rediffusé : il est supprimé quand la rediffusion est publiée, peu après la fin du direct.
+          Une rediffusion ne peut être ni republiée ni repartagée dans un fil ; ceux qui peuvent la voir
+          peuvent l'enregistrer sur leur appareil, comme un CanaReel. Vous pouvez la supprimer à tout
+          moment (au nom d'une association, toute personne qui peut publier en son nom). Si l'ensemble
+          des rediffusions dépasse l'espace qui leur est réservé, les plus anciennes sont supprimées avant
+          leur terme. Un direct coupé par la modération, ou arrêté par la suppression de votre compte,
+          n'en laisse pas, et la suppression de votre compte met fin à vos rediffusions, y compris celles
+          diffusées au nom d'une association. L'Éditeur peut désactiver les rediffusions : un direct lancé
+          ensuite n'est plus enregistré et tout est supprimé à sa fin. Rien n'empêche toutefois un spectateur
+          de filmer son écran.
         </dd>
       </div>
       <div>
@@ -273,7 +284,9 @@
           terminer ; un direct coupé prend fin pour tous. Vous êtes prévenu avec le motif (spam,
           harcèlement, contenu inapproprié, autre), sauf pour une première coupure d'un direct déjà
           terminé. Un direct n'est jamais coupé automatiquement, quel que soit le nombre de
-          signalements.
+          signalements. Un direct terminé peut être coupé tant que sa rediffusion existe, et la
+          coupure la supprime. La rediffusion se signale aussi comme une publication : sa
+          suppression par la modération n'est pas une coupure et n'entraîne aucune sanction.
         </dd>
       </div>
       <div>
