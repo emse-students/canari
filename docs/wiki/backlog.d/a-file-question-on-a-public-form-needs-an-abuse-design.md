@@ -2,6 +2,11 @@
 
 target: 1.8.0
 
+**Limits decided by the owner, 2026-11-19:** a guest attaches ONE file of at most 5 MB per answer; a limit
+per address, a global quota, and a purge within 24 h of any file never linked to a submitted answer
+(principle 7 of the [charter](../../principes.md)). The scan question is still open: it is asked next
+([decisions](owner-decisions-of-2026-11-19.md)).
+
 The user asks for it; #1908 refuses a file question on a public or anonymous form, and `main` still
 does (`assertFileQuestionConfigValid`, `forms.service.ts`). A guest has no account, so nothing bounds
 what it uploads. Before any code, a design in [public-paid-forms-chantier](../public-paid-forms-chantier.md):

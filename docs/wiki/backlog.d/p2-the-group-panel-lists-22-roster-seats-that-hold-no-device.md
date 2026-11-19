@@ -1,6 +1,11 @@
 ## P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)
 
-target: 1.7.1
+target: 1.7.2
+
+**Decided by the owner, 2026-11-19:** a seat whose user holds no active device in the group is SHOWN
+GREYED with "aucun appareil actif" (Paraglide), never hidden and never removed: the person may come back,
+and the panel shows the truth (principle 2 of the [charter](../../principes.md)). Both populations below
+take the same display; nothing is deleted ([decisions](owner-decisions-of-2026-11-19.md)).
 
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 

@@ -56,7 +56,6 @@ earliest version, as a checklist.
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
-- [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
@@ -124,6 +123,10 @@ earliest version, as a checklist.
 **Chantiers, decisions and questions (no severity)**
 
 - [Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them](backlog.d/admin-view-feeds-as-a-member.md)
+
+**P2 - correctness**
+
+- [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
 
 ## 1.7.3
 
@@ -324,12 +327,10 @@ _No entry planned beyond its readings._
 - [P2 - MLS checkpoint and queue stalls of 30-54 s on web, with a worker timeout and an add-device failure on `lock_budget_spent` (web log, 2026-11-08)](backlog.d/p2-mls-queue-and-checkpoint-stalls-of-30-to-54-seconds-on-web.md)
 - [P2 - a CanaReel that never loads (owner, Android, 1.6.8, 2026-11-09): the outcome line is built, the cause is owed one reading](backlog.d/p2-a-canareel-that-never-loads.md)
 - [P2 - Native push: an unresolvable host reads as `Redis lock not acquired`, and the FCM token registration is retried into HTTP 429 (1.6.8 logs, 2026-11-09)](backlog.d/p2-native-push-lock-and-token-registration-noise.md)
-- [P2 - three public names are not watched from outside: the edge challenges GitHub's runners (a gap the lead decides)](backlog.d/p2-the-edge-challenges-the-upstream-monitor.md)
 - [P2 - `GET /api/posts/notifications` takes 1.1-3.6 s on every call (13.8 s and 12.8 s on one account), and the bell polls it every 60 s (1.6.8 logs, 2026-11-09)](backlog.d/p2-the-post-notifications-bell-read-takes-1-to-3-seconds-every-poll.md)
 - [P2 - a missing seed minted by our own other device is asked of it whether or not it is online](backlog.d/p2-a-seed-ask-to-our-own-other-device-ignores-its-presence.md)
 - [P2 - a seek ahead in a streamed video fetches every segment before its target](backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md)
 - [P2 - the repository holds GitHub's maximum of 100 secrets, so the next one is refused](backlog.d/p2-the-repository-holds-github-s-maximum-of-100-secrets.md)
-- [P2 - the tab-leader lock is one per browser, not one per account](backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)
 - [P2 - two vendored forks are behind upstream: `wry` 0.57.2 and `tauri-plugin-keystore` 2.1.0-alpha.2 (2026-11-11)](backlog.d/p2-two-vendored-forks-are-behind-upstream.md)
 - [P2 - a call started while another call holds the audio focus runs with a live microphone (review of #3395, 2026-11-12)](backlog.d/p2-a-call-started-during-a-phone-call-runs-with-a-live-microphone.md)
 - [P2 - a crossed 1:1 pair: what the 1.6.11 fix left (owner's decision of 2026-11-12)](backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md)

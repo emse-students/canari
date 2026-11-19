@@ -51,7 +51,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 ## Scanners and repository state
 
 - Code scanning, Dependabot and secret scanning are read daily; the alert detail is in the private companion by design.
-- The upstream monitor's automatic issues: [the edge challenges the monitor](backlog.d/p2-the-edge-challenges-the-upstream-monitor.md).
+- The upstream monitor's automatic issues: [upstream-reachability](infrastructure/upstream-reachability.md#when-the-monitor-is-refused).
 
 ## Log of replannings and milestones
 
