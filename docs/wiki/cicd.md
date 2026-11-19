@@ -1412,7 +1412,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The seven gates, and the one that makes a lag impossible
+#### The eight gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -1426,6 +1426,7 @@ both store uploads and the version bump itself:
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 | 7   | Does an advisory touch what it ships? (stable only)  | an advisory published after the commit's CI is exactly what production would receive ([2026-11-17](#the-audit-blocks-on-what-we-ship-2026-11-17)) |
+| 8   | Did production MiConnect's last preflight pass, on THIS stable's authentik pin? (stable only) | `serve-prod.yml` would otherwise refuse AFTER both store uploads, a stable half-shipped ([MiConnect](#the-release-deploys-miconnects-version-and-the-host-is-asked-what-it-runs-2026-11-13)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -2010,7 +2011,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   seven gates; a refusal ends it here, having moved nothing
+       |- preflight   eight gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -2548,7 +2549,19 @@ stack's own `.env` on the host, the image scan read this repository's `compose.y
 **Both refuse early, by name**: each job's first step after its checkout is `deploy-stack.sh preflight`
 (and, on a pre-release, `rehearsal`: the test stack must start from production's version), read-only,
 so what would stop the MiConnect step stops the job before anything is rendered, with the exact hand
-command. **A MiConnect that is degraded BLOCKS CANARI'S STABLES**: the step runs first and the job
+command. **A stable is refused earlier still, before the bump and both store uploads (gate 8,
+2026-11-19)**: `serve-prod.yml` runs after `android` and `ios`, so a refusal there would leave the
+version in the stores and production behind them. The verdict is already known by then - the
+`miconnect-preflight` job of `scheduled.yml` runs the same read-only preflight against production
+every morning, as a check run of its own named `MiConnect production preflight` - so
+`release-preflight.sh` reads that check run, on the stable's commit first and then on `main`'s last 50
+commits, and refuses unless the newest completed one SUCCEEDED and judged the very authentik pin the
+stable ships (a pin, not a date, decides whether it still applies). Each refusal names the run, and
+the remedy is `gh workflow run scheduled.yml --ref <alpha tag> -f job=miconnect-preflight`, then
+`gh run rerun` of the release. The job is its own so its conclusion is the preflight's alone, never
+mixed with the image report that `drift` may be red on. The serve-prod step stays: it is the same
+question asked at the moment of the change, and the only one that sees a host altered since the
+morning. **A MiConnect that is degraded BLOCKS CANARI'S STABLES**: the step runs first and the job
 fails on any failed check, rolled back or not, so no Canari stable ships while production MiConnect
 cannot take the pin and pass its checks - and a pre-release whose test stack fails keeps `dev-deployed`
 where it was, which gate 4 then reads as "no stable". The first pre-release after the merge needs the
@@ -2571,7 +2584,7 @@ The third-party images every RELEASED compose file pins (production and MiConnec
 container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
 any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
 did to a provider on 2026-11-13 with nothing to say so beforehand; and whether the runner can still
-write each MiConnect `.env`; and what the next release would refuse on each stack (`deploy-stack.sh preflight` against `main`'s pin, the exact hand command named). And one write, of the runner's own files: the release's MiConnect
+write each MiConnect `.env`; and what the next pre-release would refuse on the test stack (`deploy-stack.sh rehearsal`, then `preflight`, against `main`'s pin, the exact hand command named) - production's preflight is the separate `miconnect-preflight` job that gate 8 reads. Neither preflight checks the root disk ceiling (85%), which only the deploy itself measures, just before its dump. And one write, of the runner's own files: the release's MiConnect
 rollback copies are expired to the owner's bound, 3 copies and 30 days at most (2026-11-19). The job
 runs in the `production` environment, as the deploy it mirrors, with `deployment: false` (it deploys nothing and reads no secret). A drift with a known cause is a WARNING until the date written beside it
 in `infrastructure/deploy/image-drift-known.txt`, and red after. No fifth visible workflow: it is

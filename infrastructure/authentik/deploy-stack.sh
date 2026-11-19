@@ -125,7 +125,10 @@ unset AUTHENTIK_TAG AUTHENTIK_IMAGE
 log() { echo "[miconnect-deploy:$project] $*"; }
 err() { echo "::error title=MiConnect ($project)::$*" >&2; }
 # shown <path> - a path under the dump directory as the public log may name it.
-shown() { case "$1" in "$dump_root"/*) printf '<dumps>/%s' "${1#"$dump_root"/}" ;; "") printf 'none' ;; *) printf '%s' "$1" ;; esac; }
+shown() {
+  if [ -n "${preflight_log:-}" ] && [ "$1" = "$preflight_log" ]; then printf 'not kept - a preflight leaves no file; run the dry run by hand to read them'; return 0; fi
+  case "$1" in "$dump_root"/*) printf '<dumps>/%s' "${1#"$dump_root"/}" ;; "") printf 'none' ;; *) printf '%s' "$1" ;; esac
+}
 
 # prune_copies - deletes this stack's rollback copies beyond the owner's bound (ak_prune_select
 # decides, from the stamp in each name; only the names this script writes are candidates).
@@ -364,15 +367,27 @@ fi
 # EVERY FILE THIS RUN WRITES (dump, `.env` backup, logs) is the runner's, mode 0600, in a 0700 tree.
 umask 077
 dump_dir="$dump_root/$project"
-mkdir -p -- "$dump_dir" 2>/dev/null || { err "the dump directory <dumps>/$project could not be created - nothing was changed"; exit 1; }
 stamp="$now_stamp"
 dump=""
 env_backup=""
 state_before=""
-# THE RUN'S PRIVATE LOG: docker compose's own messages and those of the file tools (cp, df, the
-# dump's redirection) name the stack's files by their HOST path: they go here, 0600, and the public
-# log names this file as `<dumps>/...` (shown).
-compose_log="$dump_dir/$stamp-compose.log"
+pull_config=""
+preflight_log=""
+if [ "$mode" = preflight ]; then
+  # A PREFLIGHT LEAVES NO FILE (review of #3486, 2026-11-19): it runs every morning and first in every
+  # release, and a `<stamp>-compose.log` per run would crowd the copies the retention keeps. Compose's
+  # messages, which name host paths, go to a private temporary file deleted on exit - a signal's exit
+  # included, since on_signal ends in `exit`.
+  compose_log="$(mktemp 2>/dev/null)" || { err "no temporary file for compose's messages - nothing was changed"; exit 1; }
+  preflight_log="$compose_log"
+  trap 'rm -f -- "$preflight_log"' EXIT
+else
+  mkdir -p -- "$dump_dir" 2>/dev/null || { err "the dump directory <dumps>/$project could not be created - nothing was changed"; exit 1; }
+  # THE RUN'S PRIVATE LOG: docker compose's own messages and those of the file tools (cp, df, the
+  # dump's redirection) name the stack's files by their HOST path: they go here, 0600, and the public
+  # log names this file as `<dumps>/...` (shown).
+  compose_log="$dump_dir/$stamp-compose.log"
+fi
 
 # WHAT AN INTERRUPTION LEAVES, said rather than discovered. `phase` is what a signal finds: before
 # `changing`, nothing was touched; after it, the stack may be half-way and a human takes it.
@@ -389,6 +404,8 @@ state_now() {
 }
 on_signal() {
   trap '' INT TERM
+  # The anonymous pull's empty config, if a signal met the pull: nothing in it, but nothing left either.
+  if [ -n "$pull_config" ]; then rm -rf -- "$pull_config"; fi
   if [ "$phase" = preflight ]; then
     err "interrupted ($1) before any change - nothing was changed. The dump, if taken: $(shown "$dump")"
     exit 1
@@ -581,6 +598,7 @@ log "pulling $pin (anonymously)"
 pulled=0
 DOCKER_CONFIG="$pull_config" docker pull --quiet "$pin" >/dev/null || pulled=$?
 rm -rf -- "$pull_config"
+pull_config=""
 [ "$pulled" -eq 0 ] || { err "cannot pull $pin - nothing was changed"; exit 1; }
 state_before="$(db_state)"
 [[ "$state_before" =~ ^[0-9]+:[0-9]+$ ]] ||

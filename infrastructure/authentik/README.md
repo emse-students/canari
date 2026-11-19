@@ -15,7 +15,10 @@ cas d echec. Ce pas passe AVANT le deploiement de l estate : un echec arrete la 
 Avant lui, en lecture seule, `deploy-stack.sh preflight` (et `rehearsal` sur un pre-release : la
 stack de test doit partir de la version de production) refuse des le debut du job ce qui
 l arreterait, en nommant la commande a lancer a la main ; le job quotidien `drift` le lance chaque
-matin. **Premier pre-release apres la fusion : recreer d abord a la main `server` et `worker` de la
+matin sur la stack de test, et le job `miconnect-preflight` sur la production : une stable est
+refusee avant le bump (porte 8 de `release-preflight.sh`) si ce dernier n a pas reussi sur la
+version d authentik qu elle livre. **Mesurer aussi, en lecture seule, le dry-run de la production
+avant la fusion.** **Premier pre-release apres la fusion : recreer d abord a la main `server` et `worker` de la
 stack de test sur la version qu ils font tourner**
 ([l ordre](../../docs/wiki/infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)). Les
 copies de retour arriere (dump, `.env`, journaux) restent 3 par type et 30 jours au plus (le

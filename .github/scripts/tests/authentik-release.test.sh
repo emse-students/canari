@@ -209,6 +209,9 @@ tag="${AUTHENTIK_TAG:-$envtag}"
 if [ "${1:-}" = compose ]; then env | grep -E '^(PG_|POSTGRES_)' | cut -d= -f1 >>"$S/leak"; fi
 # the test's own "send a signal to the deploy while this call runs"
 if [ -f "$S/signal-on" ] && grep -qF -- "$(cat "$S/signal-on")" <<<"$*"; then rm -f "$S/signal-on"; kill -TERM "$PPID"; fi
+# the test's own "hold this call while I signal the deploy from outside" (a call inside a command
+# substitution, whose parent is the subshell and not the deploy)
+if [ -f "$S/pause-on" ] && grep -qF -- "$(cat "$S/pause-on")" <<<"$*"; then rm -f "$S/pause-on"; touch "$S/paused"; sleep 2; fi
 case "$*" in
   "ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=server") [ -s "$S/server" ] && [ ! -f "$S/stopped" ] && echo server-id ;;
   "ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=worker") [ -s "$S/worker" ] && [ ! -f "$S/stopped" ] && echo worker-id ;;
@@ -345,7 +348,8 @@ fake_reset() {
   : >"$S/broken"
   : >"$S/leak"
   echo '/dev/root 1000000 500000 500000 50% /' >"$S/rootdf"
-  rm -rf "$tmp/dumps"
+  rm -rf "$tmp/dumps" "$tmp/tmpdir"
+  mkdir -p "$tmp/tmpdir"
   rm -f "$tmp/gh-output"
 }
 
@@ -353,13 +357,17 @@ fake_reset() {
 # never reach compose. `timeout` bounds a test whose fake would otherwise wait for ever. `newer`
 # (keep|refuse) is passed when set; `compose_file` replaces the repository's compose file; the step
 # output lands in $tmp/gh-output, as under GitHub Actions.
+# run_deploy [mode] - the deploy, its output in $tmp/out. With `as_process=1` the call EXECs into
+# `timeout`, so a `run_deploy &` leaves `$!` naming the deploy's own parent (timeout forwards a TERM to
+# it) rather than a subshell that would die of the signal itself.
 run_deploy() {
-  local extra=()
+  local extra=() run=()
+  if [ -n "${as_process:-}" ]; then run=(exec); fi
   if [ -n "${newer:-}" ]; then extra=(--newer "$newer"); fi
   if [ -n "${production:-}" ]; then extra+=(--production "$production"); fi
-  PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient GITHUB_OUTPUT="$tmp/gh-output" \
+  PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient GITHUB_OUTPUT="$tmp/gh-output" TMPDIR="$tmp/tmpdir" \
     AK_POLL_SECONDS=0 AK_HEALTH_DEADLINE_SECONDS="${deadline:-0}" AK_DUMP_DIR="$tmp/dumps" AK_NOW="${now:-}" \
-    timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect \
+    "${run[@]}" timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect \
     --compose "${compose_file:-infrastructure/authentik/compose.yml}" "${extra[@]}" >"$tmp/out" 2>&1
 }
 # outcome - the step output the run wrote, empty when none.
@@ -443,11 +451,26 @@ run_deploy preflight; st=$?
 eq "a stack whose files differ from what runs: refused early, exit 1" "$st" 1
 eq "  with the same hand command" "$(grep -cF "'AUTHENTIK_TAG=2026.8.0 docker compose up -d --no-deps server worker'" "$tmp/out")" 1
 eq "  nothing pulled, dumped, written or recreated" "$(changed)/$(ak_env_tag <"$S/dir/.env")" 0/2026.8.0
+eq "  and NO file left: no dump directory, nothing in TMPDIR" "$(find "$tmp/dumps" "$tmp/tmpdir" -type f 2>/dev/null | wc -l | tr -d ' ')" 0
+fake_reset "$O" 2026.8.0; touch "$S/configfail"
+run_deploy preflight; st=$?
+eq "a preflight whose compose cannot read the configuration: exit 1" "$st" 1
+eq "  compose's messages are said not kept, never named by a path" "$(grep -c 'not kept - a preflight leaves no file' "$tmp/out")/$(grep -cF "$tmp/tmpdir" "$tmp/out")" 1/0
+eq "  and no file left" "$(find "$tmp/dumps" "$tmp/tmpdir" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" 0
 fake_reset "$O" 2026.8.0
 run_deploy preflight; st=$?
 eq "a clean stack due an upgrade: passes, exit 0" "$st" 0
 eq "  and changes nothing - not even a pull" "$(changed)/$(ak_env_tag <"$S/dir/.env")" 0/2026.8.0
 eq "  no step output" "$(outcome)" ""
+eq "  and NO file left" "$(find "$tmp/dumps" "$tmp/tmpdir" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" 0
+fake_reset "$O" 2026.8.0; echo "--dry-run up" >"$S/pause-on"
+as_process=1 run_deploy preflight &
+deploy_pid=$!
+for _ in $(seq 1 200); do [ -f "$S/paused" ] && break; sleep 0.05; done
+kill -TERM "$deploy_pid" 2>/dev/null
+wait "$deploy_pid"; st=$?
+eq "a preflight interrupted during compose's dry run: exit 1, nothing changed" "$st/$(grep -c 'interrupted (TERM) before any change' "$tmp/out")" 1/1
+eq "  and its temporary file is gone too (the EXIT trap runs after the signal's)" "$(find "$tmp/dumps" "$tmp/tmpdir" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" 0
 fake_reset "$pin" 2026.1.0
 run_deploy preflight; st=$?
 eq "a stack on the pin with a stale line: passes (nothing restarts), the line untouched" "$st/$(ak_env_tag <"$S/dir/.env")" 0/2026.1.0
@@ -558,6 +581,7 @@ fake_reset "$O" 2026.8.0; echo "pull --quiet" >"$S/signal-on"
 run_deploy; st=$?
 eq "interrupted before any change: exit 1" "$st" 1
 eq "  saying nothing was changed" "$(grep -c 'interrupted (TERM) before any change' "$tmp/out")" 1
+eq "  and the anonymous pull's private config is removed" "$(find "$tmp/tmpdir" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')" 0
 
 fake_reset "$O" 2026.8.0; echo "up -d --no-deps server worker" >"$S/signal-on"
 run_deploy; st=$?
@@ -783,6 +807,11 @@ if before .github/workflows/serve-prod.yml "Refuse early what would stop MiConne
 else fail "the stable's MiConnect preflight is missing or comes after the render"; fi
 eq "the daily job runs the preflight on both stacks, each with its release's --newer" \
   "$(grep -c 'deploy-stack.sh preflight --project miconnect --newer keep' .github/workflows/scheduled.yml)/$(grep -c 'deploy-stack.sh preflight --project miconnect-test --newer refuse' .github/workflows/scheduled.yml)" 1/1
+# shellcheck disable=SC2016 # sed's pattern matches the lib's own `${...}`, written literally.
+eq "  production's in a job of its own, whose name is the check run the stable's gate 8 reads" \
+  "$(grep -A1 -E '^  miconnect-preflight:$' .github/workflows/scheduled.yml | grep -c "name: $(sed -n 's/^MICONNECT_PREFLIGHT_CHECK="\${MICONNECT_PREFLIGHT_CHECK:-\(.*\)}"$/\1/p' .github/scripts/lib/release-preconditions.sh)$")" 1
+eq "  and the test stack's rehearsal runs every morning too" \
+  "$(grep -c 'deploy-stack.sh rehearsal --project miconnect-test --production miconnect || status=1$' .github/workflows/scheduled.yml)" 1
 eq "  and draws no deployment row (deployment: false)" \
   "$(awk '$0 == "  drift:" { j = 1; next } j && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit } j && /^      deployment: false$/ { n++ } END { print n + 0 }' .github/workflows/scheduled.yml)" 1
 eq "the blueprints' dry run and apply reach the public log redacted" \

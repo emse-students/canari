@@ -78,7 +78,7 @@ Portail-etu since 2026-09-04, minus the bump and the two stores.
    gh pr create                                             |
         |                                          release.yml, ONE run
         +--> CI ------------------+                         |
-        |     tests + security    |                  7 gates (no bypass)
+        |     tests + security    |                  8 gates (no bypass)
         |     -> `CI passed`      |                         |
         +--> arm-auto-merge ------+                    bump + push
               (IN PARALLEL)       |                         |
@@ -125,13 +125,13 @@ ALPHA=$(gh api repos/emse-students/canari/commits/v0.16.2-alpha.1 --jq .sha)  # 
 gh release create v0.16.2 --target "$ALPHA" --generate-notes     # -> production + both stores
 ```
 
-**The seven gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
+**The eight gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; `main` contains the commit (merging after the cut is free: every bump pushes
 `release/vX.Y.Z`, `land` carries it to `main`, [cicd](docs/wiki/cicd.md#a-pre-release-is-pinned-on-its-release-branch-decided-2026-10-30)) and a pre-release is the newest release (no tag has a higher store build); `CI passed` is green ON that
 commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY, AND ONLY WHILE NOTHING NEWER SHIPPED** - it re-reads the SAME tag, so once a later pre-release is out the rerun is REFUSED (it would move dev and the store build back) and the answer is a NEW tag at the current head; dev has served it
-(stables); the notes name it; no held migration ships without its approval line merged by hand, by the owner or by the lead under the 2026-11-03 delegation ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)); no advisory touches what a stable ships ([audit](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)). *A skip flag is a fallback, and the fix belongs where the primary path
+(stables); the notes name it; no held migration ships without its approval line merged by hand, by the owner or by the lead under the 2026-11-03 delegation ([held](docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)); no advisory touches what a stable ships ([audit](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)); production MiConnect's morning preflight passed on the stable's authentik pin ([gate 8](docs/wiki/cicd.md#the-eight-gates-and-the-one-that-makes-a-lag-impossible)). *A skip flag is a fallback, and the fix belongs where the primary path
 failed.* The emergency path is a human with admin rights, written into `CHANGELOG.md` when taken.
 
 **Afterwards**: delete the local branch (`git branch -D`; squash merges are invisible to `--merged`,

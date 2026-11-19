@@ -35,10 +35,10 @@ name: Scheduled
 
 on:
   schedule:
-    # Daily, and FIVE jobs read this one: the host's security updates, after the apt-daily-upgrade
+    # Daily, and SIX jobs read this one: the host's security updates, after the apt-daily-upgrade
     # window, last night's backups, hours after the 03:30 and 04:00 runs they judge, the 90-day
-    # ceiling on technical logs, the proxies' DNS failures, and what the host runs against what was
-    # released (`drift`).
+    # ceiling on technical logs, the proxies' DNS failures, what the host runs against what was
+    # released (`drift`), and whether production MiConnect would take the pin (`miconnect-preflight`).
     - cron: '30 7 * * *'
     # Daily, and THREE jobs read this one. A new advisory can land against code nobody touched,
     # which is the half the pull-request path cannot see (`analysis`, `alerts`); and a ruleset is a
@@ -70,7 +70,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, resolver, drift, analysis, alerts, arming-bypass, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh, sfu-probe]
+        options: [all, hosts, backups, log-retention, resolver, drift, miconnect-preflight, analysis, alerts, arming-bypass, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh, sfu-probe]
       upstream_targets:
         description: "upstream only: replace the probed targets (name|url lines) - for a drill; with dry_run unchecked it really opens and closes issues"
         type: string
@@ -255,8 +255,9 @@ jobs:
   #     stable would overwrite. infrastructure/authentik/blueprint-drift.sh. The log is PUBLIC, so
   #     it names the object and field that changed, never the values.
   #   - ACCESS: the runner can still write each MiConnect `.env`, the release's one precondition.
-  #   - PREFLIGHT: what the next release would refuse on each stack (`deploy-stack.sh preflight`,
-  #     against `main`'s pin), named with the exact hand command the morning before.
+  #   - PREFLIGHT: what the next pre-release would refuse on the test stack (`deploy-stack.sh
+  #     rehearsal` and `preflight`, against `main`'s pin), named with the exact hand command the
+  #     morning before. Production's is the `miconnect-preflight` job, which a stable's gate reads.
   #
   # AND ONE WRITE, of the runner's own files only: the release's MiConnect rollback copies (dumps of
   # every account, `.env` backups, logs) are expired every morning to the owner's bound (2026-11-19:
@@ -331,16 +332,18 @@ jobs:
           done
           exit "$status"
 
-      # WHAT THE NEXT RELEASE WOULD REFUSE, SAID THE MORNING BEFORE (review of #3486, 2026-11-19): the
-      # deploy's read-only half against `main`'s pin, with each release's own `--newer` policy - for an
-      # upgrade, compose's proof that the up would change the tag and nothing else. A stack whose files
-      # differ from what runs is named here with the exact hand command, days before a release meets it.
-      - name: Check what the next release would refuse on each MiConnect stack
+      # WHAT THE NEXT PRE-RELEASE WOULD REFUSE ON THE TEST STACK, SAID THE MORNING BEFORE (reviews of
+      # #3486, 2026-11-19): its two first checks, against `main`'s pin - the rehearsal (the test stack
+      # starts from production's version) and the deploy's read-only half (for an upgrade, compose's
+      # proof that the up would change the tag and nothing else), named with the exact hand command.
+      # PRODUCTION's preflight is its own job below, because a stable's gate reads its result alone.
+      # Neither checks the root disk's ceiling: that is asked at the release, just before the pull.
+      - name: Check what the next pre-release would refuse on the test MiConnect
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           status=0
-          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect --newer keep || status=1
+          bash infrastructure/authentik/deploy-stack.sh rehearsal --project miconnect-test --production miconnect || status=1
           bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect-test --newer refuse || status=1
           exit "$status"
 
@@ -364,6 +367,40 @@ jobs:
         run: |
           set -euo pipefail
           bash infrastructure/authentik/blueprint-drift.sh released-prod/infrastructure/authentik/apply-blueprints.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # WOULD PRODUCTION MICONNECT TAKE THE PIN? A JOB OF ITS OWN, BECAUSE A STABLE'S GATE READS IT.
+  #
+  # Review of #3486, 2026-11-19: a stable puts MiConnect on the pin in `serve-prod`, AFTER both
+  # stores took the version, so a refusal there ships half a stable. The verdict is asked here every
+  # morning - the deploy's read-only half (`deploy-stack.sh preflight --newer keep`) against `main`'s
+  # pin - and `release-preflight.sh` (gate 8) reads THIS job's conclusion through its check run,
+  # named "MiConnect production preflight", before anything is bumped. Its own job, never a step of
+  # `drift`: that job's conclusion mixes the image report, red for a known reason, and the gate must
+  # read this verdict alone. Dispatched by hand on a tag (`--ref <the alpha>`, `job:
+  # miconnect-preflight`) when a stable needs the verdict for a pin `main` no longer carries.
+  # It does not check the root disk's ceiling: that is asked at the release, just before the pull.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  miconnect-preflight:
+    name: MiConnect production preflight
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "miconnect-preflight"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 10
+    # Its own group, for the reason `hosts` gives; it only reads, and the one runner serialises it with
+    # a deploy as it does `drift` (docs/wiki/cicd.md, "There is one runner").
+    concurrency:
+      group: miconnect-preflight
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Would a stable's MiConnect step pass on production
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect --newer keep
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # DO THE PUBLIC NAMES THE ESTATE DEPENDS ON STILL ANSWER?

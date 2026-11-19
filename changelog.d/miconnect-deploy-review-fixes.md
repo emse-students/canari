@@ -6,4 +6,4 @@ system migrations ran, accepts a `.env` put back by its backup, counts only this
 keeps host paths out of the public log, and expires its rollback copies to 3 and 30 days at most,
 daily. It refuses early, read-only and with the exact hand command, what would stop it, checks that
 the test stack rehearses production's upgrade, pulls anonymously under the host's 85 % disk ceiling,
-asks each probe five times before a rollback, and redacts the blueprints' output ([authentik](docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+asks each probe five times before a rollback, and redacts the blueprints' output. A stable is refused before its bump (gate 8) unless production MiConnect's morning preflight passed on the pin it ships ([authentik](docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).

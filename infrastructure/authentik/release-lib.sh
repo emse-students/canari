@@ -243,7 +243,7 @@ ak_rehearsal_verdict() {
   elif [ "$prod" = "$pin" ] || [ "$test" = "$prod" ]; then
     echo ok
   elif [ "$test" = "$pin" ]; then
-    echo "warn:the test stack already runs $pin and production runs $prod: the upgrade was rehearsed by an earlier pre-release, from a version the running state no longer shows"
+    echo "warn:the test stack already runs $pin and production runs $prod: the upgrade was rehearsed by an earlier pre-release, from a version the running state no longer shows. Were production NEWER than the pin, the stable would keep it (--newer keep) and upgrade nothing, so there is nothing to rehearse"
   else
     echo "fail:the test stack runs $test and production runs $prod: upgrading the test stack to $pin would rehearse $test -> $pin, not the $prod -> $pin the stable will make. Put the test stack on $prod first"
   fi

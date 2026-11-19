@@ -349,3 +349,94 @@ shipped_closure_gate() {
     while IFS= read -r line; do hint "  | $line"; done <<<"$out"
   done
 }
+
+# Gate 8, stables only: production MiConnect would take this release's authentik pin (review of
+# #3486, 2026-11-19). A stable's MiConnect step runs in `serve-prod`, AFTER both stores took the
+# version (`serve-prod` needs `android` and `ios`), so a refusal there leaves the stable HALF-SHIPPED.
+# The verdict is already KNOWN before the bump: the daily `miconnect-preflight` job of `scheduled.yml`
+# runs the deploy's read-only half (`deploy-stack.sh preflight`) against production every morning. It
+# is carried here rather than learned again at the end of the release.
+#
+#   classify_miconnect_preflight <job conclusion> <pin the run judged> <pin this stable ships>
+#     passed                    that run's verdict, success, on this very pin
+#     failed <conclusion>       the run judged this pin, and refused (or did not finish)
+#     stale <judged pin>        the run judged ANOTHER pin, so it says nothing about this one
+#     absent                    no completed run found
+#     undecidable <why>         a pin could not be read
+# A PIN, NOT A DATE: the run is relevant when it judged the image this stable ships, whatever its age;
+# production's running state can change by hand in between, and the stable's own step still asks then.
+classify_miconnect_preflight() {
+  local conclusion="$1" judged="$2" shipped="$3"
+  if [ -z "$conclusion" ]; then printf 'absent\n'; return 0; fi
+  if [ -z "$judged" ] || [ -z "$shipped" ]; then
+    printf 'undecidable a pin could not be read (judged %s, shipped %s)\n' "${judged:-?}" "${shipped:-?}"
+    return 0
+  fi
+  if [ "$judged" != "$shipped" ]; then printf 'stale %s\n' "$judged"; return 0; fi
+  case "$conclusion" in
+    success) printf 'passed\n' ;;
+    *) printf 'failed %s\n' "$conclusion" ;;
+  esac
+}
+
+# The job's name, as GitHub names its check run - read by gate 8, written by `scheduled.yml`.
+MICONNECT_PREFLIGHT_CHECK="${MICONNECT_PREFLIGHT_CHECK:-MiConnect production preflight}"
+
+# Gate 8's reading: the newest COMPLETED check run of that job, looked for on the stable's own commit
+# first (a run dispatched on the alpha's tag lands there), then on `main`'s last 50 commits, newest
+# first (the morning run lands on `main`'s head of that moment). Prints `<conclusion>\t<url>\t<sha>`
+# or nothing. A pure reader: the API is the `gh` on PATH (the self-test's fake).
+miconnect_preflight_reading() {
+  local target="$1" sha line
+  for sha in "$target" $(gh api "repos/$REPO/commits?sha=main&per_page=50" --jq '.[].sha' 2>/dev/null); do
+    line="$(gh api -X GET "repos/$REPO/commits/$sha/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=latest \
+      --jq '[.check_runs[] | select(.status == "completed")] | sort_by(.completed_at) | last | select(. != null) | [.conclusion, .html_url] | @tsv' 2>/dev/null)" || line=''
+    if [ -n "$line" ]; then
+      printf '%s\t%s\n' "$line" "$sha"
+      return 0
+    fi
+  done
+}
+
+# Gate 8's loop. Needs the caller's printers (`ok`, `refuse`, `hint`), `REPO`, `TARGET_SHA`, and the
+# released tree checked out (its compose.yml is the pin this stable ships).
+miconnect_preflight_gate() {
+  local here reading conclusion url sha shipped judged tmp verdict
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/authentik/release-lib.sh
+  source "$here/../../../infrastructure/authentik/release-lib.sh"
+  shipped="$(ak_pin_image infrastructure/authentik/compose.yml 2>/dev/null)" || shipped=''
+  reading="$(miconnect_preflight_reading "$TARGET_SHA")"
+  IFS=$'\t' read -r conclusion url sha <<<"$reading"
+  judged=''
+  if [ -n "${sha:-}" ]; then
+    tmp="$(mktemp)"
+    if gh api "repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha" -H 'Accept: application/vnd.github.raw' >"$tmp" 2>/dev/null; then
+      judged="$(ak_pin_image "$tmp" 2>/dev/null)" || judged=''
+    fi
+    rm -f "$tmp"
+  fi
+  verdict="$(classify_miconnect_preflight "${conclusion:-}" "$judged" "$shipped")"
+  case "$verdict" in
+    passed)
+      ok "production MiConnect would take $shipped: the preflight passed in $url"
+      return 0
+      ;;
+    failed*)
+      refuse "production MiConnect's preflight on $shipped concluded '${verdict#failed }' in $url"
+      hint 'Its MiConnect step runs AFTER both stores took the version, so refusing there would ship half a'
+      hint 'stable. Read that run: it names what blocks the upgrade and the exact hand command.'
+      ;;
+    stale*)
+      refuse "the newest MiConnect preflight ($url) judged ${verdict#stale }, not the $shipped this stable ships"
+      ;;
+    absent)
+      refuse "no completed '$MICONNECT_PREFLIGHT_CHECK' run on ${TARGET_SHA:0:8} nor on main's last 50 commits"
+      ;;
+    *)
+      refuse "could not decide - ${verdict#undecidable }${url:+ (run: $url)}"
+      ;;
+  esac
+  hint "Ask it now for this commit: gh workflow run scheduled.yml --ref <the latest v\$VERSION-alpha.N tag> -f job=miconnect-preflight"
+  hint "then re-run this release's preflight once it is green: gh run rerun ${GITHUB_RUN_ID:-<this run>}"
+}

@@ -71,18 +71,44 @@ So the order is fixed, and this pull request is merged only after the first:
    differs with `AUTHENTIK_TAG=<the tag it runs> docker compose --dry-run up -d --no-deps server worker`,
    then `AUTHENTIK_TAG=<the tag it runs> docker compose up -d --no-deps server worker` - our own stack,
    sign-in on the test instance down about a minute. No secret is in either command.
-2. **Then the merge**, and the next pre-release.
+2. **By hand, on the host, in PRODUCTION's stack directory, read-only**: `AUTHENTIK_TAG=<the tag it
+   runs> docker compose --dry-run up -d --no-deps server worker`, and the verdict written beside the
+   owed row (re-review of #3486, 2026-11-19). Production's verdict has never been measured, and the
+   first stable after the merge is an upgrade, `2026.8.0` to `2026.8.5`: a `Recreate` there means
+   production carries the same drift as the test stack, and gate 8 would refuse that stable until
+   production is recreated the same way. Nothing is changed by this step.
+3. **Then the merge**, and the next pre-release.
 
 **The refusal is early and names that command** (review of #3486, 2026-11-19): `deploy-stack.sh
 preflight`, the deploy's read-only half, is the FIRST step of both release jobs after the checkout -
 before the environment is rendered, before any container is touched - so a missed step 1 is a red
 job at its start saying the exact command, not a failure in the middle of a release. The daily
-`drift` job runs the same preflight against `main`'s pin every morning, so the refusal is seen the
-day before a release meets it. **Why not a job of `release.yml` before the bump**: the preflight
-needs the self-hosted runner and the host's daemon, and `release.yml`'s preflight and bump run on
-GitHub's runners by design; a runner dependency before the bump would make every release, even one
-with nothing for MiConnect, wait on the one host runner. The serve jobs' first step and the morning
-report cover the same ground without it.
+`drift` job runs the test stack's `rehearsal` and `preflight` against `main`'s pin every morning, so
+what the next pre-release would refuse is seen the day before it meets it.
+
+**A stable is refused before the bump, by gate 8 (re-review of #3486, 2026-11-19).** `serve-prod.yml`
+runs after `android` and `ios`, so its first step, however early in its own job, would refuse a
+stable already in both stores. The preflight itself needs the host's daemon, and `release.yml`'s
+preflight runs on GitHub's runners by design (a host-runner dependency there would make every
+release wait on the one host runner) - so the verdict is not recomputed, it is CARRIED: the job
+`miconnect-preflight` of `scheduled.yml` (07:30 daily, and on dispatch with
+`-f job=miconnect-preflight`) runs `deploy-stack.sh preflight --project miconnect --newer keep`
+alone, so its check run, `MiConnect production preflight`, is the preflight's own verdict and not
+mixed with `drift`'s image report. `release-preflight.sh` reads that check run on the stable's commit
+first, then on `main`'s last 50 commits, takes the newest completed one, and refuses unless it
+SUCCEEDED and judged the authentik pin the stable ships (read from `compose.yml` at the run's
+commit): a failed run, a run on another pin, and no run at all are three refusals, each naming the
+run and the dispatch that would lift it. A pin, not a date, decides whether a verdict still holds.
+The serve-prod step stays as the same question asked at the moment of the change.
+
+**Neither morning preflight checks the root disk ceiling** (85 %): the ceiling depends on the image
+the deploy is about to pull and on the database it is about to dump, so only the deploy measures it,
+just before the dump. A host that fills between the morning and the release is refused there, after
+the stores for a stable - the disk is the one question gate 8 does not carry.
+
+**A preflight leaves no file.** Its compose messages go to a `mktemp` file removed on exit, never to
+the dump directory, and an interrupted deploy removes the anonymous pull's temporary Docker config
+in its signal handler as well as after the pull (`authentik-release.test.sh` asserts both).
 
 **A recreate of our own existing containers is not a "new container"** under the 2026-10-24 rule (no
 new container on the shared host until its administrators extend the root disk,
@@ -335,9 +361,14 @@ read-only reports that run independently, and one write:
   dry-run`.
 - **Access** (`deploy-stack.sh access`): the runner can still read and write each MiConnect `.env`,
   the release's one precondition, by `test -r && test -w` - the file is never opened.
-- **Preflight** (`deploy-stack.sh preflight`, each stack with its release's `--newer` policy, against
-  `main`'s pin): what the next release would refuse - for an upgrade, compose's proof that the `up`
-  changes the tag and nothing else - named with the exact hand command, the morning before.
+- **Rehearsal and preflight of the TEST stack** (`deploy-stack.sh rehearsal`, then `preflight
+  --newer refuse`, against `main`'s pin): what the next pre-release would refuse - the test stack
+  starting from production's version, and for an upgrade compose's proof that the `up` changes the
+  tag and nothing else - named with the exact hand command, the morning before. Neither checks the
+  root disk ceiling, which only the deploy measures.
+- **Production's preflight is a job of its own**, `miconnect-preflight` (check run `MiConnect
+  production preflight`, `--newer keep`), the verdict gate 8 reads before a stable's bump
+  ([the order](#the-order-the-hand-step-then-the-merge)).
 - **Retention** (`deploy-stack.sh prune`, the one write): each stack's rollback copies expired to the
   owner's bound, three per kind and none older than 30 days (step 8 above). Only the runner's own
   files in its own dump directory; a copy that cannot be deleted turns the run red.

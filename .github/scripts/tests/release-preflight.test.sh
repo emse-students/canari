@@ -530,6 +530,102 @@ else
 fi
 rm -rf "$G7"
 
+printf '\ngate 8: a stable is refused unless production MiConnect would take its pin (review of #3486, 2026-11-19)\n'
+# =================================================================================================
+# THE MORNING'S VERDICT, CARRIED TO THE PREFLIGHT: its MiConnect step runs after both stores took the
+# version, so a refusal there ships half a stable. Only a SUCCESS on the very pin this stable ships is
+# permission; another pin says nothing, an absent run is no evidence, an unreadable pin decides nothing.
+mic() {
+  local got
+  got="$(classify_miconnect_preflight "$1" "$2" "$3")"
+  if [ "$got" = "$4" ]; then pass "$5"; else fail "$5 - expected '$4', got '$got'"; fi
+}
+mic success g/s:2026.8.5 g/s:2026.8.5 'passed' 'a success on this very pin is the only permission'
+mic failure g/s:2026.8.5 g/s:2026.8.5 'failed failure' 'a failure on this pin refuses'
+mic cancelled g/s:2026.8.5 g/s:2026.8.5 'failed cancelled' 'a run that did not finish refuses'
+mic success g/s:2026.8.0 g/s:2026.8.5 'stale g/s:2026.8.0' 'a success on ANOTHER pin is stale, never permission'
+mic '' g/s:2026.8.5 g/s:2026.8.5 'absent' 'no run is no evidence'
+case "$(classify_miconnect_preflight success '' g/s:2026.8.5)" in
+  undecidable*) pass 'a pin the run judged that cannot be read decides nothing' ;;
+  *) fail 'an unreadable judged pin was taken as an answer' ;;
+esac
+if grep -qxF '  miconnect_preflight_gate' "$PREFLIGHT"; then
+  pass 'release-preflight.sh asks gate 8 through miconnect_preflight_gate'
+else
+  fail 'release-preflight.sh does not run gate 8'
+fi
+
+# THE READING, against a fake `gh`: the stable's own commit first, then main's newest commits; the
+# check run's conclusion and link; the compose file of the commit it ran on.
+G8="$(mktemp -d)"
+mkdir -p "$G8/bin" "$G8/tree/infrastructure/authentik"
+cat >"$G8/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+all="$*"
+case "$all" in
+  *"commits?sha=main"*) cat "$G8_DIR/main" ;;
+  *"/check-runs"*) sha="${all#*commits/}"; sha="${sha%%/*}"; if [ -f "$G8_DIR/check-$sha" ]; then cat "$G8_DIR/check-$sha"; fi ;;
+  *"/contents/"*) sha="${all#*ref=}"; sha="${sha%% *}"; cat "$G8_DIR/compose-$sha" ;;
+  *) echo "unexpected gh $*" >&2; exit 1 ;;
+esac
+FAKE
+chmod +x "$G8/bin/gh"
+compose_pinning() { printf 'services:\n  server:\n    image: g/s:%s\n  worker:\n    image: g/s:%s\n' "$1" "$1"; }
+compose_pinning 2026.8.5 >"$G8/tree/infrastructure/authentik/compose.yml"
+# gate8: runs the loop from the released tree with stub printers, sets G8_OUT.
+gate8() {
+  G8_OUT="$(
+    cd "$G8/tree" || exit 1
+    FAILED=0
+    ok() { printf 'OK %s\n' "$1"; }
+    refuse() { FAILED=1; printf 'REFUSE %s\n' "$1"; }
+    hint() { printf 'HINT %s\n' "$1"; }
+    PATH="$G8/bin:$PATH" G8_DIR="$G8" REPO=o/r TARGET_SHA=target GITHUB_RUN_ID=4242 miconnect_preflight_gate
+    printf 'FAILED=%s\n' "$FAILED"
+  )"
+}
+printf 'm1\nm2\n' >"$G8/main"
+printf 'success\thttps://run/1\n' >"$G8/check-m2"
+compose_pinning 2026.8.5 >"$G8/compose-m2"
+gate8
+if grep -qx 'FAILED=0' <<<"$G8_OUT" && grep -qF 'https://run/1' <<<"$G8_OUT"; then
+  pass "the morning run on main, on this pin, green: gate 8 passes, naming the run"
+else
+  fail "a green morning run on this pin did not pass: $G8_OUT"
+fi
+printf 'failure\thttps://run/2\n' >"$G8/check-m1"
+compose_pinning 2026.8.5 >"$G8/compose-m1"
+gate8
+if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF 'https://run/2' <<<"$G8_OUT" && grep -qF 'gh run rerun 4242' <<<"$G8_OUT"; then
+  pass "the NEWEST run is read: a red one refuses, naming it and the remedy"
+else
+  fail "a newer red run did not refuse: $G8_OUT"
+fi
+printf 'success\thttps://run/3\n' >"$G8/check-target"
+compose_pinning 2026.8.5 >"$G8/compose-target"
+gate8
+if grep -qx 'FAILED=0' <<<"$G8_OUT" && grep -qF 'https://run/3' <<<"$G8_OUT"; then
+  pass "a run dispatched on the stable's own commit is read first"
+else
+  fail "the stable's own commit was not read first: $G8_OUT"
+fi
+rm -f "$G8/check-target" "$G8/check-m1"
+compose_pinning 2026.8.0 >"$G8/compose-m2"
+gate8
+if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF 'judged g/s:2026.8.0, not the g/s:2026.8.5' <<<"$G8_OUT"; then
+  pass "a green run on ANOTHER pin refuses as stale"
+else
+  fail "a run on another pin was taken as permission: $G8_OUT"
+fi
+rm -f "$G8/check-m2"
+gate8
+if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF "no completed 'MiConnect production preflight' run" <<<"$G8_OUT"; then
+  pass "no run at all refuses, saying none was found"
+else
+  fail "an absent run did not refuse: $G8_OUT"
+fi
+rm -rf "$G8"
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"
