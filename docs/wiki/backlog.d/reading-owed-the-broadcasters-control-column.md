@@ -15,3 +15,5 @@ over the top of the chat box (chat lines stack from the bottom, so it matters on
 the title editor at 360 px (it is `max-w-full` below `sm`) stays clear of the column.
 
 Also read: a short screen with the studio on (the scene bar is the second right-edge column, at the bottom): the control column scrolls inside its cap and never meets it.
+
+**Read in [S12](../device-verification.md#the-readings-of-2026-11-19-s12-171-alpha4-replays-texts-live-sound-and-the-controls) (`1.7.1-alpha.4`), portrait only:** on the Mi 9T and the iPhone 12 the column is one right edge, End first, the pre-live controls are one row, End asks before ending. **Still owed:** landscape on both phones, a long title, the keyboard up, and the studio on a short screen.

@@ -82,6 +82,7 @@ earliest version, as a checklist.
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a live's sound drifts ahead of its picture under 15 fps: fixed in the viewer, owed one reading](backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)
+- [P2 - a replay never reaches its end: the player halts about 0.1 s before the last frame, a spinner for good (read 2026-11-19, S12)](backlog.d/p2-a-replay-never-reaches-its-end-the-player-halts-0-1-s-before-the-last-frame.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 
 **P3 - hygiene**
