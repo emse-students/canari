@@ -81,7 +81,7 @@ questions the first draft of this page left open, the same day.
    today. [WP](backlog.d/p2-a-bde-validates-an-event-but-never-rewrites-it.md).
 9. **Sanctions: the mute extends to votes, comment likes and nicknames.** Community and group messages
    stay outside it - each place regulates itself. Account suspension touches MiConnect and is a
-   [question](open-questions.md#should-canari-suspend-an-account-asked-2026-11-15).
+   [decided 2026-11-19: a platform admin suspends, in Canari only](backlog.d/a-platform-admin-suspends-an-account-in-canari.md).
    [WP](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md).
 10. **Encrypted groups (MLS): ALL MEMBERS ARE EQUAL.** *"A quoi sert un role d'admin dans les groupes ?
     Les communautes oui, les groupes, tout le monde est a egalite non ?"* The unread `role` column of
@@ -382,7 +382,7 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 | Not decided | - | events, forms | not covered |
 | Broadcast ladder | AP, BM | warning, 30-day suspension of broadcasting, withdrawal ([lives](services/lives.md#the-strike-ladder-wp-l8b)) | same |
 | Bio erasure | AP, BM of the person's spaces | the bio emptied, never rewritten (decision 16) | **does not exist** [BIO] |
-| Account suspension | - | [open question](open-questions.md#should-canari-suspend-an-account-asked-2026-11-15) | does not exist |
+| Account suspension | - | [decided 2026-11-19, not built](backlog.d/a-platform-admin-suspends-an-account-in-canari.md) | does not exist |
 
 ---
 
@@ -415,7 +415,7 @@ decisions. None is planned.
 
 ## Open questions
 
-- **Account suspension** - [open-questions](open-questions.md#should-canari-suspend-an-account-asked-2026-11-15).
+- **Account suspension** - [decided 2026-11-19, not built](backlog.d/a-platform-admin-suspends-an-account-in-canari.md).
 
 ## How the grid is asserted
 

@@ -155,6 +155,7 @@ _No entry planned beyond its readings._
 - ["Créer un groupe" from a form's respondents (owner, 2026-11-19)](backlog.d/a-group-made-from-a-form-s-respondents.md)
 - [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
+- [An institution's "Personnel" calendar event reaches the staff of its ticked campuses (owner, 2026-11-19)](backlog.d/institution-events-reach-staff-by-campus.md)
 - [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
 - [The post search filters by person and by association (owner, 2026-11-19)](backlog.d/post-search-filters-by-person-and-by-association.md)
 - [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
@@ -231,6 +232,7 @@ _No entry planned beyond its readings._
 - [Session liveness beyond the verifier, tracked privately (2026-10-25)](backlog.d/session-liveness-beyond-the-verifier-tracked-privately-2026-10-25.md)
 - [The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up](backlog.d/the-shop-screens-decided-by-the-user-on-2026-10-26-after-the-first-real-cercle.md)
 - [History withheld from a member device that let itself in (built 2026-10-27): what is still owed](backlog.d/history-withheld-from-a-member-device-that-let-itself-in.md)
+- [A platform admin suspends an account, in Canari only (owner, 2026-11-19)](backlog.d/a-platform-admin-suspends-an-account-in-canari.md)
 
 **P2 - correctness**
 

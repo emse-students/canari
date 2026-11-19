@@ -59,4 +59,9 @@ Recorded so that no question answered here is asked again. The owner took them i
    - The lead may reset one TEST account's terms acceptance on MiConnect for the terms-prompt reading, logged and reverted after.
    - The guest-payment reading on dev is waived: *"tout fonctionne"*.
 
+30. **A platform admin can suspend an account, in Canari only**, in `1.9.0` ([entry](a-platform-admin-suspends-an-account-in-canari.md)).
+31. **A Lydia Responsable may not leave the association before handing over to another member** ([entry](p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md), item 7).
+32. **An institution's "Personnel" calendar event reaches the staff of its ticked campuses**, as posts do, in `1.8.0` ([entry](institution-events-reach-staff-by-campus.md)).
+33. **A device that dropped a frame does not tell its user.** The server reports the drop to the team.
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).
