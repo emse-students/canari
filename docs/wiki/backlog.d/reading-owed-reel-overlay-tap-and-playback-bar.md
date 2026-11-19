@@ -2,6 +2,8 @@
 
 target: 1.7.1
 
+_2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **row 1 PASSED in part on both phones; rows 2-4 are owed.** A tap hides close button, tabs, rail and author with the line kept, and a tap brings them back (Mi 9T and iPhone 12, four alternating taps on the iPhone read through the accessibility tree); on the Mi a rail tap (mute) left the overlay up, the next reel showed it again, and a long press held the frame for 1.5 s and resumed on release. Not read: the double tap and the swipe (a double tap writes a like), the iPhone long press, TalkBack/VoiceOver, the slow link, a reel opened from a conversation._
+
 Built: a single tap hides or shows the viewer's overlay (no pause on a tap), and the playback line is fixed
 to the video's real total with the loaded ranges in grey ([reels](../frontend/modules/reels.md#a-tap-hides-the-overlay-and-the-playback-bar-is-fixed-to-the-real-total-owner-2026-11-18)).
 Read on the Mi 9T and the iPhone 12, a CanaReel and a post of one video, in the viewer:

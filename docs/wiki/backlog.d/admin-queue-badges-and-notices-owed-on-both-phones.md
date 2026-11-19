@@ -2,6 +2,8 @@
 
 target: 1.7.1
 
+_2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **only the static counts were read, on the Mi 9T.** The agenda queue's `2` showed on the queue row, the dashboard's Administration row and the dashboard tab ("2 en attente"), with no corrections or reports badge while those queues were empty. Steps 1-5 need a second client filing items and were not taken._
+
 Built: a count of pending items on the Administration row of the dashboard, on the dashboard place of
 the bottom bar and the sidebar, and on each admin queue's row (profile corrections, moderation
 reports, agenda), from `GET /api/moderation/admin-queues`; and a bell row plus a push to every global

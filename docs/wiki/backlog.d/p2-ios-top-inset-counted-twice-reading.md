@@ -2,6 +2,8 @@
 
 target: 1.7.1
 
+_2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **steps 1, 2 and 4 PASSED; step 3 is owed.** Step 1: `WebView made edge to edge: ... (top now 0 pt), offset 0.0 -> 0.0` one millisecond before `safe area published to the page: bottom 0 pt, top 47 pt`, no ERROR line. Step 2: the header row centred near 75 pt, the strip above it the header's surface. Step 4: a conversation, the in-app camera and the new-post dialog each clear the clock, none doubled. Step 3 (a launch not active at once) needs a push or background launch and was not taken._
+
 **What shipped untested on a phone.** `CanariPublishSafeAreaInsets` now makes the WebView edge to
 edge before it publishes the top inset, and nothing else does
 ([parity, section 1.1](../frontend/android-ios-parity.md#11-the-two-platforms-took-opposite-decisions-about-the-system-bars---fixed-2026-08-28)).
