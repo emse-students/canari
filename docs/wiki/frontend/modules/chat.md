@@ -3457,7 +3457,10 @@ dropped, alone or isolated in a batch, with its metric; a bare `DataError` and a
 `DataCloneError` are transient; a thrown inbound add is kept and stored by the next hold; a batch-path
 row withholds its own frame; both upgrade writes are kept on failure; a notification that throws runs
 after the row is stored; a kept add's rerun asks the store; a mutation parked against a stored row
-lands at the next hold, refuses it while it cannot, and an entry waiting for its body does not),
+lands at the next hold, lets it through while it cannot - said once at ERROR - and an entry waiting
+for its body is not said stuck; a store-decided rerun shows what it wrote and announces nothing),
+`useConversations.settleLoadedRows.svelte.test.ts` (an edit parked against a stored row lands when an
+older page loads it),
 `rowWriteFailure.test.ts` (the classes, never a message; the store raises `RowRefusedError` at the
 refused row and lands nothing of its write; a page holding a poison row stores every other row) and `tabMessageSync.test.ts` (a refused post
 never throws into its caller).
@@ -3545,7 +3548,10 @@ was acknowledged - the message lost at the next reload. The order is now render,
 each effect on its own (`afterTheRow`, which says a throw at ERROR and goes no further): a failed tone
 or banner never costs the message. And the rerun of a message a live add kept decides "stored" from
 the STORE, never from memory (`KeptBatch.storeDecides`, `batchAddMessages(..., { storeDecides })`): a
-row on screen and not on disk is written as it is shown.
+row on screen and not on disk is written as it is shown, and shown as written once what waited for it
+(a deletion, an edit, reactions) is settled in. **That rerun is SILENT BY DESIGN**: the message is not
+new to the reader - its first add rendered it and ran (or tried) its effects - so it raises no second
+notification, tone or announcement.
 
 **Every row a decrypted frame writes carries that frame's id** (second review of #3851: a row kept
 WITHOUT one released its frame's ack, where the page-wide count had withheld it). The handler wraps
@@ -3572,15 +3578,24 @@ the frame's dispatch is stamped with its queued id unless the caller named one. 
 **A mutation parked against a row that STANDS is retried at every checkpoint's hold** (third review of
 #3851). Parking an edit, a tombstone or a reaction whose write onto its stored row failed kept the act
 on disk - but its frame is acknowledged, and `settlePendingFor` ran only when that row was written
-again, which a stored row never is: the parked entry was the act's only copy, and nothing drained it.
-The store of pending mutations now notes every target this session parked for
-(`pendingMutationStore`, `parkedThisSession`), and the hold retries them next to the kept rows
-(`retryParkedMutations`): a target whose message has not arrived, that does not open here, or whose
-entries settled leaves the ledger; one whose row STANDS and still refuses its entries - or whose store
-could not be read to say - refuses the hold exactly as an unstored row does (`settlePendingFor`
-resolves those ids as `stuck`). The ledger is the session's; across a reload, the rows a page LOADS
-settle what waits for them (`useConversations.settleLoadedRows`, one indexed read per page, in the
-background - settling twice changes nothing).
+again, which a stored row never is: nothing drained the parked entry. The store of pending mutations
+now notes every target this session parked for (`pendingMutationStore`, `parkedThisSession`), and the
+hold retries them next to the kept rows (`retryParkedMutations`): a target whose message has not
+arrived, that does not open here, or whose entries settled leaves the ledger; one whose row STANDS and
+still refuses its entries - or whose store could not be read to say - stays for the next hold, and is
+said at ERROR ONCE per id per session under its own cause, with the classified failure (`[PENDING] A
+PARKED MUTATION CANNOT BE MERGED ONTO ITS STORED ROW ... (transient|poison)`; `settlePendingFor`
+resolves those targets as `stuck`, each with its failure). The ledger is the session's; across a
+reload, the rows a page LOADS settle what waits for them (`useConversations.settleLoadedRows`, one
+indexed read per page, in the background - settling twice changes nothing).
+
+**A parked mutation NEVER refuses a checkpoint** (fourth review of #3851, which reversed the third's
+brief). An id enters the ledger only once its entry is WRITTEN to the pending store: the act is durable
+before it is noted, its frame's ack loses nothing, and a reload's load of the row applies it. Refusing
+the checkpoint for it would protect no copy of anything - it would only stop commits, joins and a
+send's durable state, for the whole session when the merge fails deterministically (a refused row, a
+store that cannot be read), under a line blaming "rows of applied frames". So the retry runs at every
+hold, what stays stuck is said, and the checkpoint goes through.
 
 **A mutation with no server time is not parked, and its frame is acknowledged** (`parkPendingMutation`,
 said at ERROR). Withholding that frame would not keep the act: its generation is spent, so the

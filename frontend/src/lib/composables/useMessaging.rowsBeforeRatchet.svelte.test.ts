@@ -520,6 +520,62 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     expect(storedIds(saveMessage)).toEqual(['in-memory-only']);
   });
 
+  it('a store-decided rerun shows the row as it WROTE it: what waited for it is settled onto the screen too, and nothing is announced', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...conversations.get(CONVO)!,
+      messages: [
+        {
+          id: 'in-memory-only',
+          senderId: PEER,
+          content: serializeEnvelope(mkTextEnvelope('said')),
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+        },
+      ] as never,
+    });
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // Its author deleted it while it stood shown and not stored: the deletion waits for it - read
+    // once, by the batch, and consumed by its write (the look after the write finds none).
+    storage.getPendingMutations.mockResolvedValueOnce({
+      entries: [
+        {
+          conversationId: CONVO,
+          messageId: 'in-memory-only',
+          sender: PEER,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          at: 1_700_000_001_000,
+        },
+      ],
+      removedUnreadable: 0,
+    });
+    const publish = vi.spyOn(ctx, 'playReceiveTone' as never);
+
+    await messaging.batchAddMessages(
+      [
+        {
+          senderId: PEER,
+          content: serializeEnvelope(mkTextEnvelope('said')),
+          messageId: 'in-memory-only',
+        },
+      ],
+      CONVO,
+      ctx,
+      'arrival',
+      { storeDecides: true }
+    );
+
+    expect(storedIds(saveMessage)).toEqual(['in-memory-only']);
+    expect(saveMessage.mock.calls[0][0]).toEqual(expect.objectContaining({ isDeleted: true }));
+    const shown = conversations.get(CONVO)!.messages.find((m) => m.id === 'in-memory-only')!;
+    expect(shown.isDeleted).toBe(true);
+    expect(publish).not.toHaveBeenCalled();
+    expect(ctx.sendSystemNotification).not.toHaveBeenCalled();
+  });
+
   it('an inbound add that THREW keeps the message with its frame: rethrown, withheld, and the next hold writes it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const messaging = useMessaging();
@@ -1079,17 +1135,31 @@ describe('a mutation parked against a stored row (rows before ratchet)', () => {
     expect(entries).toHaveLength(0);
   });
 
-  it('a parked mutation whose row stands and still refuses it REFUSES the hold, as an unstored row does', async () => {
+  /**
+   * NEVER A REFUSED CHECKPOINT (fourth review of #3851): the entry is durable before it is noted, so
+   * refusing would protect no copy - it would only stop commits, joins and sends for the session.
+   */
+  it('a parked mutation whose row stands and still refuses it lets the hold through, said at ERROR once under its own cause', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const messaging = useMessaging();
     const { ctx, entries, state, deps } = parkedWorld();
     await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    error.mockClear();
 
-    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
-      BufferedRowsNotStoredError
-    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
     expect(entries).toHaveLength(1);
+    const stuckLines = error.mock.calls.filter(([line]) =>
+      String(line).includes('PARKED MUTATION CANNOT BE MERGED')
+    );
+    expect(stuckLines).toHaveLength(1);
+    expect(String(stuckLines[0][0])).toContain('(transient)');
+    expect(error.mock.calls.some(([line]) => String(line).includes('Rows of applied frames'))).toBe(
+      false
+    );
 
-    // It lands once the store takes it, and the hold is no longer refused.
+    // Still retried: it lands once the store takes it.
     state.refuse = false;
     (await messaging.holdRowsForCheckpoint(ctx))();
     expect(entries).toHaveLength(0);

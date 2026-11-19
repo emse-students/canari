@@ -956,12 +956,12 @@ export function useMessaging() {
         // On a hold, ONE retry of every write that failed - this step's and any earlier close's.
         const writesLeft =
           origin === 'hold' ? await retryUnstoredRowWrites(ctx) : unstoredRowCount();
-        // And of every mutation parked this session against a row that STANDS: its frame is
-        // acknowledged, so the parked entry is the act's only copy, and nothing else would write
-        // it onto its row before that row is written again (`retryParkedMutations`).
-        const parkedLeft = origin === 'hold' ? await retryParkedMutations(pendingDeps(ctx)) : 0;
+        // And of every mutation parked this session against a row that STANDS: nothing else in this
+        // session writes it onto its row (`retryParkedMutations`). NOT counted below: the entry is
+        // durable in the pending store before it is noted, so a refusal would protect no copy.
+        if (origin === 'hold') await retryParkedMutations(pendingDeps(ctx));
         // The count is THIS step's, read before a store queued behind it can take the kept batches.
-        const left = writesLeft + keptMessageCount() + parkedLeft;
+        const left = writesLeft + keptMessageCount();
         return { stored: left === 0, left };
       })
       .catch((e: unknown) => {
@@ -2476,6 +2476,8 @@ export function useMessaging() {
     const upgradeRows: StoredMessage[] = [];
     const newRows: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
+    // Rows a store-decided rerun wrote with what waited for them settled in: shown as written.
+    const refreshedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
@@ -2536,7 +2538,8 @@ export function useMessaging() {
       }
       if (existingMsg) {
         // SHOWN IS NOT STORED on a rerun the store decides: a row memory holds and the store does
-        // not is written as it is shown - nothing re-rendered, nothing announced again.
+        // not is written as it is shown, and shown as written once what waited for it is settled
+        // in. SILENT BY DESIGN: not new to the reader, so nothing announced and no second banner.
         if (
           storeDecides &&
           ctx.storage &&
@@ -2545,6 +2548,7 @@ export function useMessaging() {
           const settled = settledWith(existingMsg, waiting.get(id) ?? []);
           consumedById.set(id, settled.consumed);
           settledIds.add(id);
+          if (settled.fields) refreshedById.set(id, settled.message);
           newRows.push({
             id,
             conversationId: normalized,
@@ -2650,7 +2654,9 @@ export function useMessaging() {
       : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
+    const withUpgrades = base.messages.map(
+      (m) => upgradedById.get(m.id) ?? refreshedById.get(m.id) ?? m
+    );
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
     if (current) {
