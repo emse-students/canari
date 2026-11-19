@@ -1,7 +1,7 @@
-## Owed to the user after the Stripe removal
+## Owed after the Stripe removal - what is left (audited 2026-11-19)
 
 target: 1.8.0
 
-Delete the GitHub secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY` and the Stripe webhook endpoint (the CGU and privacy text naming Lydia was APPROVED by the user on 2026-10-08). Three later items: the unsigned Lydia partnership contract, proof the payer e-mail is not kept, and association enrolment with conditions and uploaded documents. Later, once the previous release is no longer a rollback target: drop the three Stripe columns and rename the permission with a data migration ([stripe-archive](../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays)).
+**Done:** the `STRIPE_*` GitHub secrets are gone (none in the repository's or the two environments' secret lists on 2026-11-19), and the CGU and privacy text naming Lydia was approved on 2026-10-08.
 
-_Context, from the former backlog section "Payments":_ Lydia ("Paiement Canari") and cash are the only payments since Stripe was removed (#1589, [stripe-archive](../stripe-archive.md), which lists the names kept for rollback and old clients). `payment_provider` is `lydia | disabled`, default `disabled`; mechanism in [payments](../frontend/modules/payments.md) and [core-service](../services/core-service.md#payments-stripe--lydia).
+**Left, none of it code a session can do alone:** the Stripe webhook endpoint at the processor (the owner's dashboard); the unsigned Lydia partnership contract; proof that the payer e-mail is not kept (a promise to Lydia); and, once the previous release is no longer a rollback target, the migration dropping `associations."stripeAccountId"`, `"stripeOnboardingComplete"` and `users."stripeCustomerId"` (still created by `037_lydia_connect_columns.sql`, mapped by no entity) and renaming the permission ([stripe-archive](../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays)). Association enrolment with conditions and documents is [its own line](three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md).

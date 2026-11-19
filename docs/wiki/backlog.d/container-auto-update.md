@@ -18,3 +18,9 @@ a human noticing it first, and without shipping the stores for a server-only cha
   merged) or opens ONE deduplicated issue (one per image and finding, updated rather than reopened).
 - **Every scan exception carries a re-check date**, and an exception past its date fails the scan
   until it is renewed or removed.
+
+**State, read on 2026-11-19.** Done: Dependabot's `docker` and `docker-compose` ecosystems are configured
+(`.github/dependabot.yml`) and have opened digest bumps (#3726, #3727); some compose `image:` lines
+are digest-pinned (garage and coturn are not). **Still owed:** the Dockerfile `FROM` lines are tags (one
+of them carries a digest), the server-only release kind does not exist in `release_kind()`, there is no
+weekly scan of the deployed images in `scheduled.yml`, and no scan exception carries a re-check date.
