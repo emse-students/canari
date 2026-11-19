@@ -674,11 +674,21 @@ value, the server's:
   `REPLAY_MAX_MISSING_WALK` consecutive requested 404s replace the walk by `probeGap` forward (the same
   helper as the seek's backward probe, one parameter for the direction): a doubling stride, then a
   bisection to the FIRST existing segment after the gap (existence only: the bytes are dropped, the fill
-  takes the found segment itself). The run before it is marked skipped, so it is a known hole and the
-  playhead crosses it, and the fill goes on from there. The end of the stream is declared only when the
-  probe reaches the end of the listing (paged to its end first). An earlier version stopped the fill at
-  the limit: it called a replay whose first 40 segments are purged `gone`, and declared the end inside a
-  purge in the middle, which truncates the media source's duration and loses the content after it.
+  keeps the bytes of the found segment and appends from them). Two sets are kept, never mixed: `skippedIdx`
+  holds only segments REALLY tried (a 404, an open failure); `presumedIdx` holds the positions a probe passed
+  over without requesting them. Hole-crossing and the fill cursor use both (a presumed run is a hole of the
+  list), but a verdict never does: a seek into a presumed segment REQUESTS it, `gone` counts only tried
+  segments, and the end of the stream is not declared while presumed positions remain after the last media.
+  Those are first backfilled: `backfill` requests up to `REPLAY_MAX_MISSING_WALK` of them, in order, and a
+  survivor found is played on. Why a budget and not all of them: the common purge (media after it) costs
+  O(log n) and never reaches the backfill, which only concerns a purge running to the END of the list;
+  there a constant 30 requests find a survivor near the start of the run, and one deeper than that is cut
+  off at the end of the stream (the probe samples a run, it does not read it) - documented, bounded, and
+  reachable by a seek, which requests its target. With nothing played yet the backfill is not bounded:
+  `gone` needs every segment tried. A probe is dropped, to be redone by a later fill, the moment a newer
+  seek is pending, so a seek never waits for it. An earlier version stopped the fill at a limit: it called
+  a replay whose first 40 segments are purged `gone`, and declared the end inside a purge in the middle,
+  which truncates the media source's duration and loses the content after it.
 - **No media at all.** `gone`, the neutral "plus disponible" screen (as `replayFailureOutcome` reads a
   missing replay), is reserved for: the list is complete, every segment was tried or is known skipped, and
   none gave media. A purge in front of existing media is never this. Never a black picture with a spinner

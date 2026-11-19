@@ -992,6 +992,84 @@ describe('ReplayPlayer', () => {
       expect(missingRequests).toBeLessThanOrEqual(120); // 30 walked, then about 2 log2(900)
     });
 
+    it('R10a: segments the probe only presumed missing are requested before the replay is called gone', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`).filter((n) => n !== 'seg-45'));
+      makePlayer().start();
+      for (let i = 0; i < 30; i++) await flush();
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+      expect(buffer().appends).toContain('m45');
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('R10b: a survivor inside a purge is requested by a seek into it, and the stream end is not a verdict on it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(
+        Array.from({ length: 160 }, (_, i) => `seg-${40 + i}`).filter((n) => n !== 'seg-150')
+      );
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const before = fetchSegment.mock.calls.filter((c) => c[1] === 'seg-150').length;
+      video.currentTime = 300.5; // inside segment 150, never requested by the probe
+      p.noteSeeking();
+      for (let i = 0; i < 30; i++) await flush();
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-150').length).toBeGreaterThan(
+        before
+      );
+      expect(video.currentTime).toBeCloseTo(300.5, 1);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('R10c: the segment the probe finds is appended from the bytes it downloaded, not fetched again', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 40 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 30; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-40').length).toBe(1);
+      expect(buffer().appends).toContain('m40');
+    });
+
+    it('R10d: a seek made during the probe does not wait for the whole probe', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 60 }, (_, i) => `seg-${40 + i}`));
+      const ok = deps.fetchSegment;
+      let release: (() => void) | null = null;
+      deps.fetchSegment = vi.fn((id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-100') {
+          return new Promise<ArrayBuffer>((resolve) => {
+            release = () => resolve(new TextEncoder().encode(name).buffer as ArrayBuffer);
+          });
+        }
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+        if (release) break; // the probe is waiting on segment 100
+      }
+      expect(release).not.toBeNull();
+      video.currentTime = 3; // a newer seek, into buffered media
+      p.noteSeeking();
+      (release as unknown as () => void)();
+      for (let i = 0; i < 30; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      // The probe stopped at its next step: no probe point past the held one was requested.
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-190').length).toBe(0);
+      expect(video.currentTime).toBe(3);
+    });
+
     it('R8c: a replay in which no segment gives media stops on gone, never a black picture', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
       skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`));
@@ -1016,7 +1094,8 @@ describe('ReplayPlayer', () => {
         p.noteTime();
         for (let i = 0; i < 20; i++) await flush();
       }
-      expect(missingRequests()).toBeLessThanOrEqual(40); // 30 and the page of a retry, never ~290
+      // 30 walked, about 12 probed, 30 of backfill before the end: never ~290
+      expect(missingRequests()).toBeLessThanOrEqual(90);
     });
 
     it('a long tail of 404s is walked a bounded number of requests, then the seek lands backward', async () => {
