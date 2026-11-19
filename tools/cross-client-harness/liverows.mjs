@@ -321,8 +321,9 @@ const VIEWER = [
   at(D, String.raw`\[LIVE\] viewer ${S}: the engine's own wait at ${F} ended by itself after ${N} ms, now at ${F}: held about ${N} ms \(budget ${N} ms\)`),
   // The player's summary: every SUMMARY_EVERY appended segments while it plays (LIVE-STALL-1,
   // 1.5.1-alpha.9: 30 segments land inside the 60 s watch), then once at the end. `stopped on ended`
-  // is narration; any other `stopped` and `unavailable` stay dirt.
-  at(L, String.raw`\[LIVE\] viewer ${S} \((?:playing|ended)\): ${N} segments played, ${N} skipped, ${N} seeks, at ${N}`),
+  // is narration; any other `stopped` and `unavailable` stay dirt. `N last frames held` came in 1.7.1
+  // (#3862, the A/V drift fix); a build before it writes the line without that clause.
+  at(L, String.raw`\[LIVE\] viewer ${S} \((?:playing|ended)\): ${N} segments played, ${N} skipped, ${N} seeks(?:, ${N} last frames held)?, at ${N}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: segment downloads of the ending run cancelled`),
   at(D, String.raw`\[LIVE\] viewer ${S}: the chat heard the live is over`),
 ];
