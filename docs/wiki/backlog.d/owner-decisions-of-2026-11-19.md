@@ -44,4 +44,34 @@ Recorded so that no question answered here is asked again. The owner took them i
 17. **Everything left of Stripe is removed by the lead** (`1.7.2`), and the owner handles the administrative side ([entry](owed-to-the-user-after-the-stripe-removal.md)).
 18. **The second campaign is closed.** The server specs cover the remaining case, so the entry is deleted.
 
+19. **Lives: the app's ceiling is 300 Mb/s, and the broadcaster moves to WebCodecs in `1.8.0`.** The 90 Mb/s was the workstation's own path. The ceiling is set in the app, and nothing is changed on the host ([entry](live-host-egress-constant-rests-on-the-workstation-path.md)).
+20. **New-device notices:** a local notification when the app is in the background, disabled in one gesture. A device already in a tree this device joins is not announced. A contact's line stays 7 days ([entry](new-device-notices-three-decisions-owed.md)).
+21. **Sealed conversations:** a lift is built only once the seals are counted and honest users are shown to reach them ([entry](history-withheld-from-a-member-device-that-let-itself-in.md)).
+22. **The encryption guide was read by the owner.** It stays frank about what the server sees, and says nothing of seals. It is linked from Settings only ([entry](the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)).
+23. **A grant reaches an institution of another campus**, as today.
+24. **The "association enrolment with conditions and documents" item is dropped:** Lydia Pro collects the documents.
+25. **The global search is dropped.** The post search gains filters by person and by association in `1.8.0` ([entry](post-search-filters-by-person-and-by-association.md)).
+26. **Several media in a post show as a carousel with a counter**, in `1.7.2` ([entry](p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)).
+27. **"Créer un groupe" from a form's respondents** (a user's request), in `1.8.0`. It applies to internal, non-anonymous forms, and the button goes to whoever reads the answers ([entry](a-group-made-from-a-form-s-respondents.md)).
+28. **No Lydia re-enrolment:** *"On oublie tout ça."* Les Rootz have no Lydia account ([entry](the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)).
+29. **Readings:**
+   - The second Android package for dev is for later.
+   - The lead may reset one TEST account's terms acceptance on MiConnect for the terms-prompt reading, logged and reverted after.
+   - The guest-payment reading on dev is waived: *"tout fonctionne"*.
+
+30. **A platform admin can suspend an account, in Canari only**, in `1.9.0` ([entry](a-platform-admin-suspends-an-account-in-canari.md)).
+31. **A Lydia Responsable may not leave the association before handing over to another member** ([entry](p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md), item 7).
+32. **An institution's "Personnel" calendar event reaches the staff of its ticked campuses**, as posts do, in `1.8.0` ([entry](institution-events-reach-staff-by-campus.md)).
+33. **A device that dropped a frame does not tell its user.** The server reports the drop to the team.
+
+34. **A post that is not published yet takes no comment** (`1.7.2`, [entry](a-scheduled-post-takes-no-comment.md)).
+35. **An institution reaches the staff of its campuses beyond posts:** its shop, partnerships, directory and lives (`1.8.0`, [entry](institution-reaches-staff-by-campus-beyond-posts.md)).
+36. **The short technical durations and the backups stay constants**, and only the long retentions become settings ([entry](retention-durations-not-yet-settings.md)).
+37. **Everything goes into `1.7.1`, the two held migrations included:** the CanaReels conversion (176) and the removal of Stripe. Each runs on dev through a pre-release before the stable.
+
+38. **`1.8.0` ships in blocks** (`1.8.0`, `1.8.1`, `1.8.2`...), each a stable as soon as its block is ready, in the order of item 6. Nothing waits for the last chantier.
+39. **CanaQuiz:** the results export is a summary PDF. A player who returns after a question's time is over gets 0 for it ([entry](canaquiz-a-live-quiz-anyone-can-run.md)).
+40. **The usage dashboard is for platform admins only** ([entry](usage-dashboard-who-uses-canari-anonymously.md)).
+41. **The live card follows the feed tab:** under "Organisations", association lives only. "Pour toi" and "Campus" keep every live the reader may watch. Who may watch is unchanged (`1.7.2`, [entry](the-live-card-follows-the-feed-tab.md)).
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).

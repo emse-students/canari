@@ -127,7 +127,7 @@ export async function openExternal(url: string): Promise<void> {
  * Navigate to an external URL. On Tauri, opens in system browser. On web, redirects the page.
  *
  * Deliberately NOT safety-checked, unlike {@link openExternal}: every caller passes a URL our
- * own backend generated (a Stripe/Lydia checkout, a MiGallery/associations redirect), never a
+ * own backend generated (a Lydia checkout, a MiGallery/associations redirect), never a
  * URL taken from message or post content - there is nothing here for Safe Browsing to catch,
  * and prompting a user before their own payment checkout would be a false alarm every time.
  */

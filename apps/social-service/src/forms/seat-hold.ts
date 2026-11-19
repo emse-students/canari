@@ -109,7 +109,7 @@ export function toRequestState(wire: unknown): RequestState {
 /**
  * The shape of a Lydia `request_uuid`: 32 hex digits, no dash (measured on the sandbox,
  * 2026-10-15) - the same pattern core-service's `payments/request-state` accepts (`SESSION_ID_RE`).
- * A row from the Stripe era still holds a `cs_...` id there, which core refuses with a 400, so
+ * A historic row still holds a `cs_...` id there, which core refuses with a 400, so
  * `confirmPayment` reads it first and never sends one.
  */
 export const LYDIA_REQUEST_UUID_RE = /^[0-9a-f]{32}$/i;

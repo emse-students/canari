@@ -64,7 +64,8 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
 
     const reading = await readConfirmedTree(mls, G, 'me', '[TEST]', holdsBob);
 
-    expect(reading).toEqual({ status: 'read', identities: ['me:da', 'bob:d1'] });
+    // The epoch of the tree the identities were read from: the caught-up one.
+    expect(reading).toEqual({ status: 'read', identities: ['me:da', 'bob:d1'], epoch: 5 });
     expect(isInEpochGap(G)).toBe(false);
     expect(persist.scheduled).toHaveBeenCalledTimes(1);
   });
@@ -92,8 +93,32 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
     await expect(readConfirmedTree(mls, G, 'me', '[TEST]', holdsBob)).resolves.toEqual({
       status: 'read',
       identities: ['me:da', 'bob:d1'],
+      epoch: 5,
     });
     expect(mls.notifyConversationAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reading the local tree decides carries the local epoch, with no log read', async () => {
+    const { mls } = behindByOne();
+
+    const reading = await readConfirmedTree(mls, G, 'me', '[TEST]', () => true);
+
+    expect(reading).toEqual({ status: 'read', identities: ['me:da'], epoch: 4 });
+    expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
+  });
+
+  it('a local tree AHEAD of the server is not proof: unconfirmed', async () => {
+    const { mls } = behindByOne();
+    vi.mocked(mls.fetchCommitsSince).mockResolvedValue({
+      commits: [],
+      activeEpoch: 3,
+      belowFloor: false,
+    });
+
+    const reading = await readConfirmedTree(mls, G, 'me', '[TEST]', () => false);
+
+    expect(reading).toEqual({ status: 'unconfirmed' });
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('AHEAD of the server'));
   });
 
   it('THE REAL LOCK IS NOT RE-ENTRANT: a call from inside it waits for its own holder', async () => {
@@ -117,6 +142,7 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
     await expect(nested).resolves.toEqual({
       status: 'read',
       identities: ['me:da', 'bob:d1'],
+      epoch: 5,
     });
   });
 });

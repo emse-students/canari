@@ -1,6 +1,6 @@
 # Paid public forms - the chantier, decisions as taken
 
-**Status: PLANNING (opened 2026-10-15), parallel to [bookings-chantier](bookings-chantier.md).** Nothing is built.
+**Status: BUILT (opened 2026-10-15; WP-P0 to WP-P4 merged by 2026-10-22, #2229-#2232), and CLOSED: the guest-payment reading on dev was waived by the owner on 2026-11-19 (*"tout fonctionne"*).** Parallel to [bookings-chantier](bookings-chantier.md).
 
 ## The need, and its scope (user, 2026-10-15)
 

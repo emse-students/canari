@@ -5181,8 +5181,12 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
-  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
-    return this.delivery.declineJoinRequest(groupId, userId);
+  async declineJoinRequest(
+    groupId: string,
+    userId: string,
+    treeEpoch?: number
+  ): Promise<JoinDeclineOutcome> {
+    return this.delivery.declineJoinRequest(groupId, userId, treeEpoch);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {

@@ -116,6 +116,8 @@ function groupMls(onRegistered: () => Promise<void>, onStaged: () => Promise<voi
       releaseAddLock: vi.fn(async () => {}),
       getGroupMemberIdentities: vi.fn(async () => [] as string[]),
       runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+      // The epoch a confirmed reading carries (`readConfirmedTree`).
+      getEpoch: vi.fn().mockReturnValue(0),
       addMembersBulk: vi.fn(async () => {
         await onStaged();
         return { addedDeviceIds: ['dev-2'], skipped: [], notAdmitted: [], welcome: undefined };
@@ -214,6 +216,8 @@ describe('startNewConversation - the same window, on the DM path', () => {
       releaseAddLock: vi.fn(async () => {}),
       getGroupMemberIdentities: vi.fn(async () => [] as string[]),
       runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+      // The epoch a confirmed reading carries (`readConfirmedTree`).
+      getEpoch: vi.fn().mockReturnValue(0),
       addMembersBulk: vi.fn(async () => ({
         addedDeviceIds: ['peer-dev'],
         skipped: [],
@@ -309,6 +313,8 @@ describe('a created group is recorded as audited on success only', () => {
       releaseAddLock: vi.fn(async () => {}),
       getGroupMemberIdentities: vi.fn(async () => [] as string[]),
       runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+      // The epoch a confirmed reading carries (`readConfirmedTree`).
+      getEpoch: vi.fn().mockReturnValue(0),
       addMembersBulk: vi.fn(async () => ({
         addedDeviceIds: ['peer-dev'],
         skipped: [],

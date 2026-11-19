@@ -633,7 +633,7 @@ From the routes' `load` functions (all `ssr = false`, so a `load` that awaits ho
 | `routes/+layout.ts` (every route) | when the MLS session is NOT yet logged in (boot, a resume, the whole unlock window): `refresh()` if no user id, **then `fetchUserProfile(userId)`, a network call** (20 s deadline on a slow link) | **BLOCKS EVERY NAVIGATION during that window.** It only decides "redirect to login on a confirmed 404" and a transport failure is deliberately survived, so nothing it learns is needed to render. Fixed by WP-NAV-1 |
 | `routes/posts/[postId]/+page.ts` | the post itself (`await fetching`) | blocks the click on a post from the feed until the GET answers; the page then shows "not found" or the post. Fixed by WP-NAV-1 (the shell and header render at once, the post is a promise) |
 | `routes/posts/+page.ts` | the audience verdict only when none is remembered (first ever visit); the 20 posts are a promise handed to `{#await}` already | fine |
-| `associations/[slug]`, `lists/[slug]`, `dashboard/association`, `app-shell` | nothing (synchronous `load`) | fine |
+| `associations/[slug]`, `lists/[slug]`, `app-shell` | nothing (synchronous `load`) | fine |
 | `/chat` and its DMs | no `load`; the list waits on the WASM by ORDER, not by data (R7, section 10.3) | covered by WP-W3 (diagnosed, not built) |
 
 So the user's belief is half right: item loading is already independent of the skeleton almost

@@ -50,7 +50,6 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
-- [P2 - the iPhone reading of the top inset's one owner](backlog.d/p2-ios-top-inset-counted-twice-reading.md)
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
@@ -58,7 +57,6 @@ earliest version, as a checklist.
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
-- [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
@@ -81,7 +79,7 @@ earliest version, as a checklist.
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the iPhone's photo picker kept every item of a multiple pick](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
+- [P2 - a replay stalls for good at the first camera flip or background pause of its live (read 2026-11-19, S11)](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)
 
 **P3 - hygiene**
 
@@ -92,7 +90,6 @@ earliest version, as a checklist.
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the chips row of "Nouvelle discussion" holds its place](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
@@ -103,10 +100,8 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a second reaction to the same message stacks on the iPhone, where Android replaces it](backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)
 - [P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns](backlog.d/p3-a-sent-file-s-bubble-that-failed-to-load-stays-failed-after-the-link-returns.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the error toast over a dialog is opaque](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)](backlog.d/p3-hidden-post-row-names-the-author-not-the-association.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 - [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
 
@@ -116,20 +111,22 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
-- [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
-- [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
+- [ ] [the broadcaster's right-edge control column on both phones (owner, 2026-11-19)](backlog.d/reading-owed-the-broadcasters-control-column.md)
 
 ## 1.7.2
 
 **Chantiers, decisions and questions (no severity)**
 
 - [Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them](backlog.d/admin-view-feeds-as-a-member.md)
-- [Owed to the user after the Stripe removal](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
+- [Owed after the Stripe removal - what is left (audited 2026-11-19)](backlog.d/owed-to-the-user-after-the-stripe-removal.md)
 
 **P2 - correctness**
 
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
+- [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
+- [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
+- [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
 
 ## 1.7.3
 
@@ -139,24 +136,24 @@ _No entry planned beyond its readings._
 
 **Chantiers, decisions and questions (no severity)**
 
-- [A SECOND campaign, for everything that is not chat - asked 2026-08-16](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
-- [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 - [The MLS audit items that are still real, with their verified counts (swept 2026-09-12)](backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md)
-- [A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia](backlog.d/a-paid-public-form-user-2026-09-30-the-paid-half-waits-for-lydia.md)
 - [Audiences of associations, lists and institutions - built, in production since `v1.2.0`](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)
 - [A file question on a PUBLIC form needs an abuse design first (asked by the user 2026-10-15, re-read 2026-11-11)](backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md)
-- [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
-- [Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem](backlog.d/decided-by-the-user-on-2026-10-16-the-gdpr-pass-over-the-whole-ecosystem.md)
-- [Decided by the user on 2026-10-18 - every design question answered](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
-- [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
+- [Decided by the user on 2026-10-18 - what is still open (trimmed 2026-11-19)](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
 - [Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox)](backlog.d/found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox.md)
 - [The live viewer cap (24 seats for the whole host) lifted in measured steps - the owner's "no visible ceiling" (2026-10-21)](backlog.d/live-viewer-cap-lifted-in-measured-steps.md)
 - [Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)](backlog.d/live-replays-kept-three-days-as-canareels.md)
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
 - [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
+- ["Créer un groupe" from a form's respondents (owner, 2026-11-19)](backlog.d/a-group-made-from-a-form-s-respondents.md)
 - [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
+- [An institution's "Personnel" calendar event reaches the staff of its ticked campuses (owner, 2026-11-19)](backlog.d/institution-events-reach-staff-by-campus.md)
+- [An institution reaches the staff of its campuses beyond posts: shop, partnerships, directory, lives (owner, 2026-11-19)](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md)
+- [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
+- [The post search filters by person and by association (owner, 2026-11-19)](backlog.d/post-search-filters-by-person-and-by-association.md)
+- [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 
 **P2 - correctness**
 
@@ -183,6 +180,7 @@ _No entry planned beyond its readings._
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
+- [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
 - [P2 - rows before ratchet: tell a poison row from a transient write failure, and measure the acks withheld on unstored rows (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-poison-rows-and-withheld-ack-metric.md)
 
 **P3 - hygiene**
@@ -217,6 +215,8 @@ _No entry planned beyond its readings._
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 - [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
+- [P3 - the iPhone sign-in helper misses the terms page's button when it is below the fold](backlog.d/p3-the-iphone-sign-in-helper-misses-a-terms-button-below-the-fold.md)
+- [P3 - the Thème control's "Automatique" label spills out of its segment at a doubled font](backlog.d/p3-the-theme-control-s-automatique-label-spills-out-of-its-segment-at-a-doubled-font.md)
 
 ## 1.9.0
 
@@ -225,12 +225,12 @@ _No entry planned beyond its readings._
 - [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
 - [New-device notices: three decisions owed (built by #2278, 2026-10-22)](backlog.d/new-device-notices-three-decisions-owed.md)
 - [Three open items the CLAUDE.md queue alone carried (moved 2026-10-22)](backlog.d/three-open-items-the-claude-md-queue-alone-carried-moved-2026-10-22.md)
-- [Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md)
-- [Decided by the owner on 2026-10-24 - MiGallery faces: option C](backlog.d/decided-by-the-owner-on-2026-10-24-migallery-faces-option-c.md)
+- [Decided by the user on 2026-10-23 - what is still open, and the rules not written elsewhere (trimmed 2026-11-19)](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md)
 - [Authorization audit of the group routes, remainder tracked privately (2026-10-25)](backlog.d/authorization-audit-of-the-group-routes-remainder-tracked-privately-2026-10-25.md)
 - [Session liveness beyond the verifier, tracked privately (2026-10-25)](backlog.d/session-liveness-beyond-the-verifier-tracked-privately-2026-10-25.md)
-- [The shop screens - decided by the user on 2026-10-26 after the first real Cercle top-up](backlog.d/the-shop-screens-decided-by-the-user-on-2026-10-26-after-the-first-real-cercle.md)
+- [The shop screens - decided by the user on 2026-10-26: built, what is left (audited 2026-11-19)](backlog.d/the-shop-screens-decided-by-the-user-on-2026-10-26-after-the-first-real-cercle.md)
 - [History withheld from a member device that let itself in (built 2026-10-27): what is still owed](backlog.d/history-withheld-from-a-member-device-that-let-itself-in.md)
+- [A platform admin suspends an account, in Canari only (owner, 2026-11-19)](backlog.d/a-platform-admin-suspends-an-account-in-canari.md)
 
 **P2 - correctness**
 
@@ -306,9 +306,8 @@ _No entry planned beyond its readings._
 
 - [`dev.canari-emse.fr` - the two things that outlived the chantier](backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)
 - [The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)](backlog.d/the-1-5-1-pixel-log-what-the-catch-up-fix-left-2026-10-30.md)
-- [The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
-- [Global search (posts, forms, events, associations, people) - to design for the owner's validation after 1.6.9](backlog.d/global-search-to-design-after-1-6-9.md)
-- [Display follow-ups to the shop pricing (after the tier stack lands)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
+- [The Lydia enrolment and cashier chantier - decided 2026-10-30, lots 1-4 shipped, what is left (audited 2026-11-19)](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
+- [Display follow-ups to the shop pricing (the tier stack has landed)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
 - [The iOS rig adapter (#1284-#1286, #1290, #1291, #1303): no board row has a verdict on the iPhone yet](backlog.d/reading-owed-the-ios-rig-adapter-1284-1286-1290-1291-1303.md)
 
 **P2 - correctness**

@@ -2,6 +2,11 @@
 
 target: 1.8.0
 
+**Owner, 2026-11-19:** the app's own ceiling is **300 Mb/s** (half the ~600 measured from a near client),
+set in the app, nothing on the host, nothing asked of the IT department; and the broadcaster moves from
+`MediaRecorder` to **WebCodecs** (about 1 Mb/s at 720p instead of 2.6-3 on Android, so about 280 viewers
+instead of about 100 at that ceiling), in `1.8.0` with the viewer cap ([decisions](owner-decisions-of-2026-11-19.md)).
+
 `LIVE_HOST_EGRESS_BPS = 90_000_000` (`apps/social-service/src/lives/live.constants.ts`) and every
 figure built on it - the 24-seat `LIVE_VIEWER_CAP`, arithmetic A and B1 of
 [live-scaling](../frontend/modules/live-scaling.md#the-arithmetic), the cap row of
