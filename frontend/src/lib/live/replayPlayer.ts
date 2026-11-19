@@ -178,6 +178,15 @@ const defaultDeps: Omit<ReplayPlayerDeps, 'attach'> = {
   },
 };
 
+/**
+ * ONE USER SEEK: its id (the latest one is the single source of truth) and the signal that cancels
+ * its downloads the moment a newer seek supersedes it.
+ */
+interface SeekTicket {
+  readonly id: number;
+  readonly signal: AbortSignal;
+}
+
 /** Thrown inside the player to stop on a state; never leaves it. */
 class StopOn extends Error {
   constructor(readonly state: ReplayState) {
@@ -224,6 +233,10 @@ export class ReplayPlayer {
   private fillQueued = false;
   /** A seek is waiting its turn: the running fill yields so the seek is not made to wait for 12 s of media. */
   private seekPending = false;
+  /** The id of the LATEST seek: an older one that completes finds it changed and moves nothing. */
+  private seekId = 0;
+  /** Cancels the downloads of the latest seek when the next one supersedes it. */
+  private seekAbort: AbortController | null = null;
   /** The end of the stream was declared (the last segment is in): said once per arrival at the end. */
   private ended = false;
 
@@ -293,7 +306,16 @@ export class ReplayPlayer {
     const gen = this.generation;
     const at = this.video.currentTime;
     this.seekPending = true;
+    // The latest target wins: the older seek's download is cancelled and its queued step is void.
+    this.seekAbort?.abort();
+    const abort = new AbortController();
+    this.seekAbort = abort;
+    const ticket: SeekTicket = { id: ++this.seekId, signal: abort.signal };
     this.enqueue(gen, async () => {
+      if (this.isStale(ticket)) {
+        console.debug(`[LIVE_REPLAY] seek ${ticket.id} to ${at.toFixed(2)} superseded - dropped`);
+        return;
+      }
       this.seekPending = false;
       const span = spansOf(this.buffer as ReplaySourceBufferLike).find(
         ([s, e]) => at >= s - 0.01 && at < e
@@ -304,7 +326,7 @@ export class ReplayPlayer {
           `[LIVE_REPLAY] seek to ${at.toFixed(2)}: buffered, next segment ${this.cursor}`
         );
       } else {
-        await this.seekTo(gen, at * 1000);
+        await this.seekTo(gen, at * 1000, ticket);
       }
       await this.fill(gen);
     });
@@ -355,7 +377,15 @@ export class ReplayPlayer {
     this.tail = Promise.resolve();
     this.fillQueued = false;
     this.seekPending = false;
+    this.seekAbort?.abort();
+    this.seekAbort = null;
+    this.seekId = 0;
     this.ended = false;
+  }
+
+  /** Whether a newer seek has replaced `ticket`: its results must not touch the playhead. */
+  private isStale(ticket: SeekTicket): boolean {
+    return ticket.id !== this.seekId;
   }
 
   private alive(gen: number): boolean {
@@ -571,16 +601,25 @@ export class ReplayPlayer {
     return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000)) + 1;
   }
 
-  /** A seek to `ms` of the replay: the target's segment is taken and the playhead put where it landed. */
-  private async seekTo(gen: number, ms: number): Promise<void> {
+  /**
+   * A seek to `ms` of the replay: the target's segment is taken and the playhead put where it landed.
+   * Only the LATEST seek (`ticket`) may write the playhead: whatever an older one fetched is dropped.
+   */
+  private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
-    if (!this.alive(gen)) return;
+    if (!this.alive(gen) || this.isStale(ticket)) return;
     const pos = segmentPositionAt(this.segments, ms);
     if (pos < 0) return;
     const s = this.segments[pos];
     this.seeks++;
-    const start = await this.take(gen, s);
+    const start = await this.take(gen, s, ticket);
     if (!this.alive(gen)) return;
+    if (this.isStale(ticket)) {
+      console.debug(
+        `[LIVE_REPLAY] ${this.liveId}: seek ${ticket.id} (segment ${s.index}) superseded by ${this.seekId} - playhead untouched`
+      );
+      return;
+    }
     this.cursor = pos + 1;
     if (start !== null) {
       // Inside the segment by the share of it the target is past, never beyond its own length.
@@ -599,18 +638,27 @@ export class ReplayPlayer {
    */
   private async openOne(
     gen: number,
-    s: LiveReplaySegment
+    s: LiveReplaySegment,
+    ticket?: SeekTicket
   ): Promise<Uint8Array<ArrayBuffer> | null> {
     let sealed: ArrayBuffer;
+    const signals = [this.downloads?.signal, ticket?.signal].filter((x): x is AbortSignal => !!x);
     try {
-      sealed = await this.deps.fetchSegment(this.liveId, s.name, this.downloads?.signal);
+      sealed = await this.deps.fetchSegment(
+        this.liveId,
+        s.name,
+        signals.length > 1 ? AbortSignal.any(signals) : signals[0]
+      );
     } catch (e) {
+      // A cancelled stale seek is not a failure: its target is gone, and the newer seek serves its own.
+      if (ticket && this.isStale(ticket)) return null;
       if (!isLiveRefusal(e, 'not-found')) throw e;
       console.warn(`[LIVE_REPLAY] ${this.liveId}: segment ${s.index} is gone - skipped`);
       this.skipped++;
       return null;
     }
     if (!this.alive(gen) || this.keyHex === null) return null;
+    if (ticket && this.isStale(ticket)) return null;
     try {
       const media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
       this.openFailures = 0;
@@ -634,8 +682,12 @@ export class ReplayPlayer {
    * fragment, and MEASURE where the buffer put it. Returns the media time it begins at, or null when
    * it was skipped or opened no new range.
    */
-  private async take(gen: number, s: LiveReplaySegment): Promise<number | null> {
-    const media = await this.openOne(gen, s);
+  private async take(
+    gen: number,
+    s: LiveReplaySegment,
+    ticket?: SeekTicket
+  ): Promise<number | null> {
+    const media = await this.openOne(gen, s, ticket);
     if (!this.alive(gen) || !media || !this.buffer) return null;
     let end: number;
     try {

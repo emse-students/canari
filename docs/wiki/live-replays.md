@@ -476,3 +476,33 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 **`LIVE_RULES_VERSION` stays 2 until the flip's texts ship (WP-R6).** Version 3 is the broadcaster accepting a text that names the replay, and the rules sheet points at the CGU, which says "pas de rediffusion" until the flip; raised now, every broadcaster would re-accept, with the switch off, either a sheet promising a replay that does not happen or the unchanged text under a new number. It is raised in the pull request that changes the CGU, the privacy policy, register C19-C20 and the pre-live texts, merged before `live_replays_mode` is turned on (the table above).
 
 Owed: the phone readings listed above (cover and time left on the card included).
+
+## A replay seek: the latest target alone moves the playhead (owner, 2026-11-19)
+
+Reported on a desktop browser: drag the bar, the player loads; drag again while it loads and the
+playhead is thrown back to the earlier position ("il faut decorreler la lecture et le chargement").
+
+**Root cause.** `ReplayPlayer.noteSeeking` queued one serial step per `seeking` event, and each step
+ended by WRITING `video.currentTime` where ITS segment landed. A step for an older target still held
+the queue (its fetch pending), so when it completed it moved the playhead to the old target; a seek
+back into buffered media (which writes nothing itself) was simply overwritten.
+
+**The rule.** The user's LATEST seek is the single source of truth; only it may write the playhead.
+
+- Every seek takes a ticket `{id, signal}` (`seekId`, a counter - never a clock). A newer seek bumps
+  `seekId` and aborts the older ticket's signal, so its in-flight fetch is cancelled rather than
+  waited for, and its queued step returns at once.
+- After every `await` of a seek (page listing, fetch, decrypt, append) the ticket is compared with
+  `seekId`; a stale one stops and logs. A cancelled stale fetch is not a failure (no retry, no
+  "reconnecting").
+- Appends never set `currentTime`: the seek step's final write is the ONLY write, and it is
+  ticket-guarded. Background fills only append; they were never a writer.
+- Loading serves the target first: the seek step takes the segment holding the target, then `fill`
+  continues from its cursor ahead of it.
+- `LivePlayer` (the live edge) has no user seek: its only playhead write is `seekToEdge`, forward
+  only, from its own state, so it shares none of this.
+
+Pinned in `replayPlayer.test.ts` with deferred fetches (late answer, rapid repeated seeks, seek back
+into buffered media, abort of the stale download). **Owed:** a reading on a desktop browser and on
+both bench phones on dev (dragging the bar repeatedly while loading), listed in
+[the backlog entry](backlog.d/replay-seek-decoupled-from-loading.md).

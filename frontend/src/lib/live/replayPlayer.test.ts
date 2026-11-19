@@ -353,6 +353,105 @@ describe('ReplayPlayer', () => {
     expect(buffer().appends.slice(before)).toEqual(['m6', 'm7']);
   });
 
+  describe('the latest seek is the single source of truth', () => {
+    /** Holds every segment fetch named in `held` until the test resolves (or the signal aborts) it. */
+    function holdFetches(held: Set<string>) {
+      const pending = new Map<string, () => void>();
+      const signals = new Map<string, AbortSignal | undefined>();
+      deps.fetchSegment = vi.fn((_id: string, name: string, signal?: AbortSignal) => {
+        const bytes = new TextEncoder().encode(name).buffer as ArrayBuffer;
+        if (!held.has(name)) return Promise.resolve(bytes);
+        signals.set(name, signal);
+        return new Promise<ArrayBuffer>((resolve, reject) => {
+          pending.set(name, () => resolve(bytes));
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        });
+      }) as never;
+      return { pending, signals };
+    }
+
+    async function started(held: string[]) {
+      const fetches = holdFetches(new Set(held));
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      return { p, ...fetches };
+    }
+
+    it('seek to A, seek to B while A loads, A resolves late: the playhead stays at B', async () => {
+      const { p, pending } = await started(['seg-30', 'seg-60']);
+      video.currentTime = 60.2; // A: segment 30
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 120.2; // B: segment 60
+      p.noteSeeking();
+      await flush();
+      pending.get('seg-30')?.(); // a late answer for the older target (a no-op once aborted)
+      await flush();
+      expect(video.currentTime).toBeCloseTo(120.2, 1);
+      pending.get('seg-60')?.();
+      await flush();
+      expect(buffer().appends).not.toContain('m30');
+      expect(buffer().appends).toContain('m60');
+      expect(video.currentTime).toBeCloseTo(120.2, 1);
+    });
+
+    it('cancels the download of the superseded seek', async () => {
+      const { p, signals } = await started(['seg-30', 'seg-60']);
+      video.currentTime = 60.2;
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 120.2;
+      p.noteSeeking();
+      await flush();
+      expect(signals.get('seg-30')?.aborted).toBe(true);
+      expect(signals.get('seg-60')?.aborted).toBe(false);
+    });
+
+    it('a seek back into buffered media while an older seek loads is not overwritten by it', async () => {
+      const { p, pending } = await started(['seg-30']);
+      video.currentTime = 60.2; // A: far, not buffered
+      p.noteSeeking();
+      await flush();
+      video.currentTime = 3; // B: inside the first buffered range
+      p.noteSeeking();
+      await flush();
+      pending.get('seg-30')?.();
+      await flush();
+      expect(video.currentTime).toBe(3);
+      expect(buffer().appends).not.toContain('m30');
+    });
+
+    it('rapid repeated seeks: only the last target is served and the playhead is its own', async () => {
+      const { p, pending } = await started(['seg-20', 'seg-30', 'seg-40', 'seg-50']);
+      for (const t of [40.2, 60.2, 80.2, 100.2]) {
+        video.currentTime = t;
+        p.noteSeeking();
+        await flush();
+      }
+      for (const n of ['seg-20', 'seg-30', 'seg-40', 'seg-50']) pending.get(n)?.();
+      await flush();
+      expect(video.currentTime).toBeCloseTo(100.2, 1);
+      const appended = buffer().appends.filter((a) => a.startsWith('m'));
+      for (const stale of ['m20', 'm30', 'm40']) expect(appended).not.toContain(stale);
+      expect(appended).toContain('m50');
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('loads the target segment first, then the ones ahead of it', async () => {
+      const { p } = await started([]);
+      video.currentTime = 100.4;
+      p.noteSeeking();
+      await flush();
+      const after = buffer().appends.slice(buffer().appends.indexOf('m50'));
+      expect(after.filter((a) => a.startsWith('m'))[0]).toBe('m50');
+      expect(after).toContain('m51');
+    });
+  });
+
   it('rebases a replay trimmed to its last hours to zero under a timestampOffset', async () => {
     const pages = makePages(10, 200, 5000);
     fetchReplay.mockImplementation(async (_id: string, from?: number) => pages(from));
