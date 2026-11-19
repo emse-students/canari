@@ -30,7 +30,7 @@ function deps() {
   return { storage: null, deviceKeyB64: 'k', mlsService: {} as any, log: vi.fn() };
 }
 
-async function answer(opts: { register: boolean; answerKey?: string }) {
+async function answer(opts: { register: boolean; answerKey: string }) {
   await answerHistoryDigest({
     groupId: GROUP,
     requesterIdentity: ASKER,
@@ -38,7 +38,7 @@ async function answer(opts: { register: boolean; answerKey?: string }) {
     digest: await buildHistoryDigest([]),
     since: 0,
     requestId: 'req-0000000a',
-    ...(opts.answerKey !== undefined ? { answerKey: opts.answerKey } : {}),
+    answerKey: opts.answerKey,
     register: opts.register,
     deps: deps(),
   });
@@ -75,14 +75,5 @@ describe('answerHistoryDigest - a register digest', () => {
 
     expect(sendRegisterAnswer).not.toHaveBeenCalled();
     expect(order).toEqual(['diff']);
-  });
-
-  it('a register digest with NO key gets no state, said at error - and still its diff', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await answer({ register: true });
-
-    expect(sendRegisterAnswer).not.toHaveBeenCalled();
-    expect(order).toEqual(['diff']);
-    expect(error.mock.calls.join(' ')).toContain('with no key');
   });
 });

@@ -77,17 +77,17 @@ describe('registerOwed - the state a newcomer still asks for', () => {
    * IT TERMINATES ON A COUNT OF ASKS, durably: a group whose members never answer `register` (an
    * older build, a server that cannot address) stops being asked after REGISTER_ASKS_MAX asks.
    */
-  it('ends after REGISTER_ASKS_MAX unanswered asks, said at warn - and the register is still not taken', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('ends after REGISTER_ASKS_MAX unanswered asks, said at error - and the register is still not taken', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     noteRegisterOwed('ann', 'g1');
     for (let i = 1; i < REGISTER_ASKS_MAX; i++) noteRegisterAsked('ann', 'g1');
     expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
     noteRegisterAsked('ann', 'g1');
     expect(isRegisterOwed('ann', 'g1')).toBe(true);
-    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
     expect(endSpentRegisterAsks('ann', 'g1')).toBe(true);
     expect(isRegisterOwed('ann', 'g1')).toBe(false);
-    expect(warn.mock.calls.join(' ')).toContain(
+    expect(error.mock.calls.join(' ')).toContain(
       `asked for its register ${REGISTER_ASKS_MAX} time(s)`
     );
     // P2-b: the asking ended, the fact the responder reads did not.
@@ -147,6 +147,28 @@ describe('registerOwed - the state a newcomer still asks for', () => {
     expect(isRegisterOwed('ann', 'g1')).toBe(false);
     expect(registerNeverTaken('ann', 'g1')).toBe(true);
     expect(warn.mock.calls.join(' ')).toContain('every other device (2) declined');
+  });
+
+  it('a spent bound after a WITHHELD decline is said at info, naming it - never at error', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log');
+    noteRegisterOwed('ann', 'g1');
+    const others = ['bob:phone', 'carl:laptop'];
+    let sent = 0;
+    // bob withholds from this unvouched device at every election; carl never answers.
+    while (!endSpentRegisterAsks('ann', 'g1') && sent < 100) {
+      noteRegisterAsked('ann', 'g1');
+      sent++;
+      noteRegisterDeclined('ann', 'g1', 'bob:phone', others, 'withheld');
+    }
+    expect(isRegisterOwed('ann', 'g1')).toBe(false);
+    expect(sent).toBe(REGISTER_ASKS_MAX + 1);
+    expect(error).not.toHaveBeenCalled();
+    expect(log.mock.calls.join(' ')).toContain('1 device(s) withhold history from this unvouched');
+    // The vouch is a member's Add, which arrives as a Welcome: the asking re-opens from zero.
+    noteRegisterOwed('ann', 'g1');
+    expect(isRegisterOwed('ann', 'g1')).toBe(true);
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
   });
 
   it('counts across a reload - the count is stored, not held in memory', () => {
