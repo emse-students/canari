@@ -20,8 +20,13 @@
  * one. That is the invariant every caller of {@link RowsOwedLedger.owe} keeps, and the reason the
  * mark spans the decrypt and the row's write and nothing else.
  *
- * WHAT IT ACCEPTS, STATED: a row write that never settles holds every checkpoint, exactly as a hung
- * buffered write does (`holdRowsForCheckpoint`) - exporting past a row not stored is the loss itself.
+ * THE LIVENESS COUPLING, STATED (review of #3851): while a hold stands, NO application frame is
+ * decrypted. So a row write that never settles holds every checkpoint (exactly as a hung buffered
+ * write does, `holdRowsForCheckpoint` - exporting past a row not stored is the loss itself), AND that
+ * checkpoint's closed gate holds every inbound decrypt behind it. The gate reopens at the export's
+ * CAPTURE where the platform has one (the web: `checkpointCapturesAtCall`), so a slow or hung seal
+ * and put never stop the drain there; on native the export runs inside the command, so the gate
+ * stays closed for the whole write (~1.7 s on the phone) and a hung command stops the drain.
  * See docs/wiki/frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-2026-11-19.
  */
 
@@ -69,8 +74,8 @@ export class RowsOwedLedger {
 
   /**
    * Closes the gate and resolves, with the release, once every mark taken before settled. The
-   * release reopens the gate when no other hold stands; call it once the checkpoint's write settled
-   * (on native the export runs inside the command, so releasing at the capture would not be enough).
+   * release reopens the gate when no other hold stands; call it once the export is CAPTURED - at the
+   * call on the web, at the write's end on native, where the export runs inside the command.
    */
   async hold(): Promise<() => void> {
     this.holds += 1;

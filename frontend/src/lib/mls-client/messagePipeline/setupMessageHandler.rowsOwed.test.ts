@@ -24,7 +24,7 @@ vi.mock('./systemMessageHandler', async (original) => ({
   }),
 }));
 
-import { setupMessageHandler } from './setupMessageHandler';
+import { setupMessageHandler, SYSTEM_EVENTS_OWING_THEIR_ROW } from './setupMessageHandler';
 import { encodeAppMessage, mkReaction, mkSystem, mkText } from '$lib/proto/codec';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { RowsOwedLedger } from '../rowsOwed';
@@ -167,13 +167,37 @@ describe('an application frame owes its row from its decrypt to its write', () =
     expect(ledger.owedCount).toBe(0);
   });
 
-  it('a system event: settled BEFORE its dispatch, which may await a checkpoint', async () => {
-    const { d } = deps(ledger, app(mkSystem('some_event', '{}')));
+  it.each(['some_event', 'memberRemoved', 'groupDeleted', 'memberAdded'])(
+    'a system event outside the allowlist (%s): settled BEFORE its dispatch, which may await a checkpoint',
+    async (event) => {
+      const { d } = deps(ledger, app(mkSystem(event, '{}')));
 
-    expect(await deliver(d)).toBe(true);
+      expect(await deliver(d)).toBe(true);
 
-    expect(seen.owedAtSystemDispatch).toBe(0);
-    expect(ledger.owedCount).toBe(0);
+      expect(seen.owedAtSystemDispatch).toBe(0);
+      expect(ledger.owedCount).toBe(0);
+    }
+  );
+
+  it.each(['edit_message', 'delete_message', 'history_bundle'])(
+    'a system event that writes rows (%s): owed THROUGH its dispatch, settled once it returned',
+    async (event) => {
+      const { d } = deps(ledger, app(mkSystem(event, '{}')));
+
+      expect(await deliver(d)).toBe(true);
+
+      // The edit, deletion or bundle is written inside the dispatch: a checkpoint waits for it.
+      expect(seen.owedAtSystemDispatch).toBe(1);
+      expect(ledger.owedCount).toBe(0);
+    }
+  );
+
+  it('the allowlist is exactly the events read for a checkpoint-free path - adding one means reading it first', () => {
+    expect([...SYSTEM_EVENTS_OWING_THEIR_ROW].sort()).toEqual([
+      'delete_message',
+      'edit_message',
+      'history_bundle',
+    ]);
   });
 
   it('a frame whose decrypt throws settles its mark', async () => {

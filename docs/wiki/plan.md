@@ -168,6 +168,7 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
+- [P2 - rows before ratchet: tell a poison row from a transient write failure, and measure the acks withheld on unstored rows (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-poison-rows-and-withheld-ack-metric.md)
 
 **P3 - hygiene**
 

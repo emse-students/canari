@@ -1986,6 +1986,7 @@ export abstract class BaseMlsService implements IMlsService {
     if (ids.some((id) => !covered(id) && !needsDisk(id))) {
       await hold.rowsStored();
       rowsLeft = this.appliedRowsLeftUnstored();
+      if (rowsLeft === 0) this.noteAcksReleasedForRows();
     }
     const heldForRows = new Set(ids.filter((id) => !covered(id) && !needsDisk(id) && rowsLeft > 0));
     const heldForCheckpoint = ids.filter((id) => !covered(id) && needsDisk(id));
@@ -2015,11 +2016,7 @@ export abstract class BaseMlsService implements IMlsService {
           ') - the rows stay on the server for the tab that writes the state'
       );
     }
-    if (heldForRows.size > 0) {
-      console.warn(
-        `[ACK] ${heldForRows.size} id(s) not acknowledged: ${rowsLeft} row(s) of applied frames are shown and not stored - the frames stay on the server until a checkpoint stores them`
-      );
-    }
+    if (heldForRows.size > 0) this.noteAcksWithheldForRows(heldForRows.size, rowsLeft);
     return ids.filter((id) => !withheld.has(id));
   }
 
@@ -5351,6 +5348,16 @@ export abstract class BaseMlsService implements IMlsService {
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   /**
+   * WHETHER {@link writeCheckpoint} CAPTURES ITS EXPORT IN THE SYNCHRONOUS PART OF ITS CALL - true on
+   * the web, where `save_state` runs in the turn the write is called in and the rest is sealing and
+   * an IndexedDB put of bytes already taken; false on native, where the export runs inside the
+   * command and ends only when the command does. It decides when a checkpoint reopens the decrypt
+   * gate ({@link RowsOwedLedger}): at the capture where there is one, else at the write's end -
+   * so a slow or hung seal never holds the inbound decrypts on the web (review of #3851).
+   */
+  protected readonly checkpointCapturesAtCall: boolean = false;
+
+  /**
    * Writes the current state to this platform's durable store, and it is THE ONLY persistence this
    * class knows about. Tauri's write already lands on disk (`TauriMlsService.persistState`, which
    * returns a byte count) while Web still has to hand the bytes to IndexedDB
@@ -5477,7 +5484,7 @@ export abstract class BaseMlsService implements IMlsService {
       // applies the ledgers and exports in this same turn, so every mark staged describes an advance
       // the export holds.
       try {
-        await this.writeCheckpoint(
+        const writing = this.writeCheckpoint(
           this.currentDeviceKeyB64,
           {
             isEnded: () => this.stateWritesEnded === true,
@@ -5490,6 +5497,10 @@ export abstract class BaseMlsService implements IMlsService {
           },
           ledgers
         );
+        // ON THE WEB THE EXPORT IS TAKEN BY NOW (the call's synchronous part): a frame decrypted from
+        // here on is not in it, so the decrypts resume without waiting for the seal and the put.
+        if (this.checkpointCapturesAtCall) releaseOwed();
+        await writing;
         // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
         // into `appliedAtExport`.
         if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
@@ -5501,8 +5512,8 @@ export abstract class BaseMlsService implements IMlsService {
       }
     } finally {
       // Released once the write settled, not at the capture: on native the export runs in the
-      // command, so both holds have to outlast the call. A hold of the rows that threw has released
-      // its own.
+      // command, so both holds have to outlast the call (on the web the decrypt gate was reopened at
+      // the capture; releasing twice is a no-op). A hold of the rows that threw released its own.
       releaseRows();
       releaseOwed();
     }
@@ -5561,6 +5572,35 @@ export abstract class BaseMlsService implements IMlsService {
       }
     }
     return releaseAll;
+  }
+
+  /**
+   * Acknowledgements withheld for unstored rows during the episode that is open now - `null` when
+   * none is: the first withheld ack of an episode says so, the rest are counted, and the episode's
+   * end (a read that finds every row stored) says the count once ({@link noteAcksReleasedForRows}).
+   * Without it a repeat re-listed by every pull printed one line per frame per pull (review of #3851).
+   */
+  private acksWithheldForRows: number | null = null;
+
+  /** Counts acks withheld for unstored rows, saying it at the first of an episode only. */
+  private noteAcksWithheldForRows(withheld: number, rowsLeft: number): void {
+    if (this.acksWithheldForRows === null) {
+      this.acksWithheldForRows = withheld;
+      console.warn(
+        `[ACK] ${withheld} id(s) not acknowledged: ${rowsLeft} row(s) of applied frames are shown and not stored - the frames stay on the server until a checkpoint stores them. Further withheld acks are counted until then, not said one by one.`
+      );
+      return;
+    }
+    this.acksWithheldForRows += withheld;
+  }
+
+  /** Ends an episode of withheld acks, if one is open, with ONE line carrying its count. */
+  private noteAcksReleasedForRows(): void {
+    if (this.acksWithheldForRows === null) return;
+    console.info(
+      `[ACK] every row of an applied frame is stored again - ${this.acksWithheldForRows} ack(s) had been withheld meanwhile; their frames are acknowledged as the pulls list them again`
+    );
+    this.acksWithheldForRows = null;
   }
 
   /**

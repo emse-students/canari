@@ -3324,7 +3324,8 @@ is in the [backlog entry](../../backlog.d/p1-rows-before-ratchet.md).
 
 #### Rows before ratchet: the decrypt half and the ack (2026-11-19)
 
-The step above stores what the BUFFERS hold. Two windows of the same class were left (the
+The step above stores what the BUFFERS hold. Its follow-ups (a poison row told from a transient
+failure, a metric for the withheld acks) are [a backlog entry](../../backlog.d/p2-rows-before-ratchet-poison-rows-and-withheld-ack-metric.md). Two windows of the same class were left (the
 [backlog entry](../../backlog.d/p1-rows-before-ratchet.md), raised by the review of #3786), each
 milliseconds long - and the [charter](../../../principes.md)'s second principle does not count in
 milliseconds.
@@ -3342,15 +3343,21 @@ earlier** (`RowsOwedLedger`, `frontend/src/lib/mls-client/rowsOwed.ts`):
 - `persistCheckpoint` holds the ledger FIRST: from that instant no new mark is taken (a decrypt that
   has not marked waits at the gate, BEFORE it decrypts), and the hold resolves when every mark taken
   before it settled. THEN the observers' hold stores the buffers those handlers may just have filled,
-  THEN the export; the gate reopens only once the write settled (on native the export runs inside
-  the command).
+  THEN the export. The gate reopens at the export's CAPTURE where the platform has one - the web,
+  whose `save_state` runs in the synchronous part of the write's call (`checkpointCapturesAtCall`) -
+  and only once the write settled on native, where the export runs inside the command (review of
+  #3851: holding it through the web's seal and put made every decrypt wait out the whole write).
 
 **Why it cannot deadlock, and terminates without a clock.** The set of marks is closed when the hold
 is taken, and each is settled by its own handler on a path that never awaits a checkpoint: a commit
-takes no mark (it carries no row, and awaits checkpoints of its own); a system event or a call
-signal settles BEFORE its dispatch (a removal drops the group's state, which awaits a checkpoint);
-the `catch` settles FIRST (an eviction does the same); a message settles when `addMessageToChat`
-returned, a reaction when it is applied. The only things inside a mark are the decrypt and the row's
+takes no mark (it carries no row, and awaits checkpoints of its own); a call signal and every system
+event OUTSIDE an allowlist settle BEFORE their dispatch (a removal or a group deletion drops the
+group's state, which awaits a checkpoint; a notice resolves display names over the network); the
+`catch` settles FIRST (an eviction does the same); a message settles when `addMessageToChat`
+returned, a reaction when it is applied, and the system events that WRITE rows - `edit_message`,
+`delete_message`, `history_bundle` (`SYSTEM_EVENTS_OWING_THEIR_ROW`, review of #3851) - once their
+dispatch returned: their paths were read for a checkpoint and await the store only. An allowlist, so
+an event added later settles early by default; adding one means reading its path first. The only things inside a mark are the decrypt and the row's
 store, neither of which awaits a checkpoint. The checkpoint itself takes no MLS lock, so a decrypt
 waiting at the gate while its drain holds the frame's lock blocks nothing the checkpoint needs. The
 Welcome's replay of the frames it buffered (`handleWelcome`) marks each the same way.
@@ -3358,7 +3365,9 @@ Welcome's replay of the frames it buffered (`handleWelcome`) marks each the same
 **And a live-path write that FAILS is kept.** `addMessageToChat` wrote the row and only logged a
 failure, so the row was shown, not stored, and the next export went through. It now writes through
 the batch's own seam (`writeBatchRows`) and keeps a failed write in `unstoredRowWrites`, which the
-next hold retries and refuses on, exactly as a batch's.
+next hold retries and refuses on, exactly as a batch's. **A reaction whose write onto its stored row
+fails is kept too** (`applyReactionFrame`): parked as a pending mutation, which the next look writes
+onto the row, instead of a log line and a reaction gone at the next reload (review of #3851).
 
 **2. An application frame acknowledged before its row is stored.** A leader tab acknowledged an
 application frame at the drain's end - `announceAck` runs in `onDrainEnd` BEFORE `endBulkIngest`
@@ -3367,9 +3376,11 @@ frame gone from the server; only the history archive brought it back. **Now the 
 the close's store as it waits on a checkpoint** (`DrainAckHold.rowsStored`, the drain's `closed`),
 then reads what the observers left shown and not stored (`BulkIngestObserver.rowsLeftUnstored`: the
 failed writes and the batches that threw). While that is not zero, the drain's application ids are
-withheld (`[ACK] N id(s) not acknowledged: M row(s) of applied frames are shown and not stored`):
-they stay on the server, and the repeat a later pull brings is re-acknowledged under the same rule
-(`reAckHold`). An id a LANDED checkpoint already holds is acknowledged whatever is left - that
+withheld (`[ACK] N id(s) not acknowledged: M row(s) of applied frames are shown and not stored`,
+said ONCE per episode; the acks withheld after it are counted, and the first read that finds every
+row stored ends the episode with one line carrying the count - a repeat re-listed by every pull used
+to print a line per frame per pull, review of #3851): they stay on the server, and the repeat a
+later pull brings is re-acknowledged under the same rule (`reAckHold`). An id a LANDED checkpoint already holds is acknowledged whatever is left - that
 checkpoint stored every row before it exported. The count is the whole page's, not the drain's: a
 store that refuses rows withholds every application ack until a write lands, the same condition
 that already refuses every checkpoint. The ack's request now leaves after the window's close (a few
@@ -3377,17 +3388,27 @@ ms later than before), and the owed pull still chains behind it.
 
 **What it costs.** A checkpoint that meets a frame mid-handler waits for its row (`[ROWS_OWED] A
 checkpoint waits for N decrypted frame(s) to store their rows before it exports`, said only when it
-waits), and the drain's next application frame waits for the export (`console.debug`). **What it
-accepts, stated:** a row write that never settles holds every checkpoint, as a hung buffered write
-already did.
+waits), and the drain's next application frame waits for the capture (`console.debug`) - on native,
+for the whole write (~1.7 s on the phone). Two widenings, stated (review of #3851): the send counts
+a checkpoint declares durable are read BEFORE these holds, so the wait widens the window in which a
+send lands after the read - which costs one burnt generation too many at the next load, never too
+few; and a FOLLOWER tab's checkpoints are refused before any hold is taken, so it never retries its
+`unstoredRowWrites` until a reload (its acks wait for the leader's coverage anyway).
+
+**THE LIVENESS COUPLING, stated.** While a hold stands, no application frame is decrypted. So a row
+write that never settles holds every checkpoint, as a hung buffered write already did, AND that
+checkpoint's closed gate holds every inbound decrypt behind it; on native a hung checkpoint command
+does the same, while on the web the gate reopens at the capture, so a hung seal or put never stops
+the drain. No timeout, deliberately: exporting past a row not stored is the loss itself.
 
 **Pinned by** `rowsOwed.test.ts` (the gate, the wait, a release that reopens only with the last hold,
 a waiter re-reading the gate), `BaseMlsService.rowsBeforeRatchet.test.ts` (owed row, then buffered
 rows, then export; a decrypt asked during the write waits for it; a refused checkpoint reopens the
-gate), `setupMessageHandler.rowsOwed.test.ts` (marked before the decrypt and owed through the add; a
-checkpoint during the add waits; a system event settles before its dispatch; a throw settles; a
-commit takes none), `BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; a row left
-unstored withholds; a landed checkpoint acknowledges) and
+gate; on the web the decrypts resume at the capture), `setupMessageHandler.rowsOwed.test.ts` (marked
+before the decrypt and owed through the add; a checkpoint during the add waits; an event outside the
+allowlist settles before its dispatch, an edit, a deletion or a bundle after it; a throw settles; a
+commit takes none), `reactionFrame.unstoredWrite.test.ts` (a failed reaction write is kept), `BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; a row left
+unstored withholds, said once per episode; a landed checkpoint acknowledges) and
 `useMessaging.rowsBeforeRatchet.svelte.test.ts` (a failed live write is kept, refuses the hold, and
 the next stores it; the count the ack reads).
 

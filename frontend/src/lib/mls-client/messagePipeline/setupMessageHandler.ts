@@ -915,7 +915,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                   }
                   settleRow();
                 } else if (appMsg.system) {
-                  settleRow();
+                  if (!keepsRowOwed(appMsg)) settleRow();
                   // FIX 2 — Replay the system messages buffered before the Welcome
                   const event = appMsg.system.event ?? '';
                   let data: any = {};
@@ -937,6 +937,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                       ...(authorship ? { authorship } : {}),
                     });
                   }
+                  settleRow();
                 }
               }
             }
@@ -1160,6 +1161,28 @@ interface KnownGroupArgs {
   statePersister: ReturnType<typeof createMlsStatePersister>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string) => void;
+}
+
+/**
+ * THE SYSTEM EVENTS THAT KEEP THEIR ROW OWED THROUGH THEIR DISPATCH (rows before ratchet, review of
+ * #3851): each writes rows - an edit, a deletion, a history bundle's messages - and its path awaits
+ * the store and nothing else, never a checkpoint (read 2026-11-19: `applyEdit`, `applyDeletion`, the
+ * `history_bundle` branch and what they call). AN ALLOWLIST, NOT A DENYLIST: every other event
+ * settles its mark BEFORE its dispatch, because one may drop the group's state (`memberRemoved`,
+ * `groupDeleted` await a checkpoint, which waits for every owed row) or wait on the network (a
+ * notice resolves display names) - and an event added later is safe by default. Adding one here
+ * means reading its whole path for a checkpoint first.
+ */
+export const SYSTEM_EVENTS_OWING_THEIR_ROW: ReadonlySet<string> = new Set([
+  'edit_message',
+  'delete_message',
+  'history_bundle',
+]);
+
+/** Whether the decoded frame carries something that keeps its row owed until it is written. */
+function keepsRowOwed(msg: IAppMessage): boolean {
+  if (msg.text || msg.reply || msg.media || msg.reaction) return true;
+  return msg.system ? SYSTEM_EVENTS_OWING_THEIR_ROW.has(msg.system.event ?? '') : false;
 }
 
 /**
@@ -1405,9 +1428,8 @@ async function handleKnownGroup({
     // prove the message, edit, deletion or reaction to a reader that never saw the frame.
     const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
-    // NO ROW: a call signal, a system event, nothing. Settled BEFORE the dispatch - a system event
-    // may await a checkpoint (a removal drops the group's state), which waits for every owed row.
-    if (!(msg.text || msg.reply || msg.media || msg.reaction)) settleRow();
+    // NO ROW, OR A DISPATCH THAT MAY AWAIT A CHECKPOINT: settled BEFORE it ({@link keepsRowOwed}).
+    if (!keepsRowOwed(msg)) settleRow();
 
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
@@ -1500,16 +1522,22 @@ async function handleKnownGroup({
       // dispatch may still decline the event - most of them are addressed - but the dispatch itself
       // is a fact, and a fact nobody records is one the next reader has to reproduce.
       log(`[MLS] System event '${event}' from ${sender.slice(0, 8)} in ${convoKey.slice(0, 8)}…`);
-      await handleSystemEvent(event, data, {
-        ...deps,
-        convo: conversations.get(convoKey) ?? convo,
-        convoKey,
-        senderNorm: sender,
-        messageId: normalizeMessageId(msg.messageId),
-        sentAt: appMessageSentAtMs(msg.sentAt),
-        deliveryMeta,
-        ...(authorship ? { authorship } : {}),
-      });
+      try {
+        await handleSystemEvent(event, data, {
+          ...deps,
+          convo: conversations.get(convoKey) ?? convo,
+          convoKey,
+          senderNorm: sender,
+          messageId: normalizeMessageId(msg.messageId),
+          sentAt: appMessageSentAtMs(msg.sentAt),
+          deliveryMeta,
+          ...(authorship ? { authorship } : {}),
+        });
+      } finally {
+        // An event that writes rows ({@link SYSTEM_EVENTS_OWING_THEIR_ROW}) wrote them by now; any
+        // other was settled before its dispatch.
+        settleRow();
+      }
     }
 
     return true;

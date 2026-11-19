@@ -224,6 +224,43 @@ describe('a drain ack and the checkpoint that covers it', () => {
     expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['msg']);
   });
 
+  it('ROWS BEFORE RATCHET: withheld acks are said ONCE per episode, counted, and the episode end says the count', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    inner(svc).inboundApplied = 3;
+    const left = { now: 2 };
+    svc.addBulkIngestObserver(rowObserver(left));
+    const ack = (id: string, applied: number) =>
+      inner(svc).announceAck([id], {
+        applied: new Map([[id, applied]]),
+        structural: new Set(),
+        covered: () => Promise.reject(new Error('unused')),
+        rowsStored: () => Promise.resolve(),
+      });
+
+    // Three pulls re-listing withheld frames: one line, not three.
+    await ack('a', 1);
+    await ack('b', 2);
+    await ack('c', 3);
+    const withheldLines = warn.mock.calls.filter((c) => String(c[0]).includes('not acknowledged'));
+    expect(withheldLines).toHaveLength(1);
+    expect(ackMessages).not.toHaveBeenCalled();
+
+    left.now = 0;
+    await ack('a', 1);
+    const released = info.mock.calls.filter((c) => String(c[0]).includes('stored again'));
+    expect(released).toHaveLength(1);
+    expect(String(released[0][0])).toContain('3 ack(s) had been withheld');
+    expect(ackMessages).toHaveBeenCalledExactlyOnceWith(['a']);
+
+    // A new episode is said again.
+    left.now = 1;
+    await ack('b', 2);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('not acknowledged'))).toHaveLength(
+      2
+    );
+  });
+
   it('ROWS BEFORE RATCHET: an application frame a LANDED checkpoint holds is acknowledged whatever is left unstored', async () => {
     inner(svc).inboundApplied = 1;
     inner(svc).durableApplied = 1;

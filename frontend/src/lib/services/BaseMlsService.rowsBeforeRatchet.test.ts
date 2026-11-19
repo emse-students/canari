@@ -196,13 +196,43 @@ describe('BaseMlsService.persistCheckpoint - rows before ratchet', () => {
       return settleRow;
     });
     await drainMicrotasks();
-    // On native the export runs inside the command: the decrypt waits for the whole write.
+    // NATIVE (no capture at the call): on native the export runs inside the command: the decrypt waits for the whole write.
     expect(decrypting).toBe(false);
     finishWrite();
     await checkpoint;
     await drainMicrotasks();
     expect(decrypting).toBe(true);
     (await mark)();
+  });
+
+  it('THE DECRYPT HALF, ON THE WEB: the decrypts resume at the CAPTURE, never behind a slow seal and put', async () => {
+    const rowsOwed = new RowsOwedLedger();
+    let finishWrite!: () => void;
+    const ctx = makeCtx([], {
+      rowsOwed,
+      // The web's `save_state` runs in the call's synchronous part.
+      checkpointCapturesAtCall: true,
+      writeCheckpoint: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishWrite = resolve;
+          })
+      ),
+    });
+
+    const checkpoint = persist(ctx);
+    await vi.waitFor(() => expect(ctx.writeCheckpoint).toHaveBeenCalledTimes(1));
+    let decrypting = false;
+    const mark = rowsOwed.owe().then((settleRow) => {
+      decrypting = true;
+      return settleRow;
+    });
+    await drainMicrotasks();
+    // The write is still sealing: the decrypt went through all the same.
+    expect(decrypting).toBe(true);
+    (await mark)();
+    finishWrite();
+    await checkpoint;
   });
 
   it('THE DECRYPT HALF: reopens the gate when the checkpoint is refused or fails', async () => {
