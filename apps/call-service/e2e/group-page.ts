@@ -104,6 +104,8 @@ const legs = new Map<string, Leg>();
 let relay: CallSfuLeg | null = null;
 /** `sfu` mode: the sender (user id) of each forwarded track, by track id, as the leg read it. */
 const trackSender = new Map<string, string>();
+/** `sfu` mode: the element playing each forwarded track, released when the track is gone. */
+const trackAudio = new Map<string, HTMLAudioElement>();
 /** Every server frame type received, in order: what the driver prints when a run fails. */
 const frames: string[] = [];
 /** True once the driver said the call is ending: a `PeerLeft` is then expected, not a fault. */
@@ -262,12 +264,19 @@ function relayLeg(): CallSfuLeg {
         trackSender.set(track.id, peer);
         const audio = new Audio();
         audio.srcObject = remoteStream;
+        trackAudio.set(track.id, audio);
         void audio.play().catch((err) => note(`play: ${String(err)}`));
         note(`relay: ontrack ${track.kind} from ${peer}`);
       },
       onRemoteTrackGone: (peer, track) => {
         // Reported before any re-attachment of the same track, so the entry is still this peer's.
         trackSender.delete(track.id);
+        const audio = trackAudio.get(track.id);
+        if (audio) {
+          audio.pause();
+          audio.srcObject = null;
+          trackAudio.delete(track.id);
+        }
         note(`relay: ${track.kind} track of ${peer} gone`);
       },
       onConnectionState: (state) => connectionChanged('the connection to the SFU', state),

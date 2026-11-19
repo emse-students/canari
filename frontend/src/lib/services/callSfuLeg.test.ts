@@ -540,6 +540,29 @@ describe('CallSfuLeg - one connection to the relay (WP-GC4 client)', () => {
     expect(logs.some((x) => x.includes('ERROR the leg ends'))).toBe(true);
   });
 
+  it('a state or joined hook that throws neither keeps a failed leg open nor stops the offer', async () => {
+    hookOverrides = {
+      onConnectionState: () => {
+        throw new Error('no banner');
+      },
+      onJoined: () => {
+        throw new Error('no count');
+      },
+    };
+    const l = leg();
+    await l.handle({ type: 'Joined', others: 1 });
+    expect(logs.some((x) => x.includes('ERROR onJoined threw') && x.includes('no count'))).toBe(
+      true
+    );
+    expect(sent.some((f) => f.type === 'Offer')).toBe(true);
+    pc.connectionState = 'failed';
+    pc.onconnectionstatechange?.();
+    expect(logs.some((x) => x.includes('ERROR onConnectionState threw'))).toBe(true);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toBeInstanceOf(CallSfuConnectionFailedError);
+    expect(pc.closed).toBe(true);
+  });
+
   it('close is idempotent and ends the leg without a failure', async () => {
     const l = leg();
     l.close();

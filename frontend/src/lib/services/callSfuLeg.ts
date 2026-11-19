@@ -229,7 +229,12 @@ export class CallSfuLeg {
       }
       const state = pc.connectionState;
       appendLog(`${TAG} connectionState=${state}`);
-      this.hooks.onConnectionState(state);
+      // A throwing screen hook must not keep a dead connection's leg open.
+      try {
+        this.hooks.onConnectionState(state);
+      } catch (err) {
+        appendLog(`${TAG} ERROR onConnectionState threw for ${state}: ${String(err)}`);
+      }
       if (state === 'failed') this.fail(new CallSfuConnectionFailedError());
     };
     try {
@@ -387,7 +392,12 @@ export class CallSfuLeg {
         this.joined = true;
         const others = typeof frame.others === 'number' ? frame.others : null;
         appendLog(`${TAG} joined the relay (others=${others ?? 'unstated'})`);
-        this.hooks.onJoined(others);
+        // A throwing screen hook must not stop the leg from offering.
+        try {
+          this.hooks.onJoined(others);
+        } catch (err) {
+          appendLog(`${TAG} ERROR onJoined threw: ${String(err)}`);
+        }
         await this.offer(pc, 'after Joined');
         return;
       }
