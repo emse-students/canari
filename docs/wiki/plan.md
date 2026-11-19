@@ -46,6 +46,7 @@ earliest version, as a checklist.
 - [Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
 - [Campus trends and the daily cap, WP-8, WP-10 and the quieter batch: the iPhone's last rows, owed on the phone (a reading moved to 1.7.1)](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [Rotation on the video, live and camera screens, owed on both phones (a reading deferred to 1.7.1)](backlog.d/rotation-on-video-and-camera-screens.md)
+- [The owner's decisions of 2026-11-19](backlog.d/owner-decisions-of-2026-11-19.md)
 
 **P2 - correctness**
 
@@ -116,6 +117,16 @@ earliest version, as a checklist.
 - [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 - [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
+
+## 1.7.2
+
+**Chantiers, decisions and questions (no severity)**
+
+- [Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them](backlog.d/admin-view-feeds-as-a-member.md)
+
+## 1.7.3
+
+_No entry planned beyond its readings._
 
 ## 1.8.0
 
