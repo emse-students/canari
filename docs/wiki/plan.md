@@ -79,7 +79,6 @@ earliest version, as a checklist.
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - the iPhone reading of the top inset's one owner](backlog.d/p2-ios-top-inset-counted-twice-reading.md)
 
 **P3 - hygiene**
 
@@ -109,7 +108,6 @@ earliest version, as a checklist.
 
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
-- [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
 ## 1.8.0
@@ -161,6 +159,7 @@ earliest version, as a checklist.
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
+- [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
 
 **P3 - hygiene**
 

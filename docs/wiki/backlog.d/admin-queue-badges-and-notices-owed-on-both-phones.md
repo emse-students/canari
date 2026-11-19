@@ -28,3 +28,5 @@ global admin of dev, a test account filing the items:
    its moderation badge rises without a reload; a report outside its spaces moves nothing on it.
 5. A BDE moderator account (no global admin) sees the moderation badge for its own spaces' reports
    only, no push, and no corrections badge.
+
+_2026-11-19, sitting [S10](../device-verification.md#the-phone-readings-of-2026-11-19-s10-171-alpha3) on `1.7.1-alpha.3`: **steps 1, 2 and 3 PASSED; steps 4 and 5 are owed.** Steps 4 and 5 need a test account that moderates one space and is not a global admin. None of the four has that role. The reading needs one granted on dev for its duration. Details are in the sitting. The page open on `/admin/profile-corrections` does not take in a new correction until "Rafraîchir" is pressed (the badges do). Pushes already on a lock screen stay there, as [admin](../frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18) states._

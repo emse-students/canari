@@ -39,3 +39,5 @@ The three conditions, in order:
    it by itself (the blueprint still names the implicit flow). The flow and stage objects may stay, inert.
 
 **The lead lifts the hold** once the three hold, and tells the user (decided 2026-10-18).
+
+_2026-11-19, sitting [S10](../device-verification.md#the-phone-readings-of-2026-11-19-s10-171-alpha3): **the Mi half was not taken again.** None of the four test accounts is known to have the current terms unaccepted. The identity provider's `cgu_version` could not be read in this sitting (the read was refused). Clearing it on an account would be an identity-provider write, outside a reading. The Mi half still needs an account whose state is read first._
