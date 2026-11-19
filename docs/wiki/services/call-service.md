@@ -316,7 +316,7 @@ and, in `tests/p2p_signalling.rs`, `an_sfu_room_seats_up_to_its_cap_and_refuses_
 three seated), `an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked` and
 `a_token_signing_a_mode_refuses_a_join_in_the_other`; end to end by the `sfu-group` scenario below.
 
-**What chooses it** is `platform_config.call_relay` (`none` | `call-service`, core migration 023,
+**What chooses it** is `platform_config.call_relay` (`none` | `call-service` | `cloudflare`, core migrations 023 and 026 - `cloudflare` never reaches this service: Cloudflare Realtime carries the call through chat-delivery's [proxy](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16), and its `mode: cloudflare` token cannot seat here;
 `/admin/platform`, published as `calls.relay`), read by chat-delivery at a group call's `initiate`
 ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13)). Production stays `none`;
 the dev seed writes `call-service`.

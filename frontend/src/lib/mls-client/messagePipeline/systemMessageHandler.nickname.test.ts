@@ -515,6 +515,28 @@ describe('handleSystemEvent - the answer to OUR register ask', () => {
     expect(warn.mock.calls.join(' ')).toContain('every other device (1) declined');
   });
 
+  it('a WITHHELD decline ends the asking at info, naming it - an unvouched device is no defect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log');
+    const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);
+    const seal = await ask(true);
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, sealed: await seal({ messages: [], register: 'withheld' }) },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: { ...RESPONDER.mlsService, getGroupMemberIdentities: tree },
+      }) as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(false);
+    expect(registerNeverTaken('me', 'g1')).toBe(true);
+    expect(log.mock.calls.join(' ')).toContain('withholding history from this unvouched device');
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it('a decline answering a NON-register ask rules nobody out', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);
@@ -587,18 +609,23 @@ describe('handleSystemEvent - the answer to OUR register ask', () => {
     expect(isRegisterOwed('me', 'g1')).toBe(true);
   });
 
-  it('an UNSEALED answer claiming to answer a register ask is taken as an ordinary answer, at error', async () => {
+  it('an UNSEALED answer claiming to answer a register ask is REFUSED, at error', async () => {
+    // Every build at the floor (`1.7.0`) seals its answer to a keyed ask, so one in clear is refused
+    // whole - its register and its messages alike (docs/wiki/legacy-compatibility.md history).
     await ask(true);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ctx = makeCtx(RESPONDER);
     await handleSystemEvent(
       'history_bundle',
       { to: TO_ME, requestId: REQ, register: true, messages: [], nicknames: NICKNAMES },
-      makeCtx(RESPONDER) as any
+      ctx as any
     );
 
     expect(nicknameEntry('g1', 'bob')).toBeNull();
     expect(isRegisterOwed('me', 'g1')).toBe(true);
-    expect(error.mock.calls.join(' ')).toContain('claims to answer a register ask');
+    expect(ctx.batchAddMessages).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('REFUSED an unsealed history_bundle');
+    error.mockRestore();
   });
 
   it('takes NOTHING but the register from it - no floor, no read marks, whatever it carries', async () => {

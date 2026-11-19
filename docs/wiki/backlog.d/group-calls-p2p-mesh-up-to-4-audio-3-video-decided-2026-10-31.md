@@ -98,9 +98,12 @@ Each is one pull request or more; none is built by the D3 change.
    2026-11-13**: `CLOUDFLARE_SFU_APP_ID` / `CLOUDFLARE_SFU_APP_SECRET` in the `production` and
    `development` environments, wired OPTIONAL into chat-delivery-service by the probe's PR (dev's
    deploy and the probe read `DEV_CLOUDFLARE_SFU_*`, the ONLY pair `development` keeps - provisioned
-   2026-11-13 from a new dev app that replaced the first - until the secret-name unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). Left: the
-   backend proxy of the sessions/tracks API in chat-delivery-service (its rows go `warn` the day it
-   reads them), and the client's SFU leg on it.
+   2026-11-13 from a new dev app that replaced the first - until the secret-name unification, [MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets)). **The
+   backend proxy BUILT 2026-11-16** (`/api/calls/sfu/*`, `call_relay = cloudflare`, core migration
+   026, the pair's rows `warn`:
+   [calls](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)). Left:
+   the client's SFU leg on it (WP-GC4), the scheduled probe run through the proxy, and a five-way
+   call on dev with `call_relay = cloudflare`.
 4. **WP-GC4 - the relay setting (D2)**: **server half BUILT 2026-11-13** -
    `platform_config.call_relay` (`none` | `call-service`, core migration 023, `none` in production
    and on dev until the client's SFU leg ships), read at a group call's `initiate`; with
@@ -109,9 +112,10 @@ Each is one pull request or more; none is built by the D3 change.
    late joiner's renegotiation; a 5-party encrypted call through the SFU in CI
    ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13),
    [call-service](../services/call-service.md#the-relay-for-a-group-call-wp-gc4-2026-11-13)).
-   `cloudflare` joins the setting with WP-GC3. **Client leg BUILT as a module 2026-11-16**
-   (`services/callSfuLeg.ts`, `roomTokenMode`, the SFU `Joined { others }`; the CI's relayed call
-   now runs through it - [calls](../frontend/modules/calls.md#the-apps-sfu-leg-wp-gc4-client-2026-11-16)).
+   `cloudflare` joined the setting with WP-GC3 (2026-11-16). **Client leg BUILT as a module 2026-11-16**
+   (`services/callSfuLeg.ts`, `roomTokenMode` - a signed `cloudflare` mode is refused as
+   `RoomTokenModeUnsupportedError`; the SFU `Joined { others }`; the CI's relayed call now runs through
+   it - [calls](../frontend/modules/calls.md#the-apps-sfu-leg-wp-gc4-client-2026-11-16)).
    Owed: its `CallService` wiring once WP-GC6 merges, then `groupCallVersion` 2. A renegotiation scheduled while the peer holds a remote offer is retried
    once it is stable again (#3497); a reading under joins faster than a round trip is still owed.
 5. **WP-GC5 - the switch (D1)**: on the participant past the cap, everyone opens the SFU leg,
