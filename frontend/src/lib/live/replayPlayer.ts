@@ -794,6 +794,7 @@ export class ReplayPlayer {
     return (
       this.appended === 0 &&
       this.nextFrom === null &&
+      this.segments.length > 0 &&
       this.segments.every((x) => this.skippedIdx.has(x.index))
     );
   }
