@@ -125,6 +125,13 @@ vulnerabilities:
     paths:
       - "usr/local/bin/gosu"
     statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
+  # CVE-2026-97054 (net/http MaxBytesReader, HTTP/1 servers), 2026-11-19: read from the binaries of
+  # both pinned digests and of the newest 18-alpine (gosu 1.20, still go1.24.6) - gosu links no
+  # net, net/http or crypto/tls package, and MaxBytesReader does not appear in it.
+  - id: CVE-2026-97054
+    paths:
+      - "usr/local/bin/gosu"
+    statement: "Go stdlib in gosu, which only drops privileges at container start and exec()s postgres; the vulnerable code never runs. Upstream postgres image."
 
   # --- npm, bundled in node:24-alpine (the frontend-ssr base) ------------------------------------
   # The image runs `node index.js` and nothing else: npm is never invoked in it, so its own
