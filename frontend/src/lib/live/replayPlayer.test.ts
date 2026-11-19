@@ -926,6 +926,29 @@ describe('ReplayPlayer', () => {
     });
   });
 
+  describe('trim never drops media the walk across holes has passed', () => {
+    it('R12a: after a 100 s pause hole, no segment is downloaded more than once over 30 s of timeupdates', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 100;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 16; t += 0.5) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 10; i++) await flush();
+      }
+      const counts = new Map<string, number>();
+      for (const a of buffer().appends)
+        if (a.startsWith('m')) counts.set(a, (counts.get(a) ?? 0) + 1);
+      expect(Math.max(...counts.values())).toBeLessThanOrEqual(1);
+    });
+  });
+
   describe('the latest seek is the single source of truth', () => {
     /** Holds every segment fetch named in `held` until the test resolves (or the signal aborts) it. */
     function holdFetches(held: Set<string>) {
