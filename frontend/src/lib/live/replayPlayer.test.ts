@@ -934,6 +934,33 @@ describe('ReplayPlayer', () => {
       expect(landed).toBeCloseTo(98, 1); // segment 49
     });
 
+    it('R8c: a replay in which no segment gives media stops on gone, never a black picture', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`));
+      const p = makePlayer();
+      p.start();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+      void p;
+    });
+
+    it('the fill stops walking a 404 tail after a bounded number of requests, and does not resume on each timeupdate', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(300)(from));
+      skip404(Array.from({ length: 290 }, (_, i) => `seg-${10 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const missingRequests = () =>
+        fetchSegment.mock.calls.filter((c) => Number(String(c[1]).slice(4)) >= 10).length;
+      for (const t of [8, 14, 18, 19, 19.5]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 20; i++) await flush();
+      }
+      expect(missingRequests()).toBeLessThanOrEqual(40); // 30 and the page of a retry, never ~290
+    });
+
     it('a long tail of 404s is walked a bounded number of requests, then the seek lands backward', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
       skip404(Array.from({ length: 190 }, (_, i) => `seg-${10 + i}`));

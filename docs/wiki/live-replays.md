@@ -667,6 +667,12 @@ value, the server's:
   more than a seek should wait for. After the forward bound the walk goes backward; after the backward
   bound it PROBES back at a doubling stride (k - 30, k - 60, k - 120, ... down to segment 0), one
   segment each, and the first probe that finds media is bisected against the previous missing probe: the
-  answer is the LAST existing segment before the gap, in O(log n) requests (about 75 for a purge of 900
+  answer is the last existing segment before the PROBED gap (survivors scattered inside the run can make it land earlier), in O(log n) requests (about 75 for a purge of 900
   segments), never arbitrary buffered media. Only a replay with no media at all is answered with
   nothing.
+- **The fill's own walk** is bounded the same way: past the playhead, `REPLAY_MAX_MISSING_WALK` consecutive
+  requested 404s end the listing for the fill (a `fillLimit` position, logged at warn), so the traffic after
+  a landing is bounded too, not only the seek's wait. A seek that lands beyond the limit clears it.
+- **No media at all.** A replay in which no segment ever gives media (every one a 404) stops on `gone`,
+  the neutral "plus disponible" screen, as `replayFailureOutcome` reads a missing replay - never a black
+  picture with a spinner and a seek stuck in `seeking`.

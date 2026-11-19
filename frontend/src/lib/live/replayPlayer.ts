@@ -317,6 +317,8 @@ export class ReplayPlayer {
   private fillQueued = false;
   /** A seek is waiting its turn: the running fill yields so the seek is not made to wait for 12 s of media. */
   private seekPending = false;
+  /** A list position the fill does not go past: set after a long purge, cleared by a seek beyond it. */
+  private fillLimit: number | null = null;
   /** The id of the LATEST seek: an older one that completes finds it changed and moves nothing. */
   private seekId = 0;
   /** Cancels the downloads of the latest seek when the next one supersedes it. */
@@ -500,6 +502,7 @@ export class ReplayPlayer {
     this.placed = new Map();
     this.placedEnd = new Map();
     this.skippedIdx = new Set();
+    this.fillLimit = null;
     this.lastInit = null;
     this.retryAttempt = 0;
     this.openFailures = 0;
@@ -692,13 +695,18 @@ export class ReplayPlayer {
    */
   private async fill(gen: number): Promise<void> {
     this.cursor = Math.min(this.cursor, this.firstGapAhead());
+    let missing = 0;
     while (this.alive(gen) && !this.seekPending) {
+      if (this.fillLimit !== null && this.cursor >= this.fillLimit) {
+        this.endOfFill(gen);
+        return;
+      }
       if (this.cursor >= this.segments.length) {
         if (this.nextFrom !== null) {
           await this.loadPage(gen);
           continue;
         }
-        this.declareEnd(gen);
+        this.endOfFill(gen);
         return;
       }
       if (this.mediaAhead() >= REPLAY_AHEAD_S) return;
@@ -706,6 +714,15 @@ export class ReplayPlayer {
       this.cursor++;
       if (this.isBuffered(s.index) || this.skippedIdx.has(s.index)) continue;
       await this.take(gen, s);
+      // The fill's own walk over a purge is bounded like a seek's: past the playhead, this many
+      // requested 404s in a row end the listing for the fill (the traffic bound, not only the wait).
+      missing = this.skippedIdx.has(s.index) ? missing + 1 : 0;
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing at position ${this.cursor} - the fill stops listing there`
+        );
+        this.fillLimit = this.cursor;
+      }
     }
   }
 
@@ -744,6 +761,19 @@ export class ReplayPlayer {
       if (!held) return k;
     }
     return this.segments.length;
+  }
+
+  /**
+   * The fill has nothing more to take. A replay in which NO segment ever gave media has no end to show
+   * and nothing to play: it stops on `gone` (the neutral "plus disponible" screen), never on a black
+   * picture with a spinner. Otherwise the end of the stream is declared.
+   */
+  private endOfFill(gen: number): void {
+    if (this.appended === 0 && this.buffer && this.buffer.buffered.length === 0) {
+      console.warn(`[LIVE_REPLAY] ${this.liveId}: no segment of the replay gave media - gone`);
+      throw new StopOn({ kind: 'gone' });
+    }
+    this.declareEnd(gen);
   }
 
   /** The last segment is in: the stream ends, and the engine's `ended` closes the picture. Once. */
@@ -888,10 +918,14 @@ export class ReplayPlayer {
       landing = start !== undefined && this.rangeOf(start) ? start : undefined;
     }
     if (landing !== undefined) this.video.currentTime = landing;
-    else
+    else {
       console.error(
         `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media at all to land on`
       );
+      if (this.appended === 0) throw new StopOn({ kind: 'gone' });
+    }
+    // A landing beyond the fill's limit means media exists there: the fill may go on from it.
+    if (this.fillLimit !== null && this.cursor > this.fillLimit) this.fillLimit = null;
     this.ended = false;
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
@@ -969,7 +1003,7 @@ export class ReplayPlayer {
    * A purge too long to walk (the segments from `k + 1` up are missing): probe back at a doubling
    * stride (k - 30, k - 60, k - 120, ... down to 0), one segment each; the first probe that finds media
    * has the end of the gap between it and the previous (missing) probe, found by bisection. O(log n)
-   * requests, and the landing is the LAST existing segment before the gap - near the target, never
+   * requests, and the landing is the last existing segment before the PROBED gap - near the target, never
    * arbitrary buffered media. `undefined` when not even segment 0 exists.
    */
   private async probeBackward(
