@@ -883,6 +883,57 @@ describe('ReplayPlayer', () => {
       expect(states.some((s) => s.kind === 'unavailable')).toBe(false);
     });
 
+    /** Seeks to `seconds` and answers where the playhead landed and how many requests it waited on. */
+    async function seekAndCount(p: ReplayPlayer, seconds: number) {
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const before = fetchSegment.mock.calls.length;
+      let current = seconds;
+      let requests = -1;
+      Object.defineProperty(video, 'currentTime', {
+        get: () => current,
+        set: (t: number) => {
+          current = t;
+          requests = fetchSegment.mock.calls.length - before;
+        },
+      });
+      p.noteSeeking();
+      for (let i = 0; i < 40; i++) await flush();
+      return { landed: current, requests };
+    }
+
+    it('R7b: a purge of 900 segments lands on the last existing segment before it, in O(log n) requests', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(1000)(from));
+      skip404(Array.from({ length: 900 }, (_, i) => `seg-${100 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed, requests } = await seekAndCount(p, 1000); // segment 500, in the purge
+      expect(landed).toBeCloseTo(198, 1); // segment 99, the last that exists
+      expect(requests).toBeGreaterThan(0);
+      expect(requests).toBeLessThanOrEqual(100);
+    });
+
+    it('R7d: a purge from segment 60 on lands on segment 59, never on the start of the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 140 }, (_, i) => `seg-${60 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed, requests } = await seekAndCount(p, 300); // segment 150
+      expect(landed).toBeCloseTo(118, 1); // segment 59
+      expect(requests).toBeLessThanOrEqual(100);
+    });
+
+    it('R7e: a purge from segment 50 lands on segment 49', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 150 }, (_, i) => `seg-${50 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed } = await seekAndCount(p, 300);
+      expect(landed).toBeCloseTo(98, 1); // segment 49
+    });
+
     it('a long tail of 404s is walked a bounded number of requests, then the seek lands backward', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
       skip404(Array.from({ length: 190 }, (_, i) => `seg-${10 + i}`));

@@ -230,7 +230,7 @@ export const REPLAY_BEHIND_S = LIVE_PLAYER_KEEP_BEHIND_MS / 1000;
 export const REPLAY_FAR_AHEAD_S = 60;
 /**
  * How many segments in a row a seek's landing walk may find missing (404, skipped, no media) before it
- * gives up on that direction: about a minute of replay at 2 s a segment. A run of deleted segments
+ * gives up on that direction: about 45 s of replay at 1.5 s a segment. A run of deleted segments
  * longer than that is a purge, not a pause (a pause is a hole in TIME, kept by the segment list), so
  * the rest of the listing is the end of the walk for this seek. Bounds the requests a seek makes
  * waiting on the server (901 for a long tail of 404s without it).
@@ -929,10 +929,11 @@ export class ReplayPlayer {
         if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
       }
       if (j >= this.segments.length) return undefined;
+      const costs = this.costsARequest(this.segments[j].index);
       const start = await this.landOn(gen, this.segments[j], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: j };
-      missing++;
+      if (costs) missing++;
     }
   }
 
@@ -945,23 +946,63 @@ export class ReplayPlayer {
     let missing = 0;
     for (let k = from; k >= 0; k--) {
       if (missing >= REPLAY_MAX_MISSING_WALK) {
-        // Bounded like the forward walk; the answer then is the nearest media the buffer holds, so
-        // the seek is still answered.
         console.warn(
-          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing before position ${from} - the walk back ends`
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing before position ${from} - probing further back`
         );
-        for (let h = k; h >= 0; h--) {
-          const held = this.bufferedStart(this.segments[h].index);
-          if (held !== undefined) return { start: held, pos: h };
-        }
-        return undefined;
+        return this.probeBackward(gen, k, ticket);
       }
+      const costs = this.costsARequest(this.segments[k].index);
       const start = await this.landOn(gen, this.segments[k], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: k };
-      missing++;
+      if (costs) missing++;
     }
     return undefined;
+  }
+
+  /** Whether answering for segment `index` takes a request: not held, not known skipped. */
+  private costsARequest(index: number): boolean {
+    return this.bufferedStart(index) === undefined && !this.skippedIdx.has(index);
+  }
+
+  /**
+   * A purge too long to walk (the segments from `k + 1` up are missing): probe back at a doubling
+   * stride (k - 30, k - 60, k - 120, ... down to 0), one segment each; the first probe that finds media
+   * has the end of the gap between it and the previous (missing) probe, found by bisection. O(log n)
+   * requests, and the landing is the LAST existing segment before the gap - near the target, never
+   * arbitrary buffered media. `undefined` when not even segment 0 exists.
+   */
+  private async probeBackward(
+    gen: number,
+    k: number,
+    ticket: SeekTicket
+  ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    let hi = k + 1; // known missing
+    let stride = REPLAY_MAX_MISSING_WALK;
+    for (;;) {
+      const p = Math.max(0, k - stride);
+      const found = await this.landOn(gen, this.segments[p], ticket);
+      if (found === 'stale') return 'stale';
+      if (found !== undefined) {
+        let lo = p;
+        let loStart = found;
+        while (hi - lo > 1) {
+          const mid = (lo + hi) >> 1;
+          const at = await this.landOn(gen, this.segments[mid], ticket);
+          if (at === 'stale') return 'stale';
+          if (at !== undefined) {
+            lo = mid;
+            loStart = at;
+          } else {
+            hi = mid;
+          }
+        }
+        return { start: loStart, pos: lo };
+      }
+      if (p === 0) return undefined;
+      hi = p;
+      stride *= 2;
+    }
   }
 
   /** Takes `segment` and answers where it begins (fresh or already held), undefined when it gave none. */

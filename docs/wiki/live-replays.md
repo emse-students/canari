@@ -660,8 +660,13 @@ value, the server's:
   cursor. Pinned with a mock that answers it immediately, behind a step bound so the suite cannot hang.
 - **The landing walk.** A seek whose target is in a run of missing segments (404) used to walk it one
   request per segment while the playhead waited (901 requests for a long tail). The walk forward and the
-  walk backward each stop after `REPLAY_MAX_MISSING_WALK` (30, about a minute of replay at 2 s a segment)
-  consecutive missing segments. Why 30: a pause or a camera flip is a hole in TIME, which the segment list
-  keeps and `knownHoles` crosses without a request; a run of DELETED segments is a purge, and a minute of
-  it is already more than a seek should wait for. After the forward bound the walk goes backward; after the
-  backward bound the answer is the nearest media the buffer holds, so the seek is still answered.
+  walk backward each stop after `REPLAY_MAX_MISSING_WALK` (30, about 45 s of replay at 1.5 s a segment)
+  consecutive segments that cost a request (a segment already known as skipped is free and not
+  counted). Why 30: a pause or a camera flip is a hole in TIME, which the segment list keeps and
+  `knownHoles` crosses without a request; a run of DELETED segments is a purge, and 45 s of it is already
+  more than a seek should wait for. After the forward bound the walk goes backward; after the backward
+  bound it PROBES back at a doubling stride (k - 30, k - 60, k - 120, ... down to segment 0), one
+  segment each, and the first probe that finds media is bisected against the previous missing probe: the
+  answer is the LAST existing segment before the gap, in O(log n) requests (about 75 for a purge of 900
+  segments), never arbitrary buffered media. Only a replay with no media at all is answered with
+  nothing.
