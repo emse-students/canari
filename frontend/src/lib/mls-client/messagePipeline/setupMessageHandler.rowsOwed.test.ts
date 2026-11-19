@@ -16,11 +16,14 @@ vi.mock('$lib/utils/hex', () => ({
 const seen = vi.hoisted(() => ({
   owedAtSystemDispatch: -1 as number,
   owedCount: (): number => -1,
+  /** The context the last system event was dispatched with - its row writers, read by a test. */
+  systemCtx: null as null | Record<string, unknown>,
 }));
 vi.mock('./systemMessageHandler', async (original) => ({
   ...(await original<typeof import('./systemMessageHandler')>()),
-  handleSystemEvent: vi.fn(async () => {
+  handleSystemEvent: vi.fn(async (_event: string, _data: unknown, ctx: Record<string, unknown>) => {
     seen.owedAtSystemDispatch = seen.owedCount();
+    seen.systemCtx = ctx;
   }),
 }));
 
@@ -189,6 +192,36 @@ describe('an application frame owes its row from its decrypt to its write', () =
     );
   });
 
+  it('a system event writes its rows - a notice, a history bundle restored - stamped with ITS frame id', async () => {
+    const { d } = deps(ledger, app(mkSystem('history_bundle', '{}')));
+    const batchAddMessages = vi.fn().mockResolvedValue(undefined);
+    const withBatch = { ...d, batchAddMessages };
+
+    await deliver(withBatch);
+
+    const ctx = seen.systemCtx as {
+      addMessageToChat: (...a: unknown[]) => Promise<void>;
+      batchAddMessages: (...a: unknown[]) => Promise<void>;
+    };
+    await ctx.batchAddMessages(
+      [{ senderId: 'p', content: 'restored', messageId: 'r1' }],
+      groupId,
+      'restore'
+    );
+    await ctx.addMessageToChat('system', 'a notice', groupId, { messageId: 'n1' });
+    expect(batchAddMessages).toHaveBeenCalledWith(
+      [expect.objectContaining({ messageId: 'r1', frameId: 'q1' })],
+      groupId,
+      'restore'
+    );
+    expect(d.addMessageToChat).toHaveBeenCalledWith(
+      'system',
+      'a notice',
+      groupId,
+      expect.objectContaining({ frameId: 'q1' })
+    );
+  });
+
   it.each(['some_event', 'memberRemoved', 'groupDeleted', 'memberAdded', 'history_bundle'])(
     'a system event outside the allowlist (%s): settled BEFORE its dispatch, which may await a checkpoint',
     async (event) => {
@@ -328,7 +361,7 @@ describe("the Welcome's replay of the frames buffered before it owes each row th
     setupMessageHandler(d as never);
     const onMsg = (mlsService as never as { onMessage: { mock: { calls: unknown[][] } } }).onMessage
       .mock.calls[0][0] as (...args: unknown[]) => Promise<boolean>;
-    return { onMsg, order, mlsService };
+    return { onMsg, order, mlsService, addMessageToChat: d.addMessageToChat };
   }
 
   it('a buffered message: marked right before its replayed decrypt, owed through its add, settled after', async () => {
@@ -350,6 +383,23 @@ describe("the Welcome's replay of the frames buffered before it owes each row th
 
     expect(order).toEqual(['owed', 'decrypt (owed=1)', 'add (owed=1)']);
     expect(ledger.owedCount).toBe(0);
+  });
+
+  it("a buffered message's replayed row carries ITS frame id, so a failed write withholds that frame", async () => {
+    const { onMsg, addMessageToChat } = welcomeWorld(mkText('hello'));
+
+    await onMsg('Peer-User', new Uint8Array([7, ++nextFrame]), groupId, false, undefined, false, {
+      ...LIVE,
+      queuedMessageId: 'q-buffered',
+    });
+    await onMsg('Peer-User', new Uint8Array([8, ++nextFrame]), groupId, true, undefined, false);
+
+    expect(addMessageToChat).toHaveBeenCalledWith(
+      'peer-user',
+      expect.any(String),
+      groupId,
+      expect.objectContaining({ frameId: 'q-buffered' })
+    );
   });
 
   it('a buffered system event outside the allowlist: settled BEFORE its replayed dispatch', async () => {

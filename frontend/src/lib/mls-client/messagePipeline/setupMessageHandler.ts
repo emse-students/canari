@@ -890,12 +890,18 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                 !refusesAddressedNonAnswer(appMsg, msg.deliveryMeta, joinedGroupId, msg.sender)
               ) {
                 const envelope = appMsgToEnvelope(appMsg);
+                // Every row this replayed frame writes carries its queued id: a write that fails
+                // withholds THIS frame's ack (`framedRowWriters`, second review of #3851).
+                const writers = framedRowWriters(
+                  { addMessageToChat, batchAddMessages },
+                  msg.deliveryMeta?.queuedMessageId
+                );
                 if (envelope) {
-                  if (batchAddMessages) {
+                  if (writers.batchAddMessages) {
                     // ARRIVALS, not a restore: these frames reached this device over the wire and
                     // were held only because the Welcome had not landed yet. Nobody has been told
                     // about them, so the notification is owed.
-                    await batchAddMessages(
+                    await writers.batchAddMessages(
                       [
                         {
                           senderId: msg.sender,
@@ -908,7 +914,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                       'arrival'
                     );
                   } else {
-                    await addMessageToChat(msg.sender, envelope.content, joinedGroupId, {
+                    await writers.addMessageToChat(msg.sender, envelope.content, joinedGroupId, {
                       ...envelope.options,
                       ...(authorship ? { authorship } : {}),
                     });
@@ -928,6 +934,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                   if (convo) {
                     await handleSystemEvent(event, data, {
                       ...deps,
+                      ...writers,
                       convo,
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
@@ -1191,11 +1198,43 @@ export const SYSTEM_EVENTS_OWING_THEIR_ROW: ReadonlySet<string> = new Set([
  * one (review of #3851: it re-added a healthy group and acknowledged the frame, so the message was
  * lost). The original error is its `cause`.
  */
-export class InboundDispatchError extends Error {
+class InboundDispatchError extends Error {
   constructor(cause: unknown) {
     super(`the dispatch of a decrypted frame threw: ${String(cause)}`, { cause });
     this.name = 'InboundDispatchError';
   }
+}
+
+/**
+ * THE ROW WRITERS OF ONE DECRYPTED FRAME, each row stamped with the frame's queued id unless the
+ * caller named one (rows before ratchet, second review of #3851): every row that frame's dispatch
+ * writes - a message, a notice a system event draws, a history bundle's restored messages - then
+ * withholds THAT frame's ack while it stands shown and not stored (`framesLeftUnstored`). Wrapping the
+ * writers once, where the frame is known, reaches every branch of every dispatch without each one
+ * having to carry the id; a frame with no queue id is handed the writers as they are.
+ */
+function framedRowWriters(
+  deps: Pick<MessageHandlerDeps, 'addMessageToChat' | 'batchAddMessages'>,
+  frameId: string | undefined
+): Pick<MessageHandlerDeps, 'addMessageToChat' | 'batchAddMessages'> {
+  if (!frameId) {
+    return { addMessageToChat: deps.addMessageToChat, batchAddMessages: deps.batchAddMessages };
+  }
+  const batch = deps.batchAddMessages;
+  return {
+    addMessageToChat: (senderId, content, contactName, options) =>
+      deps.addMessageToChat(senderId, content, contactName, { frameId, ...options }),
+    ...(batch
+      ? {
+          batchAddMessages: (messages, contactName, origin) =>
+            batch(
+              messages.map((message) => ({ frameId, ...message })),
+              contactName,
+              origin
+            ),
+        }
+      : {}),
+  };
 }
 
 /** Whether the decoded frame carries something that keeps its row owed until it is written. */
@@ -1552,6 +1591,9 @@ async function handleKnownGroup({
         try {
           await handleSystemEvent(event, data, {
             ...deps,
+            // Every row the event writes - a notice, a history bundle's restored messages - carries
+            // this frame's queued id, so a failed write withholds this frame's ack.
+            ...framedRowWriters(deps, deliveryMeta?.queuedMessageId),
             convo: conversations.get(convoKey) ?? convo,
             convoKey,
             senderNorm: sender,
@@ -1576,8 +1618,10 @@ async function handleKnownGroup({
     // eviction drops the group's state), which would wait for this very mark.
     settleRow();
     // THE FRAME DECRYPTED, ITS DISPATCH THREW (`addMessageToChat`, a reaction, a system event): not a
-    // decrypt failure, so no re-add - the group is healthy - and NO ACK: the frame stays on the
-    // server, the one copy outside memory, for as long as its spent generation is not on disk.
+    // decrypt failure, so no re-add - the group is healthy - and NO ACK. The frame's generation is
+    // spent, so the server's copy cannot be decrypted again once a checkpoint lands: a MESSAGE whose
+    // add threw is therefore KEPT by the messaging layer itself (`useMessaging.addMessageToChat`,
+    // with its `frameId`) - the next checkpoint's hold writes it or is refused while it cannot.
     // Said at ERROR: nothing on this path should throw, and what did is named.
     if (e instanceof InboundDispatchError) {
       console.error(

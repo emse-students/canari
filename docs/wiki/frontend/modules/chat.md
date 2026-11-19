@@ -3445,14 +3445,19 @@ gate; on the web the decrypts resume at the capture), `setupMessageHandler.rowsO
 before the decrypt and owed through the add; the frame id reaches the row; a checkpoint during the
 add waits; an event outside the allowlist - a history bundle included - settles before its dispatch,
 an edit or a deletion after it; a decrypt throw settles; a dispatch throw settles, is NOT acknowledged
-and asks no re-add; a commit takes none; the Welcome's replay marks each buffered frame the same way),
+and asks no re-add; a commit takes none; the Welcome's replay marks each buffered frame the same way, and its replayed row carries that
+frame's id; a system event's writers stamp the frame id),
 `reactionFrame.unstoredWrite.test.ts` (a failed reaction write is kept),
+`systemMessageHandler.unstoredWrite.test.ts` (a failed edit or tombstone write is parked),
 `BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; only the frame whose row is
 unstored is withheld, said once per episode; an observer that cannot answer withholds all; a landed
 checkpoint acknowledges), `useMessaging.rowsBeforeRatchet.svelte.test.ts` (a failed live write is
 kept, refuses the hold, and the next stores it; the frames the ack reads, per frame; a poison row is
-dropped, alone or isolated in a batch; both upgrade writes are kept on failure),
-`rowWriteFailure.test.ts` (the classes, never a message) and `tabMessageSync.test.ts` (a refused post
+dropped, alone or isolated in a batch, with its metric; a bare `DataError` and a conversation-row
+`DataCloneError` are transient; a thrown inbound add is kept and stored by the next hold; a batch-path
+row withholds its own frame; both upgrade writes are kept on failure),
+`rowWriteFailure.test.ts` (the classes, never a message; the store raises `RowRefusedError` at the
+refused row and lands nothing of its write) and `tabMessageSync.test.ts` (a refused post
 never throws into its caller).
 
 #### A poison row is dropped, not kept (2026-11-19)
@@ -3463,13 +3468,20 @@ right for a failure a retry can pass (a full disk, an aborted or inactive transa
 under a reload) and wrong for a row the store refuses for WHAT IT IS: such a row fails at every retry
 and after every reload, so it stalled the device for good.
 
-**Classified at the throw, by type** (`classifyRowWriteFailure`, `frontend/src/lib/db/rowWriteFailure.ts`):
-a `DOMException` named `DataError` (a key the store cannot take) or `DataCloneError` (a value it
-cannot clone) is POISON - IndexedDB raises both synchronously from `add`/`put`, so the exception
-itself reaches the writer with its name. Everything else is TRANSIENT, deliberately: an error whose
-type says nothing (the string a failed transaction rejects with, a native SQLite refusal) is kept,
-because withholding costs a re-listing and acking past a row a retry could store costs the message. A
-message is never read.
+**Classified at the throw, by type** (`frontend/src/lib/db/rowWriteFailure.ts`): the store wraps the
+refusal of ONE message row's own request - the `add` in `saveMessagesIfAbsent`, the `put` of the
+message merge - into a `RowRefusedError` carrying the row and the refusal's `DOMException` name, and
+aborts that write whole (no half batch lands). `classifyRowWriteFailure` calls POISON only a
+`RowRefusedError` whose name is `DataError` (a key the store cannot take) or `DataCloneError` (a value
+it cannot clone) - IndexedDB raises both synchronously at the refused request. Everything else is
+TRANSIENT, deliberately, and is kept: withholding costs a re-listing, acking past a row a retry could
+store costs the message. **A name read off whatever reached the writer is NOT enough** (second review
+of #3851, which caught the first build doing it): `crypto.subtle.importKey` raises `DataError` for an
+empty device key, which sign-in paths hand the store on purpose, so every row of the page would have
+been dropped as poison and its frame acknowledged; and a `DataCloneError` on the CONVERSATION row
+(`saveConversation`, after the message rows landed) would have blamed rows that were stored. Both are
+transient now. Native SQLite refusals carry no type yet, so they are transient too. A message is never
+read.
 
 **What a poison row owes instead of a retry** (`writeOrKeep`, `useMessaging`): a single-row write is
 dropped; a multi-row write is ISOLATED - each row written on its own, once, so the rows the store takes
@@ -3496,9 +3508,40 @@ asks NO re-add, and does NOT acknowledge (`dispatch-failed` in the unacked tally
 list - no event discharges it). The reachable trigger the review named is closed at its source: the
 cross-tab announcement `addMessageToChat` makes between showing a row and storing it
 (`tabMessageSync.post`, a `BroadcastChannel.postMessage` that can throw `DataCloneError` or
-`InvalidStateError`) never throws into its caller any more. What withholding does NOT give back is
-[a backlog entry](../../backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md):
-the generation is spent, so the next pull's copy reads as a duplicate.
+`InvalidStateError`) never throws into its caller any more.
+
+**Withholding alone was not enough, so a MESSAGE whose add threw is KEPT** (second review of #3851;
+principle 2 of the [charter](../../../principes.md)). The frame's generation is spent (`noteConsumed`
+ran before the dispatch), so the next checkpoint made it durable, after which the frame the server
+still held could never be decrypted again - its next copy reads as a duplicate. `useMessaging.addMessageToChat`
+now catches a throw for an inbound message that carries a `frameId` (and no outbox entry) and keeps
+the message as a batch that threw (`unstoredBatches`, origin `dispatch`), then rethrows: the frame is
+withheld (`framesLeftUnstored`), the next store of either kind runs the message again, and every
+checkpoint's hold is refused while it cannot be written - so the advance never becomes durable
+without its row. What is left - a dispatch of a frame carrying NO message (a reaction, a system event,
+a call signal) that throws - is [a backlog entry](../../backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md).
+
+**Every row a decrypted frame writes carries that frame's id** (second review of #3851: a row kept
+WITHOUT one released its frame's ack, where the page-wide count had withheld it). The handler wraps
+the row writers once per frame (`framedRowWriters`, `setupMessageHandler`), so every row written by
+the frame's dispatch is stamped with its queued id unless the caller named one. The paths, audited
+2026-11-19:
+
+- a live message, reply or media (`handleKnownGroup` -> `addMessageToChat`): stamped;
+- a system event's rows - a visible notice (`addMessageToChat`), a history bundle's restored messages
+  (`batchAddMessages(..., 'restore')`): stamped through `framedRowWriters`. The bundle frame is thus
+  withheld while any message it restored stands unstored;
+- the Welcome's replay of the frames it buffered (text through `batchAddMessages` or
+  `addMessageToChat`, system events through `handleSystemEvent`): stamped through `framedRowWriters`
+  with the buffered frame's own `deliveryMeta`;
+- a reaction (`applyReactionFrame`), an edit or a deletion of a STORED row (`applyEdit`,
+  `applyDeletion`): no row is kept in memory - a write that fails is parked as a pending mutation,
+  which is on disk, and written onto the row at the next look. The edit and the tombstone used to be
+  logged and dropped (second review of #3851); they are parked like the reaction now;
+- a commit's eviction notice (`retireIfEvicted`): a commit is a structural id, acknowledged only once
+  a LANDED checkpoint covers it, and a checkpoint is refused while any row stands unstored;
+- outside the ledger, filed below: a community key frame's seed, the history catch-up's archive frames
+  (never acknowledged: they are not the mailbox's).
 
 **Left outside the ledger, filed** (review of #3851): a community key frame's seed
 ([entry](../../backlog.d/p2-rows-before-ratchet-community-key-frames.md)), the Tauri resume's

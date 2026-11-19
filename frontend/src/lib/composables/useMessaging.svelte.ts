@@ -162,7 +162,7 @@ import {
 import type { PendingMutation, StoredRowsById } from '$lib/db/types';
 import { settleAgainstPending, type SettledFields } from '$lib/utils/chat/pendingMutations';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
-import { classifyRowWriteFailure } from '$lib/db/rowWriteFailure';
+import { classifyRowWriteFailure, RowRefusedError } from '$lib/db/rowWriteFailure';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import {
   keepPendingMutation,
@@ -625,7 +625,7 @@ export function useMessaging() {
     ctx: MessagingContext,
     contactName: string,
     messages: KeptBatch['messages'],
-    origin: 'hold' | 'close',
+    origin: 'hold' | 'close' | 'dispatch',
     e: unknown,
     already?: KeptBatch
   ): void {
@@ -712,7 +712,7 @@ export function useMessaging() {
    */
   function dropPoisonRow(write: BatchRowWrite, row: StoredMessage, cause: unknown): void {
     poisonRowsDropped += 1;
-    const errorName = String((cause as { name?: unknown } | null)?.name ?? 'unknown');
+    const errorName = cause instanceof RowRefusedError ? cause.domName : 'unknown';
     console.error(
       `[DB] POISON ROW ${row.id.slice(0, 8)} of "${write.conversationId}" (frame ${write.framesByRow.get(row.id)?.join(',') ?? 'none'}): the store refused it for what it is (${errorName}) and will at every retry - DROPPED from the rows kept, so it stops refusing checkpoints and withholding its frame's ack. Shown, and lost from this device at the next reload (#${poisonRowsDropped} this page):`,
       cause
@@ -1617,7 +1617,41 @@ export function useMessaging() {
     orphanBuffer.set(normalized, buffer);
   }
 
+  /**
+   * Shows and stores one message ({@link addMessageToChatOnce}), and KEEPS an inbound message whose
+   * add THREW (rows before ratchet, second review of #3851): its frame decrypted, so its generation is
+   * spent and the next checkpoint would make that durable - after which the frame the server still
+   * holds can never be decrypted again. Kept as a batch that threw (`unstoredBatches`, with its
+   * `frameId`), it withholds its frame's ack, the next store runs it again, and every checkpoint is
+   * refused while it cannot be written. Rethrown, so the caller still says its dispatch failed.
+   * Only a message a queued frame produced is kept: a send's own row is its outbox's to answer for
+   * (`MessagePairWriteError`), and a row no frame produced has no ratchet advance behind it.
+   */
   async function addMessageToChat(
+    senderId: string,
+    content: string,
+    contactName: string,
+    ctx: MessagingContext,
+    options: AddMessageToChatOptions & { skipDbSave?: boolean } = {}
+  ) {
+    try {
+      await addMessageToChatOnce(senderId, content, contactName, ctx, options);
+    } catch (e) {
+      if (options.frameId && !options.outboxEntry) {
+        keepThrownBatch(
+          ctx,
+          contactName.toLowerCase(),
+          [{ senderId, content, ...options }],
+          'dispatch',
+          e
+        );
+      }
+      throw e;
+    }
+  }
+
+  /** One add, as {@link addMessageToChat} describes; it may throw, and its caller keeps what threw. */
+  async function addMessageToChatOnce(
     senderId: string,
     content: string,
     contactName: string,

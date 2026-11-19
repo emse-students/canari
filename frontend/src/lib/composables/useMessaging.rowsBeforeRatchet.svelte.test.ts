@@ -49,7 +49,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+/** The poison metric is read by the tests that must - or must not - count a dropped row. */
+vi.mock('$lib/mls-client/mlsRecoveryMetrics', () => ({ logMlsMetric: vi.fn() }));
+
 const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
+const { logMlsMetric } = await import('$lib/mls-client/mlsRecoveryMetrics');
+const { RowRefusedError } = await import('$lib/db/rowWriteFailure');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
@@ -339,14 +344,17 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
    * IS fails the same way at every retry and after every reload, so keeping it refused every
    * checkpoint - commits and joins included - and withheld its frame for good.
    */
-  it('POISON: a row refused with a DataError is dropped at ERROR - the hold is not refused and its frame is acknowledged', async () => {
+  it('POISON: a row the store refused at its own request (RowRefusedError, DataError) is dropped at ERROR - the hold is not refused and its frame is acknowledged', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
     const messaging = useMessaging();
     const { ctx, conversations } = makeContext();
     const saveMessagesIfAbsent = (
       ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
     ).saveMessagesIfAbsent;
-    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('bad key', 'DataError'));
+    saveMessagesIfAbsent.mockRejectedValueOnce(
+      new RowRefusedError('in-poison', new DOMException('bad key', 'DataError'))
+    );
     const observer = messaging.bulkIngestObserver(() => ctx);
 
     await messaging.addMessageToChat(PEER, 'poison', CONVO, ctx, {
@@ -361,6 +369,126 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     expect(error).toHaveBeenCalledWith(expect.stringContaining('POISON ROW'), expect.anything());
     // Tried once: a poison row is never retried.
     expect(saveMessagesIfAbsent).toHaveBeenCalledTimes(1);
+    expect(logMlsMetric).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'row_write_poison', errorName: 'DataError' })
+    );
+  });
+
+  /**
+   * CLASSIFIED AT THE THROW, NOT BY NAME (second review of #3851, SF-B): `crypto.subtle.importKey`
+   * raises `DataError` for an empty device key, which sign-in paths hand the store on purpose. Read by
+   * name it was poison: every row of the page dropped and its frame acknowledged - the messages lost.
+   */
+  it('a BARE DataError (a key import with an empty device key) is transient: the row is KEPT, its frame withheld, nothing dropped', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new DOMException('empty key', 'DataError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'sealed later', CONVO, ctx, {
+      messageId: 'in-key',
+      frameId: 'q-key',
+    });
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-key']);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining('POISON ROW'),
+      expect.anything()
+    );
+    expect(logMlsMetric).not.toHaveBeenCalled();
+    // The key is there at the next hold: the kept row is stored.
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-key']);
+  });
+
+  it('a DataCloneError on the CONVERSATION row blames no message row that landed: no POISON line, no metric, the write kept', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(logMlsMetric).mockClear();
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    (ctx.saveConversation as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new DOMException('cannot clone', 'DataCloneError')
+    );
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'landed', CONVO, ctx, {
+      messageId: 'in-landed',
+      frameId: 'q-landed',
+    });
+
+    // The message row landed; the conversation row did not, so the write is kept - and its frame.
+    expect(storedIds(saveMessage)).toEqual(['in-landed']);
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-landed']);
+    expect(error).not.toHaveBeenCalledWith(
+      expect.stringContaining('POISON ROW'),
+      expect.anything()
+    );
+    expect(logMlsMetric).not.toHaveBeenCalled();
+  });
+
+  /**
+   * SF-C (second review of #3851): a dispatch that threw was not acknowledged, but the next
+   * checkpoint still exported its spent generation - the frame left on the server could then never
+   * be decrypted. The message is kept, with its frame, for the checkpoint's hold to write.
+   */
+  it('an inbound add that THREW keeps the message with its frame: rethrown, withheld, and the next hold writes it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const realGet = conversations.get.bind(conversations);
+    let thrown = false;
+    vi.spyOn(conversations, 'get').mockImplementation((key: string) => {
+      if (!thrown) {
+        thrown = true;
+        throw new Error('map torn down');
+      }
+      return realGet(key);
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await expect(
+      messaging.addMessageToChat(PEER, 'thrown', CONVO, ctx, {
+        messageId: 'in-thrown',
+        frameId: 'q-thrown',
+      })
+    ).rejects.toThrow('map torn down');
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-thrown']);
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-thrown']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('a Welcome-replayed or bundle row (the batch path) whose write fails transiently withholds ITS frame', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The batch's write and the hold's one retry of it both fail.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // What `handleWelcome`'s replay hands the batch path, stamped by `framedRowWriters`.
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: 'replayed', messageId: 'in-replay', frameId: 'q-replay' }],
+      CONVO,
+      ctx,
+      'arrival'
+    );
+
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-replay']);
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
   });
 
   it('POISON IN A BATCH: the rows are written one by one - the good one is stored, the poison one dropped, nothing kept', async () => {
@@ -374,10 +502,10 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
       rows: { id: string }[],
       key: string
     ) => Promise<Set<string>>;
-    // Any write holding the poison row is refused for it, as IndexedDB's `add` throws synchronously.
+    // Any write holding the poison row is refused for it, as the store raises at that row's `add`.
     saveMessagesIfAbsent.mockImplementation(async (rows: { id: string }[], key: string) => {
       if (rows.some((row) => row.id === 'in-bad')) {
-        throw new DOMException('cannot clone', 'DataCloneError');
+        throw new RowRefusedError('in-bad', new DOMException('cannot clone', 'DataCloneError'));
       }
       return realSave(rows, key);
     });

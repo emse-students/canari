@@ -188,7 +188,7 @@ _No entry planned beyond its readings._
 - [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
 - [P2 - rows before ratchet: a device-key change re-seals the state without the holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-change-device-key.md)
 - [P2 - rows before ratchet: a community key frame is decrypted before its seed is stored (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-community-key-frames.md)
-- [P2 - rows before ratchet: a frame whose dispatch threw is withheld, but its redelivery reads as a duplicate (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md)
+- [P2 - rows before ratchet: a frame carrying no message whose dispatch threw is withheld, but its redelivery reads as a duplicate (reviews of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md)
 - [P2 - rows before ratchet: the history catch-up decrypt sessions take no mark (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)
 - [P2 - rows before ratchet: the Tauri resume's live-ahead persist bypasses both holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)
 - [P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)
