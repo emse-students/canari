@@ -54,6 +54,7 @@ earliest version, as a checklist.
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
+- [P2 - held migration 176: the videos already posted become CanaReels, waiting for its approval line](backlog.d/held-migration-176-gallery-videos-become-reels.md)
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)

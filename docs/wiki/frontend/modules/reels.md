@@ -420,10 +420,37 @@ local MediaRecorder stream before the existing H.264/AAC preparation path.
 
 ## The rule: every vertical video of 90 s or less is a CanaReel (owner, 2026-11-09)
 
+**Widened by the owner on 2026-11-14** (*"Toute vidéo verticale et/ou inférieure à 90 s est un
+CanaReel, y compris depuis la galerie"*): VERTICAL OR 90 s or less, a vertical reel up to 3 min, the
+videos already posted converted by held migration 176. The client applies the OR only when the
+server serves `rule: 'vertical-or-short'` (`reelRuleOf`); the gallery pick (`reelPickRefusal`), the
+publish (`reelCapForFrame`) and the composer notice (`reelRuleNotice`) all read it - the whole of it
+is on [the server page](../../services/reels.md#the-rule-what-is-a-canareel). What follows is the rule
+of 2026-11-09, which a client keeps against an older server.
+
+Two points the review of #3528 (2026-11-14) made exact:
+
+- **A conversation keeps vertical AND within its cap.** "Envoyer à..." (`ReelSendSheet`) asks
+  `reelPickRefusal(..., 'chat')`, the function the camera's chat pick uses, on a GALLERY pick's
+  displayed frame. So a 45 s landscape pick, a CanaReel for the feed, is offered no conversation,
+  and the sheet says why (`reel_sendto_not_vertical_for_chats`). A frame that could not be read is
+  refused too (re-review, 2026-11-14), in its own words (`reels_capture_frame_unread_for_chats`,
+  reason `frame-unread`, 2026-11-18): an unread frame is not proven vertical, but it is not proven
+  landscape either. The feed still lets it through, its publish deciding on the prepared file.
+  **A camera take is judged on its length alone, and a photo not at all** (review of 2026-11-18): the
+  chat camera's one-tap send (`handBack`) sends a take with no frame check, so the sheet judging a
+  sideways take would refuse what the other button sends; a photo reaches each chat as its own image
+  and has neither a length nor a read frame - judging it disabled every chat row.
+- **One decision on a length, grace included.** `reelDeclaredDurationMs` is read by the camera's
+  publish (`publishReel`) and by the composer's queue (`reelDeclarationFor`). A take up to half a
+  second past its cap (`VIDEO_DURATION_GRACE_SECONDS`, the recorder's overshoot) is a reel that
+  declares the cap, on both paths. Before this, the camera accepted the grace and the queue did
+  not.
+
 **Decided by the owner on 2026-11-09**, with the year of C6 the same day. ONE classifier on the
 client, `reels/reelRule.ts`, reading the server's numbers (`GET /api/posts/reel-limits`:
 `maxDurationMs`, `maxAspectRatio`), so it draws the line where the door refuses
-([server: the rule](../../services/reels.md#the-rule-what-is-a-canareel-owner-2026-11-09)).
+([server: the rule](../../services/reels.md#the-rule-what-is-a-canareel)).
 
 | Path | Where the rule is read | A vertical video of 90 s or less | Any other video |
 | --- | --- | --- | --- |
