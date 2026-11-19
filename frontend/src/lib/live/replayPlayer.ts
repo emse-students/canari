@@ -313,6 +313,8 @@ export class ReplayPlayer {
    * and a sampled verdict - never an entry per presumed index.
    */
   private gaps: Array<[number, number]> = [];
+  /** Sealed bytes a probe downloaded and the fill has not yet appended, by segment index (O(log n) of them). */
+  private probed = new Map<number, ArrayBuffer>();
   /** What counts as no media: really tried and missing, or inside a probed gap. */
   private readonly missing = {
     has: (index: number): boolean => this.skippedIdx.has(index) || this.inGap(index),
@@ -516,6 +518,7 @@ export class ReplayPlayer {
     this.placedEnd = new Map();
     this.skippedIdx = new Set();
     this.gaps = [];
+    this.probed = new Map();
     this.lastInit = null;
     this.retryAttempt = 0;
     this.openFailures = 0;
@@ -732,7 +735,10 @@ export class ReplayPlayer {
       const s = this.segments[this.cursor];
       this.cursor++;
       if (this.isBuffered(s.index) || this.missing.has(s.index)) continue;
-      await this.take(gen, s);
+      // The bytes a probe already downloaded for this segment are appended, not fetched again.
+      const pre = this.probed.get(s.index);
+      this.probed.delete(s.index);
+      await this.take(gen, s, undefined, pre);
       // The fill's own walk over a purge is bounded like a seek's: this many requested 404s in a row
       // and the walk is replaced by a probe forward (doubling stride, then bisection) to the FIRST
       // existing segment after the gap; the fill goes on from there. The stream's end is declared only
@@ -742,8 +748,9 @@ export class ReplayPlayer {
         console.warn(
           `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing at position ${this.cursor} - probing ahead`
         );
-        // The bytes of the segments the probe finds are kept: the found one is appended from them.
-        const kept = new Map<number, ArrayBuffer>();
+        // The bytes of EVERY segment the probe finds (the bisection's hits too) are kept by segment index:
+        // the fill appends each from them when it reaches it, never fetching one twice.
+        const kept = this.probed;
         const found = await this.probeGap(gen, this.cursor, 1, async (pos) => {
           // A newer seek must not wait for the probe: it is redone by a later fill.
           if (this.seekPending || !this.alive(gen)) return 'stale';
@@ -751,7 +758,7 @@ export class ReplayPlayer {
           if (this.skippedIdx.has(seg.index)) return false;
           const sealed = await this.download(gen, seg);
           if (!this.alive(gen) || this.seekPending) return 'stale';
-          if (sealed !== null) kept.set(pos, sealed);
+          if (sealed !== null) kept.set(seg.index, sealed);
           return sealed !== null;
         });
         if (found === 'stale') return;
@@ -763,7 +770,8 @@ export class ReplayPlayer {
         ]);
         this.cursor = upto;
         if (found !== undefined) {
-          const sealed = kept.get(found);
+          const sealed = kept.get(this.segments[found].index);
+          kept.delete(this.segments[found].index);
           if (sealed !== undefined) {
             this.cursor = found + 1;
             await this.take(gen, this.segments[found], undefined, sealed);
@@ -836,8 +844,9 @@ export class ReplayPlayer {
   /**
    * THE SAMPLED VERDICT FOR `gone`: nothing was ever appended, the list is complete, and every segment was
    * either really tried and missing or lies in a probed gap - the probes found nothing across the whole
-   * list. A replay the purge job really emptied is deleted whole, so a sampled "nothing" is a sound
-   * verdict; walking every segment of it under a spinner (2000 requests) is not.
+   * list. The server releases a replay's segments whole, when its post is deleted (`LivesService.purgeEnded`
+   * in apps/social-service/src/lives/lives.service.ts: the folder goes with the live row), so a sampled
+   * "nothing" is a sound verdict; walking every segment of it under a spinner (2000 requests) is not.
    */
   private noMediaAtAll(): boolean {
     return (
@@ -863,10 +872,8 @@ export class ReplayPlayer {
     if (!source || !this.alive(gen) || source.readyState !== 'open') return;
     if (this.buffer?.updating) return;
     try {
-      // The bar's total is the media that was really placed, not the arrival-time estimate.
-      let lastEnd = 0;
-      for (const e of this.placedEnd.values()) lastEnd = Math.max(lastEnd, e);
-      if (lastEnd > 0) source.duration = lastEnd;
+      // No `duration` write: `endOfStream` sets it to the largest buffered end, and a write below a buffered
+      // frame's start (the audio ending after the video) throws before the end is ever declared.
       source.endOfStream();
       console.debug(
         `[LIVE_REPLAY] ${this.liveId}: end of stream declared at ${this.cursor} segments`

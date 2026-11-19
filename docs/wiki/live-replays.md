@@ -681,22 +681,24 @@ value, the server's:
   crossing and for the fill cursor, never an entry per index, and a seek into one still REQUESTS its target.
   ONE RULE, the sampled verdict, decides both ends of a replay: a probe that found nothing across the whole
   list is `gone` (nothing was ever played), and a probed gap running to the END of the list is judged empty
-  the same way - playback reaches the last placed media and the stream ends there (`endOfStream`, the duration
-  set to the last measured end first, so the bar's total is the media that was really placed). The end is
+  the same way - playback reaches the last placed media and the stream ends there (`endOfStream`, which sets the
+  duration to the largest buffered end itself: NO `duration` write of ours, which the engine refuses below a
+  buffered frame - the audio ending after the video - and the end would never be declared). The end is
   deferred only while a gap is not yet probed: the fill's cursor has not reached the end of the list, so the
   end is not declared inside a purge in the middle. The accepted cost, as for `gone`: a lone survivor deep
-  inside a purged tail, which the probe did not land on, is cut off by the end (the purge job deletes whole
-  tails, not single segments). There is no
+  inside a purged tail, which the probe did not land on, is cut off by the end (`LivesService.purgeEnded`
+  releases segments whole, not single ones). A seek onto such a survivor still requests its target, plays it and
+  ends the stream THERE - consistent with the sampled verdict. There is no
   backfill and no budget: the probe's verdict is the verdict. A probe is dropped, to be redone by a later
   fill, the moment a newer seek is pending, so a seek never waits for it. An earlier version stopped the
   fill at a limit: it called a replay whose first 40 segments are purged `gone`, and declared the end
   inside a purge in the middle, which truncates the media source's duration and loses the content after it.
 - **No media at all - a SAMPLED verdict.** `gone`, the neutral "plus disponible" screen (as `replayFailureOutcome` reads a
   missing replay), is reserved for: the list is complete, nothing was ever appended, and every segment was either tried and
-  missing or lies in a probed gap - the probes found nothing across the whole list. A purge job deletes WHOLE replays,
+  missing or lies in a probed gap - the probes found nothing across the whole list. The server releases a replay's segments WHOLE (`LivesService.purgeEnded`, once the replay post is deleted),
   so a sample that finds nothing is a sound verdict; walking all 2000 segments of a purged replay under a spinner is not
   (the requests are O(log n) now). The accepted cost: a replay with ONE surviving segment among 99 deleted ones, which the
-  probes did not land on, is `gone` (a case that cannot come from the purge job). A purge in front of existing media is never this. Never a black picture with a spinner
+  probes did not land on, is `gone` (a case the server's whole-folder release cannot produce). A purge in front of existing media is never this. Never a black picture with a spinner
   and a seek stuck in `seeking`.
 
 ## A replay reaches its end: the engine's state is the memory of "ended" (2026-11-19)

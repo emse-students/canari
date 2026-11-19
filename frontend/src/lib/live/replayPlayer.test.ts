@@ -67,6 +67,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   base = 0;
   /** Media time added after segment `jump[0]` (a pause the live's media carries as a hole), in seconds. */
   jump: [number, number] | null = null;
+  /** How far a track the intersection hides (the audio, ending after the video) reaches past the ranges. */
+  hiddenEnd = 0;
   /** The length of the media one segment holds, in seconds. */
   len = 2;
   appends: string[] = [];
@@ -133,7 +135,19 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
 
 class FakeSource extends EventTarget implements ReplayMediaSourceLike {
   readyState = 'open';
-  duration = NaN;
+  private dur = NaN;
+  get duration(): number {
+    return this.dur;
+  }
+  /** As the engine: a duration below the highest buffered frame is refused (InvalidStateError). */
+  set duration(v: number) {
+    const highest = Math.max(
+      0,
+      ...this.buffers.map((b) => Math.max(0, ...b.ranges.map((r) => r[1])) + b.hiddenEnd)
+    );
+    if (v < highest) throw new DOMException('duration below a buffered frame', 'InvalidStateError');
+    this.dur = v;
+  }
   ended = 0;
   buffers: FakeBuffer[] = [];
   addSourceBuffer(): FakeBuffer {
@@ -366,6 +380,21 @@ describe('ReplayPlayer', () => {
     await flush();
     expect(buffer().appends.filter((a) => a.startsWith('m')).length).toBe(10);
     expect(source.ended).toBe(1);
+  });
+
+  it('R15a: audio ending after the video must not stop the end of stream (no duration write below a frame)', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(10)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    buffer().hiddenEnd = 0.02;
+    for (const t of [6, 12, 16]) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+    }
+    expect(source.ended).toBe(1);
+    expect(source.readyState).toBe('ended');
   });
 
   it('keeps the stream ended when the trim behind the playhead reopened it (S12: a halt before the last frame)', async () => {
@@ -1168,6 +1197,24 @@ describe('ReplayPlayer', () => {
       const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
       expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-40').length).toBe(1);
       expect(buffer().appends).toContain('m40');
+    });
+
+    it('R10c2: the hits of the bisection are kept too, so a probed segment the fill reaches is not fetched again', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 50 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const count = (n: string) => fetchSegment.mock.calls.filter((c) => c[1] === n).length;
+      expect(count('seg-90')).toBe(1);
+      expect(count('seg-92')).toBe(1); // a hit of the bisection (p=100, then 92), appended from its bytes
+      expect(buffer().appends).toContain('m92');
     });
 
     it('R10d: a seek made during the probe does not wait for the whole probe', async () => {
