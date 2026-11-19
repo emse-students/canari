@@ -670,9 +670,16 @@ value, the server's:
   answer is the last existing segment before the PROBED gap (survivors scattered inside the run can make it land earlier), in O(log n) requests (about 75 for a purge of 900
   segments), never arbitrary buffered media. Only a replay with no media at all is answered with
   nothing.
-- **The fill's own walk** is bounded the same way: past the playhead, `REPLAY_MAX_MISSING_WALK` consecutive
-  requested 404s end the listing for the fill (a `fillLimit` position, logged at warn), so the traffic after
-  a landing is bounded too, not only the seek's wait. A seek that lands beyond the limit clears it.
-- **No media at all.** A replay in which no segment ever gives media (every one a 404) stops on `gone`,
-  the neutral "plus disponible" screen, as `replayFailureOutcome` reads a missing replay - never a black
-  picture with a spinner and a seek stuck in `seeking`.
+- **The fill's own walk** is bounded the same way, WITHOUT ending the stream: past the playhead,
+  `REPLAY_MAX_MISSING_WALK` consecutive requested 404s replace the walk by `probeGap` forward (the same
+  helper as the seek's backward probe, one parameter for the direction): a doubling stride, then a
+  bisection to the FIRST existing segment after the gap (existence only: the bytes are dropped, the fill
+  takes the found segment itself). The run before it is marked skipped, so it is a known hole and the
+  playhead crosses it, and the fill goes on from there. The end of the stream is declared only when the
+  probe reaches the end of the listing (paged to its end first). An earlier version stopped the fill at
+  the limit: it called a replay whose first 40 segments are purged `gone`, and declared the end inside a
+  purge in the middle, which truncates the media source's duration and loses the content after it.
+- **No media at all.** `gone`, the neutral "plus disponible" screen (as `replayFailureOutcome` reads a
+  missing replay), is reserved for: the list is complete, every segment was tried or is known skipped, and
+  none gave media. A purge in front of existing media is never this. Never a black picture with a spinner
+  and a seek stuck in `seeking`.

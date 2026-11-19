@@ -945,6 +945,53 @@ describe('ReplayPlayer', () => {
       expect(landed).toBeCloseTo(98, 1); // segment 49
     });
 
+    it('R9a: a replay whose first 40 segments are gone starts playing at segment 40', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 40 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(buffer().appends).toContain('m40');
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+    });
+
+    it('R9b: a purge in the middle is crossed into segment 100, and the stream is not ended inside it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 60 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 20; i++) await flush();
+      }
+      expect(source.ended).toBe(0); // never declared inside the purge
+      video.currentTime = 80; // the end of segment 39: the hole [80, 200) is known
+      p.noteTime();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(video.currentTime).toBeCloseTo(200, 1);
+      expect(source.ended).toBe(0);
+    });
+
+    it('R9b: probing past a long purge costs O(log n) requests, not one per segment', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(1000)(from));
+      skip404(Array.from({ length: 900 }, (_, i) => `seg-${50 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      for (let t = 0; t <= 98; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const missingRequests = fetchSegment.mock.calls.filter(
+        (c) => Number(String(c[1]).slice(4)) >= 50 && Number(String(c[1]).slice(4)) < 950
+      ).length;
+      expect(missingRequests).toBeLessThanOrEqual(120); // 30 walked, then about 2 log2(900)
+    });
+
     it('R8c: a replay in which no segment gives media stops on gone, never a black picture', async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
       skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`));
