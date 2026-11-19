@@ -2045,11 +2045,44 @@ other participant, the tile grid, the start control in a group) is the
 - **WP-C11, refusal and the end of a group call - decided 2026-11-13, reversible:** one decline
   does not end the call; the call ends for a participant when the last other participant has left.
   On the server, a member's `ring-end` stops THAT member's devices only and does not mark the ring
-  ended; only the caller's ends the ring for everyone. A group call keeps the 60 s ring window to
-  join (interim).
+  ended; only the caller's ends the ring for everyone, a participant's `room-empty` included
+  ([WP-GC7](#an-emptied-room-ends-every-ring-wp-gc7-server-half-2026-11-16)). A group call keeps the
+  60 s ring window to join (interim).
 - **Pinned by** `calls.service.spec.ts` (`group calls (WP-GC2)`), `push.controller.wake.spec.ts`,
   `callFailure.test.ts`, the call-service tests named on its page, and the core-service platform and
   version specs.
+
+### An emptied room ends every ring (WP-GC7, server half, 2026-11-16)
+
+A non-caller's `ring-end` stops only its own devices (WP-C11), so when the last participant of an
+answered group call is not the caller, a member rung by CallKit or the Android full-screen ring
+keeps ringing until the 60 s window closes. The ring-end reasons are
+`'cancelled' | 'answered' | 'ended' | 'room-empty'` (`RingEndReason`, `calls.service.ts`). The
+caller's `room-empty` ends every member's ring and marks it ended, as any caller's ring-end does; a
+1:1's reaches both sides, as every 1:1 ring-end does.
+
+**A participant's `room-empty` stops only the sender's own devices and marks nothing** (decided by
+the lead 2026-11-19 on the review of #3705, reversible; principle 2, the essential is never lost).
+`room-empty` is the sender's view of a mesh, never a fact about the room: a member whose links all
+failed sees nobody in a call that is live for everyone else. Broadcasting `call_ring_end` on that
+word would stop C's CallKit or full-screen ring, and the app has NO control to join an ongoing call
+(`CallBanner` only returns to your own call), so C would miss a live call; writing `ring_ended` would
+also refuse every later `room-token` (410). So the participant path is the WP-C11 path, logged in
+one line (`reason=room-empty by a member of a group call - their own devices only`), and the other
+members' rings end with the answer window (`answer_by`, 60 s, `liveRingDeadline`). An earlier draft
+gated the broadcast on a per-call token mark (`call:room:<id>:tokened:<user>`); a mark proves a way
+in, not an empty room, and was removed with the broadcast it gated. **What lifts this**, each with
+its test: (1) an authoritative room-empty - call-service's seat query (the seats live only in its
+memory, `p2p.rs`, `sfu_seats.rs`), read by `endRing`, with a test that a `room-empty` against an
+occupied room reaches no other member; or (2) an in-app control to join an ongoing call, with a
+test that a member whose ring was ended can still reach a live room from the conversation.
+
+- **Pinned by** `calls.service.spec.ts` (`an emptied room ends every ring (WP-GC7)`).
+- **Owed:** the client line - `CallService.endCall` sending `room-empty` exactly when its hangup
+  says `roomEmpty` - after WP-GC6; until then no client sends it, and an older server reads an
+  unknown reason as `cancelled`. Reading: a three-way call with C's app killed, C's lock-screen ring
+  stops when the caller, last in the room, hangs up, on the Mi 9T and the iPhone 12; and when a
+  participant hangs up last, C's ring runs to the end of its window.
 
 ### The relay leg (WP-GC4, 2026-11-13)
 
