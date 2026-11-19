@@ -151,6 +151,7 @@ _No entry planned beyond its readings._
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
 - [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
+- [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
 
 **P2 - correctness**
 

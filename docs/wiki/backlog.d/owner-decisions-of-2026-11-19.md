@@ -15,4 +15,18 @@ Recorded so that no question answered here is asked again. The owner took them i
 
    Its entry is [admin-view-feeds-as-a-member](admin-view-feeds-as-a-member.md).
 
+5. **CanaQuiz: designed, to be built for `1.8.0`.** It is a live quiz with points and a ranking.
+   - **Who:** anyone can run one, with the same rules as a form (public or restricted to the
+     platform, optional pseudonyms).
+   - **Questions:** the owner's full list of question types.
+   - **Scoring:** points for a correct answer, plus a speed bonus timed by the server.
+   - **Display:** either a projected screen or phones only; the top 5 is shown on screen, and
+     each player sees their own rank.
+   - **Moderation:** the host hides anything in one gesture. Brainstorm ideas are grouped
+     automatically, with no AI.
+   - **Limits:** no player ceiling, and **no teams**.
+   - **Results:** kept 30 days.
+
+   Its entry is [canaquiz-a-live-quiz-anyone-can-run](canaquiz-a-live-quiz-anyone-can-run.md).
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).
