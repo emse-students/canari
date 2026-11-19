@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { RoomTokenUnreadableError, roomTokenMode, roomTokenSeats } from './callRoomToken';
+import {
+  RoomTokenModeUnsupportedError,
+  RoomTokenUnreadableError,
+  roomTokenMode,
+  roomTokenSeats,
+} from './callRoomToken';
 
 /** A token shaped as chat-delivery signs it: header.payload.signature, base64url. */
 function token(claims: Record<string, unknown>): string {
@@ -35,10 +40,19 @@ describe('roomTokenMode (WP-GC4 client)', () => {
     expect(roomTokenMode(token({ room_id: 'r', sub: 'u', max_seats: 4, mode: 'p2p' }))).toBe('p2p');
   });
 
-  it('refuses a mode it does not know, and a token it cannot read, never guessing a relay', () => {
-    expect(() => roomTokenMode(token({ max_seats: 8, mode: 'cloudflare' }))).toThrow(
-      RoomTokenUnreadableError
-    );
+  it('refuses a well-formed mode it does not speak with its own error, carrying the mode', () => {
+    let caught: unknown;
+    try {
+      roomTokenMode(token({ max_seats: 8, mode: 'cloudflare' }));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(RoomTokenModeUnsupportedError);
+    expect(caught).not.toBeInstanceOf(RoomTokenUnreadableError);
+    expect((caught as RoomTokenModeUnsupportedError).mode).toBe('cloudflare');
+  });
+
+  it('refuses a mode that is not a string, and a token it cannot read, never guessing a relay', () => {
     expect(() => roomTokenMode(token({ max_seats: 8, mode: 7 }))).toThrow(RoomTokenUnreadableError);
     expect(() => roomTokenMode('rt-1')).toThrow(RoomTokenUnreadableError);
   });

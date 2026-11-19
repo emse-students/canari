@@ -27,6 +27,18 @@ export class RoomTokenUnreadableError extends Error {
   }
 }
 
+/**
+ * Thrown when a readable room token signs a room mode this build does not speak (`mode`, a string):
+ * the server is AHEAD of this client - not an unreadable answer - and joining in a mode it does not
+ * know would only be refused `mode-mismatch` one step later.
+ */
+export class RoomTokenModeUnsupportedError extends Error {
+  constructor(public readonly mode: string) {
+    super(`call room token signs a room mode this build does not speak: ${mode}`);
+    this.name = 'RoomTokenModeUnsupportedError';
+  }
+}
+
 /** Decodes one base64url segment of a JWT to text. */
 function base64UrlToText(segment: string): string {
   const b64 = segment.replace(/-/g, '+').replace(/_/g, '/');
@@ -76,13 +88,15 @@ export type CallRoomMode = 'p2p' | 'sfu';
  * token of a group call through the relay (`calls.service.ts`, `roomClaims`) and no `mode` otherwise,
  * and call-service refuses a `Join` in another mode than the token signs (`mode-mismatch`) - so the
  * client reads the mode it joins in HERE, from the token, and never from `platform_config.call_relay`.
- * THROWS {@link RoomTokenUnreadableError} for an unreadable token and for a mode this build does not
- * speak: joining the relay it does not know in another mode would only be refused one step later.
+ * THROWS {@link RoomTokenUnreadableError} for an unreadable token or a mode that is not a string, and
+ * {@link RoomTokenModeUnsupportedError} for a mode this build does not speak (`cloudflare`, the Calls
+ * relay): joining a relay it does not know in another mode would only be refused one step later.
  */
 export function roomTokenMode(token: string): CallRoomMode {
   const mode = roomTokenClaims(token).mode;
   if (mode === undefined || mode === null) return 'p2p';
   // call-service reads a signed `p2p` as the same room as no claim at all.
   if (mode === 'sfu' || mode === 'p2p') return mode;
+  if (typeof mode === 'string') throw new RoomTokenModeUnsupportedError(mode);
   throw new RoomTokenUnreadableError(`mode=${String(mode)}`);
 }

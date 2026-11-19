@@ -1960,7 +1960,7 @@ async fn handle_signal(
             ));
 
             // The seats other users held at the reservation: an answer into a relay room everyone
-            // already left is told so (`others: 0`), as on the mesh.
+            // already left is told so (`others: 0`); the p2p `Joined` states it once WP-GC6 lands.
             info!(
                 "[call] sfu joined room={} peer={} others={}",
                 room_id, peer_id, others

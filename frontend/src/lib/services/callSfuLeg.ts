@@ -23,15 +23,20 @@
  *   SENDER (WP-GC1, `utils/callKeys.ts`), so that id is the participant the track's RECEIVER
  *   transform names (`CallTransformOptions.peer`). A forwarded track naming nobody, or this device's
  *   own user, is refused: its frames could be opened under no key, or the wrong one.
- * - **`Joined { others }`** states how many seats other users hold (the relay's `Joined`, as the
- *   mesh's since WP-GC6): handed to the caller, which decides what an empty room means.
+ * - **`Joined { others }`** states how many seats other users hold (the relay's `Joined`; the p2p
+ *   one states it once WP-GC6 lands): handed to the caller, which decides what an empty room means.
+ * - **A forwarded track going away** is its stream's `removetrack` (the browser mutes a track the
+ *   relay drops and never ends it), or the same track re-attached under another stream id (a freed
+ *   transceiver reused): either is reported through `onRemoteTrackGone`, once per `onRemoteTrack`.
  *
  * WHAT IT DOES NOT OWN, ON PURPOSE. The transforms, the worker and its keys, the codec hold, the
  * camera policy and the socket stay `CallService`'s, reached through {@link CallSfuLegHooks}: the
  * leg calls them at the moments the E2E rules fix (the sender's transform in the task that created
  * its transceiver - CALL-E2E-BYPASS-MI9T - and a forwarded track's both transforms in the task
  * `ontrack` fires in), so there is ONE implementation of each and the leg cannot drift from the
- * mesh's. Nothing here is a fallback: a refusal of any hook ends the leg through `onFailed`.
+ * mesh's. Nothing here is a fallback: a refusal of any hook the media needs, or a `failed`
+ * connection, ends the leg through `onFailed`; a throw of a SCREEN hook (`onRemoteTrack`,
+ * `onRemoteTrackGone`) is logged at error and leaves the leg standing.
  *
  * It imports only relative modules that import nothing of the app's session, so the CI page bundles
  * it as it is (`Bun.build`, no `$lib` alias).
@@ -73,6 +78,17 @@ export class CallSfuTrackUnattributedError extends Error {
       `the relay forwarded a ${kind} track naming no other sender (stream ${String(streamId)})`
     );
     this.name = 'CallSfuTrackUnattributedError';
+  }
+}
+
+/**
+ * The connection to the relay reached `failed`: ICE found no path and will not find one by itself,
+ * so the leg cannot go on (`onFailed`), as a refused negotiation step cannot.
+ */
+export class CallSfuConnectionFailedError extends Error {
+  constructor() {
+    super('the connection to the relay failed');
+    this.name = 'CallSfuConnectionFailedError';
   }
 }
 
@@ -125,7 +141,14 @@ export interface CallSfuLegHooks {
   onJoined(others: number | null): void;
   /** A forwarded track of `peer` (user id, lowercased), decrypted, ready for the screen. */
   onRemoteTrack(peer: string, track: MediaStreamTrack, stream: MediaStream): void;
-  /** The connection to the relay changed state. */
+  /**
+   * The forwarded `track` no longer carries `peer`'s frames: the relay dropped it (its stream fired
+   * `removetrack`), or reused its transceiver for another publisher (it arrives again through
+   * `onRemoteTrack` right after). Called once per `onRemoteTrack`, before any re-attachment of the
+   * same track. A track the relay drops is MUTED, never `ended`, so its `ended` event says nothing.
+   */
+  onRemoteTrackGone(peer: string, track: MediaStreamTrack): void;
+  /** The connection to the relay changed state (a `failed` one also ends the leg, `onFailed`). */
   onConnectionState(state: RTCPeerConnectionState): void;
   /** The leg cannot go on; it is closed already. Called once. */
   onFailed(error: Error): void;
@@ -148,21 +171,28 @@ export class CallSfuLeg {
   private readonly own: RTCRtpTransceiver[] = [];
   /** Candidates of the relay that arrived before a remote description. */
   private early: RTCIceCandidateInit[] = [];
-  /** The sender (user id) of each forwarded track, by track id. */
-  private readonly senders = new Map<string, string>();
+  /** The sender (user id) of each forwarded track, and the stream it came in, by track id. */
+  private readonly senders = new Map<string, { peer: string; stream: MediaStream }>();
+  /** The forwarded streams whose `removetrack` this leg already listens to. */
+  private readonly watched = new WeakSet<MediaStream>();
+  /** This device's user id, lowercased as the forwarded stream ids are compared. */
+  private readonly self: string;
   /** Relay frames, handled ONE AT A TIME in arrival order: each awaits the connection. */
   private chain: Promise<void> = Promise.resolve();
   private joined = false;
   private ended = false;
 
   /**
-   * @param self This device's user id: a forwarded track naming it is refused.
+   * @param self This device's user id: a forwarded track naming it is refused (in any case, as the
+   *   stream id is read lowercased).
    */
   constructor(
-    private readonly self: string,
+    self: string,
     private readonly media: CallSfuLegMedia,
     private readonly hooks: CallSfuLegHooks
-  ) {}
+  ) {
+    this.self = self.toLowerCase();
+  }
 
   /** The connection to the relay, or null before `open` / after the leg ended. */
   get connection(): RTCPeerConnection | null {
@@ -171,7 +201,7 @@ export class CallSfuLeg {
 
   /** The participant whose frames the forwarded track `trackId` carries, if it arrived. */
   senderOf(trackId: string): string | undefined {
-    return this.senders.get(trackId);
+    return this.senders.get(trackId)?.peer;
   }
 
   /**
@@ -193,8 +223,14 @@ export class CallSfuLeg {
       });
     };
     pc.onconnectionstatechange = () => {
-      appendLog(`${TAG} connectionState=${pc.connectionState}`);
-      this.hooks.onConnectionState(pc.connectionState);
+      if (this.ended) {
+        appendLog(`${TAG} connectionState=${pc.connectionState} after the leg ended - ignored`);
+        return;
+      }
+      const state = pc.connectionState;
+      appendLog(`${TAG} connectionState=${state}`);
+      this.hooks.onConnectionState(state);
+      if (state === 'failed') this.fail(new CallSfuConnectionFailedError());
     };
     try {
       for (const track of this.media.tracks) this.addLocal(pc, track);
@@ -236,7 +272,10 @@ export class CallSfuLeg {
    * device), and only then handed to the screen.
    */
   private onTrack(e: RTCTrackEvent): void {
-    if (this.ended) return;
+    if (this.ended) {
+      appendLog(`${TAG} a forwarded ${e.track.kind} track after the leg ended - ignored`);
+      return;
+    }
     const kind = callMediaKind(e.track.kind);
     if (!kind) {
       appendLog(`${TAG} a forwarded ${e.track.kind} track is not media - ignored`);
@@ -261,11 +300,58 @@ export class CallSfuLeg {
       this.fail(err instanceof Error ? err : new Error(String(err)));
       return;
     }
-    this.senders.set(e.track.id, peer);
+    // A transceiver the relay freed and reused for a later publisher fires `ontrack` again with
+    // the SAME track under a new stream id: the old attribution ends before the new one starts.
+    this.trackGone(e.track);
+    this.senders.set(e.track.id, { peer, stream });
+    this.watch(stream);
     appendLog(
       `${TAG} forwarded ${kind} track of ${peer.slice(0, 8)} (mid=${String(e.transceiver.mid)})`
     );
-    this.hooks.onRemoteTrack(peer, e.track, stream);
+    try {
+      this.hooks.onRemoteTrack(peer, e.track, stream);
+    } catch (err) {
+      appendLog(`${TAG} ERROR onRemoteTrack threw for ${peer.slice(0, 8)}: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Listens, once per forwarded stream, for the relay dropping one of its tracks: the browser then
+   * fires `removetrack` on the stream (and mutes the track; it never ends it).
+   */
+  private watch(stream: MediaStream): void {
+    if (this.watched.has(stream)) return;
+    this.watched.add(stream);
+    stream.addEventListener('removetrack', (ev) => {
+      if (this.ended) {
+        appendLog(`${TAG} removetrack after the leg ended - nothing to report`);
+        return;
+      }
+      const { track } = ev as MediaStreamTrackEvent;
+      // A track already re-attached to another stream was reported gone from this one then.
+      if (this.senders.get(track.id)?.stream !== stream) {
+        appendLog(
+          `${TAG} removetrack of a track this stream no longer carries - nothing to report`
+        );
+        return;
+      }
+      this.trackGone(track);
+    });
+  }
+
+  /** Reports `track`'s current attribution gone and forgets it; nothing when it has none. */
+  private trackGone(track: MediaStreamTrack): void {
+    const entry = this.senders.get(track.id);
+    if (!entry) return;
+    this.senders.delete(track.id);
+    appendLog(`${TAG} forwarded ${track.kind} track of ${entry.peer.slice(0, 8)} gone`);
+    try {
+      this.hooks.onRemoteTrackGone(entry.peer, track);
+    } catch (err) {
+      appendLog(
+        `${TAG} ERROR onRemoteTrackGone threw for ${entry.peer.slice(0, 8)}: ${String(err)}`
+      );
+    }
   }
 
   /**

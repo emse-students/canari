@@ -2105,21 +2105,32 @@ is put on the relay yet; the wiring that picks mesh or SFU waits for WP-GC6's `C
   description it belongs to; candidates before any remote description wait and are flushed after it.
   A step the engine refuses ends the leg with `CallSfuNegotiationError` (its `step`), once.
 - **`Joined { others }`** is handed to the owner (`onJoined`), `null` from a relay older than the
-  field - never read as an empty room. call-service's SFU `Joined` now states it like the p2p one
-  (WP-GC6's shape), read under the seat lock at the reservation (`Reservation::Seated { others }`).
+  field - never read as an empty room. call-service's SFU `Joined` states it, read under the seat
+  lock at the reservation (`Reservation::Seated { others }`); the p2p `Joined` does NOT yet
+  (`p2p_send_joined` sends `others: None` on main) - WP-GC6 adds it there, in the same shape.
+- **A forwarded track going away is reported** (`onRemoteTrackGone(peer, track)`), once per
+  `onRemoteTrack`. When the relay drops a publisher's track the browser MUTES it and fires
+  `removetrack` on its stream - `ended` never fires - so the leg listens to `removetrack` on every
+  forwarded stream. webrtc-rs may also reuse a freed transceiver for a later publisher: `ontrack`
+  then fires again with the SAME track under a new stream id, and the leg reports the old
+  attribution gone BEFORE the new one arrives (one tile per track). A throw from either screen hook
+  is logged at error and leaves the leg standing.
+- **A `failed` connection ends the leg** (`CallSfuConnectionFailedError` through `onFailed`, after
+  `onConnectionState('failed')`): ICE found no path and will not find one by itself.
 - **What the leg does NOT own**: the worker and its keys, the transform attach, the VP8 hold, the
   camera refusal, the microphone switch and the socket stay `CallService`'s, reached through
   `CallSfuLegHooks` - ONE implementation of each, called at the moments the E2E rules fix. The leg
   imports only relative modules with no session behind them, so the CI page bundles it as it is.
 - **The room's mode is read from its token** (`utils/callRoomToken.ts`, `roomTokenMode`): `sfu` when
-  chat-delivery signed `mode: "sfu"`, `p2p` without the claim; an unknown mode THROWS
-  (`RoomTokenUnreadableError`) - a relay this build does not speak would only be refused
-  `mode-mismatch` one step later. Never read from `call_relay` itself.
+  chat-delivery signed `mode: "sfu"`, `p2p` without the claim; a well-formed mode this build does
+  not speak (`cloudflare`, signed by the Calls relay work) THROWS `RoomTokenModeUnsupportedError`
+  (carrying `mode`), a non-string one `RoomTokenUnreadableError` - a relay this build does not speak
+  would only be refused `mode-mismatch` one step later. Never read from `call_relay` itself.
 
 **The proof.** `callSfuLeg.test.ts` (send-only transceivers and their transforms in the opening
 task, the VP8 refusal, the offer on `Joined` and `others`, the early candidates, the forwarded track
-keyed by its stream id, the unattributed track refused, the glare, the frame order, the typed
-failure) and `callRoomToken.test.ts` (the mode). **The CI's 5-party relayed call now runs through
+keyed by its stream id, the unattributed track refused, a removed or re-attached track reported
+gone, a throwing screen hook, a `failed` connection, the glare, the frame order, the typed failure) and `callRoomToken.test.ts` (the mode). **The CI's 5-party relayed call now runs through
 `CallSfuLeg`** (`apps/call-service/e2e/group-page.ts`, its hooks the page's own transforms): PASS on
 a Windows dev box, 2026-11-16 - all 20 directed legs proven, the sixth user `room-full`, the negative
 leg refused.
@@ -2132,8 +2143,10 @@ token `initiate`/`room-token` answered picks the leg: `sfu` joins with `sfuJoinF
 peer (the forwarded track's sender) passed per call and the epoch of the SFU connection; the VP8 hold
 is `holdVideoToVp8`, the camera refusal `refuseCameraSender`'s UI half, the microphone switch
 `micSwitch.attachSender`. (3) `onJoined(others)` feeds WP-GC6's empty-room rule as the mesh's
-`Joined` does. (4) Tiles come from `onRemoteTrack(peer, ...)` keyed by user, and a participant
-leaving is seen as its forwarded tracks ending (the SFU removes them, `drop_publisher_tracks`).
+`Joined` does. (4) Tiles come from `onRemoteTrack(peer, ...)` keyed by user and go with
+`onRemoteTrackGone(peer, track)`: a participant leaving is seen as its forwarded tracks REMOVED from
+their streams (the SFU drops them, `drop_publisher_tracks`; the browser fires `removetrack` and mutes
+the track, never `ended`).
 (5) Only then `groupCallVersion` 2 is declared on `initiate`/`room-token`/push registration.
 
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)

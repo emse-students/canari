@@ -4,6 +4,7 @@ const logs: string[] = [];
 vi.mock('../utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
 import {
+  CallSfuConnectionFailedError,
   CallSfuLeg,
   CallSfuNegotiationError,
   CallSfuTrackUnattributedError,
@@ -34,6 +35,19 @@ class FakeTransceiver {
     public readonly kind: string
   ) {
     this.sender = new FakeSender(track);
+  }
+}
+
+/** A forwarded stream: the relay dropping one of its tracks fires `removetrack`, as the browser does. */
+class FakeStream {
+  private readonly listeners: ((e: { track: unknown }) => void)[] = [];
+  constructor(public readonly id: string) {}
+  addEventListener(type: string, fn: (e: { track: unknown }) => void) {
+    if (type === 'removetrack') this.listeners.push(fn);
+  }
+  /** The relay dropped `track`: the browser mutes it and fires `removetrack` (never `ended`). */
+  dropTrack(track: unknown) {
+    for (const fn of this.listeners) fn({ track });
   }
 }
 
@@ -125,26 +139,40 @@ class FakePc {
     this.closed = true;
   }
 
-  /** The relay's offer forwarded a track of `streamId` (null: a track with no stream). */
-  forward(kind: string, streamId: string | null, trackId = `t-${kind}-${streamId}`) {
-    const t = new FakeTransceiver(null, 'recvonly', kind);
-    t.mid = String(this.nextMid++);
-    this.transceivers.push(t);
-    const track = { kind, id: trackId };
-    const streams = streamId === null ? [] : [{ id: streamId }];
+  /**
+   * The relay's offer forwarded a track of `streamId` (null: a track with no stream). `reuse` is a
+   * transceiver the relay freed and reused for another publisher: its SAME track fires again.
+   */
+  forward(
+    kind: string,
+    streamId: string | null,
+    trackId = `t-${kind}-${streamId}`,
+    reuse?: { track: { kind: string; id: string }; transceiver: FakeTransceiver }
+  ) {
+    let t = reuse?.transceiver;
+    if (!t) {
+      t = new FakeTransceiver(null, 'recvonly', kind);
+      t.mid = String(this.nextMid++);
+      this.transceivers.push(t);
+    }
+    const track = reuse?.track ?? { kind, id: trackId };
+    const stream = streamId === null ? null : new FakeStream(streamId);
+    const streams = stream ? [stream] : [];
     this.ontrack?.({ track, receiver: t.receiver, transceiver: t, streams });
-    return { track, transceiver: t };
+    return { track, transceiver: t, stream };
   }
 }
 
 const SELF = 'aaaa1111-self';
 const BOB = 'BBBB2222-bob';
+const CAROL = 'cccc3333-carol';
 
 let pc: FakePc;
 let sent: SfuClientFrame[];
 let failures: Error[];
 let joinedOthers: (number | null)[];
 let remote: { peer: string; trackId: string }[];
+let gone: { peer: string; trackId: string }[];
 let refusedCamera: string[];
 let hookOverrides: Partial<CallSfuLegHooks>;
 
@@ -176,6 +204,10 @@ function hooks(): CallSfuLegHooks {
       steps.push(`remote ${track.kind} ${peer}`);
       remote.push({ peer, trackId: track.id });
     },
+    onRemoteTrackGone: (peer, track) => {
+      steps.push(`gone ${track.kind} ${peer}`);
+      gone.push({ peer, trackId: track.id });
+    },
     onConnectionState: (state) => steps.push(`state ${state}`),
     onFailed: (e) => failures.push(e),
     ...hookOverrides,
@@ -186,9 +218,9 @@ function track(kind: string) {
   return { kind, id: `local-${kind}` } as MediaStreamTrack;
 }
 
-function leg(kinds: string[] = ['audio']) {
+function leg(kinds: string[] = ['audio'], self = SELF) {
   const l = new CallSfuLeg(
-    SELF,
+    self,
     { stream: { id: 'local' } as MediaStream, tracks: kinds.map(track) },
     hooks()
   );
@@ -208,6 +240,7 @@ beforeEach(() => {
   failures = [];
   joinedOthers = [];
   remote = [];
+  gone = [];
   refusedCamera = [];
   hookOverrides = {};
 });
@@ -351,6 +384,67 @@ describe('CallSfuLeg - one connection to the relay (WP-GC4 client)', () => {
     }
   });
 
+  it("refuses a forwarded track naming this device whatever the case of the owner's user id", () => {
+    leg(['audio'], SELF.toUpperCase());
+    pc.forward('audio', SELF);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toBeInstanceOf(CallSfuTrackUnattributedError);
+    expect(remote).toEqual([]);
+  });
+
+  it('reports a forwarded track gone when the relay drops it from its stream (removetrack, never ended)', () => {
+    const l = leg();
+    const { track, stream } = pc.forward('audio', BOB, 'fwd-a');
+    stream!.dropTrack(track);
+    expect(gone).toEqual([{ peer: 'bbbb2222-bob', trackId: 'fwd-a' }]);
+    expect(l.senderOf('fwd-a')).toBeUndefined();
+    // Once per onRemoteTrack: a second removetrack of the same track reports nothing.
+    stream!.dropTrack(track);
+    expect(gone).toHaveLength(1);
+    expect(failures).toEqual([]);
+  });
+
+  it('a track re-attached under another publisher (a reused transceiver) is reported gone first, then shown once', () => {
+    const l = leg();
+    const first = pc.forward('audio', BOB, 'fwd-a');
+    steps = [];
+    const second = pc.forward('audio', CAROL, 'unused', first);
+    expect(steps).toEqual([
+      'receiver transform audio cccc3333-carol',
+      'sender transform audio armed, no track yet',
+      'gone audio bbbb2222-bob',
+      'remote audio cccc3333-carol',
+    ]);
+    expect(l.senderOf('fwd-a')).toBe('cccc3333-carol');
+    // The old stream's removetrack, arriving after, names an attribution already ended.
+    first.stream!.dropTrack(first.track);
+    expect(gone).toEqual([{ peer: 'bbbb2222-bob', trackId: 'fwd-a' }]);
+    second.stream!.dropTrack(first.track);
+    expect(gone.map((g) => g.peer)).toEqual(['bbbb2222-bob', 'cccc3333-carol']);
+    expect(failures).toEqual([]);
+  });
+
+  it('a screen hook that throws is logged at error and leaves the leg standing', () => {
+    hookOverrides = {
+      onRemoteTrack: () => {
+        throw new Error('no tile');
+      },
+      onRemoteTrackGone: () => {
+        throw new Error('no tile to remove');
+      },
+    };
+    const l = leg();
+    const { track, stream } = pc.forward('audio', BOB, 'fwd-a');
+    expect(logs.some((x) => x.includes('ERROR onRemoteTrack threw') && x.includes('no tile'))).toBe(
+      true
+    );
+    expect(l.senderOf('fwd-a')).toBe('bbbb2222-bob');
+    stream!.dropTrack(track);
+    expect(logs.some((x) => x.includes('ERROR onRemoteTrackGone threw'))).toBe(true);
+    expect(failures).toEqual([]);
+    expect(pc.closed).toBe(false);
+  });
+
   it('ends the leg when a forwarded track cannot be decrypted, and never shows it', () => {
     const noKey = new Error('the worker holds no call key');
     hookOverrides = {
@@ -432,6 +526,18 @@ describe('CallSfuLeg - one connection to the relay (WP-GC4 client)', () => {
     pc.connectionState = 'connected';
     pc.onconnectionstatechange?.();
     expect(steps).toContain('state connected');
+  });
+
+  it('a failed connection ends the leg through onFailed, after reporting the state', () => {
+    const l = leg();
+    pc.connectionState = 'failed';
+    pc.onconnectionstatechange?.();
+    expect(steps).toContain('state failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toBeInstanceOf(CallSfuConnectionFailedError);
+    expect(pc.closed).toBe(true);
+    expect(l.connection).toBeNull();
+    expect(logs.some((x) => x.includes('ERROR the leg ends'))).toBe(true);
   });
 
   it('close is idempotent and ends the leg without a failure', async () => {

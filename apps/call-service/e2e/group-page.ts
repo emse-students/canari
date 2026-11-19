@@ -265,6 +265,11 @@ function relayLeg(): CallSfuLeg {
         void audio.play().catch((err) => note(`play: ${String(err)}`));
         note(`relay: ontrack ${track.kind} from ${peer}`);
       },
+      onRemoteTrackGone: (peer, track) => {
+        // Reported before any re-attachment of the same track, so the entry is still this peer's.
+        trackSender.delete(track.id);
+        note(`relay: ${track.kind} track of ${peer} gone`);
+      },
       onConnectionState: (state) => connectionChanged('the connection to the SFU', state),
       onFailed: (e) => setFault(`relay: ${e.message}`),
     }

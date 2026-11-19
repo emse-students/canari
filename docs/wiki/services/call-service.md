@@ -282,8 +282,8 @@ throughout, so no clear frame ever crosses it. The SFU mode needed three things 
   `a_departure_during_a_forward_drops_the_track_once_the_forward_is_done`).
 - **`Joined` states `others`** - how many seats OTHER users hold at the reservation, read under the
   seat lock (`Reservation::Seated { others }`) and logged `[call] sfu joined room=.. peer=.. others=N`
-  - the shape of the p2p `Joined` (WP-GC6), so a client answering into a relay room everyone already
-  left learns it from a fact (WP-GC4 client, 2026-11-16; test
+  - the p2p `Joined` does not state it yet (`p2p_send_joined` sends `others: None`; WP-GC6 adds it),
+  so a client answering into a relay room everyone already left learns it from a fact (WP-GC4 client, 2026-11-16; test
   `an_sfu_room_seats_up_to_its_cap_and_refuses_the_next_user` and the freed-seat test).
 - **A renegotiation never collides with a negotiation in flight.** One owed while the peer's
   connection is not `stable` (its own offer being answered) is recorded in `renegotiate_pending` and
