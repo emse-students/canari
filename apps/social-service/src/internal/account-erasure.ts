@@ -512,7 +512,8 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
              SET "broadcasterId" = $2,
                  "title" = NULL,
                  "endReason" = COALESCE("endReason", 'erased'),
-                 "endedAt" = COALESCE("endedAt", now())
+                 "endedAt" = COALESCE("endedAt", now()),
+                 "keepsReplay" = false
            WHERE "broadcasterId" = $1`,
   },
   {

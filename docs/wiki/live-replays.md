@@ -1,10 +1,11 @@
 # Live replays - a finished live kept three days as a CanaReel
 
-**State (2026-11-09): DESIGNED, every question decided by the owner on 2026-11-09
-([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 (the switch and the schema) and WP-R2
-(the server, [as built](#wp-r2-as-built)) built, WP-R3 (out of the backup,
-[as built](#wp-r3-as-built-the-segments-outside-the-backup)) built and owed a dev pass, the client
-(WP-R4, WP-R5) and the texts (WP-R6) not built; `live_replays_mode` is `off` everywhere.**
+**State (2026-11-19): BUILT AND ON. Every question decided by the owner on 2026-11-09
+([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 to WP-R5 built and shipped (the client in
+the `1.7.0` stable); `live_replays_mode` turned `on` in production and on dev on 2026-11-19 at the
+owner's request, BEFORE the texts (*"Prod maintenant, textes juste après"*,
+[decision 42](backlog.d/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
+[built](#wp-r6-as-built-the-texts) in the pull request that followed. The phone readings are owed.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
 measured cost and the chosen mechanism, kept as the base) and #3133 (2026-11-07, closed; its
@@ -146,8 +147,9 @@ two generations of one phone write byte-equal inits) and any player but ffmpeg -
 ### C in detail
 
 1. **The trim keeps the replay, bounded in TIME (D1).** For a live that keeps a replay
-   (`lives."keepsReplay"`, fixed at the start from `live_replays_mode`, so a flip mid-live never makes
-   half a replay), `trim` deletes the segments whose `createdAt` is more than `LIVE_REPLAY_MAX_MS`
+   (`lives."keepsReplay"`, written at the start from `live_replays_mode`, so a flip mid-live never
+   makes half a replay; on an ENDED row the final verdict, written by every end -
+   [below](#the-end-texts-say-the-servers-verdict)), `trim` deletes the segments whose `createdAt` is more than `LIVE_REPLAY_MAX_MS`
    (3 hours) older than the newest segment's - the database's own times, never a process clock - and
    never the newest 20. Everything else of the trim is unchanged (the media delete first, then the
    rows and `storedBytes` in one transaction, idempotent from durable state). A live with
@@ -299,12 +301,12 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 
 | WP | What | State |
 | --- | --- | --- |
-| **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start; the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
+| **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start (on an ended row, since WP-R6, the final verdict written by every end); the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
 | **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure ending the replay; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | built, inert while the switch is off ([as built](#wp-r2-as-built)) |
-| **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built in the repo, owed its dev pass ([as built](#wp-r3-as-built-the-segments-outside-the-backup)) |
+| **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built, shipped from the `v1.6.9` stable on; the switch went on 2026-11-19; **its dev and production readings (1-5 below, and reading 7) are NOT recorded and are owed** ([backlog](backlog.d/live-replays-kept-three-days-as-canareels.md)) |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet; the first-live rules raised to version 3 moved to WP-R6 ([why](#wp-r4-and-wp-r5-as-built)) | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R5** | the segment-by-segment save, a new part on an init change, the size first | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
-| **WP-R6** | the texts (below), then `live_replays_mode = on` on dev, the readings, then production | not built |
+| **WP-R6** | the texts (below) and `LIVE_RULES_VERSION` 3; the switch went `on` on both estates first, by the owner's decision | built ([as built](#wp-r6-as-built-the-texts)); the readings owed |
 
 ### WP-R2, as built
 
@@ -420,7 +422,7 @@ filesystem), so section 1's figures are unchanged. A restored host starts with n
 replay (`MIGRATION.md` section 6): the replay posts that come back with the database play nothing
 (every segment fetch 404s) until their `expiresAt` drops them, 3 days at most.
 
-**Owed on dev, before any production release carries it** (and before `live_replays_mode` moves):
+**Owed on dev** (written as owed before any production release; WP-R3 shipped from `v1.6.9` on and the switch went on 2026-11-19 with none of them recorded, so they are owed now, [backlog](backlog.d/live-replays-kept-three-days-as-canareels.md)):
 
 1. a live from a phone on dev: its segments under the dev estate's `live_segments` volume and NONE
    under `live/` in Garage (`garage` CLI or an S3 listing), the viewer plays, the poster shows;
@@ -447,7 +449,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -473,8 +475,178 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 - **The cover and the feed's clock.** A replay row is served (`GET /api/posts`, `GET /api/posts/:id`) with its live's last preview image as `poster` and the key that opens it alone as `posterKey` (`posterKeyOf`, the open-lives card's own derivation, its outage reported once), and the database's `now()` as `serverNow` beside `expiresAt` (`readReplayRowFacts`, one query per page, only when the page holds a replay). These are added AT SERVE TIME, on a cached page as on a computed one, never stored in the 30 s page cache - a cached clock would be up to 30 s old. A failed read is logged at ERROR and the rows go out without cover or clock, never a 500; a preview name without its time (`posterAgeMs` NULL) is no cover, never an age of 0 (`servedPoster`, shared with the open-lives list). The client's poster memo is bounded (24 images, least recently used out), since nothing lists the replays' covers to prune them. No new object: the live row and its prefix are kept while the replay post exists, so the image is where the card fetched it. The card draws the cover with `LivePosterImage` under the live's id (the same memo) and the time left with the pane's `replayTimeLeft`; the pane stands the cover over the page until the picture plays (on a neighbour page too) and drops it for a blocked autoplay or a failure. The list rows now select `posts."liveId"`, which the pane needs to start.
 - **No repost:** the card's menu offers no repost, republication or consent for a replay; the reel rail never had one. The rail's "Envoyer a..." stays (a link, not a repost). A replay is edited by its caption alone, as the server decided.
 - **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
-- **Broadcaster texts (part of WP-R6):** the audience rule, the end confirm and the broadcaster's own end screen name the replay only while the switch is on (and, for the last two, only for a live of at least 30 s: `replayFollows`). The legal pages (privacy `#directs`, CGU `#directs`, register C19) are NOT changed here: they say "pas de rediffusion" and change at the flip.
+- **Broadcaster texts (part of WP-R6):** the audience rule names the replay while the switch is on; the end confirm and the end screen read the server's facts, [below](#the-end-texts-say-the-servers-verdict) (superseding a first version that read the switch and a client clock).
 
-**`LIVE_RULES_VERSION` stays 2 until the flip's texts ship (WP-R6).** Version 3 is the broadcaster accepting a text that names the replay, and the rules sheet points at the CGU, which says "pas de rediffusion" until the flip; raised now, every broadcaster would re-accept, with the switch off, either a sheet promising a replay that does not happen or the unchanged text under a new number. It is raised in the pull request that changes the CGU, the privacy policy, register C19-C20 and the pre-live texts, merged before `live_replays_mode` is turned on (the table above).
+**`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](backlog.d/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
 
 Owed: the phone readings listed above (cover and time left on the card included).
+
+## A replay seek: the latest target alone moves the playhead (owner, 2026-11-19)
+
+Reported on a desktop browser: drag the bar, the player loads; drag again while it loads and the
+playhead is thrown back to the earlier position ("il faut decorreler la lecture et le chargement").
+
+**Root cause.** `ReplayPlayer.noteSeeking` queued one serial step per `seeking` event, and each step
+ended by WRITING `video.currentTime` where ITS segment landed. A step for an older target still held
+the queue (its fetch pending), so when it completed it moved the playhead to the old target; a seek
+back into buffered media (which writes nothing itself) was simply overwritten.
+
+**The rule.** The user's LATEST seek is the single source of truth; only it may write the playhead.
+
+- Every seek takes a ticket `{id, signal}` (`seekId`, a counter - never a clock). A newer seek bumps
+  `seekId` (monotonic, never reset) and aborts the older ticket's controller, so its in-flight fetch
+  is cancelled rather than waited for, and its queued step returns at once. The seek's download has
+  its OWN controller, aborted with the rest by `teardownMedia`: never `AbortSignal.any`, which iOS 16
+  WKWebView lacks (pinned by a test that deletes it).
+- After every `await` of a seek (page listing, fetch, decrypt, append) the ticket is compared with
+  `seekId`; a stale one stops and logs. A cancelled stale fetch is not a failure (no retry, no
+  "reconnecting"), and a dropped stale step or a seek into buffered media ends a "reconnecting"
+  left by an older seek's retry.
+- Known and pre-existing: a seek still queues behind ONE untracked step already running (a fill's
+  segment download or a page listing), which is not cancelled by a seek.
+- Appends never set `currentTime`; background fills only append. **The invariant: every playhead write
+  of the replay player is a seek, and the newest seek wins.** The writers are three: the seek step's
+  landing (`seekTo`, ticket-guarded), the seek step's landing on the edge of a hole (`noteSeeking`),
+  and the hole crossing of `crossHole` (itself a seek, which the engine reports as `seeking` and a newer
+  seek supersedes like any other). A position inside no buffered range is never written: every
+  landing is checked against the ranges.
+- Loading serves the target first: the seek step takes the segment holding the target, then `fill`
+  continues from its cursor ahead of it.
+- `LivePlayer` (the live edge) has no user seek: its only playhead write is `seekToEdge`, forward
+  only, from its own state, so it shares none of this.
+
+Pinned in `replayPlayer.test.ts` with deferred fetches (late answer, rapid repeated seeks, seek back
+into buffered media, abort of the stale download). **Owed:** a reading on a desktop browser and on
+both bench phones on dev (dragging the bar repeatedly while loading), listed in
+[the backlog entry](backlog.d/replay-seek-decoupled-from-loading.md).
+
+### Holes in the replay timeline: crossed by construction (S11, 2026-11-19)
+
+A replay is NOT contiguous media. The live itself has holes: a camera flip (a new generation and init,
+about 0.8 s on the bench) and a background pause (the broadcaster's app stopped sending, 17.6 s on the
+bench) leave a forward gap between one segment's end and the next one's start. Read on the Mi 9T on a
+live with both: buffered `[0,16.6] [17.4,27.6] [45.2,76.1]`; the playhead stopped 0.5 s before the first
+hole and never moved, because `noteStall` took a stop inside a buffered range for the engine's own wait.
+Every earlier fixture was contiguous, which is why no test saw it.
+
+The design separates two things. **Where a segment sits in media time** is MEASURED when it is appended
+(`placed` start, `placedEnd` end), kept for the whole session and never forgotten by a trim or an engine
+eviction. **What the SourceBuffer holds now** is read from `buffered`. Holes come from the first, the lead
+and eviction from the second.
+
+The rule: **a hole is a fact of the segment list, never something detected by a stall.**
+`knownHoles(segments, placed, placedEnd, skipped)` returns the gap between where a segment was measured to end and
+where its list neighbour begins (and the leading gap before the first segment, above 0.05 s); a region
+not loaded yet has no measure and is no hole, while a segment skipped for good is transparent (below). The leading gap is read from the first MEASURED segment when only skipped ones precede it. A range holding a single segment
+between two holes is crossed on both sides. **A segment skipped for good (404, or one that does not open)
+is transparent**: each measured segment is paired with the NEXT measured one, so the media the skipped
+one would have held is a hole like any other, and the lead, the far-ahead trim, the crossing and the seek
+landing all follow (a 404 inside the lead used to make the fill download the replay, and again on every
+`timeupdate`). A region not loaded yet, neither measured nor skipped, breaks the pairing. A segment that
+does not open is downloaded once more before it is skipped (a corrupted transfer). The player then:
+
+- **counts its lead across the holes** (`mediaAhead`, leading gap included). A lead that stopped at the
+  hole opened a new range and was never met: the fill downloaded the WHOLE replay (200 of 200 segments in
+  the probe), which on iOS hits the quota. The far-ahead trim is measured the same way, in media seconds
+  across holes, so the media right after an 80 s pause is not "far". Pinned by P1 (hole mid-lead) and P2
+  (first segment at 0.4 s): about 12 s ahead, no more. The fill also never keeps its cursor past a
+  segment the buffer no longer holds ahead of the playhead (`firstGapAhead`): it is fetched again;
+- on `timeupdate`, a playhead at a hole's start jumps to the start of the media after it;
+- on `waiting`, a playhead whose CURRENT range ends at a hole with at most `REPLAY_SEGMENT_LENGTH_S`
+  (1.5 s) of media left does the same - the engine ran out of playable media there. With more left it is
+  the engine's own wait and content still ahead is never skipped. The 0.5 s stop that sets the tail was
+  read on the Mi 9T ONLY and never on iOS. That one constant is also the most a seek lands inside its
+  segment;
+- a seek whose target is INSIDE a hole lands on the next range's start; a seek past its segment's own
+  end with the next segment not yet loaded takes that segment and lands on its start. `take` answers
+  null both for a skipped segment and for one already buffered, so a TARGET or next segment already
+  buffered is landed on from its measured place (the engine would otherwise hang in `seeking`).
+
+A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with ONE shared tolerance
+(0.01 s), so a position is never both and the jump cannot repeat. THE RULE of a landing is: always write
+a position inside a range - the segment after the hole, else the target segment's own start, else
+nothing (logged) - never a position in no range, which hangs the engine's seek and blocks the crossing
+(`video.seeking`). **A user seek is never left unanswered.** When the target's segment is skipped the landing walks
+FORWARD to the first segment that gives media (listing the next page when the walk reaches the end of
+the pages already listed), and BACK to the LAST EXISTING segment before the target when none does - never
+an arbitrary range the buffer happens to hold; only a replay with no media at all logs an error and writes
+nothing. Held and skipped segments are answered from what is known, never downloaded again. The second
+download after an open failure goes through the same handling as the first: a stale seek or a 404 skips
+that segment and never ends the replay.
+`firstGapAhead` starts from the last measured segment only when its end reaches the playhead, else from
+the playhead's own list position, so nothing is fetched behind it.
+
+A hole whose far side the engine evicted is still a hole: the crossing lands there and
+the engine's `seeking` fetches the media again.
+
+No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in
+`replayPlayer.test.ts`. Owed: the same reading on both phones with a live that flipped and paused.
+
+## WP-R6 as built: the texts
+
+Written 2026-11-19, after the switch went `on` on both estates (the owner's order, so no "switch off"
+production state was left to keep the texts true for). Each text says what the product does, from
+[the owner's decisions](#the-owners-decisions-of-2026-11-09): 3 days by default then deleted, never in
+a backup (the segments), the last 3 hours at most, 30 s of live at least, the live's own audience and
+no repost, saved like a CanaReel, the chat not replayed, the time left shown, a staff deletion with no
+strike, the 20 GB total cap evicting the oldest.
+
+| Text | What it says now |
+| --- | --- |
+| CGU `#directs`, the "Pas d'enregistrement" term | renamed **Rediffusion**; the "Coupure" term adds that an ended live can be cut while its replay exists (the cut deletes it) and that a staff deletion of the replay is no cut and no sanction. `updated` 19/11/2026 |
+| Privacy section 2 "Directs", section 6 rows and its closing note on backups | the replay paragraph (what is kept, for whom, no repost, no push, no seat, the chat deleted at publication); the replay row (what it holds, when it goes, never in a backup); the live row (the chat goes at the end, the video stays with a replay); the backup paragraph (segments never backed up, WP-R3). `updated` 19/11/2026 |
+| Register C19, C20 | the purpose and retention of a replay; a cut reaches an ended live while its row is kept; D7 |
+| Pre-live screen | `live_rule_audience_*_replay`: the time left, the last 3 hours, no repost, saved like a CanaReel, the chat not replayed |
+| First-live rules | `LIVE_RULES_VERSION` **3** |
+
+**How the texts read while the switch is off.** The broadcaster's screen reads the switch: the
+`_replay` strings show only while `serverLiveReplaysMode()` is `on` (`replaysAvailable`, and
+`replayFollows` for the end texts), and the plain `live_rule_audience_member` /
+`_association` ("Rien n'en est gardé après la fin") are the OFF texts - true when off, so they are
+unchanged. The legal pages are static text and the repository's precedent for a runtime switch on
+them is a sentence true in both states, not a text that changes with a fetch (the lives paragraphs
+carry "quand la fonction est ouverte"; an offline page would otherwise show a different contract): they
+describe the replay as the product does today, and say that if the Editor turns replays off, a live
+started after that is not recorded. The privacy page's durations stay the server's values (section 6).
+
+**What version 3 costs.** `LIVE_RULES_VERSION` is read only at a live's START (`assertRulesAccepted`):
+a broadcaster whose acceptance is below 3 sees the rules sheet on the pre-live screen once more and
+taps Accept, which the start records; nobody else is asked anything. The client reads the version
+from the server (`/api/lives/limits`, `/rules`), so no build carries it.
+
+**What the legal edit does not do.** Canari has no terms version a member accepts: the CGU and the
+policy carry their `updated` date and nothing else, so this edit asks no member to re-accept anything.
+The one terms version that IS accepted, MiConnect's `cgu_version`, belongs to `/legal/miconnect`
+([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)),
+which this edit does not touch.
+CGU section 14 and privacy section 12 both promise a notice 15 days before a substantial change
+takes effect; no code sends such a notice, and none was sent for the replays (the switch went on
+first, by the owner's order). **Owner's decision, 2026-11-19: handled by the owner, outside the app**
+(*"Je m'en occupe"*) - he writes the text and picks the channel; nothing is built for it.
+
+### The end texts say the server's verdict
+
+Review of #3856: a 30 s check on the client's clock (counted from the start's answer) and the
+server's (`lastSegmentAt - startedAt` on the database clock, the last flush included) disagree near
+30 s, so the screen could say "Rien n'en est gardé" over a published replay, or the reverse. Now ONE
+value, the server's:
+
+- **Every end writes it, and the column has ONE meaning on an ended row: the final verdict.** The
+  broadcaster's `POST /api/lives/:id/end` and the sweep's `endDue` set
+  `keepsReplay = keepsReplay AND <30 s rule>` in their own `UPDATE` (one SQL fragment,
+  `replayLongEnoughSql`, that `publishReplay` reads too); a cut and an erasure write it `false` in
+  their own transaction. The end answers it as `keepsReplay`, and a repeated end READS the column.
+  The ingest already refused any segment after the end; writing the verdict only makes the answer
+  self-contained. A cut or an erasure after the answer still removes the replay (the texts do not
+  promise past them). **Rows ended before this deploy keep their start-time value**: for the few
+  minutes until they are purged, a repeated end on such a row can answer "kept" for a live under
+  30 s; nothing is published wrongly, since `publishReplay` still applies the 30 s rule and the cut.
+- **The client freezes the first answer** (`LiveBroadcast.replayVerdict`) and the end screen reads
+  `replayEndText(keepsReplay, verdict)`: `none` for a live the server does not keep or judged short,
+  `kept` (how long it is visible) once the answer says so (a `404`, a purged row, is `none`: a
+  replay keeps its live row), and while no answer has come - the
+  screen settles behind no request - the rule itself ("S'il a duré au moins 30 secondes, sa
+  rediffusion sera publiée").
+- **The confirm, asked before the end, states the rule** for a live the server keeps, never a
+  promise: "s'il a duré au moins 30 secondes, sa rediffusion reste visible {days}".
+

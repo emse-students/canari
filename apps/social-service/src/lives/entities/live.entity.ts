@@ -105,9 +105,10 @@ export class Live {
   storedBytes: string;
 
   /**
-   * Whether this live is kept three days as a replay at its end (migration 156,
-   * docs/wiki/live-replays.md): fixed at the start from `platform_config.live_replays_mode`, so a
-   * flip of the switch mid-live never makes half a replay.
+   * Whether this live is kept as a replay (migration 156, docs/wiki/live-replays.md). On an OPEN
+   * live: written at the start from `platform_config.live_replays_mode`, so a flip of the switch
+   * mid-live never makes half a replay. On an ENDED live: the FINAL verdict, written by every end -
+   * the broadcaster's and the sweep's by the 30 s rule, a cut and an erasure `false`.
    */
   @Column({ type: 'boolean', default: false })
   keepsReplay: boolean;

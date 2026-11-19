@@ -275,6 +275,17 @@ export class LiveBroadcast {
    * air, the title the server last confirmed. Empty is "no title".
    */
   title = $state('');
+  /**
+   * Whether the server keeps THIS live as a replay (`keepsReplay`, fixed at its start). The end texts
+   * read it, never the switch as read now: a flip during the live does not change the live.
+   */
+  keepsReplay = $state(false);
+  /**
+   * THE SERVER'S VERDICT on the replay, from the answer to `POST /lives/:id/end` (`keepsReplay`),
+   * frozen at the first answer; null until then (the screen settles behind no request) and for a
+   * server that does not say. The broadcaster's end screen reads it, never a client clock.
+   */
+  replayVerdict = $state<boolean | null>(null);
   /** True while an on-air title edit is with the server. */
   titleSaving = $state(false);
   /** Why the last on-air title edit was not taken, or null. */
@@ -602,6 +613,8 @@ export class LiveBroadcast {
     this.liveId = live.id;
     // What the server holds (an older server ignores the field and answers none).
     this.title = live.title ?? '';
+    this.keepsReplay = live.keepsReplay === true;
+    console.debug(`[LIVE-BROADCAST] ${live.id} keeps a replay: ${this.keepsReplay}`);
     this.#startedAt = this.#deps.now();
     this.#lastStoredAt = this.#startedAt;
     this.#uploader = this.#deps.createUploader(live.id, {
@@ -1168,12 +1181,29 @@ export class LiveBroadcast {
       console.debug(`[LIVE-BROADCAST] delivering the end of ${liveId}`);
       this.#deps.endLive(liveId).then(
         (r) => {
-          console.debug(`[LIVE-BROADCAST] ${liveId} end answered (${r.endReason})`);
+          console.debug(
+            `[LIVE-BROADCAST] ${liveId} end answered (${r.endReason}, replay ${r.keepsReplay ?? 'unsaid'})`
+          );
+          if (
+            liveId === this.liveId &&
+            this.replayVerdict === null &&
+            r.keepsReplay !== undefined
+          ) {
+            this.replayVerdict = r.keepsReplay;
+          }
           done();
         },
         (e: unknown) => {
           if (e instanceof LiveRefusalError) {
             console.debug(`[LIVE-BROADCAST] ${liveId} end answered with a refusal (${e.code})`);
+            // A purged live (404) holds no replay: a replay keeps its live row while it exists.
+            if (
+              isLiveRefusal(e, 'not-found') &&
+              liveId === this.liveId &&
+              this.replayVerdict === null
+            ) {
+              this.replayVerdict = false;
+            }
             done();
             return;
           }

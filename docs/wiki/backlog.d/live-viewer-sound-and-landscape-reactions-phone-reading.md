@@ -1,0 +1,5 @@
+## Read the live viewer's sound at open and its landscape reactions on the phones (owner, 2026-11-19)
+
+target: 1.7.1
+
+The viewer opens unmuted and lays the reactions in a row in landscape ([live](../frontend/modules/live.md#the-viewer-opens-with-sound-and-the-reactions-lie-down-in-landscape-owner-2026-11-19)). Owed on real hardware, then this entry is deleted: (1) Android WebView and iOS WKWebView - a live opened from the feed plays WITH sound, no "Activer le son" button; (2) a phone held sideways and a desktop at 1024 and 1920 px - the five reactions form a row after the comment field with no overlap; (3) a muted-by-hand live reopens muted in the same session; (4) a feed stored "off" is silent again after a live that opened audible is closed.

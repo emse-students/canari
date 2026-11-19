@@ -220,6 +220,26 @@ export interface LiveEndResult {
   id: string;
   endedAt: Date;
   endReason: LiveEndReason;
+  /**
+   * THE SERVER'S VERDICT ON THE REPLAY, decided once, on the database clock, from what it had
+   * received when the live ended: the live keeps a replay (`keepsReplay`, fixed at its start) AND its
+   * stored segments span at least {@link LIVE_REPLAY_MIN_MS} ({@link replayLongEnoughSql}, the
+   * predicate {@link LivesService.publishReplay} reads). Every end writes it into `keepsReplay` (the
+   * column's meaning on an ENDED row: the final verdict), so the answer is self-contained - the ingest
+   * already refuses a segment after the end. The broadcaster's end screen says what this says. A later
+   * cut or erasure writes it false and removes the replay.
+   */
+  keepsReplay: boolean;
+}
+
+/**
+ * THE 30-SECOND RULE OF A REPLAY (D4), ONE SQL predicate on the live row's own columns: its segments
+ * span at least `LIVE_REPLAY_MIN_MS` (passed as `param`), and it stored one. Read by the end (which
+ * freezes it) and by the publication, so the two can never disagree. `alias` qualifies the columns.
+ */
+function replayLongEnoughSql(param: string, alias = ''): string {
+  const c = alias ? `${alias}.` : '';
+  return `COALESCE(${c}"lastSegmentAt" - ${c}"startedAt" >= ${param} * interval '1 millisecond', false)`;
 }
 
 /** What a staff cut answers (WP-L8), and its idempotent repeat. */
@@ -1265,7 +1285,8 @@ export class LivesService implements OnModuleDestroy {
    * just stored - the end's purge deletes the whole prefix whatever this left, so correctness never
    * rests on this pass; only the bound does, and it is re-asked by every segment.
    *
-   * A LIVE THAT KEEPS A REPLAY (`keepsReplay`, fixed at its start) keeps its last
+   * A LIVE THAT KEEPS A REPLAY (`keepsReplay`, written at its start; on an ended row the final
+   * verdict, which the trim of an open live never meets) keeps its last
    * {@link LIVE_REPLAY_MAX_MS} instead (owner, 2026-11-09, D1): a segment goes only when it is behind
    * the window AND older than three hours before the newest segment, both by the segments' own
    * `createdAt` (the database clock), so what such a live stores is bounded by three hours, never by
@@ -1657,19 +1678,21 @@ export class LivesService implements OnModuleDestroy {
   async end(broadcasterId: string, liveId: string): Promise<LiveEndResult> {
     // An UPDATE ... RETURNING answers `[rows, affected]` through TypeORM's postgres driver.
     const [rows] = (await this.db.query(
-      `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster'
+      `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster',
+              "keepsReplay" = "keepsReplay" AND ${replayLongEnoughSql('$3')}
         WHERE id = $1 AND "broadcasterId" = $2 AND "endedAt" IS NULL
         RETURNING id, "endedAt", "endReason", ${END_FACTS_SQL}`,
-      [liveId, broadcasterId]
+      [liveId, broadcasterId, LIVE_REPLAY_MIN_MS]
     )) as [
       ({ id: string; endedAt: Date; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[],
       number,
     ];
     const first = rows[0];
-    let ended: { id: string; endedAt: Date; endReason: LiveEndReason } | undefined = first && {
+    let ended: LiveEndResult | undefined = first && {
       id: first.id,
       endedAt: first.endedAt,
       endReason: first.endReason,
+      keepsReplay: first.keepsReplay,
     };
     if (!ended) {
       const current: LiveRow[] = await this.db.query(
@@ -1683,7 +1706,12 @@ export class LivesService implements OnModuleDestroy {
         const cut = await this.cutOf(this.db.manager, liveId);
         if (cut && cut.broadcasterId === broadcasterId) {
           this.logger.debug(`[LIVE] end of ${liveId} answered from its cut (${cut.liveEndReason})`);
-          return { id: liveId, endedAt: cut.liveEndedAt, endReason: cut.liveEndReason };
+          return {
+            id: liveId,
+            endedAt: cut.liveEndedAt,
+            endReason: cut.liveEndReason,
+            keepsReplay: false,
+          };
         }
         throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
@@ -1691,8 +1719,15 @@ export class LivesService implements OnModuleDestroy {
         this.logger.debug(`[LIVE] end refused: ${short(broadcasterId)} is not ${liveId}'s`);
         throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
-      // Ended already (by an earlier call, the sweep, an erasure): the same fact, answered again.
-      ended = { id: row.id, endedAt: row.endedAt!, endReason: row.endReason! };
+      // Ended already (by an earlier call, the sweep, a cut, an erasure): the same fact, answered
+      // again. On an ENDED row `keepsReplay` IS the final verdict - every end writes it (this one, the
+      // sweep's `endDue`, a cut, an erasure) - so the column is read, never recomputed.
+      ended = {
+        id: row.id,
+        endedAt: row.endedAt!,
+        endReason: row.endReason!,
+        keepsReplay: row.keepsReplay,
+      };
       this.logger.debug(`[LIVE] end of ${liveId} repeated (${row.endReason})`);
     } else {
       this.logger.log(`[LIVE] ${liveId} ended by its broadcaster, ${endFacts(first)}`);
@@ -1840,6 +1875,9 @@ export class LivesService implements OnModuleDestroy {
         liveEndedAt = ended[0].endedAt;
         endReason = 'cut';
       }
+      // A cut live never leaves a replay: its verdict is written FALSE here, in the cut's own
+      // transaction, open or already ended (the column's meaning on an ended row: the final verdict).
+      await tx.query(`UPDATE lives SET "keepsReplay" = false WHERE id = $1`, [liveId]);
       // THE STRIKE (WP-L8b): 1 + the broadcaster's other cuts on record, counted under the standing
       // lock and FIXED on the row - the ladder's durable state.
       const priorCuts = await otherCutsOnRecord(tx, row.broadcasterId, liveId);
@@ -2318,11 +2356,12 @@ export class LivesService implements OnModuleDestroy {
     const [rows] = (await this.db.query(
       `UPDATE lives
           SET "endedAt" = now(),
-              "endReason" = 'dropped'
+              "endReason" = 'dropped',
+              "keepsReplay" = "keepsReplay" AND ${replayLongEnoughSql('$2')}
         WHERE "endedAt" IS NULL
           AND COALESCE("lastSegmentAt", "startedAt") + $1 * interval '1 millisecond' <= now()
         RETURNING id, "endReason", ${END_FACTS_SQL}`,
-      [LIVE_RECONNECT_WINDOW_MS]
+      [LIVE_RECONNECT_WINDOW_MS, LIVE_REPLAY_MIN_MS]
     )) as [({ id: string; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[], number];
     for (const r of rows) {
       this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}, ${endFacts(r)}`);
@@ -2577,8 +2616,7 @@ export class LivesService implements OnModuleDestroy {
           `SELECT l."broadcasterId", l."associationId", l.title, l."endedAt", l."keepsReplay",
                   l."replayPostedAt" IS NOT NULL AS posted,
                   EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id) AS cut,
-                  COALESCE(l."lastSegmentAt" - l."startedAt" >= $2 * interval '1 millisecond', false)
-                    AS "longEnough",
+                  ${replayLongEnoughSql('$2', 'l')} AS "longEnough",
                   (SELECT (EXTRACT(EPOCH FROM (max(s."createdAt") - min(s."createdAt"))) * 1000)::bigint
                      FROM live_segments s WHERE s."liveId" = l.id) AS "spanMs"
              FROM lives l WHERE l.id = $1 FOR UPDATE OF l`,

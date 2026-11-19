@@ -243,7 +243,9 @@ export type VideoSoundScope = 'app' | 'local' | 'silent';
  *
  * In the `app` scope (the default) it opens at `videoSound`'s answer, and a change made through its
  * native controls BECOMES that answer, so turning the sound on in the viewer leaves it on in the feed
- * behind it: one answer for every video, whichever control gave it. In the `local` scope see
+ * behind it: one answer for every video, whichever control gave it - EXCEPT inside a live, whose
+ * choices belong to the live (`videoSound.startForLive`: held in memory, not written, and the feed's
+ * answer is put back at close). In the `local` scope see
  * {@link VideoSoundScope}. Either way, while it is open it is the only media playing (it registers
  * with `playbackArbiter` and claims at once), and closing it resumes the video on screen behind it.
  */

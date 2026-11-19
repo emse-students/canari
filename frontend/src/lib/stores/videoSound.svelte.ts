@@ -23,7 +23,11 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
  *   = []`). A browser refuses an audible autoplay before the page has had a gesture
  *   (`navigator.userActivation.hasBeenActive`), and a refused `play()` leaves the video STILL: so
  *   there, before any gesture, this session starts muted and the stored "on" is left as it is, for the
- *   next tap to restore. That is a fact read once at start, never a refusal provoked to learn it.
+ *   next tap to restore. That is a fact read at each viewer mount, never a refusal provoked to learn it.
+ *
+ * A LIVE is the exception (owner, 2026-11-19): it opens audible whatever is stored, unless the reader
+ * muted by hand in this page session ({@link decideLiveStart}, `videoSound.startForLive`). It is
+ * the LIVE's only: the viewer's `release` puts the app's previous in-memory answer back at unmount.
  *
  * NOT YET: following the device volume (a muted glyph at volume 0). A WebView does not expose the
  * system volume; it needs a native bridge on each phone - the owed work is in
@@ -94,6 +98,16 @@ function engineAllowsAudibleStart(): boolean {
   return activation?.hasBeenActive === true;
 }
 
+/** What the engine tells about a user gesture: `unknown` where `userActivation` does not exist. */
+export type EngineActivation = 'active' | 'inactive' | 'unknown';
+
+function readEngineActivation(): EngineActivation {
+  if (isMobileTauriRuntime()) return 'active';
+  const activation = (globalThis.navigator as Navigator | undefined)?.userActivation;
+  if (!activation) return 'unknown';
+  return activation.hasBeenActive ? 'active' : 'inactive';
+}
+
 /** The answer a run starts with: the stored choice, where the engine can honour it at once. */
 export function initialVideoMuted(
   stored: 'on' | 'off' | null,
@@ -101,6 +115,25 @@ export function initialVideoMuted(
 ): boolean {
   if (stored !== 'on') return true;
   return !audibleStartAllowed;
+}
+
+/**
+ * WHAT A LIVE DOES AT OPEN, decided from facts (owner, 2026-11-19: *"activer le son directement"*).
+ * Opening a live is the reader's gesture, so it starts AUDIBLE - whatever a past session stored - unless
+ * the reader muted by hand in THIS page session (which wins over everything), or the engine SAYS no
+ * gesture has happened yet (a deep link opened cold, `userActivation.hasBeenActive` false). Where the
+ * engine says nothing (`userActivation` absent) the answer is UNKNOWN, so the start is tried audible
+ * and the `NotAllowedError` retry is the net - never muted on a guess.
+ */
+export type LiveStartDecision = 'audible' | 'muted-by-hand' | 'muted-engine';
+
+/** Pure decision behind {@link videoSound.startForLive}. */
+export function decideLiveStart(facts: {
+  mutedByHand: boolean;
+  activation: EngineActivation;
+}): LiveStartDecision {
+  if (facts.mutedByHand) return 'muted-by-hand';
+  return facts.activation === 'inactive' ? 'muted-engine' : 'audible';
 }
 
 let muted = $state(
@@ -115,6 +148,20 @@ const startingLevel = typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL 
 let level = $state(startingLevel);
 /** What the device has stored (or the default): `commitLevel` writes only a difference. */
 let persistedLevel = startingLevel;
+/** The reader pressed mute in THIS page session: a live then opens as they left it. */
+let mutedByHand = false;
+/** The sound is off because the ENGINE would not start it (not the reader): the viewer offers a button. */
+let startBlocked = $state(false);
+/** How many audible starts the engine refused this session, for the rate (warned at each). */
+let refusedStarts = 0;
+/** How many live opens the engine SAID no to before any `play()` (`muted-engine`), counted apart. */
+let engineBlockedStarts = 0;
+/**
+ * The live now open, if any: the app's answer BEFORE it, to put back at close, and how many viewers
+ * hold it (two lives in a row overlap for a moment when a new one mounts before the old one is
+ * destroyed: the old answer is kept, never the first live's audible one).
+ */
+let liveSession: { previousMuted: boolean; previousLevel: number; holders: number } | null = null;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
@@ -137,7 +184,9 @@ export const videoSound = {
    * wheel notch, a viewer closing). A no-op when what is stored is already the level.
    */
   commitLevel(): void {
-    if (level === persistedLevel) return;
+    // A level picked INSIDE a live belongs to the live: held in memory, never written, and put back
+    // at `release` (owner, 2026-11-19).
+    if (liveSession || level === persistedLevel) return;
     Log.d(
       'VIDEO',
       `volume level ${Math.round(level * 100)}% for every video (remembered on this device)`
@@ -162,13 +211,21 @@ export const videoSound = {
   /**
    * Sets the answer for every video and REMEMBERS it on this device - called from a reader's gesture
    * (a tap on a video, the speaker button, the `m` key, a viewer's own sound button). A no-op when it
-   * is already that.
+   * is already that. WHILE A LIVE IS OPEN the choice belongs to the live (owner, 2026-11-19): it is
+   * NOT written, only held in memory (`mutedByHand`, so the next lives of the session open as the
+   * reader left them), and `release` puts the feed's answer back - so memory and storage never
+   * diverge because of a live.
    */
   setMuted(next: boolean): void {
     if (next === muted) return;
-    Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video (remembered on this device)`);
+    Log.d(
+      'VIDEO',
+      `sound ${next ? 'off' : 'on'} for every video (${liveSession ? 'inside a live, not remembered' : 'remembered on this device'})`
+    );
     muted = next;
-    writeStored(next ? 'off' : 'on');
+    mutedByHand = next;
+    startBlocked = false;
+    if (!liveSession) writeStored(next ? 'off' : 'on');
     // INSIDE THE READER'S GESTURE: a measured video's AudioContext is resumed here, where WebKit
     // honours it - never later, from the element's `volumechange` (loudnessPlayback.ts).
     if (!next) primeLoudnessAudio();
@@ -187,9 +244,86 @@ export const videoSound = {
    */
   muteForRefusedStart(): void {
     if (muted) return;
-    console.info(
-      '[VIDEO] an audible start was refused - silent for this session, the stored choice kept'
+    refusedStarts += 1;
+    console.warn(
+      `[VIDEO] an audible start was refused (#${refusedStarts} this session) - silent for this session, the stored choice kept`
     );
     muted = true;
+    startBlocked = true;
+  },
+  /** True while the sound is off because the engine refused it, not the reader: "Activer le son" shows. */
+  get startBlocked(): boolean {
+    return startBlocked;
+  },
+  /** The live opens the engine said no to up front (`muted-engine`), apart from `play()` refusals. */
+  get engineBlockedStarts(): number {
+    return engineBlockedStarts;
+  },
+  /** The audible `play()` starts the engine refused this session. */
+  get refusedStarts(): number {
+    return refusedStarts;
+  },
+  /**
+   * A LIVE OPENS (see {@link decideLiveStart}): audible in memory, NOT remembered - the stored choice
+   * is the feed's, and a reader who muted before has not asked for a silent live. Returns the verdict
+   * and `release`, which the viewer calls at unmount: it puts back the answer the app had (a feed
+   * video is never made audible by a live), whatever the live did to it. A hand mute inside the live
+   * is the reader's gesture but belongs to the live: held in memory, never written (`setMuted`).
+   */
+  startForLive(): { verdict: LiveStartDecision; release(): void } {
+    // EVERY CALL THAT CAN THROW COMES FIRST: the session is taken LAST, with plain assignments, so a
+    // throw above never leaves one held with no handle to release it.
+    const activation = readEngineActivation();
+    const verdict = decideLiveStart({ mutedByHand, activation });
+    Log.d('VIDEO', `a live opens: ${verdict} (engine activation: ${activation})`);
+    if (verdict === 'audible') {
+      primeLoudnessAudio();
+    } else if (verdict === 'muted-engine') {
+      console.warn(
+        `[VIDEO] a live opened with no user gesture on record (#${engineBlockedStarts + 1} this session) - muted, "enable sound" offered`
+      );
+    }
+    if (liveSession) {
+      liveSession.holders += 1;
+      console.warn(
+        `[VIDEO] a live opened while another is still open (${liveSession.holders} holders) - the app's own answer is kept for the close`
+      );
+    } else {
+      liveSession = { previousMuted: muted, previousLevel: level, holders: 1 };
+    }
+    const session = liveSession;
+    if (verdict === 'audible') {
+      muted = false;
+      startBlocked = false;
+    } else if (verdict === 'muted-by-hand') {
+      // The reader's mute of this session holds, whatever the app's answer was.
+      muted = true;
+      startBlocked = false;
+    } else {
+      engineBlockedStarts += 1;
+      muted = true;
+      startBlocked = true;
+    }
+    let released = false;
+    return {
+      verdict,
+      release() {
+        if (released) {
+          Log.d('VIDEO', 'a live release was asked again - nothing to put back');
+          return;
+        }
+        released = true;
+        session.holders -= 1;
+        if (session.holders > 0) return;
+        liveSession = null;
+        level = session.previousLevel;
+        Log.d(
+          'VIDEO',
+          `a live closes: the app's sound answer is back to ${session.previousMuted ? 'off' : 'on'}`
+        );
+        muted = session.previousMuted;
+        startBlocked = false;
+      },
+    };
   },
 };
