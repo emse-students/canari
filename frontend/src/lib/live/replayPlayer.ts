@@ -41,7 +41,7 @@ import {
   type LiveVideoLike,
 } from './livePlayer';
 import { liveRetryDelayMs } from './liveViewerState';
-import { mediaStartsMs, segmentPositionAt } from './replayTimeline';
+import { mediaStartsMs, measuredPositionAt, segmentPositionAt } from './replayTimeline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveReplayPage, LiveReplaySegment } from './types';
 
@@ -167,7 +167,7 @@ export function knownHoles(
   segments: readonly LiveReplaySegment[],
   placed: ReadonlyMap<number, number>,
   ends: ReadonlyMap<number, number>,
-  skipped: ReadonlySet<number> = new Set()
+  skipped: { has(index: number): boolean } = new Set()
 ): MediaSpan[] {
   const holes: MediaSpan[] = [];
   // The leading gap: the first segment of the list begins after zero (the playhead starts at 0).
@@ -228,6 +228,14 @@ export const REPLAY_AHEAD_S = 12;
 export const REPLAY_BEHIND_S = LIVE_PLAYER_KEEP_BEHIND_MS / 1000;
 /** Media kept far ahead after a seek that left an older region buffered, in seconds. */
 export const REPLAY_FAR_AHEAD_S = 60;
+/**
+ * How many segments in a row a seek's landing walk may find missing (404, skipped, no media) before it
+ * gives up on that direction: about 45 s of replay at 1.5 s a segment. A run of deleted segments
+ * longer than that is a purge, not a pause (a pause is a hole in TIME, kept by the segment list), so
+ * the rest of the listing is the end of the walk for this seek. Bounds the requests a seek makes
+ * waiting on the server (901 for a long tail of 404s without it).
+ */
+const REPLAY_MAX_MISSING_WALK = 30;
 /** How many segments in a row may fail to open or append before the replay is called unplayable. */
 const MAX_CONSECUTIVE_FAILURES = 3;
 /**
@@ -236,8 +244,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
 const REPLAY_SEGMENT_LENGTH_S = 1.5;
-/** The most two measurements of one segment may differ by before it is said at warn, in seconds: one frame. */
-const MEASURE_FRAME_S = 0.05;
+/** The most two measurements of one segment may differ by before it is said at warn, in seconds: one frame at the slowest rate a camera runs at (15 fps). */
+const MEASURE_FRAME_S = 1 / 15;
 /** How many times a seek looks its segment up again after the one taken proved not to hold the target. */
 const REPLAY_SEEK_RELOOKUPS = 3;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
@@ -298,6 +306,19 @@ export class ReplayPlayer {
   private placedEnd = new Map<number, number>();
   /** Segments skipped for good (404, did not open): never a gap of the buffer to refill. */
   private skippedIdx = new Set<number>();
+  /**
+   * ONE range per probed purge, as segment indexes `[from, to)` (`to` is Infinity when the probe found no
+   * media up to the end of the list): the positions between a run of really tried 404s and the first
+   * existing segment after it, which the probe SAMPLED rather than read. A hole of the list for crossing,
+   * and a sampled verdict - never an entry per presumed index.
+   */
+  private gaps: Array<[number, number]> = [];
+  /** Sealed bytes a probe downloaded and the fill has not yet appended, by segment index (O(log n) of them). */
+  private probed = new Map<number, ArrayBuffer>();
+  /** What counts as no media: really tried and missing, or inside a probed gap. */
+  private readonly missing = {
+    has: (index: number): boolean => this.skippedIdx.has(index) || this.inGap(index),
+  };
   private lastInit: Uint8Array | null = null;
   private retryAttempt = 0;
   private openFailures = 0;
@@ -467,7 +488,7 @@ export class ReplayPlayer {
   private holeAt(at: number, stalled: boolean): MediaSpan | null {
     if (!this.buffer) return null;
     const spans = spansOf(this.buffer);
-    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.skippedIdx);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.missing);
     const inside = holes.find(([from, to]) => at >= from && at < to - EDGE_TOL_S);
     if (inside || !stalled) return inside ?? null;
     const range = spans.find((r) => onRange(at, r));
@@ -496,6 +517,8 @@ export class ReplayPlayer {
     this.placed = new Map();
     this.placedEnd = new Map();
     this.skippedIdx = new Set();
+    this.gaps = [];
+    this.probed = new Map();
     this.lastInit = null;
     this.retryAttempt = 0;
     this.openFailures = 0;
@@ -509,6 +532,12 @@ export class ReplayPlayer {
     this.seekPending = false;
     this.seekAbort?.abort();
     this.seekAbort = null;
+  }
+
+  /** Any server answer (bytes or a 404) proves reachability: the reconnecting screen ends, the backoff restarts. */
+  private answered(): void {
+    this.retryAttempt = 0;
+    if (this.state.kind === 'reconnecting') this.setState({ kind: 'playing' });
   }
 
   /** A seek that no longer waits on the network ends the reconnecting screen of an older one's retry. */
@@ -656,12 +685,22 @@ export class ReplayPlayer {
       // The bar reads the replay's own length from the first frame, before any media is in.
       if (this.source && page.durationMs > 0) this.source.duration = page.durationMs / 1000;
     }
+    const before = this.segments.length;
     this.segments.push(
       ...page.segments.filter((s) => s.index >= (this.segments.at(-1)?.index ?? -1) + 1)
     );
     this.nextFrom = page.nextFrom;
+    // PAGING TERMINATES BY PROOF, never by trusting the server: every paging loop calls this one step,
+    // and a page that added nothing, or whose cursor did not move forward, ends the listing - otherwise
+    // such an answer would be requested forever.
+    if (page.nextFrom !== null && (this.segments.length === before || page.nextFrom <= from)) {
+      console.warn(
+        `[LIVE_REPLAY] ${this.liveId}: the server answered a page from ${from} that added ${this.segments.length - before} segments with nextFrom ${page.nextFrom} - the listing is declared complete at ${this.segments.length} segments`
+      );
+      this.nextFrom = null;
+    }
     console.debug(
-      `[LIVE_REPLAY] ${this.liveId}: ${this.segments.length} segments listed${page.nextFrom === null ? ' (all)' : ''}`
+      `[LIVE_REPLAY] ${this.liveId}: ${this.segments.length} segments listed${this.nextFrom === null ? ' (all)' : ''}`
     );
   }
 
@@ -682,20 +721,62 @@ export class ReplayPlayer {
    */
   private async fill(gen: number): Promise<void> {
     this.cursor = Math.min(this.cursor, this.firstGapAhead());
+    let missing = 0;
     while (this.alive(gen) && !this.seekPending) {
       if (this.cursor >= this.segments.length) {
         if (this.nextFrom !== null) {
           await this.loadPage(gen);
           continue;
         }
-        this.declareEnd(gen);
+        this.endOfFill(gen);
         return;
       }
       if (this.mediaAhead() >= REPLAY_AHEAD_S) return;
       const s = this.segments[this.cursor];
       this.cursor++;
-      if (this.isBuffered(s.index) || this.skippedIdx.has(s.index)) continue;
-      await this.take(gen, s);
+      if (this.isBuffered(s.index) || this.missing.has(s.index)) continue;
+      // The bytes a probe already downloaded for this segment are appended, not fetched again.
+      await this.takeProbed(gen, s);
+      // The fill's own walk over a purge is bounded like a seek's: this many requested 404s in a row
+      // and the walk is replaced by a probe forward (doubling stride, then bisection) to the FIRST
+      // existing segment after the gap; the fill goes on from there. The stream's end is declared only
+      // when the probe reaches the end of the list - never inside a purge.
+      missing = this.skippedIdx.has(s.index) ? missing + 1 : 0;
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing at position ${this.cursor} - probing ahead`
+        );
+        // The bytes of EVERY segment the probe finds (the bisection's hits too) are kept by segment index:
+        // the fill appends each from them when it reaches it, never fetching one twice.
+        const kept = this.probed;
+        const found = await this.probeGap(gen, this.cursor, 1, async (pos) => {
+          // A newer seek must not wait for the probe: it is redone by a later fill.
+          if (this.seekPending || !this.alive(gen)) return 'stale';
+          const seg = this.segments[pos];
+          if (this.skippedIdx.has(seg.index)) return false;
+          const sealed = await this.download(gen, seg);
+          if (!this.alive(gen) || this.seekPending) return 'stale';
+          if (sealed !== null) kept.set(seg.index, sealed);
+          return sealed !== null;
+        });
+        if (found === 'stale') return;
+        // ONE gap per purge: from the next unvisited segment to the first existing one (or to the end).
+        const upto = found ?? this.segments.length;
+        this.gaps.push([
+          this.segments[this.cursor].index,
+          found === undefined ? Number.POSITIVE_INFINITY : this.segments[found].index,
+        ]);
+        this.cursor = upto;
+        if (found !== undefined) {
+          const sealed = kept.get(this.segments[found].index);
+          kept.delete(this.segments[found].index);
+          if (sealed !== undefined) {
+            this.cursor = found + 1;
+            await this.take(gen, this.segments[found], undefined, sealed);
+          }
+        }
+        missing = 0;
+      }
     }
   }
 
@@ -727,13 +808,51 @@ export class ReplayPlayer {
     const spans = spansOf(this.buffer);
     for (let k = k0; k < this.segments.length; k++) {
       const { index } = this.segments[k];
-      if (this.skippedIdx.has(index)) continue;
+      if (this.missing.has(index)) continue;
       const start = this.placed.get(index);
       const held =
         start !== undefined && spans.some(([a, b]) => start >= a - EDGE_TOL_S && start + 0.5 < b);
       if (!held) return k;
     }
     return this.segments.length;
+  }
+
+  /** Whether segment `index` lies inside a probed gap. */
+  private inGap(index: number): boolean {
+    return this.gaps.some(([from, to]) => index >= from && index < to);
+  }
+
+  /**
+   * The fill has nothing more to take. A replay in which NO segment ever gave media has no end to show
+   * and nothing to play: it stops on `gone` (the neutral "plus disponible" screen), never on a black
+   * picture with a spinner. Otherwise the end of the stream is declared.
+   */
+  private endOfFill(gen: number): void {
+    if (this.noMediaAtAll()) {
+      console.warn(
+        `[LIVE_REPLAY] ${this.liveId}: the probes found no media in the whole list - gone`
+      );
+      throw new StopOn({ kind: 'gone' });
+    }
+    // A probed gap running to the end of the list was judged EMPTY by the same sampled rule as `gone`:
+    // the stream ends after the last placed media (the duration follows it, see `declareEnd`).
+    this.declareEnd(gen);
+  }
+
+  /**
+   * THE SAMPLED VERDICT FOR `gone`: nothing was ever appended, the list is complete, and every segment was
+   * either really tried and missing or lies in a probed gap - the probes found nothing across the whole
+   * list. The server releases a replay's segments only after the replay post is deleted, and then all of them
+   * (`LivesService.purgeEnded` in apps/social-service/src/lives/lives.service.ts), so a sampled
+   * "nothing" is a sound verdict; walking every segment of it under a spinner (2000 requests) is not.
+   */
+  private noMediaAtAll(): boolean {
+    return (
+      this.appended === 0 &&
+      this.nextFrom === null &&
+      this.segments.length > 0 &&
+      this.segments.every((x) => this.missing.has(x.index))
+    );
   }
 
   /**
@@ -751,6 +870,8 @@ export class ReplayPlayer {
     if (!source || !this.alive(gen) || source.readyState !== 'open') return;
     if (this.buffer?.updating) return;
     try {
+      // No `duration` write: `endOfStream` sets it to the largest buffered end, and a write below a buffered
+      // frame's start (the audio ending after the video) throws before the end is ever declared.
       source.endOfStream();
       console.debug(
         `[LIVE_REPLAY] ${this.liveId}: end of stream declared at ${this.cursor} segments`
@@ -789,7 +910,7 @@ export class ReplayPlayer {
   private walkAhead(at: number, limit: number): { media: number; position: number } {
     if (!this.buffer) return { media: 0, position: at };
     const spans = spansOf(this.buffer);
-    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.skippedIdx);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.missing);
     let pos = at;
     let media = 0;
     for (let guard = 0; guard <= holes.length + 1 && media < limit; guard++) {
@@ -824,6 +945,34 @@ export class ReplayPlayer {
     return Math.max(0, segmentPositionAt(this.segments, span[1] * 1000, this.placed)) + 1;
   }
 
+  /** {@link take}, from the bytes a probe already downloaded for this segment when it kept them. */
+  private takeProbed(
+    gen: number,
+    s: LiveReplaySegment,
+    ticket?: SeekTicket
+  ): Promise<number | null> {
+    const pre = this.probed.get(s.index);
+    this.probed.delete(s.index);
+    return this.take(gen, s, ticket, pre);
+  }
+
+  /** After a seek moved the cursor: bytes kept for segments at or behind it will not be asked for again. */
+  private dropProbedBehind(): void {
+    const ahead = this.segments[this.cursor]?.index;
+    for (const index of this.probed.keys()) {
+      if (ahead === undefined || index < ahead) this.probed.delete(index);
+    }
+  }
+
+  /**
+   * The position of the segment a media-time target `ms` falls in: the one whose MEASURED extent holds it
+   * when there is one, else the estimate of {@link segmentPositionAt}.
+   */
+  private lookup(ms: number): number {
+    const measured = measuredPositionAt(this.segments, this.placed, this.placedEnd, ms / 1000);
+    return measured >= 0 ? measured : segmentPositionAt(this.segments, ms, this.placed);
+  }
+
   /**
    * A seek to `ms` of the replay: the target's segment is taken and the playhead put where it landed.
    * Only the LATEST seek (`ticket`) may write the playhead: whatever an older one fetched is dropped.
@@ -831,7 +980,7 @@ export class ReplayPlayer {
   private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
     if (!this.alive(gen) || this.isStale(ticket)) return;
-    let pos = segmentPositionAt(this.segments, ms, this.placed);
+    let pos = this.lookup(ms);
     if (pos < 0) return;
     let s = this.segments[pos];
     this.seeks++;
@@ -839,18 +988,21 @@ export class ReplayPlayer {
     let taken =
       heldStart !== undefined || this.skippedIdx.has(s.index)
         ? null
-        : await this.take(gen, s, ticket);
+        : await this.takeProbed(gen, s, ticket);
     // THE LOOKUP IS AN ESTIMATE past the last measured segment: once the segment is taken its measured
     // extent says whether the target is really inside it. If not, look up again with the new measurement
     // - at most REPLAY_SEEK_RELOOKUPS times (a count, never a clock), and only while it picks another one.
+    const visited = new Set<number>([pos]);
     for (let again = 0; again < REPLAY_SEEK_RELOOKUPS; again++) {
       if (!this.alive(gen) || this.isStale(ticket)) break;
       const from = this.placed.get(s.index);
       const to = this.placedEnd.get(s.index);
       const at = ms / 1000;
       if (from === undefined || to === undefined || (at >= from - EDGE_TOL_S && at < to)) break;
-      const next = segmentPositionAt(this.segments, ms, this.placed);
-      if (next === pos || next < 0) break;
+      const next = this.lookup(ms);
+      // A segment already visited is never looked at again (no A -> B -> A).
+      if (next < 0 || visited.has(next)) break;
+      visited.add(next);
       console.debug(
         `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms missed segment ${s.index} (${from.toFixed(2)}-${to.toFixed(2)} s) - looking up again`
       );
@@ -860,7 +1012,7 @@ export class ReplayPlayer {
       taken =
         heldStart !== undefined || this.skippedIdx.has(s.index)
           ? null
-          : await this.take(gen, s, ticket);
+          : await this.takeProbed(gen, s, ticket);
     }
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
@@ -913,13 +1065,16 @@ export class ReplayPlayer {
       landing = start !== undefined && this.rangeOf(start) ? start : undefined;
     }
     if (landing !== undefined) this.video.currentTime = landing;
-    else
+    else {
       console.error(
         `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media at all to land on`
       );
+      if (this.noMediaAtAll()) throw new StopOn({ kind: 'gone' });
+    }
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
     );
+    this.dropProbedBehind();
     this.resume();
   }
 
@@ -939,16 +1094,25 @@ export class ReplayPlayer {
     from: number,
     ticket: SeekTicket
   ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    let missing = 0;
     for (let j = from; ; j++) {
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing after position ${from} - the walk forward ends`
+        );
+        return undefined;
+      }
       // The list is paged: the next segment may be on a page not listed yet.
       while (j >= this.segments.length && this.nextFrom !== null) {
         await this.loadPage(gen);
         if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
       }
       if (j >= this.segments.length) return undefined;
+      const costs = this.costsARequest(this.segments[j].index);
       const start = await this.landOn(gen, this.segments[j], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: j };
+      if (costs) missing++;
     }
   }
 
@@ -958,12 +1122,89 @@ export class ReplayPlayer {
     from: number,
     ticket: SeekTicket
   ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    let missing = 0;
     for (let k = from; k >= 0; k--) {
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing before position ${from} - probing further back`
+        );
+        return this.probeBackward(gen, k, ticket);
+      }
+      const costs = this.costsARequest(this.segments[k].index);
       const start = await this.landOn(gen, this.segments[k], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: k };
+      if (costs) missing++;
     }
     return undefined;
+  }
+
+  /** Whether answering for segment `index` takes a request: not held, not known skipped. */
+  private costsARequest(index: number): boolean {
+    return this.bufferedStart(index) === undefined && !this.skippedIdx.has(index);
+  }
+
+  /**
+   * A purge too long to walk: starting at list position `from` (the segments just before it, in
+   * direction `dir`, are missing), probe at a doubling stride (30, 60, 120, ... segments), one segment
+   * each, down to the list's edge; the first probe that finds media is bisected against the previous
+   * (missing) probe. O(log n) requests; returns the position of the existing segment nearest the gap
+   * (the last before it going back, the first after it going forward), `undefined` when the edge is
+   * reached with no media (going forward, the listing is paged to its end first).
+   */
+  private async probeGap(
+    gen: number,
+    from: number,
+    dir: 1 | -1,
+    exists: (pos: number) => Promise<boolean | 'stale'>
+  ): Promise<number | undefined | 'stale'> {
+    let missing = from - dir; // the last position known missing
+    let stride = REPLAY_MAX_MISSING_WALK;
+    for (;;) {
+      let p = from + dir * stride;
+      if (dir > 0) {
+        while (p >= this.segments.length && this.nextFrom !== null) {
+          await this.loadPage(gen);
+          if (!this.alive(gen)) return 'stale';
+        }
+        p = Math.min(p, this.segments.length - 1);
+        if (p < from) return undefined;
+      } else {
+        p = Math.max(0, p);
+      }
+      const here = await exists(p);
+      if (here === 'stale') return 'stale';
+      if (here) {
+        let found = p;
+        while (Math.abs(found - missing) > 1) {
+          const mid = (found + missing) >> 1;
+          const hit = await exists(mid);
+          if (hit === 'stale') return 'stale';
+          if (hit) found = mid;
+          else missing = mid;
+        }
+        return found;
+      }
+      missing = p;
+      const edge = dir > 0 ? p >= this.segments.length - 1 && this.nextFrom === null : p === 0;
+      if (edge) return undefined;
+      stride *= 2;
+    }
+  }
+
+  /** A purge in front of a seek's landing: the last existing segment before the PROBED gap, with its place. */
+  private async probeBackward(
+    gen: number,
+    k: number,
+    ticket: SeekTicket
+  ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    const pos = await this.probeGap(gen, k, -1, async (at) => {
+      const r = await this.landOn(gen, this.segments[at], ticket);
+      return r === 'stale' ? 'stale' : r !== undefined;
+    });
+    if (pos === 'stale' || pos === undefined) return pos;
+    const start = await this.landOn(gen, this.segments[pos], ticket); // held by the probe: free
+    return start === 'stale' || start === undefined ? undefined : { start, pos };
   }
 
   /** Takes `segment` and answers where it begins (fresh or already held), undefined when it gave none. */
@@ -976,7 +1217,7 @@ export class ReplayPlayer {
     const held = this.bufferedStart(segment.index);
     if (held !== undefined) return held;
     if (this.skippedIdx.has(segment.index)) return undefined;
-    const taken = await this.take(gen, segment, ticket);
+    const taken = await this.takeProbed(gen, segment, ticket);
     if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
     return taken ?? this.bufferedStart(segment.index);
   }
@@ -1001,11 +1242,14 @@ export class ReplayPlayer {
       // A cancelled stale seek is not a failure: its target is gone, and the newer seek serves its own.
       if (ticket && this.isStale(ticket)) return null;
       if (!isLiveRefusal(e, 'not-found')) throw e;
+      // A 404 is an ANSWER: the server is reachable, so an older retry's reconnecting screen ends here.
+      this.answered();
       console.warn(`[LIVE_REPLAY] ${this.liveId}: segment ${s.index} is gone - skipped`);
       this.skipped++;
       this.skippedIdx.add(s.index);
       return null;
     }
+    this.answered();
     if (!this.alive(gen) || this.keyHex === null) return null;
     if (ticket && this.isStale(ticket)) return null;
     return sealed;
@@ -1018,9 +1262,10 @@ export class ReplayPlayer {
   private async openOne(
     gen: number,
     s: LiveReplaySegment,
-    ticket?: SeekTicket
+    ticket?: SeekTicket,
+    preSealed?: ArrayBuffer
   ): Promise<Uint8Array<ArrayBuffer> | null> {
-    let sealed = await this.download(gen, s, ticket);
+    let sealed = preSealed ?? (await this.download(gen, s, ticket));
     const key = this.keyHex;
     if (sealed === null || key === null) return null;
     try {
@@ -1066,9 +1311,10 @@ export class ReplayPlayer {
   private async take(
     gen: number,
     s: LiveReplaySegment,
-    ticket?: SeekTicket
+    ticket?: SeekTicket,
+    preSealed?: ArrayBuffer
   ): Promise<number | null> {
-    const media = await this.openOne(gen, s, ticket);
+    const media = await this.openOne(gen, s, ticket, preSealed);
     if (!this.alive(gen) || !media || !this.buffer) return null;
     let end: number;
     try {

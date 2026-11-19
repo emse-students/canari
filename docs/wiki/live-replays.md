@@ -651,6 +651,56 @@ value, the server's:
   promise: "s'il a duré au moins 30 secondes, sa rediffusion reste visible {days}".
 
 
+### The listing and the walks terminate by proof (2026-11-19)
+
+- **Paging.** Every loop that lists the next page (a seek's `listUntil`, the fill, the landing walk) goes
+  through ONE step, `loadPage`. A page that adds no segment, or whose `nextFrom` does not move past the
+  page's own start, ends the listing: it is logged at warn level with what the server answered, and
+  `nextFrom` becomes null. Before, such an answer was requested forever, since the loops trust a non-null
+  cursor. Pinned with a mock that answers it immediately, behind a step bound so the suite cannot hang.
+- **The landing walk.** A seek whose target is in a run of missing segments (404) used to walk it one
+  request per segment while the playhead waited (901 requests for a long tail). The walk forward and the
+  walk backward each stop after `REPLAY_MAX_MISSING_WALK` (30, about 45 s of replay at 1.5 s a segment)
+  consecutive segments that cost a request (a segment already known as skipped is free and not
+  counted). Why 30: a pause or a camera flip is a hole in TIME, which the segment list keeps and
+  `knownHoles` crosses without a request; a run of DELETED segments is a purge, and 45 s of it is already
+  more than a seek should wait for. After the forward bound the walk goes backward; after the backward
+  bound it PROBES back at a doubling stride (k - 30, k - 60, k - 120, ... down to segment 0), one
+  segment each, and the first probe that finds media is bisected against the previous missing probe: the
+  answer is the last existing segment before the PROBED gap (survivors scattered inside the run can make it land earlier), in O(log n) requests (about 75 for a purge of 900
+  segments), never arbitrary buffered media. Only a replay with no media at all is answered with
+  nothing.
+- **The fill's own walk** is bounded the same way, WITHOUT ending the stream: past the playhead,
+  `REPLAY_MAX_MISSING_WALK` consecutive requested 404s replace the walk by `probeGap` forward (the same
+  helper as the seek's backward probe, one parameter for the direction): a doubling stride, then a
+  bisection to the FIRST existing segment after the gap (existence only: the bytes are dropped, the fill
+  keeps the bytes of the found segment and appends from them). What the player keeps of it is small:
+  `skippedIdx`, the segments REALLY tried and missing (a 404, an open failure), and `gaps`, ONE range
+  `[from, to)` of segment indexes per probed purge (`to` is infinite when the probe found no media up to
+  the end of the list). The positions inside a gap were sampled, not read: they are holes of the list for
+  crossing and for the fill cursor, never an entry per index, and a seek into one still REQUESTS its target.
+  ONE RULE, the sampled verdict, decides both ends of a replay: a probe that found nothing across the whole
+  list is `gone` (nothing was ever played), and a probed gap running to the END of the list is judged empty
+  the same way - playback reaches the last placed media and the stream ends there (`endOfStream`, which sets the
+  duration to the largest buffered end itself: NO `duration` write of ours, which the engine refuses below a
+  buffered frame - the audio ending after the video - and the end would never be declared). The end is
+  deferred only while a gap is not yet probed: the fill's cursor has not reached the end of the list, so the
+  end is not declared inside a purge in the middle. The accepted cost, as for `gone`: a lone survivor deep
+  inside a purged tail, which the probe did not land on, is cut off by the end (`LivesService.purgeEnded`
+  releases segments whole, not single ones). A seek onto such a survivor still requests its target, plays it and
+  ends the stream THERE - consistent with the sampled verdict. There is no
+  backfill and no budget: the probe's verdict is the verdict. A probe is dropped, to be redone by a later
+  fill, the moment a newer seek is pending, so a seek never waits for it. An earlier version stopped the
+  fill at a limit: it called a replay whose first 40 segments are purged `gone`, and declared the end
+  inside a purge in the middle, which truncates the media source's duration and loses the content after it.
+- **No media at all - a SAMPLED verdict.** `gone`, the neutral "plus disponible" screen (as `replayFailureOutcome` reads a
+  missing replay), is reserved for: the list is complete, nothing was ever appended, and every segment was either tried and
+  missing or lies in a probed gap - the probes found nothing across the whole list. The server releases a replay's segments WHOLE (`LivesService.purgeEnded`, once the replay post is deleted),
+  so a sample that finds nothing is a sound verdict; walking all 2000 segments of a purged replay under a spinner is not
+  (the requests are O(log n) now). The accepted cost: a replay with ONE surviving segment among 99 deleted ones, which the
+  probes did not land on, is `gone` (a case the server's whole-folder release cannot produce). A purge in front of existing media is never this. Never a black picture with a spinner
+  and a seek stuck in `seeking`.
+
 ## A replay reaches its end: the engine's state is the memory of "ended" (2026-11-19)
 
 **Symptom (S12, desktop Chrome):** a replay played from 0 halted about 0.12 s before its last frame
@@ -709,7 +759,11 @@ binary search cannot misread it whatever order the measurements came in. Before 
 is the arrival time, the only statement there is. The extrapolation is only an estimate (a 120 s pause
 after the last measurement is carried at the wrong rate): once the seek has taken the estimated segment,
 its MEASURED extent says whether the target is inside; if not it looks up again with the new measurement, at
-most `REPLAY_SEEK_RELOOKUPS` (3) times and only while that picks another segment - a count, never a clock.
+most `REPLAY_SEEK_RELOOKUPS` (3) times and never on a segment already visited (no A -> B -> A) - a count, never a clock.
+The running maximum only flattens a run when measurements arrive out of order (a later segment measured EARLIER
+in media time): the estimate then picks the run's last member. So the lookup asks the MEASUREMENTS first -
+`measuredPositionAt` returns the segment whose measured extent holds the target, exact in any order - and only
+falls back to the estimate when no segment measured so far holds it.
 `segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
 is the target's media time held inside the segment (never before its start, never past
 `REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
@@ -721,5 +775,5 @@ starts on a keyframe): landing there when the estimate was a little late stays i
 segment 50, 100-102 s) re-adds only `[100, 100.8]` when a seek re-takes it, so its measured end went from 102
 to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s of content (R16a, since #3860).
 A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
-new values; a new extent reaching OUTSIDE the old one by more than a frame (0.05 s) says the segment moved,
+new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
 which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).

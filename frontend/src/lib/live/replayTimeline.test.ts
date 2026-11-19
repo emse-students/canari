@@ -6,6 +6,7 @@ import {
   replayCoverOf,
   replayTimeLeft,
   mediaStartsMs,
+  measuredPositionAt,
   segmentPositionAt,
 } from './replayTimeline';
 import type { LiveReplaySegment } from './types';
@@ -29,6 +30,26 @@ describe('segmentPositionAt', () => {
     expect(segmentPositionAt(list, -50)).toBe(0);
     expect(segmentPositionAt(list, 1e9)).toBe(3);
     expect(segmentPositionAt([], 5)).toBe(-1);
+  });
+  it('P5 (a unit test of the guard): a later segment measured EARLIER in media time: the measured extent answers, the flattened estimate cannot', () => {
+    const segs = Array.from({ length: 20 }, (_, i) => seg(i, i * 2000));
+    // Segment 5 begins at 50 s, then segment 8 is measured at 16 s (a rebase): out of order.
+    const placed = new Map([
+      [0, 0],
+      [5, 50],
+      [8, 16],
+    ]);
+    const placedEnd = new Map([
+      [0, 2],
+      [5, 52],
+      [8, 18],
+    ]);
+    // The running maximum flattens everything from segment 5 on at 50 s: the estimate picks the run's LAST
+    // member, never segment 5 that holds the target.
+    expect(segmentPositionAt(segs, 50_500, placed)).toBe(19);
+    expect(measuredPositionAt(segs, placed, placedEnd, 50.5)).toBe(5);
+    expect(measuredPositionAt(segs, placed, placedEnd, 17)).toBe(8);
+    expect(measuredPositionAt(segs, placed, placedEnd, 30)).toBe(-1);
   });
   it('P2: an unmeasured segment between two measured ones keeps the starts monotonic and the lookup right', () => {
     // Segments 11 and 12 arrive 8 s late (an upload stall); the arrival times stay ascending.
