@@ -515,6 +515,28 @@ describe('handleSystemEvent - the answer to OUR register ask', () => {
     expect(warn.mock.calls.join(' ')).toContain('every other device (1) declined');
   });
 
+  it('a WITHHELD decline ends the asking at info, naming it - an unvouched device is no defect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log');
+    const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);
+    const seal = await ask(true);
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQ, sealed: await seal({ messages: [], register: 'withheld' }) },
+      makeCtx({
+        ...RESPONDER,
+        mlsService: { ...RESPONDER.mlsService, getGroupMemberIdentities: tree },
+      }) as any
+    );
+
+    expect(isRegisterOwed('me', 'g1')).toBe(false);
+    expect(registerNeverTaken('me', 'g1')).toBe(true);
+    expect(log.mock.calls.join(' ')).toContain('withholding history from this unvouched device');
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
   it('a decline answering a NON-register ask rules nobody out', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const tree = vi.fn(async () => ['me:device-me', 'ann:a1']);

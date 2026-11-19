@@ -447,8 +447,12 @@ ASKS, on facts it holds durably:
    message, not closing the ask (the diff's last chunk does). Its content is the NICKNAME REGISTER and
    `register: true` - or, from a device that never took its own register, `register: 'none'`, a typed
    DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
-   Never broadcast (a server that does not address gets no register), withheld from an unvouched
-   device, nothing sent when the engine cannot seal. A register ask with no key is malformed like any
+   A device that withholds history from the asker (an unvouched device, `historyWithheld.ts`)
+   declines it too, typed `register: 'withheld'`: the verdict and nothing else, so the asker ends on
+   a cause it can name rather than on a silence it would read as a defect (review of #3837). Undecided
+   device events send nothing - they say nothing about the asker.
+   Never broadcast (a server that does not address gets no register), nothing sent when the engine
+   cannot seal. A register ask with no key is malformed like any
    keyless ask since the `1.7.0` floor: it is dropped whole, said at error - neither state nor diff.
 5. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
    `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its
@@ -481,8 +485,10 @@ bound dropped both markers, and both then answered later newcomers with an empty
   decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
   answer: no answer-side count moves when nothing comes back. A device of this account is treated
   like any other device. Every build at the floor (`1.7.0`) answers or declines `register`, so
-  reaching the bound means a defect, an unvouched asker (answered by nobody), or a server that
-  cannot address - each worth a reader, so its end is said at ERROR, naming them
+  reaching the bound means a defect or a server that cannot address - each worth a reader, so its
+  end is said at ERROR, naming them. An asker some device declined as WITHHOLDING is unvouched, a
+  normal state: its end is said at info, naming it, and a member's Add of it - the vouch - arrives
+  as a Welcome, which re-opens the entry from zero
   ([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
 - **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
   every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.

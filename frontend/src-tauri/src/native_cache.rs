@@ -357,15 +357,19 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
     // one mirror, and the copy a build before it kept in `data_dir` is deleted unread rather than
     // sealed (docs/wiki/legacy-compatibility.md) - nothing reads it, so sealing it would only keep
     // its seeds at rest until the next foreground mirror edit deleted them.
+    // Without an App Group (said above) there is no one mirror to tell it apart from: kept, and the
+    // first foreground mirror edit - which needs the App Group too - deletes it.
     #[cfg(target_os = "ios")]
-    match crate::commands::push::remove_graine_mirror(data_dir) {
-        Ok(true) => log::info!(
-            "[NATIVE_CACHE] the app's former seed mirror deleted - the App Group's is the one mirror"
-        ),
-        Ok(false) => {}
-        Err(e) => {
-            log::error!("[NATIVE_CACHE] the app's former seed mirror not deleted: {e}");
-            failed = true;
+    if let Some(group) = group.as_deref() {
+        match crate::commands::push::remove_former_seed_mirror(data_dir, group) {
+            Ok(true) => log::info!(
+                "[NATIVE_CACHE] the app's former seed mirror deleted - the App Group's is the one mirror"
+            ),
+            Ok(false) => {}
+            Err(e) => {
+                log::error!("[NATIVE_CACHE] the app's former seed mirror not deleted: {e}");
+                failed = true;
+            }
         }
     }
     #[cfg(target_os = "ios")]

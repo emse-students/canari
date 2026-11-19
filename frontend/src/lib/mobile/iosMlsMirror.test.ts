@@ -70,7 +70,7 @@ describe('the iOS seed mirror', () => {
     const homeBody = home.slice(0, home.indexOf('\n}\n'));
     expect(homeBody).toContain('crate::app_group::app_group_dir()');
     // The former app copy is deleted unread since the floor reached 1.7.0 (legacy-compatibility).
-    expect(homeBody).toContain('remove_graine_mirror(data_dir)');
+    expect(homeBody).toContain('remove_former_seed_mirror(data_dir, &group)');
     expect(pushRs).not.toContain('fn fold_legacy_seed_mirror(');
     expect(pushRs).not.toContain('fn sync_seed_mirror_copy(');
     // ...and at the first start too, rather than resealed: on iOS nothing reads that copy.
@@ -78,7 +78,7 @@ describe('the iOS seed mirror', () => {
     const migrate = cacheRs.slice(cacheRs.indexOf('fn migrate_legacy_files('));
     const migrateBody = migrate.slice(0, migrate.indexOf('\n}\n'));
     expect(migrateBody).toMatch(
-      /#\[cfg\(target_os = "ios"\)\]\s*match crate::commands::push::remove_graine_mirror\(data_dir\)/
+      /#\[cfg\(target_os = "ios"\)\]\s*if let Some\(group\) = group\.as_deref\(\) \{\s*match crate::commands::push::remove_former_seed_mirror\(data_dir, group\)/
     );
   });
 

@@ -149,6 +149,28 @@ describe('registerOwed - the state a newcomer still asks for', () => {
     expect(warn.mock.calls.join(' ')).toContain('every other device (2) declined');
   });
 
+  it('a spent bound after a WITHHELD decline is said at info, naming it - never at error', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log');
+    noteRegisterOwed('ann', 'g1');
+    const others = ['bob:phone', 'carl:laptop'];
+    let sent = 0;
+    // bob withholds from this unvouched device at every election; carl never answers.
+    while (!endSpentRegisterAsks('ann', 'g1') && sent < 100) {
+      noteRegisterAsked('ann', 'g1');
+      sent++;
+      noteRegisterDeclined('ann', 'g1', 'bob:phone', others, 'withheld');
+    }
+    expect(isRegisterOwed('ann', 'g1')).toBe(false);
+    expect(sent).toBe(REGISTER_ASKS_MAX + 1);
+    expect(error).not.toHaveBeenCalled();
+    expect(log.mock.calls.join(' ')).toContain('1 device(s) withhold history from this unvouched');
+    // The vouch is a member's Add, which arrives as a Welcome: the asking re-opens from zero.
+    noteRegisterOwed('ann', 'g1');
+    expect(isRegisterOwed('ann', 'g1')).toBe(true);
+    expect(endSpentRegisterAsks('ann', 'g1')).toBe(false);
+  });
+
   it('counts across a reload - the count is stored, not held in memory', () => {
     noteRegisterOwed('ann', 'g1');
     noteRegisterAsked('ann', 'g1');

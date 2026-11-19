@@ -784,4 +784,45 @@ describe('history_bundle - an answer sealed to our ask', () => {
     expect(lines(error, '[LEGACY]')).toHaveLength(0);
     error.mockRestore();
   });
+
+  it('an unsealed answer takes NO answerer slot - the honest sealed answer after it still lands', async () => {
+    const key = await mintHistoryAnswerKey(sealEngine);
+    noteHistoryAsk(GROUP, REQUEST, { kind: 'digest', since: 0, askedAt: ASKED_AT }, key.secret);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Two clear `last` chunks from two devices that read the ask's id: taken first, they would fill
+    // both answerer slots and close the ask before the honest answer arrives.
+    for (const device of ['clear-1', 'clear-2']) {
+      await handleSystemEvent(
+        'history_bundle',
+        {
+          messages: [{ ...BUNDLE_MSG, id: 'clear-' + device }],
+          to: TO_ME,
+          requestId: REQUEST,
+          last: true,
+        },
+        makeCtx({ deliveryMeta: { ...ADDRESSED.deliveryMeta, senderDeviceId: device } }) as any
+      );
+    }
+    const honest = await sealHistoryContent(
+      sealEngine,
+      key.answerKey,
+      historySealAad(GROUP, REQUEST, TO_ME, ANSWERER),
+      { messages: [BUNDLE_MSG] }
+    );
+    const ctx = makeCtx(ADDRESSED);
+
+    await handleSystemEvent(
+      'history_bundle',
+      { to: TO_ME, requestId: REQUEST, last: true, sealed: honest },
+      ctx as any
+    );
+
+    expect(lines(error, 'REFUSED an unsealed history_bundle')).toHaveLength(2);
+    expect(lines(error, 'answerers are all taken')).toHaveLength(0);
+    const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
+      (m) => m.messageId
+    );
+    expect(added).toEqual(['m1']);
+    error.mockRestore();
+  });
 });

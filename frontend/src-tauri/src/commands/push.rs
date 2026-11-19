@@ -756,6 +756,38 @@ pub(crate) fn remove_graine_mirror(dir: &std::path::Path) -> Result<bool, String
     }
 }
 
+/// Deletes the app's FORMER seed mirror on iOS (`{app_dir}/graine_seeds.json`, kept by a build
+/// before the `1.7.0` floor), and the `graine_seeds.lock` beside it, which nothing takes any more.
+/// Returns whether a mirror was there.
+///
+/// REFUSED when `app_dir` is the App Group directory `group` (both compared canonical): that copy
+/// is the one mirror, and the extension's writers lock the file there - deleting the lock under them
+/// would let two writers hold "the" lock at once. In `app_dir` only this app process ever took it,
+/// and only to delete a mirror already gone once this returns, so the lock guards nothing.
+/// Shared by the foreground's mirror edits (`seed_mirror_home`) and the first start
+/// (`native_cache::migrate_legacy_files`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn remove_former_seed_mirror(
+    app_dir: &std::path::Path,
+    group: &std::path::Path,
+) -> Result<bool, String> {
+    let canonical =
+        |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if canonical(app_dir) == canonical(group) {
+        return Err(format!(
+            "{} is the App Group directory - its mirror is the one mirror, never a former copy",
+            app_dir.display()
+        ));
+    }
+    let removed = remove_graine_mirror(app_dir)?;
+    match std::fs::remove_file(app_dir.join("graine_seeds.lock")) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("remove the former graine_seeds.lock: {e}")),
+    }
+    Ok(removed)
+}
+
 /// Where this install's ONE seed mirror lives: the directory every foreground edit writes.
 ///
 /// On Android, the app data directory, which Kotlin hands the push service too. On iOS, the App
@@ -787,7 +819,7 @@ fn seed_mirror_home(
         })?;
         // Nothing reads the former copy any more, so a delete that fails costs a file, never a seed:
         // said at error, and the next foreground edit tries again.
-        match remove_graine_mirror(data_dir) {
+        match remove_former_seed_mirror(data_dir, &group) {
             Ok(true) => {
                 log::info!("[GRAINE_MIRROR] the app's former seed mirror deleted - the App Group's is the one mirror")
             }
@@ -3292,8 +3324,8 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
-        forget_account_entries, forget_account_in_mirror, remove_graine_mirror, AccountForgotten,
-        ForgetScope, SeedsStored, Unattributed,
+        forget_account_entries, forget_account_in_mirror, remove_former_seed_mirror,
+        AccountForgotten, ForgetScope, SeedsStored, Unattributed,
     };
     use super::{
         graine_seed_held, merge_graine_seed, prune_graine_sessions, read_graine_mirror,
@@ -3960,9 +3992,10 @@ mod graine_mirror_tests {
     /// mirror, and the push 12 s later - the app had just come to the foreground - found no seed.
     /// The extension writes the App Group copy, and the app becoming active copied its OWN file over
     /// it, which had never seen that seed (`sync_seed_mirror_copy`, gone). What remains of the app's
-    /// copy since the floor reached `1.7.0` is a DELETE (`remove_graine_mirror`, called by
+    /// copy since the floor reached `1.7.0` is a DELETE (`remove_former_seed_mirror`, called by
     /// `seed_mirror_home` and `migrate_legacy_files` on iOS): this pins that it takes the app's file
-    /// alone and leaves every seed of the group's, the extension's included. The iOS call sites are
+    /// alone - its stale lock with it - and leaves the group's copy byte-identical, the extension's
+    /// seeds and its writers' lock included. The iOS call sites are
     /// pinned by `iosMlsMirror.test.ts`.
     #[test]
     fn deleting_the_apps_former_mirror_leaves_the_groups_seeds_whole() {
@@ -3972,14 +4005,45 @@ mod graine_mirror_tests {
         merge_as(&group, "chan", "s-old", "c2VlZA==", 1, Some("acct-a")).unwrap();
         // The extension opens a frame while the app is shut, into the App Group copy.
         merge_as(&group, "chan", "s-new", "bmV3", 2, Some("acct-a")).unwrap();
+        let group_mirror = std::fs::read(group.join("graine_seeds.json")).unwrap();
+        assert!(app.join("graine_seeds.lock").exists());
+        assert!(group.join("graine_seeds.lock").exists());
 
-        assert_eq!(remove_graine_mirror(&app), Ok(true));
-        assert_eq!(remove_graine_mirror(&app), Ok(false));
+        assert_eq!(remove_former_seed_mirror(&app, &group), Ok(true));
+        // Idempotent - and a second pass finds no stale lock to remove either.
+        assert_eq!(remove_former_seed_mirror(&app, &group), Ok(false));
 
+        // The former copy is gone, its lock with it...
         assert!(!app.join("graine_seeds.json").exists());
+        assert!(!app.join("graine_seeds.lock").exists());
+        // ...and the App Group's copy is untouched to the byte, its writers' lock still in place.
+        assert_eq!(
+            std::fs::read(group.join("graine_seeds.json")).unwrap(),
+            group_mirror
+        );
+        assert!(group.join("graine_seeds.lock").exists());
         assert_eq!(graine_seed_held(&group, Some(&KEY), "chan", "s-new"), 1);
         assert_eq!(graine_seed_held(&group, Some(&KEY), "chan", "s-old"), 1);
         std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The App Group's mirror is the one mirror: a call that resolves its directory as the "former"
+    /// one - the same path, or another spelling of it - deletes nothing there.
+    #[test]
+    fn the_former_mirror_delete_never_resolves_the_app_groups_directory() {
+        let group = mirror_dir("ext-same");
+        merge_as(&group, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        let before = std::fs::read(group.join("graine_seeds.json")).unwrap();
+
+        assert!(remove_former_seed_mirror(&group, &group).is_err());
+        assert!(remove_former_seed_mirror(&group.join("."), &group).is_err());
+
+        assert_eq!(
+            std::fs::read(group.join("graine_seeds.json")).unwrap(),
+            before
+        );
+        assert!(group.join("graine_seeds.lock").exists());
         std::fs::remove_dir_all(&group).ok();
     }
 

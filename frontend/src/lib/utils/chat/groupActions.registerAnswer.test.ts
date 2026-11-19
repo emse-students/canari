@@ -146,15 +146,26 @@ describe('sendRegisterAnswer', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('a register is never broadcast'));
   });
 
-  it('is withheld from an unvouched device, like every other history answer', async () => {
+  it('is withheld from an unvouched device, and SAID to be: a typed decline, no register', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const mlsService = createMlsServiceStub();
     await withholdHistoryFrom(GROUP, ASKER, 'fp-1', async () => true);
-    const { sent, log } = await answer(mlsService);
+    const { key, sent, log } = await answer(mlsService);
+
+    expect(sent).toBe(true);
+    expect(frames(mlsService)).toHaveLength(1);
+    // The verdict and nothing else: not the nicknames this device holds.
+    expect(await opened(mlsService, key.secret)).toEqual({ messages: [], register: 'withheld' });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('unvouched'));
+  });
+
+  it('sends nothing while device events are undecided - that says nothing about the asker', async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.settleDeviceEvents).mockResolvedValue(false);
+    const { sent } = await answer(mlsService);
 
     expect(sent).toBe(false);
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('unvouched'));
   });
 
   it('an engine that cannot seal sends nothing - never the register in clear', async () => {

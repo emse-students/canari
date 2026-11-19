@@ -1130,9 +1130,10 @@ type KeyedAnswer = { requestId: string; seal: AnswerSeal; join?: never };
 
 /**
  * What an answer to a REGISTER ask says, inside its sealed content: `true` hands over the register,
- * `'none'` declines - the answerer never took one (`registerOwed.ts`).
+ * `'none'` declines - the answerer never took one - and `'withheld'` declines because the answerer
+ * withholds history from the asker, an unvouched device (`historyWithheld.ts`, `registerOwed.ts`).
  */
-type RegisterAnswer = true | 'none';
+type RegisterAnswer = true | 'none' | 'withheld';
 
 /**
  * What an answer to a KEYED ask is sealed with: the key the ask carried (base64) and THIS answerer's
@@ -1385,20 +1386,24 @@ export type JoinPushOutcome = 'sent' | 'unaddressable' | 'not-sent';
  * decided (`settleDeviceEvents`): an answer scheduled in the drain that carried an unvouched entry
  * must not read the record before that entry wrote it. Events that could not be decided withhold:
  * fail closed, the next answer settles again.
+ *
+ * @returns `false` when nothing withholds; otherwise WHY - `'withheld'`, a verdict on `to`, or
+ *   `'unsettled'`, a passing state of this device that says nothing about `to` (the register
+ *   decline names only the first, {@link sendRegisterAnswer}).
  */
 async function historyWithheldAfterSettling(
   groupId: string,
   to: string,
   mlsService: IMlsService,
   log: (msg: string) => void
-): Promise<boolean> {
+): Promise<false | 'withheld' | 'unsettled'> {
   if (!(await mlsService.settleDeviceEvents('history answer'))) {
     log(
       `[HISTORY_BUNDLE] device events not decided before answering in ${groupId.slice(0, 8)}... - nothing answered, withheld until they are`
     );
-    return true;
+    return 'unsettled';
   }
-  return historyWithheldFrom(groupId, to);
+  return historyWithheldFrom(groupId, to) ? 'withheld' : false;
 }
 
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
@@ -2185,7 +2190,10 @@ function withinTombstoneCeiling(
  * there is no unsealed form: the caller answers an unkeyed one with nothing. Sent ONLY addressed: the
  * register is a relayer's word about what others did, taken by its one reader on the strength of its
  * own ask, and a broadcast would hand it to every member without that. Withheld from an unvouched
- * device like everything else it could be told.
+ * device like everything else it could be told - and SAID to be: the asker is answered
+ * `register: 'withheld'` through the same gates and the same seal, so its asking ends on a typed
+ * cause it can name rather than on a silence it would have to read as a defect. The verdict is all
+ * it learns, and the conversation already shows it the unvouched-device notice.
  *
  * **THE REGISTER AND NOTHING ELSE** - not the pins, the floor or the read marks the push carries. The
  * ask's key is public (it rides the ask), so ANY member can answer it and take one of its answerer
@@ -2209,12 +2217,10 @@ export async function sendRegisterAnswer(
   const { to, requestId, seal } = opts;
   const short = groupId.slice(0, 8);
   if (followerTabSendsNoHistoryFrame('register answer', groupId, log)) return false;
-  if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
-    log(
-      `[REGISTER] ${to} entered ${short}... unvouched - its register is not answered until a member vouches for it`
-    );
-    return false;
-  }
+  const verdict = await historyWithheldAfterSettling(groupId, to, mlsService, log);
+  // Undecided device events say nothing about the asker: nothing is sent, the next ask settles again.
+  if (verdict === 'unsettled') return false;
+  const withheld = verdict === 'withheld';
   const routing = await readerHistorySelection(groupId, [], { mlsService, log }, userIdOfLeaf(to));
   if (routing?.mode !== 'addressed') {
     log(
@@ -2222,13 +2228,14 @@ export async function sendRegisterAnswer(
     );
     return false;
   }
-  const holds = !registerNeverTaken(userIdOfLeaf(seal.answerer), groupId);
+  const holds = !withheld && !registerNeverTaken(userIdOfLeaf(seal.answerer), groupId);
   const nicknames = holds ? nicknameEntries(groupId) : [];
+  const register: RegisterAnswer = withheld ? 'withheld' : holds ? true : 'none';
   let bytes: Uint8Array;
   try {
     bytes = await sealedBundleFrame(groupId, [], to, mlsService, {
       state: nicknames.length > 0 ? { nicknames } : {},
-      answer: { requestId, seal, register: holds ? true : 'none' },
+      answer: { requestId, seal, register },
       last: false,
     });
   } catch (e) {
@@ -2240,9 +2247,11 @@ export async function sendRegisterAnswer(
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, addressedHistoryAnswer(to));
     log(
-      holds
-        ? `[REGISTER] Answered ${to}'s register in ${short}… (${nicknames.length} nickname(s), sealed)`
-        : `[REGISTER] Declined ${to}'s register in ${short}… - this device never took its own (sealed)`
+      register === 'withheld'
+        ? `[REGISTER] Declined ${to}'s register in ${short}… - it entered unvouched, history is withheld from it until a member vouches for it (sealed)`
+        : holds
+          ? `[REGISTER] Answered ${to}'s register in ${short}… (${nicknames.length} nickname(s), sealed)`
+          : `[REGISTER] Declined ${to}'s register in ${short}… - this device never took its own (sealed)`
     );
     return true;
   } catch (e) {
