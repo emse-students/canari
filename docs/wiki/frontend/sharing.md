@@ -130,7 +130,7 @@ preselection, never a destination by itself.
   publish - 23 in one sync on the Mi 9T: rows a Welcome makes are seeded with the admission's time
   and fall to their real place when their history lands from a peer, a DM's name is read from a
   cache no effect tracks, a salon's community loads late - and the end of a first sync is not a
-  fact the client holds ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
+  fact the client holds ([read on both phones](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3)).
   The list is sent only when its ordered ids and names differ from what the native side was last
   told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock. A
   signed-out or still-loading session publishes nothing and erases nothing: the gate is

@@ -192,7 +192,7 @@ export interface MediaStorageStats {
   associationCount: number;
   associationBytes: number;
   /**
-   * CanaReels' videos, kept until their own post expires (30 days) and reaped by social-service
+   * CanaReels' videos, kept until their own post expires (its `expiresAt`) and reaped by social-service
    * with the post. Reported on their own line for the reason `archive` is: an exempt class folded
    * into a total is one whose growth nothing can see, and here a count that does not fall back is
    * the signal that the reel worker has stopped.
@@ -200,7 +200,7 @@ export interface MediaStorageStats {
   reelCount: number;
   reelBytes: number;
   /**
-   * Reels sent in conversations: swept by AGE (30 days from upload). Its own line, and an `overdue`
+   * Reels sent in conversations: swept by AGE (the chat-reel window from upload, 30 days by default). Its own line, and an `overdue`
    * pair beside it, for the reason `reel` and `archive` have theirs: a count that does not fall back
    * is the signal that the sweep has stopped, and folded into a total nothing could see it.
    */
@@ -360,7 +360,7 @@ export const REEL_PURGE_REASONS: ReadonlySet<string> = new Set<ReelPurgeReason>(
  *   upload it; only deleting the document row deletes it.
  * - `reel` - a CanaReel's video. Kept by the idle sweep (the post, not idleness, decides its end)
  *   and reaped by social-service's `ReelRetentionScheduler` through {@link MediaService.purgeReels}
- *   when the post expires, 30 days after publication. Still reached by account deletion: a reel is
+ *   when the post expires (its `expiresAt`, stamped at publication). Still reached by account deletion: a reel is
  *   its uploader's.
  *
  * - `reel-pending` - a FEED reel's upload before its post exists. SET BY THE CLIENT AT UPLOAD and

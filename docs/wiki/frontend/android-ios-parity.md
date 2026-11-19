@@ -88,7 +88,7 @@ else calls it. That call is idempotent and puts the offset on the new top itself
 A scroll view inset left over after it is logged at ERROR. The variable has one native writer and is
 SET, so the same event published twice, before or after activation, writes the same number. Pinned by
 `iosTopInsetOwner.test.ts`.
-**The phone reading is owed** ([backlog](../backlog.d/p2-ios-top-inset-counted-twice-reading.md)).
+**Read on the iPhone 12 on `1.7.1-alpha.3`**, steps 1, 2 and 4 in [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) and the launch from a push in [S10](../device-verification.md#the-phone-readings-of-2026-11-19-s10-171-alpha3).
 
 #### The system theme on iOS is read at start only
 
