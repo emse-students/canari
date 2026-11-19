@@ -536,7 +536,12 @@ The rule: **a hole is a fact of the segment list, never something detected by a 
 `knownHoles(segments, placed, placedEnd)` returns the gap between where a segment was measured to end and
 where its list neighbour begins (and the leading gap before the first segment, above 0.05 s); a region
 not loaded yet or a skipped neighbour has no measure and is no hole. A range holding a single segment
-between two holes is crossed on both sides. The player then:
+between two holes is crossed on both sides. **A segment skipped for good (404, or one that does not open)
+is transparent**: each measured segment is paired with the NEXT measured one, so the media the skipped
+one would have held is a hole like any other, and the lead, the far-ahead trim, the crossing and the seek
+landing all follow (a 404 inside the lead used to make the fill download the replay, and again on every
+`timeupdate`). A region not loaded yet, neither measured nor skipped, breaks the pairing. A segment that
+does not open is downloaded once more before it is skipped (a corrupted transfer). The player then:
 
 - **counts its lead across the holes** (`mediaAhead`, leading gap included). A lead that stopped at the
   hole opened a new range and was never met: the fill downloaded the WHOLE replay (200 of 200 segments in
@@ -559,7 +564,13 @@ A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with O
 (0.01 s), so a position is never both and the jump cannot repeat. THE RULE of a landing is: always write
 a position inside a range - the segment after the hole, else the target segment's own start, else
 nothing (logged) - never a position in no range, which hangs the engine's seek and blocks the crossing
-(`video.seeking`). A hole whose far side the engine evicted is still a hole: the crossing lands there and
+(`video.seeking`). **A user seek is never left unanswered.** When the target's segment is skipped the landing walks
+FORWARD to the first segment that gives media, and BACK to the last held one when none does (every
+segment to the end skipped); only a replay with no media at all logs an error and writes nothing.
+`firstGapAhead` starts from the last measured segment only when its end reaches the playhead, else from
+the playhead's own list position, so nothing is fetched behind it.
+
+A hole whose far side the engine evicted is still a hole: the crossing lands there and
 the engine's `seeking` fetches the media again.
 
 No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in

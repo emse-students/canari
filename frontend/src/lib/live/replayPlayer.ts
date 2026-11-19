@@ -166,20 +166,25 @@ function onRange(at: number, range: MediaSpan): boolean {
 export function knownHoles(
   segments: readonly LiveReplaySegment[],
   placed: ReadonlyMap<number, number>,
-  ends: ReadonlyMap<number, number>
+  ends: ReadonlyMap<number, number>,
+  skipped: ReadonlySet<number> = new Set()
 ): MediaSpan[] {
   const holes: MediaSpan[] = [];
   // The leading gap: the first segment of the list begins after zero (the playhead starts at 0).
   const first = segments.length > 0 ? placed.get(segments[0].index) : undefined;
   if (first !== undefined && first > HOLE_MIN_S) holes.push([0, first]);
-  for (let k = 0; k + 1 < segments.length; k++) {
-    const end = ends.get(segments[k].index);
-    const next = placed.get(segments[k + 1].index);
-    // Both MEASURED (kept for the session, never forgotten by a trim or an eviction); a region not
-    // loaded yet or a skipped neighbour has no measure and is no hole.
-    if (end !== undefined && next !== undefined && next >= end + HOLE_MIN_S) {
-      holes.push([end, next]);
+  // Each measured segment is paired with the NEXT measured one, a segment skipped for good (404, did not
+  // open) being transparent: the media it would have held is a gap like any other. A region not loaded
+  // yet (neither measured nor skipped) breaks the pairing: nothing is known across it.
+  let prevEnd: number | undefined;
+  for (const { index } of segments) {
+    const start = placed.get(index);
+    if (start === undefined) {
+      if (!skipped.has(index)) prevEnd = undefined;
+      continue;
     }
+    if (prevEnd !== undefined && start >= prevEnd + HOLE_MIN_S) holes.push([prevEnd, start]);
+    prevEnd = ends.get(index);
   }
   return holes;
 }
@@ -449,7 +454,7 @@ export class ReplayPlayer {
   private holeAt(at: number, stalled: boolean): MediaSpan | null {
     if (!this.buffer) return null;
     const spans = spansOf(this.buffer);
-    const holes = knownHoles(this.segments, this.placed, this.placedEnd);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.skippedIdx);
     const inside = holes.find(([from, to]) => at >= from && at < to - EDGE_TOL_S);
     if (inside || !stalled) return inside ?? null;
     const range = spans.find((r) => onRange(at, r));
@@ -695,6 +700,13 @@ export class ReplayPlayer {
       if (p !== undefined && p <= from + EDGE_TOL_S) k0 = k;
     }
     if (k0 < 0) return this.cursor;
+    // The last measured segment before the playhead counts only when it reaches it; otherwise the
+    // playhead is past an unmeasured stretch and its own place in the list is the start: nothing is
+    // fetched behind it.
+    const reach = this.placedEnd.get(this.segments[k0].index);
+    if (reach === undefined || reach < from - EDGE_TOL_S) {
+      k0 = Math.max(k0 + 1, segmentPositionAt(this.segments, from * 1000));
+    }
     const spans = spansOf(this.buffer);
     for (let k = k0; k < this.segments.length; k++) {
       const { index } = this.segments[k];
@@ -747,7 +759,7 @@ export class ReplayPlayer {
   private walkAhead(at: number, limit: number): { media: number; position: number } {
     if (!this.buffer) return { media: 0, position: at };
     const spans = spansOf(this.buffer);
-    const holes = knownHoles(this.segments, this.placed, this.placedEnd);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd, this.skippedIdx);
     let pos = at;
     let media = 0;
     for (let guard = 0; guard <= holes.length + 1 && media < limit; guard++) {
@@ -806,38 +818,46 @@ export class ReplayPlayer {
     // measured place of a buffered one is as good as a fresh one.
     let start = taken ?? this.bufferedStart(s.index);
     let landing: number | undefined;
-    const next = this.segments[pos + 1];
     if (start !== undefined) {
       // Inside the segment by the share of it the target is past, never beyond its own length.
       landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
       const range = this.rangeOf(start);
-      if (range && landing >= range[1] - HOLE_MIN_S && next) {
+      if (range && landing >= range[1] - HOLE_MIN_S && pos + 1 < this.segments.length) {
         // The target is past the segment's own end - in a hole of the live: land on the media after it.
-        const after = await this.landOn(gen, next, ticket);
+        const after = await this.landForward(gen, pos + 1, ticket);
         if (after === 'stale') return;
-        if (after !== undefined) {
-          landing = after;
-          this.cursor = pos + 2;
+        if (after) {
+          landing = after.start;
+          this.cursor = after.pos + 1;
         } else {
           landing = start; // no media after the hole to land on
         }
       }
-    } else if (next) {
-      // The target's own segment is skipped for good: the media after it is the nearest to land on.
-      const after = await this.landOn(gen, next, ticket);
+    } else {
+      // The target's own segment is skipped for good: the first media after it that exists, else the
+      // last media held before it. A user seek is NEVER left unanswered (the engine would hang in
+      // `seeking`, which also blocks the hole crossing).
+      const after = await this.landForward(gen, pos + 1, ticket);
       if (after === 'stale') return;
-      start = after;
-      landing = after;
-      if (after !== undefined) this.cursor = pos + 2;
+      if (after) {
+        start = landing = after.start;
+        this.cursor = after.pos + 1;
+      } else {
+        for (let k = pos - 1; k >= 0 && landing === undefined; k--) {
+          landing = this.bufferedStart(this.segments[k].index);
+        }
+        start = landing;
+      }
     }
-    // THE RULE: only a position INSIDE a range is ever written (anything else hangs the engine's seek
-    // and blocks the hole crossing, which waits on `video.seeking`).
+    // THE RULE: only a position INSIDE a range is ever written.
     if (landing !== undefined && !this.rangeOf(landing)) {
       landing = start !== undefined && this.rangeOf(start) ? start : undefined;
     }
     if (landing !== undefined) this.video.currentTime = landing;
     else
-      console.warn(`[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media to land on`);
+      console.error(
+        `[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media at all to land on`
+      );
     this.ended = false;
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
@@ -853,6 +873,21 @@ export class ReplayPlayer {
   /** The buffered range holding `at`, if any. */
   private rangeOf(at: number): MediaSpan | undefined {
     return this.buffer ? spansOf(this.buffer).find((r) => onRange(at, r)) : undefined;
+  }
+
+  /** The first segment from list position `from` on that gives media to land on, with its place. */
+  private async landForward(
+    gen: number,
+    from: number,
+    ticket: SeekTicket
+  ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    for (let j = from; j < this.segments.length; j++) {
+      if (this.skippedIdx.has(this.segments[j].index)) continue;
+      const start = await this.landOn(gen, this.segments[j], ticket);
+      if (start === 'stale') return 'stale';
+      if (start !== undefined) return { start, pos: j };
+    }
+    return undefined;
   }
 
   /** Takes `segment` and answers where it begins (fresh or already held), undefined when it gave none. */
@@ -893,7 +928,19 @@ export class ReplayPlayer {
     if (!this.alive(gen) || this.keyHex === null) return null;
     if (ticket && this.isStale(ticket)) return null;
     try {
-      const media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
+      let media: Uint8Array<ArrayBuffer>;
+      try {
+        media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
+      } catch (e) {
+        if (!(e instanceof LiveSegmentOpenError)) throw e;
+        // A corrupted transfer opens on the second download: one more try before it is skipped.
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: segment ${s.index} did not open - downloading it again`
+        );
+        sealed = await this.deps.fetchSegment(this.liveId, s.name, signal);
+        if (!this.alive(gen) || this.keyHex === null) return null;
+        media = await this.deps.openSegment(this.keyHex, this.liveId, s.index, sealed);
+      }
       this.openFailures = 0;
       // Decrypted for a target that has since moved: not worth an append.
       if (ticket && this.isStale(ticket)) return null;
