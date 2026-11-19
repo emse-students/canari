@@ -23,6 +23,7 @@ import { closeMlsDb } from '$lib/utils/hex';
 import { MlsCheckpointNotWrittenError } from '$lib/utils/hex';
 import { hydrateStateLedgers, resetStateLedgersForTests } from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 
 /**
  * ROWS BEFORE RATCHET (P1, second review of #3321): a checkpoint stores the rows held in memory for
@@ -45,6 +46,7 @@ function makeCtx(observers: unknown[], overrides: Record<string, unknown> = {}) 
     stageCheckpointLedgers: BaseMlsService.prototype['stageCheckpointLedgers'],
     emittedForCheckpoint: BaseMlsService.prototype['emittedForCheckpoint'],
     holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    rowsOwed: new RowsOwedLedger(),
     ...overrides,
   };
 }
@@ -133,5 +135,95 @@ describe('BaseMlsService.persistCheckpoint - rows before ratchet', () => {
     const ctx = makeCtx([{ onBulkIngestStart: vi.fn(), onBulkIngestEnd: vi.fn() }]);
     await persist(ctx);
     expect(ctx.writeCheckpoint).toHaveBeenCalledTimes(1);
+  });
+  /** Lets every pending continuation run, so "not yet" below means blocked, not slow. */
+  const drainMicrotasks = async () => {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  };
+
+  it('THE DECRYPT HALF: waits for a frame between its decrypt and its row, THEN stores the buffered rows, THEN exports', async () => {
+    const order: string[] = [];
+    const rowsOwed = new RowsOwedLedger();
+    // A handler that decrypted and has not stored its row yet.
+    const settleRow = await rowsOwed.owe();
+    const observer = {
+      onBulkIngestStart: vi.fn(),
+      onBulkIngestEnd: vi.fn(),
+      holdRowsForCheckpoint: vi.fn(async () => {
+        order.push('buffered rows stored');
+        return () => order.push('rows released');
+      }),
+    };
+    const ctx = makeCtx([observer], {
+      rowsOwed,
+      writeCheckpoint: vi.fn(async () => {
+        order.push('export');
+      }),
+    });
+
+    const checkpoint = persist(ctx);
+    // The hold is taken once the send counts are read (IndexedDB): polled, never timed.
+    await vi.waitFor(() => expect(rowsOwed['holds']).toBe(1));
+    await drainMicrotasks();
+    // Nothing is exported, nor are the buffers asked, while the row is owed.
+    expect(order).toEqual([]);
+    order.push('row written');
+    settleRow();
+    await checkpoint;
+
+    expect(order).toEqual(['row written', 'buffered rows stored', 'export', 'rows released']);
+  });
+
+  it('THE DECRYPT HALF: a frame that asks to decrypt while the checkpoint runs waits until its write settled', async () => {
+    const rowsOwed = new RowsOwedLedger();
+    let finishWrite!: () => void;
+    const ctx = makeCtx([], {
+      rowsOwed,
+      writeCheckpoint: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishWrite = resolve;
+          })
+      ),
+    });
+
+    const checkpoint = persist(ctx);
+    // The send counts are read from IndexedDB first: polled, never timed.
+    await vi.waitFor(() => expect(ctx.writeCheckpoint).toHaveBeenCalledTimes(1));
+    let decrypting = false;
+    const mark = rowsOwed.owe().then((settleRow) => {
+      decrypting = true;
+      return settleRow;
+    });
+    await drainMicrotasks();
+    // On native the export runs inside the command: the decrypt waits for the whole write.
+    expect(decrypting).toBe(false);
+    finishWrite();
+    await checkpoint;
+    await drainMicrotasks();
+    expect(decrypting).toBe(true);
+    (await mark)();
+  });
+
+  it('THE DECRYPT HALF: reopens the gate when the checkpoint is refused or fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rowsOwed = new RowsOwedLedger();
+    const ctx = makeCtx(
+      [
+        {
+          onBulkIngestStart: vi.fn(),
+          onBulkIngestEnd: vi.fn(),
+          holdRowsForCheckpoint: async () => {
+            throw new Error('store closed');
+          },
+        },
+      ],
+      { rowsOwed }
+    );
+
+    await expect(persist(ctx)).rejects.toBeInstanceOf(MlsCheckpointNotWrittenError);
+    const settleRow = await rowsOwed.owe();
+    expect(rowsOwed.owedCount).toBe(1);
+    settleRow();
   });
 });

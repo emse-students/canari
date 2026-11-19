@@ -59,6 +59,7 @@ import {
   noteInboundMlsFrame,
   activeMlsStatePersister,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
+import { RowsOwedLedger, type RowOwed } from '$lib/mls-client/rowsOwed';
 import {
   MAX_BURN_GENERATIONS,
   OwedSendBurnFailedError,
@@ -505,8 +506,10 @@ function oneDeviceAddResult(
  * the epoch it moves to, so it is acknowledged only once a landed checkpoint holds it: a kill, a
  * hand-over or a freeze between the ack and the checkpoint used to reload a state behind a commit
  * the server no longer had. For an APPLICATION frame the history archive is a second copy (the replay
- * reads it), so it is acknowledged at the drain's end as it always was - unless this document no
- * longer owns the MLS state by then (a hand-over, a freeze, a promotion reload): its checkpoints are
+ * reads it), so it is acknowledged without a checkpoint - once the drain's window closed and its
+ * close STORED the row the frame left in memory (rows before ratchet, 2026-11-19: a row left
+ * unstored withholds it, {@link DrainAckHold.rowsStored}) - unless this document no longer owns the
+ * MLS state by then (a hand-over, a freeze, a promotion reload): its checkpoints are
  * refused (`persistCheckpoint`), so it too waits for coverage, which then never comes. Withheld, a row
  * stays on the server and the tab that writes the state reads it; an id a LANDED checkpoint already
  * holds is acknowledged whatever the lead, so the new leader never meets a frame its disk has spent.
@@ -521,6 +524,12 @@ interface DrainAckHold {
    * window has closed): resolves when it lands, rejects when it is refused or fails.
    */
   covered: () => Promise<void>;
+  /**
+   * Resolves once the rows these ids' frames left in memory had their store attempted: the drain's
+   * window closed (its close stores the buffer). Never rejects - what the store left unstored is
+   * read afterwards ({@link BaseMlsService.appliedRowsLeftUnstored}).
+   */
+  rowsStored: () => Promise<void>;
 }
 
 export abstract class BaseMlsService implements IMlsService {
@@ -850,6 +859,17 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** Lifecycle observers of bulk-ingest windows (MLS state persister, UI render buffer). */
   private readonly bulkIngestObservers: BulkIngestObserver[] = [];
+
+  /**
+   * The rows owed by application frames between their decrypt and their row's write, which a
+   * checkpoint waits for before it exports ({@link oweRow}, {@link persistCheckpoint}).
+   */
+  private readonly rowsOwed = new RowsOwedLedger();
+
+  /** See {@link IMlsService.oweRow}. */
+  oweRow(): Promise<RowOwed> {
+    return this.rowsOwed.owe();
+  }
 
   /**
    * Open windows by handle, so {@link endBulkIngest} replays the exact phase ITS open used. A map
@@ -1956,7 +1976,20 @@ export abstract class BaseMlsService implements IMlsService {
         // A refused or failed checkpoint has said so itself; what it did not cover is read below.
       }
     }
-    const withheld = new Set(ids.filter((id) => !covered(id) && needsDisk(id)));
+    // AN APPLICATION FRAME IS ACKNOWLEDGED ONLY ONCE ITS ROW IS STORED (the second window of the rows
+    // before ratchet). Its row was buffered for the window's close, so the ack waits for that close
+    // to have stored it, as a structural id waits for a checkpoint; a row the close could not store
+    // (kept for the next checkpoint's hold) withholds the ids, and the server keeps the only copy
+    // that is not in memory. An id a LANDED checkpoint covers needs neither: that checkpoint stored
+    // every row before it exported.
+    let rowsLeft = 0;
+    if (ids.some((id) => !covered(id) && !needsDisk(id))) {
+      await hold.rowsStored();
+      rowsLeft = this.appliedRowsLeftUnstored();
+    }
+    const heldForRows = new Set(ids.filter((id) => !covered(id) && !needsDisk(id) && rowsLeft > 0));
+    const heldForCheckpoint = ids.filter((id) => !covered(id) && needsDisk(id));
+    const withheld = new Set([...heldForCheckpoint, ...heldForRows]);
     for (const id of ids) {
       const known = this.deliveries.get(id);
       if (!known) continue;
@@ -1973,13 +2006,20 @@ export abstract class BaseMlsService implements IMlsService {
     }
     if (withheld.size === 0) return ids;
     for (const id of withheld) this.unacknowledged.add(id);
-    console.info(
-      `[ACK] ${withheld.size} id(s) not acknowledged: no landed checkpoint holds what they changed (` +
-        (refusesCommitsHere()
-          ? `this tab no longer owns the MLS state, ${getTabLeadership()}`
-          : 'the checkpoint covering them did not land') +
-        ') - the rows stay on the server for the tab that writes the state'
-    );
+    if (heldForCheckpoint.length > 0) {
+      console.info(
+        `[ACK] ${heldForCheckpoint.length} id(s) not acknowledged: no landed checkpoint holds what they changed (` +
+          (refusesCommitsHere()
+            ? `this tab no longer owns the MLS state, ${getTabLeadership()}`
+            : 'the checkpoint covering them did not land') +
+          ') - the rows stay on the server for the tab that writes the state'
+      );
+    }
+    if (heldForRows.size > 0) {
+      console.warn(
+        `[ACK] ${heldForRows.size} id(s) not acknowledged: ${rowsLeft} row(s) of applied frames are shown and not stored - the frames stay on the server until a checkpoint stores them`
+      );
+    }
     return ids.filter((id) => !withheld.has(id));
   }
 
@@ -2010,6 +2050,9 @@ export abstract class BaseMlsService implements IMlsService {
       applied: new Map([[queuedMessageId, held.applied]]),
       structural: held.structural ? new Set([queuedMessageId]) : new Set(),
       covered: () => this.checkpointCoveringNow(),
+      // No window holds a repeat's row: the drain that applied it closed long ago, and what its
+      // close could not store is read as it stands now.
+      rowsStored: () => Promise.resolve(),
     };
   }
 
@@ -3278,6 +3321,7 @@ export abstract class BaseMlsService implements IMlsService {
                 applied: ackApplied,
                 structural: ackStructural,
                 covered,
+                rowsStored: () => closed,
               }).catch((e) => console.warn('[ACK] drain ack failed:', e));
             }
 
@@ -5416,10 +5460,15 @@ export abstract class BaseMlsService implements IMlsService {
     const emitted = stateLedgersHydrated(this.userId)
       ? await this.emittedForCheckpoint()
       : undefined;
-    // ROWS BEFORE RATCHET: the rows held in memory for frames already applied are stored before the
+    // ROWS BEFORE RATCHET, IN TWO STEPS AND IN THIS ORDER. First the frames between their decrypt
+    // and their row: no new one is decrypted until the export is taken, and those already decrypted
+    // store or buffer their row ({@link RowsOwedLedger}). Then the rows held in memory for frames
+    // already applied - the buffers those handlers may just have filled - are stored before the
     // export claims those frames' ratchet advance, and none is held again until the export is taken.
-    const releaseRows = await this.holdRowsForExport();
+    const releaseOwed = await this.rowsOwed.hold();
+    let releaseRows: () => void = () => {};
     try {
+      releaseRows = await this.holdRowsForExport();
       const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
       // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
       // seals is not in it ({@link durableApplied}).
@@ -5452,8 +5501,10 @@ export abstract class BaseMlsService implements IMlsService {
       }
     } finally {
       // Released once the write settled, not at the capture: on native the export runs in the
-      // command, so the hold has to outlast the call.
+      // command, so both holds have to outlast the call. A hold of the rows that threw has released
+      // its own.
       releaseRows();
+      releaseOwed();
     }
   }
 
@@ -5468,15 +5519,15 @@ export abstract class BaseMlsService implements IMlsService {
    * for good: the generation is spent on disk and the frame is marked seen. Each hold ends on one
    * store of what is held (the observer stops buffering while it is taken), so this terminates
    * without a clock; nothing here waits on a handler, so a handler awaiting a checkpoint cannot
-   * deadlock it.
+   * deadlock it. (The handlers between a decrypt and their row are waited for BEFORE this, by
+   * {@link RowsOwedLedger}, whose marks never span a checkpoint.)
    *
    * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`), once
    * per trigger: the next checkpoint's hold retries the rows. Refused, the state on disk stays
    * behind those frames, and a reload repairs it from what still holds them - a frame the server
    * still lists (a commit or a Welcome, held by {@link DrainAckHold}, or one not yet acknowledged) is
-   * decrypted again; an APPLICATION frame a leader tab already acknowledged at the drain's end is
-   * gone from the server, and comes back through the history archive, whose replay reads it because
-   * no landed checkpoint marked it seen.
+   * decrypted again; and an APPLICATION frame is acknowledged only once its row is stored
+   * ({@link appliedRowsLeftUnstored}), so a refused checkpoint leaves it on the server too.
    *
    * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
    * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
@@ -5510,6 +5561,30 @@ export abstract class BaseMlsService implements IMlsService {
       }
     }
     return releaseAll;
+  }
+
+  /**
+   * How many rows of frames already applied stand shown and NOT stored, across the observers that
+   * hold rows (a write that failed, a batch that threw): what an application frame's ack must not
+   * run ahead of ({@link idsDurableEnoughToAck}). An observer that cannot answer counts as one row
+   * left, said at the level that accuses - withholding an ack costs a re-listing, acking past an
+   * unstored row costs the message.
+   */
+  private appliedRowsLeftUnstored(): number {
+    let left = 0;
+    for (const observer of this.bulkIngestObservers) {
+      if (!observer.rowsLeftUnstored) continue;
+      try {
+        left += observer.rowsLeftUnstored();
+      } catch (e) {
+        console.error(
+          '[ACK] a row observer could not say what it left unstored - the application ids are withheld:',
+          e
+        );
+        left += 1;
+      }
+    }
+    return left;
   }
 
   /**

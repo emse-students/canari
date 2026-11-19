@@ -1697,9 +1697,10 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
   count of frames applied when it was (`inboundApplied`); a checkpoint claims the count read before
   it EXPORTS and raises `durableApplied` once it lands. A commit or Welcome is acknowledged only once
   a landed checkpoint holds it - the drain's own, which `endBulkIngest` started; the ack chain waits
-  for it, the drain never does. An application frame is acknowledged at the drain's end as before
-  (the history archive is its second copy, read by the replay) - unless this document no longer owns
-  the state by then, when it is held like a commit. A held id whose checkpoint is refused or fails
+  for it, the drain never does. An application frame needs no checkpoint (the history archive is its
+  second copy, read by the replay), but it is acknowledged only once the drain's window closed and
+  its row is STORED ([rows before ratchet, the ack](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19))
+  - and held like a commit when this document no longer owns the state by then. A held id whose checkpoint is refused or fails
   stays on the server (`[ACK] N id(s) not acknowledged: no landed checkpoint holds what they
   changed`) and the tab that writes the state reads it; an id a LANDED checkpoint holds is
   acknowledged whatever the lead, so the new leader never meets a frame its disk has spent
@@ -3282,9 +3283,9 @@ close of the page.
 
 **What a refused checkpoint leaves, exactly.** The state on disk stays behind those frames, and a
 reload repairs it from what still holds them: a frame the server still lists (a commit or a Welcome,
-held by `DrainAckHold`, or one not acknowledged) is decrypted again; an APPLICATION frame a leader
-tab already acknowledged at the drain's end is gone from the server and comes back through the
-history archive, whose replay reads it because no landed checkpoint marked it seen.
+held by `DrainAckHold`, or one not acknowledged) is decrypted again - and since 2026-11-19 an
+APPLICATION frame is acknowledged only once its row is stored, so a row the store refused keeps its
+frame on the server too ([the ack](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)).
 
 **A hung row write holds every checkpoint.** An IndexedDB write that never settles leaves the hold
 pending: that checkpoint never exports, and the persister's in-flight one (`inFlightEncrypted`)
@@ -3317,12 +3318,78 @@ close's; the observer's hold is the messaging hold) and `BaseMlsService.rowsBefo
 (rows stored, then export, then write, then release; released on a failed write; a failed hold
 refuses the checkpoint and exports nothing).
 
-**What it does not close, stated.** Narrower windows of the same class remain, in the
-[backlog entry](../../backlog.d/p1-rows-before-ratchet.md): a row not yet STORED when the export is
-taken (a frame whose handler has not reached `addMessageToChat`, or a live-path write still in
-flight); an application frame acknowledged at the drain's end (`announceAck` in `onDrainEnd`) before
-the close stores its row, whose backstop is the history archive; the orphan buffer (`bufferOrphan`);
-and the device reading of a kill inside a window.
+**What it did not close** - a row not yet STORED when the export is taken, and an application
+frame acknowledged before the close stored its row - is closed by the section below. What is left
+is in the [backlog entry](../../backlog.d/p1-rows-before-ratchet.md).
+
+#### Rows before ratchet: the decrypt half and the ack (2026-11-19)
+
+The step above stores what the BUFFERS hold. Two windows of the same class were left (the
+[backlog entry](../../backlog.d/p1-rows-before-ratchet.md), raised by the review of #3786), each
+milliseconds long - and the [charter](../../../principes.md)'s second principle does not count in
+milliseconds.
+
+**1. A frame between its decrypt and its row.** A handler that decrypted an application frame has
+spent the generation (the advance is in the state an export takes) and has not reached
+`addMessageToChat` yet (web: an `await` between the two; native: a decrypt command already issued),
+or reached it and its write is in flight - on the drain's live path and outside any drain alike. No
+buffer holds that row, so the hold above could not store it. **The fix is the same order, one step
+earlier** (`RowsOwedLedger`, `frontend/src/lib/mls-client/rowsOwed.ts`):
+
+- the handler marks the row OWED (`IMlsService.oweRow`) immediately before the decrypt, with nothing
+  awaited between the mark and the decrypt's call, and settles it once the row is stored, buffered
+  or kept as a failed write - or at once when the frame carries no row;
+- `persistCheckpoint` holds the ledger FIRST: from that instant no new mark is taken (a decrypt that
+  has not marked waits at the gate, BEFORE it decrypts), and the hold resolves when every mark taken
+  before it settled. THEN the observers' hold stores the buffers those handlers may just have filled,
+  THEN the export; the gate reopens only once the write settled (on native the export runs inside
+  the command).
+
+**Why it cannot deadlock, and terminates without a clock.** The set of marks is closed when the hold
+is taken, and each is settled by its own handler on a path that never awaits a checkpoint: a commit
+takes no mark (it carries no row, and awaits checkpoints of its own); a system event or a call
+signal settles BEFORE its dispatch (a removal drops the group's state, which awaits a checkpoint);
+the `catch` settles FIRST (an eviction does the same); a message settles when `addMessageToChat`
+returned, a reaction when it is applied. The only things inside a mark are the decrypt and the row's
+store, neither of which awaits a checkpoint. The checkpoint itself takes no MLS lock, so a decrypt
+waiting at the gate while its drain holds the frame's lock blocks nothing the checkpoint needs. The
+Welcome's replay of the frames it buffered (`handleWelcome`) marks each the same way.
+
+**And a live-path write that FAILS is kept.** `addMessageToChat` wrote the row and only logged a
+failure, so the row was shown, not stored, and the next export went through. It now writes through
+the batch's own seam (`writeBatchRows`) and keeps a failed write in `unstoredRowWrites`, which the
+next hold retries and refuses on, exactly as a batch's.
+
+**2. An application frame acknowledged before its row is stored.** A leader tab acknowledged an
+application frame at the drain's end - `announceAck` runs in `onDrainEnd` BEFORE `endBulkIngest`
+stores the window's rows - and a kill between the two left the row nowhere on the device and the
+frame gone from the server; only the history archive brought it back. **Now the ack chain waits on
+the close's store as it waits on a checkpoint** (`DrainAckHold.rowsStored`, the drain's `closed`),
+then reads what the observers left shown and not stored (`BulkIngestObserver.rowsLeftUnstored`: the
+failed writes and the batches that threw). While that is not zero, the drain's application ids are
+withheld (`[ACK] N id(s) not acknowledged: M row(s) of applied frames are shown and not stored`):
+they stay on the server, and the repeat a later pull brings is re-acknowledged under the same rule
+(`reAckHold`). An id a LANDED checkpoint already holds is acknowledged whatever is left - that
+checkpoint stored every row before it exported. The count is the whole page's, not the drain's: a
+store that refuses rows withholds every application ack until a write lands, the same condition
+that already refuses every checkpoint. The ack's request now leaves after the window's close (a few
+ms later than before), and the owed pull still chains behind it.
+
+**What it costs.** A checkpoint that meets a frame mid-handler waits for its row (`[ROWS_OWED] A
+checkpoint waits for N decrypted frame(s) to store their rows before it exports`, said only when it
+waits), and the drain's next application frame waits for the export (`console.debug`). **What it
+accepts, stated:** a row write that never settles holds every checkpoint, as a hung buffered write
+already did.
+
+**Pinned by** `rowsOwed.test.ts` (the gate, the wait, a release that reopens only with the last hold,
+a waiter re-reading the gate), `BaseMlsService.rowsBeforeRatchet.test.ts` (owed row, then buffered
+rows, then export; a decrypt asked during the write waits for it; a refused checkpoint reopens the
+gate), `setupMessageHandler.rowsOwed.test.ts` (marked before the decrypt and owed through the add; a
+checkpoint during the add waits; a system event settles before its dispatch; a throw settles; a
+commit takes none), `BaseMlsService.leadLostAck.test.ts` (the ack waits for the close; a row left
+unstored withholds; a landed checkpoint acknowledges) and
+`useMessaging.rowsBeforeRatchet.svelte.test.ts` (a failed live write is kept, refuses the hold, and
+the next stores it; the count the ack reads).
 
 ### Forwarding
 

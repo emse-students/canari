@@ -11,6 +11,7 @@ import type {
   UserDeviceEntry,
 } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
+import type { RowOwed } from './rowsOwed';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { ServerInstant } from './serverInstant';
@@ -644,6 +645,13 @@ export interface BulkIngestObserver {
    * good. Optional - only an observer that holds rows implements it.
    */
   holdRowsForCheckpoint?(): Promise<() => void>;
+  /**
+   * ROWS BEFORE RATCHET, THE ACK: how many rows of frames already applied this observer shows and
+   * has NOT stored (a write that failed, a batch that threw), read once a drain's window closed. An
+   * application frame is acknowledged - deleted from the server - only while this is zero, so the
+   * server keeps the frame of a row that exists only in memory. Optional, like the hold above.
+   */
+  rowsLeftUnstored?(): number;
 }
 
 /** Row from `GET /api/mls/users/:id/groups`. */
@@ -927,6 +935,14 @@ export interface IMlsService {
    * see `sendRatchetLedger` and `stateLedgers`.
    */
   persistCheckpoint(): Promise<void>;
+  /**
+   * ROWS BEFORE RATCHET, THE DECRYPT HALF: marks the row of the application frame about to be
+   * decrypted as OWED, waiting first while a checkpoint is taking its export
+   * (`RowsOwedLedger.owe`). Call it immediately before the decrypt and settle the returned mark
+   * once the row is stored or buffered, or known not to exist - always before awaiting anything that
+   * may await a checkpoint, which waits for every mark taken before it.
+   */
+  oweRow(): Promise<RowOwed>;
   /**
    * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance

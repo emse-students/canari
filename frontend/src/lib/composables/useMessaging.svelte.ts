@@ -897,6 +897,7 @@ export function useMessaging() {
       onBulkIngestStart: (phase) => beginBulkMessageIngest(phase),
       onBulkIngestEnd: (phase) => endBulkMessageIngest(getCtx(), phase),
       holdRowsForCheckpoint: () => holdRowsForCheckpoint(getCtx()),
+      rowsLeftUnstored: () => unstoredRowCount() + keptMessageCount(),
     };
   }
 
@@ -1900,15 +1901,28 @@ export function useMessaging() {
               e
             );
           }
+          await ctx.saveConversation(normalized);
         } else {
           // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
           // outside the inbound drain) may have written the id since. Its row stands, and memory
-          // takes it.
-          const written = await ctx.storage.saveMessagesIfAbsent([row], ctx.deviceKeyB64);
-          if (written.has(row.id)) await removeSettled(ctx, settled.consumed);
-          else await showStoredInstead(ctx, normalized, [row.id]);
+          // takes it. THE BATCH'S OWN WRITE, so a failed one is KEPT as a batch's is: shown and not
+          // stored, this message's ratchet advance must not become durable before it - the next
+          // checkpoint's hold retries it and is refused while it stands (rows before ratchet).
+          const write: BatchRowWrite = {
+            conversationId: normalized,
+            upgradeRows: [],
+            newRows: [row],
+            consumedById: new SvelteMap([[row.id, [...settled.consumed]]]),
+          };
+          const failure = await writeBatchRows(ctx, write);
+          if (failure !== null) {
+            unstoredRowWrites.push(write);
+            console.error(
+              '[DB] Failed to persist message - kept, the next checkpoint stores it first:',
+              failure
+            );
+          }
         }
-        await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
       }

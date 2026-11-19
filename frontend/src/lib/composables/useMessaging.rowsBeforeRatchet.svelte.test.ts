@@ -249,6 +249,55 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     expect(storedIds(saveMessage)).toEqual(['in-8']);
   });
 
+  it('THE LIVE PATH: a row whose write failed outside any window is kept, refuses the hold, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    // The live write and the first hold's retry fail; the second hold's retry lands.
+    saveMessagesIfAbsent
+      .mockRejectedValueOnce(new Error('QuotaExceededError'))
+      .mockRejectedValueOnce(new Error('QuotaExceededError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // No window open: the ordinary path, whose handler writes the row itself.
+    await messaging.addMessageToChat(PEER, 'live', CONVO, ctx, { messageId: 'in-live' });
+    expect(idsIn(conversations)).toEqual(['in-live']);
+    expect(storedIds(saveMessage)).toEqual([]);
+    // What an application frame's ack reads before it deletes the server's copy.
+    expect(observer.rowsLeftUnstored()).toBe(1);
+
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(storedIds(saveMessage)).toEqual(['in-live']);
+    expect(observer.rowsLeftUnstored()).toBe(0);
+  });
+
+  it('counts the rows a window close could not store for the ack, and nothing once a hold stored them', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const saveMessagesIfAbsent = (
+      ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> }
+    ).saveMessagesIfAbsent;
+    saveMessagesIfAbsent.mockRejectedValueOnce(new Error('AbortError'));
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-a' });
+    await messaging.addMessageToChat(PEER, 'b', CONVO, ctx, { messageId: 'in-b' });
+    expect(observer.rowsLeftUnstored()).toBe(0);
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
+    expect(observer.rowsLeftUnstored()).toBe(2);
+
+    (await observer.holdRowsForCheckpoint())();
+    expect(observer.rowsLeftUnstored()).toBe(0);
+  });
+
   it('builds ONE observer whose hold is the messaging hold (the wiring a page cannot half-do)', async () => {
     const messaging = useMessaging();
     const { ctx, saveMessage } = makeContext();

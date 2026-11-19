@@ -1,43 +1,30 @@
-## P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
+## P1 - rows before ratchet: the orphan buffer, the last window once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
 
 target: 1.7.1
 
-**2026-11-17 evening: the first step shipped in `1.7.0` (#3786, on dev from `1.7.0-alpha.10`); the windows left below are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below). Its device reading was [read PASS on the web and the Mi 9T on 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).**
-
-**Built (2026-11-17, #3786):** a checkpoint stores the rows the live drain's UI buffer holds BEFORE
-it exports their ratchet advance, and nothing re-enters the buffer until its write settled
-(`BaseMlsService.holdRowsForExport` -> `useMessaging.holdRowsForCheckpoint`); a row whose write
-failed refuses the checkpoint until a later hold stores it
+**Built.** The first step shipped in `1.7.0` (#3786, [read PASS on the web and the Mi 9T on
+2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11)): a
+checkpoint stores the buffered rows before it exports
 ([chat](../frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17)).
-That closes the window this entry was raised for - the whole length of a drain's window, seconds on
-a catch-up. The device reading is [in the readings of 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).
+The two windows this entry then listed first are closed on 2026-11-19
+([chat](../frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)): a
+frame between its decrypt and its row is waited for by the checkpoint (`RowsOwedLedger`), a failed
+live-path row write is kept and retried by the next hold, and an application frame is acknowledged
+only once the window's close stored its row.
 
-**Accepted, stated:** a hung IndexedDB row write holds every checkpoint (the hold never resolves, the
-persister's in-flight checkpoint never clears), and a store that keeps refusing the rows refuses
-every checkpoint - commits and joins included (`externalJoin` awaits one) - until a write lands or
-the page reloads, said once per page. No timeout: exporting past an unstored row is the loss itself.
+**Owed with them, on the `1.7.1` pre-release (a reading, not a build):** a catch-up of a few dozen
+messages on the Mi 9T and the web, then a reload - every message present, no `[ACK] ... shown and
+not stored` line, `[ROWS_OWED] A checkpoint waits` rare and never followed by a stall of the drain.
 
-**Left, in order (same class, narrower windows):**
-
-1. **A row not yet STORED when the export is taken**: a frame decrypted whose handler has not reached
-   `addMessageToChat` (web: an `await` between the decrypt and the add; native: a decrypt command
-   already issued), AND a live-path write still in flight - the drain's live path and the ordinary
-   one outside any drain alike. Milliseconds long, but the charter does not count in milliseconds.
-   The likely shape: the pipeline marks "row owed" at the decrypt of an APPLICATION frame and settles
-   it at the WRITE of its row (or where no row is decided), and the hold waits only for marks whose
-   frames carry no commit - never on a handler that may itself await a checkpoint (a commit's
-   structural one), the deadlock the built step avoids by design. **Size: 2-3 days**, MLS pipeline,
-   Opus review.
-2. **An application frame acknowledged before its row is stored.** A leader tab acknowledges an
-   application frame at the drain's end (`needsDisk` is `structural || refusesCommitsHere()`), and
-   `announceAck` runs in `onDrainEnd` BEFORE `endBulkIngest` stores the window's rows: a kill between
-   the two leaves the row nowhere on the device and the frame gone from the server. The backstop is
-   the history archive - the replay reads the frame again, since no landed checkpoint marked it seen
-   - so it is recovered, but by the archive rather than by order. Closing it: acknowledge an
-   application frame only once its row is stored (the ack chain waits on the close's store as it
-   waits on a checkpoint). **Size: 1 day.**
-3. **The orphan buffer** (`bufferOrphan`): a message whose conversation is not yet in the map is
-   kept in memory until `drainOrphanMessages`, so a checkpoint can hold its advance first. Not
-   closed by #3786: storing the row at buffering writes a message for a conversation the store does
-   not hold yet, which the restore and the sidebar would have to learn to ignore. Store it at
-   buffering behind that rule, or include it in the hold. **Size: 1 day.**
+**Left (same class, narrowest window): the orphan buffer** (`bufferOrphan`). A message whose
+conversation is not in the map is kept in memory until `drainOrphanMessages`, so a checkpoint can
+export its advance first. What the 2026-11-19 pass established, so the next one starts from it: a
+LIVE application frame cannot reach it through `handleKnownGroup` in the ordinary order - that
+handler refuses an absent conversation BEFORE it decrypts (`absent-conversation`, not
+acknowledged) - so from a decrypted frame the branch is reached only when the conversation leaves
+the map between that check and `addMessageToChat` (a deletion or a purge racing the handler), and
+the Welcome's replay inserts its conversation before it replays. Two shapes remain open: store the
+row at buffering (the restore and the sidebar would have to learn to ignore a message row whose
+conversation row does not exist yet), or count the orphan buffer in the hold. First measure which
+callers actually reach it (`[ADD_MSG] conversation ... introuvable` with its source), since a row
+for a conversation the reader deleted is one to drop, not to store. **Size: 1 day**, Opus review.

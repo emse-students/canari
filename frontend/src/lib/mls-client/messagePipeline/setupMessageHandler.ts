@@ -82,6 +82,7 @@ import {
 } from '$lib/utils/chat/externalCommitVerdict';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta, IMlsService } from '../IMlsService';
+import type { RowOwed } from '../rowsOwed';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
@@ -863,6 +864,10 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // Replay buffered messages (commits that arrived before the Welcome).
       if (buf?.msgs.length) {
         for (const msg of buf.msgs) {
+          // ROWS BEFORE RATCHET, as on the live path (`handleKnownGroup`): owed from right before the
+          // decrypt to the row's write, and settled before a system event, which may await a
+          // checkpoint.
+          const settleRow = await mlsService.oweRow();
           try {
             const dec = await mlsService.processIncomingMessage(joinedGroupId, msg.content, {
               userId: msg.sender,
@@ -908,7 +913,9 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                       ...(authorship ? { authorship } : {}),
                     });
                   }
+                  settleRow();
                 } else if (appMsg.system) {
+                  settleRow();
                   // FIX 2 — Replay the system messages buffered before the Welcome
                   const event = appMsg.system.event ?? '';
                   let data: any = {};
@@ -943,6 +950,9 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
                 `[MLS] buffered frame for ${joinedGroupId.slice(0, 8)}... not replayed after the Welcome: ${String(e).slice(0, 120)}`
               );
             }
+          } finally {
+            // Every way out that kept no row: no payload, refused, threw.
+            settleRow();
           }
         }
         statePersister.persistNow();
@@ -1290,7 +1300,15 @@ async function handleKnownGroup({
     markHistoryFrameConsumed(userId, groupId, fingerprint);
   };
 
+  // ROWS BEFORE RATCHET, THE DECRYPT HALF: an application frame's row is OWED from right before its
+  // decrypt to its write, and a checkpoint exports only once every owed row settled
+  // (`RowsOwedLedger`). Settled where the row is stored or buffered (`addMessageToChat`), where a
+  // reaction is stored, and AT ONCE on every other way out - before any work that may await a
+  // checkpoint (a system event, an eviction), which would otherwise wait for this very mark. A
+  // commit takes none: it carries no row, and its handler awaits checkpoints of its own.
+  const settleRow: RowOwed = isCommit ? () => {} : await mlsService.oweRow();
   try {
+    // NOTHING AWAITED BETWEEN THE MARK AND THE DECRYPT'S CALL (`RowsOwedLedger.owe`).
     const opened = await mlsService.processIncomingMessage(groupId, content, {
       userId: sender,
       deviceId: deliveryMeta?.senderDeviceId,
@@ -1387,6 +1405,10 @@ async function handleKnownGroup({
     // prove the message, edit, deletion or reaction to a reader that never saw the frame.
     const authorship = recordAuthorship(decrypted, groupId, opened?.author);
 
+    // NO ROW: a call signal, a system event, nothing. Settled BEFORE the dispatch - a system event
+    // may await a checkpoint (a removal drops the group's state), which waits for every owed row.
+    if (!(msg.text || msg.reply || msg.media || msg.reaction)) settleRow();
+
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
       if (envelope) {
@@ -1394,29 +1416,41 @@ async function handleKnownGroup({
           normalizeMessageId(msg.messageId) ?? normalizeMessageId(deliveryMeta?.queuedMessageId);
         if (stableId) envelope.options.messageId = stableId;
         log(`[MLS] Message decrypted for ${convoKey.slice(0, 8)}… → addMessageToChat`);
-        await addMessageToChat(sender, envelope.content, convoKey, {
-          ...envelope.options,
-          serverTimestamp: deliveryMeta?.queuedCreatedAt,
-          ...(authorship ? { authorship } : {}),
-        });
+        try {
+          await addMessageToChat(sender, envelope.content, convoKey, {
+            ...envelope.options,
+            serverTimestamp: deliveryMeta?.queuedCreatedAt,
+            ...(authorship ? { authorship } : {}),
+          });
+        } finally {
+          // Stored, buffered for the window's close (which the checkpoint's hold stores next), or
+          // kept as a failed write the hold retries: either way no longer between decrypt and row.
+          settleRow();
+        }
       } else {
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      const outcome = await applyReactionFrame(
-        {
-          storage,
-          deviceKey,
-          conversations,
-          messageReactions,
-          log,
-        },
-        convoKey,
-        sender,
-        msg.reaction,
-        authorship,
-        deliveryMeta?.queuedCreatedAt
-      );
+      let outcome: Awaited<ReturnType<typeof applyReactionFrame>>;
+      try {
+        outcome = await applyReactionFrame(
+          {
+            storage,
+            deviceKey,
+            conversations,
+            messageReactions,
+            log,
+          },
+          convoKey,
+          sender,
+          msg.reaction,
+          authorship,
+          deliveryMeta?.queuedCreatedAt
+        );
+      } finally {
+        // A reaction is what this frame leaves on disk: stored (or kept pending) by now.
+        settleRow();
+      }
       // The frame trigger of a reaction notification: the decision is the caller's
       // (`reactionNotification.ts`), this only says what the frame was and how it arrived.
       deps.onInboundReaction?.({
@@ -1480,6 +1514,9 @@ async function handleKnownGroup({
 
     return true;
   } catch (e) {
+    // FIRST: no row comes out of a frame that threw, and the arms below may await a checkpoint (an
+    // eviction drops the group's state), which would wait for this very mark.
+    settleRow();
     const err = String(e);
     const kind = classifyIncomingDecryptError(e);
 
@@ -1672,6 +1709,9 @@ async function handleKnownGroup({
     if (kind === 'same-epoch-refusal') await drainForkFindings(mlsService, log);
     startRecovery(groupId);
     return true;
+  } finally {
+    // Every return above that kept no row (no payload, undecodable, refused for its address).
+    settleRow();
   }
 }
 
