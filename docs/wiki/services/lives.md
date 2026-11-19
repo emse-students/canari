@@ -966,7 +966,8 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
 **Live replays (2026-11-09) change this for a live started while `live_replays_mode` is `on`**: its
-`lives."keepsReplay"` is fixed at the start (migration 156); it keeps its last 3 hours instead of
+`lives."keepsReplay"` is written at the start (migration 156) and, on an ENDED row, holds the final
+verdict written by every end ([live-replays](../live-replays.md#the-end-texts-say-the-servers-verdict)); it keeps its last 3 hours instead of
 the trim's window, and once drained it publishes a three-day `kind = 'replay'` post instead of being
 purged, the purge then waiting for that post's deletion; a cut ends the replay at once, and a total
 cap ends the oldest early - [live-replays](../live-replays.md#wp-r2-as-built), the one design (WP-R2).

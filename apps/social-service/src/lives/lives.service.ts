@@ -1285,7 +1285,8 @@ export class LivesService implements OnModuleDestroy {
    * just stored - the end's purge deletes the whole prefix whatever this left, so correctness never
    * rests on this pass; only the bound does, and it is re-asked by every segment.
    *
-   * A LIVE THAT KEEPS A REPLAY (`keepsReplay`, fixed at its start) keeps its last
+   * A LIVE THAT KEEPS A REPLAY (`keepsReplay`, written at its start; on an ended row the final
+   * verdict, which the trim of an open live never meets) keeps its last
    * {@link LIVE_REPLAY_MAX_MS} instead (owner, 2026-11-09, D1): a segment goes only when it is behind
    * the window AND older than three hours before the newest segment, both by the segments' own
    * `createdAt` (the database clock), so what such a live stores is bounded by three hours, never by

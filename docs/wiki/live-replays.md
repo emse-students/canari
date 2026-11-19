@@ -147,8 +147,9 @@ two generations of one phone write byte-equal inits) and any player but ffmpeg -
 ### C in detail
 
 1. **The trim keeps the replay, bounded in TIME (D1).** For a live that keeps a replay
-   (`lives."keepsReplay"`, fixed at the start from `live_replays_mode`, so a flip mid-live never makes
-   half a replay), `trim` deletes the segments whose `createdAt` is more than `LIVE_REPLAY_MAX_MS`
+   (`lives."keepsReplay"`, written at the start from `live_replays_mode`, so a flip mid-live never
+   makes half a replay; on an ENDED row the final verdict, written by every end -
+   [below](#the-end-texts-say-the-servers-verdict)), `trim` deletes the segments whose `createdAt` is more than `LIVE_REPLAY_MAX_MS`
    (3 hours) older than the newest segment's - the database's own times, never a process clock - and
    never the newest 20. Everything else of the trim is unchanged (the media delete first, then the
    rows and `storedBytes` in one transaction, idempotent from durable state). A live with
@@ -300,7 +301,7 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 
 | WP | What | State |
 | --- | --- | --- |
-| **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start; the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
+| **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start (on an ended row, since WP-R6, the final verdict written by every end); the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
 | **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure ending the replay; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | built, inert while the switch is off ([as built](#wp-r2-as-built)) |
 | **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built, shipped from the `v1.6.9` stable on; the switch went on 2026-11-19; **its dev and production readings (1-5 below, and reading 7) are NOT recorded and are owed** ([backlog](backlog.d/live-replays-kept-three-days-as-canareels.md)) |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet; the first-live rules raised to version 3 moved to WP-R6 ([why](#wp-r4-and-wp-r5-as-built)) | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
@@ -536,7 +537,9 @@ value, the server's:
   their own transaction. The end answers it as `keepsReplay`, and a repeated end READS the column.
   The ingest already refused any segment after the end; writing the verdict only makes the answer
   self-contained. A cut or an erasure after the answer still removes the replay (the texts do not
-  promise past them).
+  promise past them). **Rows ended before this deploy keep their start-time value**: for the few
+  minutes until they are purged, a repeated end on such a row can answer "kept" for a live under
+  30 s; nothing is published wrongly, since `publishReplay` still applies the 30 s rule and the cut.
 - **The client freezes the first answer** (`LiveBroadcast.replayVerdict`) and the end screen reads
   `replayEndText(keepsReplay, verdict)`: `none` for a live the server does not keep or judged short,
   `kept` (how long it is visible) once the answer says so (a `404`, a purged row, is `none`: a
