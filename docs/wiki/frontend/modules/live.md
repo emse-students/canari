@@ -1672,3 +1672,29 @@ top of an open feed now reads the (small) list every 16 s even with nothing on a
 A push event (a server-sent start/end) would remove that poll; it is not built (it would need a new
 channel). Tests: `LiveFeedCard.svelte.test.ts` (a start with no card drawn; an end read on re-entry).
 Read on the Mi 9T on `1.7.0-alpha.7` (2026-11-17, [readings](../../device-verification.md#the-mi-9t-readings-of-2026-11-17-170-alpha7-the-envoyer-a-retakes-on-section-22s-screens)): start, end and a backgrounded app all followed with no relaunch; the entry is deleted.
+
+## The broadcaster's controls are one right-edge column (owner, 2026-11-19)
+
+Seen on the iPhone 12 (390x844 pt, portrait, on air): the shared wrapping top bar
+(`liveTopBar.ts`, 2026-11-16) dropped the six 44 pt controls under the identity block as a second,
+right-aligned row, a staircase under the "Ajouter un titre" button. **Owner's decision: the controls
+are a vertical column on the right edge, End on top, like Instagram and TikTok lives; the identity,
+LIVE pill, timer, viewer count and title stay top-left.** Charter: principle 2 (the essential is never
+lost: End is always reachable) and 7 (simplicity: one layout rule, no wrap to reason about).
+
+**By construction, not by width.** The broadcaster no longer uses the viewer's wrapping bar:
+`LIVE_BROADCASTER_BAR_CLASS` is ONE non-wrapping row, the identity is `min-w-0 flex-1` (its text
+truncates) and the actions are one non-shrinking `flex-col` track
+(`LIVE_BROADCASTER_ACTIONS_CLASS`), so nothing can wrap at any width. The bar keeps `sideSafePadding`
+and the top inset, so the column clears the notch and the home-bar side insets. The viewer keeps the
+wrapping bar unchanged. Order in the column: End, flip, mic, camera, share, chat toggle (what each
+does is untouched).
+
+**Short screens (a phone turned, about 390 pt high).** Six 44 pt buttons and their gaps need about 310
+pt, which would reach the comment bar. The column is capped to the height between the top and bottom
+insets (minus the keyboard occlusion and 6 rem) and scrolls inside the cap (`overflow-y-auto`), so a
+control is never pushed under the comment bar; End, first in the column, is always in view. Horizontally
+the comment box is on the left in landscape (`landscape:max-w-sm`), so the column never covers it.
+
+Test: `LiveBroadcaster.svelte.test.ts` pins the structure and classes (happy-dom has no layout, so the
+pixels are NOT asserted). Owed: a phone reading, see the backlog entry.
