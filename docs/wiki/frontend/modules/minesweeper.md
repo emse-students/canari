@@ -340,22 +340,29 @@ checked) and the player's win stands.
 
 **The viewer.** `GET /minesweeper/scores/:scoreId/replay` returns the player's name, the recipe and the
 log. **OPEN TO EVERY SIGNED-IN MEMBER** (owner, 2026-11-18: *"laisse tous les joueurs rejouer les scores
-des autres"*), on the terms of the ranking it hangs off: a score the ranking hides - a banned player's, the
-other side of the review cohort's boundary - answers 404 to a member, as a score that does not exist, and a
-global admin (`X-Global-Admin`) sees it anyway, because judging a cheat means opening a banned player's game.
-A read is logged at `debug`, not `log`: every member may now read. On the Games page every ranking row has a
+des autres"*), on the terms of the ranking it hangs off: a member may watch another player's BEST win (the one score the
+ranking shows - an earlier win is not on offer, so a uuid from a stale client opens nothing) and any of their
+own; a score the ranking hides - a banned player's, the other side of the review cohort's boundary - answers
+404 to a member, as a score that does not exist; and a global admin (`X-Global-Admin`, read inline as every
+controller of this service does) sees every score, because judging a cheat means opening a banned player's
+game or an earlier win. A member's read is logged at `debug` (routine traffic); **an admin's at `log`**, since
+it can reach what the ranking hides and the trace must survive in production. On the Games page every ranking row has a
 "Revoir cette partie" button (admins also keep remove and ban); it opens `MinesweeperReplay.svelte`.
 
 THE SCREEN IS THE BOARD (owner, 2026-11-18: the first window was too small for the grid on a phone): the
 viewer is a full-screen sheet on a phone (`phoneFullScreen`), a tall dialog on a larger screen. The stage
 takes every pixel the controls leave and **the whole grid is fitted to it** - `fitCellSize` picks the cell
 size from the stage's measured room, re-fitted by a `ResizeObserver` on every resize or rotation, clamped
-to 10-44 px - so the grid is never scrolled. One bar under it: play / pause (the surface's primary action),
+to 14-44 px (below 14 the cell's 12 px digit no longer fits) - so the grid is on screen whole. Its
+padding and gap are DRAWN from the numbers the fit uses, and the grid is centred with `m-auto`, so a
+stage too small for 14 px cells scrolls to the right and bottom instead of clipping its top and left. The
+viewer honours the device's animation setting (`--ms-anim` on its root), as the game does. One bar under it: play / pause (the surface's primary action),
 restart, the clock, a full-width scrubber, the move count with the last action (the cell it landed on is
 ringed) and 1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up
 front, the board right after the first move is copied, and going backwards restarts from that copy and
-replays the few moves between. A score won before this shipped has no replay: 404, said as "no recording
-was kept".
+replays the few moves between. A 404 - a score removed, hidden from this member, never recorded, or
+won before replays were kept - is said as "this game is not available": the client types the answer, not
+the reason, and a wrong reason would be worse than none.
 
 **The dig no longer fades when animations are off** (owner, 2026-11-18). `app.css` gives every `button`
 a 180 ms colour crossfade in `@layer base`, and a cell is a button, so a dug cell faded from hidden to

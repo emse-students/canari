@@ -67,8 +67,13 @@ function build() {
   const scores = {
     create: (row: Partial<MinesweeperScore>) => ({ id: 'score-1', ...row }) as MinesweeperScore,
     save: jest.fn(async (row: MinesweeperScore) => void storedScores.set(row.id, row)),
+    // By id, or - as `getPersonalBest` asks - a player's fastest score.
     findOne: jest.fn(async ({ where }: { where: { id?: string; userId?: string } }) =>
-      where.id ? (storedScores.get(where.id) ?? null) : null
+      where.id
+        ? (storedScores.get(where.id) ?? null)
+        : ([...storedScores.values()]
+            .filter((sc) => sc.userId === where.userId)
+            .sort((a, b) => a.durationMs - b.durationMs)[0] ?? null)
     ),
     query: jest.fn(async (sql: string) =>
       sql.includes('"displayName"') ? [{ displayName: ' Ada ' }] : [{ cnt: 0 }]
@@ -158,8 +163,9 @@ describe('submitting a timed log', () => {
 
 describe('reading a replay', () => {
   let readLog: jest.SpyInstance;
+  let infoLog: jest.SpyInstance;
   beforeEach(() => {
-    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    infoLog = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     readLog = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
   });
 
@@ -191,7 +197,7 @@ describe('reading a replay', () => {
     });
   });
 
-  it('leaves a trace of who read it, at debug: every member may now', async () => {
+  it("leaves a trace of a member's read at debug only: it is routine traffic now", async () => {
     const { service, challenges, replays, storedScores } = build();
     storedScores.set('score-1', score);
     challenges.findOne.mockResolvedValue(challengeRow());
@@ -199,6 +205,18 @@ describe('reading a replay', () => {
     await service.replay('score-1', 'viewer-1', false);
     expect(readLog).toHaveBeenCalledWith(
       expect.stringContaining('replay read score=score-1 user=user-1 by=viewer-1')
+    );
+    expect(infoLog).not.toHaveBeenCalledWith(expect.stringContaining('replay read'));
+  });
+
+  it("keeps a trace production retains for a global admin's read, which can reach hidden games", async () => {
+    const { service, challenges, replays, storedScores } = build();
+    storedScores.set('score-1', score);
+    challenges.findOne.mockResolvedValue(challengeRow());
+    replays.findOne.mockResolvedValue({ scoreId: 'score-1', moves: [] });
+    await service.replay('score-1', 'admin-1', true);
+    expect(infoLog).toHaveBeenCalledWith(
+      expect.stringContaining('replay read score=score-1 user=user-1 by=admin-1 admin')
     );
   });
 
@@ -236,6 +254,34 @@ describe('reading a replay', () => {
       const { service } = setup(false);
       await expect(service.replay('score-1', 'someone-else', false)).resolves.toMatchObject({
         userId: 'user-1',
+      });
+    });
+
+    it('lets a member watch only the BEST win of another player: the one the ranking shows', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      // score-1 (61 s) is no longer user-1's best.
+      await expect(service.replay('score-1', 'someone-else', false)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      await expect(service.replay('score-fast', 'someone-else', false)).resolves.toMatchObject({
+        scoreId: 'score-fast',
+      });
+    });
+
+    it('lets the player watch any of their own, best or not', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      await expect(service.replay('score-1', 'user-1', false)).resolves.toMatchObject({
+        scoreId: 'score-1',
+      });
+    });
+
+    it('lets a global admin watch an earlier win too', async () => {
+      const { service, storedScores } = setup(false);
+      storedScores.set('score-fast', { ...score, id: 'score-fast', durationMs: 50_000 });
+      await expect(service.replay('score-1', 'admin-1', true)).resolves.toMatchObject({
+        scoreId: 'score-1',
       });
     });
 

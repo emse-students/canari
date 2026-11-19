@@ -3712,7 +3712,7 @@
   "minesweeper_replay_summary": "{time} - générateur {generator} - {moves} coups",
   "minesweeper_replay_loading": "Chargement de la partie...",
   "minesweeper_replay_failed": "Impossible de charger la partie.",
-  "minesweeper_replay_missing": "Aucun enregistrement n'a été conservé pour ce score.",
+  "minesweeper_replay_missing": "Cette partie n'est pas disponible.",
   "minesweeper_replay_play": "Lecture",
   "minesweeper_replay_pause": "Pause",
   "minesweeper_replay_restart": "Revenir au début",

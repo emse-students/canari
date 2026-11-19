@@ -25,4 +25,10 @@ describe('MinesweeperCell transition', () => {
     // 180ms * 1 = the 180 ms app.css gives every button: normal speed is unchanged.
     expect(css).toContain('calc(180ms * var(--ms-anim, 1))');
   });
+
+  it('carries no Tailwind transition utility that would answer for the duration instead', () => {
+    // A `transition-*` class on the cell would sit in the utilities layer and could fight the rule above.
+    const markup = source.slice(0, source.indexOf('<style>'));
+    expect(markup).not.toMatch(/\btransition(-[a-z]+)?\b/);
+  });
 });

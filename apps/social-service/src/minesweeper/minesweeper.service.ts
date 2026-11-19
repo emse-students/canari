@@ -593,16 +593,25 @@ export class MinesweeperService {
    * regenerated from them, never stored), the timed move log, and whose game it was.
    *
    * OPEN TO EVERY SIGNED-IN MEMBER (owner, 2026-11-18), on the same terms as the ranking it hangs off:
-   * a score the ranking hides is hidden here too - a banned player's, and the other side of the review
-   * cohort's boundary - and answers 404, as a score that does not exist. A global admin sees them all
-   * (a moderator judging a cheat must be able to open a banned player's game). 404 as well for a score
-   * with no stored replay (one won before replays were kept).
+   * a member may watch another player's BEST win (the one score the ranking shows) and any of their own,
+   * and a score the ranking hides - a banned player's, and the other side of the review cohort's
+   * boundary - answers 404, as a score that does not exist. A global admin sees every score (a
+   * moderator judging a cheat must be able to open a banned player's game, or an earlier win). 404 as
+   * well for a score with no stored replay (one won before replays were kept).
    */
   async replay(scoreId: string, viewerId: string, isAdmin: boolean) {
     const score = await this.scores.findOne({ where: { id: scoreId } });
     if (!score) throw new NotFoundException('Score not found');
     if (!isAdmin) {
       if (!sameSideOfReviewCohort(viewerId, score.userId) || (await this.isBanned(score.userId))) {
+        throw new NotFoundException('Score not found');
+      }
+      // The ranking shows one score per player, their best: an earlier win is not on it, so it is not
+      // on offer to another member either (a uuid from a stale client or a log line is no invitation).
+      if (
+        score.userId !== viewerId &&
+        (await this.getPersonalBest(score.userId))?.id !== score.id
+      ) {
         throw new NotFoundException('Score not found');
       }
     }
@@ -615,9 +624,11 @@ export class MinesweeperService {
       `SELECT "displayName" FROM users WHERE id = $1`,
       [score.userId]
     );
-    this.logger.debug(
-      `minesweeper replay read score=${scoreId} user=${score.userId} by=${viewerId}${isAdmin ? ' admin' : ''}`
-    );
+    const trace = `minesweeper replay read score=${scoreId} user=${score.userId} by=${viewerId}`;
+    // A global admin's read can reach what the ranking hides, so it keeps a trace production retains;
+    // a member's read of a ranked game is routine traffic.
+    if (isAdmin) this.logger.log(`${trace} admin`);
+    else this.logger.debug(trace);
     return {
       scoreId,
       userId: score.userId,

@@ -92,8 +92,11 @@ export function createReplay(source: ReplaySource): Replay {
   };
 }
 
-/** The smallest and largest cell, in CSS px, a replay draws: below the first a digit is unreadable. */
-export const REPLAY_CELL_MIN_PX = 10;
+/**
+ * The smallest and largest cell, in CSS px, a replay draws: below the first the cell's 12 px digit no
+ * longer fits it. A stage too small for the minimum scrolls (see the viewer) rather than shrinking past it.
+ */
+export const REPLAY_CELL_MIN_PX = 14;
 export const REPLAY_CELL_MAX_PX = 44;
 
 /**
