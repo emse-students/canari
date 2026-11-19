@@ -1196,6 +1196,14 @@ export class LiveBroadcast {
         (e: unknown) => {
           if (e instanceof LiveRefusalError) {
             console.debug(`[LIVE-BROADCAST] ${liveId} end answered with a refusal (${e.code})`);
+            // A purged live (404) holds no replay: a replay keeps its live row while it exists.
+            if (
+              isLiveRefusal(e, 'not-found') &&
+              liveId === this.liveId &&
+              this.replayVerdict === null
+            ) {
+              this.replayVerdict = false;
+            }
             done();
             return;
           }

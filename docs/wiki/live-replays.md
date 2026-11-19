@@ -527,14 +527,18 @@ server's (`lastSegmentAt - startedAt` on the database clock, the last flush incl
 30 s, so the screen could say "Rien n'en est gardé" over a published replay, or the reverse. Now ONE
 value, the server's:
 
-- **The end decides and freezes it.** The broadcaster's `POST /api/lives/:id/end` sets
-  `keepsReplay = keepsReplay AND <30 s rule>` in its own `UPDATE` and answers it as `keepsReplay`;
-  the rule is one SQL fragment (`replayLongEnoughSql`) that `publishReplay` reads too. A segment that
-  lands after the end cannot change the verdict; a repeated end answers it again. A cut or an erasure
-  can still remove the replay later (the texts do not promise past them).
+- **Every end writes it, and the column has ONE meaning on an ended row: the final verdict.** The
+  broadcaster's `POST /api/lives/:id/end` and the sweep's `endDue` set
+  `keepsReplay = keepsReplay AND <30 s rule>` in their own `UPDATE` (one SQL fragment,
+  `replayLongEnoughSql`, that `publishReplay` reads too); a cut and an erasure write it `false` in
+  their own transaction. The end answers it as `keepsReplay`, and a repeated end READS the column.
+  The ingest already refused any segment after the end; writing the verdict only makes the answer
+  self-contained. A cut or an erasure after the answer still removes the replay (the texts do not
+  promise past them).
 - **The client freezes the first answer** (`LiveBroadcast.replayVerdict`) and the end screen reads
   `replayEndText(keepsReplay, verdict)`: `none` for a live the server does not keep or judged short,
-  `kept` (how long it is visible) once the answer says so, and while no answer has come - the
+  `kept` (how long it is visible) once the answer says so (a `404`, a purged row, is `none`: a
+  replay keeps its live row), and while no answer has come - the
   screen settles behind no request - the rule itself ("S'il a duré au moins 30 secondes, sa
   rediffusion sera publiée").
 - **The confirm, asked before the end, states the rule** for a live the server keeps, never a
