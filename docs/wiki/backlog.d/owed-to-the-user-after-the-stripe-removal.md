@@ -1,10 +1,10 @@
-## Owed to the user after the Stripe removal
+## Owed after the Stripe removal - what is left (audited 2026-11-19)
 
 target: 1.7.2
 
 **Owner, 2026-11-19:** *"Tu peux tout supprimer en ce qui concerne Stripe, je m'occupe de l'administratif"*.
 The lead removes everything left of Stripe in the code and the database (the three columns, the
-permission's old name), in a held migration merged after the `1.7.1` stable; the Stripe webhook endpoint,
+permission's old name), in held migrations shipped in `1.7.1` (#3852); the Stripe webhook endpoint,
 the Lydia contract and the payer e-mail proof are the owner's. The three GitHub secrets were read gone on
 2026-11-19 ([decisions](owner-decisions-of-2026-11-19.md)).
 
