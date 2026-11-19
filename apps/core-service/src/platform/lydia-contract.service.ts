@@ -152,6 +152,7 @@ export class LydiaContractService {
           statusCode: 400,
           code: 'LYDIA_CONTRACT_INVALID',
           field: err.field,
+          reason: err.code,
           message: err.message,
         });
       }

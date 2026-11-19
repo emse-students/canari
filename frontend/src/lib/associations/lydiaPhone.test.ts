@@ -11,6 +11,10 @@ describe('toE164Phone', () => {
     expect(toE164Phone('+33612345678')).toBe('+33612345678');
     expect(toE164Phone('+33 6 12 34 56 78')).toBe('+33612345678');
   });
+  it('drops a French trunk 0 kept after +33, so one line has one spelling', () => {
+    expect(toE164Phone('+33 0 6 12 34 56 78')).toBe('+33612345678');
+    expect(toE164Phone('+3306123456')).toBeNull();
+  });
   it('rejects anything else', () => {
     for (const bad of [
       '',

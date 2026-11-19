@@ -63,11 +63,10 @@ function buildVersionName() {
 /** @type {import('@sveltejs/kit/vite').Config} */
 const config = {
   preprocess: vitePreprocess(),
-  // SvelteKit 3 REMOVED THE IMPLICIT `$lib` and prefers `#lib` (a package.json subpath import), which
-  // TypeScript resolves only with the file extension spelled out - 7645 imports in 1566 files would
-  // each have to gain one. This alias is the way the removal message itself names to keep `$lib`; it
-  // is deprecated (a warning at sync/dev/build); tracked in docs/wiki/backlog.md ("the $lib alias migration waits for a quiet frontend").
-  alias: { $lib: 'src/lib' },
+  // NO `alias` HERE. SvelteKit 3 removed the implicit `$lib` and deprecates `kit.alias` (a warning at
+  // every sync, dev and build). `$lib` is resolved by the two tools that actually resolve it: Vite
+  // (`resolve.alias` in vite.config.js, the same `{ find: '$lib' }` entry Kit used to generate) and
+  // TypeScript (`paths` in tsconfig.json). docs/wiki/frontend/architecture.md says why not `#lib`.
   // NO PRECOMPRESS: nothing serves the result. nginx serves `build/client` from its own COPY
   // (infrastructure/local/Dockerfile.frontend) with no `gzip_static`, so every `.gz`/`.br` was
   // copied into the image and never read. Writing them all at once is also what failed: 2026-09-27

@@ -347,3 +347,57 @@ describe('inviteMembersToGroup - an Add that got no answer', () => {
     expect(outcome).toEqual({ kind: 'not-added', reason: 'previous-commit-unresolved' });
   });
 });
+
+/**
+ * A MEMBER'S FIRST INVITATION THAT MEETS ANOTHER DEVICE'S ADD LOCK IS OWED, NOT REFUSED
+ * (1.7.0-alpha.10): it is recorded for the re-plan a lost invitation waiting on `add-lock` already
+ * takes, lifted by the events that end that lock. A creation is where it was measured - a real Add
+ * by one of the creator's other devices in that second left the group holding its creator alone.
+ */
+describe('inviteMembersToGroup - another device holds the add lock', () => {
+  it('owes the invitation, with the roster baseline its re-plan is judged against', async () => {
+    const h = harness();
+    let recorded: unknown = 'not asked';
+    h.mlsService.acquireAddLockAnswer.mockImplementationOnce((async (
+      _g: string,
+      oweIfHeld?: () => Promise<unknown>
+    ) => {
+      recorded = await oweIfHeld?.();
+      return 'owed';
+    }) as never);
+
+    const outcome = await inviteMembersToGroup(['w5'], { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'add-lock-owed' });
+    expect(recorded).toEqual({ users: ['w5'], rostered: [], seatGeneration: 0 });
+    expect(h.mlsService.addMembersBulk).not.toHaveBeenCalled();
+  });
+
+  it('records nothing when the roster cannot be read: an entry without a baseline is never re-planned', async () => {
+    const h = harness();
+    h.mlsService.getGroupRosterAtGeneration.mockRejectedValueOnce(new Error('offline'));
+    let recorded: unknown = 'not asked';
+    h.mlsService.acquireAddLockAnswer.mockImplementationOnce((async (
+      _g: string,
+      oweIfHeld?: () => Promise<unknown>
+    ) => {
+      recorded = await oweIfHeld?.();
+      return 'held';
+    }) as never);
+
+    const outcome = await inviteMembersToGroup(['w5'], { id: G } as never, h.deps as never);
+
+    expect(recorded).toBeNull();
+    expect(outcome).toEqual({ kind: 'not-added', reason: 'add-lock-busy' });
+  });
+
+  it('a re-plan is never owed again: it already IS the owed entry, and waits', async () => {
+    const h = harness();
+    h.mlsService.acquireAddLockAnswer.mockResolvedValueOnce('held');
+
+    const outcome = await replanLostInvitation(owed(), { id: G } as never, h.deps as never);
+
+    expect(outcome).toEqual({ kind: 'waiting', on: 'add-lock' });
+    expect(h.mlsService.acquireAddLockAnswer).toHaveBeenCalledWith(G, undefined);
+  });
+});

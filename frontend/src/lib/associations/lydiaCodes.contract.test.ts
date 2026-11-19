@@ -78,6 +78,7 @@ describe('Lydia codes follow the shared contract', () => {
       CLAIM_LOST: CONTRACT.social.cashierClaimLost,
       NUMBER_CHANGED: CONTRACT.social.cashierNumberChanged,
       CONFIRMED_REQUIRED: CONTRACT.social.cashierConfirmedRequired,
+      LIVE_ON_DELETE: CONTRACT.social.cashiersLiveOnDelete,
     });
   });
   it('the bell knows the new cashier notice by its contract type', () => {

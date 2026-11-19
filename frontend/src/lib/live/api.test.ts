@@ -34,6 +34,7 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveStanding,
+  fetchWithdrawnBroadcasters,
   fetchLiveManifest,
   fetchLiveReplay,
   fetchLivePoster,
@@ -42,6 +43,7 @@ import {
   hideLiveMessage,
   isLiveRefusal,
   leaveLiveSeat,
+  liftBroadcasterWithdrawal,
   listOpenLives,
   LiveRefusalError,
   LiveSegmentUploader,
@@ -57,7 +59,7 @@ import {
 } from './api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { refusalCode } from '$lib/utils/apiRefusal';
-import { TransportFailureError } from '$lib/utils/transportFailure';
+import { TransportFailureError, isTransportFailure } from '$lib/utils/transportFailure';
 
 const LIVE = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';
 const KEY = 'ab'.repeat(32);
@@ -233,6 +235,35 @@ describe('the routes', () => {
     expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/cut`, {
       method: 'POST',
       body: JSON.stringify({ reason: 'other', details: 'why' }),
+    });
+  });
+
+  it('a lift is a DELETE of the withdrawal, and a refusal keeps its code', async () => {
+    apiFetch.mockResolvedValueOnce(json(200, { userId: 'u9', lifted: true }));
+    expect(await liftBroadcasterWithdrawal('u9')).toEqual({ userId: 'u9', lifted: true });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://social.test/api/lives/broadcasters/u9/withdrawal',
+      { method: 'DELETE' }
+    );
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
+    await expect(liftBroadcasterWithdrawal('u9')).rejects.toMatchObject({
+      code: 'LIVE_WITHDRAWAL_FORBIDDEN',
+      kind: 'refused',
+    });
+  });
+
+  it('the withdrawn list is a staff read that needs no report', async () => {
+    const row = { userId: 'u9', displayName: 'Ana', cutsOnRecord: 3, withdrawnAt: 'x' };
+    apiFetch.mockResolvedValueOnce(json(200, [row]));
+    expect(await fetchWithdrawnBroadcasters()).toEqual([row]);
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      'https://social.test/api/lives/broadcasters/withdrawn',
+      {}
+    );
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_WITHDRAWAL_FORBIDDEN' }));
+    await expect(fetchWithdrawnBroadcasters()).rejects.toMatchObject({
+      code: 'LIVE_WITHDRAWAL_FORBIDDEN',
+      kind: 'refused',
     });
   });
 
@@ -438,6 +469,19 @@ describe('refusals, typed at the throw', () => {
     const failure = new TransportFailureError(new TypeError('Failed to fetch'));
     apiFetch.mockRejectedValue(failure);
     await expect(fetchLiveManifest(LIVE)).rejects.toBe(failure);
+  });
+
+  it('a body lost after the head (an app suspended mid-request) is a transport failure, not a bare TypeError', async () => {
+    const lost = new Response(
+      new ReadableStream({ pull: (c) => c.error(new TypeError('Load failed')) }),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }
+    );
+    apiFetch.mockResolvedValueOnce(lost);
+    const error = await fetchLiveManifest(LIVE).catch((e: unknown) => e);
+    expect(isTransportFailure(error)).toBe(true);
   });
 });
 

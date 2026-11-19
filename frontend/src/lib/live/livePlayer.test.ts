@@ -1056,10 +1056,19 @@ describe('every refusal has its screen', () => {
   });
 
   it('ended stops the player cleanly: paused, no timer, and its seat given back - the purge of the end waits for it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await joined();
     live.manifestErrors.push(refusal('ended', 410));
     await tickTimer();
     expect(states.at(-1)).toEqual({ kind: 'ended', cut: false });
+    // The ordinary close of every viewing is a log line, never a warning.
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('stopped'))).toEqual(
+      []
+    );
+    expect(log.mock.calls.map((c) => String(c[0]))).toContain(
+      `[LIVE] viewer ${LIVE}: stopped on ended (410 ended)`
+    );
     expect(video.pause).toHaveBeenCalled();
     expect(timers).toHaveLength(0);
     expect(deps.leaveSeat).toHaveBeenCalledTimes(1);

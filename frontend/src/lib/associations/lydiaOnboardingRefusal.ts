@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { SocialApiError } from './api';
+import { LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
 
 /**
  * The typed refusals of `POST /api/payments/onboarding` (core-service `payment.controller.ts` and
@@ -35,11 +36,23 @@ export const LYDIA_ONBOARDING_REFUSAL = {
  */
 export const LYDIA_BUSINESS_HOLDS_PAYMENTS = 'LYDIA_BUSINESS_HOLDS_PAYMENTS';
 
-/** The sentence for a failed unlink: the typed refusal's own, else the generic one. */
+/**
+ * The sentence for a failed unlink: the typed refusal's own - payments whose key must stay,
+ * cashiers still to remove at Lydia (`LYDIA_CASHIERS_LIVE`), a cashier step in flight - else the
+ * generic one.
+ */
 export function lydiaDisconnectErrorText(err: unknown): string {
-  return err instanceof SocialApiError && err.code === LYDIA_BUSINESS_HOLDS_PAYMENTS
-    ? m.asso_lydia_disconnect_holds_payments_error()
-    : m.asso_lydia_disconnect_error();
+  const code = err instanceof SocialApiError ? err.code : null;
+  switch (code) {
+    case LYDIA_BUSINESS_HOLDS_PAYMENTS:
+      return m.asso_lydia_disconnect_holds_payments_error();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.LIVE_ON_DELETE:
+      return m.asso_lydia_disconnect_cashiers_live_error();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT:
+      return m.asso_lydia_cashier_err_in_flight();
+    default:
+      return m.asso_lydia_disconnect_error();
+  }
 }
 
 export type LydiaOnboardingRefusalCode =

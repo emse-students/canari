@@ -1,6 +1,8 @@
 ## P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 The second half of the owner's decision "Une seule famille de cartes" of 2026-11-15. The first half
 shipped as the card zone - one card family for every non-media attachment, the fixed order text,

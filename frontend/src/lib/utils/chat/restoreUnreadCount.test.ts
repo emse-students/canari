@@ -170,7 +170,7 @@ describe('the unread count a load derives', () => {
     store.messages.push(row('m1', 'bob', 1_000));
     const service = mls({
       fetchHistoryBatch: vi.fn(async () => {
-        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerUnreachable('test');
         throw new TransportFailureError(new TypeError('Failed to fetch'));
       }),
     });

@@ -313,9 +313,10 @@ export function graineMirrorSessions(channelId) {
 }
 
 /**
- * Removes BOTH seed mirrors - the state of an iPhone whose seed push never woke anything, which on
- * iOS is every silent frame. Both, because the app re-mirrors its own copy into the App Group at its
- * next resign-active: removing only the extension's would be undone by the app before the row sent.
+ * Removes the seed mirror - the state of an iPhone whose seed push never woke anything, which on
+ * iOS is every silent frame. The App Group's file is the only one since channel-encryption section
+ * 27; the app-directory copy an older build left is removed too, or the next foreground edit would
+ * fold it back in.
  *
  * @returns {{ removed: boolean, appHad?: boolean, groupHad?: boolean } | { error: string }}
  */
@@ -967,6 +968,7 @@ const FOREIGN = {
   systemSwitch: { noGuard: 'control-centre-or-settings-switch-foreign-process' },
   settings: { noGuard: 'settings-foreign-process' },
   alert: { noGuard: 'system-alert-foreign-process' },
+  sheet: { noGuard: 'auth-sheet-foreign-process' },
   notification: { noGuard: 'springboard-notification-foreign-process' },
 };
 
@@ -1309,8 +1311,22 @@ export function freshInstall(ipa) {
 export const CONSENT_LABELS = ['Continuer', 'Continue'];
 
 /**
- * Which stage the sign-in sheet shows: 'consent' (the system alert), 'identifier' or 'password' (the
- * IdP's form, inside the sheet), or null when none is up.
+ * The terms page's checkbox (`45-consent.yaml`, prompt `cgu_accept`): its label starts with this, in
+ * the IdP's language (French only - the blueprint carries no other). Matched on the PREFIX of the
+ * label and on no element type, because WDA names a web checkbox by its label whatever it types it.
+ */
+export const TERMS_LABEL_PREFIX = "j'ai lu les conditions d'utilisation";
+/** The submit button of the IdP's stages, once the terms are ticked. */
+export const TERMS_SUBMIT_LABELS = ['Continuer', 'Continue'];
+
+/** The terms page's tick box in a WDA flat dump, or null. */
+export function findTermsBox(flat) {
+  return (flat ?? []).find((e) => e.rect && labelOf(e).toLowerCase().replace(/’/g, "'").startsWith(TERMS_LABEL_PREFIX)) ?? null;
+}
+
+/**
+ * Which stage the sign-in sheet shows: 'consent' (the system alert), 'terms' (MiConnect's terms page,
+ * one tick), 'identifier' or 'password' (the IdP's form, inside the sheet), or null when none is up.
  *
  * THE FORM COUNTS ONLY WHILE THE SHEET IS UP, named by an IdP HOST somewhere on screen (the sheet's
  * bar shows it): Canari's own WebView has text fields too, and the search box of a signed-in app
@@ -1323,6 +1339,7 @@ export function signInStage(flat, hosts) {
   if (has('Alert') && findLabelled(list, CONSENT_LABELS, { type: 'Button' })) return 'consent';
   const sheetUp = list.some((e) => hosts.some((h) => String(e.text ?? '').includes(h)));
   if (!sheetUp) return null;
+  if (findTermsBox(list)) return 'terms';
   if (has('SecureTextField')) return 'password';
   if (has('TextField')) return 'identifier';
   return null;
@@ -1342,7 +1359,8 @@ function fillField(field, text) {
 
 /**
  * O9 - SIGNS IN THROUGH THE ASWebAuthenticationSession SHEET, by WDA alone: the consent alert
- * ("Continuer"), then the IdP's identifier and password stages, each typed and ended with RETURN.
+ * ("Continuer"), then the IdP's identifier and password stages and, once per terms version, the
+ * terms page (one tick), each typed and ended with RETURN.
  * Return and not the form's button: tapping "Continuer" in the form added a character to the password
  * each time (phone-comparison.md, 2026-09-30). The sheet is a system view no inspector reaches, so
  * this is the only route to it.
@@ -1365,6 +1383,19 @@ export async function signInThroughSheet(creds, { hosts, settled = async () => f
     if (stage === 'consent') {
       tapRect(findLabelled(flat, CONSENT_LABELS, { type: 'Button' }).rect, FOREIGN.alert);
       answered.push('consent');
+    } else if (stage === 'terms') {
+      // The terms page: tick, then submit. Answered once - a page still up after that is the IdP
+      // refusing the tick, and tapping again would only toggle it back off.
+      if (!answered.includes('terms')) {
+        tapRect(findTermsBox(flat).rect, FOREIGN.sheet);
+        io.sleepSync(400);
+        const submit = findLabelled(readFlat(), TERMS_SUBMIT_LABELS, { type: 'Button' });
+        if (!submit) throw new Error('signInThroughSheet: the terms page shows no submit button after the tick');
+        tapRect(submit.rect, FOREIGN.sheet);
+        answered.push('terms');
+      } else if (io.now() - t0 > timeoutMs / 2) {
+        throw new Error('signInThroughSheet: the terms stage was answered and is still on screen');
+      }
     } else if (stage === 'identifier' || stage === 'password') {
       // A stage answered once and still on screen is the IdP REFUSING it, not a slow page: typing
       // the same credential again would only add to the refusals counted against the account.

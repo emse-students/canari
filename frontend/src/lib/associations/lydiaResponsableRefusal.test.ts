@@ -33,6 +33,9 @@ describe('lydiaResponsableErrorText for a locked number', () => {
   it('once on it says another number is still waiting', () => {
     expect(lydiaResponsableErrorText(locked, true)).toBe(m.asso_lydia_resp_err_phone_locked());
   });
+  it('the gate as shipped (ON since 1.7.1) reads it as another number still waiting', () => {
+    expect(lydiaResponsableErrorText(locked)).toBe(m.asso_lydia_resp_err_phone_locked());
+  });
 });
 
 describe('lydiaResponsableErrorText after a number change (lot 3)', () => {

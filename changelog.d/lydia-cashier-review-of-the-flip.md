@@ -1,0 +1,3 @@
+### Fixed - a Lydia cashier's number has one spelling, and a cashier who left gets no new role
+
+From the review of the cashier gate's flip: a French number typed with its trunk 0 (`+330...`) is refused by the servers and rewritten by the app, a role change re-checks that the person is still a member, and an unconfirmed cashier is worded "remove it, then add it again". What remains (an add binds the person and not the number, and does not read the number first) is planned for 1.7.1 ([entry](docs/wiki/backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)).

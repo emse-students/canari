@@ -99,19 +99,20 @@ describe('PushController - the wake-up push', () => {
   afterEach(() => jest.restoreAllMocks());
 
   describe('POST mls/push/register', () => {
+    const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
     const body = { token: 'fcm-token', deviceId: 'phone-1', platform: 'android' };
 
     it('records a binary that declares it understands a wake', async () => {
-      await controller.registerPushToken({ ...body, wake: true }, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, wake: true }, 'user-1', SID);
       expect(pushTokenRepo.upsert.mock.calls[0][0]).toHaveProperty('wakeCapable', true);
     });
 
     it('writes false - not nothing - for a binary that does not say so, so a downgrade is never woken', async () => {
-      await controller.registerPushToken(body, 'user-1', undefined);
+      await controller.registerPushToken(body, 'user-1', SID);
       await controller.registerPushToken(
         { ...body, wake: 'yes' as unknown as boolean },
         'user-1',
-        undefined
+        SID
       );
       for (const [row] of pushTokenRepo.upsert.mock.calls) {
         expect(row).toHaveProperty('wakeCapable', false);
@@ -120,7 +121,7 @@ describe('PushController - the wake-up push', () => {
     });
 
     it('reads a step-1 binary (`wake: true`) as version 1', async () => {
-      await controller.registerPushToken({ ...body, wake: true }, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, wake: true }, 'user-1', SID);
       expect(pushTokenRepo.upsert.mock.calls[0][0]).toMatchObject({
         wakeVersion: 1,
         wakeCapable: true,
@@ -128,8 +129,8 @@ describe('PushController - the wake-up push', () => {
     });
 
     it('stores a declared version, capped at the highest this server serves', async () => {
-      await controller.registerPushToken({ ...body, wakeVersion: 2 }, 'user-1', undefined);
-      await controller.registerPushToken({ ...body, wakeVersion: 7 }, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, wakeVersion: 2 }, 'user-1', SID);
+      await controller.registerPushToken({ ...body, wakeVersion: 7 }, 'user-1', SID);
       for (const [row] of pushTokenRepo.upsert.mock.calls) {
         expect(row).toMatchObject({ wakeVersion: 2, wakeCapable: true });
       }
@@ -140,7 +141,7 @@ describe('PushController - the wake-up push', () => {
       await controller.registerPushToken(
         { ...body, wake: true, wakeVersion: '2' as unknown as number },
         'user-1',
-        undefined
+        SID
       );
       expect(pushTokenRepo.upsert.mock.calls[0][0]).toMatchObject({
         wakeVersion: 0,
@@ -151,13 +152,13 @@ describe('PushController - the wake-up push', () => {
 
     it('stores the group-call version a binary declares, capped at the SFU leg version, 0 when it says nothing (WP-GC2)', async () => {
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-      await controller.registerPushToken({ ...body, groupCallVersion: 1 }, 'user-1', undefined);
-      await controller.registerPushToken({ ...body, groupCallVersion: 9 }, 'user-1', undefined);
-      await controller.registerPushToken(body, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, groupCallVersion: 1 }, 'user-1', SID);
+      await controller.registerPushToken({ ...body, groupCallVersion: 9 }, 'user-1', SID);
+      await controller.registerPushToken(body, 'user-1', SID);
       await controller.registerPushToken(
         { ...body, groupCallVersion: 'mesh' as unknown as number },
         'user-1',
-        undefined
+        SID
       );
       expect(pushTokenRepo.upsert.mock.calls.map(([row]) => row.groupCallVersion)).toEqual([
         1, 2, 0, 0,
@@ -167,7 +168,7 @@ describe('PushController - the wake-up push', () => {
 
     it('sweeps the envelopes of the device that registered - the app is open', async () => {
       sweep.mockResolvedValue(3);
-      await controller.registerPushToken(body, 'user-1', undefined);
+      await controller.registerPushToken(body, 'user-1', SID);
       expect(sweep).toHaveBeenCalledWith(pushTokenRepo.manager, 'user-1', 'phone-1');
       expect(sweep.mock.invocationCallOrder[0]).toBeGreaterThan(
         pushTokenRepo.upsert.mock.invocationCallOrder[0]
@@ -177,7 +178,7 @@ describe('PushController - the wake-up push', () => {
     it('still hands the device its secret when the sweep fails, and accuses it', async () => {
       sweep.mockRejectedValue(new Error('db down'));
       const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
-      const answer = await controller.registerPushToken(body, 'user-1', undefined);
+      const answer = await controller.registerPushToken(body, 'user-1', SID);
       expect(answer).toMatchObject({ status: 'registered' });
       expect(answer.pushSecret).toEqual(expect.any(String));
       expect(error).toHaveBeenCalledWith(expect.stringContaining('register sweep FAILED'));

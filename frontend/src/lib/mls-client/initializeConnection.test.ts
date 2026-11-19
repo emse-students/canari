@@ -160,7 +160,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     // Group in WASM -> no onGroupMissing
     expect(onGroupMissing).not.toHaveBeenCalledWith('g-in-wasm');
     // Group absent from server -> forgotten, tree and distribution registration together
-    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan');
+    expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan', 'absent from server');
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan', 0);
     // No direct sendWelcomeRequest (onGroupMissing is provided)
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();

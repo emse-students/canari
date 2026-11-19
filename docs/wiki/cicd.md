@@ -1215,7 +1215,20 @@ against fakes and died on it with `flow executor answered HTTP 302`:
 
 The fake in `.github/scripts/tests/smoke-login.test.mjs` copies that shape, the CAS-only denial
 included. A different component named in a failure is the flow asking for a stage the account cannot
-answer.
+answer; the message names it, and says "second factor" only for an `ak-stage-authenticator-*`.
+
+**The smoke account accepts MiConnect's terms, as a person does (2026-11-18).** Since #3839 the dev
+provider names the terms flow (`miconnect-authorization`,
+[authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16))
+as its authorization flow, so an account whose `cgu_version` is not the current text gets one
+`ak-stage-prompt` after the sign-in flow. The `v1.7.1-alpha.1` deploy died on it ("a stage this account
+cannot answer: ak-stage-prompt"). The script now recognises THAT prompt and no other - an
+`ak-stage-prompt` whose only field asking for an answer is the `cgu_accept` checkbox, beside the
+hidden `attributes.cgu_version` - posts every field the browser posts (static text excluded) with the
+box ticked, and logs one line naming
+the version. That happens once per version of the text; the next deploy skips the page. Any other
+prompt fails at `flow` naming its fields. The test reads the two field names out of `45-consent.yaml`,
+so a renamed field fails the test rather than the next deploy.
 
 ### The store arms (`ios.yml`, `android.yml`)
 
@@ -1351,7 +1364,7 @@ run. So the paths are told apart by the EVENT TYPE:
 | event         | estate               | Play         | App Store                |
 | ------------- | -------------------- | ------------ | ------------------------ |
 | `prereleased` | `dev.canari-emse.fr` | `internal`   | TestFlight               |
-| `released`    | `canari-emse.fr`     | `production` | submitted for **review** |
+| `released`    | `canari.emse.fr`     | `production` | submitted for **review** |
 
 **AND THAT CLOSED A DEFECT NOTHING COULD SEE.** `published`, the old trigger, fires for BOTH kinds,
 so the "Set as a pre-release" checkbox was invisible and the version string was the only statement
@@ -1386,7 +1399,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The six gates, and the one that makes a lag impossible
+#### The seven gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -1399,6 +1412,7 @@ both store uploads and the version bump itself:
 | 4   | Is it EXACTLY the latest pre-release's commit, and has the dev estate already served it? (stable only) | **production cannot be ahead of dev**, and a stable is built from its last alpha, never from `main` ([2026-11-14](#the-stables-commit-is-asserted-not-only-derived-2026-11-14)) |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
+| 7   | Does an advisory touch what it ships? (stable only)  | an advisory published after the commit's CI is exactly what production would receive ([2026-11-17](#the-audit-blocks-on-what-we-ship-2026-11-17)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1983,7 +1997,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   six gates; a refusal ends it here, having moved nothing
+       |- preflight   seven gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -1999,7 +2013,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
        |    '- dev.canari-emse.fr - never held behind a store queue an alpha does not use
        |
        '- serve-prod.yml  STABLE ONLY, needs [build, android, ios]
-            '- canari-emse.fr - and only once BOTH stores accepted this version
+            '- canari.emse.fr - and only once BOTH stores accepted this version
 ```
 
 A pre-release stops at TestFlight and the Play `internal` track, which is what a tester programme
@@ -2102,6 +2116,69 @@ It is a **need of `CI passed`**, so a Swift error fails the merge gate.
 - **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
   stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
 - Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
+
+### The iOS toolchain is pinned: Xcode 27 since 1.7.1
+
+Both Apple jobs - `build-ios` in `ios.yml` (the release archive) and `compile-ios-app` in `ci.yml`
+(the pull-request compile) - run on GitHub's **`xcode-27`** label and select Xcode with
+`maxim-lobanov/setup-xcode` and `xcode-version: '^27.0'`, which takes the newest 27.x on the image
+and **fails the run when there is none**. The pin is REQUIRED, never merely allowed, for two reasons:
+
+- **The store.** App Store Connect accepted builds `100700011` and `100700012` (built on `macos-15`
+  with the iOS 26.2 SDK) with warning ITMS-90725: from April 2027 it accepts only uploads built with
+  the iOS 27 SDK, Xcode 27 or later.
+- **Liquid Glass.** The native tab bar compiles its glass branch under `#if compiler(>=6.2)`; a
+  toolchain older than Xcode 26 builds the classic bar with no error.
+
+The image, read in `actions/runner-images` on 2026-11-18: the README lists "Xcode 27" (arm64,
+labels `xcode-27` or `xcode-27-xlarge`, still badged *preview*, runner-images issue 14404); its
+software list `images/macos/xcode-27-arm64-Readme.md` gives macOS 27.0.1, image `20261104.0337.1`,
+Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rust (both jobs install
+it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
+`ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
+request never compiles on another toolchain than the one the release archives with. The move and
+what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+
+**Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
+failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
+`_init_plugin_keystore`, `_init_plugin_system_components` - the entry point of every Swift plugin.
+`swift-rs` 1.0.9 promotes those symbols back to global with `llvm-objcopy` from rustup's
+`llvm-tools` component (Apple ships none), and when the tool is missing it only prints a
+`cargo:warning` and lets the link fail. `ios-libapp.sh`, the one script both jobs run, now
+`rustup component add llvm-tools` into the pinned toolchain beside the iOS target. The
+`compile-ios-app` Rust cache key names the Xcode (`ios-app-xcode-27`): a tree built under Xcode 26
+carried its toolchain's link search paths into the first run.
+
+**macOS 27's dyld refuses a stripped proc-macro dylib.** The first COLD build on the runner (new
+cache key, nothing restored) failed in `sqlx`: `dlopen(.../libsqlx_macros-*.dylib): mis-aligned
+LINKEDIT string pool`. Cargo's release profile strips debuginfo by default, the `build-override`
+profile that builds proc macros and build scripts included, and the stripped host dylib no longer
+loads; the cache from `macos-15` had hidden it in the first run. The fix is in the PROFILE, so no
+host build escapes it: `[profile.release.build-override] strip = false` in
+`frontend/src-tauri/Cargo.toml` and `frontend/mls-wasm/Cargo.toml` (the MLS WASM build runs on the
+same runner). Nothing that ships changes: cargo never strips a `staticlib` or a wasm, and the Xcode
+archive strips the app. `build-mls-wasm` names the Xcode major on macOS in BOTH of its caches:
+the built-artefact key (`mls-wasm-macOS-xcode27-...`) and the `cache-key` of the Rust target cache
+that `setup-rust-toolchain` restores on a miss - the first version keyed only the former, and run
+44278923984 restored `frontend/mls-wasm/target` from another key on a "full match". A new Xcode major
+therefore finds neither entry and rebuilds both from source; no host dylib crosses an image.
+
+**What else the move added.** `ios-libapp.sh` asserts after `cargo build` that every
+`_init_plugin_*` the Rust objects reference is an EXTERNAL `T` symbol of `libapp.a` (rustup's `llvm-nm -g`: Xcode's `nm` cannot read rustc's bitcode), so a
+plugin swift-rs failed to re-export fails there, by name. Every `xcodebuild` build and archive names
+`-destination 'generic/platform=iOS'` (Xcode 27 otherwise warns "Using the first of multiple matching
+destinations"). `ios.yml` installs the provisioning profiles into both stores Xcode scans
+(`~/Library/MobileDevice/Provisioning Profiles` and `~/Library/Developer/Xcode/UserData/Provisioning
+Profiles`) and writes `xcodebuild -version`, the iOS SDK, the runner image and the `altool` it will
+upload with (`xcrun --find altool`, version printed; the step FAILS naming it when absent, so the
+first pre-release on a new Xcode proves the upload tool before the upload needs it) to the run summary.
+
+**The `xcode-27` label is a preview, and its queue time is not bounded.** `build-ios` carries
+`timeout-minutes: 90` (a clean signed run measured about 20 minutes), so a hung job cannot hold
+`release.yml`'s `release` concurrency group - and with it the next cut - for GitHub's default 360
+minutes. The timeout counts from the job's start, not from its wait for a runner. The proof that a
+runner is available before a STABLE is the iOS leg of that version's pre-release going green: a
+stable is cut only after it.
 
 ### A green run is not proof that *your* file compiled
 
@@ -2582,7 +2659,7 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
 crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry`, and since 2026-11-11
-`tauri-plugin-system-components` and `tauri-plugin-keystore` - every `[patch.crates-io]` entry), the
+`tauri-plugin-system-components` and `tauri-plugin-keystore`, and since 2026-11-18 `tauri-plugin-dialog` - every `[patch.crates-io]` entry), the
 fork's `[package]` version with crates.io:
 
 - **a fork of a STABLE release is compared with `max_stable_version` only.** Upstream's pre-releases
@@ -3083,6 +3160,81 @@ merge, exit 2 (npm never answered) passes as a warning. The cost accepted with i
 untouched code turns every pull request red until its fix merges, and an outage makes the job slow
 without making it red. The block above `dependency-audit` in `ci.yml` is the only other copy.
 
+### The audit blocks on what we ship (2026-11-17)
+
+**Owner, 2026-11-17 ("Ce qu'on livre"):** a pull request and a stable are refused only by an advisory
+in what we SHIP. An advisory in build or test tooling is reported by the nightly `scheduled.yml`
+audit, where it is still a failure, and freezes no merge. #1229's hole stays closed for shipped code.
+
+**What forced it.** `GHSA-fc5q-39xc-vjpf` (high, picomatch ReDoS through single-branch repeated
+extglobs, every version `<= 4.0.7`, which covers the 2.x copies too) was reviewed on 2026-11-17 and
+turned the audit red in all five trees. **No fixed release exists**: 4.0.7 is the latest, so no
+upgrade or override can clear it, and `bun audit fix` does nothing. It arrives through vite, vitest,
+knip, svelte-check and paraglide (frontend) and through `@nestjs/cli`, `@angular-devkit` and jest
+(services). The ReDoS needs an attacker to choose the glob PATTERN.
+
+**One table, three readers.** `.github/scripts/lib/audit-trees.sh` holds every tree's install flags,
+level, closure and ignores. The pull-request audit reads it with `closure: production`
+(`ci.yml` passes it to `code-analysis.yml`). The nightly reads it with `full`. Gate 7 of
+`release-preflight.sh` reads it with `production`, stables only. `audit-dependencies.test.sh`
+pins the flags and asserts that the table's trees are exactly the directories of
+`git ls-files '*bun.lock'` (minus commented exclusions, none today) and the matrix's. That is how
+`libs/handoff` (its `jose`, audited by nothing until then) joined, as a sixth tree audited like a
+service.
+
+**What "what we ship" means, per tree. It is measured, not assumed:**
+
+| Tree | Production closure | Why |
+| ---- | ------------------ | --- |
+| the four services, `libs/handoff` | `bun audit --prod` | the image runs `bun dist/main.js`, which loads only what `dependencies` reaches. `--prod` (and `--production`, `-p`) is missing from `bun audit --help` in bun 1.4.0 but works: it reads the lockfile alone, and on 2026-11-17 it dropped picomatch from media-service while keeping its five minio advisories |
+| frontend | **the full audit, never `--prod`** | `svelte`, `@sveltejs/kit`, `protobufjs`, `parse5` and `emoji-picker-element-data` are devDependencies and are BUNDLED. The SSR image copies only `build/`, with no `node_modules`. `--prod` would stop auditing the code users run. Treating kit as shipped does not help either: `bun audit --prod` follows kit's PEER `vite` and brings picomatch back |
+
+**The frontend is the one exception to "a tool's advisory does not block a pull request"**: its
+pull-request audit still blocks on a devDependency advisory, because its devDependencies are bundled
+into what ships.
+
+**picomatch, measured on 2026-11-17:**
+
+- **frontend**: outside what ships. Its shipped closure (dependencies plus every devDependency not
+  declared build-only, 137 packages) reaches no picomatch. The `1.7.0-alpha.9` `frontend-build`
+  artefact holds none of its code: no `picomatch`, `POSIX_REGEX_SOURCE` or `REGEX_NON_SPECIAL_CHARS`,
+  object keys that minification keeps.
+- **media-service**: `--prod` reports no picomatch at all.
+- **core, social, chat-delivery**: **picomatch is shipped and loaded** as
+  `typeorm@1.1.3 > tinyglobby > picomatch`. `ConnectionMetadataBuilder` requires the loader when the
+  service boots. But TypeORM calls `globSync` only for the STRING entries of `entities`, `migrations`
+  and `subscribers`. All three pass classes only (social uses `autoLoadEntities`), so no pattern is
+  ever compiled, and a pattern would be ours anyway.
+
+So `--ignore=GHSA-fc5q-39xc-vjpf` was granted in the production closure of the frontend and the
+three TypeORM trees, each on a premise asserted per installed tree (`picomatch-premise.mjs`, and a
+boot-spec assertion that no STRING reached TypeORM's glob), and in the full closure of all five trees
+on the premise that no fixed release existed.
+
+**Retired 2026-11-18: GitHub WITHDREW the advisory** (`withdrawn_at` 2026-11-18T15:38Z on
+`GET /advisories/GHSA-fc5q-39xc-vjpf`). The lockfiles had not moved (`picomatch@4.0.7` in every tree,
+`4.0.4` in core-service by override, `2.3.2` beside it in social, media and chat-delivery), but
+`bun audit` stopped reporting it, `Every ignored advisory is still reported` failed as designed and
+turned every pull request and `main` red, and the ignore was deleted the same day with its premise
+script, its self-test, its workflow step and the three boot-spec assertions that existed only for it.
+Every tree then audits clean with no ignore but media-service's minio ones. The production-closure
+design above stands; it no longer carries any picomatch exception.
+
+**Gate 7 on an outage, and its evidence.** Every refusal prints the audit's whole output, indented:
+the package and path of an advisory, or what an unrecognised failure said. Once one tree's registry
+has not answered, the remaining trees are asked with `AUDIT_ATTEMPTS=1`. An outage then costs one
+tree's three attempts plus one per other tree, not three each (up to 80 minutes). Its remedy is
+`gh run rerun <run>`, which re-reads the same tag. `release-preflight.test.sh` runs the loop
+(`shipped_closure_gate`) against a fake audit.
+
+**What else the production audit reads (2026-11-17):** a LOW `fast-xml-parser` advisory
+(GHSA-474x-hrwr-fgx4, via minio and firebase-admin) is below the services' `moderate` level.
+
+**What the service images really contain is a separate defect.** Each service Dockerfile installs
+without `--production` and copies the whole `node_modules`, dev tools included, into the runtime
+stage ([backlog](backlog.d/p2-service-images-ship-their-dev-dependencies.md)). Those tools are
+never loaded, so the closure above is what RUNS. They are still on the image's disk.
+
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
 therefore not three independent draws; they are one npm blip lasting minutes. That is what the
@@ -3278,9 +3430,9 @@ The open line is in [backlog](backlog.d/p3-audit-advisories-are-suppressed-becau
 
 **Retirement is ASSERTED, not polled (2026-10-10).** The premises step audits media-service without its ignores and fails when any ignored id is no longer reported (`ignored-advisories-still-reported.sh`, `tests/ignored-advisories-still-reported.test.sh`; a registry that did not answer concludes nothing). The five hand re-checks logged here until 2026-10-09 each found `minio` still 8.0.7, `query-string: ^7.1.3`, `stream-json: ^1.8.0`.
 
-### The frontend audit carries no ignore (2026-11-16)
+### The frontend audit carries no ignore (2026-11-18)
 
-`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28; the audit stopped reporting it (the dependency moved) and `Every ignored advisory is still reported` failed, as designed, so the `--ignore` was deleted. The frontend is audited at bun's default level with no suppression.
+`GHSA-gcqx-w48m-w2h4` (LOW, `deepmerge` <= 4.3.1) was ignored from 2026-10-28. The audit stopped reporting it (the dependency moved), `Every ignored advisory is still reported` failed as designed, and the `--ignore` was deleted on 2026-11-16. From 2026-11-17 the frontend carried `GHSA-fc5q-39xc-vjpf` (picomatch) on an asserted premise; GitHub withdrew that advisory on 2026-11-18, the same step failed, and the ignore was deleted that day ([what we ship](#the-audit-blocks-on-what-we-ship-2026-11-17)). It carries none now, and is audited at bun's default level.
 
 ### The Rust ignores live in `.cargo/audit.toml` and retire themselves too (2026-10-24)
 
@@ -3296,10 +3448,14 @@ directory holding no `audit.toml`, against the database the audit step just fetc
 only in 0.7.6) turned `main` red on 2026-10-24 in all four trees. It cannot be taken by a lockfile
 change: crypto-bigint 0.7 means elliptic-curve 0.14, and every p256/p384 0.13 user here is at its
 newest release (jsonwebtoken 11.1.0, openmls_rust_crypto 0.6.0, webrtc 0.17.2's dtls). It is
-unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed25519 suite), and
+unreachable in mls-wasm and src-tauri (one X25519/Ed25519 suite), and
 **reachable in code in call-service**, whose DTLS runs P-256/P-384 ECDHE on a per-handshake
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
 placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
+
+jsonwebtoken 12.0.0 (2026-11-18) moved onto elliptic-curve 0.14 and rsa 0.10, so chat-gateway's tree
+reports neither `RUSTSEC-2026-0387` nor the `rsa` Marvin advisory (`RUSTSEC-2023-0071`) and carries
+no ignore at all; call-service keeps `-0387` on its webrtc dtls edge alone.
 
 `RUSTSEC-2026-0441` (pin-utils, an "unmaintained" status warning only, 2026-11-09) is ignored in call-service on the same webrtc 0.17 edge (webrtc-util -> nix 0.26.4 -> pin-utils): no lockfile bump drops it, the webrtc 0.21 port does; re-examine by then or 2027-01-31.
 

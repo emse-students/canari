@@ -181,6 +181,12 @@ message ReactionMsg {
   // True when the sender is TAKING THE REACTION BACK. Default false = placing it, so a frame from
   // before this field existed reads as a placement - which is exactly what it was.
   bool   removed    = 4;
+  // The reacted-to message's AUTHOR as the reactor holds it (2026-11-17): the very claim the
+  // reactor makes to the server in `notify-reaction`, which the author's push already trusts. It lets
+  // the author's devices tell a reaction is to THEM without holding the message - a salon row is kept
+  // only in the last page drawn - so the frame trigger of a reaction notification never guesses.
+  // Empty from a reactor predating it, and on a removal.
+  string target_author_id = 5;
 }
 
 // An author's replacement text for one of their own salon messages. The server cannot read it, so

@@ -51,7 +51,7 @@ describe('handleAppLinkClick', () => {
   });
 
   it('does not swallow public Canari URLs without an in-app mapping', () => {
-    document.body.innerHTML = '<a id="ext" href="https://canari-emse.fr/api/version">API</a>';
+    document.body.innerHTML = '<a id="ext" href="https://canari.emse.fr/api/version">API</a>';
     const anchor = document.getElementById('ext') as HTMLAnchorElement;
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     vi.spyOn(event, 'preventDefault');
@@ -63,7 +63,7 @@ describe('handleAppLinkClick', () => {
 
   it('navigates in-app for public Canari URLs outside the rich-label allowlist', () => {
     document.body.innerHTML =
-      '<a id="settings" href="https://canari-emse.fr/settings" target="_blank">Reglages</a>';
+      '<a id="settings" href="https://canari.emse.fr/settings" target="_blank">Reglages</a>';
     const anchor = document.getElementById('settings') as HTMLAnchorElement;
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     vi.spyOn(event, 'preventDefault');
@@ -71,7 +71,7 @@ describe('handleAppLinkClick', () => {
     Object.defineProperty(event, 'target', { value: anchor });
     expect(handleAppLinkClick(event)).toBe(true);
     expect(event.preventDefault).toHaveBeenCalled();
-    expect(navigateInAppFromHref).toHaveBeenCalledWith('https://canari-emse.fr/settings');
+    expect(navigateInAppFromHref).toHaveBeenCalledWith('https://canari.emse.fr/settings');
   });
 
   it('navigates in-app for admin dashboard links', () => {

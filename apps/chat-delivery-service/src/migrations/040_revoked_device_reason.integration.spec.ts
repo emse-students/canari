@@ -2,8 +2,15 @@
 
 jest.mock('../internal/device-sessions', () => {
   const actual = jest.requireActual('../internal/device-sessions');
-  return { ...actual, endDeviceSessions: jest.fn().mockResolvedValue(0) };
+  return {
+    ...actual,
+    endDeviceSessions: jest.fn().mockResolvedValue(0),
+    // The caller's session is bound to a device none of these cases deletes.
+    sessionBoundDevice: jest.fn().mockResolvedValue('d-caller'),
+  };
 });
+
+const CALLER_SID = '0a0a0a0a-0000-4000-8000-0000000000a1';
 
 /**
  * MIGRATION 040 AND THE CAUSE OF A BAN AGAINST A REAL POSTGRESQL: the column lands on an empty and on
@@ -122,7 +129,7 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
   });
 
   it('records the owner for a plain delete, and refuses the id as revoked by its owner', async () => {
-    await controller.deleteDevice('u1', 'd-owner', undefined, 'u1', undefined);
+    await controller.deleteDevice('u1', 'd-owner', undefined, 'u1', CALLER_SID);
     expect(await reasonOf('d-owner')).toBe('owner');
     expect(await register('d-owner')).toMatchObject({
       status: 403,
@@ -131,7 +138,7 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
   });
 
   it('records retired for an install retiring its id, and refuses it as DEVICE_REVOKED', async () => {
-    await controller.deleteDevice('u1', 'd-retired', 'retired', 'u1', undefined);
+    await controller.deleteDevice('u1', 'd-retired', 'retired', 'u1', CALLER_SID);
     expect(await reasonOf('d-retired')).toBe('retired');
     expect(await register('d-retired')).toMatchObject({
       status: 403,
@@ -140,10 +147,10 @@ maybe('migration 040 (revoked_device.reason) against PostgreSQL', () => {
   });
 
   it("never downgrades an owner's ban, and upgrades a retired one to the owner's", async () => {
-    await controller.deleteDevice('u1', 'd-owner', 'retired', 'u1', undefined);
+    await controller.deleteDevice('u1', 'd-owner', 'retired', 'u1', CALLER_SID);
     expect(await reasonOf('d-owner')).toBe('owner');
 
-    await controller.deleteDevice('u1', 'd-retired', undefined, 'u1', undefined);
+    await controller.deleteDevice('u1', 'd-retired', undefined, 'u1', CALLER_SID);
     expect(await reasonOf('d-retired')).toBe('owner');
     // One row per pair, still: the re-revocation reused it.
     const rows = (await ds.query(

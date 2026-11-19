@@ -4342,15 +4342,65 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         status: HttpStatus.FORBIDDEN,
         code: 'LIVE_BROADCAST_WITHDRAWN',
       });
+      // The staff read needs no report: the withdrawal is listed and read by its account.
+      await expect(lives.listWithdrawn(async (ids) => new Set(ids))).resolves.toMatchObject([
+        { userId: ALICE, cutsOnRecord: 3, withdrawalReason: 'harassment' },
+      ]);
+      await expect(lives.broadcasterStanding(ALICE)).resolves.toMatchObject({
+        userId: ALICE,
+        withdrawalReason: 'harassment',
+      });
+      expect(
+        await body(lives.broadcasterStanding('99999999-9999-4999-8999-999999999999'))
+      ).toMatchObject({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_BROADCASTER_NOT_FOUND',
+      });
+      const beforeLift = bell.length;
       await expect(lives.liftWithdrawal(MOD, ALICE)).resolves.toEqual({
         userId: ALICE,
         lifted: true,
       });
+      // Told once, like the sanction: no actor, no text.
+      expect(bell.slice(beforeLift)).toEqual([
+        {
+          recipientId: ALICE,
+          type: 'live_reinstated',
+          postId: ALICE,
+          actorId: '',
+          actorName: '',
+          text: '',
+          pushData: { target: 'notifications' },
+        },
+      ]);
       await expect(lives.liftWithdrawal(MOD, ALICE)).resolves.toEqual({
         userId: ALICE,
         lifted: false,
       });
+      expect(bell).toHaveLength(beforeLift + 1);
+      await expect(lives.listWithdrawn(async (ids) => new Set(ids))).resolves.toEqual([]);
       await expect(start()).resolves.toBeDefined();
+    });
+
+    it('the withdrawn list is newest first (whatever the row order) and scoped before it is cut', async () => {
+      for (const who of [BOB, CAROL, DAVE]) {
+        await threeAbuses(who);
+        await lives.withdraw(MOD, who, { reason: 'spam' });
+      }
+      // Explicit instants, so the order asserted is the withdrawal's time, never insertion luck.
+      await q(
+        `UPDATE live_broadcast_withdrawals SET "withdrawnAt" = CASE "userId"
+           WHEN $1 THEN now() - interval '3 days'
+           WHEN $2 THEN now() - interval '1 day'
+           ELSE now() - interval '2 days' END`,
+        [BOB, DAVE]
+      );
+      const all = await lives.listWithdrawn(async (ids) => new Set(ids));
+      expect(all.map((r) => r.userId)).toEqual([DAVE, CAROL, BOB]);
+      const scoped = await lives.listWithdrawn(
+        async (ids) => new Set(ids.filter((i) => i !== DAVE))
+      );
+      expect(scoped.map((r) => r.userId)).toEqual([CAROL, BOB]);
     });
 
     it('RACE: a withdrawal against an erasure in flight never leaves a row behind it', async () => {

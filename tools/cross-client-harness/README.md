@@ -482,7 +482,8 @@ instead every build appends its APK's sha256, origin and bundle verdict to `a1-b
 Installing is a deliberate gesture: an `install -r` keeps the enrolment, an uninstall costs the device.
 
 **A Play TESTER build is recorded, never installed, by `bun a1tester.mjs --tag vX.Y.Z-alpha.N`.**
-A Play-signed app cannot be replaced by the rig's APK (another signature, and no uninstall), so a
+A Play-signed app cannot be replaced by the rig's APK (another signature; only an uninstall crosses
+that line, allowed on the bench phones since 2026-11-16 but never taken by the rig on its own), so a
 phone the tester programme moved stays there, and `pin.mjs` refuses an app no record vouches for.
 `a1tester.mjs` reads the facts where they live: the installed versionName/versionCode from `dumpsys`,
 the running bundle's stamp from the app, and the release, its Android job and that job's log from
@@ -922,8 +923,10 @@ next one's symptom names the wrong cause.
   stale. Three details, each of which has cost a session:
   - **`npx tauri` does not resolve on this box** (`could not determine executable to run`), and
     `bun tauri` shells out the same way. Call the binary in `node_modules/.bin` directly.
-  - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
-    store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
+  - **`install -r` by default; an uninstall is ALLOWED, and chosen knowingly.** The bench phones
+    (Mi 9T, iPhone 12) are a sandbox and uninstalling the app on them is permitted (owner,
+    2026-11-16; the earlier "never uninstall" rule is withdrawn). `install -r` keeps the app data,
+    which is the enrolment and the MLS store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
     test accounts sign in without a second factor - but it is still a new DEVICE,
     with no history for any HEAL row to reason about. **And nothing afterwards says the uninstall
     happened**: the package reads the right version and launches. `install -r` preserves
@@ -1354,7 +1357,7 @@ The browser report attributes every console line to the ORIGIN that emitted it (
   2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
   and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; its database holds no production data (production data is never copied to a workstation).
   **Two things do NOT become local with it.** The identity provider is still
-  `auth.canari-emse.fr` by decision 8 of the workflow migration, so the accounts and their passwords
+  production's MiConnect (`miconnect.emse.fr`, formerly `auth.canari-emse.fr`) by decision 8 of the workflow migration, so the accounts and their passwords
   are production's - and the local Authentik client is a SEPARATE provider (`Canari Local`), which is
   where a local redirect URI has to be declared or the login dies on "Redirect URI Error". And the
   object store starts EMPTY, so a row whose question is about media uploads what it then reads.

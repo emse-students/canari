@@ -17,6 +17,10 @@
  * run summary say that NO sign-in was tried, so a green deploy cannot be read as a tested login. A
  * REFUSED sign-in exits 1 with the stage it died at and the reason, never the password.
  *
+ * MICONNECT'S TERMS ARE ANSWERED, AND NOTHING ELSE IS. The dev provider asks an account for the terms
+ * of use once per version of the text (#3839, `45-consent.yaml`); this ticks THAT prompt as a person
+ * would and logs it (`isTermsPrompt`). Any other prompt or stage fails the run by name.
+ *
  * Exit codes: 0 signed in (or skipped, loudly), 1 the sign-in was refused or the estate is wrong.
  *
  * Environment (all read here, none is argv - a credential must not be a process argument):
@@ -119,6 +123,43 @@ export function flowSlugFromLocation(location, base) {
 }
 
 /**
+ * The field keys of MiConnect's terms-of-use prompt (`miconnect-consent-ask` in
+ * `infrastructure/authentik/blueprints/45-consent.yaml`): the one tick a person gives, and the hidden
+ * field carrying the version of the text being accepted. The blueprint is the only definition; these
+ * are the two names this script recognises it by.
+ */
+export const TERMS_ACCEPT_FIELD = 'cgu_accept';
+export const TERMS_VERSION_FIELD = 'attributes.cgu_version';
+
+/** Prompt field types that ask nothing of the person: shown text, or values the form carries itself. */
+const PASSIVE_PROMPT_TYPES = new Set(['static', 'hidden', 'separator']);
+
+/**
+ * Whether a challenge is MiConnect's terms-of-use prompt, and nothing more: an `ak-stage-prompt`
+ * whose ONLY field asking for an answer is the `cgu_accept` checkbox, next to the hidden version.
+ * Any other prompt - or this one with a question added - is not, and fails the run by name.
+ *
+ * Since #3839 the dev and local Canari providers name the terms flow as their authorization flow, so
+ * an account whose `cgu_version` is not the current text is asked once per version, the smoke
+ * account included.
+ * @returns {boolean}
+ */
+export function isTermsPrompt(challenge) {
+  if (challenge?.component !== 'ak-stage-prompt' || !Array.isArray(challenge.fields)) return false;
+  const byKey = new Map(challenge.fields.map((f) => [f.field_key, f]));
+  if (byKey.get(TERMS_ACCEPT_FIELD)?.type !== 'checkbox') return false;
+  if (byKey.get(TERMS_VERSION_FIELD)?.type !== 'hidden') return false;
+  return challenge.fields.every(
+    (f) => f.field_key === TERMS_ACCEPT_FIELD || PASSIVE_PROMPT_TYPES.has(f.type)
+  );
+}
+
+/** The version of the terms a terms prompt asks to accept (its hidden field's value). */
+export function termsVersion(challenge) {
+  return challenge.fields.find((f) => f.field_key === TERMS_VERSION_FIELD)?.initial_value ?? '?';
+}
+
+/**
  * The body that answers one stage, or a SmokeError naming a stage this account cannot pass.
  * Never includes the password in an error.
  */
@@ -138,10 +179,29 @@ export function answerStage(challenge, { username, password }) {
     case 'ak-stage-user-login':
     case 'ak-stage-autosubmit':
       return { component: challenge.component };
+    case 'ak-stage-prompt': {
+      if (!isTermsPrompt(challenge)) {
+        const keys = (challenge.fields ?? []).map((f) => f.field_key).join(', ') || 'no fields';
+        throw new SmokeError(
+          'flow',
+          `the flow asked a prompt that is not MiConnect's terms (fields: ${keys}) - this script answers only the terms prompt of 45-consent.yaml`
+        );
+      }
+      // What the browser posts: every field with the value it was given, and the box ticked. The
+      // server re-evaluates the hidden version and date itself, so nothing here can forge them.
+      const body = { component: challenge.component };
+      for (const f of challenge.fields) {
+        if (f.type !== 'static' && f.type !== 'separator') body[f.field_key] = f.initial_value;
+      }
+      body[TERMS_ACCEPT_FIELD] = true;
+      return body;
+    }
     default:
       throw new SmokeError(
         'flow',
-        `the flow asked for a stage this account cannot answer: ${challenge.component} (a second factor on the smoke account?)`
+        challenge.component?.startsWith('ak-stage-authenticator')
+          ? `the flow asked for a second factor (${challenge.component}) - the smoke account must have no authenticator`
+          : `the flow asked for a stage this script does not answer: ${challenge.component}`
       );
   }
 }
@@ -239,7 +299,9 @@ export async function smokeLogin(o) {
       if (answered && errors && Object.keys(errors).length > 0) {
         throw new SmokeError(
           answered,
-          `MiConnect refused the answer (${Object.keys(errors).join(', ')}) - wrong username or password for the smoke account`
+          answered === 'ak-stage-prompt'
+            ? `MiConnect refused the acceptance of its terms (${Object.keys(errors).join(', ')})`
+            : `MiConnect refused the answer (${Object.keys(errors).join(', ')}) - wrong username or password for the smoke account`
         );
       }
       stages.push(challenge.component);
@@ -251,13 +313,24 @@ export async function smokeLogin(o) {
         );
       }
       const body = answerStage(challenge, { username, password });
+      // answerStage answers no prompt but the terms, so a prompt reaching here IS the terms.
+      if (challenge.component === 'ak-stage-prompt') {
+        log(
+          `smoke-login: accepting MiConnect's terms, version ${termsVersion(challenge)}, for the smoke account (once per version)`
+        );
+      }
       answered = challenge.component;
       const csrf = jar.get('authentik_csrf');
+      // Django's CSRF check runs once the session is authenticated (the terms prompt after the
+      // password): it reads Origin when present, else on HTTPS the Referer, and refuses a POST
+      // carrying neither as an HTTP 500. The browser sends both from the flow page; so does this.
       res = await send(executor, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...json,
+          Referer: `${idp}/if/flow/${slug}/`,
+          Origin: new URL(idp).origin,
           ...(csrf ? { 'X-authentik-CSRF': csrf } : {}),
         },
         body: JSON.stringify(body),

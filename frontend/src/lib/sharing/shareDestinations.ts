@@ -58,6 +58,17 @@ export interface ShareCandidate {
 }
 
 /**
+ * One titled block of a conversation picker (`ConversationPickList`): the send sheet's "Recents" and
+ * "the rest", or the forward picker's one untitled list. `title: null` draws no heading.
+ */
+export interface PickerSection {
+  /** Stable across renders: the block's key. */
+  id: string;
+  title: string | null;
+  rows: ShareCandidate[];
+}
+
+/**
  * The order of the "Envoyer a..." picker: most recent first, like the conversation list and every
  * other share surface; alphabetical once a search is typed, a list to scan (lead, 2026-11-12).
  */

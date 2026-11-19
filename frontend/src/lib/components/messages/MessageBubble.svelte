@@ -264,6 +264,27 @@
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
   /**
+   * THE FOUR CLOSED OVERLAYS ARE MOUNTED ON THE FIRST INTENT, NOT WITH THE BUBBLE.
+   *
+   * The picker, the info panel, the actions sheet and the delete confirmation draw nothing while
+   * closed, yet each bubble paid their setup at mount - effects, a history binding, a storage read -
+   * about 0.3 ms a bubble at x4, inside every salon open (community-open-budget, "Per-bubble and
+   * per-day work"). They are mounted on the bubble's first `pointerdown` or `focusin` instead: every
+   * opener (a tap, a hold, a right-click, a toolbar button, a key on the focused bubble) starts with
+   * one, in an EARLIER event, so the overlay exists closed before it opens and its local intro still
+   * plays - a transition plays only when its own `{#if}` is created after its parent is mounted.
+   * Mounting it in the same flush as the open would draw it with no intro, which is why the open
+   * states are in `overlaysMounted` only as a guarantee: an open with no intent before it (an
+   * assistive click, a test) still draws its overlay. Once armed, a bubble keeps them for its life.
+   */
+  let overlaysArmed = $state(false);
+  const overlaysMounted = $derived(
+    overlaysArmed || showEmojiPicker || showInfo || showMobileActions || showDeleteModal
+  );
+  function armOverlays() {
+    if (!overlaysArmed) overlaysArmed = true;
+  }
+  /**
    * The "everywhere" act the delete confirmation offers beside the plain delete (15.2, 15.7), asked
    * of the outbox when the confirmation OPENS - an event, never polled - for my own reel message
    * only. `null` (nothing offered) until it answers, and for a take naming one message.
@@ -1078,6 +1099,8 @@
       },
     }}
     class="group relative flex max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
+    onpointerdowncapture={armOverlays}
+    onfocusincapture={armOverlays}
   >
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
@@ -1251,6 +1274,7 @@
                   {isDeleted}
                   {firstLink}
                   jumbo={isEmojiOnly}
+                  onOwnBubble={isOwn}
                 />
               {/if}
             {/if}
@@ -1330,136 +1354,140 @@
       <ControlRefusedNotice {messageId} {isOwn} excerpt={textContent} />
     {/if}
 
-    <MessageEmojiPicker
-      origin={emojiPickerOrigin}
-      {isOwn}
-      anchor={bubbleAnchor}
-      existingReactionEmojis={Object.keys(groupedReactions)}
-      onEmojiSelect={(emoji) => {
-        // CHOOSING CLOSES THE PANEL, AND IT HAS TO BE SAID HERE NOW.
-        // It used to happen by accident: the panel is portalled, so the click that chose an emoji
-        // was read as "outside" by the guard on this element and dismissed it. That guard is fixed,
-        // which takes the accident away - a picker that stayed open after a reaction would be the
-        // fix's own regression.
-        onReact?.(messageId, emoji);
-        emojiPickerOrigin = null;
-        showMobileActions = false;
-      }}
-    />
+    {#if overlaysMounted}
+      <MessageEmojiPicker
+        origin={emojiPickerOrigin}
+        {isOwn}
+        anchor={bubbleAnchor}
+        existingReactionEmojis={Object.keys(groupedReactions)}
+        onEmojiSelect={(emoji) => {
+          // CHOOSING CLOSES THE PANEL, AND IT HAS TO BE SAID HERE NOW.
+          // It used to happen by accident: the panel is portalled, so the click that chose an emoji
+          // was read as "outside" by the guard on this element and dismissed it. That guard is fixed,
+          // which takes the accident away - a picker that stayed open after a reaction would be the
+          // fix's own regression.
+          onReact?.(messageId, emoji);
+          emojiPickerOrigin = null;
+          showMobileActions = false;
+        }}
+      />
 
-    <MessageInfoTooltip
-      visible={showInfo}
-      {timestamp}
-      {editedAt}
-      {readBy}
-      {isOwn}
-      {isEdited}
-      {nicknameScope}
-    />
+      <MessageInfoTooltip
+        visible={showInfo}
+        {timestamp}
+        {editedAt}
+        {readBy}
+        {isOwn}
+        {isEdited}
+        {nicknameScope}
+      />
 
-    <MessageMobileActions
-      visible={showMobileActions && isMobile}
-      anchor={bubbleAnchor}
-      {isOwn}
-      {isDeleted}
-      userReactions={userOwnReactions}
-      onReactEmoji={(emoji) => {
-        onReact?.(messageId, emoji);
-        showMobileActions = false;
-        if (
-          settings.vibrationsEnabled &&
-          typeof navigator !== 'undefined' &&
-          'vibrate' in navigator
-        ) {
-          navigator.vibrate(12);
-        }
-      }}
-      onOpenFullPicker={() => {
-        showMobileActions = false;
-        emojiPickerOrigin = 'sheet';
-      }}
-      onReply={onReply && !isDeleted
-        ? () => {
-            onReply!(messageId);
-            showMobileActions = false;
+      <MessageMobileActions
+        visible={showMobileActions && isMobile}
+        anchor={bubbleAnchor}
+        {isOwn}
+        {isDeleted}
+        userReactions={userOwnReactions}
+        onReactEmoji={(emoji) => {
+          onReact?.(messageId, emoji);
+          showMobileActions = false;
+          if (
+            settings.vibrationsEnabled &&
+            typeof navigator !== 'undefined' &&
+            'vibrate' in navigator
+          ) {
+            navigator.vibrate(12);
           }
-        : undefined}
-      onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
-      {pinned}
-      onPin={!isDeleted && onTogglePin
-        ? () => {
-            onTogglePin!(messageId);
-            showMobileActions = false;
-          }
-        : undefined}
-      onCopy={textContent && !isDeleted
-        ? () => {
-            void copyText(textContent, { what: 'text' });
-            showMobileActions = false;
-            if (
-              settings.vibrationsEnabled &&
-              typeof navigator !== 'undefined' &&
-              'vibrate' in navigator
-            ) {
-              navigator.vibrate(8);
+        }}
+        onOpenFullPicker={() => {
+          showMobileActions = false;
+          emojiPickerOrigin = 'sheet';
+        }}
+        onReply={onReply && !isDeleted
+          ? () => {
+              onReply!(messageId);
+              showMobileActions = false;
             }
-          }
-        : undefined}
-      onShare={shareAction}
-      onEdit={canEdit ? startEdit : undefined}
-      {canModerate}
-      onDelete={!isDeleted && (isOwn || canModerate) && onDelete
-        ? () => {
-            showDeleteModal = true;
-            showMobileActions = false;
-          }
-        : undefined}
-      onClose={() => {
-        showMobileActions = false;
-      }}
-    />
+          : undefined}
+        onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
+        {pinned}
+        onPin={!isDeleted && onTogglePin
+          ? () => {
+              onTogglePin!(messageId);
+              showMobileActions = false;
+            }
+          : undefined}
+        onCopy={textContent && !isDeleted
+          ? () => {
+              void copyText(textContent, { what: 'text' });
+              showMobileActions = false;
+              if (
+                settings.vibrationsEnabled &&
+                typeof navigator !== 'undefined' &&
+                'vibrate' in navigator
+              ) {
+                navigator.vibrate(8);
+              }
+            }
+          : undefined}
+        onShare={shareAction}
+        onEdit={canEdit ? startEdit : undefined}
+        {canModerate}
+        onDelete={!isDeleted && (isOwn || canModerate) && onDelete
+          ? () => {
+              showDeleteModal = true;
+              showMobileActions = false;
+            }
+          : undefined}
+        onClose={() => {
+          showMobileActions = false;
+        }}
+      />
+    {/if}
   </div>
 
-  <Modal
-    open={showDeleteModal}
-    title={m.msg_supprimer_message()}
-    onClose={() => (showDeleteModal = false)}
-  >
-    <p class="text-text-muted text-sm leading-relaxed">
-      {m.msg_supprimer_definitif()}
-    </p>
-    {#if everywhereAct}
-      <p class="text-text-muted mt-2 text-sm leading-relaxed" data-reel-everywhere-hint>
-        {everywhereAct === 'cancel-all'
-          ? m.reel_sendto_cancel_all_hint({ count: everywhereCount })
-          : m.reel_sendto_delete_everywhere_hint({ count: everywhereCount })}
+  {#if overlaysMounted}
+    <Modal
+      open={showDeleteModal}
+      title={m.msg_supprimer_message()}
+      onClose={() => (showDeleteModal = false)}
+    >
+      <p class="text-text-muted text-sm leading-relaxed">
+        {m.msg_supprimer_definitif()}
       </p>
-    {/if}
-    {#snippet footer()}
       {#if everywhereAct}
-        <Button
-          variant="danger-outline"
-          disabled={everywherePressed}
-          onclick={confirmDeleteEverywhere}
-          data-reel-everywhere
-        >
+        <p class="text-text-muted mt-2 text-sm leading-relaxed" data-reel-everywhere-hint>
           {everywhereAct === 'cancel-all'
-            ? m.reel_sendto_cancel_all()
-            : m.reel_sendto_delete_everywhere()}
-        </Button>
+            ? m.reel_sendto_cancel_all_hint({ count: everywhereCount })
+            : m.reel_sendto_delete_everywhere_hint({ count: everywhereCount })}
+        </p>
       {/if}
-      <button
-        onclick={() => (showDeleteModal = false)}
-        class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-      >
-        {m.common_cancel_button()}
-      </button>
-      <button
-        onclick={confirmDelete}
-        class="rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all hover:-translate-y-0.5 hover:bg-red-600"
-      >
-        {m.common_delete_button()}
-      </button>
-    {/snippet}
-  </Modal>
+      {#snippet footer()}
+        {#if everywhereAct}
+          <Button
+            variant="danger-outline"
+            disabled={everywherePressed}
+            onclick={confirmDeleteEverywhere}
+            data-reel-everywhere
+          >
+            {everywhereAct === 'cancel-all'
+              ? m.reel_sendto_cancel_all()
+              : m.reel_sendto_delete_everywhere()}
+          </Button>
+        {/if}
+        <button
+          onclick={() => (showDeleteModal = false)}
+          class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          {m.common_cancel_button()}
+        </button>
+        <button
+          onclick={confirmDelete}
+          class="rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all hover:-translate-y-0.5 hover:bg-red-600"
+        >
+          {m.common_delete_button()}
+        </button>
+      {/snippet}
+    </Modal>
+  {/if}
 {/if}

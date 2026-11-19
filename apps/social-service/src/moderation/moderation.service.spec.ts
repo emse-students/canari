@@ -236,7 +236,11 @@ describe('ModerationService - reports', () => {
 
     describe('what the route takes and answers', () => {
       const route = () =>
-        new ModerationController(service, { isContentModerator: jest.fn() } as never);
+        new ModerationController(
+          service,
+          { isContentModerator: jest.fn() } as never,
+          { announceReport: jest.fn() } as never
+        );
 
       it('drops a `reportedUserId` a client sends: who a report is about is not the reporter`s to say', async () => {
         // The service's global pipe (main.ts): unknown fields are stripped, not refused, so a

@@ -444,7 +444,7 @@ describe('outbox flusher - offline guards', () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls();
     const outbox = createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
 
     await outbox.flush();
 
@@ -480,7 +480,7 @@ describe('outbox flusher - offline guards', () => {
     const mlsService = makeMls();
     createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await outboxIdle();
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
 
@@ -1681,7 +1681,7 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await outbox.flush();
     await outboxIdle();
     expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
@@ -1996,7 +1996,7 @@ describe('outbox cancellation', () => {
   it('withdraws a queued message so no later flush can send it', async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
 
     expect(await outbox.cancelPending('m1')).toBe(true);
@@ -2072,7 +2072,7 @@ describe('outbox cancellation', () => {
     }) as any);
     const storage = makeStorage([textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
 
     // A follower withdrew it. The leader is the tab that would send it, and every other arm of
@@ -2135,7 +2135,7 @@ describe('outbox - settling a group before its exit', () => {
     const mlsService = makeMls();
     const lines: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
 
     expect(await outbox.drainForExit('left', 'delete')).toBe(2);
@@ -2185,7 +2185,7 @@ describe('outbox - settling a group before its exit', () => {
     storage._exits.push({ groupId: 'left', kind: 'leave', requestedAt: 1 });
     const mlsService = makeMls();
     const lines: string[] = [];
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = createOutbox(makeDeps({ mlsService, storage, log: (m) => lines.push(m) }));
 
     await outbox.enqueue(textEntry('m9', 'left', 200));
@@ -2207,7 +2207,7 @@ describe('outbox - settling a group before its exit', () => {
       storage._exits.push({ groupId: 'left', kind: 'delete', requestedAt: 1 });
     });
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
 
     await outbox.enqueue(textEntry('m1', 'left', 100));
@@ -2367,7 +2367,7 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     {
       name: 'connectivity.onReconnect',
       run: async () => {
-        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerUnreachable('test');
         connectivity.notifyServerReachable();
         await outboxIdle();
       },
@@ -2746,7 +2746,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     expect(sent).toEqual(['t1', 'r1']);
     // Both are now backing off 2 s. The link blips and returns, with no timer elapsed.
     healed = true;
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
 
@@ -2767,7 +2767,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
 
     await outbox.flush();
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
     // The resume attempt failed again and re-armed the ladder: one more attempt, not a loop.
@@ -3294,7 +3294,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     await outbox.flush();
     expect(uploadViewOf('q1')?.phase).toBe('waiting');
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
 
     expect(uploadViewOf('q1')?.phase).toBe('queued');
@@ -3529,7 +3529,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
   it('a failed upload stays failed across a reconnect: only the member restarts it', async () => {
     const r = await runAttempts('p3', [0, 0, 0], () => new UploadNetworkError('/x'));
     expect(uploadViewOf('p3')?.phase).toBe('failed');
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
     await r.outbox.flush();
@@ -3973,7 +3973,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
   it('two watermarks queued while offline: one row, and only the newest is sent', async () => {
     const storage = makeStorage();
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = registerOutbox(makeDeps({ mlsService, storage }));
 
     await read(100);
@@ -3991,7 +3991,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     // Written offline before the app was killed: the new controller finds it on disk.
     const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = registerOutbox(makeDeps({ mlsService, storage }));
 
     await read(250);
@@ -4013,7 +4013,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     try {
       const storage = makeStorage();
       const mlsService = makeMls();
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       registerOutbox(makeDeps({ mlsService, storage }));
 
       await vi.waitFor(() => expect(queuedAts(storage)).toEqual([400]));
@@ -4031,7 +4031,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     localStorage.setItem(ACCOUNT_KEY.dmReadMarks('u'), JSON.stringify({ g1: { at: 600 } }));
     const storage = makeStorage();
     const mlsService = makeMls();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     registerOutbox(makeDeps({ mlsService, storage }));
 
     expect(await flushOwedDmReadMarks('u')).toBe(1);
@@ -4056,7 +4056,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
 
   it('never moves a mark backwards: a watermark an unsent one covers is not queued at all', async () => {
     const storage = makeStorage([watermarkEntry('high', 'g1', 300)]);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
 
     await read(200);
@@ -4080,7 +4080,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     });
     // The process dies before the withdrawal lands: the delete never happens.
     storage.deleteOutboxEntry.mockRejectedValueOnce(new Error('process killed'));
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = registerOutbox(makeDeps({ mlsService, storage }));
 
     await read(200);
@@ -4105,7 +4105,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
       reaction,
       watermarkEntry('other-convo', 'g2', 100),
     ]);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
 
     await read(200);
@@ -4141,7 +4141,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     // Two leftovers of a crash between write and withdraw: both are superseded by one read.
     const storage = makeStorage([watermarkEntry('a', 'g1', 100), watermarkEntry('b', 'g1', 150)]);
     const log = vi.fn();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
     await outboxIdle();
     storage.getOutboxQueue.mockClear();
@@ -4156,7 +4156,7 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
   it('forgets a superseded id once its row is gone and no lane holds it', async () => {
     const storage = makeStorage();
     const log = vi.fn();
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const outbox = registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
     await read(100);
     await read(200);
@@ -5485,7 +5485,7 @@ describe('a deploy outage is not a send failure (R05)', () => {
     const mls = scripted(Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, () => 503 as Outcome));
     const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
     await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS - 1);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
     expect(status('t1')).toBe('error');
@@ -5564,7 +5564,7 @@ describe('a deploy outage is not a send failure (R05)', () => {
     // Due in the future: only the reconnect can make it go now.
     expect(storage._map.get('t1').nextAttemptAt).toBeGreaterThan(Date.now());
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
 
@@ -5579,7 +5579,7 @@ describe('a deploy outage is not a send failure (R05)', () => {
     expect(status('t1')).toBe('pending');
     expect(textWaitOf('t1')).toBe('network');
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
 
@@ -5593,7 +5593,7 @@ describe('a deploy outage is not a send failure (R05)', () => {
     const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], mls);
     await outbox.flush();
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     const e = storage._map.get('t1');
     storage._map.set('t1', { ...e, nextAttemptAt: 0 });
     connectivity.notifyServerReachable();
@@ -5723,7 +5723,7 @@ describe('a 2xx a captive portal answered is no answer (cross-client rig, 1.4.1-
 
     // The portal ends. In production the kept entry goes on its backoff ladder (connectivity never
     // left "reachable", backlog P3); a reconnect transition stands in for that retry here.
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     await outboxIdle();
 

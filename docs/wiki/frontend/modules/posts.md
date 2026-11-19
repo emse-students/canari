@@ -207,7 +207,7 @@ The user's two decisions, for posts, reels and comments alike:
   unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
   they are gone. The repost glyph is `aria-hidden`; the words carry it.
 - **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
-  reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
+  reader the server sent the author's id to - `authorId` on a post (`viewerSeesWriter`:
   the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
   writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
   glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
@@ -220,6 +220,13 @@ The user's two decisions, for posts, reels and comments alike:
   header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
+- **An association's post names its writer to its moderators the same way (owner, 2026-11-15,
+  [decision 11](../../moderation-authority.md)).** The server serves `authorId` on it to whoever
+  moderates the post (the platform admin, a BDE whose spaces hold it) and to the writer, nobody
+  else (`viewerSeesWriter`). The association stays the name and the avatar, big; the writer is the
+  same small line, with a pen instead of the mask (`RevealedAuthorLine`, `under: 'association'`,
+  from `revealedPostAuthor`). Test: `PostHeader.anonymous` ("PostHeader association post").
+  **Read on both phones and the web on `1.7.0-alpha.8`** ([readings](../../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
 
 **The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
 band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
@@ -784,6 +791,8 @@ plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`)
 | `booking_open` | the booking space | the space is listed, has no audience (L25), its association is not archived and is visible to the reader (`associationVisibleToViewerSql`, `listedSpaces`' predicate) - the VIEWER predicate, read grants counted, as `event_open`, and the follow is not re-asked either |
 | `form_paid_over_capacity` | the form | the reader owns the form or holds `MANAGE_FORMS` in its association |
 | `lydia_payments_*`, `delegation_*` | the association | the reader holds `MANAGE_PAYOUT_ACCOUNT`, resp. `MANAGE_PRODUCTS`, there |
+| `admin_profile_correction` | the correction request (core's `profile_correction_requests`) | the reader is a global admin (`users.admin`) AND the request is still `pending` - so it leaves EVERY admin's bell when one applies or refuses it ([admin](admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)) |
+| `admin_report` | the report that announced its subject | the reader is a global admin AND a report about the same subject (`contentType`, `contentId`) still waits that this notice answers for - not one filed after the subject's next notice (`reportNoticeOwedSql`) |
 | post-bound kinds | a post | the section above |
 | `birthday` | - | `birthdayRowShownSql` |
 | `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
@@ -1764,7 +1773,7 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
   real clip: a chat video stopped at 2.6 s, the viewer opened at the same place and played on.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
-  playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
+  playhead (`loadedSpans`, every loaded range since 2026-11-18), the app's ONE sound answer (`followVideoSound`), and full screen only
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
 - **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
   video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
@@ -2368,6 +2377,12 @@ predicate is unchanged (`landingFeed.ts`, `postVisibleToViewerSql`).
   (`posts/scheduledDue.ts`): a post moved to another future date takes its new place at once; one the
   edit published now (or un-scheduled) leaves the strip and the feed is re-read. A deleted card leaves
   by its own `onDelete`. `ScheduledPostsPanel` (a preview with a delete button only) is gone.
+- **The strip draws its cards with `{@render guardedCard(...)}`.** It shipped in 1.6.12 as a bare
+  `{guardedCard(sp, ...)}`: a snippet takes the DOM anchor as its first argument, so the post became the
+  anchor and `post.before(...)` threw `e.before is not a function`, which crashed the whole `/posts` page
+  for every editor of a scheduled post until it was due (production, 2026-11-17, the first scheduled
+  association post). The compiler and svelte-check accept the bare call; `styles/snippetRenderCalls.test.ts`
+  refuses it in every `.svelte` file.
 
 The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
 and the editor) lists the furthest future event first and the furthest past last; the server answers

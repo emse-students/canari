@@ -10,18 +10,27 @@
  *
  * Usage: bun .github/scripts/tests/smoke-login.test.mjs   (no arguments, no network beyond loopback)
  */
+import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   SmokeError,
+  TERMS_ACCEPT_FIELD,
+  TERMS_VERSION_FIELD,
   answerStage,
+  isTermsPrompt,
   codeFromLocation,
   credentialsVerdict,
   smokeLogin,
 } from '../smoke-login.mjs';
 
-const script = resolve(dirname(fileURLToPath(import.meta.url)), '../smoke-login.mjs');
+const here = dirname(fileURLToPath(import.meta.url));
+const script = resolve(here, '../smoke-login.mjs');
+const consentBlueprint = readFileSync(
+  resolve(here, '../../../infrastructure/authentik/blueprints/45-consent.yaml'),
+  'utf8'
+);
 let failures = 0;
 const ok = (m) => console.log(`  ok   ${m}`);
 const bad = (m) => {
@@ -31,6 +40,30 @@ const bad = (m) => {
 const check = (cond, m) => (cond ? ok(m) : bad(m));
 
 const PASSWORD = 'correct-horse-battery';
+const VERSION = '2026-10-16';
+
+/** The prompt challenge `45-consent.yaml` builds, in the order the blueprint declares its fields. */
+const termsChallenge = () => ({
+  component: 'ak-stage-prompt',
+  fields: [
+    { field_key: 'cgu_notice', type: 'static', initial_value: '<p>notice</p>', required: true },
+    { field_key: TERMS_ACCEPT_FIELD, type: 'checkbox', initial_value: '', required: true },
+    { field_key: TERMS_VERSION_FIELD, type: 'hidden', initial_value: VERSION, required: true },
+    {
+      field_key: 'attributes.cgu_accepted_at',
+      type: 'hidden',
+      initial_value: '2026-11-18T00:00:00+00:00',
+      required: true,
+    },
+  ],
+});
+/** A prompt that is NOT the terms: it asks a question a person must type. */
+/** The fake's modes in which the account owes the terms. */
+const TERMS_MODES = new Set(['terms', 'odd-prompt', 'terms-refused']);
+const oddChallenge = () => ({
+  component: 'ak-stage-prompt',
+  fields: [{ field_key: 'phone', type: 'text', initial_value: '', required: true }],
+});
 
 /**
  * A fake estate: IdP on one port, backend on another. `mode` shapes what it refuses.
@@ -46,6 +79,12 @@ const PASSWORD = 'correct-horse-battery';
  * - the last stage is `xak-flow-redirect` to the DECODED `next`, so a `next` passed unencoded loses
  *   everything after its first `&` and the authorize below refuses it;
  * - authorize WITH the session cookie 302s to `redirect_uri` with a code.
+ *
+ * Modes `terms` and `odd-prompt` add the authorization flow #3839 bound to the dev provider: an
+ * account that has not accepted the current terms is sent from authorize to
+ * `/if/flow/miconnect-authorization/` with the authorize parameters, whose one stage is the prompt of
+ * `45-consent.yaml` (`terms`) and whose final redirect carries the code itself, as authentik's plan
+ * ends; `odd-prompt` asks something else there instead, and `terms-refused` refuses every answer.
  */
 function fake(mode) {
   /** Per-session flow state: the pending user and the stage reached, keyed by cookie. */
@@ -57,6 +96,17 @@ function fake(mode) {
       const url = new URL(req.url);
       if (url.pathname === '/application/o/authorize/') {
         const sid = sessionOf(req);
+        const termsOwed = TERMS_MODES.has(mode) && !sessions.get(sid)?.accepted;
+        if (sid && sessions.get(sid)?.done && termsOwed) {
+          // As authentik does: the authorization flow page gets the authorize parameters, no
+          // `next`, and its plan ends on the code itself.
+          sessions.get(sid).back =
+            `${url.searchParams.get('redirect_uri')}?code=abc&state=${url.searchParams.get('state')}`;
+          return new Response(null, {
+            status: 302,
+            headers: { Location: `/if/flow/miconnect-authorization/?${url.searchParams}` },
+          });
+        }
         if (sid && sessions.get(sid)?.done) {
           const back = url.searchParams.get('redirect_uri');
           if (!back) return new Response('missing redirect_uri', { status: 400 });
@@ -73,6 +123,11 @@ function fake(mode) {
       }
       const page = /^\/if\/flow\/([^/]+)\/$/.exec(url.pathname);
       if (page) {
+        const known = sessions.get(sessionOf(req));
+        if (known && page[1] === 'miconnect-authorization') {
+          known.stage = 'terms';
+          return new Response('<html>flow</html>');
+        }
         const sid = crypto.randomUUID();
         sessions.set(sid, { stage: 'identify', done: false });
         return new Response('<html>flow</html>', {
@@ -96,8 +151,21 @@ function fake(mode) {
           if (s.stage === 'mfa')
             return Response.json({ component: 'ak-stage-authenticator-validate' });
           if (s.stage === 'password') return Response.json({ component: 'ak-stage-password' });
+          if (s.stage === 'terms')
+            return Response.json(mode === 'odd-prompt' ? oddChallenge() : termsChallenge());
           s.done = true;
+          if (s.accepted) return Response.json({ component: 'xak-flow-redirect', to: s.back });
           return Response.json({ component: 'xak-flow-redirect', to: next });
+        }
+        // As authentik's Django CSRF check does on HTTPS: a POST without the flow page as its
+        // Referer and the IdP as its Origin is refused with a 500 (observed on dev, 2026-11-19).
+        if (
+          req.headers.get('referer') !== `${url.origin}/if/flow/${slug}/` ||
+          req.headers.get('origin') !== url.origin
+        ) {
+          return new Response('CSRF Failed: Referer checking failed - no Referer.', {
+            status: 500,
+          });
         }
         const body = await req.json();
         const again = new Response(null, {
@@ -115,6 +183,21 @@ function fake(mode) {
               response_errors: { password: [{ string: 'no' }] },
             });
           }
+          s.stage = 'redirect';
+          return again;
+        }
+        if (body.component === 'ak-stage-prompt') {
+          if (
+            mode === 'terms-refused' ||
+            body[TERMS_ACCEPT_FIELD] !== true ||
+            body[TERMS_VERSION_FIELD] !== VERSION
+          ) {
+            return Response.json({
+              ...termsChallenge(),
+              response_errors: { non_field_errors: [{ string: 'Coche la case' }] },
+            });
+          }
+          s.accepted = true;
           s.stage = 'redirect';
           return again;
         }
@@ -225,8 +308,63 @@ try {
   mfa = e;
 }
 check(
-  mfa instanceof SmokeError && /second factor/.test(mfa.message) && !mfa.message.includes(PASSWORD),
+  mfa instanceof SmokeError &&
+    /second factor \(ak-stage-authenticator-validate\)/.test(mfa.message) &&
+    !mfa.message.includes(PASSWORD),
   'an unanswerable stage names itself and never the password'
+);
+
+let unknown = null;
+try {
+  answerStage({ component: 'ak-stage-captcha' }, { username: 'u', password: PASSWORD });
+} catch (e) {
+  unknown = e;
+}
+check(
+  unknown instanceof SmokeError &&
+    /ak-stage-captcha/.test(unknown.message) &&
+    !/second factor/.test(unknown.message),
+  'a stage that is not a second factor is named without guessing one'
+);
+
+// The two names the script recognises the terms by are the blueprint's: a renamed field there must
+// fail HERE, not on the next deploy.
+for (const [key, type] of [
+  [TERMS_ACCEPT_FIELD, 'checkbox'],
+  [TERMS_VERSION_FIELD, 'hidden'],
+]) {
+  const entry = consentBlueprint.split('- model: ').find((e) => e.includes(`field_key: "${key}"`));
+  check(
+    entry?.includes(`type: "${type}"`) === true,
+    `45-consent.yaml declares ${key} as a ${type} field`
+  );
+}
+// And the prompt the blueprint builds, every field of it, is still one this script answers: a field
+// asking a new question there would otherwise fail only on the next deploy.
+const blueprintFields = consentBlueprint
+  .split('- model: ')
+  .filter((e) => e.startsWith('authentik_stages_prompt.prompt\n'))
+  .map((e) => ({
+    field_key: /field_key: "([^"]+)"/.exec(e)?.[1],
+    type: /\n\s*type: "([^"]+)"/.exec(e)?.[1],
+  }));
+check(
+  blueprintFields.length === 4 &&
+    isTermsPrompt({ component: 'ak-stage-prompt', fields: blueprintFields }),
+  `the prompt 45-consent.yaml builds is recognised as the terms (${blueprintFields.map((f) => `${f.field_key}:${f.type}`).join(', ')})`
+);
+check(isTermsPrompt(termsChallenge()), "45-consent.yaml's prompt is recognised as the terms");
+check(!isTermsPrompt(oddChallenge()), 'a prompt asking something else is not the terms');
+const extra = termsChallenge();
+extra.fields.push({ field_key: 'phone', type: 'text', initial_value: '' });
+check(!isTermsPrompt(extra), 'the terms prompt with a question added is no longer the terms');
+const answer = answerStage(termsChallenge(), { username: 'u', password: PASSWORD });
+check(
+  answer[TERMS_ACCEPT_FIELD] === true &&
+    answer[TERMS_VERSION_FIELD] === VERSION &&
+    !('cgu_notice' in answer) &&
+    !JSON.stringify(answer).includes(PASSWORD),
+  'the terms are answered as a person does: the box ticked, the hidden values posted back'
 );
 
 // --- the whole walk against the fakes
@@ -259,6 +397,43 @@ const second = await run('mfa');
 check(
   second.err instanceof SmokeError && second.err.stage === 'flow',
   'a second factor fails at the flow, named'
+);
+
+const terms = await run('terms');
+check(
+  !terms.err && terms.out?.userId === 'u1',
+  'an account owing the terms accepts them and signs in'
+);
+check(
+  terms.out?.stages.join('>') ===
+    'ak-stage-identification>ak-stage-password>xak-flow-redirect>ak-stage-prompt>xak-flow-redirect',
+  'it walked the sign-in flow, then the terms flow'
+);
+check(
+  terms.lines.filter((l) => l.includes(`accepting MiConnect's terms, version ${VERSION}`))
+    .length === 1,
+  'the acceptance is logged once, with the version'
+);
+check(
+  !pass.lines.some((l) => l.includes('terms')),
+  'an account that owes no terms logs no acceptance'
+);
+
+const odd = await run('odd-prompt');
+check(
+  odd.err instanceof SmokeError &&
+    odd.err.stage === 'flow' &&
+    /not MiConnect's terms \(fields: phone\)/.test(odd.err.message),
+  'any other prompt fails at the flow, naming its fields'
+);
+
+const refused = await run('terms-refused');
+check(
+  refused.err instanceof SmokeError &&
+    refused.err.stage === 'ak-stage-prompt' &&
+    /refused the acceptance of its terms/.test(refused.err.message) &&
+    !/password/.test(refused.err.message),
+  'a refused acceptance fails at the prompt, without blaming the password'
 );
 
 const cb = await run('callback-500');

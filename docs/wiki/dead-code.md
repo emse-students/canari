@@ -7,7 +7,7 @@ pull request that touches the frontend, and their counts may only go down.
 
 | Measurement                                                                                                   | Tool                                                                                | Config                                         | What it counts                                                                                                                                                        |
 | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unused files, exports, exported types, duplicate exports, unused or unlisted dependencies, unresolved imports | [knip](https://knip.dev) `6.43.0`, pinned in `frontend/package.json` and `bun.lock` | `frontend/knip.json`                           | the `files`, `exports`, `types`, `duplicates`, `dependencies`, `devDependencies`, `unlisted`, `binaries`, `unresolved` ... rows of `frontend/dead-code-baseline.json` |
+| Unused files, exports, exported types, duplicate exports, unused or unlisted dependencies, unresolved imports | [knip](https://knip.dev) `6.45.1`, pinned in `frontend/package.json` and `bun.lock` | `frontend/knip.json`                           | the `files`, `exports`, `types`, `duplicates`, `dependencies`, `devDependencies`, `unlisted`, `binaries`, `unresolved` ... rows of `frontend/dead-code-baseline.json` |
 | Translation keys no source names                                                                              | `.github/scripts/dead-code-ratchet.mjs`                                             | `frontend/dead-code-allowlist.json` (optional) | the `messages` row                                                                                                                                                    |
 
 A key of `frontend/messages/fr.json` is dead when its name appears as an identifier or inside a
@@ -64,8 +64,18 @@ What they cannot see is declared in `knip.json`:
 - `scripts/**` (run by hand or by the Makefile);
 - `ignoreUnresolved`: the generated `$lib/wasm`, `$lib/proto/canari` and `$lib/paraglide`, which are
   not in git;
-- `ignoreDependencies`: `emoji-picker-element-data` (read by `tools/emoji-data/sync.mjs`), `husky`
-  (installed by `scripts/install-husky.js`); `ignoreBinaries`: `wasm-pack`.
+- `ignoreDependencies`: `emoji-picker-element-data` (read by `tools/emoji-data/sync.mjs`);
+  `ignoreBinaries`: `wasm-pack`. **`husky` is deliberately NOT listed (2026-11-18):** this page said
+  it was; #3623 removed the entry together with the unused `husky` devDependency and the page was not updated. Measured with `bun x knip --dependencies`: knip
+  reports no unlisted or unused `husky`, because `frontend/package.json` does not depend on the
+  package at all - `scripts/install-husky.js` only points `core.hooksPath` at the tracked `.husky/`
+  and imports nothing from it. An ignore entry for a name nothing declares is exactly what knip's
+  configuration hints flag, so adding one would be a defect, not a fix.
+- `ignoreIssues` `tsconfig.json: unlisted` (2026-11-18): the file's one external name is
+  `extends: "$app/tsconfig"`, SvelteKit's pseudo-package that `svelte-kit sync` writes into
+  `node_modules/$app/`. knip 6.45 reads an `extends` specifier as a dependency and called `$app`
+  unlisted; `ignoreDependencies` cannot hold it, because knip's package-name parser rejects a
+  specifier starting with `$` and skips the ignore list for it.
 
 **Reached only by name, so a deletion needs a grep first**: Tauri commands (`invoke('cmd')` in TS
 against `#[tauri::command]` in Rust), the Kotlin, Swift and Objective-C bridges in

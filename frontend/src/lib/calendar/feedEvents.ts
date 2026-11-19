@@ -284,14 +284,17 @@ export function isNeutralEvent(event: Pick<AssociationCalendarFeedEvent, 'presen
 /**
  * The ONE identity a neutral event shows, whoever reads it - a reader outside the BDE's agenda
  * managers receives blanks in the owner fields anyway, and a manager is shown what everybody else
- * sees. Its colour derives from the fixed key, so every neutral event wears the same accent.
+ * sees. Its colour is the owning BDE's `neutralEventColor` when it chose one, else it derives from
+ * the fixed key (one accent for every neutral event).
  */
-function neutralOwnerIdentity(): EventOwnerIdentity {
+function neutralOwnerIdentity(event: AssociationCalendarFeedEvent): EventOwnerIdentity {
   return {
     associationId: NEUTRAL_EVENT_OWNER_KEY,
     name: m.calendar_neutral_label(),
     slug: '',
-    color: null,
+    // The owning BDE's chosen colour (owner, 2026-11-14), carried on the row by the server and kept
+    // when the owner is masked; null -> the accent derived from the fixed key.
+    color: event.neutralEventColor ?? null,
     logoUrl: null,
     neutral: true,
   };
@@ -306,7 +309,7 @@ function neutralOwnerIdentity(): EventOwnerIdentity {
  * second one.
  */
 export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIdentity[] {
-  if (isNeutralEvent(event)) return [neutralOwnerIdentity()];
+  if (isNeutralEvent(event)) return [neutralOwnerIdentity(event)];
   return [
     {
       associationId: event.associationId,

@@ -42,7 +42,7 @@ async fn health_check() -> impl IntoResponse {
 /// match nothing. **The only proof an origin list is right is reading the served
 /// `access-control-allow-origin` back after the deploy**, never the deploy's colour.
 ///
-/// @param allow_origin - Raw `ALLOW_ORIGIN` value, e.g. `https://canari-emse.fr,tauri://localhost`.
+/// @param allow_origin - Raw `ALLOW_ORIGIN` value, e.g. `https://canari.emse.fr,tauri://localhost`.
 fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
     let mut origins: Vec<HeaderValue> = Vec::new();
     for part in allow_origin.split(',') {
@@ -65,7 +65,7 @@ fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
 ///
 /// THE LIST IS A FACT ABOUT THE CLIENTS, AND EVERY CANARI CLIENT MUST BE IN IT. A Tauri WebView
 /// presents one origin per platform and calls this gateway cross-origin (its page is served from
-/// `tauri://localhost`, the API from `https://canari-emse.fr`), so omitting a spelling here costs
+/// `tauri://localhost`, the API from `https://canari.emse.fr`), so omitting a spelling here costs
 /// that platform `/api/presence` with no server-side error to show for it - the same failure shape
 /// that cost iOS its login through the Nest services' own list (`apps/*/src/cors-origins.ts`,
 /// which this must be kept in step with).

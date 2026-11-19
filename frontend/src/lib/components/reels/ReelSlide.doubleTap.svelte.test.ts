@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * A DOUBLE TAP ON A REEL LIKES IT (user, 2026-10-19), and the reel's SINGLE tap is still the
- * player's - the sound since the shared player (owner, 2026-11-09). On a surface that likes, the
- * single tap waits for the double-tap window (`videoGestures` reads `data-double-tap-likes`), so a
- * like leaves the sound exactly as it was, never flipped twice. Driven against the real `VideoPlayer`.
+ * A DOUBLE TAP ON A REEL LIKES IT (user, 2026-10-19), and the reel's SINGLE tap is the
+ * OVERLAY's since 2026-11-18 (`reelOverlayTap`, tested in `ReelSlide.overlay`); the player's own tap
+ * does nothing on a reel. A like leaves the sound and playback exactly as they were. Driven against
+ * the real `VideoPlayer` in its `reel` variant.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -84,22 +84,20 @@ function tapOn(el: Element, detail: number) {
 
 const hearts = (target: HTMLElement) => target.querySelectorAll('[data-double-tap-heart]').length;
 
-it("a single tap is still the player's: the sound ON, once the double-tap window has passed", () => {
+it("a single tap is no longer the player's: the sound and the playback stay as they were (owner, 2026-11-18)", () => {
   vi.useFakeTimers();
   const onLike = vi.fn(() => true);
   const { video } = mountSlide({ onLike });
   expect(video.muted).toBe(true);
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause');
+  pause.mockClear();
 
   tapOn(video, 1);
-  expect(video.muted, 'a second tap could still make it a like').toBe(true);
   vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
-  expect(video.muted).toBe(false);
-  expect(onLike).not.toHaveBeenCalled();
-
-  // A tap on a video that has its sound never mutes it (owner, 2026-11-10).
-  tapOn(video, 1);
-  vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
-  expect(video.muted, 'a single tap never turns the sound off').toBe(false);
+  expect(video.muted, 'the reel overlay owns the tap, the player no longer mutes or unmutes').toBe(
+    true
+  );
+  expect(pause).not.toHaveBeenCalled();
   expect(onLike).not.toHaveBeenCalled();
 });
 
@@ -134,7 +132,7 @@ it('a like the viewer refused draws no heart', () => {
 it("a double tap on the player's bar is the bar's", () => {
   const onLike = vi.fn(() => true);
   const { bar } = mountSlide({ onLike });
-  const playPause = bar.querySelector('button')!;
+  const playPause = bar.querySelector('[role="slider"]')!;
   tapOn(playPause, 1);
   tapOn(playPause, 2);
   expect(onLike).not.toHaveBeenCalled();

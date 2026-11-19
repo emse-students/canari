@@ -749,6 +749,28 @@ describe('deletePost - a reel deleted by hand', () => {
     expect(retention.release).toHaveBeenCalledWith([BLOB, COMMENT_BLOB]);
   });
 
+  it("every [REEL] log line carries the post's id, though the repository's remove clears it", async () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const { service, postRepo } = makeService({
+      existing: { ...reel },
+      purge: () => Promise.resolve({ [BLOB]: 'failed', [COMMENT_BLOB]: 'deleted' }),
+    });
+    // TypeORM's `remove` resets the primary key on the entity it was handed.
+    postRepo.remove.mockImplementation(((post: { id?: string }) => {
+      delete post.id;
+      return Promise.resolve(post);
+    }) as unknown as () => Promise<Partial<Post>>);
+
+    await service.deletePost('r1', 'alice', false);
+
+    const lines = [...log.mock.calls, ...warn.mock.calls].map(([m]) => String(m));
+    expect(lines.filter((m) => m.startsWith('[REEL] delete of')).length).toBeGreaterThanOrEqual(2);
+    for (const m of lines.filter((l) => l.startsWith('[REEL] delete of'))) {
+      expect(m).toMatch(/^\[REEL\] delete of r1[ :]/);
+    }
+  });
+
   it('leaves an ordinary post on the release path it always had', async () => {
     const { service, retention } = makeService({
       existing: {

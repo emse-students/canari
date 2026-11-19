@@ -122,14 +122,30 @@ preselection, never a destination by itself.
   `fr.emse.canari://chat/<id>` link like a notification. No icon: the avatar bitmap
   (`avatarBitmap.ts`) rasterises a node already on screen, and the initials disc lives in the app
   module the plugin cannot reach.
-- **When**: `IncomingShareHost` calls `syncShareTargets` whenever the list, the setting or the session
-  changes; the list is sent only when its ordered ids and names differ from what the native side
-  was last told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock.
-  A signed-out or still-loading session publishes nothing and erases nothing: the gate is
+- **When**: when the member LEAVES the app (`followShareTargets`, `sharing/shareTargetsFollow.svelte.ts`,
+  on `onAppScreenChange`), and when the member moves the switch (off clears at once, on publishes
+  at once) - never on a change of the conversation map. The list has one kind of reader, the
+  system share sheet and the launcher, and both are outside the app. Following the map (an
+  `$effect` in `IncomingShareHost` until 2026-11-18) made every provisional state of a first sync a
+  publish - 23 in one sync on the Mi 9T: rows a Welcome makes are seeded with the admission's time
+  and fall to their real place when their history lands from a peer, a DM's name is read from a
+  cache no effect tracks, a salon's community loads late - and the end of a first sync is not a
+  fact the client holds ([entry](../backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)).
+  The list is sent only when its ordered ids and names differ from what the native side was last
+  told (`shareTargetsNative.ts`) - idempotence from that state, no debounce and no clock. A
+  signed-out or still-loading session publishes nothing and erases nothing: the gate is
   `conversationSourcesSettled`, whose restore half (`conversationsRestored`) is reset at sign-out
-  with the map (`invalidateRestores`), so the next account never publishes from a list still
-  loading. The conversation map is read only when a publish is due, so a disabled or signed-out
-  state does not re-run on every message.
+  with the map (`invalidateRestores`), so a departure during the next account's restore sends
+  nothing and the following one sends its list. The conversation map is read only at a trigger.
+  On iOS the departure's publish runs under `holdWhileLeaving` (`utils/backgroundFlush.ts`): the
+  native side replaces its donations one by one, and a suspension mid-way would leave none or a
+  few. **Accepted stale cases** (each corrected at the next departure): Android split screen with
+  both apps resumed (Canari never leaves, so nothing is sent); Canari's own in-app share sheet on
+  iOS (it opens over the app, which does not leave); a departure mid-first-sync, which sends the
+  provisional list of that moment.
+  Each publish writes ONE in-app log line saying how it differs from the one before
+  (`[ShareTargets] published (<reason>): added [id8], removed [id8], N relabelled, reordered|same order; N of M present, N stale left`,
+  `describeShareTargetsChange`) - ids as prefixes, never a name.
 - **Native** (`tauri-plugin-gallery`, `ShareTargets.kt`, beside S3's commands): `publish_share_targets`
   adds by its own ids and removes the ids it published before and no longer names;
   `clear_share_targets` removes every id it ever recorded. The ids are recorded in the plugin's
@@ -191,7 +207,8 @@ half, [below](#share-suggestions-ios---lot-s5).
 
 The iPhone twin of the Android suggestions above, with the same decisions: the same list (the
 picker's destinations, `lifecycle === 'active'`, named, `compareConversationRecency`, the top
-`MAX_SHARE_TARGETS` = 5), the same JS path (`syncShareTargets` -> `publishShareTargets` /
+`MAX_SHARE_TARGETS` = 5), the same JS path and the same triggers (`followShareTargets`: the
+member leaving the app, and the switch; `syncShareTargets` -> `publishShareTargets` /
 `clearShareTargets`, the "last told" state, the queue), the same setting (now shown on both phone
 apps), the same erase at sign-out, and the same rule that **the picked suggestion is only a hint
 and the picker still opens**. What differs is only what the platform holds.
@@ -359,7 +376,7 @@ A link to `/posts/<id>` in a conversation or a channel draws `SharedPostCard` (c
 picture decrypted by `PostMedia` (client-side CEK, no new crypto), a video as its ThumbHash with the
 decorative glass play glyph (`VideoGlassGlyph`, no button), a reel as the 9:16 card with a
 "CanaReel" chip and a tap that opens the reels viewer, the caption on four lines.
-- **The caption is the feed's own rendering** (owner, 2026-11-16: it was flat text, line breaks and `#` lost). The preview kept `markdownToPlainText(post.markdown)`; it now keeps the bounded markdown SOURCE (`sharedPostCaptionSource`, 600 chars, a torn `@[uuid]` dropped) and the card draws it through `PostMarkdown`, the component of the feed and the reel viewer (hashtags, mentions, links, emphasis, line breaks, no raw HTML). A picture written in the caption (`![](https://...)`) is reduced to its alt text by `sharedPostCaptionSource`: the card is drawn in every chat showing the post, a remote image would be a tracking fetch per reader (principle 3). It is `inert` and `pointer-events-none`: the whole card is the one link, so a tap on a hashtag opens the post, not the hashtag feed (a nested link would be a second control). The card reads the live post, not a stored excerpt, so no old message needs a migration. Reading owed: [the readings](../backlog.d/shared-post-card-rich-caption-reading-owed.md).
+- **The caption is the feed's own rendering** (owner, 2026-11-16: it was flat text, line breaks and `#` lost). The preview kept `markdownToPlainText(post.markdown)`; it now keeps the bounded markdown SOURCE (`sharedPostCaptionSource`, 600 chars, a torn `@[uuid]` dropped) and the card draws it through `PostMarkdown`, the component of the feed and the reel viewer (hashtags, mentions, links, emphasis, line breaks, no raw HTML). A picture written in the caption (`![](https://...)`) is reduced to its alt text by `sharedPostCaptionSource`: the card is drawn in every chat showing the post, a remote image would be a tracking fetch per reader (principle 3). It is `inert` and `pointer-events-none`: the whole card is the one link, so a tap on a hashtag opens the post, not the hashtag feed (a nested link would be a second control). The card reads the live post, not a stored excerpt, so no old message needs a migration. Read on both phones for a post (S3) and a CanaReel ([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)), 2026-11-18.
 - **Wire format unchanged**: the message is still the bare link, so an older app draws its generic card.
 - **Recipient's rights**: `sharedPostPreview.ts` reads `GET /api/posts/:id` under the reader's
   session. 403/404/410 is a verdict (cached per viewer for the session, drawn "Publication
@@ -576,6 +593,17 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   the member sends by hand, in a conversation they chose, so the residual is low.
 
 ## Owed
+
+**Where it stands (2026-11-18, the reading entry closed):** on the Mi 9T, every bullet of the
+first two below was read between 2026-11-15 and 2026-11-18. The last were the sign-out
+(`ShareTargets: clear: 5 target(s) removed`, `ConversationShortcuts: clear: 13 ... removed`, 0
+shortcuts left) and a second account publishing only its own five targets
+([S6](../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+On the iPhone 12, S4 was read from Photos, Safari, Notes and Files, cold behind the PIN, and as a
+share then a sign-out. S5's suggestion row and its pick were read ten of ten on `1.7.0-alpha.5`, and
+so was a finger tap on the banner. Never read, and not part of the closed entry: the launcher's
+long-press menu after a second account, the lock screen, Spotlight and the Siri widget, and a kill
+right after a sign-out. Those bullets below stay as the description of what is unproven.
 
 **Read on the Mi 9T on 2026-10-28** ([readings](../device-readings-2026-10.md#2026-10-28---sharing-on-the-mi-9t-151-rig-builds)):
 a text warm and cold behind the PIN, one and several pictures, a refused stream, an undrained share

@@ -112,8 +112,20 @@ export const ADDRESSED_HISTORY_CAPABILITY = 'addressed-history-1';
  */
 export const JOIN_ASK_CAPABILITY = 'join-ask-1';
 
+/**
+ * The capability this build declares because it routes the admin badges' frame
+ * (`admin.queues.changed`, `channelEventHandler.ts`). social-service names it on that frame and the
+ * gateway delivers it only to the sessions that declared it - so a build older than the badges never
+ * meets it. The same literal is `ADMIN_QUEUES_CAPABILITY` in social-service and the gateway.
+ */
+export const ADMIN_QUEUES_CAPABILITY = 'admin-queues-1';
+
 /** Every capability this build declares on its socket, comma-separated as `caps=` carries them. */
-export const SOCKET_CAPABILITIES = [ADDRESSED_HISTORY_CAPABILITY, JOIN_ASK_CAPABILITY].join(',');
+export const SOCKET_CAPABILITIES = [
+  ADDRESSED_HISTORY_CAPABILITY,
+  JOIN_ASK_CAPABILITY,
+  ADMIN_QUEUES_CAPABILITY,
+].join(',');
 
 /**
  * The gateway socket URL, built in ONE place for both openers (web and Tauri) so the two cannot

@@ -13,6 +13,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { readRetentionDays } from '../common/retention-settings';
 import { createHash, randomUUID } from 'crypto';
 import type { DataSource, EntityManager } from 'typeorm';
@@ -64,6 +68,7 @@ import {
   lockStanding,
   otherCutsOnRecord,
   standingOf,
+  standingsOf,
   type LiveStanding,
   type LiveStrikeConsequence,
 } from './live-strikes';
@@ -358,6 +363,17 @@ function endFacts(r: {
 /** How many plaintext keys one query of the backfill takes; it loops until none is left. */
 const PLAINTEXT_KEY_BATCH = 100;
 
+/** The most withdrawn accounts one staff read lists (a withdrawal is rare; the list is the lift's door). */
+const WITHDRAWN_LIST_MAX = 500;
+
+/** One account's standing as STAFF read it (`GET /api/lives/broadcasters/...`). */
+export interface BroadcasterStanding extends LiveStanding {
+  userId: string;
+  displayName: string;
+  /** The reason code of the withdrawal, null while the right is not withdrawn. */
+  withdrawalReason: LiveCutReason | null;
+}
+
 /** An association id: a uuid, checked before it reaches a `uuid` column (a 500 otherwise). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -402,6 +418,21 @@ export class LivesService implements OnModuleDestroy {
    * `LIVE_REPLAY_TOTAL_MAX_GB` stops the service at boot instead of meaning "no cap".
    */
   private readonly replayCapBytes = liveReplayTotalMaxBytes();
+
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -1754,6 +1785,8 @@ export class LivesService implements OnModuleDestroy {
     const { reason, details } = parseModerationNote(input);
 
     let replayEnded = false;
+    /** The live's pending reports this cut closed, so their moderators recount. */
+    let closedReportIds: string[] = [];
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
       replayEnded = false;
       // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
@@ -1840,11 +1873,12 @@ export class LivesService implements OnModuleDestroy {
         : (await this.cutOf(tx, liveId))!;
       if (newlyCut) {
         // The report's own trail, as a moderator closing it by hand would leave it.
-        await tx.query(
+        const [closed] = (await tx.query(
           `UPDATE content_reports SET status = 'reviewed', "reviewedBy" = $2, "reviewedAt" = now()
-            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending'`,
+            WHERE "contentType" = 'live' AND "contentId" = $1 AND status = 'pending' RETURNING id`,
           [liveId, reviewerId]
-        );
+        )) as [{ id: string }[], number];
+        closedReportIds = closed.map((r) => r.id);
       }
       return {
         liveId,
@@ -1868,6 +1902,9 @@ export class LivesService implements OnModuleDestroy {
           (result.standing.withdrawalDue ? ' withdrawalDue' : '')
       );
       await this.notifyCut(result);
+    }
+    if (closedReportIds.length > 0) {
+      void this.tellAdminQueues({ queue: 'moderation', reportIds: closedReportIds });
     }
     if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');
@@ -2172,10 +2209,102 @@ export class LivesService implements OnModuleDestroy {
     });
     if (lifted) {
       this.logger.log(`[LIVE_STRIKE] ${short(target)}'s withdrawal lifted by ${short(reviewerId)}`);
+      // Told like the sanction was (principle 6: a sanction lifted has the voice of the sanction):
+      // no actor, one fixed sentence. Best effort - the lift is made, a lost notice is logged.
+      try {
+        await this.notifications.createNotification({
+          recipientId: target,
+          type: 'live_reinstated',
+          postId: target,
+          actorId: '',
+          actorName: '',
+          text: '',
+          pushData: { target: NOTIFICATIONS_TARGET },
+        });
+      } catch (e) {
+        this.logger.warn(
+          `[LIVE_STRIKE] ${short(target)}: the reinstatement notice was not written: ${causeOf(e)}`
+        );
+      }
     } else {
       this.logger.debug(`[LIVE_STRIKE] lift of ${short(target)}: nothing withdrawn`);
     }
     return { userId: target, lifted };
+  }
+
+  /**
+   * STAFF READ of one account's standing, with no report in between (`GET
+   * /api/lives/broadcasters/:userId/standing`): the cuts on record, the suspension, the withdrawal
+   * with its reason, and the name to draw. The caller's scope is the controller's.
+   */
+  async broadcasterStanding(userId: string): Promise<BroadcasterStanding> {
+    const target = parseAccountId(userId);
+    this.logger.debug(`[LIVE_STRIKE] staff read of ${short(target)}'s standing`);
+    const rows = await this.broadcasterStandingRows([target]);
+    return rows[0] ?? (await this.unknownBroadcasterStanding(target));
+  }
+
+  /**
+   * Every account whose right to broadcast is withdrawn, newest withdrawal first, narrowed by `scope`
+   * (the people the caller may act on) BEFORE the cap of {@link WITHDRAWN_LIST_MAX}, so a scoped
+   * moderator never misses a row because other people's withdrawals filled the page. Only ids are
+   * read unbounded (a withdrawal is rare). The list reads `live_broadcast_withdrawals`, never a
+   * report: a withdrawal is a standing of the member and must stay reachable once every report
+   * naming them is handled.
+   */
+  async listWithdrawn(
+    scope: (userIds: string[]) => Promise<Set<string>>
+  ): Promise<BroadcasterStanding[]> {
+    const all: { userId: string }[] = await this.db.query(
+      `SELECT "userId" FROM live_broadcast_withdrawals ORDER BY "withdrawnAt" DESC, "userId"`
+    );
+    const allowed = await scope(all.map((r) => r.userId));
+    const kept = all
+      .map((r) => r.userId)
+      .filter((id) => allowed.has(id))
+      .slice(0, WITHDRAWN_LIST_MAX);
+    this.logger.debug(
+      `[LIVE_STRIKE] withdrawn list read: ${kept.length} of ${all.length} row(s) in scope`
+    );
+    return this.broadcasterStandingRows(kept);
+  }
+
+  private async broadcasterStandingRows(ids: string[]): Promise<BroadcasterStanding[]> {
+    if (ids.length === 0) return [];
+    const standings = await standingsOf(this.db.manager, ids);
+    const rows: {
+      id: string;
+      displayName: string | null;
+      reason: LiveCutReason | null;
+    }[] = await this.db.query(
+      `SELECT u.id, u."displayName", w.reason
+         FROM unnest($1::varchar[]) WITH ORDINALITY AS i(id, ord)
+         JOIN users u ON u.id = i.id
+         LEFT JOIN live_broadcast_withdrawals w ON w."userId" = u.id
+        ORDER BY i.ord`,
+      [ids]
+    );
+    return rows.flatMap((r) => {
+      const s = standings.get(r.id);
+      if (!s) return [];
+      return [
+        {
+          userId: r.id,
+          displayName: r.displayName ?? r.id,
+          cutsOnRecord: s.cutsOnRecord,
+          suspendedUntil: s.suspendedUntil,
+          withdrawnAt: s.withdrawnAt,
+          withdrawalDue: s.withdrawalDue,
+          withdrawalReason: s.withdrawnAt ? r.reason : null,
+        },
+      ];
+    });
+  }
+
+  /** An id that names no account: 404, never a clean standing (a typo must not read as "fine"). */
+  private async unknownBroadcasterStanding(target: string): Promise<never> {
+    this.logger.warn(`[LIVE_STRIKE] standing asked of ${short(target)}: no such account`);
+    throw new NotFoundException({ code: 'LIVE_BROADCASTER_NOT_FOUND' });
   }
 
   /**

@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.7.0-alpha.6"
+version = "1.7.1-alpha.2"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -42,7 +42,8 @@ tauri-plugin-restore = { path = "plugins/tauri-plugin-restore" }
 tauri-plugin-http = { version = "2.8", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-fs = "2"
-tauri-plugin-dialog = "2.7"
+# EXACT, and PATCHED (`[patch.crates-io]` below): the iOS photo picker's copies, one directory each.
+tauri-plugin-dialog = "=2.8.3"
 # EXACT, and PATCHED (`[patch.crates-io]` below): the app supplies the TCP connect. The vendored
 # patch (`patches/tauri-plugin-websocket`) makes `Builder::new` TAKE the connector and removes
 # `init()` and `Default`; an unpatched upstream `Builder::new` takes no argument, so the app's
@@ -94,6 +95,12 @@ tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 # instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/`;
 # everything else is the published crate. Why: docs/wiki/frontend/mobile.md#wry-main-pipe-patch.
 wry = { path = "patches/wry" }
+# tauri-plugin-dialog 2.8.3's iOS PHPicker copied every pick to `<caches>/<file name>` after deleting
+# whatever held that name, and appended the results from several threads at once: a pick of 11 gave
+# 3 files and 8 "No such file" (2026-11-18). The local patch gives each copy a directory of its own
+# and serialises the shared state - the `CANARI PATCH` hunks in `ios/Sources`; everything else is the
+# published crate. Why: docs/wiki/frontend/modules/chat.md (the iOS native picks).
+tauri-plugin-dialog = { path = "patches/tauri-plugin-dialog" }
 
 # The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).
 # iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app - PATCHED, see
@@ -105,6 +112,10 @@ tauri-plugin-system-components = "=0.1.8"
 # secret there; the bench command uses the same function. Already in the tree through wry, so this
 # names a version the lock carries.
 objc2 = "0.6"
+# The expiration handler of the background-time assertion every foreground seed-mirror edit holds
+# (`app_group::BackgroundTime`): an app suspended holding a lock on an App Group file is killed
+# (`0xdead10cc`). Already in the tree through objc2's users, so this names a version the lock carries.
+block2 = "0.6"
 
 # A BENCH build for the phone on the bench (`ios.yml` with `local_url`), and NOTHING else: the
 # `bench_native_store` command the cross-client rig asks the iPhone's native stores through
@@ -128,3 +139,14 @@ log = "0.4"
 # because this crate now calls it directly.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# THE HOST TOOLS ARE NEVER STRIPPED (2026-11-18). A release build strips debuginfo by default, the
+# `build-override` profile included - the proc macros and build scripts cargo compiles for the HOST
+# and loads there. On the `xcode-27` macOS runner the stripped `libsqlx_macros-*.dylib` was refused
+# by macOS 27's dyld ("mis-aligned LINKEDIT string pool"), and whether it showed depended on a
+# cache. Declared here, in the profile every build of this crate reads, and not as one script's
+# environment: no host build of it escapes. What ships is untouched - cargo never strips a
+# staticlib or a wasm, and the Xcode archive strips the app
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+[profile.release.build-override]
+strip = false

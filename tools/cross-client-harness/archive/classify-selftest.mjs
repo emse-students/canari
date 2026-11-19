@@ -2210,6 +2210,27 @@ const CUT_LINE =
 }
 
 /**
+ * THE APP'S OWN VERDICT LINE, in every spelling it states its evidence in (`notifyServerUnreachable`).
+ * A cut makes a healthy client say it, so each spelling is forgiven under `ignoringOfflineCut` - and
+ * stays dirt outside one. The allowlist once named only the bare `(transport failure)`, which no
+ * longer exists; pinned per spelling so the next rewording of the evidence fails here, not on a rig.
+ */
+for (const evidence of [
+  'transport failure: TypeError',
+  'transport failure: string',
+  '2 request deadlines in a row',
+  'login without a token',
+  'token still unavailable',
+]) {
+  const plain = await report({ cx: cxOf([['error', `[CONNECTIVITY] server unreachable (${evidence})`]]), label: 'selftest' });
+  const underCut = ignoringOfflineCut(plain);
+  const ok = plain.errors.length === 1 && underCut.errors.length === 0 && underCut.clean;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'cut'.padEnd(12)} the verdict line "${evidence}" is forgiven under a cut and only there`);
+  if (!ok) console.log(`       plain.errors=${plain.errors.length} cut.errors=${underCut.errors.length} clean=${underCut.clean}`);
+}
+
+/**
  * THE ONE NAMED ENVIRONMENT EXCEPTION (`DEV_EDGE_CSP_EXCEPTION`, 2026-10-25): the Cloudflare inline
  * script the dev edge injects is forgiven, one per document, on dev only - and every control beside
  * it stays dirt. A report taken with it must read clean, so a verdict reads PASS, never PASS-DIRTY.

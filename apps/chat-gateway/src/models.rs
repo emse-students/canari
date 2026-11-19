@@ -32,7 +32,9 @@ pub enum TokenRejection {
 /// access token at the socket.
 pub fn decode_access_claims(token: &str, secret: &[u8]) -> Result<Claims, TokenRejection> {
     let validation = Validation::new(Algorithm::HS256);
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)
+    // jsonwebtoken 12 refuses an empty HMAC key here; `main` refuses to start without JWT_SECRET.
+    let key = DecodingKey::from_secret(secret).map_err(TokenRejection::Invalid)?;
+    let claims = decode::<Claims>(token, &key, &validation)
         .map_err(TokenRejection::Invalid)?
         .claims;
     match claims.kind.as_deref() {
@@ -57,9 +59,18 @@ mod tests {
         encode(
             &Header::new(alg),
             &claims,
-            &EncodingKey::from_secret(secret),
+            &EncodingKey::from_secret(secret).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn an_empty_secret_accepts_nothing() {
+        let signed = token(None, SECRET, Algorithm::HS256);
+        assert!(matches!(
+            decode_access_claims(&signed, b""),
+            Err(TokenRejection::Invalid(_))
+        ));
     }
 
     #[test]

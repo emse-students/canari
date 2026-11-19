@@ -146,7 +146,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -309,7 +309,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -539,7 +539,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -1045,7 +1045,7 @@ jobs:
     name: Compile iOS app
     needs: [changes]
     if: ${{ needs.changes.outputs.run-ios-app == 'true' }}
-    runs-on: macos-15 # carries Xcode 26.x, which `ios.yml` REQUIRES for the same reason
+    runs-on: xcode-27 # the runner `ios.yml` builds the release on; the pin below is REQUIRED there
     timeout-minutes: 60
     permissions:
       contents: read
@@ -1054,10 +1054,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Select Xcode 26
+      # THE SAME PIN AS `ios.yml`, for the same two reasons (the iOS 27 SDK App Store Connect requires
+      # from April 2027, ITMS-90725; the Liquid Glass branch): a pull request compiles what ships.
+      - name: Select Xcode 27
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: '^26.0'
+          xcode-version: '^27.0'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -1083,7 +1085,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: frontend/src-tauri
-          key: ios-app
+          # The Xcode in the key: a build tree from another toolchain carries its link search paths
+          # and its swift-rs archives, which Xcode 27 links differently (docs/wiki/cicd.md).
+          key: ios-app-xcode-27
 
       # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
       # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),
@@ -1518,6 +1522,15 @@ jobs:
   # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
   # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
   # The container image scan (`image-scan`, 2026-10-23) is in the same half on the same terms.
+  #
+  # AND SINCE 2026-11-17 IT ASKS ABOUT WHAT WE SHIP, NOT ABOUT EVERY TOOL (owner: "Ce qu'on
+  # livre"). A picomatch ReDoS with no fixed release reached all five trees through vite, jest and
+  # @nestjs/cli and froze every pull request, though no shipped code compiles an attacker's glob.
+  # So this job audits the PRODUCTION closure (`closure: production`: the services `--prod`, the
+  # frontend in full because its devDependencies svelte, kit and protobufjs are bundled), and the
+  # nightly `scheduled.yml` keeps the full audit, where a tool's advisory is still a failure.
+  # #1229's hole stays closed for shipped code; a stable is refused on the same table
+  # (`release-preflight.sh`, gate 7). docs/wiki/cicd.md carries the measurement.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
@@ -1532,6 +1545,7 @@ jobs:
     uses: ./.github/workflows/code-analysis.yml
     with:
       scope: dependencies
+      closure: production
 
   # =================================================================================================
   # MLS CROSS-VERSION COMPATIBILITY - THE DIRECTION A FIXTURE CANNOT SEE

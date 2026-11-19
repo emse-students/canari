@@ -4,7 +4,7 @@ import type { RequestHandler } from './$types';
 /** Baked at `bun run build` so nginx can serve a static file (adapter-static). */
 export const prerender = true;
 
-/** Apple Universal Links association file for `canari-emse.fr`. */
+/** Apple Universal Links association file, served on `canari.emse.fr` and the legacy `canari-emse.fr`. */
 export const GET: RequestHandler = () => {
   const body = buildAppleAppSiteAssociationJson(import.meta.env.VITE_APPLE_TEAM_ID);
 

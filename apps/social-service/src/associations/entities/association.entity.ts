@@ -164,6 +164,14 @@ export class Association {
   color: string | null;
 
   /**
+   * The colour of this BDE's NEUTRAL ("Campus") agenda events (owner, 2026-11-14), `#rrggbb`. Null
+   * -> the derived Campus accent. Written only on a BDE (`AssociationsService.update`), carried on
+   * a neutral row's payload (`neutralEventColor`), never on any other.
+   */
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  neutralEventColor: string | null;
+
+  /**
    * Discriminates a regular association from a promo "list" and an institution. A list keeps the
    * shop, its cotisation, paid forms and the vault, but holds NO Lydia account of its own: it
    * collects only through an accepted payment delegation (`paymentParentAssociationId`). An

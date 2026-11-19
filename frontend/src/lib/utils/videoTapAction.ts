@@ -6,7 +6,13 @@
  *   sound and moved full screen to an expand chip; readers disliked it - the chip is gone (2026-11-10,
  *   and the chat's 2026-11-15), the speaker is the sound. A feed video with no viewer to open (none handed down) keeps the sound
  *   tap, and plays a paused video too (no play button is drawn there).
- * - **reel**, **lightbox** and **conversation** (full screen; owner, 2026-11-10, after "n'importe quel
+ * - **reel** (the CanaReels viewer; owner, 2026-11-18): THE TAP IS NOT THE PLAYER'S. A single tap hides or
+ *   shows the viewer's overlay (`actions/reelOverlayTap.ts`, on the slide) and never pauses - the only pause
+ *   is a press held on the picture. The player answers it only where there is a start to give: an
+ *   autoplay the engine REFUSED leaves the video paused with its play disc up, and a tap plays it (and
+ *   gives the sound if it was muted). A video that is playing, muted or not, is left alone: its sound is
+ *   the rail's speaker. **Supersedes** the reel rows below for this variant.
+ * - **lightbox** and **conversation** (full screen; owner, 2026-11-10, after "n'importe quel
  *   clic sur l'interface coupe le son"): THE TAP NEVER MUTES. It PLAYS or PAUSES, as TikTok, YouTube
  *   Shorts and Instagram Reels do since March 2026 (Instagram dropped tap-to-mute); a MUTED video's
  *   tap turns the sound ON instead (the autoplay-refused case). Sound goes off through the speaker or
@@ -31,7 +37,9 @@ export type VideoTapAction =
    * The sound, then play: a feed video on screen but paused has no button to press, and a full-screen
    * video muted AND paused gets both from one tap (its toggle can only turn the sound on).
    */
-  | 'toggle-sound-and-play';
+  | 'toggle-sound-and-play'
+  /** The picture's tap is another layer's (the reel viewer's overlay): the player does nothing. */
+  | 'none';
 
 export interface VideoTapState {
   variant: VideoVariant;
@@ -41,18 +49,31 @@ export interface VideoTapState {
   paused: boolean;
   /** The element's sound is off. */
   muted: boolean;
+  /** The autoplay was refused or failed and the reader must start the video (`reel` only reads it). */
+  autoplayRefused?: boolean;
 }
 
 /** The answer to a tap on the picture - see the table above. Pure, so it is tested as a table. */
-export function videoTapAction({ variant, canOpen, paused, muted }: VideoTapState): VideoTapAction {
+export function videoTapAction({
+  variant,
+  canOpen,
+  paused,
+  muted,
+  autoplayRefused = false,
+}: VideoTapState): VideoTapAction {
   switch (variant) {
     case 'feed':
       if (canOpen) return 'open-viewer';
       return paused ? 'toggle-sound-and-play' : 'toggle-sound';
     case 'chat':
       return canOpen ? 'open-viewer' : 'toggle-play';
-    case 'conversation':
     case 'reel':
+      // A video that is PLAYING is left alone. One that is PAUSED without a hold (a refused autoplay, an
+      // interruption: a call, audio focus, a headset) has no other way back, so the tap restarts it -
+      // it never pauses, which is what the rule forbids.
+      if (!paused && !autoplayRefused) return 'none';
+      return muted ? 'toggle-sound-and-play' : 'toggle-play';
+    case 'conversation':
     case 'lightbox':
       // Muted AND paused (an autoplay refused even muted, its play disc up): ONE tap gives both,
       // never a tap for the sound and a second for the picture.

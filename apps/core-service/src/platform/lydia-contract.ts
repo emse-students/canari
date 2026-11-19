@@ -59,7 +59,9 @@ export interface LydiaContractSettings extends LydiaContractTerms {
 export class LydiaContractInvalid extends Error {
   constructor(
     readonly field: string,
-    reason: string
+    reason: string,
+    /** A typed discriminator for the one refusal a field alone cannot tell (a band order). */
+    readonly code: 'BAND_ORDER' | null = null
   ) {
     super(`${field}: ${reason}`);
     this.name = 'LydiaContractInvalid';
@@ -153,7 +155,11 @@ export function parseLydiaContractTerms(raw: unknown): LydiaContractTerms {
   });
   for (let i = 1; i < bands.length; i++) {
     if (bands[i].fromCents <= bands[i - 1].fromCents) {
-      throw new LydiaContractInvalid(`bands[${i}].fromCents`, 'must be above the band before it');
+      throw new LydiaContractInvalid(
+        `bands[${i}].fromCents`,
+        'must be above the band before it',
+        'BAND_ORDER'
+      );
     }
   }
   return {

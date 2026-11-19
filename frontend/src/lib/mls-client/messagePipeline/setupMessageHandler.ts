@@ -9,6 +9,7 @@ import {
   resolveDirectPeerId,
   restoredConversationRow,
 } from '$lib/utils/chat/conversations';
+import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
@@ -34,7 +35,7 @@ import {
 import { replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
-import { handleSystemEvent } from './systemMessageHandler';
+import { forgetUnsealedAnswerNotice, handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -49,6 +50,8 @@ import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
 import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import { forgetHistoryAsks, noteJoinSolicited } from '$lib/utils/chat/historyAddressing';
+import { noteRegisterOwed } from '$lib/utils/chat/registerOwed';
+import { forgetBackgroundJoin, takeBackgroundJoined } from '$lib/utils/chat/backgroundJoins';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -63,6 +66,7 @@ import { receiveSkipBudgetFromServer } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { applyReactionFrame } from './reactionFrame';
+import { isLiveDelivery } from '$lib/utils/chat/reactionNotification';
 import type { MessageHandlerDeps } from './deps';
 import {
   membershipIsDurablyLost,
@@ -190,6 +194,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetReAddCooldowns();
   // And the open history asks: an addressed answer is accepted only by the session that asked.
   forgetHistoryAsks();
+  // And the once-per-session [LEGACY] line of an unsealed answer: a new session counts again.
+  forgetUnsealedAnswerNotice();
   // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
   forgetLegacyAdmissionFreeze(log);
 
@@ -268,6 +274,9 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onOutOfSync,
       onJoinAsk: deps.onJoinAsk,
       onJoinAskSettled: deps.onJoinAskSettled,
+      onInboundReaction: deps.onInboundReaction,
+      storage: deps.storage,
+      deviceKey: deps.deviceKey,
     });
   };
 
@@ -289,6 +298,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           statePersister,
           pendingBuffer,
           startRecovery,
+          admittedAt: deliveryMeta?.queuedCreatedAt,
         });
       }
 
@@ -380,6 +390,38 @@ interface WelcomeArgs {
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string, opts?: ReAddOptions) => void;
+  /**
+   * The SERVER's time of this Welcome (`queuedCreatedAt`): the moment this account was admitted,
+   * the same for each of its devices to within milliseconds (each holds its own queue row; ties
+   * break by id). The joined row's ordering seed - see {@link admissionSeed}.
+   */
+  admittedAt: number | undefined;
+}
+
+/**
+ * The ordering seed of a conversation this Welcome makes appear: the server time of the admission.
+ *
+ * WHY A JOINED ROW NEEDS ONE. It holds notices at most, and a notice is not activity
+ * (`conversationRecency`), so with no seed its sort key was 0 - the LAST row of the list. On a phone
+ * with a long list that is below the screen: the iPhone 12 (`1.7.0-alpha.5`, 2026-11-16) joined two
+ * groups with the list in front and drew neither for minutes, then listed both on the first screen
+ * after a resume, whose reconnect ran the group sweep that writes `startedAt` onto a row lacking one
+ * (`recordGroupStart`). The creator's row is seeded with its creation moment
+ * (`groupCreation`); this is the joiner's counterpart, on the server's clock like every sort key.
+ *
+ * A Welcome with no server time is a delivery that lost a field it always carries, so it is ACCUSED
+ * and nothing is invented in its place: the row then sorts by its first real message.
+ */
+function admissionSeed(
+  admittedAt: number | undefined,
+  groupId: string,
+  log: MessageHandlerDeps['log']
+): number | undefined {
+  if (admittedAt !== undefined) return admittedAt;
+  const line = `[WELCOME] ${groupId.slice(0, 8)}... the Welcome carries no server time - the joined conversation has no ordering seed and sorts last until its first real message`;
+  console.warn(line);
+  log(line);
+  return undefined;
 }
 
 /**
@@ -556,6 +598,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
     statePersister,
     pendingBuffer,
     startRecovery,
+    admittedAt,
   } = args;
   const {
     mlsService,
@@ -650,7 +693,13 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       await saveConversation(terminalId).catch(() => {});
     }
     if (!findConversationKeyByGroupId(deps.conversations, terminalId)) {
-      await writeRowForHeldGroup(terminalId, groupMeta, sender, deps);
+      await writeRowForHeldGroup(
+        terminalId,
+        groupMeta,
+        sender,
+        deps,
+        admissionSeed(admittedAt, terminalId, log)
+      );
     }
     // Server-side promotion of the membership to 'active' - REQUIRED even on this idempotent path.
     // Real case: a device that joins the group in the BACKGROUND (Welcome via FCM/JNI) does not go
@@ -662,6 +711,18 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
+    // HELD BECAUSE THE PUSH SERVICE JOINED IT, which the app was told at its start
+    // (`backgroundJoins.ts`): this redelivery is the first Welcome the page sees for the group, so it
+    // is the admission the background join made - the inviter's push solicited (from the user this
+    // Welcome came from) and the fresh join announced, as on the install path below. The register
+    // owed was written at the start.
+    if (takeBackgroundJoined(terminalId)) {
+      noteJoinSolicited(terminalId, sender);
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
+      log(
+        `[WELCOME] ${terminalId.slice(0, 8)}… joined in the background - its redelivered Welcome taken as the admission`
+      );
+    }
     onGroupReady(terminalId);
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… already held - redelivered Welcome ignored (idempotent)`
@@ -708,10 +769,23 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // OUR ADMISSION IS WHAT SOLICITS THE INVITER'S PUSH, which is addressed to this device and
       // carries no request id: recorded here, before any frame of the group can be read, so the
       // push is accepted as the answer to it (`historyAddressing.ts`).
-      noteJoinSolicited(joinedGroupId);
+      noteJoinSolicited(joinedGroupId, sender);
+      // AND OUR ADMISSION IS WHAT MAKES US OWE THE CONVERSATION'S STATE (`registerOwed.ts`), written
+      // durably here so a device the push never reached - offline at the delivery, or reloaded
+      // before it - asks for it by its own reconciliation. A key group has no conversation state.
+      if (!mlsService.isDistributionGroup(joinedGroupId)) noteRegisterOwed(userId, joinedGroupId);
+      // THE PAGE'S OWN INSTALL MAKES ANY BACKGROUND NOTE FOR THIS GROUP STALE (`backgroundJoins.ts`):
+      // forgotten, so the next start does not owe again a register this device is about to take.
+      void forgetBackgroundJoin(joinedGroupId);
+      // A FRESH JOIN, told to the announcement as a fact (`onWelcomeProcessed`'s `installed`): it is
+      // what runs the newcomer's reconciliation, which a redelivered Welcome must not.
+      // Keyed by the ENVELOPE's id, the one the drain reads it by: a Welcome delivered without one is
+      // not announced, so a mark under another id would never be read.
+      if (groupId) mlsService.noteWelcomeInstalled(groupId);
       log(
         `[HISTORY_ADDRESSED] ${joinedGroupId.slice(0, 8)}… admitted - the inviter's push is solicited`
       );
+      const seed = admissionSeed(admittedAt, joinedGroupId, log);
 
       // FIX 1 — Add the conversation to the map early, to avoid the race between the Welcome
       // (which adds the group to WASM) and the arrival of system messages
@@ -734,6 +808,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
             id: joinedGroupId,
             lifecycle: 'pending',
             identity: { contactName: joinedGroupId, displayName: joinedGroupId },
+            lastMessageAt: seed,
           })
         );
         saveConversation(joinedGroupId).catch(() => {});
@@ -751,6 +826,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
 
       // Persist immediately after Welcome (epoch initialised).
       statePersister.persistNow();
+      noteGroupTreeChanged(joinedGroupId, 'a Welcome');
 
       // A stray in-memory duplicate for the same DM peer (independent group created concurrently)
       // is reconciled by upsertConversation (below): it re-keys the Map entry, and every stored row
@@ -783,7 +859,7 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
       // H3: under the per-group lock so it does not interleave with a concurrent operation on the
       // same group (in-memory message overwrite).
       pendingRekey = await runExclusiveForGroup(joinedGroupId, () =>
-        upsertConversation(joinedGroupId, groupMeta, sender, userId, deps)
+        upsertConversation(joinedGroupId, groupMeta, sender, userId, deps, seed)
       );
 
       // Replay buffered messages (commits that arrived before the Welcome).
@@ -1237,6 +1313,8 @@ async function handleKnownGroup({
       // The commit consumed its generation the moment it merged; say so first.
       noteConsumed();
       statePersister.persistNow();
+      // The commit may have moved who the tree holds: an unnamed group's label is re-read from it.
+      noteGroupTreeChanged(groupId, 'an inbound commit');
       // THE COMMIT NAMED US, SO THIS IS WHERE THE EVICTION IS LEARNT. A Remove commit carrying our
       // own leaf leaves the group inactive the instant it merges, and asking is one cheap call on a
       // path that only runs for commits. Before this, the fact was discarded and the client found
@@ -1327,7 +1405,7 @@ async function handleKnownGroup({
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      await applyReactionFrame(
+      const outcome = await applyReactionFrame(
         {
           storage,
           deviceKey,
@@ -1341,6 +1419,21 @@ async function handleKnownGroup({
         authorship,
         deliveryMeta?.queuedCreatedAt
       );
+      // The frame trigger of a reaction notification: the decision is the caller's
+      // (`reactionNotification.ts`), this only says what the frame was and how it arrived.
+      deps.onInboundReaction?.({
+        conversationKey: convoKey,
+        messageId: msg.reaction.messageId ?? '',
+        reactorId: sender,
+        emoji: msg.reaction.emoji ?? '',
+        at: Number(msg.reaction.at ?? 0),
+        removed: msg.reaction.removed === true,
+        changed: outcome.changed,
+        // The row this device holds, else the author the frame states (`target_author_id`).
+        messageAuthorId: outcome.messageAuthorId ?? (msg.reaction.targetAuthorId || null),
+        authorLookupFailed: outcome.storeFailed,
+        live: isLiveDelivery(deliveryMeta),
+      });
     } else if (msg.call || msg.groupCall) {
       // A GROUP call's signal travels under its own kind (`group_call`, WP-GC2), which a build
       // older than group calls drops as a kind it does not know; this build hands both to the call
@@ -1673,7 +1766,8 @@ async function upsertConversation(
   gData: { name?: string; isGroup?: boolean } | null,
   senderNorm: string,
   userId: string,
-  deps: MessageHandlerDeps
+  deps: MessageHandlerDeps,
+  seed: number | undefined
 ): Promise<PendingRekey | null> {
   const { conversations, saveConversation } = deps;
   let pendingRekey: PendingRekey | null = null;
@@ -1767,11 +1861,17 @@ async function upsertConversation(
     // mark set by discovery (group deleted/excluded OR false positive from a snapshot race).
     // Without this the conversation would stay locked with its "deleted" banner
     // even though we just got re-added (rule: re-add => same conversation, active).
+    // A row with a seed of its own keeps it: a re-Welcome (a re-add, a repair) is no reason to move
+    // a conversation in the list. Only a row with none - the placeholder above - takes the admission.
+    // 0 is no seed either: a row with no message, seed or start is persisted as recency 0 and read
+    // back as `lastMessageAt: 0`.
+    const lastMessageAt = existing.lastMessageAt || seed;
     const updated = {
       ...existing,
       id: joinedGroupId,
       name: displayName,
       lifecycle: 'active' as const,
+      ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     };
     if (newConvoKey !== joinedGroupId) {
       // Same DM peer under a different groupId (an independent duplicate group): re-key the
@@ -1808,6 +1908,7 @@ async function upsertConversation(
           displayName,
           ...(isDirect ? { directPeerId } : {}),
         },
+        lastMessageAt: seed,
       })
     );
   }
@@ -1856,7 +1957,8 @@ async function writeRowForHeldGroup(
   groupId: string,
   groupMeta: GroupMeta | null,
   sender: string,
-  deps: MessageHandlerDeps
+  deps: MessageHandlerDeps,
+  seed: number | undefined
 ): Promise<void> {
   const { mlsService, userId, log } = deps;
   let stored: Awaited<
@@ -1903,7 +2005,7 @@ async function writeRowForHeldGroup(
   }
   if (groupMeta) {
     const rekey = await runExclusiveForGroup(groupId, () =>
-      upsertConversation(groupId, groupMeta, sender, userId, deps)
+      upsertConversation(groupId, groupMeta, sender, userId, deps, seed)
     );
     await runPendingRekey(rekey, deps);
   } else {
@@ -1913,6 +2015,7 @@ async function writeRowForHeldGroup(
         id: groupId,
         lifecycle: 'active',
         identity: { contactName: groupId, displayName: groupId },
+        lastMessageAt: seed,
       })
     );
     await deps.saveConversation(groupId).catch((e: unknown) => {

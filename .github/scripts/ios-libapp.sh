@@ -18,7 +18,7 @@
 # `IOS_EXTRA_CARGO_FEATURES` (comma-separated, optional) is the bench build's `tauri/devtools,
 # bench-observables`; a store build and the pull-request compile leave it empty.
 #
-# Needs: rustup, macOS. `frontend/build` must already exist (`generate_context!()` embeds it).
+# Needs: rustup, macOS with Xcode 27. `frontend/build` must already exist (`generate_context!()` embeds it).
 # Usage: bash .github/scripts/ios-libapp.sh
 set -euo pipefail
 
@@ -36,6 +36,13 @@ echo "cargo features: $features"
 # rust-toolchain.toml pins the compiler and lists no `targets`, so the iOS std must be added to the
 # toolchain cargo actually uses.
 rustup target add aarch64-apple-ios
+# XCODE 27 EMITS A SWIFT `@_cdecl` EXPORT AS A LOCAL SYMBOL, so every Swift plugin's
+# `init_plugin_*` is invisible to the linker ("Undefined symbols ... _init_plugin_customtabs", the
+# first compile on the `xcode-27` runner). swift-rs promotes them back to global with rustup's
+# `llvm-objcopy` (Apple ships none) and, when the tool is missing, only WARNS and links nothing -
+# so the component is installed into the toolchain cargo uses, not left to chance
+# (docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171).
+rustup component add llvm-tools
 cargo build --lib --release --target aarch64-apple-ios --features "$features"
 
 lib="$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | sed -n 1p)"
@@ -46,4 +53,33 @@ fi
 dest="gen/apple/Externals/arm64/release"
 mkdir -p "$dest"
 cp "$lib" "$dest/libapp.a"
+
+# EVERY SWIFT PLUGIN'S ENTRY POINT IS AN EXTERNAL SYMBOL, checked HERE, by name, rather than met as
+# "Undefined symbols" at the Xcode link. Xcode 27 emits `@_cdecl` exports as LOCAL symbols and
+# swift-rs re-exports them with llvm-objcopy (above); a plugin it skipped would otherwise surface
+# twenty minutes later, without saying which mechanism failed. Every `_init_plugin_*` the Rust
+# objects reference (`U`) must be defined external (`T`) in the same archive.
+#
+# RUSTUP'S `llvm-nm`, NOT XCODE'S `nm`: the archive carries rustc's LLVM bitcode, which Apple's
+# older LLVM cannot read ("Unknown attribute kind (105)", one error per member, and a non-zero
+# exit). The `llvm-tools` component installed above ships the reader of the same LLVM as rustc.
+host="$(rustc -vV | awk '/^host:/ {print $2}')"
+llvm_nm="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-nm"
+if [ ! -x "$llvm_nm" ]; then
+  echo "::error::$llvm_nm is missing - the llvm-tools component did not install"
+  exit 1
+fi
+symbols="$("$llvm_nm" -g "$dest/libapp.a")"
+wanted="$(echo "$symbols" | awk '$1 == "U" && $2 ~ /^_init_plugin_/ {print $2}' | sort -u)"
+defined="$(echo "$symbols" | awk '$2 == "T" && $3 ~ /^_init_plugin_/ {print $3}' | sort -u)"
+if [ -z "$wanted" ]; then
+  echo "::error::libapp.a references no _init_plugin_* symbol - this check would pass on nothing"
+  exit 1
+fi
+missing="$(comm -23 <(echo "$wanted") <(echo "$defined"))"
+if [ -n "$missing" ]; then
+  echo "::error::libapp.a does not export these Swift plugin entry points (local or absent): $(echo "$missing" | tr '\n' ' ')"
+  exit 1
+fi
+echo "Swift plugin entry points exported: $(echo "$wanted" | tr '\n' ' ')"
 echo "libapp.a staged at $dest ($(du -h "$dest/libapp.a" | cut -f1))"

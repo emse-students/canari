@@ -57,11 +57,17 @@ describe('PostInteractionsService - comment identity', () => {
       save: jest.fn((p: unknown) => Promise.resolve(p)),
       manager: lockedCommentsManager(post as { comments?: unknown[] }, query),
     };
+    const mayActOnAny = jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids)));
     const associations = {
       isContentModerator: jest.fn(() => Promise.resolve(false)),
       moderatedPostIds: () => Promise.resolve(new Set<string>()),
       mayModeratePost: jest.fn(() => Promise.resolve(false)),
-      mayActOnAny: jest.fn((_u: string, ids: string[]) => Promise.resolve(new Set(ids))),
+      mayActOnAny,
+      // The pencil's membership read, answered by `mayActOnAny` above: no institution moderated.
+      commentStandings: jest.fn(async (u: string, ids: string[]) => ({
+        postAs: await mayActOnAny(u, ids),
+        moderatedInstitutions: new Set<string>(),
+      })),
       listFlagHolders: jest.fn(() => Promise.resolve(holders)),
     };
     const identity = new CommentIdentityService(
@@ -93,6 +99,10 @@ describe('PostInteractionsService - comment identity', () => {
       );
       associations.moderatedAssociationIds = jest.fn((_u: string, ids: string[]) =>
         Promise.resolve(new Set(ids.filter((id) => id === CLUB)))
+      );
+      // A BDE's moderator holds MODERATE in no institution, and the pencil is nobody's here.
+      associations.commentStandings = jest.fn((_u: string, _ids: string[]) =>
+        Promise.resolve({ postAs: new Set<string>(), moderatedInstitutions: new Set<string>() })
       );
       associations.refuseModeration = jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_RESERVED_TO_PLATFORM_ADMIN' }))

@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const isTauriRuntime = vi.fn(() => true);
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => isTauriRuntime() }));
 
-const coreUrl = vi.fn(() => 'https://canari-emse.fr');
+const coreUrl = vi.fn(() => 'https://canari.emse.fr');
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => coreUrl() }));
 
 const deviceOs = vi.fn(() => 'ios');
@@ -44,7 +44,7 @@ function apiAt(origin: string) {
 
 afterEach(() => {
   isTauriRuntime.mockReturnValue(true);
-  apiAt('https://canari-emse.fr');
+  apiAt('https://canari.emse.fr');
   deviceOs.mockReturnValue('ios');
 });
 
@@ -53,7 +53,7 @@ describe('usesBodyRefreshTransport', () => {
     // WKWebView blocks the third-party class through ITP and publishes no opt-in, so no server-side
     // cookie attribute can rescue it. This answer must not become conditional on the deployment.
     servedOver('tauri:');
-    apiAt('https://canari-emse.fr');
+    apiAt('https://canari.emse.fr');
     expect(usesBodyRefreshTransport()).toBe(true);
     apiAt('http://localhost:8081');
     expect(usesBodyRefreshTransport()).toBe(true);
@@ -63,7 +63,7 @@ describe('usesBodyRefreshTransport', () => {
     // WP-ANDROID-SESS-1 verified that durability on hardware, and A1 re-confirmed it across an
     // `am force-stop` on 2026-08-27. Production and dev are HTTPS, so this is the branch they take
     // and nothing proven on hardware is re-decided.
-    apiAt('https://canari-emse.fr');
+    apiAt('https://canari.emse.fr');
     servedOver('http:');
     expect(usesBodyRefreshTransport()).toBe(false);
     servedOver('https:');

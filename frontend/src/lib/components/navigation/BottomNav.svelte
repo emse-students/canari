@@ -85,7 +85,11 @@
           {#if badge > 0}
             <span
               class="absolute -bottom-2 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-red-500"
-              aria-label={m.chat_unread_messages_label({ count: badge })}
+              aria-label={place.id === 'dashboard'
+                ? m.admin_hub_pending_count({ count: badge })
+                : place.id === 'notifications'
+                  ? m.dashboard_unread_notifications_label({ count: badge })
+                  : m.chat_unread_messages_label({ count: badge })}
             ></span>
           {/if}
         </span>

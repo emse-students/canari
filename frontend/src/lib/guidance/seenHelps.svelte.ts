@@ -5,6 +5,7 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { Log } from '$lib/utils/Log';
+import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { HELP_ID_UNKNOWN, isHelpId, type HelpId } from './helpIds';
 
 /**
@@ -223,6 +224,15 @@ export class SeenHelps {
       if (isTransportFailure(e)) {
         Log.i('seenHelps', 'the seen set could not be read - asked again at the reconnect');
         this.#owe();
+        return;
+      }
+      // THE SESSION ENDED UNDER THE READ - by the server's verdict (`SessionExpiredError`, and its
+      // subclass for a device its owner revoked) or by a sign-out already under way. Classified at the
+      // throw, by TYPE: the end has its own announcement and its own reaction (the logout, or the
+      // full reset), so a reader that lost its credential to it stands down - an error here would
+      // accuse the designed answer. The next account's `load` asks again.
+      if (e instanceof SessionExpiredError || e instanceof SignOutInProgressError) {
+        Log.i('seenHelps', `the seen set was not read - the session ended (${e.name})`);
         return;
       }
       console.error('[seenHelps] reading the seen set failed', e);

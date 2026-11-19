@@ -185,7 +185,8 @@ and this page carries the reasoning.
 - **Names are in the clear.** `dm_groups.name`, `channel_workspaces.name`, `channels.name` and the
   community `slug` are plaintext columns, and push notifications carry the sender and group names in
   the clear to FCM and APNs ([DSO dossier](../compliance/dso-dossier.md)). Encrypting them was raised
-  by the user on 2026-10-21 and is not designed yet. Its constraints are in the backlog entry.
+  by the user on 2026-10-21. The design, every server-side reader and the first step (built
+  2026-11-17) are on [sealed-names](sealed-names.md).
 - **What v2 does not close holds for both**: the server can admit a device it controls or publish a
   false key for one (BasicCredential, [§21](channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)).
   Key transparency or an out-of-band safety number would be the answer for both systems.

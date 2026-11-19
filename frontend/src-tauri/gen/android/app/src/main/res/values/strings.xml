@@ -146,6 +146,12 @@
     <string name="notif_social_live_suspended_body">Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.</string>
     <string name="notif_social_live_withdrawn_title">Droit de lancer un live retiré</string>
     <string name="notif_social_live_withdrawn_body">La modération vous a retiré le droit de lancer un live.</string>
+    <string name="notif_social_live_reinstated_title">Droit de lancer un live rétabli</string>
+    <string name="notif_social_live_reinstated_body">La modération vous a rendu le droit de lancer un live ; une suspension en cours reste appliquée jusqu\'à sa fin.</string>
+    <string name="notif_social_admin_profile_correction_title">Demande de correction de profil</string>
+    <string name="notif_social_admin_profile_correction_body">Une personne demande une correction de son profil.</string>
+    <string name="notif_social_admin_report_title">Nouveau signalement</string>
+    <string name="notif_social_admin_report_body">Un contenu ou une personne a été signalé.</string>
     <string name="notif_social_booking_cancelled_title">%1$s a annulé une réservation</string>
     <string name="notif_social_booking_cancelled_body">Elle n\'aura pas lieu</string>
     <string name="notif_social_booking_withdrawn_title">%1$s a quitté votre réservation</string>

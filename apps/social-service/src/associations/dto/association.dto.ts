@@ -149,6 +149,15 @@ export class UpdateAssociationDto {
   @Matches(/^(#[0-9A-Fa-f]{6})?$/)
   color?: string | null;
 
+  /**
+   * Hex colour of a BDE's neutral ("Campus") events; `""` or `null` clears it (the derived accent).
+   * Accepted only on a BDE, and by the same right as `color` (EDIT_PROFILE).
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^(#[0-9A-Fa-f]{6})?$/)
+  neutralEventColor?: string | null;
+
   /** When true, archives the association (moves it to "Anciennes", hides from "Mes associations"). */
   @IsBoolean()
   @IsOptional()
@@ -230,7 +239,10 @@ export class AddMemberDto {
   // inert unless the association is the BDE of a space (`spaces/bde.ts`). MANAGE_ASSO then reaches the
   // associations it is the PARENT of (WP-D2); MODERATE reaches what those associations publish AND
   // the people of every space it governs, with their personal posts (`bdeModeratesUserSql`,
-  // `spaces/bde-moderation.ts`).
+  // `spaces/bde-moderation.ts`). Two exceptions by kind (owner, 2026-11-15): MODERATE in an
+  // INSTITUTION reaches that institution's own content, governing a space or not, and never a
+  // person (`institutionModeratesOwnSql`); VALIDATE_EVENTS in an institution governing a space keeps
+  // that space's agenda.
   permissions: number;
 }
 
