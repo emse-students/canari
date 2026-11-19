@@ -47,6 +47,7 @@ earliest version, as a checklist.
 - [Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)](backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md)
 - [Campus trends and the daily cap, WP-8, WP-10 and the quieter batch: the iPhone's last rows, owed on the phone (a reading moved to 1.7.1)](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)
 - [Rotation on the video, live and camera screens, owed on both phones (a reading deferred to 1.7.1)](backlog.d/rotation-on-video-and-camera-screens.md)
+- [Read the live viewer's sound at open and its landscape reactions on the phones (owner, 2026-11-19)](backlog.d/live-viewer-sound-and-landscape-reactions-phone-reading.md)
 - [The owner's decisions of 2026-11-19](backlog.d/owner-decisions-of-2026-11-19.md)
 
 **P2 - correctness**
