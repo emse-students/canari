@@ -2554,9 +2554,13 @@ command. **A stable is refused earlier still, before the bump and both store upl
 version in the stores and production behind them. The verdict is already known by then - the
 `miconnect-preflight` job of `scheduled.yml` runs the same read-only preflight against production
 every morning, as a check run of its own named `MiConnect production preflight` - so
-`release-preflight.sh` reads that check run, on the stable's commit first and then on `main`'s last 50
-commits, and refuses unless the newest completed one SUCCEEDED and judged the very authentik pin the
-stable ships (a pin, not a date, decides whether it still applies). Each refusal names the run, and
+`release-preflight.sh` reads that check run on the stable's commit AND `main`'s last 50 commits
+together, and refuses unless the newest one that reached a verdict SUCCEEDED and judged the very
+authentik pin the stable ships (a pin, not a date and not an ancestry, decides whether it still
+applies). Every other run of `scheduled.yml` posts the job `skipped`, newer than the morning's, so
+skipped runs, runs cancelled before a runner took them, and check runs of any app but GitHub Actions
+are passed over; the winner is resolved through the Actions API as a job of `scheduled.yml` itself,
+and a failed API call is refused as undecidable, naming the call, never read as "no run". Each refusal names the run, and
 the remedy is `gh workflow run scheduled.yml --ref <alpha tag> -f job=miconnect-preflight`, then
 `gh run rerun` of the release. The job is its own so its conclusion is the preflight's alone, never
 mixed with the image report that `drift` may be red on. The serve-prod step stays: it is the same

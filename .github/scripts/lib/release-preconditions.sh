@@ -382,41 +382,101 @@ classify_miconnect_preflight() {
 # The job's name, as GitHub names its check run - read by gate 8, written by `scheduled.yml`.
 MICONNECT_PREFLIGHT_CHECK="${MICONNECT_PREFLIGHT_CHECK:-MiConnect production preflight}"
 
-# Gate 8's reading: the newest COMPLETED check run of that job, looked for on the stable's own commit
-# first (a run dispatched on the alpha's tag lands there), then on `main`'s last 50 commits, newest
-# first (the morning run lands on `main`'s head of that moment). Prints `<conclusion>\t<url>\t<sha>`
-# or nothing. A pure reader: the API is the `gh` on PATH (the self-test's fake).
+# The workflow file whose job gate 8 believes - a check run of the same name from anywhere else is
+# not its verdict.
+MICONNECT_PREFLIGHT_WORKFLOW="${MICONNECT_PREFLIGHT_WORKFLOW:-.github/workflows/scheduled.yml}"
+
+# miconnect_preflight_candidates <sha> - one line `<completed_at>\t<check run id>\t<conclusion>\t<url>`
+# per check run of that job on that commit that RAN TO A VERDICT. Every run of `scheduled.yml` posts
+# the job, and all but the 07:30 one and a dispatch post it `skipped` (measured on main 2026-11-19:
+# started_at == completed_at, no runner, no step), so a skipped run is no verdict and never read.
+# `filter=all`, not `latest`: `latest` keeps one run per name, and that one is the newest SKIPPED.
+# Only `github-actions` writes it: another app may post a check run of any name.
+miconnect_preflight_candidates() {
+  gh api -X GET "repos/$REPO/commits/$1/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=all -f per_page=100 \
+    --jq ".check_runs[] | select(.name == \"$MICONNECT_PREFLIGHT_CHECK\" and .app.slug == \"github-actions\" and .status == \"completed\" and .conclusion != \"skipped\") | [.completed_at, .id, .conclusion, .html_url] | @tsv"
+}
+
+# Gate 8's reading. Prints ONE line:
+#   run\t<conclusion>\t<url>\t<sha>   the newest verdict of the job
+#   absent                            no run of it reached a verdict
+#   error\t<what>                     an API call failed, and failing is not "no run"
+# THE NEWEST BY completed_at ACROSS the stable's own commit (a run dispatched on the alpha's tag
+# lands there) AND main's last 50 commits (the morning run lands on main's head of that moment),
+# taken together: a commit's ancestry says nothing about what production can take, the pin the run
+# judged does, and the gate compares that pin. So an old success on the stable's commit loses to a
+# newer failure on main.
+# THE JOB, NOT THE NAME (S3 of the third review, 2026-11-19): the check-run listing is per commit,
+# which is how a verdict is tied to the pin it judged; the alternative, the workflow's run list, is
+# paged by time and 96 runs a day of the 15-minute slot crowd the morning one out of a page. So the
+# listing finds the candidates, and the winner is then resolved as a JOB: a check run of GitHub
+# Actions has its job's id (measured), the job names its run, and the run names its workflow file,
+# which must be `scheduled.yml`. A run cancelled before a runner took it (no `runner_name`) never
+# judged anything and is passed over as absent; one cancelled while running is a refusal.
+# A pure reader: the API is the `gh` on PATH (the self-test's fake runs these --jq through jq).
 miconnect_preflight_reading() {
-  local target="$1" sha line
-  for sha in "$target" $(gh api "repos/$REPO/commits?sha=main&per_page=50" --jq '.[].sha' 2>/dev/null); do
-    line="$(gh api -X GET "repos/$REPO/commits/$sha/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=latest \
-      --jq '[.check_runs[] | select(.status == "completed")] | sort_by(.completed_at) | last | select(. != null) | [.conclusion, .html_url] | @tsv' 2>/dev/null)" || line=''
-    if [ -n "$line" ]; then
-      printf '%s\t%s\n' "$line" "$sha"
+  local target="$1" shas sha lines="" more _completed id conclusion url job runner run_id path
+  if ! shas="$(gh api "repos/$REPO/commits?sha=main&per_page=50" --jq '.[].sha' 2>/dev/null)"; then
+    printf 'error\tGET repos/%s/commits?sha=main failed\n' "$REPO"
+    return 0
+  fi
+  for sha in $(printf '%s\n%s\n' "$target" "$shas" | awk 'NF && !seen[$0]++'); do
+    if ! more="$(miconnect_preflight_candidates "$sha" 2>/dev/null)"; then
+      printf 'error\tGET repos/%s/commits/%s/check-runs failed\n' "$REPO" "$sha"
       return 0
     fi
+    if [ -n "$more" ]; then lines+="$(awk -v s="$sha" 'NF { print $0 "\t" s }' <<<"$more")"$'\n'; fi
   done
+  while IFS=$'\t' read -r _completed id conclusion url sha; do
+    [ -n "$id" ] || continue
+    if ! job="$(gh api "repos/$REPO/actions/jobs/$id" --jq '[.run_id, (.runner_name // "")] | @tsv' 2>/dev/null)"; then
+      printf 'error\tGET repos/%s/actions/jobs/%s failed\n' "$REPO" "$id"
+      return 0
+    fi
+    IFS=$'\t' read -r run_id runner <<<"$job"
+    if ! path="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.path' 2>/dev/null)"; then
+      printf 'error\tGET repos/%s/actions/runs/%s failed\n' "$REPO" "$run_id"
+      return 0
+    fi
+    if [ "$path" != "$MICONNECT_PREFLIGHT_WORKFLOW" ]; then
+      printf "error\tthe newest '%s' check run (%s) is a job of %s, not of %s - two jobs must not share that name\n" \
+        "$MICONNECT_PREFLIGHT_CHECK" "$url" "${path:-an unknown workflow}" "$MICONNECT_PREFLIGHT_WORKFLOW"
+      return 0
+    fi
+    if [ "$conclusion" = cancelled ] && [ -z "$runner" ]; then continue; fi
+    printf 'run\t%s\t%s\t%s\n' "$conclusion" "$url" "$sha"
+    return 0
+  done < <(sort -r <<<"$lines")
+  printf 'absent\n'
 }
 
 # Gate 8's loop. Needs the caller's printers (`ok`, `refuse`, `hint`), `REPO`, `TARGET_SHA`, and the
 # released tree checked out (its compose.yml is the pin this stable ships).
 miconnect_preflight_gate() {
-  local here reading conclusion url sha shipped judged tmp verdict
+  local here reading kind conclusion url sha shipped judged tmp verdict
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/authentik/release-lib.sh
   source "$here/../../../infrastructure/authentik/release-lib.sh"
   shipped="$(ak_pin_image infrastructure/authentik/compose.yml 2>/dev/null)" || shipped=''
   reading="$(miconnect_preflight_reading "$TARGET_SHA")"
-  IFS=$'\t' read -r conclusion url sha <<<"$reading"
+  IFS=$'\t' read -r kind conclusion url sha <<<"$reading"
   judged=''
-  if [ -n "${sha:-}" ]; then
-    tmp="$(mktemp)"
-    if gh api "repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha" -H 'Accept: application/vnd.github.raw' >"$tmp" 2>/dev/null; then
-      judged="$(ak_pin_image "$tmp" 2>/dev/null)" || judged=''
-    fi
-    rm -f "$tmp"
-  fi
-  verdict="$(classify_miconnect_preflight "${conclusion:-}" "$judged" "$shipped")"
+  case "$kind" in
+    run)
+      tmp="$(mktemp)"
+      if gh api "repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha" -H 'Accept: application/vnd.github.raw' >"$tmp" 2>/dev/null; then
+        judged="$(ak_pin_image "$tmp" 2>/dev/null)" || judged=''
+        verdict="$(classify_miconnect_preflight "$conclusion" "$judged" "$shipped")"
+      else
+        verdict="undecidable GET repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha failed"
+      fi
+      rm -f "$tmp"
+      ;;
+    absent) verdict=absent conclusion='' url='' ;;
+    # An API failure is classified HERE, where it is known, never read later as "no run".
+    error) verdict="undecidable $conclusion" url='' ;;
+    *) verdict="undecidable the reading came back unparsed" url='' ;;
+  esac
   case "$verdict" in
     passed)
       ok "production MiConnect would take $shipped: the preflight passed in $url"
@@ -431,7 +491,7 @@ miconnect_preflight_gate() {
       refuse "the newest MiConnect preflight ($url) judged ${verdict#stale }, not the $shipped this stable ships"
       ;;
     absent)
-      refuse "no completed '$MICONNECT_PREFLIGHT_CHECK' run on ${TARGET_SHA:0:8} nor on main's last 50 commits"
+      refuse "no '$MICONNECT_PREFLIGHT_CHECK' run reached a verdict on ${TARGET_SHA:0:8} nor on main's last 50 commits (skipped runs and runs cancelled before they started are not verdicts)"
       ;;
     *)
       refuse "could not decide - ${verdict#undecidable }${url:+ (run: $url)}"

@@ -554,24 +554,67 @@ if grep -qxF '  miconnect_preflight_gate' "$PREFLIGHT"; then
 else
   fail 'release-preflight.sh does not run gate 8'
 fi
+# Gate 8 reads check runs, jobs and runs: the preflight job's token must be granted all three reads.
+G8_PERMS="$(awk '/^  preflight:/ { on = 1 } on && /^    outputs:/ { exit } on' "$(dirname "$PREFLIGHT")/../workflows/release.yml")"
+if grep -qx '      checks: read' <<<"$G8_PERMS" && grep -qx '      actions: read' <<<"$G8_PERMS"; then
+  pass "release.yml's preflight job may read the check runs, jobs and runs gate 8 reads"
+else
+  fail "release.yml's preflight job lacks checks: read or actions: read - gate 8 would refuse every stable"
+fi
 
-# THE READING, against a fake `gh`: the stable's own commit first, then main's newest commits; the
-# check run's conclusion and link; the compose file of the commit it ran on.
+# THE READING, against a fake `gh` that RECORDS THE API and runs the caller's own `--jq` through the
+# real jq: the selection gate 8 makes (skipped, cancelled before or after it started, another app,
+# another workflow, the newest across every commit) is exercised exactly as GitHub's answers would
+# meet it. Check runs are `check-<sha>.json`, a job `job-<id>.json`, a run `run-<id>.json`, and a
+# path containing what `fail` holds answers like a 502.
 G8="$(mktemp -d)"
 mkdir -p "$G8/bin" "$G8/tree/infrastructure/authentik"
 cat >"$G8/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
-all="$*"
-case "$all" in
-  *"commits?sha=main"*) cat "$G8_DIR/main" ;;
-  *"/check-runs"*) sha="${all#*commits/}"; sha="${sha%%/*}"; if [ -f "$G8_DIR/check-$sha" ]; then cat "$G8_DIR/check-$sha"; fi ;;
-  *"/contents/"*) sha="${all#*ref=}"; sha="${sha%% *}"; cat "$G8_DIR/compose-$sha" ;;
-  *) echo "unexpected gh $*" >&2; exit 1 ;;
+shift # api
+path='' expr=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X | -f | -H) shift 2 ;;
+    --jq) expr="$2"; shift 2 ;;
+    *) path="$1"; shift ;;
+  esac
+done
+if [ -s "$G8_DIR/fail" ] && [[ "$path" == *"$(cat "$G8_DIR/fail")"* ]]; then
+  echo "gh: Server Error (HTTP 502)" >&2
+  exit 1
+fi
+case "$path" in
+  *"commits?sha=main"*) file="$G8_DIR/main.json" ;;
+  *"/check-runs") sha="${path#*commits/}"; file="$G8_DIR/check-${sha%%/*}.json"; [ -f "$file" ] || file="$G8_DIR/none.json" ;;
+  *"/actions/jobs/"*) file="$G8_DIR/job-${path##*/}.json" ;;
+  *"/actions/runs/"*) file="$G8_DIR/run-${path##*/}.json" ;;
+  *"/contents/"*) cat "$G8_DIR/compose-${path#*ref=}"; exit ;;
+  *) echo "unexpected gh api $path" >&2; exit 1 ;;
 esac
+[ -f "$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+if [ -n "$expr" ]; then jq -r "$expr" "$file"; else cat "$file"; fi
 FAKE
 chmod +x "$G8/bin/gh"
+printf '{"check_runs":[]}\n' >"$G8/none.json"
 compose_pinning() { printf 'services:\n  server:\n    image: g/s:%s\n  worker:\n    image: g/s:%s\n' "$1" "$1"; }
 compose_pinning 2026.8.5 >"$G8/tree/infrastructure/authentik/compose.yml"
+for c in target m1 m2 m3; do compose_pinning 2026.8.5 >"$G8/compose-$c"; done
+printf '[{"sha":"m1"},{"sha":"m2"},{"sha":"m3"}]\n' >"$G8/main.json"
+# cr <id> <conclusion> <completed_at> [app slug] [name] - one check run, as GitHub writes it.
+cr() {
+  printf '{"id":%s,"name":"%s","status":"completed","conclusion":"%s","started_at":"%s","completed_at":"%s","html_url":"https://run/%s","app":{"slug":"%s"}}' \
+    "$1" "${5:-MiConnect production preflight}" "$2" "$3" "$3" "$1" "${4:-github-actions}"
+}
+# checks <sha> <check run>... - that commit's check runs.
+checks() { local sha="$1"; shift; printf '{"check_runs":[%s]}\n' "$(IFS=,; echo "$*")" >"$G8/check-$sha.json"; }
+# job <id> <runner or empty> [workflow path] - the job behind a check run, and its run's workflow.
+job() {
+  local runner='null'
+  if [ -n "$2" ]; then runner="\"$2\""; fi
+  printf '{"id":%s,"run_id":%s,"runner_name":%s}\n' "$1" "$((1000 + $1))" "$runner" >"$G8/job-$1.json"
+  printf '{"id":%s,"path":"%s"}\n' "$((1000 + $1))" "${3:-.github/workflows/scheduled.yml}" >"$G8/run-$((1000 + $1)).json"
+}
 # gate8: runs the loop from the released tree with stub printers, sets G8_OUT.
 gate8() {
   G8_OUT="$(
@@ -584,46 +627,47 @@ gate8() {
     printf 'FAILED=%s\n' "$FAILED"
   )"
 }
-printf 'm1\nm2\n' >"$G8/main"
-printf 'success\thttps://run/1\n' >"$G8/check-m2"
-compose_pinning 2026.8.5 >"$G8/compose-m2"
-gate8
-if grep -qx 'FAILED=0' <<<"$G8_OUT" && grep -qF 'https://run/1' <<<"$G8_OUT"; then
-  pass "the morning run on main, on this pin, green: gate 8 passes, naming the run"
-else
-  fail "a green morning run on this pin did not pass: $G8_OUT"
-fi
-printf 'failure\thttps://run/2\n' >"$G8/check-m1"
-compose_pinning 2026.8.5 >"$G8/compose-m1"
-gate8
-if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF 'https://run/2' <<<"$G8_OUT" && grep -qF 'gh run rerun 4242' <<<"$G8_OUT"; then
-  pass "the NEWEST run is read: a red one refuses, naming it and the remedy"
-else
-  fail "a newer red run did not refuse: $G8_OUT"
-fi
-printf 'success\thttps://run/3\n' >"$G8/check-target"
+# expect_g8 <0|1> <text the output must hold> <what passing means>
+expect_g8() {
+  gate8
+  if grep -qx "FAILED=$1" <<<"$G8_OUT" && grep -qF -- "$2" <<<"$G8_OUT"; then pass "$3"; else fail "$3 - got: $G8_OUT"; fi
+}
+
+# Every scheduled.yml run posts the job; all but the morning one post it skipped, newer than it.
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 15 failure 2026-11-19T09:30:00Z other-app)"
+checks m2 "$(cr 12 success 2026-11-19T07:31:00Z)" "$(cr 16 skipped 2026-11-19T07:15:00Z)"
+checks m3 "$(cr 17 skipped 2026-11-19T07:00:00Z)"
+job 12 runner-1
+expect_g8 0 'https://run/12' "the morning verdict is read past the newer skipped runs and another app's same-named check"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 13 cancelled 2026-11-19T08:00:00Z)"
+job 13 ''
+expect_g8 0 'https://run/12' "a run cancelled before a runner took it is no verdict: the older green one stands"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 14 cancelled 2026-11-19T08:30:00Z)"
+job 14 runner-1
+expect_g8 1 "concluded 'cancelled' in https://run/14" "a run cancelled while it ran refuses, naming it"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)"
+checks target "$(cr 21 success 2026-11-18T07:31:00Z)"
+checks m2 "$(cr 22 failure 2026-11-19T07:31:00Z)"
+job 21 runner-1
+job 22 runner-1
+expect_g8 1 "concluded 'failure' in https://run/22" "an old success on the stable's own commit loses to a newer failure on main"
+checks target "$(cr 21 success 2026-11-19T10:00:00Z)"
+expect_g8 0 'https://run/21' "a run dispatched on the stable's own commit wins when it is the newest"
+compose_pinning 2026.8.0 >"$G8/compose-target"
+expect_g8 1 'judged g/s:2026.8.0, not the g/s:2026.8.5' "a green run on ANOTHER pin refuses as stale"
 compose_pinning 2026.8.5 >"$G8/compose-target"
-gate8
-if grep -qx 'FAILED=0' <<<"$G8_OUT" && grep -qF 'https://run/3' <<<"$G8_OUT"; then
-  pass "a run dispatched on the stable's own commit is read first"
-else
-  fail "the stable's own commit was not read first: $G8_OUT"
-fi
-rm -f "$G8/check-target" "$G8/check-m1"
-compose_pinning 2026.8.0 >"$G8/compose-m2"
-gate8
-if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF 'judged g/s:2026.8.0, not the g/s:2026.8.5' <<<"$G8_OUT"; then
-  pass "a green run on ANOTHER pin refuses as stale"
-else
-  fail "a run on another pin was taken as permission: $G8_OUT"
-fi
-rm -f "$G8/check-m2"
-gate8
-if grep -qx 'FAILED=1' <<<"$G8_OUT" && grep -qF "no completed 'MiConnect production preflight' run" <<<"$G8_OUT"; then
-  pass "no run at all refuses, saying none was found"
-else
-  fail "an absent run did not refuse: $G8_OUT"
-fi
+job 21 runner-1 .github/workflows/ci.yml
+expect_g8 1 'two jobs must not share that name' "a same-named job of ANOTHER workflow is no verdict, and says so"
+job 21 runner-1
+for call in 'commits?sha=main' 'commits/m2/check-runs' 'actions/jobs/21' 'actions/runs/1021' 'contents/'; do
+  printf '%s' "$call" >"$G8/fail"
+  expect_g8 1 "could not decide - GET repos/o/r/" "an API failure on $call is undecidable, never 'no run'"
+  grep -qF -- "$call" <<<"$G8_OUT" || fail "  the refusal does not name the failed call $call: $G8_OUT"
+done
+: >"$G8/fail"
+rm -f "$G8/check-target.json"
+checks m2 "$(cr 16 skipped 2026-11-19T07:15:00Z)"
+expect_g8 1 "run reached a verdict" "only skipped runs: no verdict, refused as such"
 rm -rf "$G8"
 
 printf '\n'

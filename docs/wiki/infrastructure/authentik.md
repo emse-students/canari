@@ -95,10 +95,19 @@ release wait on the one host runner) - so the verdict is not recomputed, it is C
 `-f job=miconnect-preflight`) runs `deploy-stack.sh preflight --project miconnect --newer keep`
 alone, so its check run, `MiConnect production preflight`, is the preflight's own verdict and not
 mixed with `drift`'s image report. `release-preflight.sh` reads that check run on the stable's commit
-first, then on `main`'s last 50 commits, takes the newest completed one, and refuses unless it
-SUCCEEDED and judged the authentik pin the stable ships (read from `compose.yml` at the run's
-commit): a failed run, a run on another pin, and no run at all are three refusals, each naming the
-run and the dispatch that would lift it. A pin, not a date, decides whether a verdict still holds.
+and on `main`'s last 50 commits TOGETHER, takes the newest that reached a verdict by `completed_at`,
+and refuses unless it SUCCEEDED and judged the authentik pin the stable ships (read from
+`compose.yml` at the run's commit): a failed run, a run on another pin, and no run at all are three
+refusals, each naming the run and the dispatch that would lift it. **What is not a verdict** (third
+review, 2026-11-19): every other run of `scheduled.yml` - the 15-minute slot, 02:00, 09:00 - posts
+the job `skipped` on `main`'s head, newer than the morning's (measured: `started_at` equal to
+`completed_at`, no runner, no step), so the listing asks `filter=all` and drops skipped runs; a run
+cancelled before a runner took it (`runner_name` empty) judged nothing and is passed over; and a
+check run counts only when GitHub Actions wrote it AND its job, resolved by id through
+`actions/jobs` and `actions/runs`, belongs to `scheduled.yml` - the listing is per commit, which ties
+a verdict to its pin, while the workflow's own run list is paged by time and crowded by 96 runs a
+day. **A failed API call is classified where it fails**: it refuses as undecidable and names the
+call, never "no run". A pin, not a date, decides whether a verdict still holds.
 The serve-prod step stays as the same question asked at the moment of the change.
 
 **Neither morning preflight checks the root disk ceiling** (85 %): the ceiling depends on the image
