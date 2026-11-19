@@ -57,7 +57,6 @@ earliest version, as a checklist.
 - [P2 - a DM ending in photos and a video lands on OLDER messages when the keyboard opens (`1.6.12`, Pixel 6a, 2026-11-14) - a defect, the 2026-10-30 fix does not hold](backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md)
 - [P2 - an iPhone re-announces what its extension showed after a cold start (2026-11-14; prior attempt: PR #2844, branch kept)](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)
 - [P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step](backlog.d/what-the-keyboard-readings-of-2026-11-14-filed.md)
-- [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)](backlog.d/p2-a-false-accuser-costs-n-online-elections-per-cold-start.md)
@@ -129,6 +128,7 @@ earliest version, as a checklist.
 **P2 - correctness**
 
 - [P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)](backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md)
+- [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 
 ## 1.7.3
 
@@ -139,12 +139,10 @@ _No entry planned beyond its readings._
 **Chantiers, decisions and questions (no severity)**
 
 - [A SECOND campaign, for everything that is not chat - asked 2026-08-16](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
-- [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 - [The MLS audit items that are still real, with their verified counts (swept 2026-09-12)](backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md)
 - [A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia](backlog.d/a-paid-public-form-user-2026-09-30-the-paid-half-waits-for-lydia.md)
 - [Audiences of associations, lists and institutions - built, in production since `v1.2.0`](backlog.d/audiences-of-associations-lists-and-institutions-built-in-production-since-v1-2.md)
 - [A file question on a PUBLIC form needs an abuse design first (asked by the user 2026-10-15, re-read 2026-11-11)](backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md)
-- [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
 - [Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem](backlog.d/decided-by-the-user-on-2026-10-16-the-gdpr-pass-over-the-whole-ecosystem.md)
 - [Decided by the user on 2026-10-18 - every design question answered](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md)
 - [Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable](backlog.d/decided-by-the-user-on-2026-10-19-lives-before-calls-and-what-a-live-owes.md)
@@ -154,8 +152,12 @@ _No entry planned beyond its readings._
 - [The moderation authority grid is asserted by one table-driven spec per service (owner, 2026-11-15)](backlog.d/the-moderation-authority-grid-is-asserted-by-table-driven-specs.md)
 - [The usage dashboard: who uses Canari, and how - anonymously (owner, 2026-11-16)](backlog.d/usage-dashboard-who-uses-canari-anonymously.md)
 - [A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")](backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)
+- ["Créer un groupe" from a form's respondents (owner, 2026-11-19)](backlog.d/a-group-made-from-a-form-s-respondents.md)
 - [CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)](backlog.d/canaquiz-a-live-quiz-anyone-can-run.md)
 - [The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan](backlog.d/container-auto-update.md)
+- [`LIVE_HOST_EGRESS_BPS` (90 Mb/s) rests on the workstation's path, not on the host: re-derive it and the 24-seat cap](backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md)
+- [The post search filters by person and by association (owner, 2026-11-19)](backlog.d/post-search-filters-by-person-and-by-association.md)
+- [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 
 **P2 - correctness**
 
@@ -305,7 +307,6 @@ _No entry planned beyond its readings._
 - [`dev.canari-emse.fr` - the two things that outlived the chantier](backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)
 - [The 1.5.1 Pixel log - what the catch-up fix left (2026-10-30)](backlog.d/the-1-5-1-pixel-log-what-the-catch-up-fix-left-2026-10-30.md)
 - [The Lydia enrolment and cashier chantier - decided by the user on 2026-10-30](backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)
-- [Global search (posts, forms, events, associations, people) - to design for the owner's validation after 1.6.9](backlog.d/global-search-to-design-after-1-6-9.md)
 - [Display follow-ups to the shop pricing (after the tier stack lands)](backlog.d/display-follow-ups-to-the-shop-pricing-after-the-tier-stack-lands.md)
 - [The iOS rig adapter (#1284-#1286, #1290, #1291, #1303): no board row has a verdict on the iPhone yet](backlog.d/reading-owed-the-ios-rig-adapter-1284-1286-1290-1291-1303.md)
 

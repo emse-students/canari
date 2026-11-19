@@ -44,4 +44,19 @@ Recorded so that no question answered here is asked again. The owner took them i
 17. **Everything left of Stripe is removed by the lead** (`1.7.2`), and the owner handles the administrative side ([entry](owed-to-the-user-after-the-stripe-removal.md)).
 18. **The second campaign is closed.** The server specs cover the remaining case, so the entry is deleted.
 
+19. **Lives: the app's ceiling is 300 Mb/s, and the broadcaster moves to WebCodecs in `1.8.0`.** The 90 Mb/s was the workstation's own path. The ceiling is set in the app, and nothing is changed on the host ([entry](live-host-egress-constant-rests-on-the-workstation-path.md)).
+20. **New-device notices:** a local notification when the app is in the background, disabled in one gesture. A device already in a tree this device joins is not announced. A contact's line stays 7 days ([entry](new-device-notices-three-decisions-owed.md)).
+21. **Sealed conversations:** a lift is built only once the seals are counted and honest users are shown to reach them ([entry](history-withheld-from-a-member-device-that-let-itself-in.md)).
+22. **The encryption guide was read by the owner.** It stays frank about what the server sees, and says nothing of seals. It is linked from Settings only ([entry](the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)).
+23. **A grant reaches an institution of another campus**, as today.
+24. **The "association enrolment with conditions and documents" item is dropped:** Lydia Pro collects the documents.
+25. **The global search is dropped.** The post search gains filters by person and by association in `1.8.0` ([entry](post-search-filters-by-person-and-by-association.md)).
+26. **Several media in a post show as a carousel with a counter**, in `1.7.2` ([entry](p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)).
+27. **"Créer un groupe" from a form's respondents** (a user's request), in `1.8.0`. It applies to internal, non-anonymous forms, and the button goes to whoever reads the answers ([entry](a-group-made-from-a-form-s-respondents.md)).
+28. **No Lydia re-enrolment:** *"On oublie tout ça."* Les Rootz have no Lydia account ([entry](the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)).
+29. **Readings:**
+   - The second Android package for dev is for later.
+   - The lead may reset one TEST account's terms acceptance on MiConnect for the terms-prompt reading, logged and reverted after.
+   - The guest-payment reading on dev is waived: *"tout fonctionne"*.
+
 **Taken by the lead under the standing delegation (reversible, written to the wiki):** a group-call participant's `room-empty` stops only that participant's own devices from ringing. It never ends the other members' rings: no in-app control lets a member join a call already in progress, and principle 2 of the [charter](../../principes.md) holds. The caller's own `room-empty` is unchanged. See [calls](../frontend/modules/calls.md) (WP-GC7, #3705).
