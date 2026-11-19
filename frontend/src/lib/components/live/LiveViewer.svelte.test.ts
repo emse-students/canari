@@ -324,6 +324,21 @@ describe('LiveViewer', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('keeps the top bar from overlapping: the name column has a floor, the actions are one group that wraps whole', async () => {
+    await render();
+    const identity = document.querySelector<HTMLElement>('[data-live-top-identity]')!;
+    const actions = document.querySelector<HTMLElement>('[data-live-top-actions]')!;
+    const bar = identity.parentElement!;
+    expect(actions.parentElement).toBe(bar);
+    expect(bar.classList.contains('flex-wrap')).toBe(true);
+    expect(identity.classList.contains('min-w-40')).toBe(true);
+    expect(actions.classList.contains('shrink-0')).toBe(true);
+    for (const sel of ['report', 'sound', 'chat-toggle', 'share', 'close']) {
+      expect(actions.querySelector(`[data-live-${sel}]`), sel).not.toBeNull();
+    }
+    expect(identity.contains(document.querySelector('[data-live-report]'))).toBe(false);
+  });
+
   it('carries the report flag in the top bar, outside the video and the status layer', async () => {
     await render();
     const flag = document.querySelector<HTMLElement>('[data-live-report]')!;

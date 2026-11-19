@@ -79,7 +79,10 @@ pull request.
 blueprints voyagent sur stdin avec `apply-blueprints.py`, donc rien n est monte ni
 copie dans `<miconnect-dir>`. **Un fichier de `blueprints/held/` n est jamais
 envoye** et chaque execution le nomme : c est une decision de l utilisateur,
-levee par un `git revert` (depuis le 2026-10-17, `45-consent.yaml` - voir
+levee par un `git revert`. Le dossier est vide depuis le 2026-11-18 : `45-consent.yaml`
+(les conditions d utilisation) en est sorti, et sa retenue hors de la production est
+desormais le `authorization_flow` de chaque provider dans `50-providers.yaml` (dev et
+local demandent les conditions, la production non - voir
 [authentik](../../docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)) :
 
 ```sh

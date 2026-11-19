@@ -8,7 +8,6 @@ import {
   HttpCode,
   Logger,
   Param,
-  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import {
@@ -19,6 +18,7 @@ import { ProductsService } from '../associations/products.service';
 import { LYDIA_ENROLMENT_PENDING } from '../associations/lydia-readiness';
 import { assertInternalSecret } from './internal-secret.util';
 import { claimTokenOf } from '../associations/lydia-cashier-claim';
+import { RouteParams } from '../common/route-params';
 
 /** What a `vendor_token` may look like before it is used for a lookup: printable ASCII, bounded. */
 const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
@@ -29,6 +29,7 @@ const VENDOR_TOKEN_SHAPE = /^[\x21-\x7e]{1,256}$/;
  * guarded (timing-safe) and `no-store`. A vendor token and a phone travel in the BODY, never the
  * path, so no access log records them; nothing here logs a phone.
  */
+@RouteParams({ id: 'uuid' })
 @Controller('internal/associations')
 export class InternalLydiaEnrolmentController {
   private readonly logger = new Logger(InternalLydiaEnrolmentController.name);
@@ -48,7 +49,9 @@ export class InternalLydiaEnrolmentController {
    * 200 - nothing to retry - EXCEPT for the token a pending `business/create` answered and that is
    * not linked yet (`no-holder-enrolment-in-flight`): the VALIDATED names the Business being linked,
    * so this answers 503 and core answers Lydia 503, asking for a retry. That Lydia retries a 503 is
-   * UNMEASURED. A failure to apply throws (5xx) the same way.
+   * UNMEASURED. A failure to apply throws (5xx) the same way. A VALIDATED naming the ENROLLED
+   * Business of a bridge whose historical account collects switches the association to it
+   * (`switched`, lydia-account-bridge.ts); a forged one costs one error 5 and a switch back.
    */
   @Post('lydia-readiness')
   @HttpCode(200)
@@ -57,7 +60,7 @@ export class InternalLydiaEnrolmentController {
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { vendorToken?: unknown; ready?: unknown; cause?: unknown }
   ): Promise<{
-    outcome: 'transitioned' | 'replay' | 'held-by-lydia' | 'no-holder';
+    outcome: 'transitioned' | 'switched' | 'replay' | 'held-by-lydia' | 'no-holder';
     associationId: string | null;
   }> {
     assertInternalSecret(headerSecret);
@@ -82,7 +85,15 @@ export class InternalLydiaEnrolmentController {
       });
     }
     if (!('associationId' in outcome)) return { outcome: 'no-holder', associationId: null };
-    return { outcome: outcome.kind, associationId: outcome.associationId };
+    if (outcome.kind === 'switched-back') {
+      // Only a refusal switches back; a VALIDATED never reaches it. Said, never guessed into a kind.
+      this.logger.error('[LYDIA-READINESS] a VALIDATED answered switched-back - nothing to report');
+      return { outcome: 'no-holder', associationId: outcome.associationId };
+    }
+    // A bridge switch (lydia-account-bridge.ts) is a transition, named for core's log line.
+    const kind =
+      outcome.kind === 'transitioned' && outcome.bridgeSwitched ? 'switched' : outcome.kind;
+    return { outcome: kind, associationId: outcome.associationId };
   }
 
   /** Claims the enrolment-in-flight marker before `business/create` (typed 409 otherwise). */
@@ -91,7 +102,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async claimEnrolment(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id') id: string
   ): Promise<{ ok: true }> {
     assertInternalSecret(headerSecret);
     await this.associationsService.claimLydiaEnrolment(id);
@@ -107,7 +118,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async releaseEnrolment(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { why?: unknown }
   ): Promise<{ ok: true }> {
     assertInternalSecret(headerSecret);
@@ -128,7 +139,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async responsableClaim(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body()
     body: { userId?: unknown; phone?: unknown; mode?: unknown; allowNumberChange?: unknown }
   ): Promise<{
@@ -156,16 +167,22 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async responsableRelease(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { claimToken?: unknown }
   ): Promise<{ ok: true; released: boolean }> {
     assertInternalSecret(headerSecret);
     const claimToken = claimTokenOf(body?.claimToken);
     if (!claimToken) throw new BadRequestException('claimToken is required');
-    return {
-      ok: true,
-      released: await this.associationsService.releaseLydiaResponsable(id, claimToken),
-    };
+    try {
+      return {
+        ok: true,
+        released: await this.associationsService.releaseLydiaResponsable(id, claimToken),
+      };
+    } finally {
+      // A departure that met this claim busy is owed now. Not after a store: core's removal of the
+      // replaced number takes the claim next, and must not meet it busy.
+      this.associationsService.afterCashierClaimReleased(id);
+    }
   }
 
   /**
@@ -177,7 +194,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async enrolmentVendorToken(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: { vendorToken?: unknown }
   ): Promise<{ recorded: boolean }> {
     assertInternalSecret(headerSecret);
@@ -202,7 +219,7 @@ export class InternalLydiaEnrolmentController {
   @Header('Cache-Control', 'no-store')
   async recordResponsable(
     @Headers('x-internal-secret') headerSecret: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() body: {
       vendorToken?: unknown;
       userId?: unknown;
@@ -217,14 +234,25 @@ export class InternalLydiaEnrolmentController {
     removeOther: boolean;
   }> {
     assertInternalSecret(headerSecret);
-    const recorded = await this.associationsService.recordLydiaResponsable(id, {
-      vendorToken: body?.vendorToken,
-      userId: body?.userId,
-      phone: body?.phone,
-      addedByUserId: body?.addedByUserId,
-      confirmed: body?.confirmed,
-      claimToken: body?.claimToken,
-    });
+    let recorded: Awaited<ReturnType<AssociationsService['recordLydiaResponsable']>>;
+    try {
+      recorded = await this.associationsService.recordLydiaResponsable(id, {
+        vendorToken: body?.vendorToken,
+        userId: body?.userId,
+        phone: body?.phone,
+        addedByUserId: body?.addedByUserId,
+        confirmed: body?.confirmed,
+        claimToken: body?.claimToken,
+      });
+    } catch (err: unknown) {
+      // Refused: no removal of a replaced number follows, so a departure owed is asked now.
+      this.associationsService.afterCashierClaimReleased(id);
+      throw err;
+    }
+    // removeOther: core's removal of the replaced number claims NEXT and must not meet a departure
+    // run holding the claim - that removal's own record or release asks for the departures. Else
+    // the store released the claim, and a departure that met it busy is owed now.
+    if (!recorded.removeOther) this.associationsService.afterCashierClaimReleased(id);
     return {
       responsable: recorded.view,
       cashierId: recorded.cashierId,

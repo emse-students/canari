@@ -8,14 +8,13 @@ use axum::{
     routing::get,
     Router,
 };
-use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::setting_engine::SettingEngine;
@@ -28,6 +27,7 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::policy::ice_transport_policy::RTCIceTransportPolicy;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::signaling_state::RTCSignalingState;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::payload_feedbacks::full_intra_request::FullIntraRequest;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
@@ -43,8 +43,15 @@ use webrtc::track::track_remote::TrackRemote;
 mod log_repeat;
 mod origin;
 mod p2p;
+mod sfu_seats;
 
-use p2p::{count_relayed, JoinOutcome, P2pPeer, P2pRoom, PartnerState, RelayedKind, ResumeOutcome};
+use p2p::{
+    count_relayed, Departure, JoinOutcome, OtherSeat, P2pPeer, P2pRoom, Pairing, RelayedKind,
+    ResumeOutcome, Route, DEFAULT_MAX_SEATS, MAX_MESH_SEATS,
+};
+use sfu_seats::{
+    forwarded_stream_id, sfu_seats_allowed, Reservation, SfuSeats, DEFAULT_SFU_SEATS, MAX_SFU_SEATS,
+};
 
 type RoomId = String;
 type PeerId = String;
@@ -170,7 +177,9 @@ enum TokenRejection {
 /// the check core-service makes on its own routes - a refresh token never opens a socket.
 fn decode_access_claims(token: &str, secret: &[u8]) -> Result<Claims, TokenRejection> {
     let validation = Validation::new(Algorithm::HS256);
-    let claims = decode::<Claims>(token, &DecodingKey::from_secret(secret), &validation)
+    // jsonwebtoken 12 refuses an empty HMAC key here; `ws_handler` answers 500 before that.
+    let key = DecodingKey::from_secret(secret).map_err(TokenRejection::Invalid)?;
+    let claims = decode::<Claims>(token, &key, &validation)
         .map_err(TokenRejection::Invalid)?
         .claims;
     match claims.kind.as_deref() {
@@ -195,6 +204,19 @@ struct RoomClaims {
     /// take back. chat-delivery-service never sets it, so its tokens can only seat, never resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     seat: Option<String>,
+    /// How many users the room may seat, signed by chat-delivery-service at `initiate` from what
+    /// the call is: 2 for a 1:1 call (also when absent - every token older than group calls),
+    /// the mesh cap for a group call (4 in audio, 3 in video, WP-GC2), the relay's own cap for a
+    /// group call that goes through the SFU. Enforced here, so a user past it is refused by the
+    /// server, never by a client's good manners ([`p2p::P2pRoom::join`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_seats: Option<usize>,
+    /// The mode chat-delivery-service decided the room carries its call in (WP-GC4: a group call
+    /// through the relay is `sfu`). A `Join` naming another mode is refused `mode-mismatch`, so a
+    /// client cannot take a relayed group call into a mesh, or the reverse. Absent on every token
+    /// older than the relay leg, and on a 1:1 call's: the client's `Join` decides, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<RoomMode>,
 }
 
 /// How long a resume token lives: the longest call chat-delivery-service counts (its room binding
@@ -262,10 +284,19 @@ struct AppState {
 }
 
 struct Room {
+    /// Who holds the room's seats, under its cap ([`sfu_seats`]). A std mutex, never held across an
+    /// await: a seat is reserved in one synchronous step, while the room map's entry is held.
+    seats: std::sync::Mutex<SfuSeats>,
     tracks: Mutex<Vec<PublishedTrack>>,
-    peers: DashMap<PeerId, PeerContext>,
+    /// Each peer's context behind an `Arc`, so a handler clones it out and drops the map's shard
+    /// guard BEFORE any await: a DashMap guard held across an await can deadlock a task on the
+    /// same worker thread that takes the same shard (`insert`, `remove`).
+    peers: DashMap<PeerId, Arc<PeerContext>>,
     /// Per-peer generation counter to debounce renegotiation (audio + video = one offer).
     renegotiate_gen: DashMap<PeerId, u64>,
+    /// Peers owed a renegotiation that could not be offered because a negotiation was in flight
+    /// (`have-remote-offer`): offered as soon as that negotiation returns to `stable`.
+    renegotiate_pending: DashMap<PeerId, ()>,
     /// Last signal activity timestamp - used to evict stale rooms.
     last_activity: std::sync::Mutex<std::time::Instant>,
 }
@@ -586,6 +617,8 @@ impl CallLedger {
 /// request keyframes on demand (the SFU forwards opaque E2E-encrypted RTP and cannot
 /// detect when a keyframe is needed).
 struct PublishedTrack {
+    /// The peer that publishes it: its tracks leave the room with it ([`drop_publisher_tracks`]).
+    publisher: PeerId,
     local: Arc<TrackLocalStaticRTP>,
     /// Publisher's PeerConnection (Weak to avoid a reference cycle with its callbacks).
     publisher_pc: std::sync::Weak<RTCPeerConnection>,
@@ -723,7 +756,7 @@ fn periodic_keyframe_recovery(
     });
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum SignalMessage {
     /// Client must supply a `room_token` issued by chat-delivery-service to prove group membership.
@@ -742,6 +775,13 @@ enum SignalMessage {
         /// A fresh one comes with every `Joined`, a resume's included.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume_token: Option<String>,
+        /// How many seats OTHER users hold in the room at this join: on every SFU join (WP-GC4
+        /// client), and on every p2p join once WP-GC6 states it there too. A FACT, so a client that ANSWERED a group call can tell an empty
+        /// room - every other participant already left - from one still to fill, without a timer.
+        /// `0` on the caller's first join is the room empty by design. Ignored by a client older
+        /// than the field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        others: Option<usize>,
     },
     /// P2P only, server -> client: the room now holds both parties. `initiator` makes the offer
     /// and is the impolite side; the other answers and yields on a collision. Sent again to the
@@ -753,23 +793,46 @@ enum SignalMessage {
         /// (false) means build the peer connection from nothing.
         #[serde(default, skip_serializing_if = "is_false")]
         resumed: bool,
+        /// Mesh: the user this pairing is WITH - one `PeerReady` per other participant. Sent in a
+        /// two-seat room too; a client older than the mesh ignores the field. Always a USER id,
+        /// never a device: a user's replaced device is re-announced under the SAME `peer`, with
+        /// `resumed` false (one device per user, `p2p.rs`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peer: Option<String>,
     },
     /// P2P only, server -> client: the other party's socket is gone (or this device was replaced
     /// by another of the same user), or its away seat was never resumed. The call is over.
-    PeerLeft,
+    PeerLeft {
+        /// Mesh: the user who left; the call goes on with the others. Absent when it is THIS
+        /// device that is out of the call (replaced by a sibling, or resumed into a call that is
+        /// over) - which, in a two-seat room, is also what the other party leaving always meant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peer: Option<String>,
+    },
     /// P2P only, server -> client: the other party's socket died WITHOUT a Close frame. Its seat
     /// is kept for the grace; the call goes on, and a `PeerReady { resumed }` or a `PeerLeft`
     /// follows.
-    PeerAway,
+    PeerAway {
+        /// Mesh: the user whose socket died; its seat is kept for the grace.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        peer: Option<String>,
+    },
     /// P2P only, server -> client: the `Join` was refused, and why, so the client fails at once
     /// with a reason instead of waiting out its Join timeout.
-    Refused {
-        reason: String,
-    },
+    Refused { reason: String },
     /// P2P only, client -> server -> partner, relayed verbatim: the POLITE side's media path is
     /// down and it cannot restart ICE itself (only the initiator offers), so it asks the initiator
     /// to. Bounded by the asker's own restart budget.
-    IceRestartRequest,
+    IceRestartRequest {
+        /// Mesh: the user this frame is FOR, named by its sender. Absent on the 1:1 wire, where a
+        /// two-seat room routes it to the one other party ([`p2p::P2pRoom::route`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        /// Mesh: the user this frame came FROM, stamped by the relay - whatever a client wrote here
+        /// is replaced, so no participant can speak as another. Absent on server-originated frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+    },
     /// P2P only, client -> server -> partner, relayed verbatim: the SENDER's operating system took
     /// its microphone (`suspended: true`: the capture track went `muted`, which is not the user's
     /// mute button) or gave it back (`false`). The partner hears nothing in between and has no
@@ -777,6 +840,14 @@ enum SignalMessage {
     /// sender says it (WP-C-BG-I, calls.md).
     MicSuspended {
         suspended: bool,
+        /// Mesh: the user this frame is FOR, named by its sender. Absent on the 1:1 wire, where a
+        /// two-seat room routes it to the one other party ([`p2p::P2pRoom::route`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        /// Mesh: the user this frame came FROM, stamped by the relay - whatever a client wrote here
+        /// is replaced, so no participant can speak as another. Absent on server-originated frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     /// Server-internal, never on the wire: tells a socket loop to send a Close frame and end -
     /// the seat it held was resumed by the same device on a new socket.
@@ -784,12 +855,36 @@ enum SignalMessage {
     Shutdown,
     Offer {
         sdp: String,
+        /// Mesh: the user this frame is FOR, named by its sender. Absent on the 1:1 wire, where a
+        /// two-seat room routes it to the one other party ([`p2p::P2pRoom::route`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        /// Mesh: the user this frame came FROM, stamped by the relay - whatever a client wrote here
+        /// is replaced, so no participant can speak as another. Absent on server-originated frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     Answer {
         sdp: String,
+        /// Mesh: the user this frame is FOR, named by its sender. Absent on the 1:1 wire, where a
+        /// two-seat room routes it to the one other party ([`p2p::P2pRoom::route`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        /// Mesh: the user this frame came FROM, stamped by the relay - whatever a client wrote here
+        /// is replaced, so no participant can speak as another. Absent on server-originated frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
     IceCandidate {
         candidate: String,
+        /// Mesh: the user this frame is FOR, named by its sender. Absent on the 1:1 wire, where a
+        /// two-seat room routes it to the one other party ([`p2p::P2pRoom::route`]).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        /// Mesh: the user this frame came FROM, stamped by the relay - whatever a client wrote here
+        /// is replaced, so no participant can speak as another. Absent on server-originated frames.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
     },
 }
 
@@ -804,9 +899,9 @@ impl SignalMessage {
             SignalMessage::Answer { .. } => "answer",
             SignalMessage::IceCandidate { .. } => "ice",
             SignalMessage::PeerReady { .. } => "peer-ready",
-            SignalMessage::PeerLeft => "peer-left",
-            SignalMessage::PeerAway => "peer-away",
-            SignalMessage::IceRestartRequest => "ice-restart-request",
+            SignalMessage::PeerLeft { .. } => "peer-left",
+            SignalMessage::PeerAway { .. } => "peer-away",
+            SignalMessage::IceRestartRequest { .. } => "ice-restart-request",
             SignalMessage::MicSuspended { .. } => "mic-suspended",
             SignalMessage::Shutdown => "shutdown",
             SignalMessage::Refused { .. } => "refused",
@@ -848,14 +943,16 @@ fn resolve_room(
 /// holds is dropped; the drop is loud when nothing has yet said why the peer is gone, and quiet
 /// when something has - an evicted device goes on trickling ICE for several seconds, and
 /// repeating a cause the log already carries is noise rather than evidence.
-fn resolve_peer<'a>(
-    room: &'a Arc<Room>,
+fn resolve_peer(
+    room: &Arc<Room>,
     session: &PeerSession,
     peer_id: &str,
     room_id: &str,
     frame: &str,
-) -> Option<Ref<'a, PeerId, PeerContext>> {
-    if let Some(ctx) = room.peers.get(peer_id) {
+) -> Option<Arc<PeerContext>> {
+    // Cloned out of the map: the shard guard is released here, never held across the caller's
+    // awaits.
+    if let Some(ctx) = room.peers.get(peer_id).map(|c| c.value().clone()) {
         return Some(ctx);
     }
     if !session_ended(session) {
@@ -1264,7 +1361,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
             p2p_leave(&state, &room_id, &peer_id);
         }
     } else if let Some(room_id) = session.room_id.clone() {
-        let remove_room = if let Some(room) = state.rooms.get(&room_id) {
+        // Cloned out of the map, so no shard guard is held across the awaits below.
+        let room = state.rooms.get(&room_id).map(|r| r.value().clone());
+        let remove_room = if let Some(room) = room {
             // Close the PeerConnection rather than only dropping it: webrtc-rs holds the ICE
             // agent and its TURN allocation until told to let go, and a relay allocation left
             // running is billed against the same monthly budget the ICE endpoint guards.
@@ -1275,7 +1374,29 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     warn!("[call] {} failed to close peer connection: {}", peer_id, e);
                 }
             }
-            room.peers.is_empty()
+            room.renegotiate_pending.remove(&peer_id);
+            // Its tracks leave with it: a late joiner must not be offered dead m-lines, and a
+            // rejoin must not leave two track sets under one sender's stream id.
+            drop_publisher_tracks(&room, &peer_id).await;
+            // Only the device holding the seat frees it: one a sibling replaced frees nothing.
+            match room.seats.lock() {
+                Ok(mut seats) => {
+                    if seats.release(&user_id, &peer_id) {
+                        info!(
+                            "[call] seat freed room={} peer={} held={}/{}",
+                            room_id,
+                            peer_id,
+                            seats.held(),
+                            seats.max_seats()
+                        );
+                    }
+                }
+                Err(e) => error!(
+                    "[call] {} could not free its seat in room {}: the lock is poisoned ({})",
+                    peer_id, room_id, e
+                ),
+            }
+            true
         } else {
             warn!(
                 "[call] {} left room {} but the room was already gone",
@@ -1283,8 +1404,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
             );
             false
         };
-        if remove_room {
-            state.rooms.remove(&room_id);
+        // Removed only when no seat is held, decided under the room map's entry lock - the lock a
+        // join reserves its seat under - so a seat taken a moment ago is never orphaned.
+        if remove_room
+            && state
+                .rooms
+                .remove_if(&room_id, |_, room| {
+                    room.seats.lock().map(|s| s.held() == 0).unwrap_or(false)
+                })
+                .is_some()
+        {
             info!("[call] room {} removed - no peers remaining", room_id);
         }
     }
@@ -1335,6 +1464,27 @@ async fn handle_signal(
             };
             let group_id = claims.group_id;
 
+            // The mode chat-delivery-service signed is the mode the call goes in: a Join asking for
+            // the other one is a client that would split one call across two designs.
+            if let Some(signed) = claims.mode.filter(|signed| *signed != mode) {
+                warn!(
+                    "[auth] {} refused from room {}: its token signs mode {}, the Join asks for {}",
+                    peer_id,
+                    room_id,
+                    signed.as_str(),
+                    mode.as_str()
+                );
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
+                        reason: "mode-mismatch".to_string(),
+                    },
+                    &room_id,
+                    peer_id,
+                );
+                return;
+            }
+
             // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = &session.room_id {
                 warn!(
@@ -1369,13 +1519,31 @@ async fn handle_signal(
                 return;
             }
 
+            let max_seats = claims.max_seats.unwrap_or(DEFAULT_MAX_SEATS);
             if mode == RoomMode::P2p {
+                // A seat count outside what a mesh may be is a token no chat-delivery-service
+                // mints: refused with its own reason, before anything is seated.
+                if !(DEFAULT_MAX_SEATS..=MAX_MESH_SEATS).contains(&max_seats) {
+                    warn!(
+                        "[auth] {} refused from p2p room {}: its token names {} seat(s), a mesh holds {} to {}",
+                        peer_id, room_id, max_seats, DEFAULT_MAX_SEATS, MAX_MESH_SEATS
+                    );
+                    p2p_send(
+                        &notify_tx,
+                        SignalMessage::Refused {
+                            reason: "seats-refused".to_string(),
+                        },
+                        &room_id,
+                        peer_id,
+                    );
+                    return;
+                }
                 match claims.seat {
                     Some(seat) => p2p_resume(
                         state, user_id, peer_id, &group_id, &seat, session, room_id, notify_tx,
                     ),
                     None => p2p_join(
-                        state, user_id, peer_id, &group_id, session, room_id, notify_tx,
+                        state, user_id, peer_id, &group_id, max_seats, session, room_id, notify_tx,
                     ),
                 }
                 return;
@@ -1386,33 +1554,124 @@ async fn handle_signal(
                     "[call] {} presented a p2p resume token for an SFU join of room {} - refused",
                     peer_id, room_id
                 );
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
+                        reason: "mode-mismatch".to_string(),
+                    },
+                    &room_id,
+                    peer_id,
+                );
                 return;
             }
 
-            info!("[call] session start room={} peer={}", room_id, peer_id);
+            if !sfu_seats_allowed(max_seats) {
+                warn!(
+                    "[auth] {} refused from SFU room {}: its token names {} seat(s), the relay holds {} to {}",
+                    peer_id, room_id, max_seats, DEFAULT_SFU_SEATS, MAX_SFU_SEATS
+                );
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
+                        reason: "seats-refused".to_string(),
+                    },
+                    &room_id,
+                    peer_id,
+                );
+                return;
+            }
+
+            // THE SEAT, RESERVED ATOMICALLY: the room is found or created and the seat taken while
+            // the room map's entry is held, in one synchronous step - two joins can never both see
+            // a free seat, and the last peer's departure (which removes the room under the same
+            // entry lock, `remove_if` on its seats) can never orphan a seat just taken.
+            let (room, reservation) = match state.rooms.entry(room_id.clone()) {
+                dashmap::mapref::entry::Entry::Occupied(entry) => {
+                    let room = entry.get().clone();
+                    let reservation = room
+                        .seats
+                        .lock()
+                        .map(|mut seats| seats.reserve(user_id, peer_id, max_seats))
+                        .map_err(|e| e.to_string());
+                    (room, reservation)
+                }
+                dashmap::mapref::entry::Entry::Vacant(entry) => {
+                    let mut seats = SfuSeats::new(max_seats);
+                    let reservation = seats.reserve(user_id, peer_id, max_seats);
+                    let room = Arc::new(Room {
+                        seats: std::sync::Mutex::new(seats),
+                        tracks: Mutex::new(Vec::new()),
+                        peers: DashMap::new(),
+                        renegotiate_gen: DashMap::new(),
+                        renegotiate_pending: DashMap::new(),
+                        last_activity: std::sync::Mutex::new(std::time::Instant::now()),
+                    });
+                    entry.insert(room.clone());
+                    (room, Ok(reservation))
+                }
+            };
+            let mut others = 0;
+            let refusal = match reservation {
+                Ok(Reservation::Seated {
+                    replaced,
+                    others: held_by_others,
+                }) => {
+                    if let Some(sibling) = replaced {
+                        info!(
+                            "[multi-device] SFU room {}: {} takes the seat of {}",
+                            room_id, peer_id, sibling
+                        );
+                    }
+                    others = held_by_others;
+                    None
+                }
+                Ok(Reservation::Full { max_seats }) => {
+                    warn!(
+                        "[call] {} refused from SFU room {}: all {} seat(s) are held by other users",
+                        peer_id, room_id, max_seats
+                    );
+                    Some("room-full")
+                }
+                Ok(Reservation::OtherSeats { room: held, token }) => {
+                    warn!(
+                        "[auth] {} refused from SFU room {}: its token names {} seat(s), the room was opened with {}",
+                        peer_id, room_id, token, held
+                    );
+                    Some("seats-mismatch")
+                }
+                Err(e) => {
+                    error!(
+                        "[call] {} refused from SFU room {}: its seat lock is poisoned ({})",
+                        peer_id, room_id, e
+                    );
+                    Some("room-unavailable")
+                }
+            };
+            if let Some(reason) = refusal {
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
+                        reason: reason.to_string(),
+                    },
+                    &room_id,
+                    peer_id,
+                );
+                return;
+            }
+
+            info!(
+                "[call] session start room={} peer={} seats={}",
+                room_id, peer_id, max_seats
+            );
             session.room_id = Some(room_id.clone());
             // The room id is also chat-delivery-service's `callId`, so this ledger and the ring
-            // fan-out's `[ring] call=...` lines join on it. Nothing else links the two services.
+            // fan-out's `[call] invite` lines join on it. Nothing else links the two services.
             let ledger = Arc::new(CallLedger::new(
                 room_id.clone(),
                 peer_id.clone(),
                 RoomMode::Sfu,
             ));
             session.ledger = Some(ledger.clone());
-
-            let room = state
-                .rooms
-                .entry(room_id.clone())
-                .or_insert_with(|| {
-                    Arc::new(Room {
-                        tracks: Mutex::new(Vec::new()),
-                        peers: DashMap::new(),
-                        renegotiate_gen: DashMap::new(),
-                        last_activity: std::sync::Mutex::new(std::time::Instant::now()),
-                    })
-                })
-                .value()
-                .clone();
 
             // Refresh activity timestamp.
             if let Ok(mut ts) = room.last_activity.lock() {
@@ -1434,12 +1693,12 @@ async fn handle_signal(
             // Register peer before slow callback wiring so Offer is never dropped.
             room.peers.insert(
                 peer_id.clone(),
-                PeerContext {
+                Arc::new(PeerContext {
                     pc: pc.clone(),
                     notify_tx: notify_tx.clone(),
                     pending_ice_candidates: Mutex::new(Vec::new()),
                     ledger: ledger.clone(),
-                },
+                }),
             );
 
             let tracks = room.tracks.lock().await;
@@ -1511,7 +1770,11 @@ async fn handle_signal(
                         }
                     };
                     match notify_tx_clone
-                        .send(SignalMessage::IceCandidate { candidate })
+                        .send(SignalMessage::IceCandidate {
+                            candidate,
+                            to: None,
+                            from: None,
+                        })
                         .await
                     {
                         Ok(()) => bump(&ledger.ice_out),
@@ -1598,23 +1861,34 @@ async fn handle_signal(
                         let local_track = Arc::new(TrackLocalStaticRTP::new(
                             remote_track.codec().capability.clone(),
                             format!("track-{}-{}", peer_id_clone, Uuid::new_v4()),
-                            "canari-sfu".to_owned(),
+                            // WHO SENT IT: every receiver keys a group call's frames by sender
+                            // (WP-GC1), and reads the sender here, as `ontrack`'s `streams[0].id`.
+                            forwarded_stream_id(&peer_id_clone),
                         ));
 
                         let is_video = remote_track.kind() == RTPCodecType::Video;
                         let media_ssrc = remote_track.ssrc();
                         let last_pli = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
 
-                        {
-                            let mut room_tracks = room_clone.tracks.lock().await;
-                            room_tracks.push(PublishedTrack {
+                        // Registered and forwarded under ONE hold of the tracks lock, which
+                        // `drop_publisher_tracks` takes too: a publisher that left is refused here,
+                        // and one that leaves meanwhile has its track dropped after the forward,
+                        // never before it - so no dead m-line outlives a departure.
+                        let Some(room_tracks) = publish_if_present(
+                            &room_clone,
+                            PublishedTrack {
+                                publisher: peer_id_clone.clone(),
                                 local: local_track.clone(),
                                 publisher_pc: pc_weak.clone(),
                                 media_ssrc,
                                 is_video,
                                 last_pli: last_pli.clone(),
-                            });
-                        }
+                            },
+                        )
+                        .await
+                        else {
+                            return;
+                        };
 
                         let local_track_clone = local_track.clone();
 
@@ -1640,13 +1914,15 @@ async fn handle_signal(
                             );
                         }
 
-                        for peer_entry in room_clone.peers.iter() {
-                            let other_pid = peer_entry.key();
-                            if other_pid == &peer_id_clone {
-                                continue;
-                            }
-
-                            let other_ctx = peer_entry.value();
+                        // Snapshot first: the loop awaits, and no shard guard may live across it.
+                        let others: Vec<(PeerId, Arc<PeerContext>)> = room_clone
+                            .peers
+                            .iter()
+                            .filter(|e| e.key() != &peer_id_clone)
+                            .map(|e| (e.key().clone(), e.value().clone()))
+                            .collect();
+                        for (other_pid, other_ctx) in others {
+                            let other_pid = &other_pid;
                             match other_ctx
                                 .pc
                                 .add_track(
@@ -1682,14 +1958,22 @@ async fn handle_signal(
 
                             schedule_renegotiate(room_clone.clone(), other_pid.clone());
                         }
+                        drop(room_tracks);
                     })
                 },
             ));
 
+            // The seats other users held at the reservation: an answer into a relay room everyone
+            // already left is told so (`others: 0`); the p2p `Joined` states it once WP-GC6 lands.
+            info!(
+                "[call] sfu joined room={} peer={} others={}",
+                room_id, peer_id, others
+            );
             if let Err(e) = notify_tx
                 .send(SignalMessage::Joined {
                     room_id: room_id.clone(),
                     resume_token: None,
+                    others: Some(others),
                 })
                 .await
             {
@@ -1699,57 +1983,16 @@ async fn handle_signal(
                 );
             }
         }
-        SignalMessage::Offer { sdp } if session.mode == RoomMode::P2p => {
-            p2p_relay(
-                state,
-                session,
-                peer_id,
-                RelayedKind::Offer,
-                SignalMessage::Offer { sdp },
-            )
-            .await;
+        frame @ (SignalMessage::Offer { .. }
+        | SignalMessage::Answer { .. }
+        | SignalMessage::IceCandidate { .. }
+        | SignalMessage::IceRestartRequest { .. }
+        | SignalMessage::MicSuspended { .. })
+            if session.mode == RoomMode::P2p =>
+        {
+            p2p_relay(state, session, peer_id, user_id, frame);
         }
-        SignalMessage::Answer { sdp } if session.mode == RoomMode::P2p => {
-            p2p_relay(
-                state,
-                session,
-                peer_id,
-                RelayedKind::Answer,
-                SignalMessage::Answer { sdp },
-            )
-            .await;
-        }
-        SignalMessage::IceCandidate { candidate } if session.mode == RoomMode::P2p => {
-            p2p_relay(
-                state,
-                session,
-                peer_id,
-                RelayedKind::Ice,
-                SignalMessage::IceCandidate { candidate },
-            )
-            .await;
-        }
-        SignalMessage::IceRestartRequest if session.mode == RoomMode::P2p => {
-            p2p_relay(
-                state,
-                session,
-                peer_id,
-                RelayedKind::IceRestartRequest,
-                SignalMessage::IceRestartRequest,
-            )
-            .await;
-        }
-        SignalMessage::MicSuspended { suspended } if session.mode == RoomMode::P2p => {
-            p2p_relay(
-                state,
-                session,
-                peer_id,
-                RelayedKind::MicSuspended,
-                SignalMessage::MicSuspended { suspended },
-            )
-            .await;
-        }
-        SignalMessage::Offer { sdp } => {
+        SignalMessage::Offer { sdp, .. } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
                 return;
             };
@@ -1776,7 +2019,7 @@ async fn handle_signal(
                 return;
             }
 
-            flush_pending_ice_candidates(ctx.value()).await;
+            flush_pending_ice_candidates(&ctx).await;
 
             let answer = match ctx.pc.create_answer(None).await {
                 Ok(answer) => answer,
@@ -1808,7 +2051,14 @@ async fn handle_signal(
             // Counted when the frame reaches the socket writer, not the wire. A write that fails
             // ends the session as `send-failed`, which is the other half of the same question:
             // the peer offered, and either the answer left or the record says it did not.
-            match ctx.notify_tx.send(SignalMessage::Answer { sdp }).await {
+            match ctx
+                .notify_tx
+                .send(SignalMessage::Answer {
+                    sdp,
+                    to: None,
+                    from: None,
+                })
+                .await {
                 Ok(()) => {
                     bump(&ctx.ledger.answers_out);
                     info!("[call] answer sent room={} peer={}", room_id, peer_id);
@@ -1818,8 +2068,22 @@ async fn handle_signal(
                     room_id, peer_id, e
                 ),
             }
+            // A participant joining a GROUP call that already forwards tracks: its offer names its
+            // own m-lines only, so every forwarded track the answer could not place waits on a
+            // transceiver with no mid. Offered to it now - nothing else ever would.
+            let unplaced = unnegotiated_tracks(&ctx.pc).await;
+            if unplaced > 0 {
+                info!(
+                    "[call] room={} peer={} has {} forwarded track(s) its offer did not place - renegotiating",
+                    room_id, peer_id, unplaced
+                );
+                room.renegotiate_pending.remove(peer_id.as_str());
+                schedule_renegotiate(room.clone(), peer_id.clone());
+            } else {
+                renegotiate_if_owed(&room, peer_id);
+            }
         }
-        SignalMessage::Answer { sdp } => {
+        SignalMessage::Answer { sdp, .. } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "answer") else {
                 return;
             };
@@ -1847,13 +2111,14 @@ async fn handle_signal(
                 );
                 return;
             }
-            flush_pending_ice_candidates(ctx.value()).await;
+            flush_pending_ice_candidates(&ctx).await;
             info!(
                 "[call] renegotiation answer applied room={} peer={}",
                 room_id, peer_id
             );
+            renegotiate_if_owed(&room, peer_id);
         }
-        SignalMessage::IceCandidate { candidate } => {
+        SignalMessage::IceCandidate { candidate, .. } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "ice") else {
                 return;
             };
@@ -1863,7 +2128,7 @@ async fn handle_signal(
             bump(&ctx.ledger.ice_in);
 
             match serde_json::from_str::<RTCIceCandidateInit>(&candidate) {
-                Ok(cand) => apply_remote_ice_candidate(peer_id, ctx.value(), cand).await,
+                Ok(cand) => apply_remote_ice_candidate(peer_id, &ctx, cand).await,
                 Err(e) => {
                     bump(&ctx.ledger.ice_in_failed);
                     warn!(
@@ -1875,8 +2140,8 @@ async fn handle_signal(
         }
         SignalMessage::Joined { .. }
         | SignalMessage::PeerReady { .. }
-        | SignalMessage::PeerLeft
-        | SignalMessage::PeerAway
+        | SignalMessage::PeerLeft { .. }
+        | SignalMessage::PeerAway { .. }
         | SignalMessage::Shutdown
         | SignalMessage::Refused { .. } => {
             // Server -> client only. A client sending one is confused, and the line says which.
@@ -1886,7 +2151,7 @@ async fn handle_signal(
                 signal.kind()
             );
         }
-        SignalMessage::IceRestartRequest | SignalMessage::MicSuspended { .. } => {
+        SignalMessage::IceRestartRequest { .. } | SignalMessage::MicSuspended { .. } => {
             // Peer-to-peer frames that reached this arm because the session is not in a p2p room:
             // either nothing is joined yet, or the room is an SFU one, where there is no partner
             // to relay them to. The two are told apart, since only the first is a timing matter.
@@ -1927,7 +2192,17 @@ fn authorize_join(
         );
         return None;
     };
-    let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
+    // `require_room_secret` refused an empty secret at startup, the only key jsonwebtoken rejects.
+    let key = match DecodingKey::from_secret(state.call_room_secret.as_bytes()) {
+        Ok(key) => key,
+        Err(e) => {
+            error!(
+                "[auth] Peer {} room key unusable: {} - CALL_ROOM_SECRET was checked at startup",
+                peer_id, e
+            );
+            return None;
+        }
+    };
     let validation = Validation::new(Algorithm::HS256);
     match decode::<RoomClaims>(token, &key, &validation) {
         Ok(data) if data.claims.room_id != room_id => {
@@ -1952,16 +2227,18 @@ fn authorize_join(
     }
 }
 
-/// Seats a peer in a peer-to-peer room and tells each party what to do next.
+/// Seats a peer in a peer-to-peer room of `max_seats` and tells each party what to do next.
 ///
 /// The decision is taken inside the map's entry guard, so a concurrent last-peer-leaves cannot
 /// remove the room between our lookup and our seat (see [`p2p_leave`], which removes under the
 /// same shard lock).
+#[allow(clippy::too_many_arguments)]
 fn p2p_join(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &str,
     group_id: &str,
+    max_seats: usize,
     session: &mut PeerSession,
     room_id: RoomId,
     notify_tx: mpsc::Sender<SignalMessage>,
@@ -1980,23 +2257,31 @@ fn p2p_join(
     };
     let outcome = {
         let room = state.p2p_rooms.entry(room_id.clone()).or_default();
-        room.value().join(me)
+        room.value().join(me, max_seats)
     };
 
-    let (initiator, evicted, partner_away) = match outcome {
-        JoinOutcome::Full => {
+    let refuse = |reason: &str| {
+        p2p_send(
+            &notify_tx,
+            SignalMessage::Refused {
+                reason: reason.to_string(),
+            },
+            &room_id,
+            peer_id,
+        );
+    };
+    let (evicted, pairings, away) = match outcome {
+        JoinOutcome::Full { max_seats } => {
+            // The cap is the owner's (D-A): past it a group call needs a relay, and until one
+            // carries it the user is told the call is full - a refusal, never a larger mesh.
             warn!(
-                "[call] {} refused from p2p room {}: two other users already hold it",
-                peer_id, room_id
-            );
-            p2p_send(
-                &notify_tx,
-                SignalMessage::Refused {
-                    reason: "room-full".to_string(),
-                },
-                &room_id,
+                "[call] {} refused from p2p room {}: {} other user(s) already hold its {} seat(s)",
                 peer_id,
+                room_id,
+                max_seats.saturating_sub(1),
+                max_seats
             );
+            refuse("room-full");
             return;
         }
         JoinOutcome::OtherGroup => {
@@ -2006,28 +2291,31 @@ fn p2p_join(
                 "[auth] {} refused from p2p room {}: its token names group {}, the room holds another",
                 peer_id, room_id, group_id
             );
-            p2p_send(
-                &notify_tx,
-                SignalMessage::Refused {
-                    reason: "group-mismatch".to_string(),
-                },
-                &room_id,
-                peer_id,
-            );
+            refuse("group-mismatch");
             return;
         }
-        JoinOutcome::Waiting { evicted } => (None, evicted, false),
-        JoinOutcome::Paired { initiator, evicted } => (Some(initiator), evicted, false),
-        JoinOutcome::PartnerAway { evicted } => (None, evicted, true),
+        JoinOutcome::OtherSeats { room, token } => {
+            warn!(
+                "[auth] {} refused from p2p room {}: its token names {} seat(s), the room was opened with {}",
+                peer_id, room_id, token, room
+            );
+            refuse("seats-mismatch");
+            return;
+        }
+        JoinOutcome::Seated {
+            evicted,
+            pairings,
+            away,
+        } => (evicted, pairings, away),
     };
 
     info!(
-        "[call] session start room={} peer={} mode=p2p",
-        room_id, peer_id
+        "[call] session start room={} peer={} mode=p2p seats={}",
+        room_id, peer_id, max_seats
     );
     session.room_id = Some(room_id.clone());
     session.mode = RoomMode::P2p;
-    session.ledger = Some(ledger.clone());
+    session.ledger = Some(ledger);
 
     for gone in evicted {
         // The FIRST cause wins on its record; its socket's later Close must not overwrite it.
@@ -2036,55 +2324,84 @@ fn p2p_join(
             "[multi-device] p2p room {}: {} replaced by {}",
             room_id, gone.peer_id, peer_id
         );
-        p2p_send(&gone.tx, SignalMessage::PeerLeft, &room_id, &gone.peer_id);
+        p2p_send(
+            &gone.tx,
+            SignalMessage::PeerLeft { peer: None },
+            &room_id,
+            &gone.peer_id,
+        );
     }
 
     if !p2p_send_joined(state, &notify_tx, &room_id, user_id, group_id, peer_id) {
         return;
     }
 
-    if partner_away {
+    for other in away {
         info!(
-            "[call] p2p room={} peer={} joined while the other party is away - waiting for its resume",
-            room_id, peer_id
+            "[call] p2p room={} peer={} joined while {} is away - its pairing waits for its resume",
+            room_id, peer_id, other.peer_id
         );
-        p2p_send(&notify_tx, SignalMessage::PeerAway, &room_id, peer_id);
-        return;
+        p2p_send(
+            &notify_tx,
+            SignalMessage::PeerAway {
+                peer: Some(other.user_id),
+            },
+            &room_id,
+            peer_id,
+        );
     }
-    let Some(initiator) = initiator else {
-        return;
-    };
-    let me = P2pPeer {
-        peer_id: peer_id.to_string(),
-        user_id: user_id.to_string(),
-        group_id: group_id.to_string(),
-        tx: notify_tx,
-        ledger,
-    };
-    p2p_announce_pair(&room_id, &initiator, &me, false);
+    for pairing in pairings {
+        p2p_announce_pair(state, &room_id, &pairing);
+    }
 }
 
-/// Tells a pair of PRESENT seats that they are paired: `PeerReady` to each, with its role. Both
-/// records mark the pairing: `paired_ms` on each is measured from its own Join.
-fn p2p_announce_pair(room_id: &str, initiator: &P2pPeer, polite: &P2pPeer, resumed: bool) {
+/// Tells a pair of PRESENT seats that they are paired: `PeerReady` to each, with its role and the
+/// user it is paired WITH. Both records mark the pairing: `paired_ms` on each is measured from its
+/// own Join, to its FIRST pairing.
+fn p2p_announce_pair(state: &Arc<AppState>, room_id: &str, pairing: &Pairing) {
+    let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
+        info!(
+            "[call] p2p pairing room={} initiator={} polite={} not announced: the room is gone",
+            room_id, pairing.initiator.peer_id, pairing.polite.peer_id
+        );
+        return;
+    };
+    let announced = room.announce_if_present(pairing, || announce_pair_now(room_id, pairing));
+    if !announced {
+        info!(
+            "[call] p2p pairing room={} initiator={} polite={} not announced: one side left first",
+            room_id, pairing.initiator.peer_id, pairing.polite.peer_id
+        );
+    }
+}
+
+/// The body of [`p2p_announce_pair`], run under the room's lock: marks both records paired and
+/// delivers one `PeerReady` to each side (never awaits: `p2p::deliver` is a `try_send`).
+fn announce_pair_now(room_id: &str, pairing: &Pairing) {
+    let Pairing {
+        initiator,
+        polite,
+        resumed,
+    } = pairing;
     initiator.ledger.mark_connected();
     polite.ledger.mark_connected();
     info!(
         "[call] p2p paired room={} initiator={} polite={} resumed={}",
         room_id, initiator.peer_id, polite.peer_id, resumed
     );
-    for (peer, is_initiator) in [(initiator, true), (polite, false)] {
+    for (peer, other, is_initiator) in [(initiator, polite, true), (polite, initiator, false)] {
         // Delivered directly rather than through `p2p_send`: a lost PeerReady is one event, and it
-        // gets ONE line, at error, because this call can then never negotiate.
+        // gets ONE line, at error, because this pair can then never negotiate.
         if let Err(reason) = p2p::deliver(
             &peer.tx,
             SignalMessage::PeerReady {
                 initiator: is_initiator,
-                resumed,
+                resumed: *resumed,
+                peer: Some(other.user_id.clone()),
             },
         ) {
             error!(
-                "[call] p2p peer-ready DROPPED room={} to={}: {} - this call cannot negotiate",
+                "[call] p2p peer-ready DROPPED room={} to={}: {} - this pair cannot negotiate",
                 room_id,
                 peer.peer_id,
                 reason.as_str()
@@ -2114,12 +2431,14 @@ fn mint_resume_token(
         group_id: group_id.to_string(),
         exp: exp as usize,
         seat: Some(seat.to_string()),
+        // A resume never seats anyone new: the seat count was the room's own from its first Join.
+        max_seats: None,
+        // A resume token only ever names a p2p seat; its mode was the room's from its first Join.
+        mode: None,
     };
-    match encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(state.call_room_secret.as_bytes()),
-    ) {
+    match EncodingKey::from_secret(state.call_room_secret.as_bytes())
+        .and_then(|key| encode(&Header::new(Algorithm::HS256), &claims, &key))
+    {
         Ok(token) => Some(token),
         Err(e) => {
             error!(
@@ -2145,6 +2464,7 @@ fn p2p_send_joined(
         SignalMessage::Joined {
             room_id: room_id.to_string(),
             resume_token: mint_resume_token(state, room_id, user_id, group_id, peer_id),
+            others: None,
         },
         room_id,
         peer_id,
@@ -2196,12 +2516,16 @@ fn p2p_resume(
         tx: notify_tx.clone(),
         ledger: ledger.clone(),
     };
-    let (replaced, partner) = match room.resume(seat, me.clone()) {
+    let (replaced, others, over) = match room.resume(seat, me) {
         ResumeOutcome::Unknown => {
             call_over("the seat expired or was never this user's");
             return;
         }
-        ResumeOutcome::Resumed { replaced, partner } => (replaced, partner),
+        ResumeOutcome::Resumed {
+            replaced,
+            others,
+            call_over,
+        } => (replaced, others, call_over),
     };
 
     info!(
@@ -2221,33 +2545,53 @@ fn p2p_resume(
     if !p2p_send_joined(state, &notify_tx, &room_id, user_id, group_id, peer_id) {
         return;
     }
-    match partner {
-        PartnerState::Alone { was_paired: true } => {
-            info!(
-                "[call] p2p room={} peer={} resumed after the other party left - the call is over",
-                room_id, peer_id
-            );
-            p2p_send(&notify_tx, SignalMessage::PeerLeft, &room_id, peer_id);
-        }
-        PartnerState::Alone { was_paired: false } => {}
-        PartnerState::Away => {
-            p2p_send(&notify_tx, SignalMessage::PeerAway, &room_id, peer_id);
-        }
-        PartnerState::Present {
-            partner,
-            i_am_initiator,
-            resumed,
-        } => {
-            if i_am_initiator {
-                p2p_announce_pair(&room_id, &me, &partner, resumed);
-            } else {
-                p2p_announce_pair(&room_id, &partner, &me, resumed);
+    if over {
+        info!(
+            "[call] p2p room={} peer={} resumed after every other party left - the call is over",
+            room_id, peer_id
+        );
+        p2p_send(
+            &notify_tx,
+            SignalMessage::PeerLeft { peer: None },
+            &room_id,
+            peer_id,
+        );
+        return;
+    }
+    for other in others {
+        match other {
+            OtherSeat::Away(away) => {
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::PeerAway {
+                        peer: Some(away.user_id),
+                    },
+                    &room_id,
+                    peer_id,
+                );
             }
+            OtherSeat::Present(pairing) => p2p_announce_pair(state, &room_id, &pairing),
         }
     }
 }
 
-/// A p2p socket died WITHOUT a Close frame: its seat stays, ABSENT, for the grace; the partner is
+/// Tells every seat of `departure.tell` one frame naming the user who went.
+fn p2p_tell_departure(
+    room_id: &str,
+    departure: &Departure,
+    frame: impl Fn(Option<String>) -> SignalMessage,
+) {
+    for other in &departure.tell {
+        p2p_send(
+            &other.tx,
+            frame(Some(departure.user_id.clone())),
+            room_id,
+            &other.peer_id,
+        );
+    }
+}
+
+/// A p2p socket died WITHOUT a Close frame: its seat stays, ABSENT, for the grace; the others are
 /// told `PeerAway`; and the grace's end frees the seat unless the device resumed it meanwhile.
 fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
     let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
@@ -2257,25 +2601,19 @@ fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
         );
         return;
     };
-    let Some(partner) = room.mark_absent(peer_id) else {
+    let Some(departure) = room.mark_absent(peer_id) else {
         // Replaced by a sibling or by its own resume: its record already says so.
         return;
     };
     let grace = state.p2p_seat_grace;
     info!(
-        "[call] p2p seat away room={} peer={} grace_s={} - kept for a resume",
+        "[call] p2p seat away room={} peer={} grace_s={} told={} - kept for a resume",
         room_id,
         peer_id,
-        grace.as_secs()
+        grace.as_secs(),
+        departure.tell.len()
     );
-    if let Some(partner) = partner {
-        p2p_send(
-            &partner.tx,
-            SignalMessage::PeerAway,
-            room_id,
-            &partner.peer_id,
-        );
-    }
+    p2p_tell_departure(room_id, &departure, |peer| SignalMessage::PeerAway { peer });
     let state = state.clone();
     let room_id = room_id.to_string();
     let peer_id = peer_id.to_string();
@@ -2285,20 +2623,20 @@ fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
     });
 }
 
-/// The grace of an away seat ran out: frees it if nobody resumed it, tells a present partner the
-/// call is over, and drops the room once empty - under the map's shard lock, as [`p2p_leave`].
+/// The grace of an away seat ran out: frees it if nobody resumed it, tells the present others
+/// that user left, and drops the room once empty - under the map's shard lock, as [`p2p_leave`].
 fn p2p_expire(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
-    let mut outcome: Option<Option<P2pPeer>> = None;
+    let mut outcome: Option<Departure> = None;
     let removed = state.p2p_rooms.remove_if(room_id, |_, room| {
         outcome = room.expire(peer_id);
         room.is_empty()
     });
-    let Some(partner) = outcome else {
+    let Some(departure) = outcome else {
         // Resumed (or the room already went): the routine case, and the reason the grace exists.
         return;
     };
     warn!(
-        "[call] p2p seat EXPIRED room={} peer={} after {} s away - the call is over",
+        "[call] p2p seat EXPIRED room={} peer={} after {} s away - it left the call",
         room_id,
         peer_id,
         state.p2p_seat_grace.as_secs()
@@ -2306,14 +2644,7 @@ fn p2p_expire(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
     if removed.is_some() {
         info!("[call] p2p room {} removed - no peers remaining", room_id);
     }
-    if let Some(partner) = partner {
-        p2p_send(
-            &partner.tx,
-            SignalMessage::PeerLeft,
-            room_id,
-            &partner.peer_id,
-        );
-    }
+    p2p_tell_departure(room_id, &departure, |peer| SignalMessage::PeerLeft { peer });
 }
 
 /// Sends one server-originated p2p frame through [`p2p::deliver`] - never awaiting a queue - and
@@ -2340,109 +2671,196 @@ fn p2p_send(
     }
 }
 
-/// Forwards one handshake frame to the other party of a peer-to-peer room.
-async fn p2p_relay(
+/// A relayable frame's kind, its addressee, and the frame re-addressed for delivery: `to` cleared
+/// and `from` stamped with the sender's user id, whatever the client wrote in either. `None` for a
+/// frame this mode does not relay.
+fn readdress(
+    frame: SignalMessage,
+    sender: &str,
+) -> Option<(RelayedKind, Option<String>, SignalMessage)> {
+    let from = Some(sender.to_string());
+    Some(match frame {
+        SignalMessage::Offer { sdp, to, .. } => (
+            RelayedKind::Offer,
+            to,
+            SignalMessage::Offer {
+                sdp,
+                to: None,
+                from,
+            },
+        ),
+        SignalMessage::Answer { sdp, to, .. } => (
+            RelayedKind::Answer,
+            to,
+            SignalMessage::Answer {
+                sdp,
+                to: None,
+                from,
+            },
+        ),
+        SignalMessage::IceCandidate { candidate, to, .. } => (
+            RelayedKind::Ice,
+            to,
+            SignalMessage::IceCandidate {
+                candidate,
+                to: None,
+                from,
+            },
+        ),
+        SignalMessage::IceRestartRequest { to, .. } => (
+            RelayedKind::IceRestartRequest,
+            to,
+            SignalMessage::IceRestartRequest { to: None, from },
+        ),
+        SignalMessage::MicSuspended { suspended, to, .. } => (
+            RelayedKind::MicSuspended,
+            to,
+            SignalMessage::MicSuspended {
+                suspended,
+                to: None,
+                from,
+            },
+        ),
+        _ => return None,
+    })
+}
+
+/// Forwards one handshake frame to the participant it names (`to`), or - on the 1:1 wire, which
+/// names nobody - to the other party of a two-seat room; a microphone state with no addressee goes
+/// to every other participant. The forwarded frame carries `from`, the sender's user id, stamped
+/// here.
+fn p2p_relay(
     state: &Arc<AppState>,
     session: &PeerSession,
     peer_id: &str,
-    kind: RelayedKind,
+    user_id: &str,
     frame: SignalMessage,
 ) {
+    let name = frame.kind();
     let Some(room_id) = session.room_id.as_ref() else {
         warn!(
             "[call] {} sent {} before Join completed - dropped",
-            peer_id,
-            frame.kind()
+            peer_id, name
         );
         return;
     };
     let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
         warn!(
             "[call] {} sent {} for p2p room {}, which no longer exists - dropped",
-            peer_id,
-            frame.kind(),
-            room_id
+            peer_id, name, room_id
         );
         return;
     };
-    let Some(partner) = room.partner_of(peer_id) else {
-        // Three cases, kept apart: an evicted device still trickling (already explained by its
-        // record), a partner AWAY (expected while it reconnects: the sender was told `PeerAway`,
-        // and the pair renegotiates on its resume), and a peer alone in the room - which the
-        // client should never produce, since it offers only on `PeerReady`.
-        if room.contains(peer_id) {
-            // The column counts ICE that went nowhere, the one kind it was written for: an offer,
-            // a restart request or a microphone state dropped here is carried by the line below.
-            if kind == RelayedKind::Ice {
-                if let Some(ledger) = &session.ledger {
-                    bump(&ledger.ice_in_failed);
-                }
+    let Some((kind, to, frame)) = readdress(frame, user_id) else {
+        warn!(
+            "[call] {} sent {} - not a relayable frame, dropped",
+            peer_id, name
+        );
+        return;
+    };
+    let broadcast = kind == RelayedKind::MicSuspended;
+    let count_ice_lost = || {
+        // The column counts ICE that went nowhere, the one kind it was written for: an offer, a
+        // restart request or a microphone state dropped here is carried by its line.
+        if kind == RelayedKind::Ice {
+            if let Some(ledger) = &session.ledger {
+                bump(&ledger.ice_in_failed);
             }
-            if room.partner_is_away(peer_id) {
-                info!(
-                    "[call] {} sent {} in p2p room {} while the other party is away - dropped",
-                    peer_id,
-                    frame.kind(),
-                    room_id
+        }
+    };
+    // Delivered UNDER the room's lock: a replaced device's frame then precedes its successor's
+    // `PeerReady` or goes nowhere (see `P2pRoom::relay`).
+    room.relay(peer_id, to.as_deref(), broadcast, |route| {
+        let targets = match route {
+            Route::To(p) => vec![p],
+            Route::Everyone(all) => all,
+            // An evicted device still trickling: its record already explains it.
+            Route::NotSeated => {
+                debug!(
+                    "[call] {} sent {} in p2p room {} but holds no seat (replaced or expired) - dropped",
+                    peer_id, name, room_id
                 );
                 return;
             }
-            warn!(
-                "[call] {} sent {} in p2p room {} with nobody to receive it - dropped",
-                peer_id,
-                frame.kind(),
-                room_id
-            );
-        }
-        return;
-    };
-    let name = frame.kind();
-    match p2p::deliver(&partner.tx, frame) {
-        Ok(()) => {
-            if let Some(ledger) = &session.ledger {
-                count_relayed(kind, ledger, &partner.ledger);
-            }
-            if kind != RelayedKind::Ice {
+            Route::Away => {
+                // Expected while it reconnects: the sender was told `PeerAway`, and the pair
+                // renegotiates on its resume.
+                count_ice_lost();
                 info!(
-                    "[call] p2p {} relayed room={} from={} to={}",
-                    name, room_id, peer_id, partner.peer_id
+                    "[call] {} sent {} in p2p room {} while the other party is away - dropped",
+                    peer_id, name, room_id
                 );
+                return;
+            }
+            Route::Nobody => {
+                count_ice_lost();
+                warn!(
+                    "[call] {} sent {} in p2p room {} with nobody to receive it (to={}) - dropped",
+                    peer_id,
+                    name,
+                    room_id,
+                    to.as_deref().unwrap_or("-")
+                );
+                return;
+            }
+            Route::Unaddressed => {
+                count_ice_lost();
+                warn!(
+                    "[call] {} sent {} in mesh room {} naming no addressee - dropped (no mesh client sends one)",
+                    peer_id, name, room_id
+                );
+                return;
+            }
+        };
+        for target in targets {
+            match p2p::deliver(&target.tx, frame.clone()) {
+                Ok(()) => {
+                    if let Some(ledger) = &session.ledger {
+                        count_relayed(kind, ledger, &target.ledger);
+                    }
+                    if kind != RelayedKind::Ice {
+                        info!(
+                            "[call] p2p {} relayed room={} from={} to={}",
+                            name, room_id, peer_id, target.peer_id
+                        );
+                    }
+                }
+                Err(e) => {
+                    // Counted only for ICE, the one kind that column was written for; a dropped offer
+                    // or answer is rarer and fatal to the negotiation, and this line carries it.
+                    if kind == RelayedKind::Ice {
+                        bump(&target.ledger.ice_out_failed);
+                    }
+                    warn!(
+                        "[call] p2p {} DROPPED room={} from={} to={}: {}",
+                        name,
+                        room_id,
+                        peer_id,
+                        target.peer_id,
+                        e.as_str()
+                    );
+                }
             }
         }
-        Err(e) => {
-            // Counted only for ICE, the one kind that column was written for; a dropped offer or
-            // answer is rarer and fatal to the negotiation, and this line carries it.
-            if kind == RelayedKind::Ice {
-                bump(&partner.ledger.ice_out_failed);
-            }
-            warn!(
-                "[call] p2p {} DROPPED room={} from={} to={}: {}",
-                name,
-                room_id,
-                peer_id,
-                partner.peer_id,
-                e.as_str()
-            );
-        }
-    }
+    });
 }
 
-/// Removes a peer from its peer-to-peer room when its socket ends, tells the party left behind,
-/// and drops the room once it is empty - atomically, under the map's shard lock, so a join racing
-/// the last leave either lands before the removal or creates a fresh room after it.
+/// Removes a peer from its peer-to-peer room when its socket ends, tells the present others who
+/// left, and drops the room once it is empty - atomically, under the map's shard lock, so a join
+/// racing the last leave either lands before the removal or creates a fresh room after it.
 fn p2p_leave(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
-    let mut remaining: Option<P2pPeer> = None;
+    let mut departure: Option<Departure> = None;
     let removed = state.p2p_rooms.remove_if(room_id, |_, room| {
-        remaining = room.leave(peer_id);
+        departure = room.leave(peer_id);
         room.is_empty()
     });
     if removed.is_some() {
         info!("[call] p2p room {} removed - no peers remaining", room_id);
     }
-    if let Some(other) = remaining {
+    if let Some(departure) = departure {
         // Through `deliver`: this runs on the LEAVING peer's task, which must not hang on a
-        // partner that stopped reading.
-        p2p_send(&other.tx, SignalMessage::PeerLeft, room_id, &other.peer_id);
+        // participant that stopped reading.
+        p2p_tell_departure(room_id, &departure, |peer| SignalMessage::PeerLeft { peer });
     }
 }
 
@@ -2505,6 +2923,15 @@ fn filter_urls_for_sfu(urls: Vec<String>) -> Vec<String> {
     filtered
 }
 
+/// Makes the renegotiation [`schedule_renegotiate`] deferred for `peer_id` while a negotiation was
+/// in flight, now that it is back to `stable`.
+fn renegotiate_if_owed(room: &Arc<Room>, peer_id: &str) {
+    if room.renegotiate_pending.remove(peer_id).is_some() {
+        info!("[call] deferred renegotiation of {} now offered", peer_id);
+        schedule_renegotiate(room.clone(), peer_id.to_string());
+    }
+}
+
 /// Debounces SFU→client offers when several tracks arrive at once (e.g. audio + video).
 fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
     let generation = {
@@ -2528,13 +2955,24 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
             return;
         }
 
-        let Some(ctx) = room.peers.get(&target_peer_id) else {
+        let Some(ctx) = room.peers.get(&target_peer_id).map(|c| c.value().clone()) else {
             info!(
                 "[call] renegotiation dropped: peer {} left before the debounce fired",
                 target_peer_id
             );
             return;
         };
+        if ctx.pc.signaling_state() != RTCSignalingState::Stable {
+            // A negotiation is in flight (the peer's own offer, or ours unanswered): an offer now
+            // would fail. Owed, and made by `renegotiate_if_owed` once it returns to stable.
+            room.renegotiate_pending.insert(target_peer_id.clone(), ());
+            info!(
+                "[call] renegotiation deferred peer={} (signaling={:?}) - offered once stable",
+                target_peer_id,
+                ctx.pc.signaling_state()
+            );
+            return;
+        }
 
         let offer = match ctx.pc.create_offer(None).await {
             Ok(offer) => offer,
@@ -2563,7 +3001,15 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
                 return;
             }
         };
-        match ctx.notify_tx.send(SignalMessage::Offer { sdp }).await {
+        match ctx
+            .notify_tx
+            .send(SignalMessage::Offer {
+                sdp,
+                to: None,
+                from: None,
+            })
+            .await
+        {
             Ok(()) => {
                 bump(&ctx.ledger.offers_out);
                 info!(
@@ -2884,6 +3330,19 @@ fn user_id_from_peer(peer_id: &str) -> &str {
     peer_id.split(':').next().unwrap_or(peer_id)
 }
 
+/// How many tracks `pc` carries on a transceiver no negotiation has placed yet (no mid): tracks the
+/// SFU added for this peer that its own offer could not answer for - a group call's late joiner
+/// meets every track already forwarded in the room this way.
+async fn unnegotiated_tracks(pc: &RTCPeerConnection) -> usize {
+    let mut count = 0;
+    for t in pc.get_transceivers().await {
+        if t.mid().is_none() && t.sender().await.track().await.is_some() {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Removes other peers belonging to the same user so only one device is in the room.
 async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
     let siblings: Vec<String> = room
@@ -2909,8 +3368,100 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
                     sibling, user_id
                 );
             }
+            room.renegotiate_pending.remove(&sibling);
+            drop_publisher_tracks(room, &sibling).await;
         }
     }
+}
+
+/// Registers a track `on_track` received, ONLY while its publisher still holds its seat, and
+/// answers the held tracks lock so the caller forwards it to the other peers before releasing it.
+///
+/// Every departure removes the peer from `room.peers` BEFORE [`drop_publisher_tracks`] takes this
+/// same lock, so the two cannot overlap: a publisher already gone is refused here (`None`, logged),
+/// and one leaving while this hold lasts has its track dropped once the forward is done.
+async fn publish_if_present(
+    room: &Room,
+    track: PublishedTrack,
+) -> Option<tokio::sync::MutexGuard<'_, Vec<PublishedTrack>>> {
+    let mut tracks = room.tracks.lock().await;
+    if !room.peers.contains_key(&track.publisher) {
+        info!(
+            "[call] track {} of {} dropped: its publisher left before it was registered",
+            track.local.id(),
+            track.publisher
+        );
+        return None;
+    }
+    tracks.push(track);
+    Some(tracks)
+}
+
+/// Removes every track `publisher` published from the room, and from every other peer's
+/// connection, then renegotiates each peer that lost one. Called when a publisher leaves or is
+/// evicted: without it a late joiner is offered m-lines of dead tracks, and a rejoining user ends
+/// up with two track sets under one stream id - which breaks the per-sender demux of WP-GC1.
+async fn drop_publisher_tracks(room: &Arc<Room>, publisher: &str) {
+    let removed: std::collections::HashSet<String> = {
+        let mut tracks = room.tracks.lock().await;
+        let mut gone = std::collections::HashSet::new();
+        tracks.retain(|t| {
+            if t.publisher == publisher {
+                gone.insert(t.local.id().to_string());
+                false
+            } else {
+                true
+            }
+        });
+        gone
+    };
+    if removed.is_empty() {
+        return;
+    }
+    info!(
+        "[call] {} track(s) of departed publisher {} removed from the room",
+        removed.len(),
+        publisher
+    );
+    let others: Vec<(PeerId, Arc<PeerContext>)> = room
+        .peers
+        .iter()
+        .filter(|e| e.key() != publisher)
+        .map(|e| (e.key().clone(), e.value().clone()))
+        .collect();
+    for (peer_id, ctx) in others {
+        let mut lost = 0;
+        for sender in ctx.pc.get_senders().await {
+            let Some(track) = sender.track().await else {
+                continue;
+            };
+            if !removed.contains(track.id()) {
+                continue;
+            }
+            match ctx.pc.remove_track(&sender).await {
+                Ok(()) => lost += 1,
+                Err(e) => warn!(
+                    "[call] could not remove a departed track from peer {}: {}",
+                    peer_id, e
+                ),
+            }
+        }
+        if lost > 0 {
+            schedule_renegotiate(room.clone(), peer_id);
+        }
+    }
+}
+
+/// The ids of the tracks the room forwards, publisher by publisher - what a test reads to prove
+/// a departed publisher's tracks are gone and a rejoin holds one set.
+#[cfg(test)]
+async fn forwarded_track_publishers(room: &Room) -> Vec<String> {
+    room.tracks
+        .lock()
+        .await
+        .iter()
+        .map(|t| t.publisher.clone())
+        .collect()
 }
 
 async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
@@ -2953,6 +3504,204 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
 mod tests {
     use super::*;
 
+    /// An empty room, as a first SFU Join creates it.
+    fn sfu_room() -> Arc<Room> {
+        Arc::new(Room {
+            seats: std::sync::Mutex::new(SfuSeats::new(8)),
+            tracks: Mutex::new(Vec::new()),
+            peers: DashMap::new(),
+            renegotiate_gen: DashMap::new(),
+            renegotiate_pending: DashMap::new(),
+            last_activity: std::sync::Mutex::new(std::time::Instant::now()),
+        })
+    }
+
+    /// A peer connection with no ICE server - nothing here connects, only tracks are attached.
+    async fn bare_pc() -> Arc<RTCPeerConnection> {
+        let mut m = MediaEngine::default();
+        m.register_default_codecs().unwrap();
+        let api = APIBuilder::new().with_media_engine(m).build();
+        Arc::new(
+            api.new_peer_connection(RTCConfiguration::default())
+                .await
+                .unwrap(),
+        )
+    }
+
+    /// Seats `peer_id` in the room with its own connection.
+    async fn seat(room: &Arc<Room>, peer_id: &str) -> Arc<RTCPeerConnection> {
+        let pc = bare_pc().await;
+        let (tx, _rx) = mpsc::channel(8);
+        room.peers.insert(
+            peer_id.to_string(),
+            Arc::new(PeerContext {
+                pc: pc.clone(),
+                notify_tx: tx,
+                pending_ice_candidates: Mutex::new(Vec::new()),
+                ledger: Arc::new(CallLedger::new(
+                    "room-t".into(),
+                    peer_id.into(),
+                    RoomMode::Sfu,
+                )),
+            }),
+        );
+        pc
+    }
+
+    /// `publisher` publishes one audio track, forwarded to every other seated peer, as `on_track`
+    /// does. Answers the forwarded track's id.
+    async fn publish(room: &Arc<Room>, publisher: &str) -> String {
+        let local = local_audio(publisher);
+        let held = publish_if_present(room, audio_track(publisher, &local))
+            .await
+            .expect("the publisher is seated");
+        let others: Vec<Arc<PeerContext>> = room
+            .peers
+            .iter()
+            .filter(|e| e.key() != publisher)
+            .map(|e| e.value().clone())
+            .collect();
+        for ctx in others {
+            ctx.pc
+                .add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
+                .await
+                .unwrap();
+        }
+        drop(held);
+        local.id().to_string()
+    }
+
+    /// An audio track named for `publisher`, built as `on_track` builds it.
+    fn local_audio(publisher: &str) -> Arc<TrackLocalStaticRTP> {
+        Arc::new(TrackLocalStaticRTP::new(
+            webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
+                mime_type: "audio/opus".into(),
+                clock_rate: 48000,
+                channels: 2,
+                ..Default::default()
+            },
+            format!("track-{}-{}", publisher, Uuid::new_v4()),
+            forwarded_stream_id(publisher),
+        ))
+    }
+
+    /// The room's record of `local`, published by `publisher`.
+    fn audio_track(publisher: &str, local: &Arc<TrackLocalStaticRTP>) -> PublishedTrack {
+        PublishedTrack {
+            publisher: publisher.to_string(),
+            local: local.clone(),
+            publisher_pc: std::sync::Weak::new(),
+            media_ssrc: 1,
+            is_video: false,
+            last_pli: Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        }
+    }
+
+    /// The forwarded track ids a peer's connection still SENDS.
+    async fn sent_track_ids(pc: &RTCPeerConnection) -> Vec<String> {
+        let mut ids = Vec::new();
+        for sender in pc.get_senders().await {
+            if let Some(t) = sender.track().await {
+                ids.push(t.id().to_string());
+            }
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn a_departed_publishers_tracks_leave_the_room_and_every_subscriber() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let bob = seat(&room, "bob:b1").await;
+        let carol = seat(&room, "carol:c1").await;
+        let alice_track = publish(&room, "alice:a1").await;
+        let bob_track = publish(&room, "bob:b1").await;
+        assert!(sent_track_ids(&carol).await.contains(&alice_track));
+
+        // Alice leaves: her track is gone from the room and from every connection forwarding it.
+        room.peers.remove("alice:a1");
+        drop_publisher_tracks(&room, "alice:a1").await;
+
+        assert_eq!(forwarded_track_publishers(&room).await, vec!["bob:b1"]);
+        assert_eq!(sent_track_ids(&carol).await, vec![bob_track.clone()]);
+        assert!(!sent_track_ids(&bob).await.contains(&alice_track));
+
+        // A late joiner is offered only the live tracks: what `Join` subscribes it to.
+        let live: Vec<String> = room
+            .tracks
+            .lock()
+            .await
+            .iter()
+            .map(|t| t.local.id().to_string())
+            .collect();
+        assert_eq!(live, vec![bob_track]);
+    }
+
+    #[tokio::test]
+    async fn a_track_arriving_after_its_publisher_left_is_never_registered() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let _bob = seat(&room, "bob:b1").await;
+
+        // Alice leaves, and her departure's drop runs, before her in-flight `on_track` registers.
+        room.peers.remove("alice:a1");
+        drop_publisher_tracks(&room, "alice:a1").await;
+        let late = local_audio("alice:a1");
+        assert!(publish_if_present(&room, audio_track("alice:a1", &late))
+            .await
+            .is_none());
+
+        assert!(forwarded_track_publishers(&room).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_departure_during_a_forward_drops_the_track_once_the_forward_is_done() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let bob = seat(&room, "bob:b1").await;
+
+        // Alice's `on_track` holds the lock: registered, forwarding to bob.
+        let local = local_audio("alice:a1");
+        let held = publish_if_present(&room, audio_track("alice:a1", &local))
+            .await
+            .expect("alice is seated");
+        bob.add_track(Arc::clone(&local) as Arc<dyn TrackLocal + Send + Sync>)
+            .await
+            .unwrap();
+
+        // She leaves meanwhile: her drop WAITS for the forward rather than racing it.
+        room.peers.remove("alice:a1");
+        let dropping = {
+            let room = room.clone();
+            tokio::spawn(async move { drop_publisher_tracks(&room, "alice:a1").await })
+        };
+        tokio::task::yield_now().await;
+        assert!(!dropping.is_finished());
+
+        drop(held);
+        dropping.await.unwrap();
+        assert!(forwarded_track_publishers(&room).await.is_empty());
+        assert!(sent_track_ids(&bob).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_rejoin_leaves_one_set_of_tracks_per_user() {
+        let room = sfu_room();
+        let _alice = seat(&room, "alice:a1").await;
+        let bob = seat(&room, "bob:b1").await;
+        let old = publish(&room, "alice:a1").await;
+
+        // Alice's new device evicts the old one (before it is seated, as `Join` does), then
+        // publishes again under the same stream id.
+        evict_sibling_peers(&room, "alice").await;
+        let _alice2 = seat(&room, "alice:a2").await;
+        let new = publish(&room, "alice:a2").await;
+
+        assert_eq!(forwarded_track_publishers(&room).await, vec!["alice:a2"]);
+        assert_eq!(sent_track_ids(&bob).await, vec![new]);
+        assert!(!sent_track_ids(&bob).await.contains(&old));
+    }
+
     fn user_token(kind: Option<&str>, secret: &[u8], alg: Algorithm) -> String {
         let claims = Claims {
             sub: "user-1".into(),
@@ -2962,9 +3711,18 @@ mod tests {
         encode(
             &Header::new(alg),
             &claims,
-            &EncodingKey::from_secret(secret),
+            &EncodingKey::from_secret(secret).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn an_empty_secret_accepts_nothing() {
+        let signed = user_token(None, b"test-secret", Algorithm::HS256);
+        assert!(matches!(
+            decode_access_claims(&signed, b""),
+            Err(TokenRejection::Invalid(_))
+        ));
     }
 
     #[test]
@@ -3256,7 +4014,7 @@ mod tests {
             }
         ));
         assert_eq!(
-            serde_json::to_string(&SignalMessage::PeerLeft).unwrap(),
+            serde_json::to_string(&SignalMessage::PeerLeft { peer: None }).unwrap(),
             r#"{"type":"PeerLeft"}"#
         );
     }

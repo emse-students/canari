@@ -52,6 +52,10 @@
 /// groups have none), so both triggers draw an unnamed group as a group (`ConversationShape`).
 /// `None` when the row carries no type: handed to Kotlin as a null `java.lang.Boolean`, the same
 /// "not said" the push's absent `isGroup` is, so the builder falls back to the name rule.
+/// `reaction` says the frame is a REACTION to one of this account's messages (2026-11-17), not a
+/// message: `body` is then the emoji and `sender_*` the actor, and Kotlin posts the push's own
+/// reaction composition on `canari_reactions_v2` under `reaction:<groupId>` - the WebView raises it
+/// only while the app is in front with that conversation off screen, where the push is dropped.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
@@ -66,6 +70,7 @@ pub(crate) fn notifier_message_natif(
     covers: i32,
     author_proven: bool,
     is_group: Option<bool>,
+    reaction: bool,
 ) -> bool {
     #[cfg(target_os = "android")]
     {
@@ -134,7 +139,7 @@ pub(crate) fn notifier_message_natif(
             .call_static_method(
                 &class,
                 "notifyMessageFromWebSocket",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZLjava/lang/Boolean;)Z",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZLjava/lang/Boolean;Z)Z",
                 &[
                     (&args[0]).into(),
                     (&args[1]).into(),
@@ -147,15 +152,17 @@ pub(crate) fn notifier_message_natif(
                     JValue::Int(covers),
                     JValue::Bool(u8::from(author_proven)),
                     (&is_group_arg).into(),
+                    JValue::Bool(u8::from(reaction)),
                 ],
             )
             .and_then(|v| v.z())
         {
             Ok(accepted) => {
                 log::debug!(
-                    "[NOTIF] native builder {} for {} (covers {covers})",
+                    "[NOTIF] native builder {} for {} (covers {covers}){}",
                     if accepted { "queued" } else { "refused" },
-                    group_id.chars().take(8).collect::<String>()
+                    group_id.chars().take(8).collect::<String>(),
+                    if reaction { " - a reaction" } else { "" }
                 );
                 accepted
             }
@@ -179,6 +186,7 @@ pub(crate) fn notifier_message_natif(
             covers,
             author_proven,
             is_group,
+            reaction,
         );
         false
     }

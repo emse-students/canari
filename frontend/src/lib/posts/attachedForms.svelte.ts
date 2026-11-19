@@ -75,27 +75,33 @@ export function attachedFormSources(
 export function attachedFormsLoader(
   sources: () => AttachedFormSource[],
   reads: AttachedFormReads
-): { readonly infos: AttachedFormInfo[]; readonly pending: string[] } {
+): { readonly infos: AttachedFormInfo[] } {
   const answered = new SvelteMap<string, AttachedFormInfo>();
   // NOT REACTIVE ON PURPOSE: the effect below must not re-run because it recorded an ask.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a record of asks nothing draws
   const asked = new Set<string>();
 
   async function load(src: AttachedFormSource): Promise<void> {
+    // ALWAYS READ, even when the post already names the title: the post's `forms` entry carries no
+    // `opensAt`, and a card without it can neither say "opens on ..." nor offer its reminder bell.
     let title = src.title;
     let opensAt: string | null | undefined;
-    if (!title) {
-      try {
-        const form = await reads.getForm(src.id);
-        title = form.title;
-        opensAt = form.opensAt;
-      } catch (e) {
+    try {
+      const form = await reads.getForm(src.id);
+      title ||= form.title;
+      opensAt = form.opensAt;
+    } catch (e) {
+      if (!title) {
         console.error(
           `[POSTS] attached form ${src.id} could not be read - left as a placeholder`,
           e
         );
         return;
       }
+      console.warn(
+        `[POSTS] attached form ${src.id}: opening date could not be read - drawn as open`,
+        e
+      );
     }
     let submitted = false;
     try {
@@ -109,7 +115,7 @@ export function attachedFormsLoader(
     answered.set(src.id, { id: src.id, title, submitted, opensAt });
   }
 
-  // Derived ONCE: the effect and both derived values below share it.
+  // Derived ONCE: the effect and the derived value below share it.
   const list = $derived(sources());
 
   $effect(() => {
@@ -127,14 +133,10 @@ export function attachedFormsLoader(
       return info ? [info] : [];
     })
   );
-  const pending = $derived(list.map((s) => s.id).filter((id) => !answered.has(id)));
 
   return {
     get infos() {
       return infos;
-    },
-    get pending() {
-      return pending;
     },
   };
 }

@@ -88,6 +88,7 @@
   } from '$lib/utils/messageSwipeReply';
   import { hasActiveTextSelection } from '$lib/utils/textSelection';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
+  import { claimTouchMove } from '$lib/utils/touchClaim';
 
   interface Props {
     /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
@@ -263,6 +264,27 @@
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
   /**
+   * THE FOUR CLOSED OVERLAYS ARE MOUNTED ON THE FIRST INTENT, NOT WITH THE BUBBLE.
+   *
+   * The picker, the info panel, the actions sheet and the delete confirmation draw nothing while
+   * closed, yet each bubble paid their setup at mount - effects, a history binding, a storage read -
+   * about 0.3 ms a bubble at x4, inside every salon open (community-open-budget, "Per-bubble and
+   * per-day work"). They are mounted on the bubble's first `pointerdown` or `focusin` instead: every
+   * opener (a tap, a hold, a right-click, a toolbar button, a key on the focused bubble) starts with
+   * one, in an EARLIER event, so the overlay exists closed before it opens and its local intro still
+   * plays - a transition plays only when its own `{#if}` is created after its parent is mounted.
+   * Mounting it in the same flush as the open would draw it with no intro, which is why the open
+   * states are in `overlaysMounted` only as a guarantee: an open with no intent before it (an
+   * assistive click, a test) still draws its overlay. Once armed, a bubble keeps them for its life.
+   */
+  let overlaysArmed = $state(false);
+  const overlaysMounted = $derived(
+    overlaysArmed || showEmojiPicker || showInfo || showMobileActions || showDeleteModal
+  );
+  function armOverlays() {
+    if (!overlaysArmed) overlaysArmed = true;
+  }
+  /**
    * The "everywhere" act the delete confirmation offers beside the plain delete (15.2, 15.7), asked
    * of the outbox when the confirmation OPENS - an event, never polled - for my own reel message
    * only. `null` (nothing offered) until it answers, and for a take naming one message.
@@ -311,6 +333,11 @@
   let pointerStartY = $state(0);
   let swipeHandled = $state(false);
   let replyGesture = $state<ReplySwipeGestureState | null>(null);
+  /**
+   * The engine took this stroke (a touchmove was uncancelable): it gates the claim AND its log, so
+   * the bubble stops claiming and writes ONE line per stroke. Reset at every touch start.
+   */
+  let replyStrokeLost = false;
   let replyDragPx = $state(0);
 
   let envelope = $derived(parseEnvelope(content));
@@ -651,6 +678,7 @@
     pointerStartX = x;
     pointerStartY = y;
     swipeHandled = false;
+    replyStrokeLost = false;
     replyDragPx = 0;
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
@@ -700,11 +728,34 @@
     }
 
     const { x, y } = pointerCoords(e);
+    const before = replyGesture.phase;
     const updated = updateReplySwipeGesture(replyGesture, x, y);
     replyGesture = updated;
+    if (before === 'pending' && updated.phase !== 'pending') {
+      Log.d(
+        'MESSAGE',
+        `reply swipe on ${messageId.slice(0, 8)} locked ${updated.phase} (dx ${Math.round(x - updated.startX)}, dy ${Math.round(y - updated.startY)})`
+      );
+    }
 
     if (updated.phase === 'horizontal') {
-      if ('touches' in e) e.stopPropagation();
+      if ('touches' in e) {
+        e.stopPropagation();
+        // THE STROKE IS CLAIMED, NOT HOPED FOR. `touch-action: pan-y` leaves the vertical axis to
+        // the engine, and WebKit applies a diagonal's vertical component to the thread unless the
+        // page cancels the move (iPhone 12, 2026-11-15: a 110 px stroke with 45 px of drift
+        // scrolled the thread 35 px and staged no reply). Chromium never needed it - its first
+        // direction decides - which is why Android kept replying without it. Cancelable until the
+        // engine has started a scroll; the lock is at 8 px so the first delivered move already
+        // claims.
+        if (!replyStrokeLost && !claimTouchMove(e)) {
+          replyStrokeLost = true;
+          Log.w(
+            'MESSAGE',
+            `reply swipe on ${messageId.slice(0, 8)} locked horizontal but its touchmove is not cancelable: the engine already owns the stroke`
+          );
+        }
+      }
       const dx = x - updated.startX;
       // `null` is an OUTWARD drag, which is no longer a gesture - the bubble simply does not move.
       replyDragPx = replySwipeDragOffset(dx, isOwn) ?? 0;
@@ -841,19 +892,20 @@
     if (connectivity.isOffline) return 'network';
     return textWaitOf(messageId) ?? null;
   });
-  const upload = $derived.by((): UploadView | null => {
+  /** The view of an upload this tab has not started (its turn, or another tab drains the queue). */
+  const notStartedView = $derived<UploadView>({
+    // Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
+    phase: connectivity.isOffline ? 'waiting' : 'queued',
+    loaded: 0,
+    total: 0,
+    attempt: 0,
+  });
+  /** The upload as this tab's memory knows it: the outbox's own view, from the derived status. */
+  const liveUpload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
-    // No view yet = the outbox has not started this entry (its turn, or the file is about to be
-    // read). Only a KNOWN offline link may say "waiting for the connection"; otherwise it is queued.
-    return (
-      uploadViewOf(messageId) ?? {
-        phase: connectivity.isOffline ? 'waiting' : 'queued',
-        loaded: 0,
-        total: 0,
-        attempt: 0,
-      }
-    );
+    // No view yet = the outbox has not started this entry (its turn, or the file is about to be read).
+    return uploadViewOf(messageId) ?? notStartedView;
   });
 
   /**
@@ -867,7 +919,7 @@
   /** The reason the STORED row gives for a retired attachment - the answer after a reload. */
   let storedUnsentReason = $state<UnsentReason | null>(null);
   const orphanCandidate = $derived(
-    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!upload, uploadFailed }) &&
+    isOrphanMediaCandidate({ mediaRef, isOwn, hasUpload: !!liveUpload, uploadFailed }) &&
       // The sender's own enqueue is still writing the row: "absent" is not yet an answer.
       !isOutboxEnqueueInflight(messageId)
   );
@@ -907,6 +959,15 @@
   );
   const orphanMedia = $derived(
     orphanCandidate && outboxHasEntry === false && storedUnsentReason === null
+  );
+  /**
+   * THE QUEUE, NOT THE MEMORY, SAYS WHETHER THE FILE IS STILL TO GO. A row whose derived status was
+   * lost (a stored page merged over it, a tab that never ran the send) but whose entry the durable
+   * queue still holds is a QUEUED upload, and says so - never the bare image placeholder, which reads
+   * as a picture loading and promises nothing (owner, web 1.6.9, 2026-11-10).
+   */
+  const upload = $derived(
+    liveUpload ?? (orphanCandidate && outboxHasEntry === true ? notStartedView : null)
   );
 
   /**
@@ -1038,6 +1099,8 @@
       },
     }}
     class="group relative flex max-w-full flex-col {isOwn ? 'items-end' : 'items-start'}"
+    onpointerdowncapture={armOverlays}
+    onfocusincapture={armOverlays}
   >
     <div class="relative w-fit max-w-full">
       {#if replyDragPx !== 0 && onReply}
@@ -1161,7 +1224,7 @@
                 ? 'text-bubble-out-text bg-bubble-out'
                 : 'text-text-main bg-bubble-in'} {isHighlighted
               ? 'ring-accent/80 animate-pulse ring-2 ring-offset-2 ring-offset-transparent'
-              : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
+              : ''} {shouldAnimate ? 'motion-bubble-in' : ''}"
           >
             {#if pollEnvelope && pollSpec && pollMeta}
               <ChannelPoll
@@ -1211,6 +1274,7 @@
                   {isDeleted}
                   {firstLink}
                   jumbo={isEmojiOnly}
+                  onOwnBubble={isOwn}
                 />
               {/if}
             {/if}
@@ -1278,7 +1342,10 @@
       {isLastOwn}
       {isReadReceiptAnchor}
       {status}
+      {waitingOn}
       {readBy}
+      onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
+      {onDiscard}
       outsideBubble
     />
 
@@ -1287,136 +1354,140 @@
       <ControlRefusedNotice {messageId} {isOwn} excerpt={textContent} />
     {/if}
 
-    <MessageEmojiPicker
-      origin={emojiPickerOrigin}
-      {isOwn}
-      anchor={bubbleAnchor}
-      existingReactionEmojis={Object.keys(groupedReactions)}
-      onEmojiSelect={(emoji) => {
-        // CHOOSING CLOSES THE PANEL, AND IT HAS TO BE SAID HERE NOW.
-        // It used to happen by accident: the panel is portalled, so the click that chose an emoji
-        // was read as "outside" by the guard on this element and dismissed it. That guard is fixed,
-        // which takes the accident away - a picker that stayed open after a reaction would be the
-        // fix's own regression.
-        onReact?.(messageId, emoji);
-        emojiPickerOrigin = null;
-        showMobileActions = false;
-      }}
-    />
+    {#if overlaysMounted}
+      <MessageEmojiPicker
+        origin={emojiPickerOrigin}
+        {isOwn}
+        anchor={bubbleAnchor}
+        existingReactionEmojis={Object.keys(groupedReactions)}
+        onEmojiSelect={(emoji) => {
+          // CHOOSING CLOSES THE PANEL, AND IT HAS TO BE SAID HERE NOW.
+          // It used to happen by accident: the panel is portalled, so the click that chose an emoji
+          // was read as "outside" by the guard on this element and dismissed it. That guard is fixed,
+          // which takes the accident away - a picker that stayed open after a reaction would be the
+          // fix's own regression.
+          onReact?.(messageId, emoji);
+          emojiPickerOrigin = null;
+          showMobileActions = false;
+        }}
+      />
 
-    <MessageInfoTooltip
-      visible={showInfo}
-      {timestamp}
-      {editedAt}
-      {readBy}
-      {isOwn}
-      {isEdited}
-      {nicknameScope}
-    />
+      <MessageInfoTooltip
+        visible={showInfo}
+        {timestamp}
+        {editedAt}
+        {readBy}
+        {isOwn}
+        {isEdited}
+        {nicknameScope}
+      />
 
-    <MessageMobileActions
-      visible={showMobileActions && isMobile}
-      anchor={bubbleAnchor}
-      {isOwn}
-      {isDeleted}
-      userReactions={userOwnReactions}
-      onReactEmoji={(emoji) => {
-        onReact?.(messageId, emoji);
-        showMobileActions = false;
-        if (
-          settings.vibrationsEnabled &&
-          typeof navigator !== 'undefined' &&
-          'vibrate' in navigator
-        ) {
-          navigator.vibrate(12);
-        }
-      }}
-      onOpenFullPicker={() => {
-        showMobileActions = false;
-        emojiPickerOrigin = 'sheet';
-      }}
-      onReply={onReply && !isDeleted
-        ? () => {
-            onReply!(messageId);
-            showMobileActions = false;
+      <MessageMobileActions
+        visible={showMobileActions && isMobile}
+        anchor={bubbleAnchor}
+        {isOwn}
+        {isDeleted}
+        userReactions={userOwnReactions}
+        onReactEmoji={(emoji) => {
+          onReact?.(messageId, emoji);
+          showMobileActions = false;
+          if (
+            settings.vibrationsEnabled &&
+            typeof navigator !== 'undefined' &&
+            'vibrate' in navigator
+          ) {
+            navigator.vibrate(12);
           }
-        : undefined}
-      onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
-      {pinned}
-      onPin={!isDeleted && onTogglePin
-        ? () => {
-            onTogglePin!(messageId);
-            showMobileActions = false;
-          }
-        : undefined}
-      onCopy={textContent && !isDeleted
-        ? () => {
-            void copyText(textContent, { what: 'text' });
-            showMobileActions = false;
-            if (
-              settings.vibrationsEnabled &&
-              typeof navigator !== 'undefined' &&
-              'vibrate' in navigator
-            ) {
-              navigator.vibrate(8);
+        }}
+        onOpenFullPicker={() => {
+          showMobileActions = false;
+          emojiPickerOrigin = 'sheet';
+        }}
+        onReply={onReply && !isDeleted
+          ? () => {
+              onReply!(messageId);
+              showMobileActions = false;
             }
-          }
-        : undefined}
-      onShare={shareAction}
-      onEdit={canEdit ? startEdit : undefined}
-      {canModerate}
-      onDelete={!isDeleted && (isOwn || canModerate) && onDelete
-        ? () => {
-            showDeleteModal = true;
-            showMobileActions = false;
-          }
-        : undefined}
-      onClose={() => {
-        showMobileActions = false;
-      }}
-    />
+          : undefined}
+        onForward={forwardAction && !isDeleted ? () => forwardAction!(messageId) : undefined}
+        {pinned}
+        onPin={!isDeleted && onTogglePin
+          ? () => {
+              onTogglePin!(messageId);
+              showMobileActions = false;
+            }
+          : undefined}
+        onCopy={textContent && !isDeleted
+          ? () => {
+              void copyText(textContent, { what: 'text' });
+              showMobileActions = false;
+              if (
+                settings.vibrationsEnabled &&
+                typeof navigator !== 'undefined' &&
+                'vibrate' in navigator
+              ) {
+                navigator.vibrate(8);
+              }
+            }
+          : undefined}
+        onShare={shareAction}
+        onEdit={canEdit ? startEdit : undefined}
+        {canModerate}
+        onDelete={!isDeleted && (isOwn || canModerate) && onDelete
+          ? () => {
+              showDeleteModal = true;
+              showMobileActions = false;
+            }
+          : undefined}
+        onClose={() => {
+          showMobileActions = false;
+        }}
+      />
+    {/if}
   </div>
 
-  <Modal
-    open={showDeleteModal}
-    title={m.msg_supprimer_message()}
-    onClose={() => (showDeleteModal = false)}
-  >
-    <p class="text-text-muted text-sm leading-relaxed">
-      {m.msg_supprimer_definitif()}
-    </p>
-    {#if everywhereAct}
-      <p class="text-text-muted mt-2 text-sm leading-relaxed" data-reel-everywhere-hint>
-        {everywhereAct === 'cancel-all'
-          ? m.reel_sendto_cancel_all_hint({ count: everywhereCount })
-          : m.reel_sendto_delete_everywhere_hint({ count: everywhereCount })}
+  {#if overlaysMounted}
+    <Modal
+      open={showDeleteModal}
+      title={m.msg_supprimer_message()}
+      onClose={() => (showDeleteModal = false)}
+    >
+      <p class="text-text-muted text-sm leading-relaxed">
+        {m.msg_supprimer_definitif()}
       </p>
-    {/if}
-    {#snippet footer()}
       {#if everywhereAct}
-        <Button
-          variant="danger-outline"
-          disabled={everywherePressed}
-          onclick={confirmDeleteEverywhere}
-          data-reel-everywhere
-        >
+        <p class="text-text-muted mt-2 text-sm leading-relaxed" data-reel-everywhere-hint>
           {everywhereAct === 'cancel-all'
-            ? m.reel_sendto_cancel_all()
-            : m.reel_sendto_delete_everywhere()}
-        </Button>
+            ? m.reel_sendto_cancel_all_hint({ count: everywhereCount })
+            : m.reel_sendto_delete_everywhere_hint({ count: everywhereCount })}
+        </p>
       {/if}
-      <button
-        onclick={() => (showDeleteModal = false)}
-        class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-      >
-        {m.common_cancel_button()}
-      </button>
-      <button
-        onclick={confirmDelete}
-        class="rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all hover:-translate-y-0.5 hover:bg-red-600"
-      >
-        {m.common_delete_button()}
-      </button>
-    {/snippet}
-  </Modal>
+      {#snippet footer()}
+        {#if everywhereAct}
+          <Button
+            variant="danger-outline"
+            disabled={everywherePressed}
+            onclick={confirmDeleteEverywhere}
+            data-reel-everywhere
+          >
+            {everywhereAct === 'cancel-all'
+              ? m.reel_sendto_cancel_all()
+              : m.reel_sendto_delete_everywhere()}
+          </Button>
+        {/if}
+        <button
+          onclick={() => (showDeleteModal = false)}
+          class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+        >
+          {m.common_cancel_button()}
+        </button>
+        <button
+          onclick={confirmDelete}
+          class="rounded-xl bg-red-500 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-red-500/20 transition-all hover:-translate-y-0.5 hover:bg-red-600"
+        >
+          {m.common_delete_button()}
+        </button>
+      {/snippet}
+    </Modal>
+  {/if}
 {/if}

@@ -104,6 +104,8 @@ function mls(overrides: Record<string, unknown> = {}) {
     getGroupMemberIdentities: vi.fn(async () => [] as string[]),
     // The Add reads its tree under the MLS lock (`readConfirmedTree`).
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+    // The epoch a confirmed reading carries (`readConfirmedTree`).
+    getEpoch: vi.fn().mockReturnValue(0),
     addMembersBulk: vi.fn(async () => ({
       addedDeviceIds: [],
       skipped: [],
@@ -397,6 +399,33 @@ describe('buildConversationRow - what the sites no longer decide', () => {
         identity: { ...base.identity, conversationType: 'group' },
       }).conversationType
     ).toBe('channel');
+  });
+
+  it('keeps a name an MLS frame dated: a site rebuilding the row carries an undated one (groupName.ts)', () => {
+    const existing = {
+      ...buildConversationRow(base),
+      name: 'Les ROOTz',
+      nameAt: 1_790_000_000_000,
+    };
+    const rebuilt = buildConversationRow({
+      ...base,
+      existing,
+      identity: { contactName: 'g1', displayName: 'Groupe' },
+    });
+    expect(rebuilt).toMatchObject({ name: 'Les ROOTz', nameAt: 1_790_000_000_000 });
+    // A site that states a dated name of its own (the restore, from the stored row) writes it.
+    expect(
+      buildConversationRow({
+        ...base,
+        existing,
+        nameAt: 1_790_000_100_000,
+        identity: { contactName: 'g1', displayName: 'Nouveau' },
+      })
+    ).toMatchObject({ name: 'Nouveau', nameAt: 1_790_000_100_000 });
+    // An undated row takes the site's name, as it always did.
+    expect(buildConversationRow({ ...base, existing: buildConversationRow(base) }).name).toBe(
+      'bob'
+    );
   });
 
   it('falls back to `group` only when the site said nothing and the id is not a channel', () => {

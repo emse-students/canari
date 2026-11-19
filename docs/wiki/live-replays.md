@@ -48,8 +48,9 @@ stays a cut of a live, with its strike, and deletes the replay first; D7 covers 
 les vidéos du genre ? 90 s et vidéos verticales ?"*: every vertical video of 90 s or less is a
 CanaReel, and CanaReels are kept one year, the existing ones too. That work moves
 `REEL_RETENTION_DAYS` and the `kind = 'reel'` rows; **a replay is untouched by it**: its
-`expiresAt` is written once from `LIVE_REPLAY_RETENTION_DAYS` (3) at its publication, never from
-`REEL_RETENTION_DAYS`, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
+`expiresAt` is written once at its publication from the admin setting `retention_live_replay_days`
+(3 by default, a constant until 2026-11-14 - [retention-settings](retention-settings.md)), never from
+the reels' own setting, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
 
 ## 1. What a replay costs, measured
 
@@ -343,7 +344,11 @@ so with the switch off nothing changes for any live.
   association's replay included, as its live was (the feed's `blockedAuthorSql` exempts every other
   association post, a replay alone not: the live had already named its broadcaster) - and the
   **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
-  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`.
+  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`. **`?moderation=true`** is the
+  MODERATION READ (owner, 2026-11-15): whoever moderates the replay's post (`mayReadToModeratePost`)
+  reads it past that gate, logged - the rule of the post by id and its comments (*"Oui, dans ses
+  espaces"*); anyone else gets the gate above
+  ([moderation-and-blocking](moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
 - **`withReplays`** on `GET /api/posts` (the feed, and `kind=reel` - the CanaReels list) and on
   `GET /api/posts/:id`: a client that does not say it can draw a replay never receives one - a
   replay by id is then `404`. Search, the linked-event post, pins, member-repost cards and the
@@ -439,15 +444,17 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 
 ### The readings owed
 
-1. **Bytes per hour by platform**: a 10-minute live from the Mi 9T and one from the iPhone 12.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks.
-3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as two parts.
-4. **Expiry on dev**: `expiresAt` moved into the past by SQL, gone within an hour and 30 s, the prefix listed empty.
-5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one.
-6. **The audience**: an outsider, a blocked account and a removed viewer each get `404`.
+Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
+
+1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
+4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
+5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
+6. **The audience**: an outsider, a blocked account (both ways) and a removed viewer each get `404`: **read**, on the replay route and on the post route.
 7. **The backup**: after WP-R3, the next restic snapshot holds no replay byte (`restic ls latest` names
-   no `live_segments` path, and `live/` is absent from Garage's listing).
-8. **The cap on dev**: `LIVE_REPLAY_TOTAL_MAX_GB` set low, the oldest replay evicted, `[LIVE_REPLAY_CAP]` logged, the panel's line showing it.
+   no `live_segments` path, and `live/` is absent from Garage's listing): **owed.** The configuration was read (three paths, `live_segments` outside them); the snapshot of 2026-11-20 after 04:00 is the one to list, by an account that reaches restic.
+8. **The cap on dev**: `LIVE_REPLAY_TOTAL_MAX_GB` set low, the oldest replay evicted, `[LIVE_REPLAY_CAP]` logged, the panel's line showing it: **owed.** Setting it needs the runner's identity on dev's `.env`.
 9. **The first week in production**: the panel's replay bytes against the scenarios above.
 
 ## See also

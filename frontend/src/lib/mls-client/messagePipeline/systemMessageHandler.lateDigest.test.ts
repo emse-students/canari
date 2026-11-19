@@ -79,6 +79,8 @@ const DIGEST_FRAME = {
   digest: { mode: 'ids', ids: ['m1'] },
   since: 0,
   requestId: 'ask-00000001',
+  // Every ask carries its answer key since option B (the 1.7.0 floor); a keyless one is ignored.
+  answerKey: 'a'.repeat(43) + '=',
 };
 
 /** Lets the `void`-ed answer chain behind `answerAfterMailboxDrained` run. */
@@ -166,5 +168,21 @@ describe('a digest that arrives after the wait ended', () => {
     expect(answerHistoryDigest).not.toHaveBeenCalled();
     // Nor read as overheard: the waiter's diff already pulls what we lack.
     expect(pullFromOverheardDigest).not.toHaveBeenCalled();
+  });
+});
+
+describe('a digest asking for the register (`registerOwed.ts`)', () => {
+  it('carries `register` to the answer, and an ordinary digest carries none', async () => {
+    noteDigestSolicited(GROUP, PEER);
+    await handleSystemEvent(
+      'history_digest',
+      { ...DIGEST_FRAME, register: true },
+      makeCtx() as any
+    );
+    noteDigestSolicited(GROUP, PEER);
+    await handleSystemEvent('history_digest', DIGEST_FRAME, makeCtx() as any);
+    await settle();
+
+    expect(answerHistoryDigest.mock.calls.map(([call]) => call.register)).toEqual([true, false]);
   });
 });

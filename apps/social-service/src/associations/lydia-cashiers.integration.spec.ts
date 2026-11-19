@@ -17,9 +17,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HttpException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
+import { of } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { AssociationProduct } from './entities/association-product.entity';
 import { Association } from './entities/association.entity';
+import { AssociationMember } from './entities/association-member.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
@@ -30,7 +32,9 @@ import { AssociationsService, LYDIA_CASHIER_PHONE_PURPOSE } from './associations
 import { LYDIA_CASHIER_IN_FLIGHT, LydiaCashiersService } from './lydia-cashiers.service';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
+  LYDIA_CASHIERS_LIVE,
   LYDIA_CASHIER_CLAIM_LOST,
+  assertNoCashierOwed,
   LYDIA_CASHIER_NUMBER_CHANGED,
   LYDIA_CASHIER_PHONE_IN_USE,
 } from './lydia-cashier-claim';
@@ -75,6 +79,8 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       AssociationProduct,
       UserTag,
       Association,
+      // The departure debt (`CASHIER_DEPARTED_SQL`) reads the memberships.
+      AssociationMember,
       AssociationAudience,
       Space,
       PostNotification,
@@ -85,6 +91,9 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     // TWICE each: CD may replay them, and every statement is IF NOT EXISTS.
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
+    // The bridge's table (lydia-account-bridge.ts), read by every Lydia path: twice, idempotent.
+    await admin.query(migration('167_lydia_account_bridge.sql'));
+    await admin.query(migration('167_lydia_account_bridge.sql'));
     await admin.query('RESET lock_timeout');
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
@@ -409,6 +418,76 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       associations.claimLydiaResponsable(ASSO, 'member-3', HOLDER_PHONE, { mode: 'add' })
     ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
     expect(await claimHeld()).toBe(false);
+  });
+
+  describe('a membership that ended owes its Lydia rights (the real SQL)', () => {
+    /** A service whose core answers every removal with `answer` (what `getpermission` re-read). */
+    const withCore = (answer: { verified: boolean; held: number }) => {
+      const post = jest.fn(() => of({ data: answer }));
+      return {
+        post,
+        service: new LydiaCashiersService(
+          ds.getRepository(Association),
+          associations,
+          { tellAdded } as never,
+          { post } as never
+        ),
+      };
+    };
+    const member = (userId: string) =>
+      ds.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, $2, 0)`,
+        [ASSO, userId]
+      );
+
+    it('the departed Vendeur is listed departed, removed through core, closed; a member stays untouched', async () => {
+      await reset();
+      await ds.query(`DELETE FROM association_members`);
+      await member('holder');
+      await member('member-3');
+      const gone = await record('member-2', '+33600000002');
+      const kept = await record('member-3', '+33600000003');
+      const listed = await listLydiaCashiers((s, p) => ds.query(s, p), ASSO, VENDOR);
+      expect(listed.find((c) => c.id === gone.id)?.departed).toBe(true);
+      expect(listed.find((c) => c.id === kept.id)?.departed).toBe(false);
+      const { service, post } = withCore({ verified: true, held: 0 });
+      await service.settleDepartures(ASSO, 'departure', 'member-2');
+      expect(post).toHaveBeenCalledTimes(1);
+      const live = await ds.query(
+        `SELECT id FROM lydia_cashiers WHERE "associationId" = $1 AND "removedAt" IS NULL`,
+        [ASSO]
+      );
+      expect(live.map((r: { id: string }) => r.id).sort()).toEqual(
+        [kept.id, (await responsableNumbers()).id].sort()
+      );
+      expect(await claimHeld()).toBe(false);
+    });
+
+    it('the delete and the unlink guard read the real rows: owed, in flight, then clear', async () => {
+      await reset();
+      await ds.query(`DELETE FROM association_members`);
+      await member('holder');
+      await member('member-2');
+      const view = await record('member-2', '+33600000002');
+      const guard = () => ds.transaction((manager) => assertNoCashierOwed(manager, ASSO, VENDOR));
+      await expect(guard()).rejects.toMatchObject({ response: { code: LYDIA_CASHIERS_LIVE } });
+      await expect(
+        ds.transaction((manager) => assertNoCashierOwed(manager, ASSO, 'another-business'))
+      ).resolves.toEqual([]);
+      const target = await cashiers.claimRevoke(ASSO, { cashierId: view.id, number: 'current' });
+      await expect(guard()).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_IN_FLIGHT } });
+      await cashiers.recordRevoke(ASSO, {
+        cashierId: view.id,
+        number: 'current',
+        verified: true,
+        actorId: 'treasurer',
+        cashierPhone: target.cashierPhone,
+        claimToken: target.claimToken,
+      });
+      await expect(
+        ds.transaction((manager) => assertNoCashierOwed(manager, ASSO))
+      ).resolves.toEqual([{ vendorToken: VENDOR }]);
+    });
   });
 
   describe('under concurrency (Promise.all, one connection each)', () => {

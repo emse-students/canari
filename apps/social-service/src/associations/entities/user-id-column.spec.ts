@@ -6,6 +6,7 @@ import { PartnershipCode } from './partnership-code.entity';
 import { AssociationMember } from './association-member.entity';
 import { AssociationRoleHistory } from './association-role-history.entity';
 import { DocumentReviewerGrant } from './document-reviewer-grant.entity';
+import { AgendaSubscription } from './agenda-subscription.entity';
 import { ChannelMember } from '../../channels/entities/channel-member.entity';
 import { Submission } from '../../forms/entities/submission.entity';
 import { BookingResource } from '../../bookings/entities/booking-resource.entity';
@@ -39,6 +40,7 @@ describe('a user-id column is varchar(255), never uuid', () => {
     ['association_members', 'userId', AssociationMember],
     ['association_role_history', 'userId', AssociationRoleHistory],
     ['document_reviewer_grants', 'userId', DocumentReviewerGrant],
+    ['agenda_subscriptions', 'userId', AgendaSubscription],
     ['channel_members', 'userId', ChannelMember],
     ['form_submissions', 'userId', Submission],
     ['booking_resources', 'linkedUserId', BookingResource],

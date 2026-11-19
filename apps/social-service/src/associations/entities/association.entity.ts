@@ -37,10 +37,6 @@ export class Association {
   @Column({ type: 'uuid', nullable: true })
   logoMediaId: string | null;
 
-  // The historic `stripeAccountId` / `stripeOnboardingComplete` columns are deliberately NOT mapped any
-  // more (2026-10-09): nothing reads or writes them, and they stay in the table until the drop step of
-  // docs/wiki/stripe-archive.md so a rollback to the previous release still finds them.
-
   /** Lydia Business `vendor_token`. */
   @Column({ type: 'varchar', nullable: true })
   lydiaAccountId: string | null;
@@ -103,8 +99,8 @@ export class Association {
   lydiaBusinessKeyCiphertext?: string | null;
 
   /**
-   * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable
-   * (unlike Stripe's Express dashboard link) - stored so the treasurer can still reach it after
+   * Lydia Business dashboard URL, returned once by `business/create` and never re-issuable -
+   * stored so the treasurer can still reach it after
    * the creating session ends.
    */
   @Column({ type: 'varchar', nullable: true })
@@ -162,6 +158,14 @@ export class Association {
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend falls back to generateAvatarColor. */
   @Column({ type: 'varchar', length: 7, nullable: true })
   color: string | null;
+
+  /**
+   * The colour of this BDE's NEUTRAL ("Campus") agenda events (owner, 2026-11-14), `#rrggbb`. Null
+   * -> the derived Campus accent. Written only on a BDE (`AssociationsService.update`), carried on
+   * a neutral row's payload (`neutralEventColor`), never on any other.
+   */
+  @Column({ type: 'varchar', length: 7, nullable: true })
+  neutralEventColor: string | null;
 
   /**
    * Discriminates a regular association from a promo "list" and an institution. A list keeps the

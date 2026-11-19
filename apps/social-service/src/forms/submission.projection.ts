@@ -25,6 +25,8 @@ const SUBMITTER_FIELDS = [
   'paymentMethod',
   'cashExpiresAt',
   'createdAt',
+  // When the respondent last changed the answer (migration 166): the managers' "modifiee le".
+  'editedAt',
 ] as const;
 
 /**
@@ -41,6 +43,9 @@ const MANAGER_FIELDS = [
   'guestLastName',
   'guestFirstName',
   'guestEmail',
+  // What the form joined from the account or asked to be declared (migration 174,
+  // `respondent-identity.ts`): the manager chose to collect it, and the respondent was shown it.
+  'respondentIdentity',
 ] as const;
 
 export type SubmitterSubmissionView = Pick<Submission, (typeof SUBMITTER_FIELDS)[number]>;

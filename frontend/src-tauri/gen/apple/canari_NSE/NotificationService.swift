@@ -170,6 +170,7 @@ class NotificationService: UNNotificationServiceExtension {
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       applyServerContent(userInfo: userInfo, content: content)
+      applyQuietUpdate(userInfo: userInfo, content: content)
       trace?.mark("attach")
       attachSocialIcon(userInfo: userInfo, content: content)
       trace?.outcome = "server-content"
@@ -177,6 +178,23 @@ class NotificationService: UNNotificationServiceExtension {
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
     }
+  }
+
+  /// A QUIET update of a post's one notification (owner, 2026-11-14): the server decided the post
+  /// still has an unread bell row, so this replaces the delivered notification (same
+  /// `apns-collapse-id`) without a sound and passively. The server already sent it so; this holds it
+  /// whatever the payload's `aps` says, so no later rewrite can make a quiet update ring.
+  private func applyQuietUpdate(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    guard Self.string(userInfo["quiet"]) == "true", Self.nonEmpty(Self.string(userInfo["collapseId"])) != nil
+    else { return }
+    content.sound = nil
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .passive
+    }
+    NseLog.log.notice("[CanariNSE] social push is a quiet update of its post's notification")
   }
 
   /// Files the generic incoming-call alert: stacked under its conversation, opening it on a tap, and
@@ -222,13 +240,14 @@ class NotificationService: UNNotificationServiceExtension {
     let locale = loadPushContext()?.locale
     let actor = Self.string(userInfo["actorName"]) ?? ""
     let arg = Self.string(userInfo["contentArg"]) ?? ""
+    /// How many OTHER people the line names, for the keys that carry `contentCount`; 0 otherwise.
+    let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
 
     /// A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named in
     /// `actorName`, and how many others reacted in `contentCount` - one sentence per count form, so
     /// the plural is exact; the fixed sentence `fallback` when the server names nobody.
     func trendBody(_ fallback: String) -> String {
       if actor.isEmpty { return Self.localized(fallback, locale: locale) }
-      let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
       switch others {
       case 0: return Self.localizedFormat("notif.social.campus_trend.liked_by", actor, locale: locale)
       case 1:
@@ -250,7 +269,25 @@ class NotificationService: UNNotificationServiceExtension {
     switch key {
     case "social_mention": composed = actorTitled("mention")
     case "social_reply": composed = actorTitled("reply")
-    case "social_comment": composed = actorTitled("comment")
+    // A comment on MY post (owner, 2026-11-14): `contentCount` is how many OTHER people commented
+    // while the post's notification stayed unread - "Alice et 4 autres ont commenté", the latest
+    // comment as the body.
+    case "social_comment":
+      let (title, body) = actorTitled("comment")
+      switch others {
+      case 0: composed = (title, body)
+      case 1:
+        composed = (
+          Self.localizedFormat("notif.social.comment.title_others_one", actor, locale: locale), body
+        )
+      default:
+        composed = (
+          String(
+            format: Self.localized("notif.social.comment.title_others_many", locale: locale),
+            actor, String(others)),
+          body
+        )
+      }
     // The two publication notices take the same shape as a comment: the actor names the
     // title - an association for the first, a person for the second - and the post's own
     // opening is the body, or a fixed sentence when the post carries only images.
@@ -332,18 +369,38 @@ class NotificationService: UNNotificationServiceExtension {
       )
     // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
     // no fragment.
-    case "social_live_cut", "social_live_suspended", "social_live_withdrawn":
+    // The two notices of a new item in a global admin's queue (owner, 2026-11-18) take the same
+    // shape: fixed sentences, nothing variable (the content-free rule).
+    case "social_live_cut", "social_live_suspended", "social_live_withdrawn",
+      "social_live_reinstated", "social_admin_profile_correction", "social_admin_report":
       let stem = String(key.dropFirst("social_".count))
       composed = (
         Self.localized("notif.social.\(stem).title", locale: locale),
         Self.localized("notif.social.\(stem).body", locale: locale)
       )
+    // A reaction on MY post (owner, 2026-11-14): "12 réactions" once others reacted while the
+    // post's notification stayed unread, naming the latest.
     case "social_reaction":
-      composed = (
-        Self.localized("notif.social.reaction.title", locale: locale),
-        String(
-          format: Self.localized("notif.social.reaction.body", locale: locale), actor, arg)
-      )
+      switch others {
+      case 0:
+        composed = (
+          Self.localized("notif.social.reaction.title", locale: locale),
+          String(
+            format: Self.localized("notif.social.reaction.body", locale: locale), actor, arg)
+        )
+      case 1:
+        composed = (
+          Self.localizedFormat("notif.social.reaction.title_count", String(others + 1), locale: locale),
+          Self.localizedFormat("notif.social.reaction.body_others_one", actor, locale: locale)
+        )
+      default:
+        composed = (
+          Self.localizedFormat("notif.social.reaction.title_count", String(others + 1), locale: locale),
+          String(
+            format: Self.localized("notif.social.reaction.body_others_many", locale: locale),
+            actor, String(others))
+        )
+      }
     case "form_opening_soon":
       composed = (
         Self.localized("notif.form.opening_soon.title", locale: locale),
@@ -453,7 +510,12 @@ class NotificationService: UNNotificationServiceExtension {
     let emoji = Self.string(userInfo["emoji"]) ?? ""
     let groupId = Self.string(userInfo["groupId"]) ?? ""
     let ctx = loadPushContext()
-    let actorName = Self.nonEmpty(Self.string(userInfo["title"])) ?? ""
+    // The actor's nickname in that conversation first (owner, 2026-11-14), else the push's title.
+    let actorId = Self.string(userInfo["senderId"]) ?? ""
+    let actorName =
+      Self.conversationNicknameLookup(
+        me: ctx?.userId, salon: false, conversation: groupId, label: "[REACTION_NAME]")(actorId)
+      ?? Self.nonEmpty(Self.string(userInfo["title"])) ?? ""
     if !actorName.isEmpty {
       content.title = actorName
     }
@@ -1174,10 +1236,17 @@ class NotificationService: UNNotificationServiceExtension {
     }
     trace?.outcome = decrypted != nil ? "decrypted" : "fallback"
 
+    // THE NAME THE BANNER GIVES THE SENDER: their nickname in THIS conversation, from the phone's
+    // copy (owner, 2026-11-14), else the push's profile name. The cache row keeps the profile name -
+    // the app resolves its own labels. Android twin: `shownName`.
+    let shownName =
+      Self.conversationNicknameLookup(
+        me: ctx.userId, salon: false, conversation: groupId, label: "[NOTIF_NAME]")(senderId)
+      ?? senderName
     let body =
       decrypted?.text
       ?? Self.fallbackText(
-        senderName: senderName, groupName: groupName, declared: isGroup, locale: ctx.locale)
+        senderName: shownName, groupName: groupName, declared: isGroup, locale: ctx.locale)
 
     // Cache decrypted messages so the app can pre-inject them at boot. Do not cache
     // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
@@ -1189,7 +1258,7 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     applyMessageContent(
-      content: content, senderName: senderName, groupName: groupName, declaredGroup: isGroup,
+      content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
       body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
       level: Self.levelDecision(
@@ -1496,6 +1565,9 @@ class NotificationService: UNNotificationServiceExtension {
       !cipher.isEmpty
     else { return nil }
 
+    // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of a shut
+    // phone pays it again, inside the extension's time and memory (channel-encryption section 28).
+    let startedAt = DispatchTime.now().uptimeNanoseconds
     let json = state.withUnsafeBytes { statePtr -> String? in
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message_with_commits(
@@ -1507,6 +1579,8 @@ class NotificationService: UNNotificationServiceExtension {
         return String(cString: raw)
       }
     }
+    let elapsedMs = (DispatchTime.now().uptimeNanoseconds - startedAt) / 1_000_000
+    NseLog.log.info("[CanariNSE] catchup: replay since epoch=\(epoch, privacy: .public) took \(elapsedMs, privacy: .public) ms (state \(state.count, privacy: .public) B, commits \(commitsJson.count, privacy: .public) ch) answered=\(json != nil, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
     Self.announceOwnDevicesAdded(json, ctx: ctx, source: "catchup")
     return json
   }
@@ -1894,6 +1968,8 @@ class NotificationService: UNNotificationServiceExtension {
     // Decided BEFORE the tokens are rendered, so the first reader of the names is known.
     let author = Self.channelBannerAuthor(
       showsMessage: body != nil, authorProven: authorProven, authorId: attribution.authorId,
+      nickname: Self.conversationNicknameLookup(
+        me: ctx?.userId, salon: true, conversation: channelId, label: "[SALON_AUTHOR]"),
       book: namesRead.read)
     switch author {
     case .named(_, let name):
@@ -1934,7 +2010,7 @@ class NotificationService: UNNotificationServiceExtension {
     if mentionsMe {
       content.subtitle = Self.mentionAuthorLine(
         senderId: Self.salonDrawsFace(author) ? senderId : "", nameBook: nameBook,
-        locale: ctx?.locale)
+        speakerName: Self.salonInitialsSource(author), locale: ctx?.locale)
     }
     content.threadIdentifier = "channel_\(channelId)"
     if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
@@ -2115,11 +2191,17 @@ class NotificationService: UNNotificationServiceExtension {
   /// carries only `senderId`. Salon only: an MLS banner already names its sender. No Android twin
   /// since 2026-11-01: there the speaker's Person names the author and the line keeps no prefix.
   /// ObjC twin: `CanariMentionAuthorLine`.
+  /// `speakerName` is the speaker's name as the salon rule already settled it - their nickname in
+  /// the community when they have one (owner, 2026-11-14) - and wins over the book when set.
   private static func mentionAuthorLine(
-    senderId: String, nameBook: () -> [String: Any]?, locale: String?
+    senderId: String, nameBook: () -> [String: Any]?, speakerName: String = "", locale: String?
   ) -> String {
     let id = senderId.lowercased()
-    let name = id.isEmpty ? nil : (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    let name =
+      id.isEmpty
+      ? nil
+      : (nonEmpty(speakerName)
+        ?? (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 })
     NseLog.log.notice("[CanariNSE] [MENTION_NAME] author named=\(name != nil, privacy: .public)")
     // The placeholder opens the sentence in both languages, so the word is capitalised there.
     let who = name ?? someoneCapitalised(locale: locale)
@@ -2141,6 +2223,96 @@ class NotificationService: UNNotificationServiceExtension {
     guard (root["userId"] as? String)?.lowercased() == me else { return (nil, "other-account") }
     guard let names = root["names"] as? [String: Any] else { return (nil, "no-names") }
     return (names, nil)
+  }
+
+  /// One account's `conversation_nicknames.json`, parsed (owner, 2026-11-14): `scopes` maps an MLS
+  /// group id or `community:<id>` to {member id: nickname}, `channels` a salon id to its community's
+  /// scope. Written by the app (`nicknameMirror.ts`, Rust `store_conversation_nicknames`) with the
+  /// nicknames this account may SEE - the block rule is applied before the write.
+  struct NicknameBook {
+    let owner: String
+    let scopes: [String: [String: String]]
+    let channels: [String: String]
+  }
+
+  /// Reads `conversation_nicknames.json` in the App Group, or nil (absent, unreadable - said under
+  /// `label`). The owner is checked by `conversationNickname`.
+  static func readConversationNicknames(label: String) -> NicknameBook? {
+    guard let dir = appGroupDir() else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) WARN no App Group - profile names only")
+      return nil
+    }
+    let url = dir.appendingPathComponent("conversation_nicknames.json")
+    // Absent is a state (a session of this build never ran yet); present and unreadable is a fault.
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) no conversation_nicknames.json - profile names only")
+      return nil
+    }
+    let data: Data
+    do {
+      data = try Data(contentsOf: url)
+    } catch {
+      NseLog.log.notice(
+        "[CanariNSE] \(label, privacy: .public) WARN conversation_nicknames.json not read: \(errorReason(error), privacy: .public)")
+      return nil
+    }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) WARN conversation_nicknames.json unreadable")
+      return nil
+    }
+    var scopes: [String: [String: String]] = [:]
+    for (scope, members) in (root["scopes"] as? [String: Any]) ?? [:] {
+      scopes[scope] = ((members as? [String: Any]) ?? [:]).compactMapValues { $0 as? String }
+    }
+    let channels = ((root["channels"] as? [String: Any]) ?? [:]).compactMapValues { $0 as? String }
+    return NicknameBook(
+      owner: ((root["userId"] as? String) ?? "").lowercased(), scopes: scopes, channels: channels)
+  }
+
+  /// THE NICKNAME A NOTIFICATION GIVES `memberId` IN ONE CONVERSATION, or nil - the rule of
+  /// `libs/contracts/notification-nickname.cases.json` (`ConversationNicknameContractTests`). `salon`
+  /// says `conversation` is a salon id (its `channel_` prefix allowed), placed through `channels`;
+  /// otherwise it is an MLS group id, itself the scope. Another account's book never answers. Twins:
+  /// Android `ConversationNicknames.of`, ObjC `CanariConversationNickname`.
+  static func conversationNickname(
+    book: NicknameBook?, me: String?, salon: Bool, conversation: String, memberId: String
+  ) -> String? {
+    guard let book = book, let me = me?.trimmingCharacters(in: .whitespaces).lowercased(),
+      !me.isEmpty, book.owner == me
+    else { return nil }
+    let scope: String
+    if salon {
+      let id = conversation.hasPrefix("channel_") ? String(conversation.dropFirst(8)) : conversation
+      guard let placed = book.channels[id] else { return nil }
+      scope = placed
+    } else {
+      scope = conversation
+    }
+    let nick = book.scopes[scope]?[memberId.trimmingCharacters(in: .whitespaces).lowercased()]?
+      .trimmingCharacters(in: .whitespaces)
+    return (nick?.isEmpty ?? true) ? nil : nick
+  }
+
+  /// THE ONE DOOR A NICKNAME HAS INTO THIS EXTENSION'S NOTIFICATIONS: a lookup in one conversation for
+  /// the account `me`, the file read at the first lookup only; each answer logged under `label`
+  /// (named or not, never the name). nil means "no nickname": the caller keeps the name it had.
+  static func conversationNicknameLookup(
+    me: String?, salon: Bool, conversation: String, label: String
+  ) -> (String) -> String? {
+    var book: NicknameBook?
+    var read = false
+    return { memberId in
+      guard !memberId.isEmpty, !conversation.isEmpty else { return nil }
+      if !read {
+        book = readConversationNicknames(label: label)
+        read = true
+      }
+      let nick = conversationNickname(
+        book: book, me: me, salon: salon, conversation: conversation, memberId: memberId)
+      NseLog.log.notice(
+        "[CanariNSE] \(label, privacy: .public) nickname in conversation=\(nick != nil, privacy: .public)")
+      return nick
+    }
   }
 
   /// Logs why a read of `display_names.json` names nobody, under `label`; returns the read.
@@ -2223,14 +2395,20 @@ class NotificationService: UNNotificationServiceExtension {
   ///   - authorProven: the native open's `authorProven` - true only under a v2 session.
   ///   - authorId: `channelBannerAttribution`'s author - the push's `senderId` once opened.
   ///   - book: the phone's names, read only when an author must be named.
+  ///   - nickname: the author's nickname in the salon's community, from the phone's copy - it wins
+  ///     over the profile name, for a PROVEN author only (owner, 2026-11-14).
   static func channelBannerAuthor(
     showsMessage: Bool, authorProven: Bool, authorId: String?,
+    nickname: (String) -> String? = { _ in nil },
     book: () -> (names: [String: Any]?, unusable: String?)
   ) -> SalonAuthor {
     guard showsMessage else { return .unproven }
     let id = (authorId ?? "").trimmingCharacters(in: .whitespaces).lowercased()
     guard !id.isEmpty else { return .unnamed(id: "", reason: "no-sender-id") }
     guard authorProven else { return .unnamed(id: id, reason: "v1-session") }
+    if let nick = nickname(id)?.trimmingCharacters(in: .whitespaces), !nick.isEmpty {
+      return .named(id: id, name: nick)
+    }
     let read = book()
     guard let names = read.names else { return .unnamed(id: id, reason: read.unusable ?? "no-names") }
     let name = (names[id] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""

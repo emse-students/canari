@@ -1,0 +1,821 @@
+/**
+ * THE BRIDGE FROM A HISTORICAL LYDIA ACCOUNT TO THE ENROLLED BUSINESS, AGAINST A REAL POSTGRESQL
+ * (owner, 2026-11-13; lydia-account-bridge.ts, migration 167).
+ *
+ * What a mocked manager cannot prove: that the enrolment of an association whose historical account
+ * collects leaves that account collecting; that the VALIDATED of the enrolled Business swaps the two
+ * under the association's lock, so the NEXT checkout - and one racing the switch - goes to the new
+ * Business; that a forged VALIDATED costs one error 5, a switch back and the SAME purchase issued on
+ * the historical account, with exactly ONE request existing at Lydia; that the historical key still
+ * opens, by the row's vendor token, after the switch; and that a delegate of the parent follows the
+ * switch. Migration 167 runs twice.
+ *
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
+ *
+ *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- lydia-account-bridge.integration
+ *
+ * Every vendor token and key below is a throwaway string made up for the test.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { ConflictException, Logger } from '@nestjs/common';
+import { Client } from 'pg';
+import { Observable, of, throwError } from 'rxjs';
+import { DataSource } from 'typeorm';
+import { ProductCheckout } from './entities/product-checkout.entity';
+import { AssociationProduct } from './entities/association-product.entity';
+import { Association } from './entities/association.entity';
+import { AssociationMember } from './entities/association-member.entity';
+import { AssociationAudience } from '../spaces/association-audience.entity';
+import { Space } from '../spaces/space.entity';
+import { PurchaseRecord } from '../users/entities/purchase-record.entity';
+import { Submission } from '../forms/entities/submission.entity';
+import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
+import { UserTag } from '../users/entities/user-tag.entity';
+import { PurchaseRecordService } from '../users/purchase-record.service';
+import { UserTagService } from '../users/user-tag.service';
+import { PostNotification } from '../posts/entities/post-notification.entity';
+import { SECRET_BOX_ENV } from '../common/secret-box';
+import { AssociationsService } from './associations.service';
+import {
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
+} from './lydia-account-bridge';
+import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
+import { ProductsService } from './products.service';
+
+const URL = process.env.SOCIAL_IT_DATABASE_URL;
+const maybe = URL ? describe : describe.skip;
+
+const BDE = '00000000-0000-4000-8000-0000000002b1';
+const LIST = '00000000-0000-4000-8000-0000000002b2';
+const HISTORICAL = 'vendor-token-historical';
+const ENROLLED = 'vendor-token-enrolled';
+const HISTORICAL_KEY = 'throwaway-historical-key';
+const ENROLLED_KEY = 'throwaway-enrolled-key';
+const migration = (name: string) => readFileSync(join(__dirname, '../migrations', name), 'utf8');
+
+/** Core's answer to a `request/do` Lydia refused with error 5: no request exists at Lydia. */
+const error5 = () =>
+  Object.assign(new Error('refused'), {
+    response: { status: 400, data: { code: 'LYDIA_BUSINESS_NOT_VALIDATED', providerCode: '5' } },
+  });
+
+maybe(
+  'Lydia account bridge: a historical account until the enrolled Business is validated (PostgreSQL)',
+  () => {
+    const schema = `lydia_bridge_it_${Math.random().toString(36).slice(2, 10)}`;
+    let admin: Client;
+    let ds: DataSource;
+    let associations: AssociationsService;
+    let products: ProductsService;
+    let savedSecret: string | undefined;
+    const tell = jest.fn(async (_asso: { id: string }, _kind: string, _to: string[]) => 1);
+    const tellDelegation = jest.fn(
+      async (_asso: { id: string }, _notice: string, _to: string[]) => 1
+    );
+    /**
+     * The fake core-service: every `create-checkout-session` is recorded with the Business it names;
+     * a token in `refusing` answers error 5 (nothing issued at Lydia), any other ISSUES a request.
+     * With `holdRefusals` set, the error-5 answers are HELD until that many have arrived, then all
+     * answered at once: every purchase held there was decided (its row committed) on the refused
+     * Business before any of them switches back - an interleaving forced, not hoped for.
+     */
+    const core = {
+      calls: [] as string[],
+      issued: [] as string[],
+      refusing: new Set<string>(),
+      holdRefusals: null as null | { expected: number; answer: Array<() => void> },
+    };
+    const post = (_url: string, body: { connectAccountId: string }): Observable<unknown> => {
+      core.calls.push(body.connectAccountId);
+      const held = core.holdRefusals;
+      if (core.refusing.has(body.connectAccountId) && held) {
+        return new Observable((subscriber) => {
+          held.answer.push(() => subscriber.error(error5()));
+          if (held.answer.length === held.expected) {
+            core.holdRefusals = null;
+            for (const answer of held.answer) answer();
+          }
+        });
+      }
+      if (core.refusing.has(body.connectAccountId)) return throwError(error5);
+      core.issued.push(body.connectAccountId);
+      const n = core.issued.length;
+      return of({
+        data: {
+          ok: true,
+          url: `https://lydia.example/pay/${n}`,
+          id: randomUUID(),
+          requestId: `${n}`,
+        },
+      });
+    };
+
+    const options = (synchronize: boolean, entities: Function[]) => ({
+      type: 'postgres' as const,
+      url: URL,
+      entities,
+      synchronize,
+      uuidExtension: 'pgcrypto' as const,
+      installExtensions: false,
+      extra: { options: `-c search_path=${schema},public`, application_name: schema },
+    });
+
+    beforeAll(async () => {
+      for (const level of ['log', 'warn', 'debug', 'error'] as const) {
+        jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+      }
+      admin = new Client({ connectionString: URL });
+      await admin.connect();
+      await admin.query(`CREATE SCHEMA ${schema}`);
+      await admin.query(`SET search_path TO ${schema},public`);
+      const entities = [
+        PurchaseRecord,
+        Submission,
+        AssociationProduct,
+        UserTag,
+        Association,
+        // The departure debt (`CASHIER_DEPARTED_SQL`) reads the memberships.
+        AssociationMember,
+        AssociationAudience,
+        Space,
+        PostNotification,
+      ];
+      const others = new DataSource(options(true, entities));
+      await others.initialize();
+      await others.destroy();
+      ds = new DataSource(options(false, [ProductCheckout, PurchaseRecordClosing, ...entities]));
+      await ds.initialize();
+      await ds.query(migration('101_product_checkouts.sql'));
+      await admin.query(migration('112_product_checkouts_held_tier.sql'));
+      await admin.query(migration('113_purchase_record_closings.sql'));
+      await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
+      await admin.query(migration('119_lydia_cashiers_lot3.sql'));
+      // TWICE: CD may replay it, and every statement is IF NOT EXISTS.
+      await admin.query(migration('167_lydia_account_bridge.sql'));
+      await admin.query(migration('167_lydia_account_bridge.sql'));
+      // The ledger the link writes (lydia-contract-flux.ts).
+      await admin.query(migration('168_lydia_enrolled_businesses.sql'));
+      await admin.query('RESET lock_timeout');
+      await admin.query(
+        `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
+         "displayName" text, admin boolean NOT NULL DEFAULT false)`
+      );
+      await admin.query(
+        `INSERT INTO users (id, "firstName", admin) VALUES ('global-admin', 'Admin', true)`
+      );
+      savedSecret = process.env[SECRET_BOX_ENV];
+      process.env[SECRET_BOX_ENV] = 'throwaway-encryption-secret-0123456789abcdef';
+
+      const assoRepo = ds.getRepository(Association);
+      for (const [id, extra] of [
+        [BDE, {}],
+        [LIST, { paymentParentAssociationId: BDE, paymentDelegationStatus: 'approved' }],
+      ] as const) {
+        await assoRepo.save(
+          assoRepo.create({
+            id,
+            name: `Asso ${id.slice(-2)}`,
+            slug: `asso-${id.slice(-2)}`,
+            createdBy: 'it',
+            ...extra,
+          } as Partial<Association>)
+        );
+      }
+      associations = Object.assign(Object.create(AssociationsService.prototype) as object, {
+        assoRepo,
+        logger: new Logger('AssociationsService'),
+        redis: { deleteByPattern: async () => 0 },
+        lydiaNotifier: { enabled: () => true, tell, tellDelegation },
+        listFlagHolders: async () => ['manager-1'],
+        isMember: async () => true,
+      }) as unknown as AssociationsService;
+      products = Object.assign(Object.create(ProductsService.prototype) as object, {
+        logger: new Logger('ProductsService'),
+        checkoutRepo: ds.getRepository(ProductCheckout),
+        productRepo: ds.getRepository(AssociationProduct),
+        assoRepo,
+        associationsService: associations,
+        purchaseRecordService: new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
+        userTagService: new UserTagService(ds.getRepository(UserTag)),
+        config: { get: () => undefined },
+        httpService: { post },
+        pricingFacts: { cursusFor: () => Promise.resolve([{ promo: null, formation: null }]) },
+        activePaymentProvider: () => Promise.resolve('lydia'),
+      }) as unknown as ProductsService;
+
+      // THE BDE's CASE, generic: its historical account was linked before the bridge, ready.
+      await associations.setLydiaAccountId(BDE, HISTORICAL, null, HISTORICAL_KEY);
+      await products.markLydiaReady(HISTORICAL, 'admin', { path: 'admin' });
+      // The operator's step that puts the association on a bridge (docs/wiki/frontend/modules/
+      // payments.md): one row naming the account that collects today.
+      await ds.query(
+        `INSERT INTO lydia_account_bridges ("associationId", "historicalVendorToken") VALUES ($1, $2)`,
+        [BDE, HISTORICAL]
+      );
+    });
+
+    afterAll(async () => {
+      jest.restoreAllMocks();
+      if (savedSecret === undefined) delete process.env[SECRET_BOX_ENV];
+      else process.env[SECRET_BOX_ENV] = savedSecret;
+      await ds?.destroy();
+      await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await admin?.end();
+    });
+
+    beforeEach(() => {
+      core.calls = [];
+      core.issued = [];
+      core.refusing.clear();
+      core.holdRefusals = null;
+      tell.mockClear();
+      tellDelegation.mockClear();
+    });
+
+    const product = (associationId: string, name: string) =>
+      ds.getRepository(AssociationProduct).save(
+        ds.getRepository(AssociationProduct).create({
+          associationId,
+          name,
+          type: 'other',
+          amountCents: 1500,
+          currency: 'eur',
+          isActive: true,
+        } as Partial<AssociationProduct>)
+      );
+    /** One checkout by a buyer seen for the first time, so no earlier attempt is settled first. */
+    const buy = (associationId: string, productId: string) =>
+      products.createCheckoutSession(associationId, productId, `buyer-${randomUUID()}`);
+    const active = async () =>
+      (
+        await ds.query(
+          `SELECT "lydiaAccountId" AS token, "lydiaOnboardingComplete" AS ready FROM associations WHERE id = $1`,
+          [BDE]
+        )
+      )[0] as { token: string; ready: boolean };
+    const bridge = async () =>
+      (
+        await ds.query(
+          `SELECT state, "enrolledVendorToken" AS enrolled, "standbyReady", "standbyReadinessCause",
+                "switchCount", "switchBackCount", "reissueCount"
+           FROM lydia_account_bridges WHERE "associationId" = $1`,
+          [BDE]
+        )
+      )[0] as {
+        state: string;
+        enrolled: string | null;
+        standbyReady: boolean;
+        standbyReadinessCause: string | null;
+        switchCount: number;
+        switchBackCount: number;
+        reissueCount: number;
+      };
+
+    it('migration 167 ran twice and keeps two Businesses apart', async () => {
+      await expect(
+        ds.query(
+          `INSERT INTO lydia_account_bridges ("associationId", "historicalVendorToken", "enrolledVendorToken")
+         VALUES ($1, 'same', 'same')`,
+          [LIST]
+        )
+      ).rejects.toThrow(/two_businesses/);
+      await expect(
+        ds.query(
+          `INSERT INTO lydia_account_bridges ("associationId", "historicalVendorToken", state)
+         VALUES ($1, 'x', 'switched')`,
+          [LIST]
+        )
+      ).rejects.toThrow(/switched_names_enrolled/);
+    });
+
+    it('an enrolment while the historical account collects: the new Business is PENDING, the historical one still collects', async () => {
+      // The historical account's key is not the managers' to see, even as a flag.
+      await expect(associations.isLydiaBusinessKeySet(BDE)).resolves.toBe(false);
+      await associations.claimLydiaEnrolment(BDE);
+      await associations.recordLydiaEnrolmentVendorToken(BDE, ENROLLED);
+      await associations.setLydiaAccountId(
+        BDE,
+        ENROLLED,
+        'https://lydia.example/console',
+        ENROLLED_KEY
+      );
+      expect(await active()).toEqual({ token: HISTORICAL, ready: true });
+      expect(await bridge()).toMatchObject({ state: 'historical', enrolled: ENROLLED });
+      // The PENDING Business is recorded as Canari-enrolled at its link (the platform's Lydia flux,
+      // lydia-contract-flux.ts). This fixture installed the historical account through the same
+      // link, which no production path does - the flux excludes it by its bridge anyway.
+      const ledger = (await ds.query(`SELECT "vendorToken" FROM lydia_enrolled_businesses`)) as {
+        vendorToken: string;
+      }[];
+      expect(ledger.map((r) => r.vendorToken)).toContain(ENROLLED);
+      await expect(associations.isLydiaBusinessKeySet(BDE)).resolves.toBe(true);
+
+      // The managers see the new Business only, not validated; the historical one is invisible.
+      const managers = await associations.getPayoutAccount(BDE);
+      expect(managers).toMatchObject({
+        lydiaAccountId: ENROLLED,
+        lydiaOnboardingComplete: false,
+        enrolmentInFlightSince: null,
+      });
+      expect(managers.bridge).toBeUndefined();
+      expect(JSON.stringify(managers)).not.toContain(HISTORICAL);
+      const globalAdmin = await associations.getPayoutAccount(BDE, { isGlobalAdmin: true });
+      expect(globalAdmin.bridge).toMatchObject({
+        state: 'historical',
+        historicalReady: true,
+        enrolledLinked: true,
+      });
+
+      // A second enrolment while the first waits for Lydia: the typed 409.
+      const second = await associations.claimLydiaEnrolment(BDE).catch((e: unknown) => e);
+      expect(second).toBeInstanceOf(ConflictException);
+      expect((second as ConflictException).getResponse()).toMatchObject({
+        code: LYDIA_BUSINESS_PENDING_VALIDATION,
+      });
+      // Both keys open, each by its own vendor token.
+      await expect(associations.lydiaCallbackKey(HISTORICAL)).resolves.toBe(HISTORICAL_KEY);
+      await expect(associations.lydiaCallbackKey(ENROLLED)).resolves.toBe(ENROLLED_KEY);
+      await expect(associations.lydiaBusinessOfVendorToken(ENROLLED)).resolves.toMatchObject({
+        associationId: BDE,
+        role: 'pending',
+      });
+    });
+
+    it('a payment while the Business is pending goes to the historical account, a delegate`s too', async () => {
+      const own = await product(BDE, 'pending-own');
+      const delegated = await product(LIST, 'pending-delegated');
+      await buy(BDE, own.id);
+      await buy(LIST, delegated.id);
+      expect(core.calls).toEqual([HISTORICAL, HISTORICAL]);
+    });
+
+    it('the VALIDATED of the enrolled Business switches: the next payment goes to it, a replay switches nothing', async () => {
+      const outcome = await products.markLydiaReady(ENROLLED, 'webhook-validated', {
+        path: 'webhook',
+      });
+      expect(outcome).toMatchObject({ kind: 'transitioned', bridgeSwitched: true });
+      expect(await active()).toEqual({ token: ENROLLED, ready: true });
+      expect(await bridge()).toMatchObject({
+        state: 'switched',
+        standbyReady: true,
+        switchCount: 1,
+        switchBackCount: 0,
+      });
+      // No notice yet: an unsigned VALIDATED is not a proof. The delegate's collecting did not stop.
+      expect(tell).not.toHaveBeenCalled();
+      expect(tellDelegation).not.toHaveBeenCalled();
+      await expect(
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'replay' });
+      expect((await bridge()).switchCount).toBe(1);
+
+      const own = await product(BDE, 'switched-own');
+      const delegated = await product(LIST, 'switched-delegated');
+      await buy(BDE, own.id);
+      await buy(LIST, delegated.id);
+      expect(core.calls).toEqual([ENROLLED, ENROLLED]);
+      // The first request Lydia issued on it is the proof: the managers are told "active" ONCE.
+      expect(tell.mock.calls.map(([asso, kind]) => [asso.id, kind])).toEqual([[BDE, 'active']]);
+      expect(
+        (await ds.query(`SELECT "enrolledProvenAt" FROM lydia_account_bridges`))[0].enrolledProvenAt
+      ).not.toBeNull();
+      // The historical key still opens by its token, to refund what that account took.
+      await expect(associations.lydiaCallbackKey(HISTORICAL)).resolves.toBe(HISTORICAL_KEY);
+      await expect(associations.lydiaBusinessOfVendorToken(HISTORICAL)).resolves.toMatchObject({
+        associationId: BDE,
+        role: 'retired',
+      });
+      // The managers now see the new Business validated, and nothing of the old one.
+      const managers = await associations.getPayoutAccount(BDE);
+      expect(managers).toMatchObject({ lydiaAccountId: ENROLLED, lydiaOnboardingComplete: true });
+      expect(JSON.stringify(managers)).not.toContain(HISTORICAL);
+    });
+
+    it('a FORGED VALIDATED: error 5 switches back and the SAME purchase is issued on the historical account - ONE request at Lydia', async () => {
+      // State: switched by the VALIDATED above, which Lydia did not mean - its Business answers 5.
+      core.refusing.add(ENROLLED);
+      await ds.query(`DELETE FROM post_notifications`);
+      const item = await product(BDE, 'forged');
+      const opened = await buy(BDE, item.id);
+      // Two calls to core, ONE request at Lydia: error 5 is answered before any request exists.
+      expect(core.calls).toEqual([ENROLLED, HISTORICAL]);
+      expect(core.issued).toEqual([HISTORICAL]);
+      const attempts = await ds.query(
+        `SELECT id, status, "vendorToken" FROM product_checkouts WHERE "productId" = $1 ORDER BY "createdAt"`,
+        [item.id]
+      );
+      expect(attempts.map((a: { status: string }) => a.status)).toEqual(['cancelled', 'open']);
+      expect(attempts[1]).toMatchObject({ id: opened.checkoutId, vendorToken: HISTORICAL });
+      expect(await active()).toEqual({ token: HISTORICAL, ready: true });
+      expect(await bridge()).toMatchObject({
+        state: 'historical',
+        enrolled: ENROLLED,
+        standbyReady: false,
+        standbyReadinessCause: 'request-refused',
+        switchCount: 1,
+        switchBackCount: 1,
+        reissueCount: 1,
+      });
+      // The global admins' bell row, marked as a switch back; payments did not stop, so the delegate
+      // is told nothing - the managers, told "active" once it proved itself, get the counter-notice.
+      expect(
+        await ds.query(`SELECT "recipientId", type, meta FROM post_notifications WHERE type = $1`, [
+          LYDIA_PAYMENTS_PAUSED_TYPE,
+        ])
+      ).toEqual([
+        {
+          recipientId: 'global-admin',
+          type: LYDIA_PAYMENTS_PAUSED_TYPE,
+          meta: expect.objectContaining({ cause: 'request-refused', bridge: 'switched-back' }),
+        },
+      ]);
+      expect(tell.mock.calls.map(([asso, kind]) => [asso.id, kind])).toEqual([[BDE, 'paused']]);
+      expect(tellDelegation).not.toHaveBeenCalled();
+      // The managers see their Business waiting for Lydia again.
+      expect(await associations.getPayoutAccount(BDE)).toMatchObject({
+        lydiaAccountId: ENROLLED,
+        lydiaOnboardingComplete: false,
+      });
+
+      // Lydia refused it: a later UNSIGNED VALIDATED is held, only a global admin switches again.
+      core.refusing.clear();
+      await expect(
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'held-by-lydia', previousCause: 'request-refused' });
+      expect(await bridge()).toMatchObject({ state: 'historical', switchCount: 1 });
+      await expect(
+        products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' })
+      ).resolves.toMatchObject({ kind: 'transitioned', bridgeSwitched: true });
+      expect(await bridge()).toMatchObject({ state: 'switched', switchCount: 2 });
+    });
+
+    /** Back to the historical account, if switched: one purchase meeting error 5 switches back. */
+    const switchBack = async (name: string) => {
+      if ((await bridge()).state !== 'switched') return;
+      core.refusing.add(ENROLLED);
+      await buy(BDE, (await product(BDE, name)).id);
+      core.refusing.clear();
+    };
+
+    it('a STREAM of forged VALIDATED during purchases: held after the first switch back, every purchase issued on the historical account', async () => {
+      // The switch above was never proven: its switch back tells the managers nothing.
+      tell.mockClear();
+      await switchBack('stream-back');
+      expect(tell).not.toHaveBeenCalled();
+      const before = await bridge();
+      expect(before).toMatchObject({
+        state: 'historical',
+        standbyReadinessCause: 'request-refused',
+      });
+      core.calls = [];
+      core.issued = [];
+      const items = await Promise.all(
+        [BDE, LIST, BDE, LIST].map((id, i) => product(id, `stream-${i}`))
+      );
+      const forged = Array.from({ length: 10 }, () =>
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      );
+      const [outcomes] = await Promise.all([
+        Promise.all(forged),
+        Promise.all(items.map((item) => buy(item.associationId, item.id))),
+      ]);
+      expect(new Set(outcomes.map((o) => o.kind))).toEqual(new Set(['held-by-lydia']));
+      // Not one purchase failed, met the enrolled Business, or was re-issued.
+      expect(core.calls).toEqual([HISTORICAL, HISTORICAL, HISTORICAL, HISTORICAL]);
+      expect(core.issued).toHaveLength(4);
+      expect(await bridge()).toEqual(before);
+      expect(tell).not.toHaveBeenCalled();
+    });
+
+    it('a Business Lydia BLOCKED is never switched onto by an unsigned VALIDATED', async () => {
+      expect((await bridge()).state).toBe('historical');
+      // A 2701 naming the pending Business is recorded on it.
+      await associations.revertLydiaReadinessAfterRefusal(ENROLLED, 'request-blocked', {
+        path: 'shop',
+        id: 'late-2701',
+      });
+      expect((await bridge()).standbyReadinessCause).toBe('request-blocked');
+      await expect(
+        products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'held-by-lydia', previousCause: 'request-blocked' });
+      expect(await active()).toEqual({ token: HISTORICAL, ready: true });
+    });
+
+    it('the enrolled Business that took payments cannot be unlinked: its key stays for their callbacks and refunds', async () => {
+      expect((await bridge()).state).toBe('historical');
+      // It collected while switched (the proof above): those checkouts name it.
+      const refusal = await associations.clearLydiaAccount(BDE).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect((refusal as ConflictException).getResponse()).toMatchObject({
+        code: LYDIA_BUSINESS_HOLDS_PAYMENTS,
+      });
+      expect(await bridge()).toMatchObject({ enrolled: ENROLLED });
+      await expect(associations.lydiaCallbackKey(ENROLLED)).resolves.toBe(ENROLLED_KEY);
+    });
+
+    it('a switch committed while a purchase is prepared: the typed ROUTING_CHANGED under the lock, NO request', async () => {
+      for (const [associationId, name] of [
+        [BDE, 'raced-own'],
+        [LIST, 'raced-delegated'],
+      ] as const) {
+        await switchBack(`${name}-back`);
+        expect((await bridge()).state).toBe('historical');
+        core.calls = [];
+        const item = await product(associationId, name);
+        const prepare = (products as any).preparePurchase.bind(products);
+        const spy = jest
+          .spyOn(products as any, 'preparePurchase')
+          .mockImplementationOnce(async (...args: unknown[]) => {
+            const prepared = await prepare(...args);
+            // The VALIDATED commits between the purchase's preparation and its decision.
+            await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+            return prepared;
+          });
+        const refusal = await buy(associationId, item.id).catch((e: unknown) => e);
+        spy.mockRestore();
+        // The account prepared is no longer the one that collects: refused before any row or request
+        // - the payer retries, and the retry goes to the new Business.
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: 'PAYMENT_ROUTING_CHANGED',
+        });
+        expect(core.calls).toEqual([]);
+        expect(
+          await ds.query(`SELECT id FROM product_checkouts WHERE "productId" = $1`, [item.id])
+        ).toEqual([]);
+        await buy(associationId, item.id);
+        expect(core.calls).toEqual([ENROLLED]);
+      }
+    });
+
+    it('a switch racing purchases on separate connections: each is issued on the Business its row names, or refused unissued', async () => {
+      for (let round = 0; round < 5; round++) {
+        await switchBack(`race-back-${round}`);
+        core.calls = [];
+        const items = await Promise.all(
+          [BDE, LIST, BDE, LIST].map((id, i) => product(id, `race-${round}-${i}`))
+        );
+        const settled = await Promise.allSettled([
+          products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' }),
+          ...items.map((item) => buy(item.associationId, item.id)),
+        ]);
+        // A purchase refused by the race is refused with the routing code, and nothing else.
+        const refusals = settled
+          .slice(1)
+          .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+          .map((r) => ((r.reason as ConflictException).getResponse() as { code?: string }).code);
+        expect(refusals.filter((code) => code !== 'PAYMENT_ROUTING_CHANGED')).toEqual([]);
+        const rows: Array<{ vendorToken: string; requestUuid: string | null }> = await ds.query(
+          `SELECT "vendorToken", "requestUuid" FROM product_checkouts WHERE "productId" = ANY($1)`,
+          [items.map((i) => i.id)]
+        );
+        // Every request issued names the Business its row names, once; a refusal wrote no row.
+        expect(rows).toHaveLength(settled.slice(1).filter((r) => r.status === 'fulfilled').length);
+        expect([...core.calls].sort()).toEqual(rows.map((r) => r.vendorToken).sort());
+        expect(rows.every((r) => r.requestUuid !== null)).toBe(true);
+        expect(await active()).toEqual({ token: ENROLLED, ready: true });
+        expect((await bridge()).state).toBe('switched');
+      }
+    });
+
+    // Three purchases fired together meet a switch back in one of THREE interleavings each: decided
+    // before it (error 5, re-issued), prepared after it (straight to the historical account), or
+    // prepared before and decided after (the typed ROUTING_CHANGED, unissued). Each is FORCED below;
+    // a `Promise.all` asserting one of them was a flake (docs/wiki/frontend/modules/payments.md).
+    it('three purchases DECIDED on the switched Business, answered error 5 together: ONE switch back, each re-issued ONCE on the historical account', async () => {
+      if ((await bridge()).state !== 'switched') {
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+      }
+      const before = await bridge();
+      core.refusing.add(ENROLLED);
+      core.holdRefusals = { expected: 3, answer: [] };
+      core.calls = [];
+      const items = await Promise.all(
+        [BDE, LIST, BDE].map((id, i) => product(id, `error5-race-${i}`))
+      );
+      await Promise.all(items.map((item) => buy(item.associationId, item.id)));
+      // Each met error 5 exactly once and was issued exactly once, on the historical account.
+      expect(core.calls).toEqual([
+        ENROLLED,
+        ENROLLED,
+        ENROLLED,
+        HISTORICAL,
+        HISTORICAL,
+        HISTORICAL,
+      ]);
+      expect(core.issued).toEqual([HISTORICAL, HISTORICAL, HISTORICAL]);
+      const after = await bridge();
+      expect(after.state).toBe('historical');
+      expect(after.switchBackCount).toBe(before.switchBackCount + 1);
+      expect(after.reissueCount).toBe(before.reissueCount + 3);
+      const rows: Array<{ productId: string; status: string; vendorToken: string }> =
+        await ds.query(
+          `SELECT "productId", status, "vendorToken" FROM product_checkouts
+            WHERE "productId" = ANY($1) ORDER BY "productId", "createdAt"`,
+          [items.map((i) => i.id)]
+        );
+      // Per purchase: the attempt error 5 released, then the ONE open on the historical account.
+      for (const item of items) {
+        expect(
+          rows.filter((r) => r.productId === item.id).map((r) => [r.status, r.vendorToken])
+        ).toEqual([
+          ['cancelled', ENROLLED],
+          ['open', HISTORICAL],
+        ]);
+      }
+    });
+
+    it('a purchase PREPARED on the switched Business, decided after the error 5 of another one switched back: re-issued ONCE by the server on the historical account, counted, nothing on the stale routing', async () => {
+      for (const [associationId, name] of [
+        [BDE, 'error5-straddle-own'],
+        [LIST, 'error5-straddle-delegated'],
+      ] as const) {
+        if ((await bridge()).state !== 'switched') {
+          await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+        }
+        const before = await bridge();
+        const item = await product(associationId, name);
+        const other = await product(BDE, `${name}-other`);
+        core.calls = [];
+        const prepare = (products as any).preparePurchase.bind(products);
+        const spy = jest
+          .spyOn(products as any, 'preparePurchase')
+          .mockImplementationOnce(async (...args: unknown[]) => {
+            const prepared = await prepare(...args);
+            // Another purchase meets error 5 between this one's preparation and its decision.
+            core.refusing.add(ENROLLED);
+            await buy(BDE, other.id);
+            core.refusing.clear();
+            return prepared;
+          });
+        const opened = await buy(associationId, item.id);
+        spy.mockRestore();
+        // The other purchase: its error 5, then its re-issue. This one: ONE request, on the
+        // historical account - nothing was sent with the routing it was prepared on.
+        expect(core.calls).toEqual([ENROLLED, HISTORICAL, HISTORICAL]);
+        expect(
+          await ds.query(
+            `SELECT id, status, "vendorToken" FROM product_checkouts WHERE "productId" = $1`,
+            [item.id]
+          )
+        ).toEqual([{ id: opened.checkoutId, status: 'open', vendorToken: HISTORICAL }]);
+        // ONE switch back (the other's), TWO re-issues counted (the other's, and this one's).
+        expect(await bridge()).toMatchObject({
+          state: 'historical',
+          switchBackCount: before.switchBackCount + 1,
+          reissueCount: before.reissueCount + 2,
+        });
+      }
+    });
+
+    it('a routing change that is NOT a switch back keeps the 409, and a second change during the re-entry propagates it', async () => {
+      // A forward switch (historical -> enrolled) between a purchase's preparation and its decision.
+      await switchBack('not-a-switch-back-back');
+      expect((await bridge()).state).toBe('historical');
+      const forward = await product(LIST, 'not-a-switch-back');
+      let before = await bridge();
+      core.calls = [];
+      const prepare = (products as any).preparePurchase.bind(products);
+      let spy = jest
+        .spyOn(products as any, 'preparePurchase')
+        .mockImplementationOnce(async (...args: unknown[]) => {
+          const prepared = await prepare(...args);
+          await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+          return prepared;
+        });
+      const refused = await buy(LIST, forward.id).catch((e: unknown) => e);
+      spy.mockRestore();
+      expect((refused as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENT_ROUTING_CHANGED',
+      });
+      expect(core.calls).toEqual([]);
+      expect((await bridge()).reissueCount).toBe(before.reissueCount);
+
+      // Now switched: a switch back moves the first preparation (re-entered), and a forward switch
+      // moves the re-entry's own preparation - the second change is the 409, never a third attempt.
+      expect((await bridge()).state).toBe('switched');
+      const twice = await product(LIST, 'moved-twice');
+      const other = await product(BDE, 'moved-twice-other');
+      before = await bridge();
+      core.calls = [];
+      // Keyed on the product: the other purchase's own preparations run through the spy untouched.
+      let seen = 0;
+      spy = jest
+        .spyOn(products as any, 'preparePurchase')
+        .mockImplementation(async (...args: unknown[]) => {
+          const prepared = await prepare(...args);
+          if (args[1] !== twice.id) return prepared;
+          seen += 1;
+          if (seen === 1) {
+            core.refusing.add(ENROLLED);
+            await buy(BDE, other.id);
+            core.refusing.clear();
+          } else if (seen === 2) {
+            await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+          }
+          return prepared;
+        });
+      const second = await buy(LIST, twice.id).catch((e: unknown) => e);
+      spy.mockRestore();
+      expect(seen).toBe(2);
+      expect(second).toBeInstanceOf(ConflictException);
+      expect((second as ConflictException).getResponse()).toMatchObject({
+        code: 'PAYMENT_ROUTING_CHANGED',
+      });
+      // Only the other purchase reached core; this one wrote no row in either attempt.
+      expect(core.calls).toEqual([ENROLLED, HISTORICAL]);
+      expect(
+        await ds.query(`SELECT id FROM product_checkouts WHERE "productId" = $1`, [twice.id])
+      ).toEqual([]);
+      // The other's re-issue, and this one's single re-entry: two counted, not three.
+      expect((await bridge()).reissueCount).toBe(before.reissueCount + 2);
+    });
+
+    it('a switch back onto a historical account that is NOT ready: the re-issue and the retry answer the typed not-ready 409, never "not found", no request', async () => {
+      if ((await bridge()).state !== 'switched') {
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+      }
+      // The account standing by stopped being ready while the enrolled Business collected.
+      await ds.query(
+        `UPDATE lydia_account_bridges SET "standbyReady" = false WHERE "associationId" = $1`,
+        [BDE]
+      );
+      // On sale BEFORE the switch back, so the switch back withholds both (own and delegated).
+      const own = await product(BDE, 'not-ready-back-own');
+      const delegated = await product(LIST, 'not-ready-back-delegated');
+      const straddling = await product(LIST, 'not-ready-back-straddling');
+      core.calls = [];
+      // The switch back lands between the preparation and the decision of a delegated purchase.
+      let first: unknown;
+      const prepare = (products as any).preparePurchase.bind(products);
+      const spy = jest
+        .spyOn(products as any, 'preparePurchase')
+        .mockImplementationOnce(async (...args: unknown[]) => {
+          const prepared = await prepare(...args);
+          core.refusing.add(ENROLLED);
+          first = await buy(BDE, own.id).catch((e: unknown) => e);
+          core.refusing.clear();
+          return prepared;
+        });
+      const straddled = await buy(LIST, straddling.id).catch((e: unknown) => e);
+      spy.mockRestore();
+      // The switch back withheld the products: the re-issue is told why it cannot be issued.
+      const notReady = (refusal: unknown) => {
+        expect(refusal).toBeInstanceOf(ConflictException);
+        expect((refusal as ConflictException).getResponse()).toMatchObject({
+          code: 'PAYMENTS_NOT_ACTIVATED',
+        });
+      };
+      notReady(first);
+      // Prepared before it, decided after it: the readiness is read first - not ready, no re-entry.
+      notReady(straddled);
+      expect(await active()).toEqual({ token: HISTORICAL, ready: false });
+      const flags = await ds.query(
+        `SELECT "isActive", "activationWithheld" FROM association_products WHERE id = ANY($1)`,
+        [[own.id, delegated.id]]
+      );
+      expect(flags).toEqual([
+        { isActive: false, activationWithheld: true },
+        { isActive: false, activationWithheld: true },
+      ]);
+      // The payers' retries, own and delegated: the same typed refusal.
+      notReady(await buy(BDE, own.id).catch((e: unknown) => e));
+      notReady(await buy(LIST, delegated.id).catch((e: unknown) => e));
+      // Only the error 5 reached core; the one attempt it released is the only row.
+      expect(core.calls).toEqual([ENROLLED]);
+      const rows = await ds.query(
+        `SELECT "productId", status FROM product_checkouts WHERE "productId" = ANY($1)`,
+        [[own.id, delegated.id, straddling.id]]
+      );
+      expect(rows).toEqual([{ productId: own.id, status: 'cancelled' }]);
+    });
+
+    it('a VALIDATED naming a Business nobody holds is no-holder, the bridge untouched', async () => {
+      const before = await bridge();
+      // (BUSINESS_UNVALIDATED never reaches social-service: core logs it, webhook.controller.ts.)
+      await expect(
+        products.markLydiaReady('vendor-token-nobody', 'webhook-validated', { path: 'webhook' })
+      ).resolves.toMatchObject({ kind: 'no-holder' });
+      expect(await bridge()).toEqual(before);
+    });
+
+    it('a 2701 on the switched-to Business is the ordinary pause, never a switch back', async () => {
+      if ((await bridge()).state !== 'switched') {
+        await products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' });
+      }
+      const switchBacks = (await bridge()).switchBackCount;
+      await expect(
+        associations.revertLydiaReadinessAfterRefusal(ENROLLED, 'request-blocked', {
+          path: 'shop',
+          id: 'blocked',
+        })
+      ).resolves.toBe(false);
+      expect(await active()).toEqual({ token: ENROLLED, ready: false });
+      expect(await bridge()).toMatchObject({ state: 'switched', switchBackCount: switchBacks });
+    });
+  }
+);

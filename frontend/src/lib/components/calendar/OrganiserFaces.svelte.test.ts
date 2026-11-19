@@ -99,5 +99,32 @@ describe('OrganiserFaces - a neutral "Campus" event', () => {
     expect(root.querySelector('[data-neutral-mark]')).not.toBeNull();
     expect(root.textContent?.trim()).toBe('');
     expect(root.getAttribute('aria-label')).toBe('Campus');
+    // No colour chosen: the muted disc, nothing derived from "Campus".
+    expect(root.querySelector('[data-neutral-mark]')?.getAttribute('style')).toBeNull();
+  });
+
+  it("wears the BDE's chosen colour, still with no initials (owner, 2026-11-14)", () => {
+    mounted.push(
+      mount(OrganiserFaces, {
+        target: document.body,
+        props: {
+          owners: [
+            {
+              associationId: 'campus',
+              name: 'Campus',
+              slug: '',
+              color: '#336699',
+              logoUrl: null,
+              neutral: true,
+            },
+          ],
+        },
+      })
+    );
+    flushSync();
+    const root = document.querySelector('[role="img"]') as HTMLElement;
+    const mark = root.querySelector('[data-neutral-mark]') as HTMLElement;
+    expect(mark.getAttribute('style')?.toLowerCase()).toContain('#336699');
+    expect(root.textContent?.trim()).toBe('');
   });
 });

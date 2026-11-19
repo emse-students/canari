@@ -478,10 +478,10 @@ never whether it happens, so a wrong number costs a little early traffic or a li
 never a wrong answer.
 
 **An action cannot be applied to a component**, which is what decides where the call site sits when
-a component renders one of two shapes. `LinkPreviewCard` renders either its own `<a>` or
-`EcosystemCoverPreview`; a layout-neutral wrapper was the obvious alternative and is impossible,
-because `display: contents` generates no box and an element with no box is never observed. Both
-branches carry the action on their own root `<a>` instead, the second through an `onnear` prop.
+a component renders another. `LinkPreviewCard` renders `AttachmentCard` (the one card family of
+2026-11-15); a layout-neutral wrapper was the obvious alternative and is impossible, because
+`display: contents` generates no box and an element with no box is never observed. The card carries
+the action on its own root instead, and hands it back through an `onnear` prop.
 
 *This is not the deferral that was rejected on [backlog](../backlog.md).* That one gated the whole
 feed's ~45 requests at the SvelteKit route `load`, which changes the web client for every reader;
@@ -764,6 +764,14 @@ check in the same file, which is also what catches a fourteenth builder.
   (`getLocale() === 'en' ? 'en-US' : 'fr-FR'`); they are equivalent, and new code calls the helper.
 - User-visible strings must always go through Paraglide — never inline string literals, in either
   language. English ones are the easier mistake to miss: they look like the rest of the codebase.
+- **A MESSAGE WITH TWO SELECTORS KEYS ITS MATCH WITH `", "`** (`"aPlural=one, bPlural=other"`). The
+  message-format plugin splits a key on comma-plus-space; a bare space reads as ONE selector whose
+  value is `"one bPlural=other"`, no branch matches and the compiled function returns its own NAME -
+  two messages (`post_attachments_partial`, `reel_sendto_delete_everywhere_skipped`) showed their key
+  in a toast until 1.7.1. A comma without a space happens to compile (the two
+  `profile_backup_import_ok*` used it) but is written in the canonical form too. A caller's test
+  comparing `m.x(..)` with `m.x(..)` passes on a key; `i18n/multiSelectorMessages.test.ts` pins the key
+  syntax in both locale files and renders every plural pair of the four.
 - **Nothing types a string as user-visible**, so the compiler cannot enforce the rule above.
   `showToast` takes a `string` and a literal passes lint, `check` and CI. `showToast` is guarded by
   `stores/toastLocalization.test.ts`, which reads the sources and accepts a template only when it
@@ -908,7 +916,7 @@ One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3
 - **Config.** `svelte.config.js` is refused. The same object lives in `frontend/kit.config.js` (still plain JS, still stamping `kit.version.name` once per process - `kitConfigStamp.test.ts`) and `vite.config.js` passes it to `sveltekit(kitConfig)`. There is no `kit:` namespace any more. `vitest.config.ts` passes `svelte({ configFile: false })`, otherwise the plugin logs "no Svelte config found".
 - **`cookie` override removed.** `overrides.cookie ^0.7` existed to lift kit 2's `cookie@0.6`; kit 3 depends on `cookie@2`, which the pin broke (`parseCookie is not a function`).
 - **adapter-node 6.** `ORIGIN` is gone and so are the three compose lines that set it (2026-10-27): the origin is derived per request: scheme `https` by default, host from `Host` (nginx `@ssr` forwards it); `PROTOCOL_HEADER` is deliberately NOT set (it would trust a client-sendable value; the edge names have no Cloudflare in front). The app has no form action or remote function for the CSRF origin check to guard; **the day one is added, verify the derived origin behind nginx first** (`$host` and the port matter; a local origin would be `https://localhost`), because that check compares it with the browser's. Static assets are served from a table recorded at build time, with content-hash ETags and `GET`/`HEAD` only. The server half of `check-bundle-consistency.mjs` now reads `const global = "__sveltekit_..."` instead of `version_hash`.
-- **Two build warnings, both about `$lib`, and why they stay for now.** (1) `config_option_deprecated_alias`: `alias: { $lib: 'src/lib' }` is deprecated. The replacement, `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`, was RUN on 2026-10-27 and REVERTED: it rewrites 1567 files (7645 imports gain a `.js` extension, comments included), which would conflict with every pull request open on the frontend. It belongs in a quiet window, as ONE mechanical commit with the repository frozen ([backlog](../backlog.md#p3---the-lib-alias-migration-waits-for-a-quiet-frontend-2026-10-27)); that commit removes the alias and this warning. (2) `tsconfig_invalid: "paths" was overwritten. Imports from "$lib" may not typecheck`: a FALSE POSITIVE on Windows. Kit compares the generated path `<root>srclib/*` with `path.resolve(base, ...)`, which on win32 normalises the slash to `srclib*`, so `$lib/*` always mismatches; our tsconfig sets no `paths` and `bun run check` (0 errors) is right. Linux (CI, the images) does not print it. Both disappear with the migration.
+- **`$lib` is resolved by Vite and TypeScript, not by `kit.alias` (2026-11-17).** Kit 3 deprecates `alias: { $lib: 'src/lib' }` (`config_option_deprecated_alias` at every sync, dev and build) and, on Windows, the alias also produced a false `tsconfig_invalid: "paths" was overwritten` (Kit compares its generated path with a `path.resolve` that win32 normalises differently). Kit's own replacement, `bunx sv@latest migrate sveltekit-3 --tasks lib-alias`, rewrites 1567 files (7645 imports gain a `.js` extension, for `#lib` subpath imports); it was RUN on 2026-10-27 and REVERTED because it conflicts with every open frontend pull request. Neither import spelling is needed to end the noise: `kit.config.js` declares no alias, `vite.config.js` carries `resolve.alias: [LIB_ALIAS]` (the same `{ find: '$lib', replacement: <posix src/lib> }` Kit generated in `get_config_aliases`), and `tsconfig.json` carries `paths` for `$lib` and `$lib/*` (Kit's generated parent now has `paths: {}`, so there is nothing to overwrite). `vitest.config.ts` already had its own `$lib`. **Proven unchanged:** a build before and after produced the same 4671 files, 4668 of them byte for byte; the other three (`version.json`, `index.html`, `app-shell.html`) differ only by the build stamp and the `__sveltekit_<hash>` global derived from it; `bun run check` 0 errors 0 warnings; the full vitest suite. `#lib` stays a free choice, not a debt.
 - **Behaviour kept on purpose.** `version.pollInterval: 0` (the app owns stale-build recovery) - which stops Kit 3's hourly poll ONLY: Kit still fetches `/_app/version.json` on every return to visible and every window focus ([backlog](../backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md)).
 - **UNVERIFIED here:** the `ORIGIN` removal behind nginx; the web app on dev (`frontend-ssr` container, SEO head injection was smoke-tested against a local `build/index.js` only); both phones. `goto` rejecting a URL no route resolves is handled below.
 

@@ -224,7 +224,13 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * that must land ITSELF - a device key change's re-seal - only on `written`. `ended` is the writing
  * document's own refusal, not the guard's: its {@link MlsStateWriteLatch} is set.
  */
-export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collision' | 'ended';
+export type MlsStateWriteOutcome =
+  | 'written'
+  | 'superseded'
+  | 'stale'
+  | 'collision'
+  | 'ended'
+  | 'follower-tab';
 
 /**
  * A write was refused by the version guard, so the state it carried is NOT on disk. The device key
@@ -238,10 +244,12 @@ export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collisi
  *
  * `follower-tab` is not the guard's either: the document does not own the account's MLS state - a
  * follower tab, whose copy was loaded once and is never written back (`stateAuthority.ts`). Refused
- * BEFORE anything is captured, and said once per document by `BaseMlsService.persistCheckpoint`.
+ * BEFORE anything is captured, and said once per document by `BaseMlsService.persistCheckpoint` -
+ * and again AT THE PUT ({@link MlsStateWriteLatch.holdsNoLead}), for a write whose lead left the
+ * document while it was sealing.
  */
 export class MlsStateWriteRefusedError extends Error {
-  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'> | 'follower-tab') {
+  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
     super(
       outcome === 'ended'
         ? 'the MLS state write was refused: this document ended after a refused rotation'
@@ -262,7 +270,7 @@ export class MlsStateWriteRefusedError extends Error {
  */
 export class MlsCheckpointNotWrittenError extends Error {
   constructor(
-    readonly step: 'export' | 'store',
+    readonly step: 'rows' | 'export' | 'store',
     readonly cause: unknown
   ) {
     super(`the MLS checkpoint failed at its ${step} - nothing was stored: ${String(cause)}`);
@@ -311,6 +319,14 @@ export interface MlsStateWriteLatch {
    * the transaction that refused it, so no later transaction of this document can land.
    */
   endOnRefusal?(): void;
+  /**
+   * True once this document no longer owns the account's MLS state (`refusesCommitsHere`): read AT
+   * THE PUT, because the lead can leave while a checkpoint seals - a hidden leader hands it to a
+   * visible tab, Chromium freezes it, the page unloads (`tabLeader.ts`) - and the tab that takes it
+   * loads the state on disk. A put landing after that load is the fork the single writer prevents,
+   * so the write resolves `follower-tab` and stores nothing.
+   */
+  holdsNoLead?(): boolean;
 }
 
 async function writeMlsState(
@@ -341,6 +357,13 @@ async function writeMlsState(
       // THE LATCH, AT THE PUT: see `MlsStateWriteLatch` for why the check at the start is not one.
       if (latch?.isEnded()) {
         outcome = 'ended';
+        return;
+      }
+      if (latch?.holdsNoLead?.()) {
+        console.info(
+          '[MLS] MLS state write not stored: the lead left this tab while the checkpoint was sealing - the tab that leads now writes the state'
+        );
+        outcome = 'follower-tab';
         return;
       }
       const stored = (verReq.result as number | undefined) ?? 0;
@@ -413,6 +436,49 @@ async function writeMlsState(
       resolve(outcome);
     };
     tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Reads one small record of `CanariDBMls_<userId>` that is NOT the state - on BOTH runtimes (the
+ * native app's WebView has the same IndexedDB). Today that is the send ledger's `emitted` counts
+ * (`sendRatchetLedger.ts`), which must be durable before a frame leaves, earlier than any checkpoint.
+ */
+export async function readMlsDbRecord<T>(userId: string, key: string): Promise<T | undefined> {
+  const db = await openMlsDb(userId);
+  return new Promise<T | undefined>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    tx.oncomplete = () => resolve(req.result as T | undefined);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * Read-modify-writes one record of `CanariDBMls_<userId>` in ONE transaction, and resolves only once
+ * that transaction has COMMITTED - the moment IndexedDB has handed the write to the disk, which a
+ * process killed right after keeps (unlike `localStorage`, committed seconds later). `update`
+ * returning undefined deletes the record. One transaction is also what makes two documents of one
+ * profile increment the same record without losing either increment.
+ */
+export async function updateMlsDbRecord<T>(
+  userId: string,
+  key: string,
+  update: (previous: T | undefined) => T | undefined
+): Promise<void> {
+  const db = await openMlsDb(userId);
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    const req = store.get(key);
+    req.onsuccess = () => {
+      const next = update(req.result as T | undefined);
+      if (next === undefined) store.delete(key);
+      else store.put(next, key);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error(`the ${key} transaction aborted`));
   });
 }
 

@@ -73,7 +73,12 @@ export class ContentReport {
   @Column({ type: 'timestamptz', nullable: true })
   reviewedAt: Date | null;
 
-  /** The user ID of the content's author, stored at report time to enable quick moderation actions. Null for association posts. Equal to `contentId` when the report targets a person. */
+  /**
+   * Who the report is about - the account a moderator's mute acts on from the queue. READ FROM THE
+   * CONTENT BY THE SERVER at report time, for every type, never taken from the reporter; null for a
+   * post in an association's name; equal to `contentId` when the report targets a person. Held for
+   * the moderators: the reporter is answered a receipt without it (`receiptOf`).
+   */
   @Column({ nullable: true })
   reportedUserId: string | null;
 

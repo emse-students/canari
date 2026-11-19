@@ -74,6 +74,18 @@ export const LYDIA_ONBOARDING_STEP_TIMEOUT_MS = {
   link: 10_000,
 } as const;
 
+/**
+ * THE REMOVAL ANSWERS BEFORE ITS CALLER GIVES UP. A removal is three Lydia calls in a row - the
+ * preconditions read, `business/removecashier`, the `getpermission` re-read - made while
+ * social-service holds the association's cashier claim. social-service waits for core at most
+ * `timeouts.cashierRemovalWaitMs` of `libs/contracts/lydia-refusal-codes.json` (an erasure's or a
+ * departure's removal) and then records the outcome NOT confirmed and RELEASES the claim: a core
+ * still talking to Lydia after that would act outside any claim, alongside the next cashier step.
+ * So each of the three calls gets this bound, and their SUM stays under that wait (asserted by a
+ * spec against the contract): core always answers first.
+ */
+export const LYDIA_REMOVAL_STEP_TIMEOUT_MS = 8_000;
+
 /** nginx's `proxy_read_timeout` on `/api/payments` (its 60 s default; Dockerfile.frontend sets none). */
 export const PAYMENTS_PROXY_READ_TIMEOUT_MS = 60_000;
 
@@ -244,8 +256,14 @@ export const LYDIA_CASHIER_PERMISSIONS = [
   'access_easeofpayment',
 ] as const;
 
-/** A cashier phone as Lydia takes it: E.164, `+` and 8 to 15 digits (`+33...`, accepted 2026-10-30). */
-export const LYDIA_CASHIER_PHONE_RE = /^\+[1-9]\d{7,14}$/;
+/**
+ * A cashier phone as Lydia takes it: E.164, `+` and 8 to 15 digits (`+33...`, accepted 2026-10-30).
+ * A French number keeping its trunk `0` (`+330...`) is refused: no French E.164 number has one, and
+ * accepting it would let ONE line be typed in two spellings, which the one-number-one-row check
+ * (string compare of the opened numbers) could not see as the same (review of the 1.7.1 flip).
+ * social-service's checks hold the same pattern.
+ */
+export const LYDIA_CASHIER_PHONE_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** What `business/getpermission` read for one cashier: every right, true when it reads 1. */
 export type LydiaCashierRights = Readonly<
@@ -378,15 +396,18 @@ export const LYDIA_CASHIER_ADD_DISABLED = 'LYDIA_CASHIER_ADD_DISABLED';
 export const LYDIA_CASHIER_REVOKE_UNCONFIRMED = 'LYDIA_CASHIER_REVOKE_UNCONFIRMED';
 
 /**
- * THE OWNER'S GATE (2026-10-30): adding a Tresorier or a Vendeur, and changing a cashier's role,
- * ship OFF. It flips to `true` ONLY AFTER ONE REMOVAL (`removeCashier`, verified at 0 rights) HAS
- * BEEN OBSERVED IN PRODUCTION - nobody is added who Canari has not proven it can take away. The
- * flip is ONE pull request changing this constant, the frontend's constant of the same name
+ * THE OWNER'S GATE (2026-10-30), ON since 1.7.1 (owner, 2026-11-18): adding a Tresorier or a
+ * Vendeur, changing a cashier's role and changing the Responsable's number. It first waited for one
+ * removal observed in production, a condition nothing could meet while adding was off (every
+ * production association held only its Responsable, whose current number is never removed); the
+ * removal path was measured on Lydia homologation 2026-10-30, and the owner's own production trial
+ * (add himself as Vendeur, then remove) is the first production removal. The switch lives in THREE
+ * places changed together - this constant, the frontend's constant of the same name
  * (`frontend/src/lib/associations/lydiaCashiers.ts`) and `switches.cashierAddEnabled` in
- * `libs/contracts/lydia-refusal-codes.json` together; each side's contract spec asserts them equal.
- * The removal path is live meanwhile: it only takes rights away.
+ * `libs/contracts/lydia-refusal-codes.json` - and each side's contract spec asserts them equal.
+ * Turning it off again refuses the three with their typed 409s; removal is never gated.
  */
-export const LYDIA_CASHIER_ADD_ENABLED = false;
+export const LYDIA_CASHIER_ADD_ENABLED = true;
 
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
@@ -453,8 +474,7 @@ export function redactForLog(data: Record<string, unknown>): Record<string, unkn
 }
 
 /**
- * Lydia API implementation of PaymentProvider (WP-LYDIA-1). Stripe left the product
- * (docs/wiki/stripe-archive.md); this is the only live provider.
+ * Lydia API implementation of PaymentProvider (WP-LYDIA-1), the only live provider.
  * Covers checkout (`request/do`, confirmed server-side via its signed per-request callback - see
  * `webhook.controller.ts`'s `lydia-request-callback` route) and session lookup (`request/state`).
  *
@@ -498,7 +518,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * URL Lydia calls back on a `request/do` outcome (`webhook.controller.ts`'s
    * `lydia-request-callback` route). Built from `FRONTEND_URL` because nginx is the single public
    * entry point - `/api/...` under it already reaches core-service, exactly like every
-   * success/cancel URL this controller already hands to Stripe and Lydia.
+   * success/cancel URL this controller already hands to Lydia.
    */
   private callbackUrl(outcome: 'confirm' | 'cancel' | 'expire'): string {
     return `${publicApiBase()}/api/payments/lydia-request-callback?outcome=${outcome}`;
@@ -611,9 +631,8 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   /**
    * Creates a payment request via `POST /api/request/do`. `connectAccountId` is the target
-   * Business's `vendor_token` (unchanged storage shape from Stripe's `stripeAccountId` - confirmed
-   * by the doc that `vendor_token` is a per-request field, so Canari's existing payment-delegation
-   * logic keeps choosing the destination exactly as it does today).
+   * Business's `vendor_token` (a per-request field, confirmed by the doc, so Canari's
+   * payment-delegation logic chooses the destination Business per request).
    *
    * `request/do` needs no signature (confirmed by the doc: "you can't sign a call to
    * api/request/do.json, it's reserved to another Lydia product"), so no private_token is needed
@@ -809,9 +828,15 @@ export class LydiaPaymentProvider implements PaymentProvider {
   async assertRemovalPreconditions(
     associationId: string,
     vendorToken: string,
-    contextPhone: string
+    contextPhone: string,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<void> {
-    const reading = await this.readCashierReading(associationId, vendorToken, contextPhone);
+    const reading = await this.readCashierReading(
+      associationId,
+      vendorToken,
+      contextPhone,
+      timeoutMs
+    );
     const lacking = cashierRightsDifference(reading, 'responsable');
     if (lacking.length === 0) {
       this.logger.debug(`[LYDIA-CASHIER] association ${associationId}: removal preconditions met`);
@@ -845,17 +870,20 @@ export class LydiaPaymentProvider implements PaymentProvider {
   ): Promise<LydiaCashierRemoval> {
     this.cashierKeyOrThrow(associationId, contextPhone);
     this.cashierKeyOrThrow(associationId, cashierPhone);
-    await this.assertRemovalPreconditions(associationId, vendorToken, contextPhone);
+    // Each call bounded so the three answer within social's wait (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`).
+    const step = LYDIA_REMOVAL_STEP_TIMEOUT_MS;
+    await this.assertRemovalPreconditions(associationId, vendorToken, contextPhone, step);
     const tag =
       `[LYDIA-CASHIER] association ${associationId}: removal of phone ending ` +
       `${cashierPhone.slice(-2)}`;
     this.logger.log(`${tag} asked`);
     try {
-      await this.cashierCall(associationId, 'business/removecashier', {
-        vendor_token: vendorToken,
-        phone: contextPhone,
-        cashier_phone: cashierPhone,
-      });
+      await this.cashierCall(
+        associationId,
+        'business/removecashier',
+        { vendor_token: vendorToken, phone: contextPhone, cashier_phone: cashierPhone },
+        step
+      );
     } catch (err: unknown) {
       this.logger.warn(
         `${tag}: Lydia did not accept the call (${typedCode(err)}) - the re-read decides`
@@ -863,7 +891,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
     }
     let reading: LydiaCashierReading;
     try {
-      reading = await this.readCashierReading(associationId, vendorToken, cashierPhone);
+      reading = await this.readCashierReading(associationId, vendorToken, cashierPhone, step);
     } catch (err: unknown) {
       this.logger.error(`${tag}: the re-read failed (${typedCode(err)}) - NOT confirmed`);
       return { verified: false, held: null };
@@ -888,13 +916,16 @@ export class LydiaPaymentProvider implements PaymentProvider {
   async readCashierReading(
     associationId: string,
     vendorToken: string,
-    phone: string
+    phone: string,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<LydiaCashierReading> {
     this.cashierKeyOrThrow(associationId, phone);
-    const answer = await this.cashierCall(associationId, 'business/getpermission', {
-      vendor_token: vendorToken,
-      cashier_phone: phone,
-    });
+    const answer = await this.cashierCall(
+      associationId,
+      'business/getpermission',
+      { vendor_token: vendorToken, cashier_phone: phone },
+      timeoutMs
+    );
     let reading: LydiaCashierReading;
     try {
       reading = parseCashierReading(answer);
@@ -947,10 +978,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private async cashierCall(
     associationId: string,
     path: 'business/addcashier' | 'business/getpermission' | 'business/removecashier',
-    fields: Record<string, string>
+    fields: Record<string, string>,
+    timeoutMs: number = LYDIA_CALL_TIMEOUT_MS
   ): Promise<Record<string, unknown>> {
     try {
-      return await this.postForm<Record<string, unknown>>(`/api/${path}`, fields);
+      return await this.postForm<Record<string, unknown>>(`/api/${path}`, fields, [], timeoutMs);
     } catch (err: unknown) {
       if (err instanceof HttpException && !(err instanceof BadRequestException)) throw err;
       const providerCode =
@@ -1153,11 +1185,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
   }
 
   /**
-   * Creates a Business via `POST /api/business/create`. Unlike Stripe's `accountLinks` (a hosted
-   * page the association fills in itself), Lydia needs the legal profile as request fields - the
-   * caller must collect it first (see the onboarding form, WP-LYDIA-1). `dashboard_url` is returned
-   * as `OnboardingResult.url` so the treasurer has somewhere to go manage the Business; there is no
-   * separate "finish onboarding" redirect step like Stripe's, the Business exists immediately.
+   * Creates a Business via `POST /api/business/create`. Lydia needs the legal profile as request
+   * fields, so the caller must collect it first (see the onboarding form, WP-LYDIA-1).
+   * `dashboard_url` is returned as `OnboardingResult.url` so the treasurer has somewhere to go
+   * manage the Business; there is no separate "finish onboarding" redirect step, the Business
+   * exists immediately.
    *
    * `api_token_id` IS the Business private token (homologation 2026-10-30, lydia-api.md section 1),
    * and it is answered ONCE. So it is captured here, but only after Lydia's own `auth/vendortoken`

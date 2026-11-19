@@ -183,15 +183,22 @@ export interface PersonalRepublicationRequestState {
 
 export interface PostEntity {
   id: string;
-  /** Omitted when the post is published as an association (`association` is set). */
+  /**
+   * The writer. On a post published under another name - an association's, or "Anonyme" - it is
+   * served only to whoever moderates the post and to the writer (`PostsService.viewerSeesWriter`,
+   * decision 11 of moderation-authority), and drawn as the small line under that name
+   * (`revealedPostAuthor`); every other reader receives none.
+   */
   authorId?: string;
   /**
    * The pencil and the bin: the post's publisher, a content moderator, or a platform admin.
    *
    * This and the two below are what the CALLING user may do with this post, one field per control,
-   * answered by the server. None of them can be derived here: `authorId` is deliberately stripped
-   * from association posts, so a client comparing ids finds no owner for the very posts an
-   * association's officers manage, and nothing in a post says whether its reader moderates the feed.
+   * answered by the server. None of them can be derived here: `authorId` is withheld from an
+   * association post's readers (its moderators and its writer aside), and the post belongs to the
+   * association rather than to its writer anyway - a client comparing ids finds no owner for the
+   * very posts an association's officers manage, and nothing in a post says whether its reader
+   * moderates the feed.
    */
   canManage?: boolean;
   /**
@@ -207,8 +214,14 @@ export interface PostEntity {
   canPin?: boolean;
   /** WP-PIN: the spaces the pin menu lists for this reader, each with the pin's state there. */
   pinSpaces?: PinSpace[];
-  /** The flag: any logged-in reader who is not the post's own publisher. */
+  /** The flag: a logged-in reader who is not the post's own publisher and may act on it. */
   canReport?: boolean;
+  /**
+   * The reader may react to and comment on the post. False only for a platform admin shown it by the
+   * moderation read outside their own audience (2026-11-14): no reaction or comment control is drawn.
+   * Absent is true (an older server).
+   */
+  canParticipate?: boolean;
   /** Clears `anonymous`, revealing the author again: a moderator of this post or a platform admin. */
   canUnmaskAnonymous?: boolean;
   /**
@@ -284,7 +297,7 @@ export interface PostEntity {
   association?: PostAssociationAuthor;
   /**
    * Fixed at creation, mutually exclusive with `association`. Strips `authorId` (and the name
-   * fields above) from every reader except a content moderator or platform admin - see
+   * fields above) from every reader except its moderators and its own author - see
    * `canUnmaskAnonymous`. Always present regardless of viewer, so the client can render the
    * generic icon even when it never received an `authorId` to draw a real avatar from.
    */
@@ -399,6 +412,14 @@ export interface ReelLimits {
    * server - read through `reelRuleOf` (`reels/reelRule.ts`), the one classifier.
    */
   maxAspectRatio?: number;
+  /**
+   * The rule the server's door applies, `'vertical-or-short'` since 2026-11-14 (owner: every
+   * vertical video, and every video of 90 s or less, is a CanaReel) and absent from an older server,
+   * which refuses a landscape reel - read through `reelRuleOf`, the version-skew gate.
+   */
+  rule?: 'vertical-or-short';
+  /** The longest VERTICAL reel (3 min, owner 2026-11-14), served with `rule`. */
+  maxVerticalDurationMs?: number;
   retentionDays: number;
   warningWindowDays: number;
 }
@@ -509,7 +530,7 @@ export interface CreatePostPayload {
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
-  /** A reel's length in ms, 1 to `ReelLimits.maxDurationMs`; required on a reel, absent otherwise. */
+  /** A reel's length in ms, within `isReelVideo`'s cap for its frame; required on a reel, absent otherwise. */
   durationMs?: number;
 }
 
@@ -987,6 +1008,8 @@ export interface HiddenPost {
   markdown: string;
   createdAt: string;
   pendingReportCount: number;
+  /** The server's answer to "may THIS caller mute the writer": the mute control is drawn from it alone. */
+  canMuteAuthor?: boolean;
 }
 
 /** Returns all posts currently hidden by moderation. Global admin only. */
@@ -1011,9 +1034,10 @@ export interface PostNotification {
   actorId: string;
   actorName: string;
   /**
-   * Set only for `type === 'association_post'`. `actorId` on this row is the publishing MEMBER,
-   * not the association - see the backend `PostNotification` entity's own docblock for why - so
-   * the association's identity/logo has nowhere else to come from for rendering an avatar.
+   * The association the row speaks for (an association's post, republication, or a mention in its
+   * post; a proposal, a booking, a live). Its logo is the row's avatar. On an association's post or
+   * republication `actorId` is served empty: the member who acted is never shown (decision 11 of
+   * moderation-authority).
    */
   associationId?: string | null;
   associationLogoUrl?: string | null;

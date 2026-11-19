@@ -20,7 +20,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { getReelLimits, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
   import { readVideoMetadata } from '$lib/reels/videoDuration';
-  import { reelDeclarationFor, reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
+  import { reelDeclarationFor, reelRuleNotice, reelRuleOf } from '$lib/reels/reelRule';
   import { landingFeedFor } from '$lib/posts/landingFeed';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
@@ -39,6 +39,7 @@
   import { getForms, type Form } from '$lib/forms/api';
   // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
   import { publishedForms } from '$lib/forms/publish';
+  import { attachableForms } from '$lib/posts/editableForms';
   import {
     ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
@@ -243,12 +244,7 @@
           'POST_COMPOSER',
           `the picked video ${video.width ?? '?'}x${video.height ?? '?'}, ${video.durationMs ?? '?'} ms: ${reel ? 'a CanaReel' : 'a post'}`
         );
-        reelNotice = reel
-          ? m.reels_publish_from_composer_notice({
-              seconds: Math.round(rule.maxDurationMs / 1000),
-              lifetime: reelLifetimeLabel(limits.retentionDays),
-            })
-          : null;
+        reelNotice = reel ? reelRuleNotice(rule, limits.retentionDays) : null;
       })
       .catch((e: unknown) => {
         // The notice only: the queue reads the rule again at the create step, and waits it out.
@@ -265,6 +261,24 @@
 
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
+  /**
+   * The forms THIS identity may attach (the server's rule): an association's post, its own only; an
+   * anonymous post, none.
+   */
+  const formsForIdentity = $derived(
+    attachableForms(availableForms, {
+      associationId: isAssociationSelected ? selectedAssociationId : null,
+      anonymous: isAnonymousSelected,
+    })
+  );
+  /**
+   * The chosen form while the identity may still attach it, else none: an identity changed after
+   * the choice drops it from the publish (and the readiness check asks for a choice again) rather
+   * than send a form the server would refuse.
+   */
+  const attachableFormId = $derived(
+    formsForIdentity.some((f) => f.id === selectedFormId) ? selectedFormId : ''
+  );
 
   /**
    * The broadcaster's screen is open (WP-L5; the chip is offered only where `livesAvailable` says so -
@@ -601,7 +615,10 @@
         markdown,
         fileCount: selectedFiles.length,
         poll: pollDraft,
-        form: includeForm ? { selectedFormId, availableCount: availableForms.length } : null,
+        form:
+          includeForm && !isAnonymousSelected
+            ? { selectedFormId: attachableFormId, availableCount: formsForIdentity.length }
+            : null,
       });
       pollIssue = blocker?.pollIssue ?? null;
       if (blocker) {
@@ -640,7 +657,8 @@
           },
         ];
       }
-      if (includeForm) payload.attachedFormId = selectedFormId;
+      // An anonymous post carries no form (`attachableForms`): nothing is sent, the server would refuse it.
+      if (includeForm && !isAnonymousSelected) payload.attachedFormId = attachableFormId;
 
       Object.assign(payload, postIdentityFields(selectedAssociationId));
       // Sent only where it is offered: a switch left on before the identity changed is not a choice.
@@ -787,10 +805,7 @@
 
     {#if studentsOnlyAssociation}
       <div class="mt-3" transition:fade={{ duration: 200 }}>
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={studentsOnlyAssociation.name}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} />
       </div>
     {/if}
 
@@ -932,11 +947,15 @@
       </div>
     {/if}
 
-    {#if includeForm}
+    {#if includeForm && isAnonymousSelected}
+      <p class="text-text-muted mt-3 text-sm" transition:slide={{ duration: 250 }}>
+        {m.post_form_not_on_anonymous_note()}
+      </p>
+    {:else if includeForm}
       <div class="mt-3" transition:slide={{ duration: 250 }}>
         <FormSection
           bind:selectedFormId
-          {availableForms}
+          availableForms={formsForIdentity}
           createFormHref={buildCreateFormHref()}
           onBeforeCreateForm={persistComposerDraft}
           onRemove={() => (includeForm = false)}
@@ -971,7 +990,7 @@
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
       formActive={includeForm}
-      onToggleForm={() => (includeForm = !includeForm)}
+      onToggleForm={isAnonymousSelected ? undefined : () => (includeForm = !includeForm)}
       bind:scheduledAt
       status={draftSaved ? m.post_create_draft_saved_label() : ''}
       onLive={livesAvailable(serverLivesMode()) &&

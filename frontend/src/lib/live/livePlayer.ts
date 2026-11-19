@@ -74,6 +74,7 @@ import {
   isTerminalLiveState,
   liveFailureOutcome,
   liveRetryDelayMs,
+  logViewerStop,
   type LiveViewerState,
 } from './liveViewerState';
 import type { LiveChatBlock, LiveChatQuery, LiveManifest, LiveManifestSegment } from './types';
@@ -543,7 +544,10 @@ export class LivePlayer {
     ) {
       console.error(`[LIVE] viewer ${this.liveId}: stopped (${describe(error)})`, error);
     } else {
-      console.warn(`[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`);
+      logViewerStop(
+        final.kind,
+        `[LIVE] viewer ${this.liveId}: stopped on ${final.kind} (${describe(error)})`
+      );
     }
     this.generation++;
     this.running = false;

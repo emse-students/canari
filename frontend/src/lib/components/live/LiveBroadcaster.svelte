@@ -20,7 +20,8 @@
     LoaderCircle,
     MessageCircle,
     MessageCircleOff,
-    Monitor,
+    Mic,
+    MicOff,
     Pencil,
     Radio,
     RefreshCcw,
@@ -29,6 +30,8 @@
     Share2,
     SwitchCamera,
     Video,
+    VideoOff,
+    Volume2,
     WifiOff,
     X,
   } from '@lucide/svelte';
@@ -50,7 +53,9 @@
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { shareLiveLink } from '$lib/live/shareLive';
   import { replayFollows, replaysAvailable } from '$lib/live/replayAvailability';
-  import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
+  import { serverLiveReplaysMode, serverRetention } from '$lib/stores/appVersionCheck.svelte';
+  import { retentionInForce } from '$lib/legal/retention';
+  import { durationLabel } from '$lib/legal/retentionLabel';
   import { grabPosterFrame } from '$lib/live/livePoster';
   import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
   import Button from '$lib/components/ui/Button.svelte';
@@ -59,11 +64,21 @@
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
+  import LiveSceneBar from './LiveSceneBar.svelte';
+  import LiveOverlayHandle from './LiveOverlayHandle.svelte';
   import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import {
+    LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS,
+    LIVE_BROADCASTER_ONAIR_BAR_CLASS,
+    LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS,
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
+  } from './liveTopBar';
 
   interface Props {
     /** Broadcast AS this association (`POST_AS_ASSO` there), or null for the member. */
@@ -87,6 +102,17 @@
   }: Props = $props();
 
   const camera = $derived(broadcast.camera);
+  /** The scenes of a desktop live, or null on a phone (the camera recorded directly). */
+  const studio = $derived(broadcast.studio);
+  /**
+   * WHAT THE PREVIEW SHOWS: on a desktop, the COMPOSED picture itself - the frames the recorder gets,
+   * black bars included, drawn `contain` so nothing sent is hidden from the member (owner, reading of
+   * `1.6.12-alpha.2`: "pour éviter les angles morts"); on a phone, the camera.
+   */
+  const shownStream = $derived(studio ? studio.previewStream : camera.stream);
+  /** The preview's drawn size, for placing the overlay handle over the picture. */
+  let displayWidth = $state(0);
+  let displayHeight = $state(0);
   let batteryLevel = $state<number | null>(null);
   /** Re-read every second on air, only to redraw the elapsed time. */
   let elapsedMs = $state(0);
@@ -116,14 +142,16 @@
   $effect(() => orientation.hold(broadcast.phase !== 'preview'));
 
   /**
-   * The lens may flip now: the preview of a camera live with a second lens - the button's condition,
-   * and the preview's double tap's (owner, 2026-11-09, as the CanaReels camera does).
+   * The lens may flip now, with a second lens: in the preview, on a desktop live at any time (the
+   * studio follows the new stream), and ON AIR on a phone (owner, 2026-11-14: a new recorder on the
+   * same live, `switchLens`). The preview's double tap flips only before the live (owner,
+   * 2026-11-09): on air it would cut a gap into the broadcast on a stray tap.
    */
   const flipAllowed = $derived(
-    broadcast.phase === 'preview' &&
-      camera.phase === 'live' &&
+    camera.phase === 'live' &&
       camera.canSwitch &&
-      broadcast.source === 'camera'
+      !broadcast.lensSwitching &&
+      (broadcast.phase === 'preview' || broadcast.phase === 'live' || (studio !== null && onAir))
   );
 
   function flip() {
@@ -131,13 +159,24 @@
       console.debug('[LIVE-SCREEN] flip asked while it is not allowed - ignored');
       return;
     }
-    console.debug('[LIVE-SCREEN] flip');
-    void camera.switchFacing();
+    console.debug(`[LIVE-SCREEN] flip in ${broadcast.phase}`);
+    void broadcast.switchLens();
   }
+
+  /** The two switches are offered from the preview to the end; they never end anything. */
+  const switchesShown = $derived(broadcast.phase === 'preview' || onAir);
 
   /** Whether a Back should ask before ending - the overlay's history entry reads it. */
   export function holdsBack(): boolean {
     return onAir;
+  }
+
+  /**
+   * How long a replay stays visible, as the server applies it to a replay published now (the admin
+   * setting, `GET /api/version`'s `retention.liveReplayDays`) - never a number this build carries.
+   */
+  function replayDaysLabel(): string {
+    return durationLabel(retentionInForce(serverRetention()).days.liveReplayDays);
   }
 
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
@@ -145,11 +184,14 @@
     console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
     // The promise of a replay is made only to a live long enough to leave one (`replayFollows`).
     const keepsReplay = replayFollows(serverLiveReplaysMode(), broadcast.elapsedMs());
-    const ok = await showConfirm(keepsReplay ? m.live_end_confirm_replay() : m.live_end_confirm(), {
-      danger: true,
-      confirmLabel: m.live_end_confirm_button(),
-      cancelLabel: m.live_end_keep(),
-    });
+    const ok = await showConfirm(
+      keepsReplay ? m.live_end_confirm_replay({ days: replayDaysLabel() }) : m.live_end_confirm(),
+      {
+        danger: true,
+        confirmLabel: m.live_end_confirm_button(),
+        cancelLabel: m.live_end_keep(),
+      }
+    );
     if (!ok) {
       console.debug('[LIVE-SCREEN] end declined - still on air');
       return;
@@ -183,13 +225,18 @@
     frameReady = true;
   }
 
-  // The element follows the session's stream; `muted` as a PROPERTY (CameraScreen: a cloned element
+  // The element follows the shown stream; `muted` as a PROPERTY (CameraScreen: a cloned element
   // does not take its muted state from the attribute, and the microphone played back as an echo).
   $effect(() => {
     frameReady = false;
     if (!video) return;
     video.muted = true;
-    video.srcObject = camera.stream;
+    video.srcObject = shownStream;
+  });
+
+  // A phone's switches live on the tracks: every new camera stream (a flip) takes them again.
+  $effect(() => {
+    if (camera.stream) broadcast.syncTrackSwitches();
   });
 
   // The preview still (owner, 2026-11-07) is grabbed from THIS element, the one the member sees:
@@ -243,13 +290,6 @@
     };
   });
 
-  // The share was stopped from the browser's own bar: the live ends (liveBroadcast.screenShareStopped).
-  $effect(() => {
-    if (camera.phase === 'error' && camera.fault === 'interrupted') {
-      void broadcast.screenShareStopped();
-    }
-  });
-
   onMount(() => {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
@@ -260,6 +300,7 @@
       (err: unknown) => console.warn('[LIVE-SCREEN] battery not read', err)
     );
     if (document.visibilityState !== 'hidden') void camera.start();
+    void studio?.open();
     return () => releaseBar();
   });
 
@@ -280,8 +321,8 @@
   }
 
   /** The suspension sentence, with its end date in the reader's locale when the server sent one. */
-  function suspendedText(): string {
-    const until = broadcast.startSuspendedUntil ? new Date(broadcast.startSuspendedUntil) : null;
+  function suspendedText(iso: string | null): string {
+    const until = iso ? new Date(iso) : null;
     if (!until || Number.isNaN(until.getTime())) return m.live_start_suspended_no_date();
     return m.live_start_suspended({
       date: new Intl.DateTimeFormat(getLocale(), { day: 'numeric', month: 'long' }).format(until),
@@ -303,7 +344,7 @@
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
-    suspended: suspendedText,
+    suspended: () => suspendedText(broadcast.startSuspendedUntil),
     withdrawn: m.live_start_withdrawn,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
@@ -323,12 +364,12 @@
 
   /**
    * What the broadcaster's own end says: "Rien n'en est gardé" is true only without a replay - with
-   * one (a live of at least 30 s while replays are on) it says the replay is visible for 3 days. The
+   * one (a live of at least 30 s while replays are on) it says how long the replay is visible. The
    * length is the last second the screen counted on air.
    */
   function endedByBroadcasterText(): string {
     return replayFollows(serverLiveReplaysMode(), elapsedMs)
-      ? m.live_ended_broadcaster_replay()
+      ? m.live_ended_broadcaster_replay({ days: replayDaysLabel() })
       : m.live_ended_broadcaster();
   }
 
@@ -359,17 +400,25 @@
   class="relative h-full w-full overflow-hidden bg-black text-white"
   aria-label={m.live_overlay_label()}
   data-live-phase={broadcast.phase}
-  use:previewDoubleTap={{ onDoubleTap: flip, enabled: flipAllowed }}
+  data-live-scenes={studio ? 'on' : 'off'}
+  bind:clientWidth={displayWidth}
+  bind:clientHeight={displayHeight}
+  use:previewDoubleTap={{
+    onDoubleTap: flip,
+    enabled: flipAllowed && broadcast.phase === 'preview' && studio === null,
+  }}
 >
   <!-- One element per stream: WKWebView keeps a video's layer at its FIRST layout's size, and a
-       re-acquired camera is a new stream (CameraScreen, iPhone 12, 2026-10-02). -->
-  {#key camera.stream}
+       re-acquired camera is a new stream (CameraScreen, iPhone 12, 2026-10-02). On a desktop the
+       stream is the composed picture, drawn `contain` and never mirrored: exactly what is sent. -->
+  {#key shownStream}
     <video
       bind:this={video}
-      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user' &&
-      broadcast.source === 'camera'
-        ? '-scale-x-100'
-        : ''} {camera.phase === 'live' && frameReady
+      class="absolute inset-0 h-full w-full {studio
+        ? 'object-contain'
+        : `object-cover ${camera.facing === 'user' ? '-scale-x-100' : ''}`} {(studio ||
+        camera.phase === 'live') &&
+      frameReady
         ? 'opacity-100'
         : 'opacity-0'} transition-opacity duration-200 motion-reduce:transition-none"
       poster={TRANSPARENT_VIDEO_POSTER}
@@ -382,13 +431,35 @@
     ></video>
   {/key}
 
+  {#if studio && studio.scene === 'screen-camera' && (broadcast.phase === 'preview' || onAir)}
+    <LiveOverlayHandle {studio} display={{ width: displayWidth, height: displayHeight }} />
+  {/if}
+
+  {#if !studio && broadcast.cameraOff && (broadcast.phase === 'preview' || onAir)}
+    <!-- A phone's camera switched off sends black frames; the member sees why, not a frozen black. -->
+    <div
+      class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/80"
+      data-live-camera-off
+    >
+      <VideoOff size={40} strokeWidth={1.5} />
+      <p class="text-sm font-semibold">{m.live_scene_camera_off_card()}</p>
+    </div>
+  {/if}
+
   <!-- The top row: close (never while on air: End is the way out) and the lens. -->
   <div
-    class="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+    class={onAir ? LIVE_BROADCASTER_ONAIR_BAR_CLASS : LIVE_TOP_BAR_CLASS}
     style={sideSafePadding('0.75rem')}
+    data-live-top-bar
   >
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
-      <div class="flex flex-col items-start gap-2" role="status">
+      <div
+        class="{onAir
+          ? LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS
+          : LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
+        role="status"
+        data-live-top-identity
+      >
         {#if onAir}
           <!-- Who is on air, then the badge, the time and the audience: Instagram Live's corner. -->
           {#if broadcasterId}
@@ -422,7 +493,7 @@
               </Button>
             {:else}
               <form
-                class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
+                class="flex max-w-full flex-col gap-1.5 rounded-lg bg-black/60 p-2 sm:max-w-72"
                 onsubmit={(e) => {
                   e.preventDefault();
                   void saveTitleDraft();
@@ -460,7 +531,7 @@
               </form>
             {/if}
             {#if broadcast.titleProblem}
-              <span class="max-w-72 text-xs text-white/80" data-live-title-problem
+              <span class="max-w-full text-xs text-white/80 sm:max-w-72" data-live-title-problem
                 >{TITLE_TEXT[broadcast.titleProblem]()}</span
               >
             {/if}
@@ -485,7 +556,24 @@
       </CameraControlButton>
     {/if}
 
-    <div class="flex shrink-0 items-center gap-2">
+    <div
+      class={onAir ? LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS : LIVE_TOP_ACTIONS_CLASS}
+      data-live-top-actions
+    >
+      {#if onAir}
+        <!-- First of the column (owner, 2026-11-19), a compact X like the other controls, tinted red because it is destructive; its name is
+           "Terminer" and the confirmation stays. -->
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
+          aria-label={m.live_end_button()}
+          title={m.live_end_button()}
+          onclick={() => void confirmEnd()}
+          data-live-end
+        >
+          <X size={20} strokeWidth={2.75} />
+        </button>
+      {/if}
       {#if broadcast.phase === 'preview' && orientation.canRotate}
         <RotateButton onrotate={orientation.rotate} />
       {/if}
@@ -494,8 +582,38 @@
           <SwitchCamera size={22} strokeWidth={2.25} />
         </CameraControlButton>
       {/if}
+      {#if switchesShown}
+        <!-- The microphone and the camera switched off and on WITHOUT ending the live (owner,
+             2026-11-14): `pressed` is "switched off", the state the member must not forget. -->
+        <CameraControlButton
+          label={broadcast.micMuted ? m.live_mic_unmute_label() : m.live_mic_mute_label()}
+          pressed={broadcast.micMuted}
+          class={broadcast.micMuted ? 'bg-red-600/80 hover:bg-red-600' : ''}
+          onclick={() => broadcast.toggleMic()}
+          data-live-mic-toggle
+        >
+          {#if broadcast.micMuted}
+            <MicOff size={20} strokeWidth={2.25} />
+          {:else}
+            <Mic size={20} strokeWidth={2.25} />
+          {/if}
+        </CameraControlButton>
+        <CameraControlButton
+          label={broadcast.cameraOff ? m.live_camera_unmute_label() : m.live_camera_mute_label()}
+          pressed={broadcast.cameraOff}
+          class={broadcast.cameraOff ? 'bg-red-600/80 hover:bg-red-600' : ''}
+          onclick={() => broadcast.toggleCamera()}
+          data-live-camera-toggle
+        >
+          {#if broadcast.cameraOff}
+            <VideoOff size={20} strokeWidth={2.25} />
+          {:else}
+            <Video size={20} strokeWidth={2.25} />
+          {/if}
+        </CameraControlButton>
+      {/if}
       {#if onAir}
-        <!-- The on-air controls, together at the top right: share the link, show or hide the chat
+        <!-- The on-air controls, together in a column at the right edge: share the link, show or hide the chat
              (the old eye-off icon hid ONE LINE and is now in that line's tap menu), and the small
              End - destructive, so it asks (`confirmEnd`). -->
         {#if broadcast.liveId}
@@ -520,18 +638,6 @@
             <MessageCircleOff size={20} strokeWidth={2.25} />
           {/if}
         </CameraControlButton>
-        <!-- A compact X like the other controls, tinted red because it is destructive; its name is
-             "Terminer" and the confirmation stays. -->
-        <button
-          type="button"
-          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
-          aria-label={m.live_end_button()}
-          title={m.live_end_button()}
-          onclick={() => void confirmEnd()}
-          data-live-end
-        >
-          <X size={20} strokeWidth={2.75} />
-        </button>
       {/if}
     </div>
   </div>
@@ -539,7 +645,7 @@
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <!-- Turned, the sheet takes the left side and leaves the picture on the right. -->
     <div
-      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
+      class="absolute inset-x-0 bottom-(--keyboard-occlusion-bottom,0px) flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem-var(--keyboard-occlusion-bottom,0px))] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)] landscape:max-w-md"
       style={sideSafePadding('1rem')}
       data-no-double-tap
       data-live-prelive-sheet
@@ -568,40 +674,22 @@
           />
         </label>
       {/if}
-      {#if broadcast.canShareScreen}
-        <div
-          class="flex flex-col gap-2"
-          role="radiogroup"
-          aria-label={m.live_source_label()}
-          data-live-source-group
-        >
-          <div class="flex gap-2">
-            {#each ['camera', 'screen'] as const as option (option)}
-              <button
-                type="button"
-                role="radio"
-                aria-checked={broadcast.source === option}
-                disabled={broadcast.phase !== 'preview' || broadcast.choosingSource}
-                class="{pill} flex-1 justify-center {broadcast.source === option
-                  ? 'bg-white text-black'
-                  : 'bg-white/15 hover:bg-white/25'}"
-                onclick={() => void broadcast.chooseSource(option)}
-                data-live-source={option}
-              >
-                {#if option === 'camera'}
-                  <Video size={18} strokeWidth={2.25} />
-                  {m.live_source_camera()}
-                {:else}
-                  <Monitor size={18} strokeWidth={2.25} />
-                  {m.live_source_screen()}
-                {/if}
-              </button>
-            {/each}
+      {#if studio}
+        <LiveSceneBar {studio} showHint />
+        {#if studio.micPhase === 'error'}
+          <div class="flex items-center justify-between gap-3" role="alert" data-live-mic-fault>
+            <p class="text-sm text-white/80">{m.live_mic_fault()}</p>
+            <Button
+              variant="secondary"
+              size="compact"
+              class="shrink-0"
+              onclick={() => void studio.reopenMicrophone()}
+            >
+              <RefreshCcw size={16} strokeWidth={2.5} />
+              {m.reels_camera_retry()}
+            </Button>
           </div>
-          {#if broadcast.source === 'screen'}
-            <p class="text-sm text-white/80" data-live-source-hint>{m.live_source_screen_hint()}</p>
-          {/if}
-        </div>
+        {/if}
       {/if}
 
       <ul class="flex flex-col gap-2 text-sm text-white/90">
@@ -609,8 +697,8 @@
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
           {#if replaysAvailable(serverLiveReplaysMode())}
             {associationId
-              ? m.live_rule_audience_association_replay()
-              : m.live_rule_audience_member_replay()}
+              ? m.live_rule_audience_association_replay({ days: replayDaysLabel() })
+              : m.live_rule_audience_member_replay({ days: replayDaysLabel() })}
           {:else}
             {associationId ? m.live_rule_audience_association() : m.live_rule_audience_member()}
           {/if}
@@ -682,6 +770,28 @@
         <p class="text-sm text-white/70">{m.live_limits_loading()}</p>
       {/if}
 
+      {#if broadcast.standingBar}
+        <!-- Said BEFORE Start, from the standing the server answered: Start is not offered. "Retry"
+             reads it again - a suspension that ended, a withdrawal staff lifted. -->
+        <div class="flex items-center justify-between gap-3" role="alert" data-live-standing>
+          <p class="text-sm font-semibold text-red-300">
+            {broadcast.standingBar === 'withdrawn'
+              ? m.live_start_withdrawn()
+              : suspendedText(broadcast.standing?.suspendedUntil ?? null)}
+          </p>
+          <Button
+            variant="secondary"
+            size="compact"
+            class="shrink-0"
+            onclick={() => void broadcast.loadLimits()}
+            data-live-standing-retry
+          >
+            <RefreshCcw size={16} strokeWidth={2.5} />
+            {m.live_retry()}
+          </Button>
+        </div>
+      {/if}
+
       {#if broadcast.startProblem}
         <p class="text-sm font-semibold text-red-300" role="alert" data-live-start-problem>
           {START_TEXT[broadcast.startProblem]()}
@@ -690,13 +800,7 @@
 
       {#if camera.phase === 'error' && camera.fault}
         <div class="flex items-center justify-between gap-3" role="alert">
-          <p class="text-sm text-white/80">
-            {broadcast.source === 'screen'
-              ? broadcast.phase === 'preview'
-                ? m.live_source_screen_stopped()
-                : m.live_source_screen_stopped_on_air()
-              : CAMERA_FAULT_TEXT[camera.fault]()}
-          </p>
+          <p class="text-sm text-white/80">{CAMERA_FAULT_TEXT[camera.fault]()}</p>
           <button
             type="button"
             class="{pill} shrink-0 bg-white/15 hover:bg-white/25"
@@ -740,27 +844,76 @@
 
   <!-- The chat while on air (WP-L6): its own ONE loop, a hide button on every line, above the End
        button. Under the away layer in paint order, and kept mounted through it, so its lines and
-       cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
-  {#if onAir && broadcast.liveId && broadcast.chatKey}
+       cursors survive a camera taken away. A verdict that the live is over goes to the machine.
+       The desktop's scene bar on air (owner, 2026-11-14) shares ONE flex row with it: the chat takes
+       the room the bar leaves, so the two cannot overlap at any width and no width is written down;
+       the sound and the microphone say so above the bar when they need a click. -->
+  {#if onAir && ((broadcast.liveId && broadcast.chatKey) || studio)}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-(--safe-area-inset-bottom,0px) landscape:max-w-sm"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-[calc(var(--safe-area-inset-bottom,0px)+var(--keyboard-occlusion-bottom,0px))] flex items-end gap-3"
       style={sideSafePadding()}
-      data-no-double-tap
-      data-live-broadcaster-chat-box
     >
-      {#key broadcast.liveId}
-        <LiveBroadcasterChat
-          liveId={broadcast.liveId}
-          keyHex={broadcast.chatKey}
-          visible={chatOpen}
-          onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
-          onViewers={(count) => (viewers = count)}
-        />
-      {/key}
+      {#if broadcast.liveId && broadcast.chatKey}
+        <div
+          class="relative h-full min-w-0 flex-1 landscape:max-w-sm"
+          data-no-double-tap
+          data-live-broadcaster-chat-box
+        >
+          {#key broadcast.liveId}
+            <LiveBroadcasterChat
+              liveId={broadcast.liveId}
+              keyHex={broadcast.chatKey}
+              visible={chatOpen}
+              onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
+              onViewers={(count) => (viewers = count)}
+            />
+          {/key}
+        </div>
+      {/if}
+      {#if studio}
+        <div
+          class="ms-auto flex shrink-0 flex-col items-end gap-2 p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)] *:pointer-events-auto"
+          data-no-double-tap
+          data-live-onair-scenes
+        >
+          {#if !studio.audioRunning}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => studio.wakeAudio()}
+              data-live-audio-suspended
+            >
+              <Volume2 size={16} strokeWidth={2.5} />
+              {m.live_audio_suspended()}
+            </Button>
+          {/if}
+          {#if studio.micPhase === 'error'}
+            <Button
+              variant="danger-outline"
+              size="compact"
+              onclick={() => void studio.reopenMicrophone()}
+              data-live-mic-fault
+            >
+              <RefreshCcw size={16} strokeWidth={2.5} />
+              {m.live_mic_fault()}
+            </Button>
+          {/if}
+          <LiveSceneBar {studio} onAir />
+        </div>
+      {/if}
     </div>
   {/if}
 
-  {#if broadcast.phase === 'away'}
+  {#if broadcast.phase === 'away' && broadcast.lensSwitching}
+    <div
+      class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40 text-center"
+      role="status"
+      data-live-lens-switching
+    >
+      <LoaderCircle size={32} strokeWidth={2} class="motion-safe:animate-spin" />
+      <p class="text-sm">{m.live_lens_switching()}</p>
+    </div>
+  {:else if broadcast.phase === 'away'}
     <div
       class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 px-8 text-center"
       role="alert"
@@ -771,6 +924,8 @@
       <p class="text-sm text-white/70">{m.live_away_body()}</p>
       {#if broadcast.awayProblem === 'unsendable'}
         <p class="text-sm text-white/70" data-live-away-problem>{m.live_away_unsendable()}</p>
+      {:else if broadcast.awayProblem === 'audio'}
+        <p class="text-sm text-white/70" data-live-away-problem>{m.live_away_audio()}</p>
       {/if}
       {#if camera.phase === 'error' && camera.fault}
         <p class="text-sm text-white/70">{CAMERA_FAULT_TEXT[camera.fault]()}</p>

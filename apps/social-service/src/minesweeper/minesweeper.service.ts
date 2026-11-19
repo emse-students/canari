@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,8 +13,19 @@ import { inReviewCohortSql, isInReviewCohort, sameSideOfReviewCohort } from '../
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
+import { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
-import { CHALLENGE as BOARD_CONFIG, verifySolve, type MinesweeperMove } from './engine/game';
+import { timingsFault, type TimedMove } from './minesweeper.timings';
+import {
+  CHALLENGE as BOARD_CONFIG,
+  LATEST_GENERATOR_VERSION,
+  verifySolve,
+  type GeneratorVersion,
+  type MinesweeperMove,
+} from './engine/game';
+
+/** HTTP 426: Nest's `HttpStatus` has no name for it. */
+const UPGRADE_REQUIRED = 426;
 
 /** Challenge board must be cleared in at least this long (blocks 0ms cheats). */
 const MIN_DURATION_MS = 8_000;
@@ -71,6 +83,20 @@ function sameSideAsSql(userId: string | undefined, column: string): string {
   return isInReviewCohort(userId) ? inCohort : `NOT ${inCohort}`;
 }
 
+/**
+ * The generator a new ranked challenge is issued with, or null when this client cannot be ranked.
+ *
+ * RANKED IS OPEN ONLY TO A CLIENT THAT CAN MAKE THE LATEST GENERATOR (owner, 2026-11-13). A time is
+ * only comparable with another on a board of the same difficulty: letting a build that makes the
+ * older, easier boards into the same ranking would hand it faster times for less reasoning. A client
+ * that names nothing - every build before versions - is therefore refused, not served the old one.
+ * It still plays: the screen falls back to an unranked game.
+ */
+export function issuedGeneratorVersion(requested: number | undefined): GeneratorVersion | null {
+  if (requested === undefined || requested < LATEST_GENERATOR_VERSION) return null;
+  return LATEST_GENERATOR_VERSION;
+}
+
 @Injectable()
 export class MinesweeperService {
   private readonly logger = new Logger(MinesweeperService.name);
@@ -81,7 +107,9 @@ export class MinesweeperService {
     @InjectRepository(MinesweeperScore)
     private readonly scores: Repository<MinesweeperScore>,
     @InjectRepository(MinesweeperBan)
-    private readonly bans: Repository<MinesweeperBan>
+    private readonly bans: Repository<MinesweeperBan>,
+    @InjectRepository(MinesweeperReplay)
+    private readonly replays: Repository<MinesweeperReplay>
   ) {}
 
   /** Whether a global admin has banned this user from the ranked game. */
@@ -99,10 +127,26 @@ export class MinesweeperService {
 
   /**
    * Starts a ranked run: cancels prior open challenges for this user and returns
-   * a fresh seed. Duration is measured from `startedAt` on the server.
+   * a fresh seed. Duration is measured from `startedAt` on the server. A client that cannot make the
+   * latest generator is refused (`426`, `generator_update_required`).
    */
-  async startChallenge(userId: string) {
+  async startChallenge(userId: string, maxGeneratorVersion?: number) {
     await this.assertNotBanned(userId);
+    // Before anything is expired: a refused client keeps the challenge it already holds.
+    const generatorVersion = issuedGeneratorVersion(maxGeneratorVersion);
+    if (generatorVersion === null) {
+      this.logger.warn(
+        `minesweeper refused: generator_update_required user=${userId} requested=${maxGeneratorVersion ?? 'none'} latest=${LATEST_GENERATOR_VERSION}`
+      );
+      throw new HttpException(
+        {
+          code: 'generator_update_required',
+          message: 'This app version cannot play ranked Minesweeper: update it',
+          latestGeneratorVersion: LATEST_GENERATOR_VERSION,
+        },
+        UPGRADE_REQUIRED
+      );
+    }
     const now = new Date();
     await this.challenges
       .createQueryBuilder()
@@ -115,6 +159,7 @@ export class MinesweeperService {
     const row = this.challenges.create({
       userId,
       seed,
+      generatorVersion,
       width: BOARD_CONFIG.width,
       height: BOARD_CONFIG.height,
       mineCount: BOARD_CONFIG.mineCount,
@@ -123,11 +168,14 @@ export class MinesweeperService {
       status: 'open',
     });
     await this.challenges.save(row);
-    this.logger.log(`minesweeper challenge started user=${userId} id=${row.id}`);
+    this.logger.log(
+      `minesweeper challenge started user=${userId} id=${row.id} generator=${generatorVersion}`
+    );
 
     return {
       challengeId: row.id,
       seed: row.seed,
+      generatorVersion: row.generatorVersion,
       config: {
         width: row.width,
         height: row.height,
@@ -176,17 +224,57 @@ export class MinesweeperService {
       throw new BadRequestException('Claimed duration exceeds server elapsed time');
     }
 
+    // The timestamps must describe ONE game of the length claimed. Checked before the replay: it is the
+    // cheaper test, and a log that fails it is no record of a game whatever the board says.
+    const fault = timingsFault(dto.moves, dto.claimedDurationMs);
+    if (fault !== null) {
+      challenge.status = 'rejected';
+      await this.challenges.save(challenge);
+      this.logger.warn(
+        `minesweeper reject ${fault} user=${userId} id=${challengeId} claimed=${dto.claimedDurationMs} last=${dto.moves[dto.moves.length - 1]?.t ?? 'none'}`
+      );
+      throw new BadRequestException(`Move timings do not match the game: ${fault}`);
+    }
+
     const moves: MinesweeperMove[] = dto.moves.map((m) => ({
       type: m.type,
       x: m.x,
       y: m.y,
     }));
 
-    const result = verifySolve(challenge.seed, moves, {
-      width: challenge.width,
-      height: challenge.height,
-      mineCount: challenge.mineCount,
-    });
+    // A version this server does not know cannot be replayed, and replaying it with another would
+    // judge an honest solve on a board the player never saw.
+    if (
+      !Number.isInteger(challenge.generatorVersion) ||
+      challenge.generatorVersion < 1 ||
+      challenge.generatorVersion > LATEST_GENERATOR_VERSION
+    ) {
+      // NOT stored as rejected: a server rolled back past a generator would otherwise turn every honest
+      // in-flight solve into a permanent loss, and the roll-forward could not retry it.
+      this.logger.error(
+        `minesweeper refuse unknown_generator user=${userId} id=${challengeId} generator=${challenge.generatorVersion}`
+      );
+      throw new BadRequestException('Challenge was issued with an unknown generator');
+    }
+
+    const result = verifySolve(
+      challenge.seed,
+      moves,
+      {
+        width: challenge.width,
+        height: challenge.height,
+        mineCount: challenge.mineCount,
+      },
+      challenge.generatorVersion as GeneratorVersion
+    );
+
+    if (result.generation?.fellBack) {
+      // Generator 2 found no layout its solver can clear, so this board may have needed a guess: it is
+      // accepted, and this line is the only way to learn how often (the client logs it too).
+      this.logger.warn(
+        `minesweeper generation fell back user=${userId} id=${challengeId} generator=${challenge.generatorVersion} score=${result.generation.score}`
+      );
+    }
 
     if (!result.ok) {
       challenge.status = 'rejected';
@@ -220,6 +308,7 @@ export class MinesweeperService {
       verifiedAt: now,
     });
     await this.scores.save(score);
+    await this.keepReplay(score.id, dto.moves);
     this.logger.log(
       `minesweeper score ok user=${userId} id=${challengeId} scored=${durationMs} server=${serverDurationMs} claimed=${dto.claimedDurationMs} rtt=${dto.challengeRoundTripMs ?? 'n/a'} moves=${moves.length}`
     );
@@ -242,6 +331,24 @@ export class MinesweeperService {
       previousRank,
       ranksGained,
     };
+  }
+
+  /**
+   * Keeps the timed log of a verified win for a moderator's replay. The win is already recorded, so a
+   * failure here must not turn an honest solve into an error for the player: it is logged loudly (a
+   * score with no replay cannot be checked) and the submit goes on.
+   */
+  private async keepReplay(scoreId: string, moves: ReadonlyArray<TimedMove>): Promise<void> {
+    try {
+      await this.replays.save(
+        this.replays.create({
+          scoreId,
+          moves: moves.map((m) => ({ type: m.type, x: m.x, y: m.y, t: m.t })),
+        })
+      );
+    } catch (err) {
+      this.logger.error(`minesweeper replay not stored score=${scoreId}: ${String(err)}`);
+    }
   }
 
   /**
@@ -479,6 +586,60 @@ export class MinesweeperService {
       `minesweeper score removed id=${scoreId} user=${score.userId} ms=${score.durationMs} by=${adminId}`
     );
     return { removed: true, userId: score.userId, durationMs: score.durationMs };
+  }
+
+  /**
+   * Everything needed to watch a won game back: the board's seed, generator and size (the board is
+   * regenerated from them, never stored), the timed move log, and whose game it was.
+   *
+   * OPEN TO EVERY SIGNED-IN MEMBER (owner, 2026-11-18), on the same terms as the ranking it hangs off:
+   * a member may watch another player's BEST win (the one score the ranking shows) and any of their own,
+   * and a score the ranking hides - a banned player's, and the other side of the review cohort's
+   * boundary - answers 404, as a score that does not exist. A global admin sees every score (a
+   * moderator judging a cheat must be able to open a banned player's game, or an earlier win). 404 as
+   * well for a score with no stored replay (one won before replays were kept).
+   */
+  async replay(scoreId: string, viewerId: string, isAdmin: boolean) {
+    const score = await this.scores.findOne({ where: { id: scoreId } });
+    if (!score) throw new NotFoundException('Score not found');
+    if (!isAdmin) {
+      if (!sameSideOfReviewCohort(viewerId, score.userId) || (await this.isBanned(score.userId))) {
+        throw new NotFoundException('Score not found');
+      }
+      // The ranking shows one score per player, their best: an earlier win is not on it, so it is not
+      // on offer to another member either (a uuid from a stale client or a log line is no invitation).
+      if (
+        score.userId !== viewerId &&
+        (await this.getPersonalBest(score.userId))?.id !== score.id
+      ) {
+        throw new NotFoundException('Score not found');
+      }
+    }
+    const [replay, challenge] = await Promise.all([
+      this.replays.findOne({ where: { scoreId } }),
+      this.challenges.findOne({ where: { id: score.challengeId } }),
+    ]);
+    if (!replay || !challenge) throw new NotFoundException('No replay was kept for this score');
+    const users: Array<{ displayName: string | null }> = await this.scores.query(
+      `SELECT "displayName" FROM users WHERE id = $1`,
+      [score.userId]
+    );
+    const trace = `minesweeper replay read score=${scoreId} user=${score.userId} by=${viewerId}`;
+    // A global admin's read can reach what the ranking hides, so it keeps a trace production retains;
+    // a member's read of a ranked game is routine traffic.
+    if (isAdmin) this.logger.log(`${trace} admin`);
+    else this.logger.debug(trace);
+    return {
+      scoreId,
+      userId: score.userId,
+      displayName: users[0]?.displayName?.trim() || score.userId,
+      durationMs: score.durationMs,
+      verifiedAt: score.verifiedAt.toISOString(),
+      seed: challenge.seed,
+      generatorVersion: challenge.generatorVersion,
+      config: { width: challenge.width, height: challenge.height, mineCount: challenge.mineCount },
+      moves: replay.moves,
+    };
   }
 
   /**

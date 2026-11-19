@@ -84,7 +84,7 @@ const ASSO = '11111111-1111-4111-8111-111111111111';
 const SCHOOL = '22222222-2222-4222-8222-222222222222';
 const BDE = '33333333-3333-4333-8333-333333333333';
 
-function makeService(rows: Row[]) {
+function makeService(rows: Row[], opts: { departures?: boolean } = {}) {
   const kinds: Record<string, string> = { [ASSO]: 'association', [SCHOOL]: 'institution' };
   kinds[BDE] = 'association';
   const assoRepo = {
@@ -168,7 +168,10 @@ function makeService(rows: Row[]) {
       'invalidatePostListCaches'
     )
     .mockResolvedValue(undefined);
-  return { service, update, remove };
+  // The Lydia cashiers' departure debt, registered at boot by `LydiaCashiersService`.
+  const departures = { settleDepartures: jest.fn(() => Promise.resolve()) };
+  if (opts.departures !== false) service.registerCashierDepartures(departures);
+  return { service, update, remove, departures };
 }
 
 /** A refusal's typed code, or the outcome itself when the call did not throw a typed one. */
@@ -735,5 +738,55 @@ describe('the ceiling covers EDIT_PROFILE', () => {
     const ceiling = grantCeiling(standing(MANAGE_MEMBERS | EDIT_PROFILE));
     expect(flagsBeyondCeiling(ceiling, 0, EDIT_PROFILE)).toBe(0);
     expect(ALL_PERMISSION_FLAGS & EDIT_PROFILE).toBe(EDIT_PROFILE);
+  });
+});
+
+describe('removeMember - a membership that ended asks the Lydia cashiers to settle their debt', () => {
+  const rows = (): Row[] => [
+    { associationId: ASSO, userId: 'pres', permissions: MANAGE_MEMBERS },
+    { associationId: ASSO, userId: 'sec', permissions: MANAGE_MEMBERS },
+    { associationId: ASSO, userId: 'plain', permissions: 0 },
+  ];
+
+  it('a member who leaves, or is removed: the departure is asked once the delete committed', async () => {
+    const { service, departures } = makeService(rows());
+    await service.leaveAssociation(ASSO, 'plain');
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'plain');
+    departures.settleDepartures.mockClear();
+    await service.removeMember(ASSO, 'sec', { granter: PLATFORM });
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'sec');
+  });
+
+  it('a released cashier claim asks again (claim-released): a departure that met it busy is owed now', () => {
+    const { service, departures } = makeService(rows());
+    service.afterCashierClaimReleased(ASSO);
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'claim-released', undefined);
+  });
+
+  it('a refused removal asks nothing: the membership still stands', async () => {
+    const { service, departures } = makeService(rows());
+    await expect(
+      service.removeMember(ASSO, 'nobody', { granter: PLATFORM })
+    ).rejects.toBeInstanceOf(HttpException);
+    expect(departures.settleDepartures).not.toHaveBeenCalled();
+  });
+
+  it('the Lydia side failing never fails the removal: the membership is gone, the debt stays in the rows', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, remove, departures } = makeService(rows());
+    departures.settleDepartures.mockRejectedValue(new Error('lost'));
+    await expect(service.leaveAssociation(ASSO, 'plain')).resolves.toEqual({ ok: true });
+    expect(remove).toHaveBeenCalledTimes(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(String(error.mock.calls)).toContain('the debt stays owed');
+    error.mockRestore();
+  });
+
+  it('an unregistered port is a wiring defect said at ERROR, never a refused removal', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service } = makeService(rows(), { departures: false });
+    await expect(service.leaveAssociation(ASSO, 'plain')).resolves.toEqual({ ok: true });
+    expect(String(error.mock.calls)).toContain('departure removals are not registered');
+    error.mockRestore();
   });
 });

@@ -56,8 +56,22 @@ pub const ADDRESSED_HISTORY_CAPABILITY: &str = "addressed-history-1";
 /// The same literal is `JOIN_ASK_CAPABILITY` in chat-delivery and in the client.
 pub const JOIN_ASK_CAPABILITY: &str = "join-ask-1";
 
-/// Every capability this gateway records, each in its own hash.
-pub const KNOWN_CAPABILITIES: [&str; 2] = [ADDRESSED_HISTORY_CAPABILITY, JOIN_ASK_CAPABILITY];
+/// The capability a socket declares when the code behind it routes the admin badges' frame
+/// (`admin.queues.changed`, social-service's `AdminQueueSignal`). social-service names it in
+/// `requiresCapability` on `chat:channel_events`, and this gateway delivers that frame only to the
+/// sessions that declared it - so a build that predates the badges never meets a frame it cannot
+/// route. EDGE-ONLY: no publisher checks a device before sending (a newer build of the account
+/// refetches its counts on its own), so it has no hash in the shared store.
+/// The same literal is `ADMIN_QUEUES_CAPABILITY` in social-service and in the client.
+pub const ADMIN_QUEUES_CAPABILITY: &str = "admin-queues-1";
+
+/// Every capability this gateway knows. The first two are also recorded, each in its own hash, for
+/// chat-delivery to check before it publishes; [`ADMIN_QUEUES_CAPABILITY`] is only filtered here.
+pub const KNOWN_CAPABILITIES: [&str; 3] = [
+    ADDRESSED_HISTORY_CAPABILITY,
+    JOIN_ASK_CAPABILITY,
+    ADMIN_QUEUES_CAPABILITY,
+];
 
 /// A session field's value when its socket declared none of [`KNOWN_CAPABILITIES`].
 pub const UNDECLARED: &str = "-";
@@ -68,6 +82,7 @@ pub const UNDECLARED: &str = "-";
 pub struct SessionCaps {
     pub addressed_history: bool,
     pub join_ask: bool,
+    pub admin_queues: bool,
 }
 
 impl SessionCaps {
@@ -78,6 +93,7 @@ impl SessionCaps {
         SessionCaps {
             addressed_history: named(ADDRESSED_HISTORY_CAPABILITY),
             join_ask: named(JOIN_ASK_CAPABILITY),
+            admin_queues: named(ADMIN_QUEUES_CAPABILITY),
         }
     }
 
@@ -86,6 +102,7 @@ impl SessionCaps {
         match capability {
             ADDRESSED_HISTORY_CAPABILITY => self.addressed_history,
             JOIN_ASK_CAPABILITY => self.join_ask,
+            ADMIN_QUEUES_CAPABILITY => self.admin_queues,
             _ => false,
         }
     }
@@ -295,10 +312,12 @@ mod redis_it {
     const HISTORY: SessionCaps = SessionCaps {
         addressed_history: true,
         join_ask: false,
+        admin_queues: false,
     };
     const NONE: SessionCaps = SessionCaps {
         addressed_history: false,
         join_ask: false,
+        admin_queues: false,
     };
 
     /// Review of #2442: a session declaring BOTH capabilities leaves the history value byte-identical
@@ -311,6 +330,7 @@ mod redis_it {
         let both = SessionCaps {
             addressed_history: true,
             join_ask: true,
+            admin_queues: false,
         };
 
         assert!(
@@ -660,6 +680,36 @@ mod tests {
             SessionCaps::default()
         );
         assert_eq!(SessionCaps::from_query(None), SessionCaps::default());
+        let badges = SessionCaps::from_query(Some("join-ask-1,admin-queues-1"));
+        assert!(badges.admin_queues && badges.holds(ADMIN_QUEUES_CAPABILITY));
+        assert!(!both.admin_queues);
+    }
+
+    /// The admin badges' frame names its capability on `chat:channel_events` (a control frame's
+    /// rule): only the sessions that declared it take it, and one naming nothing reaches all.
+    #[test]
+    fn a_channel_event_naming_the_admin_capability_reaches_only_the_sessions_that_declared_it() {
+        let frame = serde_json::json!({
+            "type": "admin.queues.changed",
+            "requiresCapability": ADMIN_QUEUES_CAPABILITY,
+        });
+        let required = required_capability(&frame, true).unwrap();
+        assert_eq!(required, Some(ADMIN_QUEUES_CAPABILITY));
+        let declared = HashMap::from([
+            (
+                1,
+                SessionCaps::from_query(Some("addressed-history-1,join-ask-1")),
+            ),
+            (
+                2,
+                SessionCaps::from_query(Some("join-ask-1,admin-queues-1")),
+            ),
+        ]);
+        let (deliver, refused) = deliverable_sessions(required, [1, 2, 3], &declared);
+        assert_eq!(deliver, vec![2]);
+        assert_eq!(refused, vec![1, 3]);
+        let plain = serde_json::json!({ "type": "channel.created" });
+        assert_eq!(required_capability(&plain, true), Ok(None));
     }
 
     /// Each hash holds ONE value per session, compared whole by every reader: the capability or the

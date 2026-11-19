@@ -260,6 +260,31 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     return { service, save, update };
   }
 
+  it('accuses a sign-in that takes away the campus or the whole cursus (no space left)', async () => {
+    const stored = { id: 's1', displayName: 'A B', ...profile, promo: 2025, formation: 'ISMIN' };
+    const { service } = makeService(stored);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+        miconnectUuid: 'uuid-1',
+        campus: null,
+        cursus: [],
+        posts: [],
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
+      warn.mockClear();
+      // A change that keeps a campus and a cursus is not one.
+      const { service: other } = makeService(stored);
+      await other.findOrCreateFromOidc('s1', 'A B', 'A', 'B', {
+        ...profile,
+        campus: 'saint-etienne',
+      });
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('creates an account carrying the profile and the derived promo/formation', async () => {
     const { service, save } = makeService(null);
     await service.findOrCreateFromOidc('s1', 'A B', 'A', 'B', profile);
@@ -347,22 +372,35 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
 
 /** The directory's campus and post filters (WP3) must reach the query, and count as a filter. */
 describe('UsersService.directory campus and post filters', () => {
-  function makeService() {
+  function makeService(hidden: string[] = []) {
     const where: Array<[string, unknown]> = [];
+    const orders: string[] = [];
     const qb: Record<string, jest.Mock> = {};
-    for (const m of ['select', 'orderBy', 'skip', 'take', 'andWhere', 'where', 'leftJoin']) {
+    for (const m of [
+      'select',
+      'orderBy',
+      'addOrderBy',
+      'skip',
+      'take',
+      'andWhere',
+      'where',
+      'leftJoin',
+    ]) {
       qb[m] = jest.fn().mockImplementation((sql?: string, params?: unknown) => {
         if (m === 'andWhere') where.push([sql as string, params]);
+        if (m === 'orderBy' || m === 'addOrderBy') orders.push(`${m}:${sql}`);
         return qb;
       });
     }
     qb.getCount = jest.fn().mockResolvedValue(0);
     qb.getMany = jest.fn().mockResolvedValue([]);
+    const invisibleUserIdsFor = jest.fn().mockResolvedValue(hidden);
+    const blocks = { invisibleUserIdsFor } as unknown as UserBlocksService;
     const userRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(qb),
     } as unknown as Repository<User>;
-    const service = new UsersService(userRepository, {} as DataSource, makeBlocksStub());
-    return { service, where };
+    const service = new UsersService(userRepository, {} as DataSource, blocks);
+    return { service, where, orders, invisibleUserIdsFor };
   }
 
   it('accepts a campus alone as a filter and applies it', async () => {
@@ -375,6 +413,47 @@ describe('UsersService.directory campus and post filters', () => {
     const { service, where } = makeService();
     await service.directory({ post: 'ALUMNI' });
     expect(where).toContainEqual([':post = ANY(user.posts)', { post: 'ALUMNI' }]);
+  });
+
+  // D32: the promo and formation filters read every cursus entry OR the legacy pair, the two from the
+  // same place. Judged on SQL in `cursus-reads.integration.spec.ts`; here, that the query asks it.
+  it('filters promo and formation through one cursus entry or the legacy pair', async () => {
+    const { service, where } = makeService();
+    await service.directory({ promo: 2024, formation: 'ICM' });
+    const filter = where.find(([sql]) => sql.includes('jsonb_array_elements'));
+    expect(filter?.[0]).toContain("entry->>'promo' = :cursusPromoText");
+    expect(filter?.[0]).toContain(
+      'OR (user.promo = :legacyPromo AND unaccent(LOWER(user.formation)) LIKE'
+    );
+    expect(filter?.[0]).toContain("jsonb_typeof(user.cursus) = 'array'");
+    expect(filter?.[1]).toEqual({
+      cursusPromoText: '2024',
+      legacyPromo: 2024,
+      cursusFormation: '%ICM%',
+    });
+  });
+
+  it('hides accounts blocked in either direction, as the New chat search does', async () => {
+    const { service, where, invisibleUserIdsFor } = makeService(['blocked-1', 'blocker-2']);
+    await service.directory({ campus: 'gardanne' }, 'me');
+    expect(invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(where).toContainEqual([
+      'user.id NOT IN (:...blockedIds)',
+      { blockedIds: ['blocked-1', 'blocker-2'] },
+    ]);
+  });
+
+  it('adds no block clause when the reader has no block either way', async () => {
+    const { service, where, invisibleUserIdsFor } = makeService([]);
+    await service.directory({ campus: 'gardanne' }, 'me');
+    expect(invisibleUserIdsFor).toHaveBeenCalledWith('me');
+    expect(where.some(([sql]) => sql.includes('blockedIds'))).toBe(false);
+  });
+
+  it('breaks ties on the id after the name order, so offset paging is stable', async () => {
+    const { service, orders } = makeService();
+    await service.directory({ campus: 'gardanne' });
+    expect(orders).toEqual(['orderBy:user.displayName', 'addOrderBy:user.id']);
   });
 });
 

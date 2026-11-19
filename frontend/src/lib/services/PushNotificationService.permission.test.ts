@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 // Stub Tauri internals before any import: the CJS `@tauri-apps/api/core` reads this global.
+import { JWT_AUTH } from '../../test/pushAuth';
 const tauriInvokeStub = vi.fn((cmd: string) => {
   if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-perm');
@@ -36,9 +37,6 @@ vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: vi.fn(() => true) })
  * collection has no per-case budget - leaves each case only the cheap re-evaluation. The paraglide
  * barrel is replaced outright: no case asserts a message, and it is nearly all of that graph.
  */
-// A module, so the top-level `await` below type-checks.
-export {};
-
 vi.mock('$lib/paraglide/messages', () => ({
   m: new Proxy({}, { get: (_t, key) => () => String(key) }),
 }));
@@ -126,7 +124,7 @@ describe('startPushService and the notification permission rationale', () => {
     }) as unknown as typeof setTimeout);
 
     const { startPushService, confirmStore, resolveConfirm } = await loadService();
-    const running = startPushService('https://api', 'jwt', 'dev-perm');
+    const running = startPushService('https://api', JWT_AUTH, 'dev-perm');
     try {
       await waitForRationale({ confirmStore, resolveConfirm } as ConfirmModule);
 
@@ -152,7 +150,7 @@ describe('startPushService and the notification permission rationale', () => {
 
   it('never spends the OS prompt on a user who answered "later"', async () => {
     const { startPushService, confirmStore, resolveConfirm } = await loadService();
-    const running = startPushService('https://api', 'jwt', 'dev-perm');
+    const running = startPushService('https://api', JWT_AUTH, 'dev-perm');
 
     await waitForRationale({ confirmStore, resolveConfirm } as ConfirmModule);
     resolveConfirm(false);
@@ -170,7 +168,7 @@ describe('startPushService and the notification permission rationale', () => {
     isPermissionGranted.mockResolvedValue(true);
     const { startPushService, confirmStore } = await loadService();
 
-    await startPushService('https://api', 'jwt', 'dev-perm');
+    await startPushService('https://api', JWT_AUTH, 'dev-perm');
 
     expect(confirmStore.pending).toBeNull();
     expect(requestPermission).not.toHaveBeenCalled();

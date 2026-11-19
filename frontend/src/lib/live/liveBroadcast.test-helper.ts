@@ -7,7 +7,8 @@ import { vi } from 'vitest';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import type { LiveSegmentUploaderOptions } from './api';
 import type { LiveBroadcastDeps } from './liveBroadcast.svelte';
-import type { LiveLimits, LiveRulesStatus, LiveView } from './types';
+import type { LiveStudio } from './liveStudio.svelte';
+import type { LiveLimits, LiveOwnStanding, LiveRulesStatus, LiveView } from './types';
 
 export class FakeTrack extends EventTarget {
   readyState: 'live' | 'ended' = 'live';
@@ -142,6 +143,12 @@ export function fakeDeps() {
       acceptedVersion: 1,
       acceptedAt: '2026-10-19T09:00:00.000Z',
     })),
+    // In good standing by default: a test of the ladder overrides it.
+    fetchLiveStanding: vi.fn(async (): Promise<LiveOwnStanding> => ({
+      cutsOnRecord: 0,
+      suspendedUntil: null,
+      withdrawnAt: null,
+    })),
     startLive: vi.fn(
       async (_k: string, _a?: string, _r?: number, title?: string | null): Promise<LiveView> => ({
         ...liveView(),
@@ -192,9 +199,8 @@ export function fakeDeps() {
     now: () => clock.t,
     sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
-    screenShareAvailable: vi.fn(() => false),
-    openScreen: vi.fn(async (_context: AudioContext | null) => fakeStream().stream),
-    createAudioContext: vi.fn((): AudioContext | null => null),
+    // A phone by default: the camera recorded directly. A desktop test sets a studio.
+    createStudio: vi.fn((_camera: CameraSession): LiveStudio | null => null),
   } satisfies LiveBroadcastDeps;
   return {
     deps,

@@ -276,11 +276,22 @@ it("toggles a governor's reach like any other box", async () => {
   ]);
   api.setAssociationAudiences.mockResolvedValue([]);
   const target = await render();
-  const reach = target.querySelector<HTMLButtonElement>(
-    `button[aria-label="${m.admin_spaces_reach_aria({ association: 'Club Photo', space: SPACE })}"]`
-  )!;
+  const box = (association: string, space: string) =>
+    target.querySelector<HTMLButtonElement>(
+      `button[aria-label="${m.admin_spaces_reach_aria({ association, space })}"]`
+    )!;
+  // Club Photo reaches Gardanne: the box of the space it governs, on the OTHER campus, is not
+  // offered (one campus per association), and says why. The institution's is.
+  expect(box('Club Photo', SPACE).disabled).toBe(true);
+  expect(box('Club Photo', SPACE).title).toBe(m.audience_err_one_campus_only());
+  expect(box('Ecole', SPACE).disabled).toBe(false);
+  box('Club Photo', SPACE).click();
+  expect(api.setAssociationAudiences).not.toHaveBeenCalled();
 
-  reach.click();
+  // On its own campus a box toggles, ticked or not.
+  const own = box('Club Photo', `${formationLabel('ICM')} · ${campusLabel('gardanne')}`);
+  expect(own.disabled).toBe(false);
+  own.click();
 
   await vi.waitFor(() => expect(api.setAssociationAudiences).toHaveBeenCalledOnce());
   expect(api.setAssociationAudiences.mock.calls[0][0]).toBe('a1');

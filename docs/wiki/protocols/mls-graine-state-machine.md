@@ -673,7 +673,7 @@ count alone would have hidden.
 **This page's DE1-DE9 are the Graine subsystem's own dead ends and carry their own numbering.** They
 are nine of the items a four-subsystem audit produced, and that whole set was swept against `main`
 on 2026-09-12 - eight of its counts came back LARGER than claimed, so **work to the swept numbers,
-never to the audit's**: [backlog](../backlog.md#the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026-09-12).
+never to the audit's**: [backlog](../backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md).
 Two of this page's own entries moved in that sweep: the seed minted against an unsettled group can
 no longer lose the publish race (`unsettledDistributionGroups` holds it across creation), and
 `SCOPE_HAS_NO_DISTRIBUTION_GROUP` is now two codes, `WORKSPACE_`- and `CHANNEL_`-prefixed.

@@ -42,7 +42,7 @@ async fn health_check() -> impl IntoResponse {
 /// match nothing. **The only proof an origin list is right is reading the served
 /// `access-control-allow-origin` back after the deploy**, never the deploy's colour.
 ///
-/// @param allow_origin - Raw `ALLOW_ORIGIN` value, e.g. `https://canari-emse.fr,tauri://localhost`.
+/// @param allow_origin - Raw `ALLOW_ORIGIN` value, e.g. `https://canari.emse.fr,tauri://localhost`.
 fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
     let mut origins: Vec<HeaderValue> = Vec::new();
     for part in allow_origin.split(',') {
@@ -65,7 +65,7 @@ fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
 ///
 /// THE LIST IS A FACT ABOUT THE CLIENTS, AND EVERY CANARI CLIENT MUST BE IN IT. A Tauri WebView
 /// presents one origin per platform and calls this gateway cross-origin (its page is served from
-/// `tauri://localhost`, the API from `https://canari-emse.fr`), so omitting a spelling here costs
+/// `tauri://localhost`, the API from `https://canari.emse.fr`), so omitting a spelling here costs
 /// that platform `/api/presence` with no server-side error to show for it - the same failure shape
 /// that cost iOS its login through the Nest services' own list (`apps/*/src/cors-origins.ts`,
 /// which this must be kept in step with).
@@ -206,6 +206,26 @@ async fn main() {
              estate serves its clients from."
         );
     }
+    // What one connection may send. A value that is not an integer above its floor is REFUSED by name and
+    // its default kept: the gateway serves, and this line is the only sign the setting was lost.
+    let (frame_limits, unusable) = frame_census::FrameLimits::from_values(
+        std::env::var("WS_MAX_FRAME_BYTES").ok().as_deref(),
+        std::env::var("WS_MAX_FRAMES_PER_MINUTE").ok().as_deref(),
+    );
+    for refused in unusable {
+        tracing::error!(
+            "{} is {:?}, which is not an integer of at least {} - its default is used instead",
+            refused.name,
+            refused.raw,
+            refused.min
+        );
+    }
+    tracing::info!(
+        "[WS LIMIT] a connection may send frames of at most {} bytes, at most {} per minute",
+        frame_limits.max_frame_bytes,
+        frame_limits.max_frames_per_minute
+    );
+    app_state.frame_limits = frame_limits;
     let app_state = Arc::new(app_state);
 
     // ── Redis pub/sub subscriber ──────────────────────────────────────────

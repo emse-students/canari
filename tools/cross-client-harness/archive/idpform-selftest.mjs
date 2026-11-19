@@ -3,7 +3,7 @@
  *
  *   bun idpform-selftest.mjs
  *
- * WHY. Blueprint `45-consent.yaml` (held in `infrastructure/authentik/blueprints/held/`) adds a
+ * WHY. Blueprint `45-consent.yaml` (bound to the dev and local clients, held out of production) adds a
  * terms page after the password for every account whose `attributes.cgu_version` is not the current
  * one. `login.mjs` knew three shapes - `cas`, `authentik-uid`, `authentik-password` - and the terms
  * page is none of them, so the loop would have waited on it and reported "never gave way". The

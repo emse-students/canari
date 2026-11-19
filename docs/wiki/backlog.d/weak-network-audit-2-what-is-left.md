@@ -1,5 +1,9 @@
 ## P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed
 
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+
 The owner reopened the weak-network audit closed on 2026-10-14. Measured on dev at 500 ms RTT,
 screen by screen ([weak-network-audit-2026-11-10](../frontend/weak-network-audit-2026-11-10.md)):
 the stored screens paint in 0-1 round trips, the boot keeps the link busy for 15 serial levels

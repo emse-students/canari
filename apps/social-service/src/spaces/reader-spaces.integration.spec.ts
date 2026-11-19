@@ -25,8 +25,10 @@ import {
   announceRecipientsSql,
   associationRulesReachSpaceMatchingSql,
   associationVisibleToViewerSql,
+  campusWideReaderCampus,
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
+  isCampusStaffSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
@@ -106,10 +108,13 @@ const POSTS: {
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
-    label: 'an A2 post (the whole Gardanne campus)',
+    label:
+      'an A2 post (the whole Gardanne campus), written by a platform admin who is not a member of A2',
     authorId: 'admin',
     associationId: A2,
-    seenBy: ['isminGa', 'admin'],
+    // The author's door of an entity's post is held only with a membership of it (2026-11-14): the admin
+    // wrote it through the admin tier, is no member, and has no space - browsing shows them nothing.
+    seenBy: ['isminGa'],
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
@@ -117,7 +122,7 @@ const POSTS: {
     authorId: 'admin',
     associationId: A2,
     republishedBy: [A1],
-    seenBy: ['isminGa', 'admin', 'icmSe', 'icmSe2', 'adminIcm', 'staff'],
+    seenBy: ['isminGa', 'icmSe', 'icmSe2', 'adminIcm', 'staff'],
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
@@ -195,7 +200,8 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
-        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
+        "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "reachPublic" varchar(16), "reachSpaces" jsonb);
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         event_id uuid NOT NULL, association_id uuid NOT NULL);
     `);
@@ -299,6 +305,21 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(icm).toEqual([{ formation: 'ICM', campus: 'saint-etienne' }]);
   });
 
+  it('isCampusStaffSql and campusWideReaderCampus agree for every reader (the staff-by-campus door)', async () => {
+    for (const [id, u] of Object.entries(USERS)) {
+      const { rows } = await client.query(
+        `SELECT ${isCampusStaffSql('u')} AS staff FROM users u WHERE u.id = $1`,
+        [id]
+      );
+      const pure = campusWideReaderCampus({ id, campus: u.campus, cursus: u.cursus }) !== null;
+      expect({ id, staff: rows[0].staff }).toEqual({ id, staff: pure });
+    }
+    // A cursus that is not an array is no staff, in both.
+    expect(campusWideReaderCampus({ campus: 'saint-etienne', cursus: { formation: 'ICM' } })).toBe(
+      null
+    );
+  });
+
   it('the gate admits an admin, a reader with a space, a member and an accepted follower - and nobody else', async () => {
     const admitted: string[] = [];
     for (const id of [...EVERYONE, 'nobody-at-all']) {
@@ -342,31 +363,16 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     }
   });
 
-  it('a global admin may open ANY post by its id, but browsing never shows it to them', async () => {
-    for (const post of POSTS) {
-      const { rows } = await client.query(
-        `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
-        [post.id, 'admin']
-      );
-      expect({ post: post.label, openByIdAsAdmin: rows[0].visible }).toEqual({
-        post: post.label,
-        openByIdAsAdmin: true,
-      });
-    }
+  it('the predicate has no admin door: browsing shows a global admin only what is theirs', async () => {
+    // The moderation read of one post is `mayModeratePost` handed to `readPostOpenVerdict`
+    // (post-openable.integration.spec.ts), never a disjunct here (owner, 2026-11-15).
     const { rows } = await client.query(
       `SELECT posts.id FROM posts WHERE ${postVisibleToViewerSql('posts', '$1')} ORDER BY posts.id`,
       ['admin']
     );
-    // Only what the admin wrote themselves: the posts of the two A2 rows.
-    expect(rows.map((r) => r.id as string)).toEqual(
-      POSTS.filter((p) => p.authorId === 'admin').map((p) => p.id)
-    );
-    // A non-admin never gets the opening by id (staff shares no space with icmSe, nor follows them).
-    const outsider = await client.query(
-      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible FROM posts WHERE posts.id = $1`,
-      [POSTS[4].id, 'staff']
-    );
-    expect(outsider.rows[0].visible).toBe(false);
+    // Nothing: the two A2 rows they wrote are A2's, and they are not a member of A2 (the author's door
+    // of an entity's post, 2026-11-14) - an admin's personal post would be theirs, as anyone's.
+    expect(rows.map((r) => r.id as string)).toEqual([]);
   });
 
   it('an absent viewer (NULL) sees nothing at all', async () => {
@@ -513,6 +519,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     expect(rows.map((r) => EVENTS.find((ev) => ev.id === r.id)?.label)).toEqual(expected);
   });
 
+  // Nobody here holds a read grant; what a grant adds is read-grants.integration.spec.ts's subject.
   it('lists each reader their directory (D37): rules or membership, an admin as anyone', async () => {
     const seen: Record<string, string[]> = {};
     for (const id of EVERYONE) {

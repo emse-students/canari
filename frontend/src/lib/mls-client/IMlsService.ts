@@ -1,9 +1,10 @@
 import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
-import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
+import type { DeviceEvent, DevicePin, KeyPackageVerdict, MembershipEvidence } from './deviceTrust';
 import type {
   DeviceKeyPackageAnswer,
   DeviceSignatureKeys,
@@ -27,6 +28,7 @@ import type {
   PendingInvitationRow,
   RefusedAdmit,
   SentFrame,
+  WelcomeAddressability,
 } from './mlsDeliveryApi';
 
 /**
@@ -46,6 +48,11 @@ export type DeliveredWelcome = {
   deviceId: string;
   /** The Welcome's bytes - what tells this delivery from a later Welcome to the same device. */
   welcome: Uint8Array;
+  /**
+   * Whether the server can address the device a history answer, read when it answered the Welcome;
+   * `null` when its answer did not say (an older delivery service). The join push reads it.
+   */
+  addressability: WelcomeAddressability | null;
 };
 
 export interface OneDeviceAddResult {
@@ -629,6 +636,14 @@ export type BulkIngestHandle = number;
 export interface BulkIngestObserver {
   onBulkIngestStart(phase: BulkIngestPhase): void;
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
+  /**
+   * ROWS BEFORE RATCHET: stores every row this observer holds in memory for a frame already
+   * applied, and keeps the frames applied from now on out of that memory until the returned release
+   * is called. Called by `persistCheckpoint` BEFORE it exports the state, which holds those frames'
+   * ratchet advance and seen marks: exported first, a kill before the rows were stored lost them for
+   * good. Optional - only an observer that holds rows implements it.
+   */
+  holdRowsForCheckpoint?(): Promise<() => void>;
 }
 
 /** Row from `GET /api/mls/users/:id/groups`. */
@@ -707,6 +722,15 @@ export type GroupMeta = {
   name?: string;
   isGroup?: boolean;
   deletedAt?: string | null;
+  /**
+   * The server's clock when it answered (ms), read from the HTTP `Date` header of the delivery
+   * service's own answer - a fact the server states, to the second, never this device's clock.
+   * Undefined when the answer was not the API's or carried no readable `Date` (a phone app reads it
+   * only once the service exposes the header, `main.ts`). What the rename sweep bounds a re-send by
+   * (`settleNameSync`): the receivers measure their bound on the server's clock, so only it proves a
+   * re-send would still be taken.
+   */
+  serverNow?: number;
   /**
    * The community whose Graine key-distribution group this is, null on a conversation.
    *
@@ -873,8 +897,8 @@ export interface IMlsService {
    * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
    */
   createGroup(groupId: string): Promise<void>;
-  /** Creates a new named group on the delivery server and returns its assigned group ID. */
-  createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
+  /** Creates a new group on the delivery server and returns its assigned group ID; `null` = unnamed. */
+  createRemoteGroup(name: string | null, isGroup?: boolean): Promise<string>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
    * only call a checkpoint needs.
@@ -898,8 +922,9 @@ export interface IMlsService {
    *
    * CONCRETE IN `BaseMlsService`, and platforms supply only the write itself (`writeCheckpoint`),
    * because a checkpoint is not just a write: it is also the moment this device may declare how much
-   * of its send ratchet is now durable. That count is read before the write and committed after it,
-   * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
+   * of its send ratchet is now durable. That count is read before the export and staged INTO the
+   * state the write exports (KILL-2), so a restored snapshot always carries the count true of it -
+   * see `sendRatchetLedger` and `stateLedgers`.
    */
   persistCheckpoint(): Promise<void>;
   /**
@@ -1049,6 +1074,13 @@ export interface IMlsService {
    * `BaseMlsService.removalEpochs`.
    */
   removalEpochs(groupId: string, userId: string): Promise<number[]>;
+  /**
+   * What this device can prove, ALONE, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted, and the first epoch its record covers
+   * (`MembershipEvidence`). Per USER, kept in the sealed state, never asked of the server. See
+   * `BaseMlsService.membershipEvidence`.
+   */
+  membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence>;
   /**
    * Adds multiple devices to a group in a single STAGED MLS commit (C7-A unified regime): stages
    * the commit, validates server-side, merges on accept / rolls back on reject (throws), broadcasts
@@ -1259,8 +1291,18 @@ export interface IMlsService {
    * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
    * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
    * about anyone else.
+   *
+   * `oweIfHeld`: a member's first invitation, asked for only when the server answered `held`. The
+   * invitation it returns is RECORDED as owed (`owedInvitations.ts`, at this group's current epoch)
+   * before the refusal arms its wake, and the answer is `owed`: it is re-planned by the events that
+   * end another device's lock - the server-stated end of the lock, a commit applied in the group, the
+   * next connection - exactly as a lost invitation waiting on `add-lock` is. `null` (its roster
+   * baseline unreadable) records nothing, and the answer stays `held`.
    */
-  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
+  acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**
@@ -1423,9 +1465,9 @@ export interface IMlsService {
    * through the other: {@link forgetDistributionGroup} resolves the group through the scope
    * registration, so it can only forget what that registration already names - and the state worth
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
-   * takes that name.
+   * takes that name. `reason` is printed by the drop's log line and is the CALLER's to state.
    */
-  forgetDistributionGroupById(groupId: string): Promise<boolean>;
+  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */
@@ -1669,10 +1711,16 @@ export interface IMlsService {
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /**
-   * A member's Decline of an invitation-link ask: withdraws the person's seat only while it still
-   * awaits a member, never the seat of someone another member's Add admitted (`JoinDeclineOutcome`).
+   * A member's Decline of a person who holds no leaf: withdraws an invitation-link ask only while it
+   * still awaits a member, never the seat of someone another member's Add admitted; removes a seat
+   * that is not an ask only while the group is still at `treeEpoch`, the epoch of the tree the member
+   * read the person absent from (`JoinDeclineOutcome`).
    */
-  declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome>;
+  declineJoinRequest(
+    groupId: string,
+    userId: string,
+    treeEpoch?: number
+  ): Promise<JoinDeclineOutcome>;
   /** Performs a real MLS remove commit for all devices of the given user(s) and broadcasts it. */
   removeMember(groupId: string, userIds: string[]): Promise<void>;
   /**
@@ -1728,6 +1776,11 @@ export interface IMlsService {
   graineRun(groupId: string): Promise<GraineRunReading>;
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
+  /**
+   * The sealed history answer's HPKE operations (`mls-core/src/history_seal.rs`), from this
+   * platform's engine - docs/wiki/protocols/history-answer-addressing.md, "Sealing the answer".
+   */
+  historySealEngine(): HistorySealEngine;
   /**
    * Signs `message` with THIS device's MLS credential key - the key its leaf in every group
    * carries. What a Graine v2 endorsement is (channel-encryption section 21): a member checks it
@@ -1885,8 +1938,18 @@ export interface IMlsService {
   ): void;
   /** Registers a callback invoked when the WebSocket connection is lost. */
   onDisconnect(callback: () => void): void;
-  /** Registers a callback invoked after a Welcome message has been successfully processed. */
-  onWelcomeProcessed(callback: (groupId?: string) => void): void;
+  /**
+   * Registers a callback invoked after a Welcome message has been processed. `installed` says
+   * whether the handler INSTALLED the group from it ({@link noteWelcomeInstalled}) - false for a
+   * redelivered Welcome of a group already held, which joins nothing.
+   */
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void;
+  /**
+   * Records, from the Welcome handler, that the Welcome it is processing for `groupId` (the
+   * envelope's id, the one the drain announces) INSTALLED the group - read once by the announcement
+   * ({@link onWelcomeProcessed}), so a fresh join is told from a redelivery by a fact, not by a row.
+   */
+  noteWelcomeInstalled(groupId: string): void;
 
   /**
    * Installs THE listener of every Welcome this device delivers: called once per send the server
@@ -1903,6 +1966,16 @@ export interface IMlsService {
    * none multiplexes the others' parameters.
    */
   addBulkIngestObserver(observer: BulkIngestObserver): void;
+
+  /**
+   * Resolves once every bulk-ingest window open or closing AT THE CALL has closed - each one's
+   * observers have returned, so the rows a drain buffered are stored. At once when none is; a
+   * window opened after the call does not hold it. A document leaving the lead
+   * reloads behind it (`useChatSession`): a checkpoint that landed before the lead left may already
+   * hold the ratchet advance and the seen mark of a frame whose row is still buffered, and a reload
+   * there would lose the message for good.
+   */
+  whenBulkIngestsClosed(): Promise<void>;
 
   /**
    * Opens a bulk-ingest window with the given {@link BulkIngestPhase} and returns the handle that
@@ -2013,10 +2086,11 @@ export interface IMlsService {
    *
    * IT DOES NOT NEED A COMPANION THAT CLOSES AT UNLOAD. One was added on 2026-08-15 (`closeForUnload`,
    * spending `1001 - going away` so a dying document would stop reporting `1006`) and removed the
-   * same day, measured inert on both sides at once: the gateway matches `disconnect` with
-   * `handle_disconnect(...); break`, leaving its read loop before any close frame can be read - 0
+   * same day, measured inert on both sides at once: the gateway then matched `disconnect` with
+   * `handle_disconnect(...); break`, leaving its read loop before any close frame could be read - 0
    * `Client closed connection` lines against 12 explicit disconnects over 25 minutes of production
-   * traffic - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
+   * traffic (since 2026-11-14 it reads on until the Close and answers it, but a close code still
+   * tells it nothing the frame has not) - and the page's own `CloseEvent` reports `1006` either way, because a closing handshake
    * needs a reply from the server and the document is gone before one can arrive. The `1006` a
    * browser console shows at a navigation is a property of unloading, not a defect to be fixed.
    */
@@ -2026,8 +2100,9 @@ export interface IMlsService {
    * Sends the `disconnect` frame, then lets go of the socket WITHOUT reporting a disconnection -
    * what `pauseConnectionImpl` asks of a backgrounded app.
    *
-   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` with `handle_disconnect(...);
-   * break`, so it stops reading the socket the moment the frame lands. Keeping the client half
+   * THE GATEWAY HAS ALREADY LET GO OF IT. It answers `disconnect` by taking the socket out of
+   * routing (until 2026-11-14 it also stopped reading; it now reads on only to answer the Close,
+   * and ends the socket on any other frame). Keeping the client half
    * alive after that, which is what a bare `sendDisconnect` used to do here, kept its heartbeat too:
    * every ping went unanswered, and 32 s later the zombie watchdog closed it and reported a
    * disconnection - which the reconnect ladder answered by reconnecting a BACKGROUNDED app. Measured

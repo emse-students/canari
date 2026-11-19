@@ -55,7 +55,7 @@ export {
   saysMessage,
   wordingsOf,
 } from './messages.mjs';
-import { caption, captionWith, control, pluralPattern } from './messages.mjs';
+import { caption, captionWith, control, pluralPattern, saysMessage } from './messages.mjs';
 import { assertCampaignOwned, recordCreated } from './campaign.mjs';
 
 
@@ -585,6 +585,11 @@ export async function setChannelNotifLevel(cx, level) {
   return true;
 }
 
+/** The salon access panel's two options (public, then restricted), as the panel lists them (#3289). */
+const ACCESS_OPTIONS = '[data-testid=channel-access-options] > li';
+/** The option the salon holds now - the list's `aria-current` one. */
+const ACCESS_CURRENT = `${ACCESS_OPTIONS}[aria-current=true]`;
+
 export async function openChannelAccess(cx) {
   await openChannelSettings(cx);
   await realClick(cx, control('chat_channel_access_tab'));
@@ -593,10 +598,12 @@ export async function openChannelAccess(cx) {
     `document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) >= 0`,
     10000
   );
-  // THE TOGGLE, not the heading: the panel renders its title above a spinner while the access
-  // state is still being fetched, so a read taken on the heading answers `isPrivate: null` for a
-  // salon that is plainly private - an instrument reporting about itself.
-  await until(cx, `!!document.querySelector('button[role=switch][aria-checked]')`, 15000);
+  // THE CURRENT OPTION, not the heading: the panel renders its title above a spinner while the
+  // access state is still being fetched, so a read taken on the heading answers `isPrivate: null`
+  // for a salon that is plainly private - an instrument reporting about itself. Since #3289
+  // (2026-11-10) the state is a Public / Restreint CHOICE, not a switch: the option list marks the
+  // current one `aria-current`, for every member, manager or not.
+  await until(cx, `!!document.querySelector(${JSON.stringify(ACCESS_CURRENT)})`, 15000);
 }
 
 /**
@@ -626,8 +633,9 @@ export async function channelAccessState(cx) {
          if (document.body.innerText.indexOf(${JSON.stringify(caption('chat_channel_access_title'))}) < 0) {
            return JSON.stringify({ up: false });
          }
-         var sw = document.querySelector('button[role=switch][aria-checked]');
-         var list = document.querySelector('ul');
+         var options = [].slice.call(document.querySelectorAll(${JSON.stringify(ACCESS_OPTIONS)}));
+         var current = options.findIndex(function (li) { return li.getAttribute('aria-current') === 'true'; });
+         var list = document.querySelector('ul:not([data-testid=channel-access-options])');
          var allowed = list
            ? [].slice.call(list.querySelectorAll('li')).map(function (li) {
                return (li.innerText || '').split(String.fromCharCode(10))[0].trim();
@@ -636,7 +644,7 @@ export async function channelAccessState(cx) {
          var trig = document.querySelector(${JSON.stringify(WRITE_POLICY_TRIGGER())});
          return JSON.stringify({
            up: true,
-           isPrivate: sw ? sw.getAttribute('aria-checked') === 'true' : null,
+           isPrivate: current < 0 ? null : current === 1,
            allowed: allowed,
            writePolicyLabel: trig ? trig.getAttribute('aria-label') : null,
          });
@@ -661,18 +669,31 @@ export async function channelAccessState(cx) {
  * check that clicks it unconditionally sets the state it wanted exactly when the state was already
  * wrong, which is the one case it was not testing.
  *
- * THE TOGGLE IS THE SAVE, BEHIND A CONFIRMATION (#1171, 2026-09-28). The panel has no "Enregistrer"
- * any more: pressing the switch asks `showConfirm`, and only the answer sends the PATCH, which the
- * switch shows as `aria-busy` until it is answered. The panel flips `aria-checked` only on an
+ * THE CHOICE IS THE SAVE, BEHIND A CONFIRMATION (#1171, 2026-09-28; a switch until #3289). The panel
+ * has no "Enregistrer" any more: picking an option asks `showConfirm`, and only the answer sends the
+ * PATCH, which the choice shows as `aria-busy` until it is answered. The panel moves `aria-current` only on an
  * accepted write, so a refusal (RM-6's `REMOVAL_EXCEEDS_ACTOR`) is `landed: false`, not a timeout.
  * Until 2026-10-25 this waited for the flip with no confirmation answered, and timed out.
  */
 export async function setChannelPrivate(cx, wanted) {
   const before = await channelAccessState(cx);
   if (before.isPrivate === wanted) return { moved: false, landed: true };
-  await realClick(cx, 'button[role=switch][aria-checked]');
+  const option = caption(wanted ? 'chat_channel_access_option_restricted' : 'chat_channel_access_option_public');
+  const tablist = `[role=tablist][aria-label=${JSON.stringify(caption('chat_channel_access_title'))}]`;
+  const tab = await evaluate(
+    cx,
+    `(function () {
+       [].slice.call(document.querySelectorAll('[data-rig-access-pick]')).forEach(function (e) { e.removeAttribute('data-rig-access-pick'); });
+       var t = [].slice.call(document.querySelectorAll(${JSON.stringify(tablist + ' [role=tab]')})).find(function (b) { return (b.innerText || '').trim() === ${JSON.stringify(option)}; });
+       if (!t) return '';
+       t.setAttribute('data-rig-access-pick', '1');
+       return 'ok';
+     })()`
+  );
+  if (tab !== 'ok') throw new Error(`setChannelPrivate: no "${option}" option in the access choice - is this seat a manager?`);
+  await realClick(cx, '[data-rig-access-pick]');
   await confirmDialog(cx, 'common_confirm_button');
-  // SETTLED: the dialog gone and the switch not busy. The answer sets `privacySaving` in the same
+  // SETTLED: the dialog gone and the choice not busy. The answer sets `privacySaving` in the same
   // task as the confirm resolves, before any CDP round trip can look, so "not busy" after the
   // dialog closed is the write answered - accepted or refused - never the write not yet begun.
   const confirm = JSON.stringify(caption('common_confirm_button'));
@@ -680,8 +701,9 @@ export async function setChannelPrivate(cx, wanted) {
     cx,
     `(function () {
        var open = [].slice.call(document.querySelectorAll('button')).some(function (b) { return (b.innerText || '').trim() === ${confirm}; });
-       var sw = document.querySelector('button[role=switch][aria-checked]');
-       return !open && !!sw && sw.getAttribute('aria-busy') !== 'true';
+       var opts = document.querySelector('[data-testid=channel-access-options]');
+       var box = opts && opts.parentElement;
+       return !open && !!box && box.getAttribute('aria-busy') !== 'true';
      })()`,
     30_000
   );
@@ -1177,7 +1199,42 @@ async function awaitMemberRole(cx, displayName, role, timeoutMs = 20000) {
 export async function removeCommunityMember(cx, displayName) {
   const before = await openCommunityMembers(cx);
   const row = await markMemberRow(cx, displayName);
-  await realClick(cx, `${row} button:not([aria-haspopup="listbox"])`);
+  const remove = `${row} button:not([aria-haspopup="listbox"])`;
+  // THE CONTROL IS DEAD WHILE THE ROSTER'S ORDER IS STILL SETTLING (a member whose lookup is in
+  // flight will be inserted and move the rows): a click now would land on nothing, so wait for it.
+  await until(
+    cx,
+    `(function () {
+       var b = document.querySelector(${JSON.stringify(remove)});
+       return !!b && !b.disabled;
+     })()`,
+    20000
+  );
+  // The rows may have been re-rendered while the order settled: mark the member's row again.
+  await markMemberRow(cx, displayName);
+  await realClick(cx, remove);
+  // THE DIALOG MUST NAME WHOM IT REMOVES (1.7.0-alpha.9: a removal aimed at beta removed alpha, 4/4,
+  // and the dialog said only "this member"). Read before confirming, so a click on the wrong row is
+  // a refusal here and never a removal of the wrong person.
+  const namedBy = Date.now() + 10000;
+  for (;;) {
+    const texts = await evaluate(
+      cx,
+      `(function () {
+         var name = ${JSON.stringify(displayName)};
+         return [].slice.call(document.querySelectorAll('p'))
+           .map(function (el) { return (el.innerText || '').trim(); })
+           .filter(function (t) { return t.indexOf(name) >= 0; });
+       })()`
+    );
+    if ((texts ?? []).some((t) => saysMessage('chat_community_remove_member_confirm', t))) break;
+    if (Date.now() > namedBy) {
+      throw new Error(
+        `removeCommunityMember: the confirmation does not name "${displayName}" - not confirmed`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
   await confirmDialog(cx, 'common_remove_label');
 
   // GONE FROM A ROSTER THAT STILL HAS PEOPLE IN IT. "The marked row no longer names them" is also

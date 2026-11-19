@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -13,18 +14,25 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
+  import LydiaContractPanel from '$lib/components/admin/LydiaContractPanel.svelte';
+  import RetentionAppliedNotice from '$lib/components/admin/RetentionAppliedNotice.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     CALLS_MODES,
+    CALL_RELAYS,
     CHECKPOINT_SKIP_MODES,
+    GROUP_CALLS_MODES,
     LIVES_MODES,
     LIVE_REPLAYS_MODES,
+    type CallRelay,
     type CallsMode,
     type CheckpointSkipMode,
+    type GroupCallsMode,
     type LivesMode,
     type LiveReplaysMode,
   } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
+  import { RETENTION_ADMIN_SETTINGS, type RetentionAdminKey } from '$lib/legal/retention';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
 
@@ -38,7 +46,9 @@
     pushMode: PushMode;
     checkpointSkipMode: CheckpointSkipMode;
     liveReplaysMode: LiveReplaysMode;
-  };
+    groupCallsMode: GroupCallsMode;
+    callRelay: CallRelay;
+  } & Record<RetentionAdminKey, number>;
 
   /**
    * The config as the server last answered it. A save sends ONLY the fields that differ from it: a
@@ -54,6 +64,8 @@
   let savedProvider = $state<PaymentProviderChoice>('disabled');
   let error = $state<string | null>(null);
   let savedMessage = $state('');
+  /** Bumped at each config load or save: the retention-applied notice reads its state again. */
+  let retentionRevision = $state(0);
 
   let maintenanceEnabled = $state(false);
   let maintenanceMessage = $state('');
@@ -64,6 +76,25 @@
   let pushMode = $state<PushMode>('full');
   let checkpointSkipMode = $state<CheckpointSkipMode>('off');
   let liveReplaysMode = $state<LiveReplaysMode>('off');
+  let groupCallsMode = $state<GroupCallsMode>('off');
+  let callRelay = $state<CallRelay>('none');
+  /**
+   * The retention durations in days, keyed as the admin route names them - read at the creation of
+   * each item by the service that stamps its expiry, so a change applies to new content only.
+   */
+  let retention = $state<Record<RetentionAdminKey, number>>({
+    retentionReelDays: 365,
+    retentionLiveReplayDays: 3,
+    retentionChatReelDays: 30,
+    retentionIdleFileDays: 90,
+  });
+  /** One label per retention setting, typed so a new setting cannot reach the form unlabelled. */
+  const RETENTION_LABELS: Record<RetentionAdminKey, () => string> = {
+    retentionReelDays: m.admin_platform_retention_reel_label,
+    retentionLiveReplayDays: m.admin_platform_retention_live_replay_label,
+    retentionChatReelDays: m.admin_platform_retention_chat_reel_label,
+    retentionIdleFileDays: m.admin_platform_retention_idle_media_label,
+  };
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -107,6 +138,23 @@
   };
   const LIVE_REPLAYS_MODE_OPTIONS: PickerOption[] = $derived(
     LIVE_REPLAYS_MODES.map((mode) => ({ value: mode, label: LIVE_REPLAYS_MODE_LABELS[mode]() }))
+  );
+  /** One label per group calls mode, typed so a new mode cannot reach the picker unlabelled. */
+  const GROUP_CALLS_MODE_LABELS: Record<GroupCallsMode, () => string> = {
+    off: m.admin_platform_group_calls_mode_off,
+    mesh: m.admin_platform_group_calls_mode_mesh,
+  };
+  const GROUP_CALLS_MODE_OPTIONS: PickerOption[] = $derived(
+    GROUP_CALLS_MODES.map((mode) => ({ value: mode, label: GROUP_CALLS_MODE_LABELS[mode]() }))
+  );
+  /** One label per call relay, typed so a new relay cannot reach the picker unlabelled. */
+  const CALL_RELAY_LABELS: Record<CallRelay, () => string> = {
+    none: m.admin_platform_call_relay_none,
+    'call-service': m.admin_platform_call_relay_call_service,
+    cloudflare: m.admin_platform_call_relay_cloudflare,
+  };
+  const CALL_RELAY_OPTIONS: PickerOption[] = $derived(
+    CALL_RELAYS.map((relay) => ({ value: relay, label: CALL_RELAY_LABELS[relay]() }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -234,6 +282,7 @@
   /** Shows a server answer in the form and makes it the snapshot the next save is diffed against. */
   function applyConfig(data: PlatformConfig) {
     loaded = data;
+    retentionRevision += 1;
     savedProvider = data.paymentProvider;
     maintenanceEnabled = data.maintenanceEnabled;
     maintenanceMessage = data.maintenanceMessage ?? '';
@@ -244,6 +293,11 @@
     pushMode = data.pushMode;
     checkpointSkipMode = data.checkpointSkipMode;
     liveReplaysMode = data.liveReplaysMode;
+    groupCallsMode = data.groupCallsMode;
+    callRelay = data.callRelay;
+    retention = Object.fromEntries(
+      RETENTION_ADMIN_SETTINGS.map(({ key }) => [key, data[key]])
+    ) as Record<RetentionAdminKey, number>;
   }
 
   /**
@@ -263,6 +317,9 @@
       pushMode,
       checkpointSkipMode,
       liveReplaysMode,
+      groupCallsMode,
+      callRelay,
+      ...retention,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -575,6 +632,74 @@
         </p>
       </div>
 
+      <div class="space-y-1.5">
+        <label for="group-calls-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_group_calls_mode_label()}
+        </label>
+        <Picker
+          id="group-calls-mode"
+          value={groupCallsMode}
+          options={GROUP_CALLS_MODE_OPTIONS}
+          label={m.admin_platform_group_calls_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = GROUP_CALLS_MODES.find((known) => known === v);
+            if (mode) groupCallsMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_group_calls_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="call-relay" class="text-text-main text-sm font-bold">
+          {m.admin_platform_call_relay_label()}
+        </label>
+        <Picker
+          id="call-relay"
+          value={callRelay}
+          options={CALL_RELAY_OPTIONS}
+          label={m.admin_platform_call_relay_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const relay = CALL_RELAYS.find((known) => known === v);
+            if (relay) callRelay = relay;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_call_relay_hint()}
+        </p>
+      </div>
+
+      <fieldset class="space-y-3">
+        <legend class="text-text-main text-sm font-bold"
+          >{m.admin_platform_retention_title()}</legend
+        >
+        <p class="text-text-muted text-xs">{m.admin_platform_retention_hint()}</p>
+        {#each RETENTION_ADMIN_SETTINGS as setting (setting.key)}
+          <div class="max-w-xs space-y-1">
+            <Input
+              id={`retention-${setting.key}`}
+              type="number"
+              label={RETENTION_LABELS[setting.key]()}
+              inputmode="numeric"
+              step="1"
+              min={setting.minDays}
+              max={setting.maxDays}
+              required
+              bind:value={retention[setting.key]}
+            />
+            <p class="text-text-muted text-xs">
+              {m.admin_platform_retention_bounds({ min: setting.minDays, max: setting.maxDays })}
+            </p>
+          </div>
+        {/each}
+        {#if retentionRevision > 0}
+          <RetentionAppliedNotice revision={retentionRevision} />
+        {/if}
+      </fieldset>
+
       {#if error}
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
@@ -728,5 +853,7 @@
         {/if}
       </div>
     </form>
+
+    <LydiaContractPanel />
   {/if}
 </div>

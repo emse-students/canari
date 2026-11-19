@@ -81,8 +81,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
       markdown: 'Le bureau organise...',
       association: { id: 'asso-1', name: 'BDE', slug: 'bde' },
     });
-    // A personal post's authorId would be masked by mustHideAnonymousAuthor; an association
-    // post's is stripped unconditionally by the same branch of shapeListRow either way.
+    // An association post's writer is served only to its moderators and its writer
+    // (`viewerSeesWriter`, decision 11); this reader is neither.
     expect(result).not.toHaveProperty('authorId');
   });
 
@@ -96,6 +96,15 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     expect(calls[0].sql).toMatch(/ORDER BY posts\."publishedAt" DESC/);
     expect(calls[0].sql).toMatch(/LIMIT 1/);
     expect(calls[0].params).toEqual(['event-1', null]);
+  });
+
+  it('never serves a post scheduled for later: the statement keeps published posts only', async () => {
+    // The feeds, the search and the by-id gate all refuse an unpublished post; this read did not.
+    const { service, calls } = makeService([ROW]);
+    await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
+    expect(calls[0].sql).toMatch(
+      /AND \(posts\."scheduledAt" IS NULL OR posts\."scheduledAt" <= NOW\(\)\)/
+    );
   });
 
   it('returns only a post the viewer may see (WP6b), the viewer being the last parameter', async () => {

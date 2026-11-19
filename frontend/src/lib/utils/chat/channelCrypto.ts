@@ -5,7 +5,8 @@ import {
 } from '$lib/services/ChannelService';
 import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
-import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { channelSystemEnvelope } from './channelNotice';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
   GraineAuthorMismatchError,
@@ -23,6 +24,7 @@ import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
 import { noteSalonSendAnswer } from './salonRepeatProof';
+import { channelReactionOf } from './messageReactions';
 
 const channelService = new ChannelService();
 
@@ -70,6 +72,12 @@ export interface DecodedChannelReaction {
   /** The sender's clock for this `(user, emoji)` pair. The larger one wins the merge. */
   at: number;
   removed: boolean;
+  /**
+   * The reacted-to message's author as the REACTOR stated it (`ReactionMsg.target_author_id`), or
+   * null when the frame names none. A claim, read only where nothing better answers (the
+   * live-decision path, `owedLiveFrames.ts`).
+   */
+  targetAuthorId: string | null;
 }
 
 /**
@@ -96,6 +104,8 @@ export interface DecodedChannelReaction {
  *   asks and lets the answerer decide.
  * @param tally A page being read: the row is counted into it instead of logged, and the page says
  *   it once. Absent for a live frame, which is one row and says so itself.
+ * @returns Whether the row is REPAIRABLE - a missing seed, asked for here - so a reader that will
+ *   open it once the seed lands is coming. Classified from the error's type, here and only here.
  */
 export function reportUnreadableChannelMessage(
   channelId: string,
@@ -104,7 +114,7 @@ export function reportUnreadableChannelMessage(
   sentAt: number | undefined,
   err: unknown,
   tally?: UnreadableRowTally
-): void {
+): boolean {
   const channel = rawChannelId(channelId);
   const cause =
     err instanceof GraineSessionUnavailableError
@@ -134,7 +144,9 @@ export function reportUnreadableChannelMessage(
   // three times and not fifty - and a live frame asking costs nothing when history already did.
   if (err instanceof GraineSessionUnavailableError) {
     noteMissingSeed(channel, err.sessionId, senderId, sentAt);
+    return true;
   }
+  return false;
 }
 
 /**
@@ -243,18 +255,29 @@ export async function decodeChannelMessageRow(
  * report, in page order - but the page's signatures cost ONE engine call
  * (`openChannelMessagePage`, F7) instead of one per row. What the history load and the
  * whole-history search call.
+ *
+ * @param deferMissingSeed Given while the salon's key group is still DRAINING (`salonKeysNow`): a row
+ *   whose seed is missing is put here, by its index in `rows`, answered `null`, and neither reported
+ *   nor asked for - its seed may be a frame of that queue, so "missing" is not known yet. The caller
+ *   decodes those rows again once the drain is proven. Every other outcome is reported as usual.
  */
 export async function decodeChannelMessagePage(
   channelId: string,
   rows: readonly ChannelMessageRow[],
   userIdLower: string,
-  tally?: UnreadableRowTally
+  tally?: UnreadableRowTally,
+  deferMissingSeed?: Set<number>
 ): Promise<(DecodedChannelRow | null)[]> {
   const channel = rawChannelId(channelId);
   const openings = await openChannelMessagePage(channel, rows);
   const out: (DecodedChannelRow | null)[] = [];
   for (const [i, row] of rows.entries()) {
     const opening = openings[i];
+    if (deferMissingSeed && !opening.ok && opening.error instanceof GraineSessionUnavailableError) {
+      deferMissingSeed.add(i);
+      out.push(null);
+      continue;
+    }
     out.push(
       await decodeOpenedRow(
         channel,
@@ -293,14 +316,7 @@ async function decodeOpenedRow(
       // decode and the store it feeds has exactly one writer per call site.
       return {
         kind: 'reaction',
-        reaction: {
-          targetMessageId: String(decoded.reaction.messageId ?? ''),
-          senderId: String(row.senderId || '').toLowerCase(),
-          emoji: String(decoded.reaction.emoji ?? ''),
-          // An undated frame reads as 0 and loses to anything dated - it cannot be trusted to win.
-          at: Number(decoded.reaction.at ?? 0),
-          removed: decoded.reaction.removed === true,
-        },
+        reaction: channelReactionOf(decoded.reaction, String(row.senderId || '')),
       };
     }
     if (decoded?.edit) {
@@ -318,7 +334,8 @@ async function decodeOpenedRow(
     }
     if (decoded) {
       const envelope =
-        appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
+        appMsgToEnvelope(decoded, serverMs) ??
+        (await channelSystemEnvelope(decoded, serverMs, String(row.senderId || '').toLowerCase()));
       if (envelope) {
         content = envelope.content;
         timestamp = envelope.options.timestamp;
@@ -463,10 +480,12 @@ export async function sendChannelReaction(
   emoji: string,
   at: number,
   removed: boolean,
-  rowId: string = crypto.randomUUID()
+  rowId: string = crypto.randomUUID(),
+  /** The reacted-to message's author as this device holds it (`mkReaction`), or undefined. */
+  targetAuthorId?: string
 ): Promise<void> {
   const protoBytes = encodeAppMessage({
-    ...mkReaction(targetMessageId, emoji, at, removed),
+    ...mkReaction(targetMessageId, emoji, at, removed, removed ? undefined : targetAuthorId),
     // Its OWN id, never the reacted-to message's: this is a row in the channel like any other, and
     // giving it the target's id would make two rows answer to one address.
     messageId: rowId,

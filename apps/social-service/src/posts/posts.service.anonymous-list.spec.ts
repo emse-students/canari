@@ -10,7 +10,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
 /**
  * `listPosts` AND `searchPosts` NEVER SELECTED `posts.anonymous`, SO THE MASK NEVER FIRED.
  *
- * `mustHideAnonymousAuthor` and `shapeListRow` were both correct - reported by a user who posted
+ * `mustHideAnonymousAuthor` (now `viewerSeesWriter`) and `shapeListRow` were both correct - reported by a user who posted
  * anonymously and watched a second account read the real name straight off the feed. The two raw
  * SQL queries that actually populate the feed (`listPosts`'s shared `selectBody`, `searchPosts`'s
  * own copy) built their row from a fixed column list that named `authorId` but never `anonymous`,
@@ -56,11 +56,11 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
   };
 
   /** A `manager.query` that answers each of `listPosts`'s three shapes by matching on the SQL text. */
-  function makeQueryMock() {
+  function makeQueryMock(post: Record<string, unknown> = ANON_POST) {
     const calls: string[] = [];
     const query = jest.fn((sql: string) => {
       calls.push(sql);
-      if (sql.includes('FROM posts')) return Promise.resolve([{ ...ANON_POST }]);
+      if (sql.includes('FROM posts')) return Promise.resolve([{ ...post }]);
       if (sql.includes('FROM users WHERE id = ANY')) return Promise.resolve([NAME_ROW]);
       if (sql.includes('SELECT promo FROM users')) return Promise.resolve([]);
       return Promise.resolve([]);
@@ -154,6 +154,29 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
     });
 
     expect(row.authorId).toBe('author-1');
+  });
+
+  it('withholds its form from the readers it hides the author from (a form names its manager)', async () => {
+    // Stored before an anonymous post was refused a form: no row is rewritten, the read masks it.
+    const FORM = '00000000-0000-4000-8000-00000000f0c3';
+    const withForm = { ...ANON_POST, attachedFormId: FORM, forms: [{ id: FORM, title: 'Gala' }] };
+    const read = async (viewerUserId: string | undefined, moderators: string[] = []) => {
+      const { query } = makeQueryMock(withForm);
+      const [row] = await makeService(query, moderators).listPosts({
+        limit: 10,
+        offset: 0,
+        feed: 'all',
+        viewerUserId,
+      });
+      return row;
+    };
+
+    const stranger = await read('someone-else');
+    expect(stranger.attachedFormId).toBeUndefined();
+    expect(stranger.forms).toEqual([]);
+    expect((await read(undefined)).attachedFormId).toBeUndefined();
+    expect((await read('author-1')).attachedFormId).toBe(FORM);
+    expect((await read('mod-1', ['mod-1'])).attachedFormId).toBe(FORM);
   });
 
   it('excludes an anonymous post from the followed feed - membership itself is the leak', async () => {

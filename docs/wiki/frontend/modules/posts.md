@@ -207,7 +207,7 @@ The user's two decisions, for posts, reels and comments alike:
   unshrinkable item and the republishers an item of basis 0 - the author name shrinks only once
   they are gone. The repost glyph is `aria-hidden`; the words carry it.
 - **An anonymous post or comment is NAMED "Anonyme" for every reader, with the mask avatar.** A
-  reader the server sent the author's id to - `authorId` on a post (`mustHideAnonymousAuthor`:
+  reader the server sent the author's id to - `authorId` on a post (`viewerSeesWriter`:
   the author, a content moderator, a platform admin), `userId` on a comment (`serveComment`: the
   writer, a content moderator, a platform admin) - also gets ONE small line under the name: a mask
   glyph and the real name linking the profile (`RevealedAuthorLine`, mounted from
@@ -220,6 +220,13 @@ The user's two decisions, for posts, reels and comments alike:
   header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
+- **An association's post names its writer to its moderators the same way (owner, 2026-11-15,
+  [decision 11](../../moderation-authority.md)).** The server serves `authorId` on it to whoever
+  moderates the post (the platform admin, a BDE whose spaces hold it) and to the writer, nobody
+  else (`viewerSeesWriter`). The association stays the name and the avatar, big; the writer is the
+  same small line, with a pen instead of the mask (`RevealedAuthorLine`, `under: 'association'`,
+  from `revealedPostAuthor`). Test: `PostHeader.anonymous` ("PostHeader association post").
+  **Read on both phones and the web on `1.7.0-alpha.8`** ([readings](../../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
 
 **The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
 band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
@@ -297,6 +304,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
 
 ## Post creation (EditPostForm.svelte)
 
+- **Editing a reel sends its caption alone** (`EditPostForm`, `isReel(post)`): no media, poll, form or schedule is named and no attachment chip is drawn, because the server answers any of them on a reel with a 400 ([reels](../../services/reels.md)). Ordinary posts keep sending their media.
 - Markdown content editor. **A body OR a media entry, and either is enough** - the client's
   `hasContent` and the server's `PostBodyOrMediaConstraint` (`post.dto.ts`, create and edit) say the
   same thing, whitespace counting as no body on both. Until 2026-10-02 the server said
@@ -756,7 +764,80 @@ A bell row about a post is shown only while its recipient still SEES that post: 
 (`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
 `POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
 carrier or a hidden post takes the row out on the next read. A push already delivered to a device
-cannot be recalled. A row bound to no post is left alone.
+cannot be recalled. A row bound to something else is re-asked against THAT, below.
+
+### The bell re-checks what a row points at (audit of 2026-11-14)
+
+**The rule: a bell row is served while the predicate of the thing it names still admits its
+reader** - a post's rows above, and every other kind the same way, in the same statement. Until
+2026-11-14 a row naming no post was re-asked against nothing, so an event's title or a form's
+title outlived its reader's right to it for the row's whole 90-day life.
+
+`BELL_ROW_GATE` (`apps/social-service/src/posts/bell-row-gates.ts`) gives EVERY kind its gate and is
+exhaustive over `NotificationType`, so a new kind does not compile until it says what its row is
+re-asked against; `bell-row-gates.spec.ts` holds it to `POST_BOUND_NOTIFICATION_TYPES`. The
+target-bound kinds become one `CASE` over the row's type (`targetBoundRowShownSql`), spliced into
+`bellRowShownSql`: each row runs its own kind's correlated subquery, on about one page of rows (the
+plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`).
+
+| Kind | What `postId` names | Shown while |
+| --- | --- | --- |
+| `repost_proposed`, `coorganise_proposed` | the receiving association | the reader holds `POST_AS_ASSO` there (who `holdersOf` told) |
+| `event_validated`, `event_updated`, `event_deleted`, `event_rejected` | the organiser | the reader holds `PROPOSE_EVENT` there |
+| `event_proposed` | the organiser | the reader holds the BDE agenda right over it (`holdsBdeAgendaRightOverSql`), or is a platform admin; a row that REPLACED its reader's party notice (`meta.toldAsParty`) also while they are a party as `event_pending` (see below) |
+| `event_pending` | the organiser | `PROPOSE_EVENT` in the organiser, or in an ACCEPTED co-organiser of `meta.eventId` (written since 2026-11-14; an older row names no event, and only the organiser's holders keep it) |
+| `event_pending_coorganiser` | the organiser | `meta.audience = 'validators'`: as `event_proposed`; otherwise as `event_pending` |
+| `event_open` | the event | the event is validated, its organiser not archived, and `eventVisibleToViewerSql` admits the reader - the VIEWER predicate, which counts read grants and an institution's reach, while the writer chose followers with the plain user predicate (a read grant never notifies). So a row once written stays while its reader can still see the event by ANY read door; the gate does not re-ask the follow (unfollowing keeps the row) |
+| `booking_open` | the booking space | the space is listed, has no audience (L25), its association is not archived and is visible to the reader (`associationVisibleToViewerSql`, `listedSpaces`' predicate) - the VIEWER predicate, read grants counted, as `event_open`, and the follow is not re-asked either |
+| `form_paid_over_capacity` | the form | the reader owns the form or holds `MANAGE_FORMS` in its association |
+| `lydia_payments_*`, `delegation_*` | the association | the reader holds `MANAGE_PAYOUT_ACCOUNT`, resp. `MANAGE_PRODUCTS`, there |
+| `admin_profile_correction` | the correction request (core's `profile_correction_requests`) | the reader is a global admin (`users.admin`) AND the request is still `pending` - so it leaves EVERY admin's bell when one applies or refuses it ([admin](admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)) |
+| `admin_report` | the report that announced its subject | the reader is a global admin AND a report about the same subject (`contentType`, `contentId`) still waits that this notice answers for - not one filed after the subject's next notice (`reportNoticeOwedSql`) |
+| post-bound kinds | a post | the section above |
+| `birthday` | - | `birthdayRowShownSql` |
+| `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
+
+A role is read through the reader's OWN membership row - the member tier the writers chose the
+recipients with - so a row is shown exactly while its reader would be told again. A row that fails
+is not served, so it is not counted unread either (the count is the served page's); it is not
+deleted by the read and goes with the 90-day sweep, as a post-bound row. Rows are SERVED by this
+statement alone. The other reads of `post_notifications` serve nothing of their own: the campus-trend
+writer's dedupe (`campus-trend.ts`, "has this reader already had a row for this post"), and the two
+post-read passes of `getNotifications` - `resolveTrendLikedBy` and `repostProposalTextWithheldSql` -
+which only narrow rows this statement already admitted; the mark-read routes write `read`.
+
+**A validator told in place of their party notice keeps that row by EITHER right, and reads it as
+the party notice once only the party right is left** (decided 2026-11-14). `announceEventReopened`
+reads the event's parties ONCE (`eventPartyIds`), writes the validators' notice, then the parties'
+notice to the parties it did not reach - so someone who both validates and holds `PROPOSE_EVENT` in
+the organiser or an accepted co-organiser gets the validators' row only. The writer KNOWS which
+validators those are, and records it on their row: `meta.toldAsParty` (written apart from the other
+validators' rows, same notice), with `meta.eventId` on every reopening's validators' notice, a date
+move's included.
+
+- The gate (`validatorRowSql`): the validator's right, OR `toldAsParty` AND the party's right
+  (`eventPartySql`: the organiser, or a co-organiser of `meta.eventId`). A first proposal, or a
+  reopening row that replaced nothing, follows the validator's right alone - so a validator who
+  loses the right while holding `PROPOSE_EVENT` somewhere is not kept a row they were never sent as a
+  party. A row written before the flag carries none, and fails closed the same way.
+- The link: a validators' row opens the validation queue (`/admin/agenda`), which a non-validator is
+  turned away from. So a `toldAsParty` row whose reader no longer validates
+  (`validatorRowServedAsPartySql`, one statement per page in `getNotifications`) is SERVED as the
+  party notice it replaced - type `EVENT_REOPEN_NOTIFICATION_TYPE[meta.reason]`, meta
+  `{reason, eventId}`, no `audience` - which every client, an old build included, opens on the
+  agenda.
+
+**Decided by the lead, 2026-11-14, reversible (owner's absence delegation):**
+
+- a row that fails its gate is HIDDEN, never deleted: it returns with the right, and only the 90-day
+  sweep removes it;
+- an `event_pending` row written before `meta.eventId` names no event, so a partner association's
+  members lose it (fail closed); the organiser's holders keep it;
+- a validators' row keeps its party arm only when the writer recorded that it replaced a party
+  notice (`meta.toldAsParty`); every other validators' row, older ones included, follows the
+  validator's right alone (fail closed);
+- `event_open` and `booking_open` rows stay while the reader can still see the target by ANY read
+  door, read grants and an institution's reach included, and do not re-check the follow.
 
 A mention is held to the read's rule when it is WRITTEN, since #2947: only who may open the post
 (`mentionRecipientsOf`, the read's gate), a post's mentions told by `PostAnnounceScheduler` alone
@@ -774,6 +855,51 @@ at most a page read) on a reader seeded with 600 rows among 6,000. The page is b
 `NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
 the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
 does not compare order).
+
+**The target gates, measured against `origin/main` (2026-11-14, local, `jit=off`).** A throwaway
+PostgreSQL 18 database with the bell spec's schema: 3,000 users, 150 associations with audience
+rules, 3,000 memberships with mixed flags, 3,000 events (500 co-organised), 200 booking spaces, 500
+forms, 5,000 posts, 30,000 background `association_post` rows; and three heavy readers - an
+ex-officer with 5,000 rows, 70 % of them gated kinds that FAIL (`repost_proposed`,
+`coorganise_proposed`, `event_validated`) interleaved with visible posts; the same ex-officer with
+5,000 rows that ALL fail; a BDE validator with 4,000 `event_proposed` and 1,000 `event_open` rows;
+and a FORMER validator with 2,000 `event_proposed` rows written in place of a party notice
+(`toldAsParty`), a party now only through one co-organiser, so about 1 row in 65 passes.
+`EXPLAIN (ANALYZE, BUFFERS)` of the bell statement, minimum of 8 runs (first discarded). Two
+sessions:
+
+| Reader, page | `main` plan / exec | branch plan / exec | branch buffers |
+| --- | --- | --- | --- |
+| ex-officer, 30 | 24.7 / 6.8 ms | 26.7 / 7.3 ms | 632 |
+| ex-officer, 50 | 27.7 / 6.7 ms | 28.7 / 8.2 ms | 1,053 |
+| validator, 30 | 26.8 / 6.3 ms | 30.3 / 8.5 ms | 302 |
+| validator, 50 | 21.0 / 5.3 ms | 31.0 / 10.0 ms | 502 |
+| all-failing, 30 | 22.4 / 5.6 ms (serves 30 stale rows) | 30.5 / 19.8 ms (serves 0, walks all 5,000) | 15,030 |
+| former validator, 30 (second session) | 40.7 / 7.8 ms (serves 30, stale) | 92.3 / 237.2 ms (walks 1,950 rows for 30) | 29,232 |
+
+The first five rows: the role checks as scalar subqueries on a column; the final `bit_or` form,
+re-run on a fresh seed, read the same buffers. The last row: the final code (`toldAsParty` and the
+re-read of the parties), a second session on a busier machine whose `main` timings ran 20-60 %
+above the first's; its other rows read the same buffers as above (validator 317 / 527 with the
+extra `meta` test). Index walk and no sort in every case. Caveat: a Windows workstation running
+PostgreSQL in Docker, planning time swinging by 15 ms or more between identical runs; the deltas on
+a normal page are inside that noise. A reader whose rows nearly all FAIL pays for walking a history
+`main` served stale: about 0.1 ms per row walked, bounded by the 90-day retention (production
+2026-11-03: max 149 rows per recipient, so at most about 15 ms).
+
+**What is hashed and what is not, read on the plans.** The first draft read a role with an
+`EXISTS`, and the planner turned it into a HASHED subplan: one scan of every flag holder in
+`association_members` per kind met on the page, a cost that grows with the estate rather than with
+the reader. The role and admin checks are scalar aggregates on the unique key instead
+(`holdsFlagSql`, `bit_or`/`bool_or` so any number of rows stays defined), which the planner never
+hashes. `holdsBdeAgendaRightOverSql` (the validator's right, an `EXISTS` with joins) stays an
+`EXISTS`: on both the validator's and the former validator's plan it is a correlated subplan, an
+index probe of `association_members` by user per row walked (loops = rows walked), never hashed;
+the co-organiser arm probes the estates' unique key (`event_id`, `association_id`, migration 074;
+the bell's spec schema now creates it too, without which it was a sequential scan per row). The
+hashed subplans that remain on those plans all belong to the reused visibility predicates
+(`vis_member_*` hashes the READER's own memberships by the user index, `sc_rule_*` an
+association's audience rules) - none to a target gate.
 
 **The 1-13 s bell was JIT compilation, not the walk (measured 2026-11-09).** Production answered
 `GET /api/posts/notifications` in 1.1-3.6 s for one account and 12.8-13.8 s for another while other
@@ -982,6 +1108,108 @@ Four changes from one reading of the feed on the phone, each measured at 436 px 
 blur, which takes the hue of the frame under it. It is now an amber glyph on a near-opaque
 `--color-cn-scrim` while muted and a solid `--cn-yellow` disc once the sound is on.
 
+### The card zone: one family, a fixed order (owner, 2026-11-15)
+
+The owner's decision, "Une seule famille de cartes", read on dev screenshots of 2026-11-15 (one post
+holding a text with two links, a photo, a PDF and an attached form). What they showed: the same form
+twice - a link card in the text ("Form" chip, diagonal arrow, "Open") and an attached-form card under
+the action bar (40 px glyph tile, no chip, "Fill out the form", exit arrow, narrower inset); seven
+card shapes, arrows and chips; the event ABOVE the text, the links and the media between the text
+and the action bar, the attached form and the poll AFTER it; the PDF's 22rem first page; and every
+URL left in full in the text above its own card.
+
+**ONE CARD, `AttachmentCard`** (`components/shared/AttachmentCard.svelte`), modelled on the chat's
+link card, which was already coherent: a 64 px tile, a type chip (the host, "Formulaire", "PDF",
+"Événement", "MiGallery"; dropped when the title only repeats it), a title (two lines), ONE subtitle
+line, ONE arrow, one border, `rounded-2xl` (12 px, the scale's larger card), `p-3`. Every non-media
+attachment is it.
+
+- **The arrow says "this card opens something", and where**: the exit glyph out of the app, a
+  chevron inside it (the up-right arrow it replaced read as "external" too). A card that opens
+  nothing (a file that is not a PDF) has none; a hero showing its call to action has none, and
+  neither has a file row, whose download button beside it already says what the card is for
+  (`showArrow`). A card with an address is ALWAYS a link, a tap handler of its own included
+  (middle click and copy link work); only a tap with no address (a PDF opening in the viewer) is
+  a button, `ui/Button variant="bare"` ([controls](../controls.md)), and everything a card draws
+  is phrasing content (spans), which a button requires.
+- **The tile is one treatment**: the accent-tinted surface (`bg-accent/10`), a glyph or a picture on
+  it. The Canari logo stays for an in-app LINK only, where it identifies the destination.
+
+| Kind | Caller | Tile | Subtitle | Arrow, and the control beside it |
+| --- | --- | --- | --- | --- |
+| Link, external | `LinkPreviewCard` | Open Graph picture, favicon, globe | the page's description | exit |
+| Link, in-app (post, form, association...) | `LinkPreviewCard` | the target's picture or the Canari logo | the target's line | chevron |
+| MiGallery album | `LinkPreviewCard` (the old `EcosystemCoverPreview` is deleted) | the square cover once PROVEN to decode, else the album glyph | the album's description | exit |
+| Attached form | `FormCard` | the form glyph, a check once answered | answered / opens on / open (`link_preview_form_open`, the link card's word) | chevron; the reminder bell beside it when not open yet |
+| File | `PostMedia` (`fileCard`) | the file glyph | the size | none: the download beside it; a PDF's row still opens the reader, named `pdf_open_named_document_label` |
+| Calendar event | `PostEventCard` (was an amber pill above the text) | a calendar page: the locale's short month in sentence case, and the day | short weekday, date, hour | chevron |
+
+The control beside the arrow is the ONE that is not the card's destination (the bell, the
+download), so it sits beside the link and never inside it. What a banner or the band below shows
+(a link's picture, a post preview's photo with its own zoom button) is `inert` and takes no pointer
+events: it repeats the row's destination and is never a control of its own. The chat keeps the same card: it is the model, and a
+MiGallery album in a conversation is now the same family too.
+
+**THE ORDER IS FIXED: text, media, cards, poll, action bar.** `planPostAttachments`
+(`utils/posts/postAttachments.ts`, pure and tested) decides it once for `PostContent`:
+
+- the **media** are the pictures and videos, full-bleed, in the gallery (unchanged);
+- the **card zone** follows, on the text's 16 px inset, `space-y-2`: the **event**, the **attached
+  forms** in the post's order, the **files**, then the **links** of the text in the text's order;
+- the **poll** closes it, just above the action bar (`PostCard`): it is the one attachment the reader
+  acts on in the post, so it sits where the hand already is; it takes the cards' corner and border
+  and keeps its own voting body. Before, it was under the action bar. Its inset is the host's
+  (`PostPolls` `inset`): `px-4 pb-3` under the cards of a post, `px-5 py-4` in a channel bubble,
+  where it is the whole bubble.
+
+**A form is drawn once.** A link to `/forms/<id>` or `/f/<id>` whose form is also attached is not a
+second card: the attached form's card stands for both (`linkedFormId`). The moderation preview
+reads no forms, so it draws the link card.
+
+**A URL that has a card leaves the text** where it ends its line - alone on it, after the words
+introducing it ("inscription ici https://..."), or as a trailing run of several: `stripCardedUrls`.
+In the middle of a sentence it stays (taking it out would leave "plus d'infos sur et inscription"),
+and so do a labelled Markdown link (text in brackets, then the URL) and an `<url>` autolink. A URL
+is matched by the link identity the cards were drawn by, so `https://x/` leaves with the card of
+`https://x`. The punctuation after the last URL of the run stays, and so does the author's before
+it ("!!! https://x" keeps "!!!"); a line left EMPTY goes, its list, quote or heading marker
+included (no bare `-` or `>`). `\r\n` lines are read like `\n` ones.
+
+**Code is never a link** (`utils/markdownCode.ts`, `codeRanges` / `codeBlockLines`): a URL in an
+inline code span, a backtick or tilde fence, or an indented block gets no card
+(`extractPreviewUrls`, which the chat shares) and is never taken out of the text. A span's closing
+backtick used to end up inside the URL. CommonMark's reading, which the renderer draws: a backtick
+run whose info string holds a backtick ("```x``` voir") opens no fence, a closer is fence characters
+and white space only, and under a list item an indented block needs four columns PAST the item's
+content - four columns under "- item" continue the item, its URL a link. `extractPreviewUrls` also draws `https://x` and
+`https://x/` once (the first spelling kept).
+
+**HERO: a lone attachment under a short caption is put forward** (owner, 2026-11-15). The rule,
+`planPostAttachments`: exactly ONE card, NO picture or video, NO poll, not a replay, and at most
+`HERO_TEXT_MAX` = 140 characters of PLAIN text (Markdown marks and the URL the card replaces not
+counted), counted as a reader sees them (`Intl.Segmenter` graphemes: a family emoji is one, not
+eight UTF-16 units; the length alone decides below 140 units or above 140 x 11, and an engine without
+`Intl.Segmenter` counts code points and says so once) - a one-sentence caption, two lines on a phone. Then the card is drawn large:
+
+- a **link** with a picture runs it full width at 1.91:1 (the Open Graph ratio) above the chip and the
+  title; an album its cover; a post preview its own photo. A link with no picture stays a row;
+- a **PDF** shows its first page full width (4:3, top-anchored: a document's top is its identity)
+  above the row, its box reserved before the file arrives so nothing moves; a tap opens the reader.
+  Any other file stays a row;
+- a **form** or an **event**, which have no picture, keep the row and gain a full-width call to
+  action ("Remplir le formulaire", "Voir l'événement") - decorative (`aria-hidden`, `tabindex=-1`),
+  the row being the one tab stop, and the row's arrow is dropped (the button says it). A form not
+  open yet shows its bell instead.
+
+A lone PICTURE needs no rule: it is already drawn at its own shape, full width.
+
+Pinned by `postAttachments.test.ts` (order, the form drawn once, the URL taken out or kept - markers,
+runs, fences, indented code, CRLF - and every side of the hero rule, emoji included),
+`messageDisplay.test.ts` (no card for code, one card for `x` and `x/`), `PostContent.cards.svelte.test.ts`
+(the combined post of the screenshots, rendered), `AttachmentCard.svelte.test.ts` (the arrow, the
+chip, the inert picture), `PostCard.order.test.ts` (the poll between the cards and the action bar),
+`PostMedia.compactFile.svelte.test.ts` (the named row, the reserved page) and `FormCard.svelte.test.ts`.
+
 ### Several media: square cells, and a "+N" past four (2026-10-05)
 
 Decided by the user with a screenshot: a post of several pictures was a two-column grid whose
@@ -1021,13 +1249,13 @@ already fixed `aspect-square` thumbnails in a scrolling row.
 A post of five PDFs was a column of five first-page previews, up to 22rem each. Images were already
 compacted into the gallery; documents were not.
 
-- **One document is a card, several are a list.** `usesCompactDocumentRows`
-  (`utils/posts/documentRows.ts`, the ONE rule) counts a post's `file` media: exactly one keeps the
-  file row plus the first-page preview; from two on EVERY file is a compact row - icon, name, size,
-  download, NO preview - passed to `PostMedia` as `compact`. Audio is not a document and keeps its
-  player. Images keep the gallery, unchanged; the rows sit under it as the cards did. The rule is
-  read by `PostContent` (the feed, the post page, community and channel posts via `PostCard`, the
-  moderation preview) and by `EditPostForm`'s strip of existing attachments.
+- **A document is a compact card; only the post's LONE attachment is large.** Superseded on
+  2026-11-15 by [the card zone](#the-card-zone-one-family-a-fixed-order-owner-2026-11-15): the
+  "one document keeps its first-page preview" rule of 2026-11-02 drew a 22rem page for a PDF beside a
+  photo and two links. Every file is now a compact card of the one family (`compact` on `PostMedia`)
+  unless the plan names it the hero, and only a PDF has a large shape at all - any other file is a
+  row whatever the caller asks (`PostMedia.compactFile`). `EditPostForm`'s strip of existing
+  attachments always draws the compact row. Audio keeps its player, in the card zone.
 - **A compact row downloads nothing until it is asked.** It is drawn from the metadata the post
   already holds (`PostMedia`, `compactFile`); the row and the full card are ONE snippet
   (`fileCard`). What a tap does (`activate`):
@@ -1488,15 +1716,15 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, a tap is the sound, the expand chip opens the viewer |
+| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, its tap opens the viewer (2026-11-10; no expand chip) |
 | Chat bubble | `VideoPlayer variant="chat"` | Discord-style: the glass play disc, no autoplay, its own sound (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
 - **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
   Discord"*): `VideoPlayer variant="chat"`. It shows its first frame with the glass **play
   disc**; **the disc starts the video where it is, with sound of its own**;
-  **the expand chip opens the viewer, whose player starts it too** (a tap on the picture used to;
-  since 2026-11-09 it is this video's own sound, and a press held pauses it). No `playWhileVisible`, no
+  **a tap on the picture opens the viewer, whose player starts it** (owner, 2026-11-15; the expand chip
+  of 2026-11-09 and the tap-is-the-sound rule are SUPERSEDED, and a press held pauses it). No `playWhileVisible`, no
   loop (it stops on its last frame and offers play again).
   **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
   2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
@@ -1535,7 +1763,7 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
   two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
   video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
   each: the inline `VideoPlayer` (`feed`, `chat`) writes `currentTime` to `utils/videoResume.ts` as
-  the reader opens it from the expand chip, keyed by
+  the reader opens it from the picture's tap, keyed by
   the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
   mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
   once the viewer has it, it is gone, so opening the same file later from somewhere that never played
@@ -1545,7 +1773,7 @@ nor sized to a 44 px target. ONE component now carries every video the app shows
   real clip: a chat video stopped at 2.6 s, the viewer opened at the same place and played on.
 - **`VideoPlayer`'s bar**: play/pause, elapsed/duration, a seek bar (`role="slider"`, pointer
   capture so a finger leaving it keeps scrubbing) whose lighter fill is the range buffered under the
-  playhead (`bufferedFraction`), the app's ONE sound answer (`followVideoSound`), and full screen only
+  playhead (`loadedSpans`, every loaded range since 2026-11-18), the app's ONE sound answer (`followVideoSound`), and full screen only
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
 - **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
   video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
@@ -2063,7 +2291,8 @@ the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts`
   full-screen viewer: a picture (`PostMedia`'s image button) and the gallery's "+N" cell carry
   `data-double-tap-defers`. A feed video and a reel card no longer do (2026-11-09): their picture's
   tap is the sound, which waits for the window itself (`videoGestures`, `data-double-tap-likes`), and
-  the viewer is the expand chip's, a button that acts at once. Their click
+  the viewer was an expand chip's, a button that acted at once (SUPERSEDED 2026-11-10 and 2026-11-15: the
+  tap opens the viewer and there is no chip). Their click
   is stopped in capture and replayed (`element.click()`) once the window has passed with no second
   tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
   stated reason: whether a second tap will come is not a fact any event carries before it comes.**
@@ -2148,6 +2377,12 @@ predicate is unchanged (`landingFeed.ts`, `postVisibleToViewerSql`).
   (`posts/scheduledDue.ts`): a post moved to another future date takes its new place at once; one the
   edit published now (or un-scheduled) leaves the strip and the feed is re-read. A deleted card leaves
   by its own `onDelete`. `ScheduledPostsPanel` (a preview with a delete button only) is gone.
+- **The strip draws its cards with `{@render guardedCard(...)}`.** It shipped in 1.6.12 as a bare
+  `{guardedCard(sp, ...)}`: a snippet takes the DOM anchor as its first argument, so the post became the
+  anchor and `post.before(...)` threw `e.before is not a function`, which crashed the whole `/posts` page
+  for every editor of a scheduled post until it was due (production, 2026-11-17, the first scheduled
+  association post). The compiler and svelte-check accept the bare call; `styles/snippetRenderCalls.test.ts`
+  refuses it in every `.svelte` file.
 
 The "link to an event" picker (`linkableEventPickerOptions`, `utils/time.ts`, used by the composer
 and the editor) lists the furthest future event first and the furthest past last; the server answers
@@ -2196,12 +2431,12 @@ Before 2026-11-02 the write paths asked the audience term alone, so they honoure
   copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
   was accepted until then. The route hands the row it loaded to the write, so a reaction reads the
   post once.
-- **`allowHidden` is the platform admin's (`x-global-admin`), on the read by id and the comment page
-  only.** A platform admin reads a hidden post and its comments, and never reacts, comments or likes
-  a comment on it: no write route passes the flag, by intent - a hidden post is held for review, not
-  for conversation. A scoped BDE moderator predicate (`mayModeratePost` or its equivalent) is being
-  built on a separate branch; **whichever of the two pull requests lands second derives
-  `allowHidden` on `getById` and `listComments` from that predicate** instead of the header alone.
+- **`allowHidden` is the moderation read, on the read by id and the comment page only**, derived
+  from `AssociationsService.mayReadToModeratePost` by `getById` and `listComments` (owner, 2026-11-15,
+  *"Oui, dans ses espaces"*: a platform admin, a BDE `MODERATE` holder within its scope). Its holder
+  reads a hidden post and its comments, and never reacts, comments or likes a comment on it: no
+  write route passes the flag, by intent - a hidden post is held for review, not for conversation
+  ([moderation-and-blocking](../../moderation-and-blocking.md#the-moderation-read-of-a-post-its-comments-and-its-replay-owner-2026-11-15)).
 - **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
   with no block either way with whoever wrote the mentioning text
   (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader
@@ -2332,6 +2567,14 @@ row drawn from the device, wherever it sits, including when the answer is empty:
 - reaction counts, poll tallies, comment counts and the pinned order are the answer's.
 
 The store is then rewritten from that answer, so the next launch draws what the server last said.
+
+**The stored copy has no age limit of its own (taken by the lead under the owner's absence rule,
+2026-11-15, reversible).** A device that stays offline keeps drawing the page it last received,
+however old, including a post withdrawn since; the first server answer replaces it. Charter,
+principle 2 (the essential is never lost) decides: the copy is content the server served to this
+reader, sealed under the device key, bounded to four pages and stripped of every right, and an age
+limit would take offline reading away for what the next answer already does. The bell's stored
+rows follow the same rule.
 
 **A card already drawn takes the answer's row (review of #1896).** The list is keyed by post id, so
 the card drawn from the copy is KEPT when the answer replaces its row, and `PostCard` used to copy
@@ -2577,6 +2820,27 @@ Every feed arm orders by `pinned DESC, "publishedAt" DESC` and then `posts.id`, 
 tie-breaker, so a page boundary never swaps two posts. The next page's merge (`loadMorePosts`) still
 drops an id it holds.
 
+## The attached form's reminder bell was decided once, at mount (2026-11-14)
+
+**Owner's report, production.** A post with an attached form that opens later showed no "Me prevenir"
+bell.
+
+**The cause.** `PostForms` decided its bells in an `onMount` that looped over `formInfos` ONCE.
+`PostForms` is always mounted and `formInfos` is filled afterwards by `attachedFormsLoader` (each form
+is read after the post is drawn), so the loop ran on an empty list and a form arriving later never got
+its reminder state, so never its bell. Under it sat a second gap: the post's `forms` entry carries a
+title but no `opensAt`, and the loader read the form only when it lacked the title, so a titled form
+could never say when it opens. The loader now reads every form (the post's title stays the one shown).
+
+**The fix.** `FormCard.svelte` (one card per attached form, drawn by `PostForms` then, by
+`PostContent`'s card zone since 2026-11-15): the bell is an
+`$effect` on the form and on "not open yet and not answered" - no mount-time read, no timer - drawn at
+once, its subscribed state filled in when `checkFormReminder` answers; a failed read is LOGGED
+(`FORM_CARD`) and drawn as not subscribed, the old `.catch(() => {})` having said nothing. Pinned by
+`FormCard.svelte.test.ts` (the bell appears when `opensAt` arrives after mount - the old `PostForms`
+fails it) and `attachedForms.svelte.test.ts`. A form LINK and an attached form are now the same card
+family, and one form is drawn once ([the card zone](#the-card-zone-one-family-a-fixed-order-owner-2026-11-15)).
+
 ## Comment sheet rework (2026-10-21)
 
 Plan: a full-screen sheet from the comment icon, the composer pinned above the keyboard, replies folded, a draft per post, and posting as an association or anonymously. It ships in four pull requests; **this section records what is on `main`**.
@@ -2596,7 +2860,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - Edit/delete: the author alone edits (the writer; any `POST_AS_ASSO` holder for an association's comment); the author, a platform admin or a moderator of the post deletes, whatever the kind of comment (2026-11-02, [profiles-and-access](../../profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
 - Served in every path: feed windows and count (`serveRows`, BEFORE the post's own shaping since `byPostAuthor` reads `authorId`), `getById`, the paged route, and the like/edit/add responses.
 - Notices are masked at the WRITE: anonymous -> actor `''` / "Anonyme", association -> its name. A reply to an association comment notifies every holder (`listFlagHolders`), to an anonymous one the real account.
-- A report on a comment takes `reportedUserId` from the stored comment, never from the client.
+- A report takes `reportedUserId` from the stored content, never from the client - a comment's from the stored comment, a post's from the post - and the reporter is answered a receipt without it ([moderation-and-blocking](../../moderation-and-blocking.md)).
 - Account erasure keeps an association comment (writer detached, `userId: ''`).
 - Privacy policy and register of processing say moderation can identify an anonymous author (dated 21/10/2026).
 
@@ -2626,7 +2890,68 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 
 ## The edit picker always lists the attached form (2026-10-21)
 
-`GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form) and who may attach a form they do not manage (the server still decides).
+`GET /api/forms` returns only the forms its reader owns or manages (`MANAGE_FORMS`), so an editor whose post carries a form they do not manage (a moderator, an officer without that right) saw "Aucun formulaire pour l'instant" under a post that visibly had one (user report, production). `EditPostForm` now passes the list through `withAttachedForm` (`$lib/posts/editableForms.ts`), which reads the attached form by id (`GET /api/forms/:id`, open to any signed-in reader) and puts it first when the list lacks it; a failed read is logged and the list stays as it was. Saving never depended on the picker: `attachedFormId` is written from the selected id, so the form was kept all along - only the display lied. Not changed: the create picker (a new post has no attached form). Who may attach which form is decided by the server since 2026-11-14 ([a post attaches its own entity's form](#a-post-attaches-its-own-entitys-form-2026-11-14)).
+
+## A post attaches its own entity's form (2026-11-14)
+
+An agenda event already linked only its association's forms; a post attached ANY form id, so an
+association's post could present another association's form (or a personal one) as its own, and a
+personal post anyone's. The server now applies one rule, `apps/social-service/src/forms/form-ownership.ts`,
+shared with the events (`assertFormOfAssociation`); the post-only refusals live in
+`apps/social-service/src/posts/attached-form.ts`:
+
+| The post | May attach |
+|---|---|
+| an association's, institution's or list's post (`associationId` set) | that association's forms only - the events' rule, 400 `FORM_NOT_OF_ENTITY` otherwise |
+| a personal post | a form its AUTHOR manages (`managesForm`: a personal form they own, or a form of an association where they hold MANAGE_FORMS; a global admin any) - exactly what `GET /api/forms` offers the composer, 400 `FORM_NOT_OF_ENTITY` otherwise |
+| an anonymous post | **no form**, 400 `FORM_NOT_ON_ANONYMOUS_POST`: the personal rule above means a form names someone who may be its author, which is what the post hides |
+
+**Decisions.** The OWNER's, 2026-11-14 ("Oui, comme aujourd'hui"): a personal, non-anonymous post
+may attach any form its author manages, association forms included. Decided by the lead, 2026-11-14,
+reversible: an anonymous post carries no form; stored posts already carrying another entity's form
+are left as they are (no row is rewritten).
+
+- **When**: at create, and at an edit that CHANGES the form. An edit that resends the form the post
+  carries is never judged again, so a post written before the rule stays editable (and an anonymous
+  one may drop its form). A personal post's form is judged for its author, whoever edits.
+- **The retired inline `forms` list is refused** (400 `POST_FORMS_RETIRED`, an empty list
+  excepted): no client of this repository ever wrote it on create - the composer has sent
+  `attachedFormId` since its first version (2026-03), before any store build - so there was no
+  supported client to keep a shim for, and the list (titles stored as sent, never checked) was
+  dead acceptance. Its input DTOs were deleted. Stored rows keep their `forms` and are still drawn.
+- **The pickers follow it** (`attachableForms`, `$lib/posts/editableForms.ts`): the composer offers
+  an association's post that association's forms only and an anonymous post none (no form chip; a
+  form chosen before switching to anonymous becomes a note and is not sent), and drops a choice the
+  identity can no longer attach (the readiness check then asks for a form again) rather than send
+  one the server refuses; the edit picker lists the identity's forms plus the one the post carries.
+  A refusal that still reaches the client is worded by its code (`publishFailure.ts`).
+- **At read**: a post serves only the form's id (and, for the legacy list, the title its author
+  stored); everything else the card shows is read through `GET /api/forms/:id` and its own gate (a
+  draft, or a form of an archived association, is a 404 to a non-manager -
+  [forms](forms.md#an-archived-associations-form-is-closed-by-its-link-2026-11-14)). So a stored post naming a foreign form
+  serves no more than the form's own link does. Two reads close the anonymous case for stored
+  posts: an anonymous post's form (`attachedFormId`, the legacy `forms`) is withheld from every
+  reader its author is withheld from (`withholdFormsOfHiddenAuthor`, on the same branch that strips
+  `authorId`; the author and moderators still see it), and `GET /api/forms/:id` serves `ownerId`
+  to the form's managers only, asking management ONCE per read (`readVerdict` hands `get` the
+  answer where it already had to ask it). **Stored posts are masked at read, never rewritten.
+  Measured read-only on production on 2026-11-15** with
+  `SELECT anonymous, ("attachedFormId" IS NOT NULL) AS has_form_id, (forms <> '[]'::jsonb)
+  AS has_inline_forms, count(*) FROM posts GROUP BY 1, 2, 3` (recounted the same day, ~14:20): 301 posts with neither, 14
+  non-anonymous posts with an attached form, 16 anonymous posts with none - ZERO anonymous posts
+  carrying a form, and ZERO posts with a non-empty inline `forms` list in any group. So the read-side
+  mask covers no stored post today, and the retired inline list was never stored: for stored data,
+  no client outside this repository ever wrote it (the question git history could not answer).
+  **Still not measured:** the posts naming a FOREIGN form - the statement does not look at whose
+  form it is.
+- **`POST_FORMS_RETIRED` has no client wording, deliberately**: no screen can send the list, so the
+  refusal reaches only a hand-made request, which reads the typed code. A string no user can be
+  shown would be dead text.
+- Proof: `posts.service.attached-form.spec.ts` (each post kind, the anonymous post, the retired
+  list, an edit changing, keeping, removing and a personal post's author),
+  `posts.service.anonymous-list.spec.ts` (the withheld form), `forms.service.draft.spec.ts`
+  (`ownerId` to managers only), `editableForms.test.ts`, `publishFailure.test.ts`,
+  `CreatePostForm.anonymousForm.svelte.test.ts`.
 
 ### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
 

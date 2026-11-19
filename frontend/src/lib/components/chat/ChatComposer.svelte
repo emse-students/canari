@@ -134,9 +134,15 @@
     onFilesSelected?: (files: File[]) => void;
     /**
      * The conversation takes a CanaReel filmed here (a DM or a group - never a salon). Only effective
-     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: a dev build only).
+     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: on in every build since the `1.7.0` flip).
      */
     reelMessages?: boolean;
+    /**
+     * The conversation this composer writes to - its id and its name as the header shows it. A
+     * camera that films (`reelMessages`, the writer on) says whom it films for and sends there in one
+     * tap (reels-in-chat section 22, path 2); ignored by a photo-only camera.
+     */
+    cameraTarget?: { id: string; name: string } | null;
     /**
      * Sends a finished recording immediately, as its own message.
      *
@@ -182,6 +188,7 @@
     onConfirmEdit,
     onFilesSelected,
     reelMessages = false,
+    cameraTarget = null,
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
@@ -906,9 +913,14 @@
   </div>
 {/snippet}
 
-<!-- Footer Container -->
+<!-- Footer Container. It RIDES the keyboard (`data-keyboard-ride="box"`, keyboardRide.ts): on the
+     Android overlay the band around it never moves, the footer does (`bottom:
+     var(--keyboard-layout-inset-bottom)`), so the footer is the piece whose edge a ride measures. On
+     iOS the footer moves with its band, so the reading is the same there. -->
 <footer
+  data-keyboard-ride="box"
   class="chat-composer-footer"
+  data-keyboard-leaf
   class:has-keyboard-panel={surfaceReservesPanel(surface)}
   bind:this={composerFooter}
 >
@@ -982,7 +994,8 @@
     </div>
   {/if}
 
-  <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
+  <!-- 4px from the edge on a phone: the controls' own 40px boxes are the margin, as on Messenger. -->
+  <div class="pointer-events-auto flex flex-col gap-2 px-1 sm:px-4 md:px-6">
     <!-- A picked video being re-encoded on the device, before it joins the strip below. -->
     {#if videoPreparation && videoPreparation.fraction !== null}
       <VideoPreparationProgress
@@ -1008,14 +1021,20 @@
         that must never become unreachable. The cap is expressed in `rem` rather than in rows so a
         tall tile and a short one give the same maximum.
       -->
-      <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
+      <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full px-2 sm:px-0">
         <div
           class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
         >
           <div class="text-text-muted text-2xs mb-2 px-1 font-bold">
             {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
           </div>
-          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">
+          <!--
+          THE ROW'S PADDING IS THE OVERHANG'S ROOM. A scroll container (`overflow-y-auto` forces
+          `overflow-x` to clip too) cuts whatever leaves its padding box, and the recording tile's
+          remove cross sits half outside the tile (`-top-1.5 -right-1.5`), so it was sliced at the
+          top. `pt-2 pr-2` exceeds that 6px overhang; tiles that keep their cross inside are unaffected.
+        -->
+          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain pt-2 pr-2">
             {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
               {@const file = entry.file}
               {@const key = fileKey(file, index)}
@@ -1298,6 +1317,7 @@
         <CameraOverlay
           destination="chat"
           chatFilms={chatReelAllowed(!reelMessages)}
+          chatTarget={chatReelAllowed(!reelMessages) ? cameraTarget : null}
           oncapture={onCameraCapture}
           onclose={() => (cameraOpen = false)}
         />
@@ -1371,7 +1391,7 @@
         {/if}
 
         <!-- Dynamic send button. -->
-        <div class="shrink-0 pr-1">
+        <div class="shrink-0">
           <button
             onmousedown={(e) => e.preventDefault()}
             onclick={submit}

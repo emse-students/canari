@@ -144,7 +144,7 @@ describe('the order of a sign-out: push deregistration, socket, revocation', () 
     );
     setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
     try {
-      const signingOut = clearAuth();
+      const signingOut = clearAuth('chosen');
       await new Promise((r) => setTimeout(r, 0));
       expect(fetchMock).not.toHaveBeenCalled();
       expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
@@ -163,7 +163,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
     setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
     try {
       // 1. Tableau de bord > Deconnexion.
-      await clearAuth();
+      await clearAuth('chosen');
       expect(s.ctx.isLoggedIn()).toBe(false);
       expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
       expect(s.clearConversations).toHaveBeenCalledTimes(1);
@@ -182,7 +182,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(s.log.mock.calls.flat().join('\n')).not.toContain('App in foreground');
 
       // 3. A second sign-out (the PIN gate's) finds nothing live: no second, flushing teardown.
-      await clearAuth();
+      await clearAuth('pin-gate');
       expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
       expect(s.clearConversations).toHaveBeenCalledTimes(1);
       expect(s.log).toHaveBeenCalledWith(
@@ -197,7 +197,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
     const s = liveSession();
     setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
     try {
-      await clearAuth();
+      await clearAuth('chosen');
       await s.ctx.whenMlsRetired();
       s.endNative.mockClear();
 
@@ -207,7 +207,7 @@ describe('sign-out, then the resume of the sign-in browser, then a second sign-o
       expect(probe).not.toBe(s.clients[0]);
 
       // The gate's exit.
-      await clearAuth();
+      await clearAuth('pin-gate');
       await s.ctx.whenMlsRetired();
       expect(probe.destroy).toHaveBeenCalledTimes(1);
       expect(s.endNative).toHaveBeenCalledWith('sign-out');
@@ -290,7 +290,7 @@ describe('a sign-out retires the account with its MLS client', () => {
     setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
     try {
       // A signs out.
-      await clearAuth();
+      await clearAuth('chosen');
       expect(a.persister.flushEncrypted).toHaveBeenCalledTimes(1);
 
       // B's login asks for a client while A's final checkpoint is still being written: a NEW one.
@@ -327,7 +327,7 @@ describe('a sign-out retires the account with its MLS client', () => {
     registerMlsStatePersister(a.persister);
     setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
     try {
-      await clearAuth();
+      await clearAuth('chosen');
       // B's session registers its persister before A's final flush has landed.
       const b = heldPersister();
       registerMlsStatePersister(b.persister);

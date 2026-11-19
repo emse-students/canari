@@ -7,6 +7,8 @@ import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
+import { adminQueuesChanged } from '$lib/admin/adminQueueCounts.svelte';
+import { isGroupInCreation } from '$lib/utils/chat/groupsInCreation';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
@@ -232,8 +234,9 @@ export async function openGatewayConnection(
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the
       // only one. A close code was added here on 2026-08-15 to spend `1001 - going away` instead of
       // letting a dying document report `1006`, and it was measured inert the same day: the gateway
-      // handles `disconnect` with `handle_disconnect(...); break`, so it has already left its read
-      // loop before any close frame can be read - 0 `Client closed connection` lines in 25 minutes
+      // then handled `disconnect` with `handle_disconnect(...); break`, so it had already left its read
+      // loop before any close frame could be read (since 2026-11-14 it reads on to answer the Close,
+      // see docs/wiki/services/chat-gateway.md) - 0 `Client closed connection` lines in 25 minutes
       // of production traffic - while the browser fills the page's own `CloseEvent` with `1006`
       // regardless, because a closing handshake cannot complete inside an unload. Do not re-add it:
       // this frame already tells the gateway everything a close code would, and earlier.
@@ -307,6 +310,8 @@ export async function syncConnectionAfterWsOpen(
   const { mlsService, userId, deviceKeyB64, processDeviceInvitationsLocally, log } = deps;
 
   if (!getIsTabLeader()) return undefined;
+  // A frame sent while the socket was down is never replayed: the admin badges ask again.
+  adminQueuesChanged('socket-open');
   const verdicts: AbsentGroupVerdicts = new Map();
 
   // 1. Publish KeyPackages
@@ -499,7 +504,13 @@ export async function syncConnectionAfterWsOpen(
   // READ AGAIN HERE, deliberately: the `localGroups` snapshot taken before the sync loop predates
   // the joins and purges it performs, and reconciling a stale list would audit groups this device
   // has just left and miss the ones it has just joined.
-  const groupsNow = [...mlsService.getLocalGroups()];
+  //
+  // A GROUP THIS DEVICE IS CREATING IS LEFT OUT, read in this same turn as the local groups, before
+  // the mode is chosen - so neither the sweep nor the audit asks about it. It is local from
+  // `createGroup` on, long before the creation ends, and has no past to compare; a creation that
+  // succeeds records it audited, one that fails leaves it owed (`groupsInCreation.ts`,
+  // `dischargeCreatedGroupAudit`).
+  const groupsNow = [...mlsService.getLocalGroups()].filter((id) => !isGroupInCreation(id));
   const { sweep, reason } = connectionSweepDecision(userId, deviceId);
 
   // TWO INDEPENDENT REASONS TO COMPARE, and only one of them is about this connection. The sweep

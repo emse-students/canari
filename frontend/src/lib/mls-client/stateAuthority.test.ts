@@ -3,6 +3,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({ getTabLeadership: () => leadership
 
 import {
   answersFollowerCommits,
+  lostLeadSinceLoad,
   noteMlsStateLoaded,
   refusesCommitsHere,
   resetStateAuthorityForTests,
@@ -18,6 +19,19 @@ describe('stateAuthority', () => {
   beforeEach(() => {
     resetStateAuthorityForTests();
     leadership.role = 'undecided';
+  });
+
+  it('a document that LED and lost the lead is told apart from a copy loaded as a follower', () => {
+    leadership.role = 'leader';
+    noteMlsStateLoaded(true);
+    expect(lostLeadSinceLoad()).toBe(false);
+    leadership.role = 'follower';
+    expect(lostLeadSinceLoad()).toBe(true);
+    expect(refusesCommitsHere()).toBe(true);
+    resetStateAuthorityForTests();
+    noteMlsStateLoaded(false);
+    expect(lostLeadSinceLoad()).toBe(false);
+    expect(refusesCommitsHere()).toBe(true);
   });
 
   it('a document that loaded its state as the leader commits, serves and answers', () => {

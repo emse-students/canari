@@ -300,20 +300,26 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinSource).toContain('.apply { senderKey?.let { setKey(it) } }');
     // The socket trigger takes the same rule, with the WebView's proof, and the same keys for a
     // salon - one answer per message, whichever trigger arrives first (review of #2881, HIGH-1).
-    expect(kotlinSource).toContain(
-      'ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId)'
+    // And the same nickname lookup as the push (owner, 2026-11-14).
+    expect(kotlinSource).toMatch(
+      /ChannelBannerAuthor\.of\(\s*showsMessage = true,\s*authorProven = authorProven,\s*authorId = senderId,\s*nickname = nicknameLookup\(/
     );
     expect(kotlinSource).toContain('senderKey = salonLine?.personKey,');
     expect(kotlinSource).not.toContain('ofSocketFrame');
     // The proof comes from the WebView's own open, through the Rust command, unchanged.
-    expect(rustCommand).toMatch(/covers: i32,\s*author_proven: bool,\s*is_group: Option<bool>,/);
-    expect(rustCommand).toContain('ZJJIZLjava/lang/Boolean;)Z');
+    expect(rustCommand).toMatch(
+      /covers: i32,\s*author_proven: bool,\s*is_group: Option<bool>,\s*reaction: bool,/
+    );
+    // The trailing `Z` is the reaction flag (2026-11-17), the last parameter on both sides.
+    expect(rustCommand).toContain('ZJJIZLjava/lang/Boolean;Z)Z');
     expect(channelHandler).toContain('authorProven = opening.authorProven;');
     expect(channelSeal).toContain("authorProven: prepared.kind === 'v2',");
     // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT (review of #2888, LOW-1): the socket
     // trigger names a salon's speaker from `display_names.json`, and resolving the sender is what
     // notes the name - so the mirror is flushed between the two, never after the post.
-    const resolved = messaging.indexOf('void resolveNotificationSenderName(senderId, convo)');
+    const resolved = messaging.indexOf(
+      'void resolveNotificationSenderName(senderId, conversationKey, convo)'
+    );
     const flushed = messaging.indexOf('await flushNameMirror();', resolved);
     const posted = messaging.indexOf(
       'ctx.sendSystemNotification(senderName, notificationBody',

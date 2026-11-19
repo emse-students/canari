@@ -9,6 +9,7 @@
 
 <script lang="ts">
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
@@ -99,15 +100,19 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import { callsAvailable, callVideoAvailable } from '$lib/utils/callsAvailability';
-  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    callsAvailable,
+    callVideoAvailable,
+    groupCallsAvailable,
+    groupCallVideoAvailable,
+  } from '$lib/utils/callsAvailability';
+  import { serverCallsMode, serverGroupCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import type {
     AddMessageToChatOptions,
     ChatMessage,
     Conversation,
     MessageBatchOrigin,
   } from '$lib/types';
-  import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
   import { describeCaughtError } from '$lib/utils/describeCaughtError';
   import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
@@ -483,6 +488,7 @@
       playReceiveTone: notifs.playReceiveTone,
       playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
+      sendReactionNotification: notifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: channels.handleChannelWriteRefused,
     };
@@ -499,9 +505,7 @@
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        messaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: messaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof messaging.batchAddMessages>[0],
         contactName: string,
@@ -520,6 +524,8 @@
         if (e.conversationKey !== convs.selectedContact) return;
         notifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        messaging.notifyInboundReaction(reaction, msgCtx()),
       log,
       messageReactions: messaging.messageReactions,
       getSelectedContact: () => convs.selectedContact,
@@ -540,38 +546,18 @@
       viewMode: (routeMode === 'communities' ? 'communities' : 'chat') as 'chat' | 'communities',
       conversations: convs.conversations,
       selectedContact: convs.selectedContact,
-      newContactInput: convs.newContactInput,
-      newGroupInput: convs.newGroupInput,
       newChannelInput: convs.newChannelInput,
       channelWorkspaces: channels.channelWorkspaces,
       selectedChannelId: channels.selectedChannelConversationId,
       currentUserId: session.userId,
-      onContactInputChange: (v: string) => {
-        convs.newContactInput = v;
-      },
-      onGroupInputChange: (v: string) => {
-        convs.newGroupInput = v;
-      },
       onChannelInputChange: (v: string) => {
         convs.newChannelInput = v;
       },
-      // BOTH ANSWER, because the sidebar closes its creation panel on the answer. The input is
-      // cleared here as before - the panel keeps its own copy of the text and decides, from the
-      // outcome, whether to blank it.
-      onAddContact: async (value?: string) => {
-        const c = (value ?? convs.newContactInput).trim();
-        if (!c) return { ok: true, key: null } as const;
-        const outcome = await convs.startNewConversation(c, convCtx());
-        convs.newContactInput = '';
-        return outcome;
-      },
-      onCreateGroup: async (value?: string) => {
-        const g = (value ?? convs.newGroupInput).trim();
-        if (!g) return { ok: true, key: null } as const;
-        const outcome = await convs.createNewGroup(g, convCtx());
-        convs.newGroupInput = '';
-        return outcome;
-      },
+      // BOTH ANSWER, because the sidebar closes its creation panel on the answer.
+      onAddContact: (contactId: string) => convs.startNewConversation(contactId, convCtx()),
+      // A blank name creates an UNNAMED group (owner, 2026-11-17).
+      onCreateGroup: (name: string, memberIds: string[]) =>
+        convs.createGroupWithMembers(name, memberIds, convCtx()),
       onCreateChannel: (workspaceId: string, value?: string, visibility?: 'public' | 'private') => {
         const ch = (value ?? convs.newChannelInput).trim();
         if (!ch) return;
@@ -853,7 +839,8 @@
     // nothing.
     if (verdict === 'idle') {
       Log.d(
-        `[READ] ${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
+        'READ',
+        `${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
           `for ${ATTENTION_WINDOW_MS / 1000} s - the first gesture marks it`
       );
       return;
@@ -1643,21 +1630,33 @@
   }
 
   /**
-   * Whether the conversation on screen is a one-to-one DM. A call is peer to peer since the
-   * 2026-10-17 revival, and the signalling room seats exactly two users: a group has no call
-   * button until a group design exists (calls-revival-plan WP-C4/WP-C11).
+   * The kind of conversation on screen, for its call buttons: a one-to-one DM calls whenever calls
+   * are open; a GROUP conversation calls only when the server runs group calls on the peer-to-peer
+   * mesh (WP-GC2, `serverGroupCallsMode`). A community channel has no call.
    */
-  let selectedIsDirect = $derived(
-    !!convs.selectedContact &&
-      convs.conversations.get(convs.selectedContact)?.conversationType === 'direct'
+  let selectedType = $derived(
+    convs.selectedContact
+      ? convs.conversations.get(convs.selectedContact)?.conversationType
+      : undefined
+  );
+  let canStartAudioCall = $derived(
+    selectedType === 'direct'
+      ? callsAvailable(serverCallsMode())
+      : selectedType === 'group' && groupCallsAvailable(serverCallsMode(), serverGroupCallsMode())
+  );
+  let canStartVideoCall = $derived(
+    selectedType === 'direct'
+      ? callVideoAvailable(serverCallsMode())
+      : selectedType === 'group' &&
+          groupCallVideoAvailable(serverCallsMode(), serverGroupCallsMode())
   );
 
-  /** Starts a voice or video call in the one-to-one conversation on screen. */
+  /** Starts a voice or video call in the conversation on screen: a DM, or a group (WP-GC2). */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo) return;
-    if (convo.conversationType !== 'direct') return;
+    if (convo.conversationType !== 'direct' && convo.conversationType !== 'group') return;
     if (convo.lifecycle !== 'active') {
       showToast(m.chat_call_session_not_ready(), 'warning');
       return;
@@ -1829,12 +1828,12 @@
           onRemovePendingFile={(index) =>
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
-          onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
+          onStartAudioCall={canStartAudioCall
             ? () => {
                 void startCallForCurrentConversation(false);
               }
             : undefined}
-          onStartVideoCall={callVideoAvailable(serverCallsMode()) && selectedIsDirect
+          onStartVideoCall={canStartVideoCall
             ? () => {
                 void startCallForCurrentConversation(true);
               }

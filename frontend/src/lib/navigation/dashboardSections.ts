@@ -9,8 +9,8 @@
  *
  * ONE table, read by the page and by its test, so a row and the rule that shows it are one
  * decision. This table only LINKS: who may OPEN a page is each page's own guard, unchanged here.
- * The directory is linked where it was linked before (the reader who reaches the admin hub, whose
- * shortcuts carry it), not wider.
+ * The directory is a row for EVERY signed-in reader since 2026-11-13 (owner): it was linked to staff
+ * only, though the server always answered any signed-in member (D18, no border between spaces).
  *
  * Every fact below is already held when the page renders or arrives from a probe the page made
  * before this hub existed - no row costs a request of its own.
@@ -81,6 +81,11 @@ export interface DashboardFacts {
   unreadNotifications: number;
   /** `ensureMayOpenAdmin()`: the same predicate the `/admin` layout admits on. */
   mayOpenAdmin: boolean;
+  /**
+   * The items waiting in the queues this reader can act on (`adminQueueCounts.total`, the server's
+   * counts) - the Administration row's badge. Never fetched for the dashboard.
+   */
+  adminPending: number;
   /** What the console is called for this reader (`adminScopeLabels`). */
   adminScope: AdminScopeLabels;
   /** `getReviewerAccess()`: may read every association's public documents. */
@@ -202,8 +207,6 @@ const ENTRIES: readonly DashboardEntry[] = [
     label: () => m.directory_heading(),
     summary: () => m.directory_subtitle(),
     icon: BookUser,
-    // Arrives with the probed groups, not alone: one change below Explorer, never two.
-    may: (f) => f.probesSettled && f.mayOpenAdmin,
   },
   {
     key: 'admin',
@@ -362,6 +365,10 @@ function toRow(e: DashboardEntry, f: DashboardFacts, actions: DashboardActions):
   if (e.key === 'notifications' && f.unreadNotifications > 0) {
     row.badge = f.unreadNotifications;
     row.badgeLabel = m.dashboard_unread_notifications_label({ count: f.unreadNotifications });
+  }
+  if (e.key === 'admin' && f.adminPending > 0) {
+    row.badge = f.adminPending;
+    row.badgeLabel = m.admin_hub_pending_count({ count: f.adminPending });
   }
   return row;
 }

@@ -1,6 +1,38 @@
 <script lang="ts">
   import LegalDocument from '$lib/components/legal/LegalDocument.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { onMount } from 'svelte';
+  import { refreshAppVersionCheck, serverRetention } from '$lib/stores/appVersionCheck.svelte';
+  import { retentionInForce } from '$lib/legal/retention';
+  import { durationLabel } from '$lib/legal/retentionLabel';
+  import { getLocale } from '$lib/paraglide/runtime';
+
+  /**
+   * THE DURATIONS AN ADMIN SETS ARE RENDERED FROM THE SAME SOURCE THE SERVICES READ (owner,
+   * 2026-11-14): `GET /api/version`'s `retention`, from `platform_config` - never a number typed in
+   * this text, so the policy and the code cannot disagree. The page has no prerendered or
+   * server-rendered body (`ssr = false` in the root layout), so it shows the live answer, else this
+   * session's cached one DATED ("valeurs du ..."), else - offline with no answer ever read here - the
+   * values each setting is created with, and says so above the table (docs/wiki/retention-settings.md).
+   */
+  const retention = $derived(retentionInForce(serverRetention()));
+  const readOn = $derived(
+    retention.readAt === null
+      ? ''
+      : new Intl.DateTimeFormat(getLocale(), { dateStyle: 'long', timeStyle: 'short' }).format(
+          retention.readAt
+        )
+  );
+
+  onMount(() => {
+    void refreshAppVersionCheck().then(() => {
+      if (serverRetention()?.live !== true) {
+        console.warn(
+          `[privacy] the retention durations could not be read from the server - ${serverRetention() ? 'an earlier answer of this session is shown, dated' : 'the defaults are shown'}, and the page says so`
+        );
+      }
+    });
+  });
 
   /**
    * The document's own sections, in order. Numbered here because the DOCUMENT numbers
@@ -30,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="10/11/2026"
+  updated="17/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -81,10 +113,13 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
-          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
-          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
-          déconnexion, et il n'apparaît jamais dans une notification.
+          l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
+          l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
+          jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
+          réponse perdue. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
+          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
+          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
+          jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -104,22 +139,25 @@
         <dt>Publications, commentaires, réactions, sondages, CanaReels</dt>
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
-          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
-          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
-          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
-          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
-          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
-          personne et il est conservé sans limite de durée, même après la suppression de votre
-          compte. Une association, une liste ou une institution peut vous demander de relayer une de
-          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
-          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
-          première fois et, pour une institution, son public possible) vous est adressée, et rien
-          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
-          d'une institution, votre publication est vue de son public, y compris de ses membres qui
-          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
-          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
-          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          plateforme selon l'audience choisie. Une institution (l'École, une Maison des Élèves,
+          l'association des alumni) choisit pour chacune de ses publications les espaces qu'elle
+          vise et son public (étudiants, personnel ou tous) ; les publics « Personnel » et « Tous »
+          atteignent tout le personnel du campus d'un espace coché. Les fichiers joints sont
+          chiffrés avant l'envoi. Une publication en cours d'envoi attend sur votre appareil, avec
+          ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une
+          simple déconnexion la conserve, la suppression de votre compte l'efface. Quand une
+          publication est supprimée, le serveur garde son identifiant et la date de suppression,
+          sans auteur ni contenu, pour qu'un envoi encore en route ne la fasse pas réapparaître ;
+          cet identifiant ne désigne plus personne et il est conservé sans limite de durée, même
+          après la suppression de votre compte. Une association, une liste ou une institution peut
+          vous demander de relayer une de vos publications personnelles : la demande (l'association,
+          la liste ou l'institution, le membre qui l'a faite, la publication, le nombre de personnes
+          qui la verraient pour la première fois et, pour une institution, son public possible) vous
+          est adressée, et rien n'est montré à son public tant que vous n'avez pas accepté. Si vous
+          acceptez la demande d'une institution, votre publication est vue de son public, y compris
+          de ses membres qui font partie du personnel ; si ce public a changé depuis que vous l'avez
+          lu, votre acceptation est refusée et le nouveau public vous est montré. Une fois le relais
+          accepté, ceux qui voient votre publication suivent le public et les membres ACTUELS de
           l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
           nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
           la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
@@ -166,13 +204,14 @@
           donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
           serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
           feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
-          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
-          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
-          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
-          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
-          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
-          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
-          lecture.
+          réactions. Lorsque les rediffusions sont activées sur Canari, un direct d'au moins 30
+          secondes reste visible en rediffusion pendant la durée indiquée en section 6, par le même
+          public ; sinon, un direct n'est pas enregistré. Avant votre premier direct, vous acceptez
+          les règles de publication : la version acceptée et sa date sont conservées. Pour limiter
+          les abus, le serveur garde aussi l'heure de chacun de vos démarrages pendant une heure.
+          Les journaux techniques notent les débuts et fins de direct, les coupures et les retraits
+          de spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
+          requête, le serveur web journalise l'adresse IP de chaque lecture.
         </dd>
       </div>
       <div>
@@ -329,27 +368,40 @@
       <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
-          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
-          (montant, produit, statut, identifiant de la transaction chez Lydia). Quand un responsable
-          d'association enregistre l'issue d'un paiement non livré (remboursé ou cotisation
-          attribuée), Canari garde cette issue, sa date et l'identifiant du responsable. Quand une
-          association vous rembourse un paiement depuis Canari, Canari garde le remboursement : le
-          paiement concerné, le montant, total ou partiel, le motif saisi, la date, l'identifiant du
-          responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia ne l'avait pas confirmé)
-          et la réponse de Lydia. Le motif est écrit librement par le responsable : il peut nommer
-          une personne, et il figure tel quel dans le relevé que les responsables du compte de
-          paiement de l'association peuvent télécharger. Quand une association accepte de recevoir
-          les paiements d'une autre entité (une liste, par exemple), Canari garde l'identifiant du
-          responsable qui a accepté, à quel titre et la date. Un remboursement total retire ce que
-          le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
-          Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
-          Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
-          l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
-          est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
-          effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
-          cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
-          formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
-          supprimé avec le formulaire.
+          Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires (et, si le
+          formulaire vous laisse modifier votre réponse, la date de votre dernière modification,
+          visible de ceux qui le gèrent, sans historique des versions précédentes) et vos achats
+          (montant, produit, statut, identifiant de la transaction chez Lydia). L'auteur d'un
+          formulaire choisit lesquelles de vos informations de compte accompagnent chaque réponse :
+          nom, prénom, promo et formation, statut élève ou personnel, campus (chacune séparément ;
+          nom et prénom par défaut). Elles sont lues sur votre compte au moment où vous envoyez la
+          réponse, conservées avec elle telles qu'elles étaient alors, et lues par ceux qui gèrent
+          le formulaire (liste des réponses et export) ; le formulaire vous dit lesquelles avant
+          l'envoi. Un formulaire anonyme n'en joint aucune : s'il demande votre promo, votre statut
+          ou votre campus, c'est vous qui les indiquez, sans lien avec votre compte. Quand un
+          responsable d'association enregistre l'issue d'un paiement non livré (remboursé ou
+          cotisation attribuée), Canari garde cette issue, sa date et l'identifiant du responsable.
+          Quand une association vous rembourse un paiement depuis Canari, Canari garde le
+          remboursement : le paiement concerné, le montant, total ou partiel, le motif saisi, la
+          date, l'identifiant du responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia
+          ne l'avait pas confirmé) et la réponse de Lydia. Le motif est écrit librement par le
+          responsable : il peut nommer une personne, et il figure tel quel dans le relevé que les
+          responsables du compte de paiement de l'association peuvent télécharger. Quand une
+          association accepte de recevoir les paiements d'une autre entité (une liste, par exemple),
+          Canari garde l'identifiant du responsable qui a accepté, à quel titre et la date. Un
+          remboursement total retire ce que le paiement avait apporté (la cotisation, la place du
+          formulaire), sauf une recharge du Cercle, dont le solde ne change pas. Aucune donnée
+          bancaire n'est reçue ni conservée par Canari. Les fichiers déposés dans un formulaire (par
+          exemple un CV) sont lisibles par l'association qui l'a créé. Une image ajoutée à une
+          question par l'auteur d'un formulaire est publique : quiconque a le lien du formulaire
+          peut la voir, sans compte. Elle est effacée quand plus aucun formulaire ne l'affiche. Les
+          modifications d'un formulaire en cours d'écriture sont enregistrées au fur et à mesure
+          comme brouillon (le contenu du formulaire, sans le nom de qui l'a écrit), vidé à la
+          publication ou à l'abandon et supprimé avec le formulaire. Quand le BDE de votre espace
+          publie la carte de la vie associative, votre nom, votre photo de profil et votre rôle dans
+          les associations qui y figurent peuvent y être affichés, visibles de tous sans compte sur
+          le portail, jusqu'à la prochaine publication ou la suppression de votre compte, qui les en
+          retire.
         </dd>
       </div>
       <div>
@@ -381,17 +433,18 @@
           chez Lydia. Par défaut, rien ne lui est demandé sur son identité : l'auteur du formulaire
           peut lui demander son nom, son prénom et son adresse e-mail (chacun séparément), qui sont
           alors obligatoires, conservés avec la réponse et lus par ceux qui gèrent le formulaire
-          (liste des réponses et export) ; un membre connecté n'a jamais ces champs. Si l'adresse
-          e-mail est demandée, c'est elle qui est transmise à Lydia pour un paiement en ligne.
-          Sinon, l'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas conservée par
-          Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de retour (jamais le
-          lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse payante attend
-          son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC) à partir du
-          formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse
-          IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert uniquement à limiter à
-          trois les réponses en attente de paiement depuis un même réseau ; elle est effacée par une
-          tâche planifiée, dans les cinq minutes qui suivent le règlement, l'annulation ou
-          l'expiration de la réponse.
+          (liste des réponses et export). Il peut aussi lui demander sa promo et sa formation, son
+          statut (élève ou personnel) et son campus, conservés de la même façon ; un membre connecté
+          ne les saisit pas, ils sont lus sur son compte. Si l'adresse e-mail est demandée, c'est
+          elle qui est transmise à Lydia pour un paiement en ligne. Sinon, l'adresse e-mail saisie
+          pour payer est transmise à Lydia et n'est pas conservée par Canari. Pour un paiement en
+          ligne, Canari garde une empreinte du lien de retour (jamais le lien lui-même), qui permet
+          de consulter ce paiement. Tant qu'une réponse payante attend son paiement, elle porte une
+          empreinte calculée avec une clé secrète (HMAC) à partir du formulaire et du réseau de la
+          connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse IPv6. L'adresse elle-même
+          n'est pas conservée. Cette empreinte sert uniquement à limiter à trois les réponses en
+          attente de paiement depuis un même réseau ; elle est effacée par une tâche planifiée, dans
+          les cinq minutes qui suivent le règlement, l'annulation ou l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -418,7 +471,10 @@
           nom d'une personne ; rien sur un espace accessible par son seul lien) et le début du
           créneau. Ces notifications, message, lieu et début du créneau compris, sont supprimées au
           bout de 90 jours, comme toute notification dans l'application, y compris lorsque l'espace
-          a été supprimé entre-temps.
+          a été supprimé entre-temps. Quand vous demandez un lien d'abonnement à l'agenda, Canari
+          enregistre votre identifiant et l'agenda choisi (campus, formation ou association) jusqu'à
+          ce que vous révoquiez vos liens, que l'association soit supprimée ou que votre compte le
+          soit ; quiconque détient ce lien voit ce que vous voyez de cet agenda, et rien de plus.
         </dd>
       </div>
       <div>
@@ -469,10 +525,11 @@
           dont l'un a bloqué l'autre. La conversation garde une ligne « appel » (heure, durée), chiffrée
           comme vos messages. Pour un appel, notre serveur envoie aussi un avis d'appel entrant à chaque
           appareil d'un membre qui accepte les appels dans cette conversation, même si l'application est
-          fermée : il contient en clair le nom de l'appelant, le nom de la conversation s'il s'agit d'un
-          groupe, et les identifiants techniques de l'appel (sur Android ; sur iPhone, l'alerte affichée
-          est générique, « Appel entrant », sans nom), et sur les deux s'il s'agit d'un appel vidéo. Dans
-          cette version, un appel ne sonne que dans l'application ouverte.
+          fermée : il ne contient aucun nom, seulement les identifiants techniques de la conversation,
+          de l'appel et de l'appelant, s'il s'agit d'un appel vidéo et l'heure de fin de sonnerie ; votre
+          téléphone affiche lui-même le nom de l'appelant qu'il connaît déjà (sur iPhone, l'alerte envoyée
+          est générique, « Appel entrant »). L'avis qui arrête la sonnerie ne contient que l'identifiant
+          de l'appel et la raison de l'arrêt.
         </dd>
       </div>
       <div>
@@ -529,13 +586,16 @@
         <dt>Démineur</dt>
         <dd>
           Une partie « Libre » n'envoie rien. Pour une partie classée : la partie (sa grille, sa
-          taille, ses dates et son état) et, si vous gagnez, votre temps et votre nombre de coups.
-          Les classements, général et par promo, montrent à chaque membre connecté le nom, le
-          meilleur temps et le rang de chaque joueur classé ; le classement par promo montre aussi
-          la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure pas). Votre
-          profil affiche votre rang (badge « Démineur »). La modération peut retirer un score ou
-          exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur qui l'a
-          prononcée et sa date. Tout est supprimé avec votre compte.
+          taille, ses dates et son état) et, si vous gagnez, votre temps, votre nombre de coups et
+          le détail de chaque coup (ouverture ou drapeau, case et instant), conservé avec le score
+          pour pouvoir rejouer la partie : tout membre connecté peut rejouer la partie qui figure au
+          classement (votre meilleur temps), et seul vous, ou un administrateur, peut rejouer vos
+          autres victoires. Les classements, général et par promo, montrent à chaque membre connecté
+          le nom, le meilleur temps et le rang de chaque joueur classé ; le classement par promo
+          montre aussi la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure
+          pas). Votre profil affiche votre rang (badge « Démineur »). La modération peut retirer un
+          score ou exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur
+          qui l'a prononcée et sa date. Tout est supprimé avec votre compte.
         </dd>
       </div>
       <div>
@@ -570,7 +630,8 @@
           <tr>
             <td>Compte, profil, annuaire</td>
             <td
-              >Vous reconnaître, vous permettre de trouver et d'être trouvé par les autres membres</td
+              >Vous reconnaître, vous permettre de trouver et d'être trouvé par tout membre
+              connecté, grâce à l'annuaire des membres</td
             >
             <td>Exécution du service (6.1.b)</td>
           </tr>
@@ -779,6 +840,14 @@
   <!-- 6 -->
   <section id="retention">
     <h2>6. Durées de conservation</h2>
+    <p>{m.legal_privacy_retention_settings_note()}</p>
+    {#if retention.source === 'defaults'}
+      <p role="status"><strong>{m.legal_privacy_retention_defaults_notice()}</strong></p>
+    {:else if retention.source === 'cached'}
+      <p role="status">
+        <strong>{m.legal_privacy_retention_cached_notice({ date: readOn })}</strong>
+      </p>
+    {/if}
     <div class="legal-table-wrap">
       <table class="legal-table">
         <thead>
@@ -820,6 +889,10 @@
             <td>90 jours au plus</td>
           </tr>
           <tr>
+            <td>Trace d'un message privé envoyé (expéditeur, appareil, identifiant aléatoire)</td>
+            <td>90 jours au plus ; avant, avec la conversation ou le compte de l'expéditeur</td>
+          </tr>
+          <tr>
             <td>Messages de salon (chiffrés)</td>
             <td>365 jours, sauf messages épinglés ; ou jusqu'à leur suppression</td>
           </tr>
@@ -833,14 +906,25 @@
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
             <td>
-              90 jours sans consultation ; CanaReels de conversation : 30 jours. Les fichiers
-              envoyés avant octobre 2026, ou par une version de l'application antérieure, sont pour
-              l'instant conservés sans limite
+              {durationLabel(retention.days.idleFileDays)} sans consultation ; CanaReels de conversation
+              : {durationLabel(retention.days.chatReelDays)} après l'envoi. Les fichiers envoyés avant
+              octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
+              sans limite
             </td>
           </tr>
           <tr>
             <td>Publications, commentaires, médias des publications</td>
-            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : un an</td>
+            <td>
+              Jusqu'à leur suppression ou celle du compte ; CanaReels du fil :
+              {durationLabel(retention.days.reelDays)} après leur publication
+            </td>
+          </tr>
+          <tr>
+            <td>Rediffusion d'un direct (lorsque les rediffusions sont activées)</td>
+            <td>
+              {durationLabel(retention.days.liveReplayDays)} après la fin du direct, puis supprimée avec
+              sa vidéo ; ou avant, à sa suppression
+            </td>
           </tr>
           <tr>
             <td>Démineur : parties classées, scores, exclusions du classement</td>

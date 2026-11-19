@@ -25,7 +25,7 @@ measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner'
 to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
 generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
 (core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
-`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
 **The switch is flipped by the lead on dev, then production, only after [the readings
 below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
 the protocol, and is deleted when those readings are read and the switch is on in production.
@@ -59,13 +59,14 @@ on-disk state is BEHIND by the frames received since the last checkpoint. The th
 
 Three things are out of scope: commits, which `persistNow` checkpoints at once under any policy; this
 device's own sends, which are checkpointed on the send path; and the replay marks, which are already
-bound to the checkpoint (`commitPendingHistoryMarks`).
+bound to the checkpoint (staged into the state it writes, `stagePendingHistoryMarks`).
 
 **Why this is a decision and not a fix.** Skipping the checkpoint WEAKENS durability. A process
 death leaves `mls.bin` behind by up to N received generations. The MLS layer recovers from that, but
 three app-level consequences are not measured:
 
-1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`, `localStorage`). After a
+1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`; since KILL-2 it travels
+   inside the MLS state, so this item applies to the marks staged between checkpoints). After a
    crash it can say "read" for a frame the restored state could still read. The rows for those frames
    are written at the same drain end as today's checkpoint, so nothing new is lost. The open part is
    that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the
@@ -202,6 +203,14 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
    and every notification shown matches a message in the conversation.
 
 Either one failing keeps the switch `off` and reopens this section.
+
+### DECIDED 2026-11-14 - a member's removal by another member cancels the device proof
+
+Owner, 2026-11-14: *"Retiré = non prouvé"*. A commit by ANOTHER user that removes every leaf of a
+user cancels that user's sighting (`member_sightings.rs`), so an entry of theirs afterwards with no
+member's Add is NOT proven; a commit by the user's own device removing their own leaves cancels
+nothing. Built on #3519, with real-MLS tests both ways
+([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
 
 ### QUESTION - can an identity provider that stops answering exhaust anything in core-service? (2026-11-12)
 
@@ -462,7 +471,16 @@ waits on hardware like everything else iOS. Do not "fix" this by marking every m
 `.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
 Apple badge, and Apple reviews it.
 
-### DECISION OWED - naming the author of each line inside a salon's stacked notification
+### DECIDED (owner, 2026-11-14) - naming the author of each line inside a salon's stacked notification
+
+**Decided: the DEVICE names each line's author from the sender id - their nickname in that community,
+else their profile name from the phone's own copy - and no push carries a name** (owner, 2026-11-14:
+*"Tout pourrait etre donne par l'appareil et rien par le serveur"*). Neither shape below was taken.
+The per-line attribution has existed on the device since 2026-11-01 (`ChannelBannerAuthor` on Android,
+`channelBannerAuthor` in the iOS extension, `CanariSalonSpeaker` in `canari_push.mm`, each line its own
+Person / subtitle, from `display_names.json`, for a PROVEN author); the nickname is added by
+[chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)
+(`conversation_nicknames.json`). The text below is the question as it was asked.
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
 messages stacking one under another in a single banner. **The stacking already exists**;
@@ -488,7 +506,13 @@ Two shapes, and the choice is the user's:
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
 
-### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+### ~~QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on~~
+
+**ANSWERED 2026-11-17, by a fourth option.** The agreeing responder acks only when the ask carries the
+asker's proof of incompleteness (`incomplete: true` on the probe, answered by `history_cannot_repair`),
+so the ack costs nothing on the common path and the walk past an agreeing member advances on an
+answer rather than on a silence ([history-reconciliation](protocols/history-reconciliation.md#the-fix-the-walk-advances-on-an-answer-built-2026-11-17)).
+The text below is kept for why the other options were not taken.
 
 Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
 is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
@@ -576,27 +600,21 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
-## Which account a SECOND phone would carry, the day one is attached again
+## A group call holds one device per user (decided 2026-11-13, reversible)
 
-**Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
-temporarily on 2026-09-04; `adb devices` has listed only the Mi 9T (A1) since, which is what
-`state.mjs` reports as `A2 (9335) UNREACHABLE` - **that line is explained and is not a defect, so no
-session should spend time chasing the forward.**
+*The question (review of #3489): group-call media keys are per USER (`deriveSenderKey`,
+`<callId>|<userId>`), so two devices of one person in the same group call would seal under one key
+- one nonce space, and no receiver could tell the two apart.*
 
-The question it leaves: A2 is bound and addressable on port 9335, and **no account is assigned**. The
-peer's, or a third one? One line in the out-of-tree `names.mjs` decides it, and guessing is an
-identity invented by a tool rather than chosen by the person who owns the accounts.
-
-**It is worth answering BEFORE the hardware returns**, because it now overlaps something concrete:
-the third test account owed for first contact (NOTIF-17) would also be the obvious occupant of A2, so
-the two asks are one decision rather than two. See the table of what is owed to the user in
-[backlog](backlog.md).
-
-**Where it came from.** Item C1 of the harness tidy, which is otherwise complete and was deleted on
-2026-09-08 - its A and B sections shipped, its D items are the campaign order that
-[cross-client-campaign-resume](cross-client-campaign-resume.md) carries, and its E items are the
-standing bar now in `CLAUDE.md`. This was the only thing on the page that was neither done nor a
-duplicate.
+**Recommended and taken (reversible): one device per user in a group call - the second device's
+join REPLACES the first.** call-service already evicts a seated user's sibling device in p2p mode
+(`PeerLeft` to the replaced one, a new `PeerReady` to the others), so the server half holds today;
+the group client treats the replaced device as gone. The alternative - keys per DEVICE
+(`<callId>|<userId>|<deviceId>`) - changes the derivation and every receiver's key map, and buys a
+case (one person, two devices, one call) nobody asked for. Recorded in
+[calls](frontend/modules/calls.md#one-key-per-sender-wp-gc1-2026-11-13); the check that it holds end
+to end is [a backlog entry](backlog.d/group-calls-one-device-per-user.md). Reopen only if two devices
+of one user in one group call becomes a wanted case.
 
 ## Whether the three legal documents should be localized at all
 
@@ -622,31 +640,29 @@ binding text. Only the first costs nothing.
 **What must NOT happen is a session "fixing the lint" by machine-translating them.** That is the
 failure mode this entry exists to prevent.
 
-## Should a device that dropped a frame say so?
+## DECIDED 2026-11-14 by the owner ("Oui, par campus") - an institution's Personnel public reaches every staff account of its campuses
 
-Parked 2026-10-09 when the "twelve of sixteen messages fetched and dropped" entry was closed as a defect
-([campaign-measured-defects](protocols/campaign-measured-defects.md#twelve-of-sixteen-messages-fetched-and-dropped-the-hole-at-epoch-121-prod-2026-09-02)).
-Every cause that dropped frames silently is fixed, and the loss that remains is reported where it can be
-acted on (the hourly commit-log hole report on the server, the shortfall report on a partial restore on the
-client). The question is whether the USER should ever see that a frame was dropped on their device: the
-"SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
-machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
+**The answer (owner, 2026-11-14): "Oui, par campus".** A "Personnel" or "Tous" POST
+of an institution also opens to every staff account (a campus, no cursus) whose campus is the campus
+of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
+in `postVisibleToUserSql`, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
 
-## QUESTION - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
+**Decided for the agenda too (owner, 2026-11-19, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)):** an institution's calendar event with the public "Personnel" or "Tous" opens to every staff account whose campus is the campus of a TICKED space - the same door as posts, so an event for Saint-Etienne only reaches Saint-Etienne's staff only; entry [institution-events-reach-staff-by-campus](backlog.d/institution-events-reach-staff-by-campus.md). **What it replaced - the agenda.** The owner's answer is for POSTS. An institution's
+calendar event with "Personnel" still reaches only the staff who already have a door
+(`eventVisibleToUserSql` unchanged), although the question below said one answer would settle both:
+whether the same door opens on events waits for the owner.
 
-Asked by the owner on 2026-11-09 while deciding the live replays ([live-replays](live-replays.md)):
-*"un truc général pour toutes les vidéos du genre ? 90 s et vidéos verticales ?"* - whether camera
-CanaReels should move from 30 days to one year, or whether every vertical video of 90 s or less posted
-in the feed should become a CanaReel (and expire like one).
+**Decided 2026-11-19 for the institution as a whole too** (*"Oui, par campus"*, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)): the shop, the partnerships, the directory and an institution's lives open to the staff of the campuses its rules reach - [entry](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md). **What it was:** The door is per ITEM: it needs a chosen
+public. The association-level readers that the audiences audit of 2026-11-14 found with the same
+dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
+(`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
+and its posts and events with no reach (legacy) - ask whether the reader sees the ASSOCIATION, and
+carry no public. Opening an institution to every staff account of a campus its rules reach would
+widen all of them at once; it was not taken by default. (The agenda subscription link gives staff
+nothing of their campus either: it serves its holder's in-app agenda,
+[decided 2026-11-15](profiles-and-access.md#a-staff-accounts-subscription-shows-its-in-app-agenda-owner-2026-11-15).)
 
-**No such decision exists in the repository.** What holds today: a camera reel is at most 90 s
-([reels C4](services/reels.md)) and is kept **30 days** (`REEL_RETENTION_DAYS`, C6); a video posted
-from the gallery is a feed post and never expires, even when it is drawn full screen in CanaReels. An
-earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the owner's 2026-11-09
-question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
-is written until the owner answers. Live replays are not part of the question: they are 3 days.
-
-## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
+The question as it was asked:
 
 Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
 ([profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)): the public "Personnel" means "only staff (no
@@ -663,3 +679,16 @@ which would let the School address its staff in the app without naming each one?
 reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
 institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
 account with no membership, grant or follow.
+
+**The same question holds for an institution's calendar events (2026-11-13)**: their "Personnel" public
+has exactly the posts' meaning ([as built](profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13)),
+so one answer settles both, and widening would add the same disjunct to `eventVisibleToUserSql`.
+
+## Should the privacy policy describe named readers? (parked 2026-11-15)
+
+The privacy policy (`frontend/src/routes/legal/privacy/+page.svelte`) does not describe named readers at
+all - neither the read grants of 2026-10-07 nor the comments switch that narrows them. The register row
+C5 already says what they read ([register](compliance/register-of-processing.md)). Whether the public
+policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
+owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
+

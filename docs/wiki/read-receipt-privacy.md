@@ -13,7 +13,7 @@ listed below with its evidence, one defect was found and fixed, and nothing else
 | Mark | Column | Who sees it | Written by |
 | --- | --- | --- | --- |
 | the read RECEIPT | `channel_members."readMarks"` | every member of the salon ("Lu par" heads), via `channel.read` and `GET read-marks` | `advanceChannelReadMark` ONLY |
-| the private CLEAR | `channel_members."clearedMarks"` | the member's own devices | `clearWorkspaceUnread` ONLY ("Marquer tout comme lu", migration 082) |
+| the private CLEAR | `channel_members."clearedMarks"` | the member's own devices | `clearWorkspaceUnread` ("Marquer tout comme lu", migration 082) and `floorUnreadAtGrant` (a salon granted or made visible: the count starts there, owner 2026-11-16, [chat](frontend/modules/chat.md#a-salons-badge-starts-at-the-grant-owner-2026-11-16)) |
 
 The unread COUNT a device shows is the server's (`listUnreadCounts`: newer than the later of both
 marks, the membership and `UNREAD_TRACKED_SINCE_MS`) plus what landed live after it counted
@@ -203,4 +203,4 @@ What is NOT part of it, and stays where it lives:
   (notification level `mentions`, more than six lines): a receipt is a WATERMARK, read "up to", as a
   DM's is. Changing that is a product decision, not a defect of this chantier;
 - the "owed" readings of rows 5, 10 and 16 on dev and on the phones ([chat](frontend/modules/chat.md),
-  [backlog](backlog.md#owed-a-verification-and-nothing-else)).
+  [backlog](plan.md#readings-owed)).

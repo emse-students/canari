@@ -171,12 +171,12 @@ export const assertRowOwns = (target, rowId) => assertCampaignOwned(target, rowI
 
 /**
  * Mints the row's OWN group from `cx` (`rowGroupName`, swept by `debris.mjs`) and returns its name and
- * server id. `createGroup` records the name in the campaign ledger the moment the sidebar names it;
+ * server id. `members` are the display names of the (at least two) people the panel chooses. `createGroup` records the name in the campaign ledger the moment the sidebar names it;
  * the id is recorded beside it once the server answers, so a later deletion is matched by id.
  */
-export async function mintRowGroup(cx, rowId, creatorUserId) {
+export async function mintRowGroup(cx, rowId, creatorUserId, members) {
   const name = rowGroupName(rowId);
-  await createGroup(cx, name, { label: rowId });
+  await createGroup(cx, name, { label: rowId, members });
   let id = null;
   for (let i = 0; i < 40 && !id; i++) {
     id = liveGroupIdByName(name, creatorUserId);

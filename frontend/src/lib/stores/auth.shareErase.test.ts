@@ -29,7 +29,7 @@ describe('a sign-out erases the share into Canari', () => {
   });
 
   it('on the sign-out a member chooses', async () => {
-    await clearAuth();
+    await clearAuth('chosen');
     expect(erase).toHaveBeenCalledExactlyOnceWith('signed out');
     expect(discardOut).toHaveBeenCalledExactlyOnceWith('signed out');
   });

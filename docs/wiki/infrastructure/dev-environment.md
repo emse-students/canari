@@ -396,38 +396,32 @@ among the producers says nothing about the consumer.
 |---|---|---|
 | Stripe | no credentials, identifiers stripped | user, 2026-09-01: dev will not reach Stripe for now |
 | Lydia | the HOMOLOGATION pair, from `DEV_LYDIA_PROVIDER_TOKEN` / `DEV_LYDIA_PROVIDER_PRIVATE_TOKEN`; `LYDIA_ENV=homologation` is a literal in `docker-compose.dev.yml` and the manifest's `LYDIA_ENV` row is `skip` in dev (production renders it from its own `required` secret since 2026-10-23); the seed carries no Lydia identifier | user, 2026-10-04 - Lydia's sandbox moves no money, so a Lydia onboarding can be tried on dev. A missing `DEV_` secret is a `warn`, not a failure |
-| Push notifications | PERMITTED, no dev credentials yet | not a decision, just an absence: both halves are `warn`, so dev sends nothing until a credential is given. Nothing has to be CREATED for it - see below |
-| Mobile builds | phase 2 | a dev keystore and a dev bundle identifier are prerequisites, and they are the real blocker - not the push credentials |
+| Push notifications | WIRED and SENDING (measured 2026-11-14) | `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` set 2026-10-21, `DEV_APNS_VOIP_KEY_ID` / `_KEY_P8` / `_TEAM_ID` set 2026-10-23; dev chat-delivery logs `[PUSH_SEND] ... FCM sent batch pushed=1`, and a TestFlight pre-release receives notifications. See below |
+| Mobile builds | a pre-release (`X.Y.Z-alpha.N`) feeds the Play internal track and TestFlight, and those builds point at dev | the second package id (section 9) is still owed, so such a build REPLACES the production app on a device |
 | A `dev` branch | none - it existed for one day and was deleted 2026-09-03 | there is one branch. What reaches this estate is a `X.X.X-alpha.N` PRE-RELEASE published from it, and a run deploys exactly one estate - see the section on the pre-release target below |
 
-**Push is the one row that changed its mind, and the reason is worth keeping.** The three APNs values
-were first written `skip` alongside Stripe and Lydia, on the reading that a dev estate holding a copy
-of production could ring a real member's phone. It cannot, and the guard is not the missing
-credential: the copy truncated `push_token`, and since 2026-10-16 dev holds no production row at
-all - the reset verifies 0 push tokens - so dev holds no real device's token to send to. The manifest made the
-inconsistency visible by putting the two halves of push on adjacent lines - Android `warn`, iOS
-`skip`, one threat model, opposite dispositions - and `deploy-env.test.sh` now locks them EQUAL
-rather than locking either value, so the next person to move one has to move both.
+**Push on dev: what is wired, and how a reading uses it (2026-11-14).** Dev SENDS push notifications.
+Measured 2026-11-14: dev chat-delivery logs `[PUSH_SEND] ... FCM sent batch pushed=1`; the repository
+secrets `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` (2026-10-21) and `DEV_APNS_VOIP_KEY_ID`, `_KEY_P8`,
+`_TEAM_ID` (2026-10-23) exist and `serve-dev.yml` hands them to the estate; the owner confirms
+TestFlight pre-release builds receive notifications. A pre-release store build (Play internal
+track, TestFlight) points at dev, so a reading that needs a push to a killed or locked phone installs
+the pre-release, signs into dev, and sends from a second dev account - nothing to wait for and no
+console to visit. **A reading needing a push to a killed phone runs on dev.** (Reasons older pages gave
+for dev having no sender, "nothing has to be created at Firebase for dev", "mobile is phase 2", were
+true of 2026-09 and are superseded; the page history is in git.)
 
-`skip` means something narrower than "absent from dev": a credential whose USE reaches a third party
-that believes it is talking to production. Stripe charges a card, Lydia moves money, `CERCLE_API_KEY`
-makes another estate answer as though production asked. Push reaches devices this estate does not
-know about, which is a different sentence.
-
-**AND NOTHING HAS TO BE CREATED AT FIREBASE FOR DEV** (asked by the user, 2026-09-02). There is no
-web push in this app: the only file under `frontend/src` that mentions Firebase is
-`androidFcmManifest.test.ts`, a manifest assertion - no VAPID key, no FCM `getToken()`, no push
-handler in a service worker. Push exists exclusively in the native Tauri builds, and mobile is
-phase 2, so on the web-only dev estate a Firebase project would be dead weight;
-`FIREBASE_SERVICE_ACCOUNT_JSON` is `warn` for both estates and is not among the 14 `required`, which
-is why the first dev deploy came up without it. **If push is ever wanted on dev, the blocker is not
-Firebase but the IDENTIFIER**: the app has exactly one bundle id, `fr.emse.canari`, in
-`tauri.conf.json`, the Android `applicationId`/`namespace` and both iOS targets, so a dev build
-would REPLACE production's app on a device rather than sit beside it - that, not a project
-registration, is the expensive part. Production's own credential could then be handed to dev as
-`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` without risk, for the same reason the APNs rows are `warn`: dev
-holds no production row, so it has no production device to reach. An APNs auth key is issued
-per Apple TEAM rather than per app, so it needs no new key either.
+**What still bounds it.** Dev holds no production row - the copy's `push_token` was truncated and
+since 2026-10-16 the reset verifies 0 push tokens - so a dev notification can only reach a phone that
+has itself signed into dev; that, not an absent credential, is the guard, and `deploy-env.test.sh`
+locks the Android and iOS halves to ONE disposition (`warn`) so one platform cannot be testable
+while the other is not. `skip` means narrower than "absent from dev": a credential whose USE reaches a
+third party that believes it is talking to production (Stripe, Lydia, `CERCLE_API_KEY`). One thing
+is NOT proven by the above: a DEVELOPMENT-signed iOS build (the bench build, `aps-environment:
+development`, sandbox token) was refused by Firebase with `Invalid APNs credential` on 2026-10-01
+against the local estate; whether the `.p8` was uploaded in Firebase's development slot is not
+recorded, so that row stays in [backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+TestFlight builds use the production APNs environment and are not affected.
 
 ---
 
@@ -454,7 +448,8 @@ account instead of asking the gallery.
   pull request until it merges, so this page names the rule, not the file); the bench accounts' ids are
   not public, so they are named in `DEV_AVATAR_OVERRIDE_EXTRA`.
 - **Where `DEV_AVATAR_OVERRIDE_EXTRA` lives.** It is a GitHub secret named `DEV_AVATAR_OVERRIDE_EXTRA`
-  (the same repository-level secret store as every other `DEV_*` one, read by `serve-dev.yml`'s
+  (a secret of the `development` environment like every other `DEV_*` one since 2026-11-13,
+  [cicd](../cicd.md#where-a-secret-lives-and-why), read by `serve-dev.yml`'s
   `Render the dev environment` step), format `<user-id>=<file>.png,<user-id>=<file>.png` with each
   file one of the eight in the directory. It reaches the container through the env manifest row
   `AVATAR_OVERRIDE_EXTRA` (production `skip`, dev `warn`: optional, a warning when absent) and the
@@ -495,7 +490,7 @@ secret, and a silent gate is one nobody can debug.
 
 | job | where | what it does |
 |---|---|---|
-| `build-frontend` | GitHub runner | builds the frontend from the `DEV_*` secrets when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
+| `build-frontend` | GitHub runner | builds the frontend from the secrets of the `development` environment (`BASE_URL`, `AUTHENTIK_*`, `ANDROID_APP_LINK_SHA256`, dev's values under the bare names since 2026-11-13) when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
 | `build-docker-images` | GitHub runner | pushes every changed image, moving `:dev` rather than `:latest` |
 | `deploy-dev` | the server | renders `.env`, then runs [`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) |
 | `dev-reset` in [`scheduled.yml`](../../../.github/workflows/scheduled.yml) | the server | on demand, empties dev and loads the fictional seed |
@@ -685,16 +680,13 @@ that nobody reads a stale meaning into either.
 
 The tracked items live in [backlog](../backlog.md); this is the map. **Nothing here blocks the
 estate any more** - the three steps that did are numbered below, each recording HOW, because the
-how is what a rebuild would need. What remains is two capabilities dev deliberately does
-without.
+how is what a rebuild would need. What remains is what the list below names.
 
-**Still owed, and NOT blocking the estate** - each buys one capability dev does without:
+**Still owed, and NOT blocking the estate:**
 
-- a dev APNs key, for push. **FIREBASE OWES NOTHING** (settled with the user 2026-09-02): dev reuses
-  the existing `fr.emse.canari` Firebase app, so `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` is not a new
-  project. Both push rows are disposition `warn` in the manifest, so their absence has never blocked
-  a deploy - dev simply sends no notifications
-- a dev Android keystore, and where it is backed up; mobile is phase 2
+- a dev Android keystore, and where it is backed up; and the second package id of section 9 (a pre-release
+  currently replaces the production app on a device). Push is NOT among the owed items: dev sends it since
+  2026-10-21 (FCM) and 2026-10-23 (APNs VoIP key), measured 2026-11-14
 
 **The CD wiring is DONE** (2026-09-01), and it is section 8. `cd-dev.yml` is gone, deleted ahead of
 the unification rather than with it: its `push: branches: [dev]` trigger could never fire, but its
@@ -716,7 +708,8 @@ would need.**
    production's tunnel, so moving it before a dev deploy had been proved on `127.0.0.1:3080` would
    have turned a name serving production into a 502. The proof that unlocked it was a green
    **deploy** (the data job alone proves only the port), read as `build: dev.<sha7>`.
-2. **The `DEV_*` repository secrets. 12 of the 14 required ones were created on 2026-09-02** - the
+2. **The `DEV_*` secrets (repository-level when created; the `development` environment's since
+   2026-11-13, [cicd](../cicd.md#where-a-secret-lives-and-why)). 12 of the 14 required ones were created on 2026-09-02** - the
    three derived ones (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) and nine generated
    with `openssl rand`, none copied from production, plus `DEV_INTERNAL_SECRET` and
    `DEV_EXTERNAL_API_KEY`. The generated values exist in GitHub Secrets and, once dev has deployed
@@ -743,7 +736,7 @@ pre-release deploys dev and nothing else, a stable deploys production and nothin
 deploys neither. The three deploy files - `build.yml`, `serve-dev.yml` and `serve-prod.yml` - are
 `workflow_call` libraries carrying no `workflow_dispatch` at all, deliberately: a dispatch is a
 second door onto one machine. Do not re-open it as a design question
-([backlog](../backlog.md#devcanari-emsefr---the-two-things-that-outlived-the-chantier)).
+([backlog](../backlog.d/dev-canari-emse-fr-the-two-things-that-outlived-the-chantier.md)).
 
 **The dev OIDC client, and why it is not created here.** Authentik has one Canari application
 (provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six

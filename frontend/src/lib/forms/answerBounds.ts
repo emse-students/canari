@@ -3,6 +3,7 @@ import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
 import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
 import { productGridDefinitionMessage } from './productGridEditor';
 import { productGridRefusalMessage } from './productGridFill';
+import { FORM_CLOSE_BEFORE_OPEN, FORM_CLOSE_NOT_OPEN_YET } from './formWindow';
 
 /**
  * THE BOUNDS OF A FORM AND OF AN ANSWER, AND THE SENTENCE FOR EACH CODED REFUSAL OF A FORM.
@@ -45,6 +46,31 @@ export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
 export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
 /** A price grid splits a multiple-choice question into several groups (refused at save). */
 export const FORM_GRID_MULTIPLE_CHOICE_SPLIT = 'FORM_GRID_MULTIPLE_CHOICE_SPLIT';
+/**
+ * The form does not let its answers be changed (the switch is off, or it is anonymous).
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
+ */
+export const FORM_ANSWER_EDIT_OFF = 'FORM_ANSWER_EDIT_OFF';
+/**
+ * An edit changed a question that touches the price; `itemId` names it.
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
+ */
+export const FORM_ANSWER_LOCKED = 'FORM_ANSWER_LOCKED';
+/**
+ * The answer was cancelled or has expired: nothing left to change.
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
+ */
+export const FORM_ANSWER_NOT_EDITABLE = 'FORM_ANSWER_NOT_EDITABLE';
+/**
+ * No answer of the reader's under this id.
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
+ */
+export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
+/**
+ * A manager deleted an answer whose payment was received: refund or cancel it instead.
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
+ */
+export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
@@ -59,6 +85,10 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_closed();
     case FORM_FULL:
       return m.form_refusal_full();
+    case FORM_CLOSE_BEFORE_OPEN:
+      return m.form_closed_at_before_open();
+    case FORM_CLOSE_NOT_OPEN_YET:
+      return m.form_refusal_close_not_open_yet();
     case FORM_ANSWER_MISSING:
       return m.form_refusal_answer_missing();
     case FORM_ANSWER_TOO_LONG:
@@ -86,6 +116,15 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_guest_identity_changed();
     case FORM_GRID_MULTIPLE_CHOICE_SPLIT:
       return m.form_refusal_grid_multiple_choice_split();
+    case FORM_ANSWER_EDIT_OFF:
+      return m.form_refusal_answer_edit_off();
+    case FORM_ANSWER_LOCKED:
+      return m.form_refusal_answer_locked();
+    case FORM_ANSWER_NOT_EDITABLE:
+    case FORM_ANSWER_NOT_FOUND:
+      return m.form_refusal_answer_not_editable();
+    case FORM_ANSWER_PAID:
+      return m.form_refusal_answer_paid();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

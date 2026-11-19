@@ -132,8 +132,13 @@ export function typeExcludedFlags(kind: string): number {
  *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
  *   manage the payout-account onboarding must be explicitly granted this flag.
  * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in
- *   non-BDE associations (read through `spaces/bde.ts`: the BDE of a space, scoped to the
- *   associations reaching that space - MODERATE too since 2026-11-02, `bde-moderation.ts`).
+ *   non-BDE associations (read through `spaces/bde.ts`: the BDE of a space;
+ *   VALIDATE_EVENTS follows the spaces an event reaches, MANAGE_ASSO the associations it is the
+ *   PARENT of (WP-D2). MODERATE has two halves (`bde-moderation.ts`): what is published in the
+ *   name of an association it is the parent of, AND the people of every space it governs, with
+ *   their personal posts (`bdeModeratesUserSql`). In an INSTITUTION, MODERATE is not inert: it
+ *   moderates that institution's own content and no person, governing a space or not (owner,
+ *   2026-11-15, decisions 3 and 4; `institutionModeratesOwnSql`).
  */
 export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.POST_AS_ASSO |

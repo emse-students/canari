@@ -81,9 +81,54 @@ export function owesInvitationIn(userId: string, groupId: string): boolean {
   return Object.values(readAll(userId)).some((o) => o.groupId === groupId);
 }
 
-/** The key of one entry:a group holds one staged commit at a time, each on its own epoch. */
-function entryKey(groupId: string, baseEpoch: number): string {
-  return `${groupId}@${baseEpoch}`;
+/**
+ * The key of one entry: a group, an epoch and what is owed there. A RACE and a REFUSAL at the same
+ * epoch are different debts (one re-planned, one told), so they never share an entry; two gestures
+ * owed the same way at the same epoch do, merged ({@link recordOwedInvitation}).
+ */
+function entryKey(groupId: string, baseEpoch: number, cause: LostInvitationCause): string {
+  return cause === 'race' ? `${groupId}@${baseEpoch}` : `${groupId}@${baseEpoch}!${cause}`;
+}
+
+/** The stored key of the entry `owed` names, whatever key it was written under (an older build's). */
+function storedKeyOf(
+  all: Record<string, OwedInvitation>,
+  owed: Pick<OwedInvitation, 'groupId' | 'baseEpoch' | 'cause'>
+): string | undefined {
+  return Object.keys(all).find((k) => {
+    const o = all[k];
+    return o.groupId === owed.groupId && o.baseEpoch === owed.baseEpoch && o.cause === owed.cause;
+  });
+}
+
+/**
+ * Two gestures owed at the same epoch, as ONE entry: every person of both, each person's roster
+ * baseline kept (`rostered` names the people on the roster at their gesture, per person). A seat
+ * generation dates the departures the server checks for ONE gesture: kept only when both carry the
+ * same one, since an older one would date a person's earlier removal as a departure after their
+ * own, later gesture.
+ */
+function mergeOwed(earlier: OwedInvitation, later: OwedInvitation): OwedInvitation {
+  const users = [...new Set([...earlier.invitation.users, ...later.invitation.users])];
+  const rostered = [
+    ...new Set([...(earlier.invitation.rostered ?? []), ...(later.invitation.rostered ?? [])]),
+  ];
+  const seatGeneration =
+    earlier.invitation.seatGeneration === later.invitation.seatGeneration
+      ? earlier.invitation.seatGeneration
+      : undefined;
+  const reason = earlier.reason ?? later.reason;
+  return {
+    groupId: earlier.groupId,
+    baseEpoch: earlier.baseEpoch,
+    cause: earlier.cause,
+    invitation: {
+      users,
+      ...(earlier.invitation.rostered || later.invitation.rostered ? { rostered } : {}),
+      ...(seatGeneration !== undefined ? { seatGeneration } : {}),
+    },
+    ...(reason ? { reason } : {}),
+  };
 }
 
 function isOwed(v: unknown): v is OwedInvitation {
@@ -143,12 +188,19 @@ function writeAll(userId: string, all: Record<string, OwedInvitation>): void {
  * Records `owed` for `userId`, synchronously - the caller clears the stage right after. The same
  * lost commit recorded twice (a reload before its clear reached disk) is ONE entry.
  *
+ * AN ENTRY ALREADY OWED AT THAT EPOCH IS MERGED INTO, NEVER REPLACED ({@link mergeOwed}): an
+ * invitation owed on another device's add lock and a kept commit refused at the same base are two
+ * gestures, and writing the second over the first lost the first in silence. A merge of the same
+ * gesture twice is the gesture, so the reload case stays one entry.
+ *
  * @throws {@link OwedInvitationNotRecordedError} - the caller still clears the stage (a refused stage
  *   left in place blocks every commit of the group) and tells the member instead.
  */
 export function recordOwedInvitation(userId: string, owed: OwedInvitation): void {
   const all = readAll(userId);
-  all[entryKey(owed.groupId, owed.baseEpoch)] = owed;
+  const stored = storedKeyOf(all, owed);
+  if (stored !== undefined) all[stored] = mergeOwed(all[stored], owed);
+  else all[entryKey(owed.groupId, owed.baseEpoch, owed.cause)] = owed;
   writeAll(userId, all);
 }
 
@@ -158,12 +210,36 @@ export function listOwedInvitations(userId: string): OwedInvitation[] {
 }
 
 /**
- * The re-plan of `owed` concluded (whatever it came to): its entry leaves the record. A write that
- * fails leaves it in place - re-planned once more, which the confirmed tree answers - and says so.
+ * The re-plan of `owed` concluded (whatever it came to): THE PEOPLE IT COVERED leave the record, and
+ * the entry with them once nobody is left. A gesture merged into the entry while the re-plan ran - an
+ * invitation refused by the very lock the re-plan held - is not what concluded, and stays owed for
+ * the next drain. A write that fails leaves it all in place - re-planned once more, which the
+ * confirmed tree answers - and says so.
  */
 export function settleOwedInvitation(userId: string, owed: OwedInvitation): void {
   const all = readAll(userId);
-  delete all[entryKey(owed.groupId, owed.baseEpoch)];
+  const stored = storedKeyOf(all, owed);
+  if (stored === undefined) return;
+  const covered = new Set(owed.invitation.users);
+  const entry = all[stored];
+  const users = entry.invitation.users.filter((u) => !covered.has(u));
+  if (users.length === 0) {
+    delete all[stored];
+  } else {
+    console.log(
+      `[INVITE_OWED] ${owed.groupId.slice(0, 8)}... the re-plan at epoch ${owed.baseEpoch} concluded for ${covered.size} person(s); ${users.length} invited meanwhile stay owed`
+    );
+    all[stored] = {
+      ...entry,
+      invitation: {
+        ...entry.invitation,
+        users,
+        ...(entry.invitation.rostered
+          ? { rostered: entry.invitation.rostered.filter((u) => !covered.has(u)) }
+          : {}),
+      },
+    };
+  }
   try {
     writeAll(userId, all);
   } catch (e) {

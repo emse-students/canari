@@ -119,7 +119,12 @@ RESET lock_timeout;`
     // The two columns of `associations` the sweep's key test reads, and nothing else of it.
     await ds.query(
       `CREATE TABLE associations (id uuid PRIMARY KEY, "lydiaAccountId" varchar(255),
-         "lydiaBusinessKeyCiphertext" text)`
+         "lydiaBusinessKeyCiphertext" text, "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
+    );
+    // The bridge's table (lydia-account-bridge.ts): the key test reads every Business held.
+    await ds.query(
+      `${readFileSync(join(__dirname, '../migrations/167_lydia_account_bridge.sql'), 'utf8')}
+RESET lock_timeout;`
     );
     await ds.query(
       `INSERT INTO associations VALUES ($1, $2, 'sealed'), ('00000000-0000-4000-8000-0000000000c9', $3, NULL)`,
@@ -139,7 +144,13 @@ RESET lock_timeout;`
       associationsService,
       { grantCotisant: jest.fn() } as any,
       purchaseRecordService,
-      { build: async () => ({ answers: {} }) } as any,
+      {
+        build: async () => ({
+          cursus: [{ promo: null, formation: null }],
+          cotisationTiers: [],
+          answers: {},
+        }),
+      } as any,
       ds.getRepository(FormRespondent),
       {} as any,
       { enabled: () => false } as any,
@@ -261,10 +272,10 @@ RESET lock_timeout;`
     const formId = await paidForm();
     const ended = await pendingAnswer(formId, 1, 31);
     const live = await pendingAnswer(formId, 2, 10);
-    // A Stripe-era id core would refuse: never sent.
-    const stripe = await pendingAnswer(formId, 3, 40);
+    // A historic `cs_...` id core would refuse: never sent.
+    const foreignId = await pendingAnswer(formId, 3, 40);
     await ds.query(`UPDATE submissions SET "stripeSessionId" = 'cs_test_x' WHERE id = $1`, [
-      stripe,
+      foreignId,
     ]);
 
     await sweep.sweepFormPayments(await cutoffNow());
@@ -274,7 +285,7 @@ RESET lock_timeout;`
     expect(verifiedReads).toBe(1);
     expect(await status(ended)).toBe('paid');
     expect(await status(live)).toBe('pending');
-    expect(await status(stripe)).toBe('pending');
+    expect(await status(foreignId)).toBe('pending');
 
     // Idempotent from the row: the settled one left `pending`, so the next tick selects nothing.
     await sweep.sweepFormPayments(await cutoffNow());

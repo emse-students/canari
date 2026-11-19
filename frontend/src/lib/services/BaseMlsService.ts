@@ -1,4 +1,5 @@
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
@@ -47,6 +48,7 @@ import {
   isTerminalWelcomeRefusal,
   whyWelcomeUndeliverable,
   type RefusedAdmit,
+  type WelcomeAddressability,
   ADD_LOCK_WAIT_BOUND_MS,
   boundAddLockWait,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -55,22 +57,35 @@ import {
   persistMlsStructuralCheckpoint,
   scheduleOutboundMlsPersist,
   noteInboundMlsFrame,
+  activeMlsStatePersister,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import {
   MAX_BURN_GENERATIONS,
   OwedSendBurnFailedError,
-  commitPersisted,
   forgetSendRatchetEntries,
   noteFrameEmitted,
+  readEmitted,
   resetSendRatchetLedger,
   sendRatchetDebt,
   sendRatchetEntries,
   sendRatchetKey,
-  snapshotEmitted,
+  stagePersisted,
 } from '$lib/mls-client/sendRatchetLedger';
+import {
+  closeStateLedgers,
+  hydrateStateLedgers,
+  restageStateLedgers,
+  restageWholeStateLedgerView,
+  stateLedgersHydrated,
+  STATE_LEDGER,
+  takeStagedStateLedgers,
+  type StateLedgerChanges,
+} from '$lib/mls-client/stateLedgers';
+import { adoptLegacyLedgers } from '$lib/mls-client/stateLedgerMigration';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
   MlsStateUnreadableNowError,
@@ -94,6 +109,7 @@ import {
   verdictAdmits,
   type DeviceEvent,
   type DevicePin,
+  type MembershipEvidence,
   type KeyPackageVerdict,
 } from '$lib/mls-client/deviceTrust';
 import {
@@ -159,10 +175,15 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership, leaderLockReleasedForUnload } from '$lib/mls-client/tabLeader';
-import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import {
+  lostLeadSinceLoad,
+  promotedSinceLoad,
+  refusesCommitsHere,
+} from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
+  MlsCheckpointNotWrittenError,
   MlsStateWriteRefusedError,
   sameBytes,
   toBase64,
@@ -176,7 +197,11 @@ import {
   REFUSED_ROTATION_RELOADS_KEY,
   forgetRefusedRotationReloads,
 } from '$lib/mls-client/refusedRotationReloads';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  TransportFailureError,
+  transportFailureEvidence,
+} from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
@@ -190,10 +215,11 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
 import {
-  commitPendingHistoryMarks,
+  forgetSeenCipherCaches,
   noteFrameConsumed,
-  snapshotPendingHistoryMarks,
+  stagePendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { Log } from '$lib/utils/Log';
@@ -471,6 +497,32 @@ function oneDeviceAddResult(
     : { welcome: result.welcome, ratchetTree: result.ratchetTree };
 }
 
+/**
+ * A DRAIN'S IDS, HELD UNTIL THE CHECKPOINT THAT COVERS THEM, WHERE THE DISK IS THEIR ONLY COPY
+ * (review of #3321, 2026-11-14).
+ *
+ * An ack deletes the row from the server. For a COMMIT or a WELCOME that row is the only way back to
+ * the epoch it moves to, so it is acknowledged only once a landed checkpoint holds it: a kill, a
+ * hand-over or a freeze between the ack and the checkpoint used to reload a state behind a commit
+ * the server no longer had. For an APPLICATION frame the history archive is a second copy (the replay
+ * reads it), so it is acknowledged at the drain's end as it always was - unless this document no
+ * longer owns the MLS state by then (a hand-over, a freeze, a promotion reload): its checkpoints are
+ * refused (`persistCheckpoint`), so it too waits for coverage, which then never comes. Withheld, a row
+ * stays on the server and the tab that writes the state reads it; an id a LANDED checkpoint already
+ * holds is acknowledged whatever the lead, so the new leader never meets a frame its disk has spent.
+ */
+interface DrainAckHold {
+  /** Per id, {@link BaseMlsService.inboundApplied} once it was applied; absent = changed nothing. */
+  applied: Map<string, number>;
+  /** The commits and Welcomes among the ids. */
+  structural: Set<string>;
+  /**
+   * The drain's checkpoint, asked only by an id that needs it (memoised, and only once the drain's
+   * window has closed): resolves when it lands, rejects when it is refused or fails.
+   */
+  covered: () => Promise<void>;
+}
+
 export abstract class BaseMlsService implements IMlsService {
   // ── Platform identity ─────────────────────────────────────────────────────
   protected readonly platform: 'web' | 'tauri';
@@ -507,7 +559,10 @@ export abstract class BaseMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
-  protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
+  protected welcomeProcessedCallback: ((groupId?: string, installed?: boolean) => void) | null =
+    null;
+  /** The groups whose Welcome the handler INSTALLED, read once by the announcement (see below). */
+  private readonly welcomesInstalled = new Set<string>();
   /** @see onWelcomeDelivered */
   private welcomeDeliveredListener: ((delivered: DeliveredWelcome) => void) | null = null;
 
@@ -768,6 +823,11 @@ export abstract class BaseMlsService implements IMlsService {
       via: DeliveryChannel;
       /** The {@link ackSerial} of the request that acknowledged it; absent until one is issued. */
       ackSerial?: number;
+      /**
+       * Set while a drain's hold WITHHELD its ack for want of a landed checkpoint covering it
+       * ({@link DrainAckHold}): what it had applied, and whether it was a commit or a Welcome.
+       */
+      heldForDisk?: { applied: number; structural: boolean };
     }
   >();
 
@@ -842,11 +902,17 @@ export abstract class BaseMlsService implements IMlsService {
     // BEFORE the impl, not after: `_initImpl` itself checkpoints on several of its recovery paths
     // (fresh start, identity rotation), and those writes need the key too.
     this.currentDeviceKeyB64 = deviceKeyB64;
-    const p = this._initImpl(userId, deviceKeyB64, state, opts).then(() =>
-      // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send racing
-      // the repair would be encrypted at the very generation the repair exists to move past.
-      this.reconcileSendRatchets()
-    );
+    // A state is about to be loaded: whatever this document knew of the ledgers describes another
+    // copy of it, until `openStateLedgers` reads what the loaded one carries.
+    closeStateLedgers(userId);
+    const p = this._initImpl(userId, deviceKeyB64, state, opts)
+      // The ledgers the opened state carries, before anything reads one or sends.
+      .then(() => this.openStateLedgers())
+      .then(() =>
+        // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send
+        // racing the repair would be encrypted at the very generation the repair exists to move past.
+        this.reconcileSendRatchets()
+      );
     this.initPromise = p;
     try {
       await p;
@@ -992,6 +1058,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.userId = userId;
     this.delivery.userId = userId;
     await this.resolveDeviceId(userId);
+    closeStateLedgers(userId);
     try {
       await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
@@ -1012,7 +1079,9 @@ export abstract class BaseMlsService implements IMlsService {
     // ratchet burn happens before anything can send - a recovery opens a snapshot that may sit
     // behind sends the app made but never checkpointed (killed after them, PIN changed elsewhere),
     // and without the burn the next send re-used a spent generation.
-    const ready = this.afterStateOpened().then(() => this.reconcileSendRatchets());
+    const ready = this.afterStateOpened()
+      .then(() => this.openStateLedgers())
+      .then(() => this.reconcileSendRatchets());
     this.initPromise = ready;
     try {
       await ready;
@@ -1703,7 +1772,11 @@ export abstract class BaseMlsService implements IMlsService {
     this.historyRequestCallback = callback;
   }
 
-  onWelcomeProcessed(callback: (groupId?: string) => void): void {
+  noteWelcomeInstalled(groupId: string): void {
+    this.welcomesInstalled.add(groupId);
+  }
+
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void {
     this.welcomeProcessedCallback = callback;
   }
 
@@ -1741,6 +1814,32 @@ export abstract class BaseMlsService implements IMlsService {
     return handle;
   }
 
+  /** Windows removed from {@link openBulkIngests} whose observers are still closing. */
+  private readonly closingBulkIngests = new Set<BulkIngestHandle>();
+
+  /**
+   * Waiters of {@link whenBulkIngestsClosed}, each with the windows it is still behind. Released by
+   * the close of the last of THOSE windows - never held by one opened after it asked.
+   */
+  private bulkIngestsClosedWaiters: Array<{ behind: Set<BulkIngestHandle>; release: () => void }> =
+    [];
+
+  whenBulkIngestsClosed(): Promise<void> {
+    // THE WINDOWS OPEN NOW, NOT THE ONES TO COME (third review of #3321). The caller is behind rows a
+    // window already holds; a window opened after it asked holds rows it never asked about, and
+    // waiting for "none open" would let a drain that restarts behind each close hold it for good.
+    const behind = new Set<BulkIngestHandle>([
+      ...this.openBulkIngests.keys(),
+      ...this.closingBulkIngests,
+    ]);
+    if (behind.size === 0) return Promise.resolve();
+    // Said only when it waits: the line names what the caller is behind.
+    console.log(
+      `[QUEUE] waiting for ${behind.size} open ingest window(s) to close before going on`
+    );
+    return new Promise<void>((release) => this.bulkIngestsClosedWaiters.push({ behind, release }));
+  }
+
   async endBulkIngest(handle: BulkIngestHandle): Promise<void> {
     const phase = this.openBulkIngests.get(handle);
     if (!phase) {
@@ -1750,22 +1849,33 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     this.openBulkIngests.delete(handle);
-    // Replay the exact phase the matching open used: start and end can never disagree.
-    //
-    // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
-    // state persister and the UI render buffer - and they were being awaited in one bare loop, so
-    // the FIRST to reject cancelled every one after it. The persister is registered first and
-    // rethrows when a checkpoint fails, which would have left the UI observer's window open
-    // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
-    // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
-    // buffered instead of rendered and is then discarded by the next drain. A failed disk write
-    // must cost a checkpoint, never the message pipeline.
-    for (const observer of this.bulkIngestObservers) {
-      try {
-        await observer.onBulkIngestEnd(phase);
-      } catch (e) {
-        console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+    this.closingBulkIngests.add(handle);
+    try {
+      // Replay the exact phase the matching open used: start and end can never disagree.
+      //
+      // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
+      // state persister and the UI render buffer - and they were being awaited in one bare loop, so
+      // the FIRST to reject cancelled every one after it. The persister is registered first and
+      // rethrows when a checkpoint fails, which would have left the UI observer's window open
+      // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
+      // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
+      // buffered instead of rendered and is then discarded by the next drain. A failed disk write
+      // must cost a checkpoint, never the message pipeline.
+      for (const observer of this.bulkIngestObservers) {
+        try {
+          await observer.onBulkIngestEnd(phase);
+        } catch (e) {
+          console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+        }
       }
+    } finally {
+      this.closingBulkIngests.delete(handle);
+      this.bulkIngestsClosedWaiters = this.bulkIngestsClosedWaiters.filter((waiter) => {
+        waiter.behind.delete(handle);
+        if (waiter.behind.size > 0) return true;
+        waiter.release();
+        return false;
+      });
     }
   }
 
@@ -1819,6 +1929,91 @@ export abstract class BaseMlsService implements IMlsService {
   private ackInFlight: Promise<void> | null = null;
 
   /**
+   * How many inbound frames this document has APPLIED to its MLS state (a drained frame whose handler
+   * returned). Each drained id is tagged with the count after it ({@link DrainAckHold.applied}).
+   */
+  private inboundApplied = 0;
+
+  /**
+   * The highest {@link inboundApplied} a LANDED checkpoint of this document holds: read before the
+   * checkpoint exports (so what it claims is in the export, never more) and raised once its write
+   * lands (`persistCheckpoint`). A refused or failed write raises nothing.
+   */
+  private durableApplied = 0;
+
+  /**
+   * Of a drain's ids, the ones that may be acknowledged now - waiting, where one needs it, for the
+   * drain's own checkpoint ({@link DrainAckHold}). The rest are withheld: left on the server, noted
+   * unacknowledged, and said in ONE line.
+   */
+  private async idsDurableEnoughToAck(ids: string[], hold: DrainAckHold): Promise<string[]> {
+    const covered = (id: string) => (hold.applied.get(id) ?? 0) <= this.durableApplied;
+    const needsDisk = (id: string) => hold.structural.has(id) || refusesCommitsHere();
+    if (ids.some((id) => !covered(id) && needsDisk(id))) {
+      try {
+        await hold.covered();
+      } catch {
+        // A refused or failed checkpoint has said so itself; what it did not cover is read below.
+      }
+    }
+    const withheld = new Set(ids.filter((id) => !covered(id) && needsDisk(id)));
+    for (const id of ids) {
+      const known = this.deliveries.get(id);
+      if (!known) continue;
+      // REMEMBERED ON THE DELIVERY, so the re-ack of its repeat waits for the same coverage
+      // ({@link reAckHold}); forgotten once it is acknowledged.
+      if (withheld.has(id)) {
+        known.heldForDisk = {
+          applied: hold.applied.get(id) ?? 0,
+          structural: hold.structural.has(id),
+        };
+      } else {
+        delete known.heldForDisk;
+      }
+    }
+    if (withheld.size === 0) return ids;
+    for (const id of withheld) this.unacknowledged.add(id);
+    console.info(
+      `[ACK] ${withheld.size} id(s) not acknowledged: no landed checkpoint holds what they changed (` +
+        (refusesCommitsHere()
+          ? `this tab no longer owns the MLS state, ${getTabLeadership()}`
+          : 'the checkpoint covering them did not land') +
+        ') - the rows stay on the server for the tab that writes the state'
+    );
+    return ids.filter((id) => !withheld.has(id));
+  }
+
+  /**
+   * Resolves once a checkpoint holding everything applied so far has landed; rejects when it could
+   * not land. Through the session's persister when there is one - it coalesces with the drain's own
+   * flush, which `endBulkIngest` has just started - and the checkpoint itself before the pipeline
+   * exists.
+   */
+  private checkpointCoveringNow(): Promise<void> {
+    const persister = activeMlsStatePersister();
+    return persister ? persister.flushEncrypted() : this.persistCheckpoint();
+  }
+
+  /**
+   * The hold a REPEAT of a withheld id is re-acknowledged under (second review of #3321).
+   *
+   * A withheld row stays on the server, so the next pull lists it again; the drain had settled it
+   * `done`, so {@link admitDelivery} drops the repeat and acknowledges it once more. Without a hold
+   * that re-ack deleted the row while still no landed checkpoint held the commit it carried - the
+   * very window the drain's hold had just refused. It waits for a checkpoint covering it, asked now.
+   */
+  private reAckHold(
+    queuedMessageId: string,
+    held: { applied: number; structural: boolean }
+  ): DrainAckHold {
+    return {
+      applied: new Map([[queuedMessageId, held.applied]]),
+      structural: held.structural ? new Set([queuedMessageId]) : new Set(),
+      covered: () => this.checkpointCoveringNow(),
+    };
+  }
+
+  /**
    * Acknowledges message ids and announces the request, so a pull can refuse to overtake it.
    *
    * Every ack in this class goes through here. Callers keep `void`-ing it - the drain must not wait
@@ -1827,8 +2022,10 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @param messageIds the ids to acknowledge; EMPTY is meaningful - `ackMessagesWithRetry` merges
    *   the ids persisted by a failed earlier attempt, so an empty call is the flush of those.
+   * @param hold a drain's ids, held until the checkpoint that covers them where they need it
+   *   ({@link DrainAckHold}); absent for an ack whose row changes no state (a repeat, the flush).
    */
-  private announceAck(messageIds: string[]): Promise<void> {
+  private announceAck(messageIds: string[], hold?: DrainAckHold): Promise<void> {
     const previous = this.ackInFlight;
     // NUMBERED IN THE TICK IT IS ASKED FOR, like the chaining below, so a pull's flush and the rows
     // of a drain ack are ordered exactly as their requests will be.
@@ -1859,11 +2056,19 @@ export abstract class BaseMlsService implements IMlsService {
         for (const id of messageIds) this.unacknowledged.add(id);
         return;
       }
+      // AN ACK NEVER RUNS AHEAD OF THE DISK WHERE THE DISK IS THE ONLY COPY ({@link DrainAckHold}).
+      let ids = messageIds;
+      if (hold) {
+        ids = await this.idsDurableEnoughToAck(messageIds, hold);
+        if (ids.length === 0) return;
+      }
       try {
-        await this.delivery.ackMessages(messageIds);
+        await this.delivery.ackMessages(ids);
         // One success covers every id a failed attempt had persisted, because the retry merged them
         // into this payload - so the whole set goes, not just the ids named here.
         this.unacknowledged.clear();
+        // ...except the ids this call WITHHELD, which no request has carried.
+        for (const id of messageIds) if (!ids.includes(id)) this.unacknowledged.add(id);
       } catch (e) {
         for (const id of messageIds) this.unacknowledged.add(id);
         throw e;
@@ -2712,9 +2917,11 @@ export abstract class BaseMlsService implements IMlsService {
       console.log(`${line}. Further ones of this shape are counted, not printed`);
     }
     if (reAck) {
-      void this.announceAck([queuedMessageId]).catch((e) =>
-        console.warn('[ACK] re-ack of a repeated delivery failed:', e)
-      );
+      const held = known.heldForDisk;
+      void this.announceAck(
+        [queuedMessageId],
+        held ? this.reAckHold(queuedMessageId, held) : undefined
+      ).catch((e) => console.warn('[ACK] re-ack of a repeated delivery failed:', e));
     }
     return false;
   }
@@ -2884,6 +3091,9 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     const ackIds: string[] = [];
+    /** What each acknowledged id had applied, and which changed the group ({@link DrainAckHold}). */
+    const ackApplied = new Map<string, number>();
+    const ackStructural = new Set<string>();
     /** Groups whose Welcome landed in this drain: the one event that unblocks an unknown group. */
     const welcomedGroups: string[] = [];
     /** This drain's own window, closed by handle so an overlapping window cannot be closed instead. */
@@ -2939,10 +3149,14 @@ export abstract class BaseMlsService implements IMlsService {
             isCommit: msg.isCommit,
             hasQueuedId: Boolean(msg.queuedMessageId),
           };
+          // APPLIED: the handler returned, so its change is in this document's MLS state now.
+          this.inboundApplied += 1;
           const acked = shouldAckAfterSuccess(cbResult, flags) && !!msg.queuedMessageId;
           this.settleDelivery(msg.queuedMessageId, acked, msg.channel);
           if (acked) {
             ackIds.push(msg.queuedMessageId!);
+            ackApplied.set(msg.queuedMessageId!, this.inboundApplied);
+            if (msg.isCommit || msg.isWelcome) ackStructural.add(msg.queuedMessageId!);
           } else if (flags.hasQueuedId && cbResult === false) {
             // The handler already recorded WHY, against the group, in `unackedFrames`. Nothing to
             // note here: what discharges it is an event, not this drain ending.
@@ -2957,6 +3171,9 @@ export abstract class BaseMlsService implements IMlsService {
 
           if (msg.isWelcome && groupId) {
             this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
+            // Read ONCE, whatever follows: a mark left behind would make the next redelivery of
+            // this group's Welcome look like a fresh join.
+            const installed = this.welcomesInstalled.delete(groupId);
             // A KEY GROUP'S WELCOME IS NOT A CONVERSATION'S, and the listener below is the
             // conversation layer: it writes a sidebar row for any group it does not hold one for,
             // then restores, reconciles and loads history for it. A key group is in the set this
@@ -2970,7 +3187,7 @@ export abstract class BaseMlsService implements IMlsService {
                 `[QUEUE] Welcome for key group ${groupId.slice(0, 8)}... - not announced to the conversation layer`
               );
             } else {
-              this.welcomeProcessedCallback?.(groupId);
+              this.welcomeProcessedCallback?.(groupId, installed);
               // A re-admission's Welcome is what makes a `pending` conversation active again: a
               // lost invitation that waited for it can be re-planned now.
               this.replanOwedInvitationsIn(groupId, 'Welcome processed');
@@ -3003,6 +3220,10 @@ export abstract class BaseMlsService implements IMlsService {
             // is still unknown, so the handler records it against that group and the Welcome that
             // eventually lands re-fetches it - the seam that exists for exactly this.
             if (groupId) this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome failed');
+            // And the install mark is read here too - ONCE, whatever happened: a handler that threw
+            // after installing announces nothing, and its mark left behind would make the next
+            // redelivery look like a fresh join. The register owed is durable and asks anyway.
+            if (groupId) this.welcomesInstalled.delete(groupId);
           } else {
             const exFlags = {
               isWelcome: msg.isWelcome,
@@ -3039,39 +3260,56 @@ export abstract class BaseMlsService implements IMlsService {
           drainIngest = this.beginBulkIngest({ bufferUi: true, showOverlay: pendingCount > 1 });
         },
         onDrainEnd: async () => {
-          if (ackIds.length > 0) {
-            logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
-            // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the
-            // pull `refetchFramesLeftBehind` starts a few lines below must not overtake it.
-            void this.announceAck(ackIds).catch((e) => console.warn('[ACK] drain ack failed:', e));
-          }
+          // THE DRAIN'S CHECKPOINT, asked only by an id that needs it and only once the window has
+          // closed (the `finally` below), so it coalesces with the flush `endBulkIngest` started.
+          // The id waits for it inside the ack chain, never here: the drain never waits on a disk.
+          let windowClosed!: () => void;
+          const closed = new Promise<void>((resolve) => {
+            windowClosed = resolve;
+          });
+          let checkpoint: Promise<void> | null = null;
+          const covered = () => (checkpoint ??= closed.then(() => this.checkpointCoveringNow()));
+          try {
+            if (ackIds.length > 0) {
+              logMlsMetric({ kind: 'queue_ack', platform: this.platform, count: ackIds.length });
+              // ANNOUNCED, still not awaited: the drain must not block on a round trip, and the
+              // pull `refetchFramesLeftBehind` starts a few lines below must not overtake it.
+              void this.announceAck(ackIds, {
+                applied: ackApplied,
+                structural: ackStructural,
+                covered,
+              }).catch((e) => console.warn('[ACK] drain ack failed:', e));
+            }
 
-          // A Welcome landing is the proof that frames buffered for an unknown group can now be
-          // read. `releaseWelcomeBuffer` replays the ones this session buffered in memory; this
-          // asks the server for the ones it left unacknowledged in earlier drains.
-          if (welcomedGroups.length > 0) {
-            this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
-          }
-          // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
-          // ack, so the server cannot list again a row this drain applied. Not while a pull is still
-          // fetching (its end issues it), nor while a row a pull listed is still queued here - a
-          // commit holding it, or a Welcome it is parked behind: unacknowledged, it would be listed
-          // again. The drain that applies it ends here once more, and issues it then.
-          this.issueOwedPull('drain end');
+            // A Welcome landing is the proof that frames buffered for an unknown group can now be
+            // read. `releaseWelcomeBuffer` replays the ones this session buffered in memory; this
+            // asks the server for the ones it left unacknowledged in earlier drains.
+            if (welcomedGroups.length > 0) {
+              this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
+            }
+            // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
+            // ack, so the server cannot list again a row this drain applied. Not while a pull is still
+            // fetching (its end issues it), nor while a row a pull listed is still queued here - a
+            // commit holding it, or a Welcome it is parked behind: unacknowledged, it would be listed
+            // again. The drain that applies it ends here once more, and issues it then.
+            this.issueOwedPull('drain end');
 
-          finishQueueDrainBench(ackIds.length);
-          if (drainIngest === null) {
-            // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
-            // start is a scheduler that broke that contract - and there is no window to close.
-            console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
-            return;
+            finishQueueDrainBench(ackIds.length);
+            if (drainIngest === null) {
+              // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
+              // start is a scheduler that broke that contract - and there is no window to close.
+              console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
+              return;
+            }
+            const closing = drainIngest;
+            drainIngest = null;
+            await this.endBulkIngest(closing);
+            // AFTER the window closes: a contact line is a row like any other, and the rows of the
+            // drain are flushed first. Not awaited - a notice must never hold the next drain.
+            void this.handOverDeviceEvents('drain end');
+          } finally {
+            windowClosed();
           }
-          const closing = drainIngest;
-          drainIngest = null;
-          await this.endBulkIngest(closing);
-          // AFTER the window closes: a contact line is a row like any other, and the rows of the
-          // drain are flushed first. Not awaited - a notice must never hold the next drain.
-          void this.handOverDeviceEvents('drain end');
         },
       }
     );
@@ -3343,7 +3581,8 @@ export abstract class BaseMlsService implements IMlsService {
           // NOT for a deadline (`RequestDeadlineError`, e.g. the token refresh's): `trackedFetch`
           // already counts that one towards `STALLS_BEFORE_UNREACHABLE`, and one expiry is a slow
           // moment, not a dead link. The page itself answering clears it (`pullPendingMessagesJson`).
-          if (e instanceof TransportFailureError) connectivity.notifyServerUnreachable();
+          if (e instanceof TransportFailureError)
+            connectivity.notifyServerUnreachable(transportFailureEvidence(e));
         } else {
           console.error(
             `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
@@ -3669,8 +3908,9 @@ export abstract class BaseMlsService implements IMlsService {
       return inFlight.done;
     }
     const done = (async () => {
+      let addressability: WelcomeAddressability | null;
       try {
-        await this.delivery.sendWelcome(
+        addressability = await this.delivery.sendWelcome(
           welcomeBytes,
           targetUserId,
           groupId,
@@ -3700,6 +3940,7 @@ export abstract class BaseMlsService implements IMlsService {
         userId: targetUserId,
         deviceId: targetDeviceId,
         welcome: welcomeBytes,
+        addressability,
       });
     })();
     const entry = { welcome: welcomeBytes, done };
@@ -4153,17 +4394,16 @@ export abstract class BaseMlsService implements IMlsService {
       const settledBefore = this.keyPackageRoundsSettled;
       // NEVER LEARN BY A 404 WHAT THE CLIENT ALREADY KNOWS: this device's id was MINTED in this
       // process (`stateWasExpected` false - no id was stored before this boot, read from durable
-      // state by `resolveDeviceId`), so its whole life is this process, no round of it has settled
-      // yet and one is running: its FIRST publication is in flight and the server cannot hold a
-      // package of it. A RETURNING device (an id stored before this boot) is never skipped - its
+      // state by `resolveDeviceId`), so its whole life is this process and no round of it has settled
+      // yet: it has never published and the server cannot hold a package of it - whether its
+      // FIRST round is running (the read is made when it settles) or has not started yet (a join
+      // landing in that gap used to ask anyway: one 404 per attempt, and the pass below starts the
+      // round). A RETURNING device (an id stored before this boot) is never skipped - its
       // package may well be published already, and waiting on its boot round would make a failed
-      // round fail a join that a read would have let through. The read is made when the round settles.
-      const firstPublicationRunning =
-        pass === 1 &&
-        !this.stateWasExpected &&
-        this.keyPackageRoundsActive > 0 &&
-        this.keyPackageRoundsSettled === 0;
-      const answer = firstPublicationRunning
+      // round fail a join that a read would have let through.
+      const neverPublished =
+        pass === 1 && !this.stateWasExpected && this.keyPackageRoundsSettled === 0;
+      const answer = neverPublished
         ? null
         : // A PEEK: this reads a fact, and a claim would spend one of this device's own one-time
           // packages per join attempt - production 2026-11-06, a device retrying seven unjoinable
@@ -4299,6 +4539,11 @@ export abstract class BaseMlsService implements IMlsService {
     // Left true, the abandonment of a device would report itself as a loss.
     this.stateWasExpected = false;
     await this.loadFreshStateReplacingUnopened(deviceKeyB64);
+    // THE FRESH STATE HOLDS NONE OF THE LEDGERS THIS DOCUMENT KNOWS, and the seen marks still
+    // describe frames this account has read: carried into it, as `localStorage` carried them across
+    // a rotation before they moved into the state. Not the send counts - they describe the ratchets
+    // of the device being abandoned (reset below). A rotation inside the load has no view yet.
+    restageWholeStateLedgerView(this.userId, [STATE_LEDGER.sendPersisted]);
     try {
       // ENDS THE DOCUMENT ON REFUSAL, inside the transaction that refuses it: a flight of this
       // document already past its start check must find the latch set at its own put.
@@ -4312,15 +4557,21 @@ export abstract class BaseMlsService implements IMlsService {
       );
       throw e;
     }
+    // The counters describe the ratchets of the device being abandoned, whose state was discarded
+    // for a fresh one starting at generation zero. Carried over, they would burn against sends
+    // that, from the peers' side, this device has never made. Awaited HERE, before the socket
+    // follows the identity: nothing from the reopen on waits behind a store.
+    await resetSendRatchetLedger(this.userId).catch((e) =>
+      console.warn(
+        '[MLS] Send ledger not cleared after the rotation - its counts name groups the fresh state does not hold, and the next load forgets them:',
+        String(e).slice(0, 160)
+      )
+    );
     localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
     // THE SOCKET FOLLOWS THE IDENTITY, AT THE ONE MOMENT THE IDENTITY CHANGES. The login opens its
     // socket beside the state load that rotates here, so a socket opened (or opening) under the old
     // id is reopened under the new one - queued BEFORE the retirement below, which waits for it.
     this.reopenGatewaySocketAfterRotation(oldDeviceId);
-    // The counters describe the ratchets of the device being abandoned, whose state was discarded
-    // for a fresh one starting at generation zero. Carried over, they would burn against sends
-    // that, from the peers' side, this device has never made.
-    resetSendRatchetLedger(this.userId);
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
@@ -4688,7 +4939,10 @@ export abstract class BaseMlsService implements IMlsService {
    * another device holds the lock; `unanswered` is a transport error or a non-2xx answer, which says
    * nothing about anyone else.
    */
-  async acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'> {
+  async acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'> {
     const short = groupId.slice(0, 8);
     if (!this.addLocksHeld.has(groupId)) {
       const owed = claimAddLockMarker(this.userId, groupId);
@@ -4707,8 +4961,47 @@ export abstract class BaseMlsService implements IMlsService {
       markAddLock(this.userId, groupId, answer.token);
       return 'taken';
     }
+    // RECORDED BEFORE THE WAKE IS ARMED: the wake is armed only for a group that owes a re-plan.
+    const owed =
+      answer.answered && oweIfHeld ? await this.oweInvitationOnHeldLock(groupId, oweIfHeld) : false;
     this.wakeAtAddLockExpiry(groupId, answer.retryAfterMs);
+    if (owed) return 'owed';
     return answer.answered ? 'held' : 'unanswered';
+  }
+
+  /**
+   * Records a member's first invitation that another device's add lock refused, as owed at this
+   * group's current epoch (see {@link IMlsService.acquireAddLockAnswer}). An entry already owed at
+   * that epoch is merged into by the record itself (`recordOwedInvitation`), never overwritten.
+   *
+   * @returns whether it is recorded; `false` tells the caller the refusal is the member's to retry.
+   */
+  private async oweInvitationOnHeldLock(
+    groupId: string,
+    oweIfHeld: () => Promise<CommitInvitation | null>
+  ): Promise<boolean> {
+    const short = groupId.slice(0, 8);
+    const invitation = await oweIfHeld();
+    if (!invitation) return false;
+    const baseEpoch = this.getEpoch(groupId);
+    try {
+      recordOwedInvitation(this.userId, {
+        groupId,
+        baseEpoch,
+        invitation,
+        cause: 'race',
+      });
+    } catch (e) {
+      if (!(e instanceof OwedInvitationNotRecordedError)) throw e;
+      console.warn(
+        `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock and could NOT be recorded (${e.reason}) - refused, the member is told`
+      );
+      return false;
+    }
+    console.log(
+      `[INVITE_OWED] ${short}... an invitation of ${invitation.users.length} person(s) met another device's add lock - recorded at epoch ${baseEpoch}, re-planned when that lock ends`
+    );
+    return true;
   }
 
   /**
@@ -4776,7 +5069,7 @@ export abstract class BaseMlsService implements IMlsService {
     this.addLockExpiryWakes.clear();
   }
 
-  async createRemoteGroup(name: string, isGroup = true): Promise<string> {
+  async createRemoteGroup(name: string | null, isGroup = true): Promise<string> {
     return this.delivery.createRemoteGroup(name, isGroup);
   }
 
@@ -4847,8 +5140,12 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.removeMemberFromServer(groupId, userId);
   }
 
-  async declineJoinRequest(groupId: string, userId: string): Promise<JoinDeclineOutcome> {
-    return this.delivery.declineJoinRequest(groupId, userId);
+  async declineJoinRequest(
+    groupId: string,
+    userId: string,
+    treeEpoch?: number
+  ): Promise<JoinDeclineOutcome> {
+    return this.delivery.declineJoinRequest(groupId, userId, treeEpoch);
   }
 
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
@@ -5028,11 +5325,37 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * `latch` is this document's write latch ({@link stateWritesEnded}); a platform whose store can
    * refuse a write reads it AT THE PUT, and rejects `MlsStateWriteRefusedError('ended')` on it.
+   *
+   * `ledgers` are the app's staged ledger changes (`stateLedgers.ts`). The platform APPLIES THEM TO
+   * THE LIVE CLIENT BEFORE IT EXPORTS - synchronously, on the web, in the turn this is called in -
+   * so the state written carries them beside the ratchets they describe, and so does every later
+   * export of that client, whoever makes it.
    */
   protected abstract writeCheckpoint(
     deviceKeyB64: string,
-    latch: MlsStateWriteLatch
+    latch: MlsStateWriteLatch,
+    ledgers?: StateLedgerChanges
   ): Promise<void>;
+
+  /**
+   * Every ledger the opened state carries (`mls-core/src/app_ledgers.rs`), read once, right after it
+   * opened. Platform-specific: the web asks the WASM client, native the live manager.
+   */
+  protected abstract readStateLedgers(): Promise<Record<string, string>>;
+
+  /**
+   * Takes the opened state's ledgers as this document's, and moves an older client's
+   * `localStorage` copies into it (`stateLedgerMigration.ts`). Runs once per opened state, before
+   * {@link reconcileSendRatchets} and before anything reads a ledger or sends.
+   *
+   * The in-memory seen sets go first: an earlier login of this document may have marked frames
+   * whose advance the state being opened never received.
+   */
+  private async openStateLedgers(): Promise<void> {
+    forgetSeenCipherCaches(this.userId);
+    hydrateStateLedgers(this.userId, await this.readStateLedgers());
+    await adoptLegacyLedgers(this.userId);
+  }
 
   /**
    * Advances this device's send ratchet by `count` generations without emitting anything.
@@ -5044,14 +5367,20 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract skipSendGenerations(groupId: string, count: number): Promise<number>;
 
   /**
-   * Checkpoints the live state AND records how much of this device's send ratchet it makes durable.
+   * Checkpoints the live state WITH the ledgers that describe it, in the same write.
    *
-   * CONCRETE, FOR THE REASON {@link sendMessage} IS. The count is read BEFORE the write is started
-   * and committed only AFTER it resolves, and that order is the entire guarantee: a send landing
-   * during the write is then counted as unpersisted and costs one burnt generation too many on the
-   * next load, where the opposite order costs one too few and reproduces exactly the fault this
-   * exists to close. Leaving the pairing to each call site would be the eighteen-call-sites lesson
-   * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
+   * CONCRETE, FOR THE REASON {@link sendMessage} IS: leaving the pairing to each call site would be
+   * the eighteen-call-sites lesson of `sendMessage`, re-learnt on the seam that guards the ratchet
+   * instead of the one that moves it.
+   *
+   * TWO LEDGERS DESCRIBE THE STATE AND BOTH TRAVEL INSIDE IT (KILL-2, 2026-10-26): the send ledger's
+   * `persisted` counts and the history marks are staged and handed to the platform, which applies
+   * them to the client before it exports (`stateLedgers.ts`). They were written to `localStorage`
+   * AFTER the write until then - the survivable order of two stores, and a window as long as the
+   * seconds `localStorage` waits before reaching the disk. One write has no order to choose.
+   *
+   * `emitted` is read BEFORE the export: a send landing after the read is counted as unpersisted and
+   * costs one burnt generation too many on the next load, never one too few.
    *
    * THE LATCH IS READ TWICE ({@link stateWritesEnded}): here, so an ended document captures
    * nothing, and at the put, where it decides. `endsDocumentOnRefusal` is the rotation's: its write
@@ -5085,39 +5414,145 @@ export abstract class BaseMlsService implements IMlsService {
       }
       throw new MlsStateWriteRefusedError('follower-tab');
     }
-    const emitted = snapshotEmitted(this.userId);
-    // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
-    // (or still running) when the count is read is not in the state this checkpoint exports, so
-    // committing `persisted = emitted` for that ratchet would erase the only record of the debt: the
-    // settle merges into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues
-    // generation 0. Left out at SNAPSHOT time; a burn that lands during the write is only over-counted
-    // on the next load, which is free.
+    // Before the state opened there is no ledger to stage: the state being written is the one the
+    // load is building (a fresh start, a rotation), and the opening reads what it carries.
+    // Read first: a send landing after the read costs one burnt generation too many, never too few.
+    const emitted = stateLedgersHydrated(this.userId)
+      ? await this.emittedForCheckpoint()
+      : undefined;
+    // ROWS BEFORE RATCHET: the rows held in memory for frames already applied are stored before the
+    // export claims those frames' ratchet advance, and none is held again until the export is taken.
+    const releaseRows = await this.holdRowsForExport();
+    try {
+      const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
+      // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
+      // seals is not in it ({@link durableApplied}).
+      const appliedAtExport = this.inboundApplied;
+      // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
+      // applies the ledgers and exports in this same turn, so every mark staged describes an advance
+      // the export holds.
+      try {
+        await this.writeCheckpoint(
+          this.currentDeviceKeyB64,
+          {
+            isEnded: () => this.stateWritesEnded === true,
+            holdsNoLead: refusesCommitsHere,
+            endOnRefusal: options?.endsDocumentOnRefusal
+              ? () => {
+                  this.stateWritesEnded = true;
+                }
+              : undefined,
+          },
+          ledgers
+        );
+        // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
+        // into `appliedAtExport`.
+        if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
+      } catch (e) {
+        // The next checkpoint carries them. A client that already took them re-applies the same
+        // value, a no-op; one that never got them (a native call refused before it ran) takes them then.
+        if (ledgers) restageStateLedgers(this.userId, ledgers);
+        throw e;
+      }
+    } finally {
+      // Released once the write settled, not at the capture: on native the export runs in the
+      // command, so the hold has to outlast the call.
+      releaseRows();
+    }
+  }
+
+  /**
+   * ROWS BEFORE RATCHET (P1, review of #3321): asks every observer that holds rows of applied frames
+   * in memory to store them, and returns the release of every hold taken.
+   *
+   * THE ORDER, NOT A WAIT FOR A WINDOW: a live drain buffers its rows until its window closes, and a
+   * checkpoint started meanwhile - by a send, an earlier window, the persister's coalescing, and the
+   * window's own close, whose persister observer runs BEFORE the UI one - exported the ratchet
+   * advance and the seen marks of frames whose rows existed only in memory. A kill there lost them
+   * for good: the generation is spent on disk and the frame is marked seen. Each hold ends on one
+   * store of what is held (the observer stops buffering while it is taken), so this terminates
+   * without a clock; nothing here waits on a handler, so a handler awaiting a checkpoint cannot
+   * deadlock it.
+   *
+   * A HOLD THAT FAILS REFUSES THE CHECKPOINT ({@link MlsCheckpointNotWrittenError} at `rows`), once
+   * per trigger: the next checkpoint's hold retries the rows. Refused, the state on disk stays
+   * behind those frames, and a reload repairs it from what still holds them - a frame the server
+   * still lists (a commit or a Welcome, held by {@link DrainAckHold}, or one not yet acknowledged) is
+   * decrypted again; an APPLICATION frame a leader tab already acknowledged at the drain's end is
+   * gone from the server, and comes back through the history archive, whose replay reads it because
+   * no landed checkpoint marked it seen.
+   *
+   * AND A HUNG ROW WRITE HOLDS EVERY CHECKPOINT: an IndexedDB write that never settles leaves the
+   * hold pending, so this checkpoint never exports and the persister's in-flight one never clears.
+   * No timeout, deliberately - exporting past a row write that has not answered is the loss this
+   * order exists to prevent; the hung store is the defect, and every write after it hangs too. A
+   * store that keeps REFUSING the rows does the same - every checkpoint, commits and joins included,
+   * is refused until a write lands or the page reloads - and the observer names it once per page.
+   */
+  private async holdRowsForExport(): Promise<() => void> {
+    const releases: Array<() => void> = [];
+    const releaseAll = () => {
+      for (const release of releases) {
+        try {
+          release();
+        } catch (e) {
+          console.error('[MLS] a row hold could not be released after the checkpoint:', e);
+        }
+      }
+    };
+    for (const observer of this.bulkIngestObservers) {
+      if (!observer.holdRowsForCheckpoint) continue;
+      try {
+        releases.push(await observer.holdRowsForCheckpoint());
+      } catch (e) {
+        releaseAll();
+        console.error(
+          '[MLS] checkpoint not written: the rows of frames already applied could not be stored first - the state stays behind them; the next checkpoint retries the rows, and a reload reads them again from the server or the history archive:',
+          e
+        );
+        throw new MlsCheckpointNotWrittenError('rows', e);
+      }
+    }
+    return releaseAll;
+  }
+
+  /**
+   * The `emitted` counts a checkpoint may declare durable - NONE when they cannot be read.
+   *
+   * Declaring nothing is the direction that is free (the next load over-burns), and the state itself
+   * must still be written: refusing the checkpoint over a counter would lose every ratchet advance
+   * since the last one. Logged as the error it is - the store that refused the read is the one every
+   * send needs before it posts (`noteFrameEmitted`).
+   */
+  private async emittedForCheckpoint(): Promise<Record<string, number>> {
+    try {
+      return await readEmitted(this.userId);
+    } catch (e) {
+      console.error(
+        '[MLS_LEDGER] The send counts could not be read for this checkpoint - it declares no send durable, so the next load burns everything counted:',
+        String(e).slice(0, 160)
+      );
+      return {};
+    }
+  }
+
+  /**
+   * Stages what this checkpoint's state holds, and takes the whole batch for the platform.
+   *
+   * A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed (or
+   * still running) when the count is read is not in the state this checkpoint exports, so staging
+   * `persisted = emitted` for that ratchet would erase the only record of the debt: the settle merges
+   * into the epoch, a checkpoint lands, a reload finds nothing owed and re-issues generation 0.
+   *
+   * The history marks: every group marked since the last checkpoint (`stagePendingHistoryMarks`).
+   * Their ratchet advances are all in the live client by now, so the export about to be taken holds
+   * them - and the marks the walk makes from here on wait for the next one.
+   */
+  private stageCheckpointLedgers(emitted: Record<string, number>): StateLedgerChanges | undefined {
     for (const key of this.sendRatchetsNotDurable()) delete emitted[key];
-    // The replay marks are captured BEFORE the write for the same reason as `emitted`: a page
-    // decrypted while the seal runs is marked in memory, and this write does not hold its advance.
-    const replayMarks = snapshotPendingHistoryMarks(this.userId);
-    await this.writeCheckpoint(this.currentDeviceKeyB64, {
-      isEnded: () => this.stateWritesEnded === true,
-      endOnRefusal: options?.endsDocumentOnRefusal
-        ? () => {
-            this.stateWritesEnded = true;
-          }
-        : undefined,
-    });
-    commitPersisted(this.userId, emitted);
-    // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
-    //
-    // The send ledger above declares what this checkpoint made durable. The history replay's marks
-    // owed exactly the same declaration and did not get it: they became durable only in the thunk at
-    // the END of the archive walk, so a checkpoint landing mid-walk - and one lands on any structural
-    // mutation, because `flushEncryptedInternal` is not gated by the bulk-ingest depth - made the
-    // ratchet durable while the marks were still in memory. A page killed there re-accuses frames it
-    // had really read. Proved by insertion order on TAB-3b: six accused row keys all sat at the END
-    // of a 3 511-entry set, so two whole runs had written nothing durable at all.
-    //
-    // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
-    // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
-    commitPendingHistoryMarks(replayMarks);
+    stagePersisted(this.userId, emitted);
+    stagePendingHistoryMarks(this.userId);
+    return takeStagedStateLedgers(this.userId);
   }
 
   /**
@@ -5189,8 +5624,8 @@ export abstract class BaseMlsService implements IMlsService {
   protected async reconcileSendRatchets(): Promise<void> {
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
-    // THE LEDGER IS THE LEADER'S, AND SO IS ITS VERDICT. It is shared by every tab of the account
-    // (`localStorage`), and judged here against the state this document loaded - in a follower, a copy
+    // THE LEDGER IS THE LEADER'S, AND SO IS ITS VERDICT. Its `emitted` counts are shared by every tab
+    // of the account (IndexedDB, `sendRatchetLedger.ts`), and judged here against the state this document loaded - in a follower, a copy
     // the leader keeps moving. A follower that judged it reset the ledger on a fresh start, forgot
     // entries its copy did not hold (a group the leader joined after that copy was loaded), and burnt
     // generations into a copy that never sends (`sendMessage` refuses in a follower). It touches
@@ -5202,10 +5637,24 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     if (this.freshStart) {
-      resetSendRatchetLedger(this.userId);
+      await resetSendRatchetLedger(this.userId).catch((e) =>
+        console.warn(
+          '[MLS] Send ledger not cleared on a fresh start - its counts name groups this state does not hold, and the next load forgets them:',
+          String(e).slice(0, 160)
+        )
+      );
       return;
     }
-    const entries = sendRatchetEntries(this.userId);
+    // AN UNREADABLE LEDGER IS NO INFORMATION, as it always was: nothing is burnt this load, which is
+    // where this client stood before the ledger existed - said, because a silent empty read and a
+    // real one are the same value with different causes.
+    const entries = await sendRatchetEntries(this.userId).catch((e: unknown) => {
+      console.warn(
+        '[MLS] Send ledger unreadable - nothing will be burnt this load:',
+        String(e).slice(0, 160)
+      );
+      return [];
+    });
     if (entries.length === 0) return;
 
     const restored = new Map<string, number | 'not-held' | 'unknown'>();
@@ -5271,7 +5720,12 @@ export abstract class BaseMlsService implements IMlsService {
         );
       }
     }
-    forgetSendRatchetEntries(this.userId, forget);
+    await forgetSendRatchetEntries(this.userId, forget).catch((e) =>
+      console.warn(
+        `[MLS] Send ledger: ${forget.length} dead entr(ies) not forgotten - the next load judges them again:`,
+        String(e).slice(0, 160)
+      )
+    );
     const blind = [...restored.values()].filter((r) => r === 'unknown').length;
     if (blind > 0) {
       console.warn(
@@ -5401,6 +5855,14 @@ export abstract class BaseMlsService implements IMlsService {
     for (;;) {
       if (this.owedSendBurns.has(groupId) || this.owedBurnInFlight.has(groupId)) {
         await this.settleOwedBurns(groupId);
+      }
+      // THE LAST SYNCHRONOUS STEP BEFORE THE RATCHET MOVES: a send begun while this document led may
+      // resume after a freeze handed the lock on (`tabLeader.ts`), on a copy now behind the leader's.
+      if (refusesCommitsHere()) {
+        console.warn(
+          `[MLS] ${groupId.slice(0, 8)}... a send reached the encrypt in a tab that no longer holds the leader copy - refused, nothing sealed`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
       }
       const frame = await this.encryptForSend(groupId, messageBytes);
       const epoch = sealedFrameEpoch(frame.sealed);
@@ -6424,6 +6886,8 @@ export abstract class BaseMlsService implements IMlsService {
     // periodic one is not owed again for an interval. Dated HERE, the one merge both the transaction
     // and a settlement go through.
     await this.noteOwnLeafReplaced(submission.groupId, submission.baseEpoch + 1);
+    // An Add or a Remove of our own moves who the tree holds: an unnamed group's label re-reads it.
+    noteGroupTreeChanged(submission.groupId, 'a commit of this device');
     return recipients;
   }
 
@@ -7191,7 +7655,7 @@ export abstract class BaseMlsService implements IMlsService {
   async forgetDistributionGroup(scope: DistributionScope): Promise<string | null> {
     const groupId = this.distributionGroupFor(scope);
     if (!groupId) return null;
-    await this.forgetDistributionGroupById(groupId);
+    await this.forgetDistributionGroupById(groupId, 'distribution group left');
     return groupId;
   }
 
@@ -7206,15 +7670,19 @@ export abstract class BaseMlsService implements IMlsService {
    * still held and joins nothing. Named by the group, both halves go, whatever the registration
    * says.
    *
+   * `reason` is what the `[MLS] dropped local state` line prints, and THE CALLER STATES IT: this
+   * method serves a community leaving, a stale key group being re-joined and a 1:1 the server no
+   * longer lists, and a fixed sentence named a key group in the log of the last one, which has none.
+   *
    * @returns whether this device held anything under that id
    */
-  async forgetDistributionGroupById(groupId: string): Promise<boolean> {
+  async forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean> {
     const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
     // The eviction belonged to the state being dropped; the next one, if any, is a new fact.
     this.evictionTold.delete(groupId);
     await dropGroupState(this, groupId, {
-      reason: 'distribution group left',
+      reason,
       checkpoint: 'awaited',
     });
     this.distributionScopeByGroup.delete(groupId);
@@ -7836,201 +8304,215 @@ export abstract class BaseMlsService implements IMlsService {
         // moment ONLY this device - can export the GroupInfo for the epoch its own commit produces.
         // That base then travels inside the submission below and is stored with the epoch advance,
         // which is what stops an external joiner from locking the NEXT one out (COMM-22).
-        let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
+        // THE GATE'S ANSWER IS AWAITED BY EVERY WELCOME FOR THIS GROUP (`externalCommitVerdict.ts`).
+        // From the build below until the answer is applied, the group is HELD by a commit nobody has
+        // accepted: a Welcome that read that as "joined" was ignored as a redelivery, then the refusal
+        // dropped the state and the device waited for that very Welcome for good (iPhone 12,
+        // 2026-11-16). Opened under the lock before the build, closed here whatever the outcome.
+        let closeVerdictWindow: (() => void) | undefined;
         try {
-          joined = await this.runUnderMlsLock(async () => {
-            // THE GROUP IS READ AGAIN UNDER THE LOCK, BECAUSE A WELCOME INSTALLS IT UNDER THE SAME
-            // LOCK. Everything above ran outside it - a recovery started by one failed Welcome reaches
-            // here after a second Welcome for the group may have been applied by the drain - and an
-            // external commit built over a held group was refused only AFTER OpenMLS had written it
-            // into the live group's storage rows, then read as a failed build that asked a member to
-            // re-add a healthy leaf (review of #2466). Held now means joined: nothing to build.
-            if (holdsGroupState(this, groupId)) return 'already-held' as const;
-            const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
-            // The same atomic read as every other publisher, under the lock this section already holds.
-            const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
-            // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
-            // published base is monotonic and cannot be walked back, so a blob exported at any other
-            // epoch than the one the server will record it under would strand the group for good.
-            // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
-            // join is abandoned like any other build failure, and the caller's welcome_request
-            // fallback is the right next move.
-            if (baseEpoch !== gi.baseEpoch + 1) {
-              throw new Error(
-                `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+          let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
+          try {
+            joined = await this.runUnderMlsLock(async () => {
+              // THE GROUP IS READ AGAIN UNDER THE LOCK, BECAUSE A WELCOME INSTALLS IT UNDER THE SAME
+              // LOCK. Everything above ran outside it - a recovery started by one failed Welcome reaches
+              // here after a second Welcome for the group may have been applied by the drain - and an
+              // external commit built over a held group was refused only AFTER OpenMLS had written it
+              // into the live group's storage rows, then read as a failed build that asked a member to
+              // re-add a healthy leaf (review of #2466). Held now means joined: nothing to build.
+              if (holdsGroupState(this, groupId)) return 'already-held' as const;
+              closeVerdictWindow = openExternalCommitWindow(this, groupId);
+              const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
+              // The same atomic read as every other publisher, under the lock this section already holds.
+              const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
+              // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
+              // published base is monotonic and cannot be walked back, so a blob exported at any other
+              // epoch than the one the server will record it under would strand the group for good.
+              // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
+              // join is abandoned like any other build failure, and the caller's welcome_request
+              // fallback is the right next move.
+              if (baseEpoch !== gi.baseEpoch + 1) {
+                throw new Error(
+                  `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
+                );
+              }
+              return { ...built, nextBase: base };
+            });
+          } catch (e) {
+            // THE ENGINE'S OWN REFUSAL OF A HELD GROUP (`MlsError::GroupAlreadyHeld`, a token this
+            // repository defines) is the same answer as the read above, from the side that cannot be
+            // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
+            // held groups missed one the engine holds, and the read above trusted that list.
+            //
+            // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
+            // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
+            // base this join cannot use, so it fails the build like any other unusable base.
+            const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
+            if (held === groupId) {
+              console.error(
+                `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
               );
+              return { joined: true, alreadyHeld: true };
             }
-            return { ...built, nextBase: base };
-          });
-        } catch (e) {
-          // THE ENGINE'S OWN REFUSAL OF A HELD GROUP (`MlsError::GroupAlreadyHeld`, a token this
-          // repository defines) is the same answer as the read above, from the side that cannot be
-          // wrong - so it is joined, and the line ACCUSES: reaching it means this service's list of
-          // held groups missed one the engine holds, and the read above trusted that list.
-          //
-          // ONLY FOR THE GROUP ASKED FOR. The refusal names the group the served GroupInfo is for,
-          // and a base naming ANOTHER group the engine holds says nothing about this one: that is a
-          // base this join cannot use, so it fails the build like any other unusable base.
-          const held = /GROUP_ALREADY_HELD: (\S+)/.exec(String(e))?.[1];
-          if (held === groupId) {
-            console.error(
-              `[MLS] externalJoin ${short}... refused by the engine: the group is already held, but this service's list of held groups did not say so - joined, nothing built`
-            );
-            return { joined: true, alreadyHeld: true };
-          }
-          if (held !== undefined) {
-            console.error(
-              `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+            if (held !== undefined) {
+              console.error(
+                `[MLS] externalJoin ${short}... the served base is for another group (${held.slice(0, 8)}...), one this device holds - not joined`
+              );
+              return { joined: false, reason: 'build_failed' };
+            }
+            console.warn(
+              `[MLS] externalJoin build failed for ${short}...:`,
+              String(e).slice(0, 120)
             );
             return { joined: false, reason: 'build_failed' };
           }
-          console.warn(`[MLS] externalJoin build failed for ${short}...:`, String(e).slice(0, 120));
-          return { joined: false, reason: 'build_failed' };
-        }
-        if (joined === 'already-held') {
-          console.log(
-            `[MLS] externalJoin ${short}... the group is already held (a Welcome installed it first) - joined, nothing built`
-          );
-          return { joined: true, alreadyHeld: true };
-        }
+          if (joined === 'already-held') {
+            console.log(
+              `[MLS] externalJoin ${short}... the group is already held (a Welcome installed it first) - joined, nothing built`
+            );
+            return { joined: true, alreadyHeld: true };
+          }
 
-        // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
-        // commit out to existing members (excluding this device, which already applied it).
-        let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
-        try {
-          validation = await this.delivery.submitCommit(
-            joined.groupId,
-            gi.baseEpoch,
-            toBase64(joined.commit),
-            excludeSelf,
-            joined.nextBase
-          );
-        } catch (e) {
-          // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
-          // staged commit was discarded, the base refetched, and the whole thing retried against a
-          // server that had never been reached. We claim NOTHING about membership here. The group is
-          // still dropped, because an external commit cannot be cleared and a pending one left
-          // unmerged breaks every later operation on it - and if the server DID accept the commit we
-          // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
-          const rateLimited = e instanceof ApiRefusalError && e.status === 429;
-          const overtaken = isSeatClaimOvertaken(e);
+          // Submit under the epoch gate against the GroupInfo's base epoch. The server fans the external
+          // commit out to existing members (excluding this device, which already applied it).
+          let validation: { accepted: boolean; reason?: string; currentEpoch?: number };
+          try {
+            validation = await this.delivery.submitCommit(
+              joined.groupId,
+              gi.baseEpoch,
+              toBase64(joined.commit),
+              excludeSelf,
+              joined.nextBase
+            );
+          } catch (e) {
+            // A TRANSPORT FAILURE IS NOT AN ANSWER, and this used to be relabelled an epoch race: the
+            // staged commit was discarded, the base refetched, and the whole thing retried against a
+            // server that had never been reached. We claim NOTHING about membership here. The group is
+            // still dropped, because an external commit cannot be cleared and a pending one left
+            // unmerged breaks every later operation on it - and if the server DID accept the commit we
+            // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
+            const rateLimited = e instanceof ApiRefusalError && e.status === 429;
+            const overtaken = isSeatClaimOvertaken(e);
+            await dropGroupState(this, joined.groupId, {
+              reason: rateLimited
+                ? 'the commit gate refused it under the rate limit'
+                : overtaken
+                  ? 'an unrelated eviction overtook its seat claim'
+                  : 'the commit gate could not be reached',
+              // Built in memory during this very call and never checkpointed: there is nothing
+              // durable to undo, and a save here would cost one per failed attempt.
+              checkpoint: 'never-persisted',
+            });
+            // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
+            // wait is recorded for every commit path and handed to the caller, which stops its sweep.
+            if (rateLimited) {
+              noteCommitRateLimited(e.retryAfterMs);
+              return {
+                joined: false,
+                reason: 'rate_limited',
+                retryAfterMs: commitRateLimitRemainingMs(),
+              };
+            }
+            // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
+            // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
+            // attempt bound still holds against a group evicting without pause.
+            if (overtaken) {
+              console.warn(
+                `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+              );
+              if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
+                return {
+                  joined: false,
+                  reason: 'refused',
+                  serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
+                };
+              }
+              continue;
+            }
+            console.warn(
+              `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
+                ` nothing is claimed about membership:`,
+              String(e).slice(0, 120)
+            );
+            return { joined: false, reason: 'unreachable' };
+          }
+
+          if (validation.accepted) {
+            await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
+            // The external commit's path IS this device's new leaf, so the group's periodic refresh is
+            // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
+            await this.noteOwnLeafReplaced(joined.groupId, gi.baseEpoch + 1);
+            // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
+            // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
+            // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
+            // A reload before the next checkpoint restores a device that is IN the published tree and
+            // cannot read a word of it - and, finding no local group, joins again from the new base.
+            //
+            // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
+            // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
+            // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
+            // seed that device held undeliverable - a member granted access who can read nothing.
+            //
+            // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
+            // is replayable from the server, and outbound ratchet state is checkpointed on the send
+            // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
+            // so the structural checkpoint is awaited here, at the point the state moved.
+            let checkpointed: boolean;
+            try {
+              checkpointed = await persistMlsStructuralCheckpoint();
+            } catch (e) {
+              checkpointed = false;
+              console.error(
+                `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
+                  ` would rejoin and fork the group:`,
+                String(e).slice(0, 120)
+              );
+            }
+            // The join stands either way - it is accepted server-side and usable for this session, and
+            // refusing it here would discard a membership the rest of the group can already see. What
+            // is lost is only its durability, which is why this accuses rather than informs.
+            if (!checkpointed) {
+              console.error(
+                `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
+                  ` so this membership does not survive a reload and the next load will rejoin`
+              );
+            }
+            // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
+            // created was written in the same transaction as the epoch itself, so there is nothing left
+            // to mint and nothing left to lose - which is what a reload used to take with it.
+            console.log(
+              `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
+                ` base for ${gi.baseEpoch + 1} stored with the commit)`
+            );
+            return { joined: true };
+          }
+
+          // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
+          // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
+          // pass re-reads the base and exits on the stale-base fact above if nobody republished.
           await dropGroupState(this, joined.groupId, {
-            reason: rateLimited
-              ? 'the commit gate refused it under the rate limit'
-              : overtaken
-                ? 'an unrelated eviction overtook its seat claim'
-                : 'the commit gate could not be reached',
+            reason: 'the server refused the external commit',
             // Built in memory during this very call and never checkpointed: there is nothing
             // durable to undo, and a save here would cost one per failed attempt.
             checkpoint: 'never-persisted',
           });
-          // A 429 IS AN ANSWER: the throttler refused before the gate, so nothing was accepted. Its
-          // wait is recorded for every commit path and handed to the caller, which stops its sweep.
-          if (rateLimited) {
-            noteCommitRateLimited(e.retryAfterMs);
+          console.warn(
+            `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
+              ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
+              ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
+          );
+          if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
             return {
               joined: false,
-              reason: 'rate_limited',
-              retryAfterMs: commitRateLimitRemainingMs(),
+              reason: 'refused',
+              serverReason: validation.reason ?? 'unspecified',
+              ...(validation.currentEpoch !== undefined
+                ? { serverEpoch: validation.currentEpoch }
+                : {}),
             };
           }
-          // A 409 SEAT_CLAIM_OVERTAKEN IS AN ANSWER: nothing advanced, and the next attempt asks
-          // for a fresh claim at once. Each refusal proves an eviction landed in between, and the
-          // attempt bound still holds against a group evicting without pause.
-          if (overtaken) {
-            console.warn(
-              `[MLS] externalJoin seat claim OVERTAKEN for ${short}... (base ${gi.baseEpoch}) - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
-            );
-            if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
-              return {
-                joined: false,
-                reason: 'refused',
-                serverReason: SEAT_CLAIM_OVERTAKEN_REASON,
-              };
-            }
-            continue;
-          }
-          console.warn(
-            `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
-              ` nothing is claimed about membership:`,
-            String(e).slice(0, 120)
-          );
-          return { joined: false, reason: 'unreachable' };
-        }
-
-        if (validation.accepted) {
-          await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
-          // The external commit's path IS this device's new leaf, so the group's periodic refresh is
-          // dated from here - not from a ledger entry of an earlier incarnation (`leafRefresh.ts`).
-          await this.noteOwnLeafReplaced(joined.groupId, gi.baseEpoch + 1);
-          // THE SERVER HAS ALREADY MADE THIS DURABLE FOR EVERYONE ELSE, so this device may not hold
-          // its half in RAM. The commit is accepted: the group's epoch has advanced for every other
-          // member, and the secrets that make the new epoch usable exist ONLY here, in WASM memory.
-          // A reload before the next checkpoint restores a device that is IN the published tree and
-          // cannot read a word of it - and, finding no local group, joins again from the new base.
-          //
-          // THAT SECOND JOIN FORKS THE GROUP. Measured on prod 2026-08-27: a device joined one salon
-          // at base 0 and again at base 1 two seconds apart across a navigation, leaving the salon at
-          // epoch 2, the granting device stranded at 0 refusing frames it could not read, and the
-          // seed that device held undeliverable - a member granted access who can read nothing.
-          //
-          // `mlsStatePersister` defers routine writes for a reason it states in full: inbound state
-          // is replayable from the server, and outbound ratchet state is checkpointed on the send
-          // path. AN EXTERNAL JOIN IS NEITHER. Nothing on the server can replay these secrets back,
-          // so the structural checkpoint is awaited here, at the point the state moved.
-          let checkpointed: boolean;
-          try {
-            checkpointed = await persistMlsStructuralCheckpoint();
-          } catch (e) {
-            checkpointed = false;
-            console.error(
-              `[MLS] externalJoin FAILED to checkpoint ${short}... - a reload before the next write` +
-                ` would rejoin and fork the group:`,
-              String(e).slice(0, 120)
-            );
-          }
-          // The join stands either way - it is accepted server-side and usable for this session, and
-          // refusing it here would discard a membership the rest of the group can already see. What
-          // is lost is only its durability, which is why this accuses rather than informs.
-          if (!checkpointed) {
-            console.error(
-              `[MLS] externalJoin for ${short}... was not checkpointed: no persister is registered,` +
-                ` so this membership does not survive a reload and the next load will rejoin`
-            );
-          }
-          // NO FOLLOW-UP REFRESH HERE, AND ITS ABSENCE IS THE FIX. The base for the epoch this join
-          // created was written in the same transaction as the epoch itself, so there is nothing left
-          // to mint and nothing left to lose - which is what a reload used to take with it.
-          console.log(
-            `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
-              ` base for ${gi.baseEpoch + 1} stored with the commit)`
-          );
-          return { joined: true };
-        }
-
-        // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
-        // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
-        // pass re-reads the base and exits on the stale-base fact above if nobody republished.
-        await dropGroupState(this, joined.groupId, {
-          reason: 'the server refused the external commit',
-          // Built in memory during this very call and never checkpointed: there is nothing
-          // durable to undo, and a save here would cost one per failed attempt.
-          checkpoint: 'never-persisted',
-        });
-        console.warn(
-          `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
-            ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
-            ` - attempt ${attempt + 1}/${EXTERNAL_JOIN_MAX_ATTEMPTS}`
-        );
-        if (attempt === EXTERNAL_JOIN_MAX_ATTEMPTS - 1) {
-          return {
-            joined: false,
-            reason: 'refused',
-            serverReason: validation.reason ?? 'unspecified',
-            ...(validation.currentEpoch !== undefined
-              ? { serverEpoch: validation.currentEpoch }
-              : {}),
-          };
+        } finally {
+          closeVerdictWindow?.();
         }
       }
       // Unreachable - the last attempt returns above. Typed rather than asserted.
@@ -8150,6 +8632,11 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<DevicePin | null>;
   /** Reads the recorded departures from the MLS layer - see {@link removalEpochs}. */
   protected abstract removalEpochsNative(groupId: string, userId: string): Promise<number[]>;
+  /** Reads what this device can prove of a membership from the MLS layer - see {@link membershipEvidence}. */
+  protected abstract membershipEvidenceNative(
+    groupId: string,
+    userId: string
+  ): Promise<MembershipEvidence>;
 
   /**
    * What THIS DEVICE has seen of `userId:deviceId`'s signature key in a signed tree it merged or
@@ -8194,6 +8681,25 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async removalEpochs(groupId: string, userId: string): Promise<number[]> {
     return this.removalEpochsNative(groupId, userId);
+  }
+
+  /**
+   * What THIS DEVICE can prove, alone, about `userId` having been a member of `groupId`: the first
+   * epoch it saw the user hold a leaf of a tree it accepted (a Welcome or GroupInfo it joined by, a
+   * commit it merged, a tree it held at load) and no other member's commit retired since, and the first epoch its
+   * record of the group covers (`mls-core/src/member_sightings.rs`).
+   *
+   * WHY: whether a user entering by their own commit is a member coming back must not be the
+   * delivery service's word - a server that lets an outsider in can seat them on the roster it
+   * serves (owner, 2026-11-14: the proof is on the device). Per USER, so any device of a member is
+   * that member; kept in the sealed state, so it follows the account through restarts, the native
+   * background engine and an account switch.
+   *
+   * `firstSeenEpoch: null` IS "NOT SEEN", never "never a member": a device that joined after the
+   * user's every leaf left holds no sighting of them.
+   */
+  async membershipEvidence(groupId: string, userId: string): Promise<MembershipEvidence> {
+    return this.membershipEvidenceNative(groupId, userId);
   }
 
   /**
@@ -8643,6 +9149,15 @@ export abstract class BaseMlsService implements IMlsService {
         );
         throw new FollowerTabSendError(groupId, 'reload-owed');
       }
+      // A DOCUMENT THAT LED AND LOST THE LEAD is not an unrouted caller either: a send handed to it
+      // as the leader (a follower's frame, a seed its seal distributes) was routed right, and the
+      // lead left before it began - expected, nothing encrypted, the caller answers it by type.
+      if (lostLeadSinceLoad()) {
+        console.warn(
+          `[SEND] ${groupId.slice(0, 8)}... frame refused: the lead left this tab before the send began - nothing encrypted`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
+      }
       console.error(
         `[SEND] ${groupId.slice(0, 8)}... frame refused in a tab that does not own the MLS state (${getTabLeadership()}) - its caller is not routed to the leader tab`
       );
@@ -8707,6 +9222,14 @@ export abstract class BaseMlsService implements IMlsService {
     if (!(await this.knownUnresolvedGroups()).has(groupId)) return;
     await this.settleUnresolvedCommits([groupId]);
     if ((await this.knownUnresolvedGroups()).has(groupId)) {
+      // A SETTLEMENT LEFT UNFINISHED BECAUSE THE LEAD LEFT DURING IT is that fact, not an unknown
+      // outcome: nothing was sealed, and the leader that took the lead settles the commit itself.
+      if (lostLeadSinceLoad()) {
+        console.warn(
+          `[SEND] ${groupId.slice(0, 8)}... the lead left this tab while the send settled a kept commit - nothing sealed`
+        );
+        throw new FollowerTabSendError(groupId, 'lead-lost');
+      }
       throw new CommitOutcomeUnknownError(
         groupId,
         this.getEpoch(groupId),
@@ -8738,7 +9261,24 @@ export abstract class BaseMlsService implements IMlsService {
     // would leave every failed POST as an under-count, which is the direction that re-issues a spent
     // generation. It is what a reload recovers the advance from when the checkpoint below does not
     // land in time - the whole reason that checkpoint is allowed not to be awaited.
-    noteFrameEmitted(this.userId, groupId, epoch);
+    //
+    // AWAITED, AND THAT IS WHAT "DURABLE" MEANS (KILL-2, 2026-10-26): resolved once its IndexedDB
+    // transaction committed. A synchronous `localStorage` write returned at once and reached the disk
+    // seconds later, so a browser killed in between had posted a frame no reload knew about. One small
+    // transaction per send, against a checkpoint that costs 1.7 s on a phone. A count that does not
+    // commit refuses the post (`SendCountNotDurableError`).
+    await noteFrameEmitted(this.userId, groupId, epoch);
+    // THE AWAIT ABOVE IS A TASK GAP, AND THE LEAD CAN LEAVE INSIDE IT (#3321: a hidden leader hands
+    // it over, a frozen one releases it). The leader that takes it reloads the state on disk, which
+    // does not hold this frame's advance - so a frame posted from here is one the new leader may seal
+    // again at the same generation: a nonce reused at every peer. Read again AFTER the count is
+    // durable and BEFORE the post: refused, the frame never leaves, and the count only over-burns.
+    if (refusesCommitsHere()) {
+      console.warn(
+        `[SEND] ${groupId.slice(0, 8)}... frame sealed but not posted: the lead left this tab while its count was written - the leader sends it`
+      );
+      throw new FollowerTabSendError(groupId, 'lead-lost');
+    }
     // BEST-EFFORT, AND DELIBERATELY NOT AWAITED. It shortens the window; the ledger write above is
     // what CLOSES it. Awaiting here would put a checkpoint on the latency of every message - 1.7 s
     // on the phone - to buy a guarantee that is already held, so the trade is refused.
@@ -8769,6 +9309,7 @@ export abstract class BaseMlsService implements IMlsService {
   abstract leafHoldingKeyOf(groupId: string, keyPackage: Uint8Array): Promise<string | null>;
   abstract graineRun(groupId: string): Promise<GraineRunReading>;
   abstract graineSignatureEngine(): GraineSignatureEngine;
+  abstract historySealEngine(): HistorySealEngine;
   abstract signWithDeviceCredential(message: Uint8Array): Promise<Uint8Array>;
   abstract takeForkFindings(): Promise<ForkFinding[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;

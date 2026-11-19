@@ -25,6 +25,10 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // First line of the extension's life: its absence means the system never started it (a suggestion
+        // row that launches nothing); its presence without the `opened` line below means it never appeared.
+        let launchedWithIntent = extensionContext?.intent != nil
+        log.notice("[CanariShare] share extension launched, intent=\(launchedWithIntent)")  // log-safe: a Bool, whether the system handed the extension an intent
         // A copy in progress holds the App Group lock; a swipe-down would end the extension mid-copy.
         isModalInPresentation = true
         view.backgroundColor = UIColor.black.withAlphaComponent(0.3)
@@ -64,8 +68,12 @@ final class ShareViewController: UIViewController {
         guard !started else { return }
         started = true
         let items = (extensionContext?.inputItems as? [NSExtensionItem]) ?? []
+        let intent = extensionContext?.intent
+        let isSendMessage = intent is INSendMessageIntent
         let target = suggestedTarget()
-        log.info("share extension opened with \(items.count) item(s), suggestion=\(target != nil)")
+        // The line a reading of the share sheet's suggestion row looks for (no id, no name): which path
+        // the sheet took - an intent handed over or not, of what shape, and whether it became a target.
+        log.notice("[CanariShare] share extension opened with \(items.count) item(s), intent=\(intent != nil), send_message_intent=\(isSendMessage), suggestion=\(target != nil)")
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = ShareCapture().run(items: items, target: target)
             DispatchQueue.main.async {
@@ -82,18 +90,18 @@ final class ShareViewController: UIViewController {
     private func suggestedTarget() -> String? {
         guard let intent = extensionContext?.intent as? INSendMessageIntent else { return nil }
         if let target = ShareRules.suggestedTarget(intent.conversationIdentifier) { return target }
-        log.warning("a suggestion whose conversation identifier is not of the suggestion shape was ignored")
+        log.warning("[CanariShare] a suggestion whose conversation identifier is not of the suggestion shape was ignored (identifier present: \(intent.conversationIdentifier != nil), \(intent.conversationIdentifier?.count ?? 0) characters)")
         return nil
     }
 
     private func show(_ outcome: ShareCaptureOutcome) {
         switch outcome {
         case .handedOver(let files, let refused):
-            log.info("share handed over: \(files) file(s), \(refused) refused")
+            log.notice("[CanariShare] share handed over: \(files) file(s), \(refused) refused")
             announce()
         case .keptNothing(let refused):
             // The app tells the member what was refused once they open it, as on Android.
-            log.info("share kept nothing, \(refused) refusal(s) handed over")
+            log.notice("[CanariShare] share kept nothing, \(refused) refusal(s) handed over")
             announce()
         case .empty:
             finish(NSLocalizedString("share.empty", comment: "Nothing in the share could be taken"))
@@ -109,7 +117,7 @@ final class ShareViewController: UIViewController {
         center.getNotificationSettings { settings in
             let status = settings.authorizationStatus
             guard status == .authorized || status == .provisional || status == .ephemeral else {
-                self.log.info("notifications not allowed - the member is told to open Canari")
+                self.log.notice("[CanariShare] notifications not allowed - the member is told to open Canari")
                 DispatchQueue.main.async {
                     self.finish(NSLocalizedString("share.done.open_app", comment: "Open Canari to choose"))
                 }
@@ -125,9 +133,9 @@ final class ShareViewController: UIViewController {
             let request = UNNotificationRequest(identifier: "canari.share.ready", content: content, trigger: nil)
             center.add(request) { error in
                 if let error = error {
-                    self.log.error("the share notification was not posted: \(error.localizedDescription)")
+                    self.log.error("[CanariShare] the share notification was not posted: \(error.localizedDescription)")
                 } else {
-                    self.log.info("share notification posted")
+                    self.log.notice("[CanariShare] share notification posted")
                 }
                 DispatchQueue.main.async {
                     self.finish(error == nil
@@ -147,7 +155,7 @@ final class ShareViewController: UIViewController {
     }
 
     @objc private func closeTapped() {
-        log.info("share extension closed")
+        log.notice("[CanariShare] share extension closed")
         extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
     }
 }

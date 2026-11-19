@@ -1,4 +1,5 @@
 import type { ProductGridLine } from '../product-grid-contract';
+import type { RespondentIdentity } from '../respondent-identity';
 import {
   Entity,
   Column,
@@ -169,6 +170,32 @@ export class Submission {
   /** See `guestLastName`. */
   @Column({ type: 'varchar', length: 254, nullable: true })
   guestEmail: string | null;
+
+  /**
+   * Who answered, as the form chose to keep it (migration 174, `respondent-identity.ts`): the
+   * account fields the form joined, read AT SUBMIT TIME (`source: 'account'`), or the fields the
+   * respondent declared when no account could be read (`source: 'declared'`). A snapshot: a later
+   * profile change does not reach it. NULL on every answer given before 174 (its names are read
+   * live, as they always were) and on a guest's answer that declared nothing.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  respondentIdentity: RespondentIdentity | null;
+
+  /**
+   * When the respondent last changed this answer (migration 166, `FormsService.editAnswer`); NULL
+   * for an answer never changed. Not `updatedAt`, which every payment status move rewrites: the
+   * managers read this one as "modifiee le".
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  editedAt: Date | null;
+
+  /**
+   * The questions the price depended on WHEN THIS ANSWER WAS PRICED (migration 166): written by
+   * `submit` (and its retry that re-prices the row), read by `rowLockedItemIds`, so a supplement
+   * removed from the form later still locks its question here. NULL on a row older than 166.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  priceLockedItemIds: string[] | null;
 
   @CreateDateColumn()
   createdAt: Date;

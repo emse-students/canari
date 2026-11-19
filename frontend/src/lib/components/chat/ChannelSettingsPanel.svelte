@@ -2,6 +2,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { Log } from '$lib/utils/Log';
+  import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import {
     Settings,
@@ -459,11 +460,13 @@
   }
 
   async function handleRemoveMemberFromChannel(userId: string) {
-    const confirmed = await showConfirm(m.chat_channel_remove_access_confirm(), {
-      danger: true,
-      confirmLabel: m.common_remove_label(),
-    });
-    if (!confirmed) return;
+    const confirmed = await confirmMemberRemoval(userId, m.chat_channel_remove_access_confirm);
+    if (!confirmed) {
+      Log.d('channelSettings.handleRemoveMemberFromChannel declined at its confirmation', {
+        userId,
+      });
+      return;
+    }
     if (!claimAccessWrite('remove')) return;
     memberRemoving = { ...memberRemoving, [userId]: true };
     const channelId = selectedChannelId;

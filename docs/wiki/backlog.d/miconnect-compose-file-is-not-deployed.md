@@ -1,5 +1,7 @@
 ## P3 - the release deploys MiConnect's version, not its compose file; the test stack is on PostgreSQL 16
 
+target: 1.7.2
+
 Since 2026-11-13 the release puts each MiConnect stack on the authentik image `compose.yml` pins
 (`deploy-stack.sh`), through the `AUTHENTIK_TAG` line of the stack's `.env`. The rest of the file is
 still copied by hand, and both host copies differ from it (measured 2026-11-13): production's lacks

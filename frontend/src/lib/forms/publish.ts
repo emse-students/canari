@@ -32,7 +32,7 @@ export const FORM_NO_PAYMENT_METHOD = 'FORM_NO_PAYMENT_METHOD';
 export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
 
 /** The 410 refusing a create key whose form was deleted since. */
-export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
+const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 
 /**
  * The 400 refusing to move a PUBLISHED form to another association: its answers, payments and
@@ -41,8 +41,8 @@ export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
 
 /**
- * The 403 refusing to move a draft between associations when the actor is not a member of both the
- * association it leaves and the one it joins.
+ * The 403 refusing a form for an association whose forms the actor does not manage (MANAGE_FORMS,
+ * owner 2026-11-14): a create naming it, or a draft moved from or to it.
  */
 export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
 

@@ -101,6 +101,31 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 
 ## Routes
 
+### Path parameters are declared (2026-11-14)
+
+The mechanism is social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14), with the reasons): each
+controller says what its path parameters are with `@RouteParams`, a global guard answers `400`
+naming the parameter when a `uuid` is not one, before any other guard, and
+`src/route-params.coverage.spec.ts` fails on a parameter no declaration names.
+
+**What is a uuid here, and what is not.** A user id is NOT a uuid (`users.id` is the login), so
+`id`, `userId`, `otherUserId`, `blockedId` and an external `sub` are `opaque`, like a device id and a
+help id (checked against the help contract by its handler). Four names are uuids: a session
+(`auth_sessions.id`), an announcement, a profile-correction request, and an association or a Lydia
+cashier named in a payments path. **A name means one thing in the whole service**, which the
+coverage spec holds: the session route's parameter is `sessionId`, not `id`, because `id` is a user
+everywhere else.
+
+**What changed for a caller.** A session id or an announcement id that is not a uuid is answered
+`400` before the handler runs (`announcement.route-params.http.spec.ts` shows it over HTTP: the
+service is not called, and the session guard has not run). A malformed profile-correction request
+id was a `404` written by the service's own check; it is a `400` now, like the others. The payments
+routes already refused a malformed association or cashier id with a `400` written by hand in each
+handler; the declaration replaces those copies, and the message now names the parameter. The one
+check left in a handler is on an id that arrives in a BODY, which the guard does not read; it uses
+the guard's own `isUuidShaped`. As in social-service, the `400` comes before the session and admin
+guards: a malformed path is refused whoever asks.
+
 ### Auth
 
 | Method | Path | Auth | Description |
@@ -111,7 +136,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
 | DELETE | `/api/auth/sessions` | Bearer (+ cookie) | Revoke every session except the current one |
-| DELETE | `/api/auth/sessions/:id` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
+| DELETE | `/api/auth/sessions/:sessionId` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
 | POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per account | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
 | POST | `/api/auth/restore/registration` | same | Verify and store THE restore key of the calling session |
 | POST | `/api/auth/restore/assertion/options` | none | A stateless HMAC challenge for a restore |
@@ -159,6 +184,14 @@ Three properties carry it, and each is asserted in `users.batch.spec.ts`:
   `user_deleted_label`. An answer with NO `deleted` field is an older server's (rolling deploy,
   rollback, a store build live before production): absence is the plain 404 it always was, cached
   and quiet - a dated shim in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-profile-batch-answered-without-deleted-by-a-server-older-than-2026-10-18).
+  **ONLY A WELL-FORMED ID CAN BE DELETED** (2026-11-14): the answer is `{ users, deleted, malformed }`.
+  An id that breaks the one mint rule (`user-id.ts`: visible ASCII, no colon - a name, a sentence) is a
+  DEFECT of the asker, never an account: it is not queried, it is named in `malformed`, logged at warn
+  (count and lengths, never the strings), and the store rejects it with `MalformedUserIdError`
+  (`UserProfileFetchError(400)`: not absent, not cached as an answer, the resolver's ordinary failure
+  warn). It used to be listed in `deleted` and rendered "Compte supprimé" for the whole session. A
+  server older than this has no `malformed` field and a client treats the missing field as an empty
+  list - harmless, since such a server never named one.
   Only an id in NEITHER list from a server that SENDS `deleted` is a contract breach: it rejects
   502, is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
 
@@ -372,7 +405,7 @@ round trip and no MiGallery traffic, and HTTP/3 multiplexing measured 17-37 ms e
 | --- | --- |
 | browser HTTP cache | stores, revalidates each use (`fetch` in `userAvatarCache.ts` sets no cache mode and keeps no lifetime of its own; no service worker exists) |
 | nginx (`infrastructure/local/Dockerfile.frontend`) | no avatar rule; passes the headers |
-| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **OWED: one `curl -sI` pair on the next deploy** to confirm a changed photo answers `REVALIDATED`/`EXPIRED` and not a `HIT` with a growing `Age`, since the avatar Cache Rule cannot be read by our tokens |
+| Cloudflare | edge TTL follows the origin's `Cache-Control` ("use cache-control if present"); **read 2026-11-14**: through the old name (the only one still behind Cloudflare) a face answers `MISS` then `REVALIDATED`, never a `HIT` with an `Age`, so the avatar Cache Rule does not override the origin; `canari.emse.fr` is served by the school host with no Cloudflare in front (no `cf-cache-status` at all) |
 | Android/iOS notification disk copies | unchanged: their own 24 h age check, no conditional request |
 | `chat-delivery` `/api/mls/push/avatar/:id` | unchanged: `max-age=3600`, native readers only |
 
@@ -431,7 +464,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 ### Payments (Stripe + Lydia)
 
 Only the Lydia pair of columns on `associations` (`lydiaAccountId`/`lydiaOnboardingComplete`,
-migration 037) is read; the `stripe*` pair is kept at rest for rollback ([stripe-archive](../stripe-archive.md)).
+migration 037) exists now; the `stripe*` pair and `users."stripeCustomerId"` are dropped by the held
+migrations social 177 and core 027 ([stripe-archive](../stripe-archive.md)).
 `/api/payments/onboarding` writes to whichever pair matches the platform's currently active
 provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
 created the account, so the two always agree on which provider actually issued the id.
@@ -451,7 +485,7 @@ of the association its `vendor_token` names (read from social-service's internal
 fulfillment as a trigger, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`) - a form only: a `product:` confirm fulfils nothing until a boutique checkout
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
+[backlog](../frontend/modules/payments.md), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
 requires. The `business/create` webhook is described in
 [payments](../frontend/modules/payments.md).
 
@@ -506,7 +540,7 @@ PostgreSQL (`auth_db`). Main tables:
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `restore_credentials` | `id` (credential id), `userId` (FK CASCADE), `sessionId` (UNIQUE, FK `auth_sessions` CASCADE), `publicKey`, `counter`, `cloudBackup`, `createdAt` - [account-restore](../account-restore.md) |
 | `restore_challenges_spent` | `nonce`, `expiresAt` - written only after a verified assertion, swept hourly |
-| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)), `checkpointSkipMode` (`checkpoint_skip_mode`, migration 020: `off` / `on`, default `off`, enforced by no service - published by `/api/version` as `checkpointSkip.mode` and obeyed by the client's MLS state persister, [the decision](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below))), `liveReplaysMode` (`live_replays_mode`, migration 021: `off` / `on`, default `off`, read by social-service at a live's START and fixed on the live row - [live-replays](../live-replays.md); published as `liveReplays.mode`) |
+| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)), `checkpointSkipMode` (`checkpoint_skip_mode`, migration 020: `off` / `on`, default `off`, enforced by no service - published by `/api/version` as `checkpointSkip.mode` and obeyed by the client's MLS state persister, [the decision](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below))), `liveReplaysMode` (`live_replays_mode`, migration 021: `off` / `on`, default `off`, read by social-service at a live's START and fixed on the live row - [live-replays](../live-replays.md); published as `liveReplays.mode`), `groupCallsMode` (`group_calls_mode`, migration 022: `off` / `mesh`, default `off`, read by chat-delivery-service at a group call's `initiate` - [calls](../frontend/modules/calls.md#group-calls---the-mesh-server-half-wp-gc2-2026-11-13); published as `calls.groupMode`), `callRelay` (`call_relay`, migration 023: `none` / `call-service`, `cloudflare` added by 026 ([WP-GC3](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)), default `none`, read by chat-delivery-service at a group call's `initiate` - [calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13); published as `calls.relay`) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
 | `help_seen` | `user_id` (varchar 255), `help_id` (one of `libs/contracts/help-ids.json`), `seen_at` — PK is the pair; migration 019, erased with the account |

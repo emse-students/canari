@@ -14,6 +14,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard';
 import { HelpSeenService } from './help-seen.service';
 import { HELP_ID_UNKNOWN, isHelpId, type HelpId } from './help-ids';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Per account, per minute and PER ROUTE: the throttler keys each route separately, so the read and
@@ -29,6 +30,7 @@ export const HELP_SEEN_LIMIT_PER_MINUTE = 30;
  * Under `users/me/...` for the reason `AnnouncementController` gives: a third segment cannot be
  * captured by the users catch-all `users/:id`, whatever the module order.
  */
+@RouteParams({ helpId: 'opaque' })
 @Controller('users/me/help-seen')
 export class HelpSeenController {
   private readonly logger = new Logger(HelpSeenController.name);

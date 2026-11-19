@@ -68,6 +68,8 @@ function makeServer() {
     releaseAddLock: vi.fn(async () => {}),
     getGroupMemberIdentities: vi.fn(async () => [...tree]),
     runUnderMlsLock: vi.fn((fn: () => Promise<unknown>) => fn()),
+    // The epoch a confirmed reading carries (`readConfirmedTree`).
+    getEpoch: vi.fn().mockReturnValue(0),
     // ONE commit admits both devices: the server writes their rows `pending` (`admits`).
     addMembersBulk: vi.fn(async (_g: string, kps: { deviceId: string; userId: string }[]) => {
       for (const kp of kps) {

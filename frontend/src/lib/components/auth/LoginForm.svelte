@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PaymentHandedNotice from '$lib/components/payments/PaymentHandedNotice.svelte';
   import { fade, slide } from 'svelte/transition';
   import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
   import { TriangleAlert } from '@lucide/svelte';
@@ -90,19 +91,7 @@
       {/if}
 
       {#if paymentReturnHref}
-        <div
-          role="status"
-          data-payment-return
-          class="border-cn-border bg-cn-border/20 text-text-main rounded-xl border px-4 py-3 text-sm"
-        >
-          <p class="font-bold">{m.form_payment_handed_heading()}</p>
-          <p class="text-text-muted mt-1">{m.form_payment_handed_desc()}</p>
-          <a
-            href={paymentReturnHref}
-            class="text-accent-text mt-2 inline-block font-semibold underline"
-            >{m.form_payment_open_canari()}</a
-          >
-        </div>
+        <PaymentHandedNotice href={paymentReturnHref} />
       {/if}
 
       <button

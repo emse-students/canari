@@ -21,13 +21,13 @@ describe('connectivity store', () => {
   it('reports offline when the server cannot be reached, even though the browser claims a link', () => {
     // The exact case navigator.onLine gets wrong: a captive portal, or a backend that is down.
     expect(connectivity.isOnline).toBe(true);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(connectivity.isOnline).toBe(true);
     expect(connectivity.isOffline).toBe(true);
   });
 
   it('clears the offline state on the first request that reaches the server', () => {
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
     expect(connectivity.isOffline).toBe(false);
   });
@@ -36,7 +36,7 @@ describe('connectivity store', () => {
     const listener = vi.fn();
     connectivity.onReconnect(listener);
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(listener).not.toHaveBeenCalled();
 
     connectivity.notifyServerReachable();
@@ -54,7 +54,7 @@ describe('connectivity store', () => {
     });
     connectivity.onReconnect(good);
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
 
     expect(good).toHaveBeenCalledTimes(1);
@@ -65,7 +65,7 @@ describe('connectivity store', () => {
     const off = connectivity.onReconnect(listener);
     off();
 
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     connectivity.notifyServerReachable();
 
     expect(listener).not.toHaveBeenCalled();
@@ -170,7 +170,7 @@ describe('the slow state is derived from observed answers, and never stacks on o
     const r = connectivity.trackRequest();
     await vi.advanceTimersByTimeAsync(SLOW_IN_FLIGHT_MS + 10);
     expect(connectivity.slow).toBe(true);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(connectivity.slow).toBe(false);
     r.failed(new TypeError('Failed to fetch'));
     expect(connectivity.slow).toBe(false);
@@ -186,6 +186,26 @@ describe('the slow state is derived from observed answers, and never stacks on o
     expect(connectivity.isOffline).toBe(false);
     stall();
     expect(connectivity.isOffline).toBe(true);
+  });
+
+  it('the verdict line states its evidence: two deadlines, or the type of the transport failure', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const verdicts = () =>
+      log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('server unreachable'));
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    stall();
+    stall();
+    expect(verdicts()).toEqual([
+      '[CONNECTIVITY] server unreachable (2 request deadlines in a row)',
+    ]);
+    connectivity.notifyServerReachable();
+    connectivity.trackRequest().failed(new TransportFailureError(new TypeError('Failed to fetch')));
+    expect(verdicts().at(-1)).toBe(
+      '[CONNECTIVITY] server unreachable (transport failure: TypeError)'
+    );
+    vi.restoreAllMocks();
   });
 
   it('a deadline that expired while other answers arrived is a slow link, never an unreachable one', async () => {
@@ -217,6 +237,48 @@ describe('the slow state is derived from observed answers, and never stacks on o
     }
   });
 
+  it('an answer from before a Wi-Fi cut is not "answers arrived meanwhile" (Mi 9T, 2026-11-14)', async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const waiting = connectivity.trackRequest();
+      await vi.advanceTimersByTimeAsync(100);
+      connectivity.trackRequest().answered();
+      // The radio goes down here: the offline transition opens a new link epoch.
+      window.dispatchEvent(new Event('offline'));
+      await vi.advanceTimersByTimeAsync(20_000);
+      waiting.failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes('answers arrived meanwhile'))).toBe(false);
+      expect(lines.some((l) => l.includes('(stall 1/2)'))).toBe(true);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a narrow link answering every 8 s through two 20 s reads is slow, never unreachable', async () => {
+    vi.useFakeTimers();
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      for (let read = 0; read < 2; read++) {
+        const waiting = connectivity.trackRequest();
+        for (let i = 0; i < 2; i++) {
+          await vi.advanceTimersByTimeAsync(8_000);
+          connectivity.trackRequest().answered();
+        }
+        await vi.advanceTimersByTimeAsync(4_000);
+        waiting.failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+      }
+      expect(connectivity.isOffline).toBe(false);
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines.filter((l) => l.includes('slow, not unreachable'))).toHaveLength(2);
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Read on Android 1.5.3 (2026-10-31): "(stall 3/2)", "(stall 4/2)" - a count past its own limit.
   it('never counts past its limit: a stall once unreachable is said as such, and the count restarts with the server', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -227,7 +289,8 @@ describe('the slow state is derived from observed answers, and never stacks on o
     const lines = warn.mock.calls.map((c) => String(c[0]));
     expect(lines.filter((l) => l.includes('(stall 1/2)'))).toHaveLength(1);
     expect(lines.filter((l) => l.includes('(stall 2/2)'))).toHaveLength(1);
-    expect(lines.filter((l) => l.includes('(server already unreachable)'))).toHaveLength(3);
+    // Said once for the spell, however many deadlines expire inside it (3 of the 5 here).
+    expect(lines.filter((l) => l.includes('(server already unreachable)'))).toHaveLength(1);
     expect(lines.some((l) => /stall [3-9]\/2/.test(l))).toBe(false);
     // Back by an answer that did not go through `trackRequest` (a socket): a fresh count of two.
     connectivity.notifyServerReachable();
@@ -236,6 +299,35 @@ describe('the slow state is derived from observed answers, and never stacks on o
     stall();
     expect(connectivity.isOffline).toBe(true);
     warn.mockRestore();
+  });
+
+  it('says "already unreachable" once per spell and counts the rest on the line that closes it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stall = () =>
+      connectivity.trackRequest().failed(new RequestDeadlineError('read', 20000, 'GET', '/a', 0));
+    const already = () =>
+      warn.mock.calls.filter((c) => String(c[0]).includes('(server already unreachable)')).length;
+    stall();
+    stall(); // verdict reached
+    stall();
+    stall();
+    stall(); // three deadlines inside the spell
+    expect(already()).toBe(1);
+    connectivity.notifyServerReachable();
+    const closing = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('reachable again'));
+    expect(closing).toHaveLength(1);
+    expect(closing[0]).toContain('2 more request deadline(s)');
+    // The next spell speaks again, once.
+    stall();
+    stall();
+    stall();
+    stall();
+    expect(already()).toBe(2);
+    warn.mockRestore();
+    log.mockRestore();
   });
 
   it('an unproven answer restarts the stall count without moving reachability either way', () => {
@@ -282,7 +374,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     connectivity.setReachabilityProbe(probe);
     const listener = vi.fn();
     connectivity.onReconnect(listener);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     window.dispatchEvent(new Event('offline'));
     await vi.advanceTimersByTimeAsync(10_000);
     probe.mockClear();
@@ -301,7 +393,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
   it('is bounded: a server that never answers gets exactly the planned probes, then silence', async () => {
     const probe = vi.fn(async () => false);
     connectivity.setReachabilityProbe(probe);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     window.dispatchEvent(new Event('offline'));
     await vi.advanceTimersByTimeAsync(60_000);
     probe.mockClear();
@@ -316,7 +408,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
   it('is single-flight: a flapping link joins the running probe instead of starting another', async () => {
     const probe = vi.fn(async () => false);
     connectivity.setReachabilityProbe(probe);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     window.dispatchEvent(new Event('offline'));
     await vi.advanceTimersByTimeAsync(60_000);
     probe.mockClear();
@@ -331,7 +423,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
   it('stops asking as soon as something else answered', async () => {
     const probe = vi.fn(async () => false);
     connectivity.setReachabilityProbe(probe);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     window.dispatchEvent(new Event('offline'));
     await vi.advanceTimersByTimeAsync(60_000);
     probe.mockClear();
@@ -350,7 +442,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
       return true;
     });
     connectivity.setReachabilityProbe(probe);
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await vi.advanceTimersByTimeAsync(500);
     expect(probe).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1_000);
@@ -371,7 +463,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
       connectivity.setReachabilityProbe(probe);
       connectivity.setProbePausesOffScreen(true);
       setForeground(false);
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       await vi.advanceTimersByTimeAsync(120_000);
       expect(probe).not.toHaveBeenCalled();
 
@@ -394,7 +486,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     try {
       const probe = vi.fn(async () => false);
       connectivity.setReachabilityProbe(probe);
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       await vi.advanceTimersByTimeAsync(120_000);
       expect(probe).toHaveBeenCalledTimes(PROBE_DELAYS_AFTER_FAILURE_MS.length);
     } finally {
@@ -407,7 +499,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
       const probe = vi.fn(async () => false);
       connectivity.setReachabilityProbe(probe);
       connectivity.setProbePausesOffScreen(true);
-      connectivity.notifyServerUnreachable();
+      connectivity.notifyServerUnreachable('test');
       await vi.advanceTimersByTimeAsync(1_500);
       expect(probe).toHaveBeenCalledTimes(1);
       setForeground(false);
@@ -427,7 +519,7 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     const probe = vi.fn(async () => true);
     connectivity.setReachabilityProbe(probe);
     window.dispatchEvent(new Event('offline'));
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     await vi.advanceTimersByTimeAsync(60_000);
     expect(probe).not.toHaveBeenCalled();
   });

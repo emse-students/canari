@@ -15,7 +15,9 @@ import {
   findBdeAssociationWithFlag,
   hasPermissionFlag,
   holdsBdeFlag,
+  holdsModerationDoor,
   mayActOnAssociation,
+  offersBdeOnlyFlag,
   type Association,
 } from './api';
 
@@ -67,7 +69,7 @@ describe('mayActOnAssociation', () => {
   });
 
   // These two are the whole point of sharing one predicate: the edit page used to spell the
-  // Stripe exception out by hand, so the exception and the rule could drift apart.
+  // payout-account exception out by hand, so the exception and the rule could drift apart.
   it.each([
     ['MANAGE_PAYOUT_ACCOUNT', MANAGE_PAYOUT_ACCOUNT],
     ['POST_AS_ASSO', POST_AS_ASSO],
@@ -99,6 +101,40 @@ describe('BDE-wide flag lookup', () => {
 
   it('treats a withheld bitmask as no flags rather than guessing', () => {
     expect(holdsBdeFlag([asso('bde', true, undefined)], MANAGE_ASSO)).toBe(false);
+  });
+});
+
+describe('the moderation door (owner, 2026-11-15, decisions 3 and 4)', () => {
+  const { MODERATE } = AssociationPermissionFlag;
+  const typed = (type: Association['type'], isBDE: boolean, permissions?: number) =>
+    ({ id: type, type, isBDE, permissions }) as Association;
+
+  it('opens to MODERATE in a BDE, or in any institution - governing a space or not', () => {
+    expect(holdsModerationDoor([typed('association', true, MODERATE)])).toBe(true);
+    expect(holdsModerationDoor([typed('institution', false, MODERATE)])).toBe(true);
+    expect(holdsModerationDoor([typed('institution', true, MODERATE)])).toBe(true);
+  });
+
+  it('stays shut for MODERATE in a club or a list, and for another flag', () => {
+    expect(holdsModerationDoor([typed('association', false, MODERATE)])).toBe(false);
+    expect(holdsModerationDoor([typed('list', true, MODERATE)])).toBe(false);
+    expect(holdsModerationDoor([typed('institution', false, VALIDATE_EVENTS)])).toBe(false);
+    expect(holdsModerationDoor([typed('institution', false, undefined)])).toBe(false);
+  });
+
+  it('offers each BDE-only flag where the server honours it', () => {
+    // A BDE: all three.
+    for (const flag of BDE_ONLY_FLAGS)
+      expect(offersBdeOnlyFlag('association', true, flag)).toBe(true);
+    // A club: none.
+    for (const flag of BDE_ONLY_FLAGS)
+      expect(offersBdeOnlyFlag('association', false, flag)).toBe(false);
+    // An institution: MODERATE always (its own content), the agenda where it governs a space, never
+    // the management of associations.
+    expect(offersBdeOnlyFlag('institution', false, MODERATE)).toBe(true);
+    expect(offersBdeOnlyFlag('institution', false, VALIDATE_EVENTS)).toBe(false);
+    expect(offersBdeOnlyFlag('institution', true, VALIDATE_EVENTS)).toBe(true);
+    expect(offersBdeOnlyFlag('institution', true, MANAGE_ASSO)).toBe(false);
   });
 });
 

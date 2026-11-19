@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Put, UseGuards } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { RouteParams } from '../common/route-params';
 import { CommunityNicknamesService } from './community-nicknames.service';
 import { SetCommunityNicknameDto } from './dto/community-nickname.dto';
 
@@ -7,6 +8,7 @@ import { SetCommunityNicknameDto } from './dto/community-nickname.dto';
  * A community's nicknames ("Modifier les pseudos"). Under `channels/workspaces/...` with the rest of a
  * community's routes; the rules are the service's.
  */
+@RouteParams({ workspaceId: 'uuid', userId: 'opaque' })
 @Controller('channels')
 export class CommunityNicknamesController {
   constructor(private readonly nicknames: CommunityNicknamesService) {}

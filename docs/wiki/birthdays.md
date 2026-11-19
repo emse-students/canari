@@ -5,7 +5,7 @@ Decided by the owner on 2026-11-08 (part of [engagement](engagement.md)), built 
 (shown once, "Ajouter mon anniversaire" opening the section, gone after "Passer" and a cold
 restart); the settings PARTIAL (the "counts from tomorrow" note and no ring on the day of the save
 seen, the locked state not, since a same-day correction is accepted by design). The readings still
-owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else); the GDPR row is C26 of the
+owed are an entry of [the readings owed](plan.md#readings-owed); the GDPR row is C26 of the
 [register](compliance/register-of-processing.md), whose public face is `/legal/privacy`.
 
 ## The four decisions
@@ -121,7 +121,9 @@ each member celebrated today whose date is in effect, in ONE transaction:
    day, the date in effect and the 300 days on the row it locks - **idempotence is this column, never
    a clock**: a second tick or replica waits on the row lock, re-reads it and fails the condition, so
    nobody is told twice;
-2. read the recipients: accepted followers who may see the date (so `nobody` tells nobody);
+2. read the recipients: accepted followers who may see the date (so `nobody` tells nobody), minus
+   those who switched the `birthdays` category off - they get neither a bell row nor a push
+   (`inAppCategoryOffSql`; read on dev 2026-11-18);
 3. write their bell rows (`post_notifications`, type `birthday`, `postId` = the celebrant's id).
 
 After the commit, `PostNotificationsService.pushNotice` fans out the pushes (content key

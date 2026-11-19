@@ -194,6 +194,23 @@ describe('ChannelService - the community distribution group', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('logs neither the name nor the slug of the community it creates', async () => {
+      const { service } = makeService();
+
+      await service.createWorkspace({
+        name: 'Les Canaris Secrets',
+        slug: 'les-canaris-secrets',
+        createdBy: USER,
+      });
+
+      const lines = (service['logger'].log as jest.Mock).mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes('[WORKSPACE] create'))).toBe(true);
+      for (const line of lines) {
+        expect(line).not.toContain('Canaris');
+        expect(line).not.toContain('canaris');
+      }
+    });
+
     it.each([
       ['a name', { name: ' ', slug: 'test' }, 'COMMUNITY_NAME_INVALID'],
       ['a slug', { name: 'Test', slug: 'Te st' }, 'COMMUNITY_SLUG_INVALID'],
@@ -1139,7 +1156,7 @@ describe('ChannelService - the community distribution group', () => {
 
     /** An actor holding exactly `permissions` in the community. */
     function arrangeActorRole(repos: ReturnType<typeof makeService>, permissions: string[]) {
-      const actor = { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
+      const actor = { id: 'm-actor', workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] };
       repos.memberRepo.findOne.mockResolvedValue(actor);
       // The community as a locked read sees it: the actor is a member, so a flip that grants them
       // passes the grantee check (`assertGranteesAreMembers`).
@@ -1237,6 +1254,12 @@ describe('ChannelService - the community distribution group', () => {
         'channel.member.joined',
         expect.objectContaining({ channelId: CHANNEL, joinedBy: USER }),
         expect.any(Array)
+      );
+      // The salon's past is history to them, not a badge (owner, 2026-11-16): the grant raises
+      // their private unread floor in its own transaction, on a row it locked `FOR UPDATE`.
+      expect(repos.departures.floors).toEqual([{ channelId: CHANNEL, memberIds: ['m-actor'] }]);
+      expect(repos.memberRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: 'pessimistic_write' } })
       );
     });
 

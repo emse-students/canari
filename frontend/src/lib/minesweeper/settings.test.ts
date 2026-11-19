@@ -55,8 +55,8 @@ describe('minesweeper settings', () => {
     expect(loadMinesweeperSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
-  it('snaps the long-press delay into 200-600 ms in steps of 50', () => {
-    expect(clampLongPressMs(10)).toBe(200);
+  it('snaps the long-press delay into 150-600 ms in steps of 50', () => {
+    expect(clampLongPressMs(10)).toBe(150);
     expect(clampLongPressMs(9999)).toBe(600);
     expect(clampLongPressMs(372)).toBe(350);
     expect(clampLongPressMs(NaN)).toBe(350);

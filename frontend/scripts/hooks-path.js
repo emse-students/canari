@@ -7,8 +7,14 @@
  * vanish without anybody acting, and when the named directory is gone git runs NO hook and says
  * nothing - commits are merely suspiciously fast and stop re-staging anything. A RELATIVE value
  * resolves inside whichever checkout is committing, which is what every checkout wants.
+ *
+ * AND IT NAMES A TRACKED DIRECTORY (2026-11-15). It was `.husky/_`, the wrappers husky GENERATES
+ * on `bun install` - so a fresh worktree with no `node_modules` had no `.husky/_`, and git ran no
+ * hook there and said nothing (PR #3611 was committed that way). `.husky/` itself is tracked: every
+ * checkout has the hooks the moment it exists, and a hook that then finds no toolchain FAILS and
+ * names what to install, rather than never running.
  */
-export const HOOKS_PATH = '.husky/_';
+export const HOOKS_PATH = '.husky';
 
 /**
  * Why a `core.hooksPath` reading cannot be trusted, or `null` when it can.

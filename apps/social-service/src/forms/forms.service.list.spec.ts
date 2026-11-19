@@ -18,6 +18,8 @@ describe('FormsService.list', () => {
     viaAssociation?: Record<string, unknown>[];
     managed?: { id: string; name: string }[];
     names?: [string, string][];
+    /** The associations outside `managed` where `mayActOnAny` still grants MANAGE_FORMS. */
+    mayStill?: string[];
   }) {
     const queries: Record<string, unknown>[][] = [];
     const formRepo: any = {
@@ -40,6 +42,7 @@ describe('FormsService.list', () => {
     const associationsService: any = {
       associationsWhereUserHasFlag: jest.fn(() => Promise.resolve(opts.managed ?? [])),
       namesByIds: jest.fn(() => Promise.resolve(new Map(opts.names ?? []))),
+      mayActOnAny: jest.fn(() => Promise.resolve(new Set(opts.mayStill ?? []))),
     };
     const service = new FormsService(
       formRepo,
@@ -113,6 +116,20 @@ describe('FormsService.list', () => {
     expect((await service.list('user1')).map((f) => f.id)).toEqual(['f03', 'f02', 'f01']);
   });
 
+  it('carries the server-judged window state of each form', async () => {
+    const { service } = makeService({
+      owned: [
+        form('f01'),
+        { ...form('f02'), closedAt: new Date(Date.now() - 1000) },
+        { ...form('f03'), opensAt: new Date(Date.now() + 86_400_000) },
+      ],
+    });
+    const byId = Object.fromEntries(
+      (await service.list('user1')).map((f) => [f.id, f.windowState])
+    );
+    expect(byId).toEqual({ f01: 'open', f02: 'closed', f03: 'not-yet' });
+  });
+
   it('labels a personal form with no association name', async () => {
     const { service } = makeService({ owned: [form('f01')] });
     expect((await service.list('user1'))[0].associationName).toBeNull();
@@ -124,8 +141,24 @@ describe('FormsService.list', () => {
     const { service } = makeService({
       owned: [form('f01', { associationId: 'gone' })],
       names: [],
+      mayStill: ['gone'],
     });
     expect((await service.list('user1'))[0].associationName).toBeNull();
+  });
+
+  // Owner, 2026-11-14: an association's form is managed by MANAGE_FORMS, never by authorship. A
+  // form its creator no longer may manage is not offered to them (`managesForm` would refuse it).
+  it("drops an owned association form its owner does not manage, asked by mayAct's predicate", async () => {
+    const { service, associationsService } = makeService({
+      owned: [form('f01', { associationId: 'asso2' }), form('f02')],
+      managed: [],
+    });
+    expect((await service.list('user1')).map((f) => f.id)).toEqual(['f02']);
+    expect(associationsService.mayActOnAny).toHaveBeenCalledWith(
+      'user1',
+      ['asso2'],
+      AssociationPermissionFlag.MANAGE_FORMS
+    );
   });
 
   // The association scan is skipped entirely when the caller manages none, rather than running a

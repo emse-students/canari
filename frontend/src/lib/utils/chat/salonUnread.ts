@@ -83,6 +83,7 @@ export function beginUnreadReconcile(): number {
 export function resetSalonUnread(): void {
   ticks = 0;
   countsInFlight = null;
+  uncountedAsk = null;
   generation++;
   openedAtTick.clear();
   levelNotedAtTick.clear();
@@ -115,7 +116,7 @@ function mergeMuted(answerMuted: readonly string[], token: number): Set<string> 
   const next = new Set(answerMuted);
   for (const [id, tick] of levelNotedAtTick) {
     if (tick <= token) continue;
-    Log.d(`[UNREAD] salon ${id}: level chosen after the counts were asked - kept over the answer`);
+    Log.d('UNREAD', `salon ${id}: level chosen after the counts were asked - kept over the answer`);
     if (mutedSalons.has(id)) next.add(id);
     else next.delete(id);
   }
@@ -255,6 +256,12 @@ export async function reconcileSalonUnreadFromServer(opts: {
   log: (message: string) => void;
   /** Where the counts were asked for, for the one line this leaves. */
   reason: string;
+  /**
+   * False when the answer must count something that reached this device JUST NOW: a request
+   * already on the wire may have been counted before that row existed, so it is never joined.
+   * Default true.
+   */
+  joinInFlight?: boolean;
 }): Promise<void> {
   // NOTHING OWED = THE REQUEST ALREADY ON THE WIRE IS AS FRESH AS OURS. Only a flush that delivered
   // no mark (or no flush at all) lets this caller join; one that delivered marks asks for itself,
@@ -272,7 +279,12 @@ export async function reconcileSalonUnreadFromServer(opts: {
   const token = beginUnreadReconcile();
   const startedIn = generation;
   try {
-    const raw = await countsRequest(opts.fetchCounts, startedIn, nothingOwed, opts);
+    const raw = await countsRequest(
+      opts.fetchCounts,
+      startedIn,
+      nothingOwed && opts.joinInFlight !== false,
+      opts
+    );
     if (startedIn !== generation) {
       opts.log(
         `[UNREAD] ${opts.reason}: the session ended while the counts were in flight - dropped`
@@ -318,6 +330,55 @@ export async function reconcileSalonUnreadFromServer(opts: {
       `[UNREAD] ${opts.reason}: counts not refreshed - badges may be stale until the next load: ${String(e)}`
     );
   }
+}
+
+/**
+ * The counts request owed to live salon messages this device could not open, while one runs.
+ * `owed` is set by an arrival that lands DURING the run: that run's request may have been counted
+ * before the arrival's row existed, so exactly one more follows it. A flag and a loop, not a timer.
+ */
+let uncountedAsk: { generation: number; owed: boolean; done: Promise<void> } | null = null;
+
+/**
+ * A live salon message reached this device and could not be counted here - its frame could not be
+ * opened (a salon granted, or a community joined, before the seed of its first messages landed) -
+ * so its badge is taken from the server's count, which holds the row (`ask`, a reconcile that never
+ * joins an older request).
+ *
+ * WHY NOT A LOCAL +1. The frame names its author and `silent`, but a local tally of rows nobody can
+ * show yet needs its own ledger to survive a re-delivered frame and the repair's history load, and
+ * the server's count already IS that ledger (`listUnreadCounts`: not silent, not own, newer than the
+ * mark). One question, the same answer a reload would give, and nothing to reconcile afterwards.
+ *
+ * A burst of such frames costs at most two requests: the one running, and one after it for every
+ * arrival it may have missed. Resolves when the counts that cover this arrival are applied.
+ */
+export function noteUncountedSalonArrival(
+  channelId: string,
+  ask: () => Promise<void>,
+  log: (message: string) => void
+): Promise<void> {
+  const running = uncountedAsk;
+  if (running && running.generation === generation) {
+    running.owed = true;
+    log(
+      `[UNREAD] salon ${channelId.slice(0, 8)}: an uncounted arrival during a counts request - one more is owed after it`
+    );
+    return running.done;
+  }
+  const state = { generation, owed: false, done: Promise.resolve() };
+  uncountedAsk = state;
+  state.done = (async () => {
+    try {
+      do {
+        state.owed = false;
+        await ask();
+      } while (state.owed && state.generation === generation);
+    } finally {
+      if (uncountedAsk === state) uncountedAsk = null;
+    }
+  })();
+  return state.done;
 }
 
 /**

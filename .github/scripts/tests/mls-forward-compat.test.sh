@@ -65,13 +65,13 @@ fi
 # -------------------------------------------------------------------------------------------------
 echo "the change filter fires on what a protocol bump actually touches:"
 
-# The patterns, read out of `ci.yml` rather than restated - a copy here could pass while the
+# The patterns, read out of `ci-scopes.sh` (where `ci.yml`'s filters live since 2026-11-15) rather than restated - a copy here could pass while the
 # workflow's own filter said something else, which is the failure this whole file is about.
-patterns=$(sed -n '/-- MLS cross-version compatibility --/,/mls_compat=true/p' "$ci" |
+patterns=$(sed -n '/-- MLS cross-version compatibility --/,/mls_compat=true/p' "$repo_root/.github/scripts/ci-scopes.sh" |
   grep -oE "has '[^']+'" | sed "s/^has '//; s/'$//")
 
 if [ -z "$patterns" ]; then
-  bad "could not read the mls_compat filter out of ci.yml - this test is measuring nothing"
+  bad "could not read the mls_compat filter out of ci-scopes.sh - this test is measuring nothing"
   patterns='__none__'
 fi
 

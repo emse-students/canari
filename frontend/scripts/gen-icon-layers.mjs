@@ -8,7 +8,8 @@
  * - `layers/`: the bird alone on a transparent square (`bird.svg`, `bird-2048.png`), its flat
  *   one-colour silhouette for tinted/monochrome modes (`bird-mono-2048.png`), and the gradient
  *   (`background.svg`, `background-2048.png`). The bird is sized so that on the 1024 canvas it is
- *   `BIRD_ICON_FILL` wide, the same rule as every generated icon.
+ *   `BIRD_ICON_FILL` wide, the rule of every square icon (the Android foreground is sized in dp,
+ *   `ANDROID_BIRD_DP`).
  *
  * Run from the `frontend` directory: `bun scripts/gen-icon-layers.mjs`
  */

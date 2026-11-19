@@ -92,7 +92,7 @@ export function isReaderSpaceSql(space: string, user: string): string {
 /**
  * A further condition on the SPACE through which an association's rules (or a read grant) reach a
  * reader: a function of the `spaces` alias, answering a SQL boolean. `postVisibleToUserSql` passes
- * the post's own reach (`postReachHoldsSpaceSql`, owner 2026-11-10), so an institution's post reaches
+ * the post's own reach (`institutionReachHoldsSpaceSql`, owner 2026-11-10), so an institution's post reaches
  * only the spaces it ticked, inside the institution's audience. Absent: every space the rules reach.
  */
 export type SpaceFilter = (space: string) => string;
@@ -110,8 +110,30 @@ function ruleReachesUserSql(rule: string, user: string, spaceFilter?: SpaceFilte
 
 /** User row `user` is a member of association `association` (an id expression). Any row counts. */
 export function isMemberSql(association: string, user: string): string {
+  return isMemberIdSql(association, `${user}.id`);
+}
+
+/** {@link isMemberSql} for a user ID expression (`$2`, a column) rather than a `users` row. */
+function isMemberIdSql(association: string, userId: string): string {
   return `EXISTS (SELECT 1 FROM association_members vis_member
-    WHERE vis_member."associationId" = ${association} AND vis_member."userId" = ${user}.id)`;
+    WHERE vis_member."associationId" = ${association} AND vis_member."userId" = ${userId})`;
+}
+
+/**
+ * THE AUTHOR'S DOOR of post row `post`, for the user whose id is the expression `userId` (2026-11-14,
+ * profiles-and-access.md): the writer of a PERSONAL post always; the writer of a post in an ENTITY's
+ * name (an association, a list, an institution) only while they are still a member of that entity -
+ * any `association_members` row, the membership the own-entity branch of `postVisibleToUserSql`
+ * already reads. An entity's post belongs to the entity: an officer who left it keeps no door the
+ * other former members do not have.
+ *
+ * One fragment, asked by every place where "the author" opens or is told something: the visibility
+ * predicate's first door, the by-id gate's "scheduled later, unless the reader wrote it", the comment
+ * and reaction notices to the author, and the bell rows those wrote.
+ */
+export function authorDoorHoldsSql(post: string, userId: string): string {
+  return `(${post}."authorId" = ${userId}
+    AND (${post}."associationId" IS NULL OR ${isMemberIdSql(`${post}."associationId"`, userId)}))`;
 }
 
 /** The association's own rules (its ceiling) reach user row `user`, through a space `spaceFilter` keeps. */
@@ -221,14 +243,15 @@ export function associationVisibleToUserSql(
  */
 export function associationRulesReachSpaceMatchingSql(
   association: string,
-  filter: { formation: string | null; campus: string | null }
+  filter: { formation: string | null; campus: string | null },
+  spaceFilter?: SpaceFilter
 ): string {
   const formation =
     filter.formation === null ? '' : ` AND dir_space.formation = ${filter.formation}`;
   const campus = filter.campus === null ? '' : ` AND dir_space.campus = ${filter.campus}`;
   return `EXISTS (SELECT 1 FROM association_audiences dir_rule
     JOIN spaces dir_space ON ${ruleReachesSpaceSql('dir_rule', 'dir_space')}
-    WHERE dir_rule."associationId" = ${association}${formation}${campus})`;
+    WHERE dir_rule."associationId" = ${association}${formation}${campus}${andSpaceFilter(spaceFilter, 'dir_space')})`;
 }
 
 /**
@@ -237,15 +260,26 @@ export function associationRulesReachSpaceMatchingSql(
  * ACCEPTED co-organiser's (D39), the union an event's audience is. Rules only, like the map filter:
  * an anonymous reader has no membership, so D21 has nothing to add. Both sides `null` is not a
  * selection and the caller must not splice it.
+ *
+ * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 165), read as `postReachesSpaceSql` reads a
+ * post's: the organiser's door matches only a space the event ticked
+ * ({@link institutionReachHoldsSpaceSql}), and an event for STAFF only reaches no space at all - a
+ * space's readers are students, whom its public refuses. An accepted co-organiser's door keeps its
+ * own rules (the reach narrows the institution's own door, as a republisher keeps its readers).
  */
 export function eventReachesSpaceMatchingSql(
   event: string,
   filter: { formation: string | null; campus: string | null }
 ): string {
-  return `(${associationRulesReachSpaceMatchingSql(`${event}."associationId"`, filter)}
+  const ownDoor = associationRulesReachSpaceMatchingSql(
+    `${event}."associationId"`,
+    filter,
+    (space) => institutionReachHoldsSpaceSql(event, space)
+  );
+  return `(${event}."reachPublic" IS DISTINCT FROM 'staff' AND (${ownDoor}
     OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners sel_coorg
       WHERE sel_coorg.event_id = ${event}.id
-        AND ${associationRulesReachSpaceMatchingSql('sel_coorg.association_id', filter)}))`;
+        AND ${associationRulesReachSpaceMatchingSql('sel_coorg.association_id', filter)})))`;
 }
 
 /**
@@ -314,7 +348,6 @@ function acceptedFollowerOfAuthorSql(author: string, user: string): string {
  * - for a personal post - not through a carrier the author accepted (no second hop, 2026-11-02).
  */
 const REPOSTER_FIRST_HAND = {
-  adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
   personalRepublications: false,
@@ -484,16 +517,18 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
 }
 
 /**
- * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 162): post row `post` carries no
+ * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 162 for posts, 165 for calendar
+ * events - the same two columns, so `post` may be either row): post row `post` carries no
  * reach (`reachPublic` NULL: not an institution's post, or one written before the reach existed), or
  * its public is 'all', or 'students' and user row `user` is a student ({@link isStudentSql}), or
  * 'staff' and they are not - or they are a member of the institution that PUBLISHED it, who reads
  * every post of their own institution (D21). Like the "Entre étudiants" gate, a conjunct over every
  * door but the author's own: the rule is on WHO READS, wherever the post arrives.
  *
- * A "staff" reader is an account with no space: staff (a campus and an empty cursus). They reach an
- * institution's post only through a door they already had - a membership, a read grant, a
- * republisher, a member repost - since a staff account has no space for the post's rules to reach.
+ * A "staff" reader is an account with no space: staff (a campus and an empty cursus). A staff account
+ * has no space for the post's rules to reach, so they reach an institution's post through a door they
+ * already had - a membership, a read grant, a republisher, a member repost - or, on a POST since
+ * 2026-11-14, the staff-by-campus door of "Tous" and "Personnel" ({@link institutionReachStaffCampusDoorSql}).
  */
 export function institutionReachAdmitsUserSql(post: string, user: string): string {
   return `(${post}."reachPublic" IS NULL OR ${post}."reachPublic" = 'all'
@@ -523,24 +558,75 @@ export function postPublicAdmitsViewerSql(post: string, viewer: string): string 
 }
 
 /**
- * THE SPACES AN INSTITUTION TICKED (owner, 2026-11-10; migration 162): space row `space` is one post
- * row `post` reaches through its OWN association - the post carries no reach (`reachSpaces` NULL:
- * every space of the association's audience, as before), or the space is one of its ticked pairs.
- * Containment (`@>`) as `users.cursus` is read: a malformed value contains nothing, so the post then
- * reaches nobody through its rules (it fails closed). Always ANDed with the association's own rules
- * reaching that same space, so the reach never widens the audience and shrinks with it.
+ * THE SPACES AN INSTITUTION TICKED (owner, 2026-11-10 for posts, migration 162; 2026-11-13 for
+ * calendar events, migration 165): space row `space` is one that row `item` - a post or an
+ * `association_calendar_events` row, both carrying `"reachSpaces"` - reaches through its OWN
+ * association. The item carries no reach (`reachSpaces` NULL: every space of the association's
+ * audience, as before), or the space is one of its ticked pairs. Containment (`@>`) as `users.cursus`
+ * is read: a malformed value contains nothing, so the item then reaches nobody through its rules (it
+ * fails closed). Always ANDed with the association's own rules reaching that same space, so the reach
+ * never widens the audience and shrinks with it.
  */
-export function postReachHoldsSpaceSql(post: string, space: string): string {
-  return `(${post}."reachSpaces" IS NULL OR ${post}."reachSpaces" @> jsonb_build_array(
+export function institutionReachHoldsSpaceSql(item: string, space: string): string {
+  return `(${item}."reachSpaces" IS NULL OR ${item}."reachSpaces" @> jsonb_build_array(
       jsonb_build_object('formation', ${space}.formation, 'campus', ${space}.campus)))`;
 }
 
 /**
+ * User row `user` is STAFF OF A CAMPUS: a campus and NO cursus entry, and not a review account - the
+ * SQL twin of {@link campusWideReaderCampus} (EMSE staff, user 2026-10-07), whose test holds the two
+ * together. A cursus that is not an array (malformed) is not staff, as the pure twin answers.
+ */
+export function isCampusStaffSql(user: string): string {
+  return `(${user}.campus IS NOT NULL
+    AND (${user}.cursus IS NULL OR ${user}.cursus = '[]'::jsonb OR ${user}.cursus = 'null'::jsonb)
+    AND NOT ${inReviewCohortSql(`${user}.id`)})`;
+}
+
+/**
+ * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14: "Oui, par campus"): post row `item` - one an
+ * institution gave a reach - whose public is "Tous" or "Personnel" opens to user row `user`
+ * when they are staff of a campus ({@link isCampusStaffSql}) and one of the spaces the item TICKED is
+ * on that campus AND is still reached by the institution's own rules. So the School addresses its
+ * staff without naming each one; a staff account of another campus is not reached, a student gains
+ * nothing (their door is their space), and the door is never wider than the institution's audience
+ * and shrinks with it, as the rules door does. An item with no reach (not an institution's, or
+ * written before the reach existed) opens nothing here: its readers are what they were.
+ *
+ * Read from the row: an edit to "Étudiants", or unticking the campus, closes the door at once. The
+ * public gate ({@link institutionReachAdmitsUserSql}) still ANDs over it.
+ */
+export function institutionReachStaffCampusDoorSql(item: string, user: string): string {
+  return `(${item}."reachPublic" IN ('all', 'staff') AND ${item}."reachSpaces" IS NOT NULL
+    AND ${isCampusStaffSql(user)}
+    AND EXISTS (SELECT 1 FROM association_audiences sc_rule
+      JOIN spaces sc_space ON ${ruleReachesSpaceSql('sc_rule', 'sc_space')}
+      WHERE sc_rule."associationId" = ${item}."associationId" AND sc_space.campus = ${user}.campus
+        AND ${institutionReachHoldsSpaceSql(item, 'sc_space')}))`;
+}
+
+/**
+ * Row `item` (a post or a calendar event) is NOT for students only by an institution's public: what
+ * closes a read grant's door and a browsing admin's on a "students" item (S1, S2 of #3010, kept for
+ * the reach of posts and of events alike).
+ */
+export function institutionReachNotForStudentsSql(item: string): string {
+  return `${item}."reachPublic" IS DISTINCT FROM 'students'`;
+}
+
+/**
  * Post row `post` is visible to user row `user` (decision 3 of WP6b, D38):
- * - the post's author, and a global admin ONLY when `adminSeesAll` (opening one post by its id, the
- *   way a report or a moderation link does) - never when BROWSING, so the feed, the search and the
- *   announcements show an admin what they would show an ordinary reader (user, 2026-10-04: an admin
- *   reading everyone's personal posts would be a mess, and a wrong thing to be able to do);
+ * - the post's author ({@link authorDoorHoldsSql}: for an entity's post, only while they still hold a
+ *   membership of that entity). NO ADMIN DOOR: the feed, the search and the announcements show a
+ *   platform admin what they would show an ordinary reader (user, 2026-10-04: an admin reading
+ *   everyone's personal posts would be a mess, and a wrong thing to be able to do), and a reaction, a
+ *   comment, a vote, a republication ask them the ordinary reader's right (2026-11-14). The
+ *   MODERATION READ - one post by its id, its comments, its replay - is not a door of this
+ *   predicate: it is `AssociationsService.mayModeratePost`, asked where the read is made and handed
+ *   to `readPostOpenVerdict` as `allowHidden` (owner, 2026-11-15: "Oui, dans ses espaces");
+ * - with `adminSeesCohort`, a platform admin on a REVIEW ACCOUNT's post - the live's own exception
+ *   (`liveVisibleToUserSql`), passed by a live replay's watch alone, so a replay is never wider than
+ *   its live;
  * - an association post: the reader sees its association (a member, or its rules reach one of the
  *   reader's spaces), OR sees an association that republished it. A post has no rules of its own
  *   any more (D38, user 2026-10-04): what widens its audience is a republication, never the author.
@@ -563,45 +649,42 @@ export function postReachHoldsSpaceSql(post: string, space: string): string {
  *   `memberRepostReachesUserSql`), left out with `followers: false` like the author's followers.
  *   Monotone in reposts too, so a repost's newly-reached set is "after and not before".
  *
- * EVERY DOOR BUT THE AUTHOR'S AND THE MODERATING ADMIN'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
+ * EVERY DOOR BUT THE AUTHOR'S IS NARROWED BY THE "ENTRE ÉTUDIANTS" GATE
  * ({@link studentsOnlyAdmitsUserSql}, owner 2026-11-04). It reads no republication and no repost, so
  * the predicate stays monotone in both, and the newly-reached rules restate it on their "after" side.
- * Two narrowings more on such a post (the lead's decisions, 2026-11-04, reversible):
- * - A READ GRANT NEVER OPENS IT: the grant door carries `grantGuard` = "not students-only", so a
- *   student who also holds a grant on another campus does not read that campus's post through it;
- * - `adminSeesAll` opens it to a platform admin ONLY with `adminModerates` - the moderation read
- *   (`allowHidden`: the post by id, its comments, a comment's moderation). Reacting, commenting,
- *   voting and browsing it ask the gate of an admin like of anyone.
+ * One narrowing more on such a post (the lead's decision, 2026-11-04, reversible): A READ GRANT
+ * NEVER OPENS IT - the grant door carries `grantGuard` = "not students-only", so a student who also
+ * holds a grant on another campus does not read that campus's post through it.
  *
  * AN INSTITUTION'S REACH (owner, 2026-11-10, amending D19 for institutions only; migration 162):
  * - its PUBLIC is a second gate beside the switch ({@link institutionReachAdmitsUserSql}, both in
  *   {@link postPublicAdmitsUserSql}), over every door but the author's; 'students' closes the grant
- *   and browsing-admin doors exactly as the switch does;
+ *   door exactly as the switch does;
  * - its SPACES narrow the post's OWN association door - rules and read grant alike - to the ticked
- *   spaces ({@link postReachHoldsSpaceSql}), ANDed with the institution's rules, so never wider than
- *   its audience. A membership is not narrowed (D21), and a republisher reaches its own readers (G4).
+ *   spaces ({@link institutionReachHoldsSpaceSql}), ANDed with the institution's rules, so never wider than
+ *   its audience. A membership is not narrowed (D21), and a republisher reaches its own readers (G4);
+ * - "Tous" and "Personnel" also open it to the staff of a ticked space's campus
+ *   ({@link institutionReachStaffCampusDoorSql}, owner 2026-11-14), a door of its own beside the rules.
  * Read from the row: an edit narrows or widens the post for every path at once.
  */
 export function postVisibleToUserSql(
   post: string,
   user: string,
-  opts: { adminSeesAll?: boolean; adminModerates?: boolean } & ReadOpts & FollowerOpts = {}
+  opts: { adminSeesCohort?: boolean } & ReadOpts & FollowerOpts = {}
 ): string {
-  // "For students" in either form - the switch, or an institution's public - closes the grant door
-  // and the browsing admin's, as the lead decided for the switch (S1, S2 of #3010).
+  // "For students" in either form - the switch, or an institution's public - closes the grant door,
+  // as the lead decided for the switch (S1 of #3010).
   const notStudentsOnly = `(NOT COALESCE(${post}."studentsOnly", false)
-      AND ${post}."reachPublic" IS DISTINCT FROM 'students')`;
-  const adminClause = opts.adminSeesAll
-    ? opts.adminModerates
-      ? `${isAdminSql(user)}\n    OR `
-      : `(${isAdminSql(user)} AND ${notStudentsOnly})\n    OR `
+      AND ${institutionReachNotForStudentsSql(post)})`;
+  const cohortClause = opts.adminSeesCohort
+    ? `(${isAdminSql(user)} AND ${inReviewCohortSql(`${post}."authorId"`)})\n    OR `
     : '';
   const grantOpts: ReadOpts = { readGrants: opts.readGrants, grantGuard: notStudentsOnly };
   // The post's OWN association reaches only the spaces the post ticked (an institution's reach,
   // 2026-11-10); a republisher reaches its own readers (G4), so its door takes no filter.
   const ownEntityOpts: ReadOpts = {
     ...grantOpts,
-    spaceFilter: (space) => postReachHoldsSpaceSql(post, space),
+    spaceFilter: (space) => institutionReachHoldsSpaceSql(post, space),
   };
   const followerClause =
     opts.followers === false
@@ -622,12 +705,13 @@ export function postVisibleToUserSql(
       ? ''
       : `
       OR ${republicationReachesUserSql(post, user)}`;
-  return `(${adminClause}${post}."authorId" = ${user}.id
+  return `(${cohortClause}${authorDoorHoldsSql(post, `${user}.id`)}
     OR (${postPublicAdmitsUserSql(post, user)} AND (
     (${post}."associationId" IS NULL AND (
       ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}${personalCarrierClause}${followerClause}${repostClause}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, ownEntityOpts)}
+      OR ${institutionReachStaffCampusDoorSql(post, user)}
       OR ${republicationReachesUserSql(post, user, grantOpts)}${repostClause})))))`;
 }
 
@@ -721,7 +805,7 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
  * It is `postVisibleToUserSql` with everything PERSONAL taken out, since a space is not a person:
  * - an association post: one of the association's rules reaches the space (a membership is one
  *   person's door, never a space's) and, for an institution's post with a reach, the space is one it
- *   ticked (`postReachHoldsSpaceSql`, 2026-11-10);
+ *   ticked (`institutionReachHoldsSpaceSql`, 2026-11-10);
  * - an institution's post for staff only (`reachPublic` 'staff') reaches no space at all: a space's
  *   readers are students, whom its public refuses (review of #3314);
  * - a personal post: its author belongs to the space (`isReaderSpaceSql`, so a review account's post
@@ -747,7 +831,7 @@ export function postReachesSpaceSql(post: string, space: string): string {
     OR (${post}."associationId" IS NOT NULL AND (
       (EXISTS (SELECT 1 FROM association_audiences sp_rule
         WHERE sp_rule."associationId" = ${post}."associationId" AND ${ruleReachesSpaceSql('sp_rule', space)})
-        AND ${postReachHoldsSpaceSql(post, space)})
+        AND ${institutionReachHoldsSpaceSql(post, space)})
       OR ${republished}))))`;
 }
 
@@ -773,8 +857,7 @@ export function postVisibleToViewerSql(
   post: string,
   viewer: string,
   opts: {
-    adminSeesAll?: boolean;
-    adminModerates?: boolean;
+    adminSeesCohort?: boolean;
     readGrants?: boolean;
   } & FollowerOpts = {}
 ): string {
@@ -803,17 +886,23 @@ export function readerSeesGrantCommentsSql(user: string): string {
  * them and NOT visible WITHOUT them - so a reader who also reaches it natively (their own space, a
  * membership, a republication, an accepted follow, a member repost) keeps everything.
  *
- * A global admin is never withheld. A reader with no grant at all answers `false` on the grant
+ * A global admin is withheld like anyone from a post's comments (2026-11-14: an admin participates
+ * only as the reader they are; the by-id moderation read skips this term instead), and never from a
+ * live's chat (`exemptAdmin`, unchanged). A reader with no grant at all answers `false` on the grant
  * conjunct, before either visibility arm is asked. The two consumers are
  * {@link commentsWithheldFromViewerSql} (a post's comments and people) and
  * {@link liveChatWithheldFromViewerSql} (a live's chat); neither restates any of this.
  */
 function withheldFromGrantOnlyReaderSql(
   viewer: string,
-  visibleTo: (user: string, readGrants: boolean) => string
+  visibleTo: (user: string, readGrants: boolean) => string,
+  exemptAdmin: boolean
 ): string {
-  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}
-    AND NOT ${isAdminSql('cw_viewer')}
+  const admin = exemptAdmin
+    ? `
+    AND NOT ${isAdminSql('cw_viewer')}`
+    : '';
+  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}${admin}
     AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
     AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
     AND ${visibleTo('cw_viewer', true)}
@@ -825,14 +914,18 @@ function withheldFromGrantOnlyReaderSql(
  * is the placeholder `viewer` ({@link withheldFromGrantOnlyReaderSql}). Such a reader still reads the
  * post and reacts to it, but its COMMENTS - the students' own expression, like their personal posts,
  * which a grant never opens - and every list of PEOPLE on it (who reacted, who voted what) are
- * withheld: totals only. Both arms take `adminSeesAll`, as the by-id gate does.
+ * withheld: totals only. Neither arm widens a platform admin: an admin whose only door is a grant is
+ * withheld like any named reader, and the by-id MODERATION read (`readPostOpenVerdict` with
+ * `allowHidden`) does not ask this term at all (2026-11-14).
  *
  * Every consumer asks THIS - `commentsWithheldPostIds` (`posts/comments-withheld.ts`) for a page, the
  * `'COMMENT'` intent of the by-id gate, the bell - so none of them can drift from the others.
  */
 export function commentsWithheldFromViewerSql(post: string, viewer: string): string {
-  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
-    postVisibleToUserSql(post, user, { adminSeesAll: true, readGrants })
+  return withheldFromGrantOnlyReaderSql(
+    viewer,
+    (user, readGrants) => postVisibleToUserSql(post, user, { readGrants }),
+    false
   );
 }
 
@@ -847,8 +940,10 @@ export function commentsWithheldFromViewerSql(post: string, viewer: string): str
  * so on every open and every manifest poll) and by the report of a chat line (`ModerationService`).
  */
 export function liveChatWithheldFromViewerSql(live: string, viewer: string): string {
-  return withheldFromGrantOnlyReaderSql(viewer, (user, readGrants) =>
-    liveVisibleToUserSql(live, user, { readGrants })
+  return withheldFromGrantOnlyReaderSql(
+    viewer,
+    (user, readGrants) => liveVisibleToUserSql(live, user, { readGrants }),
+    true
   );
 }
 
@@ -892,19 +987,28 @@ export function reviewCohortAuthorFilterSql(
  * review account's live. No admin ever shares the review cohort's space (`review-cohort.ts`), so
  * without it a reported live of the cohort could be judged by nobody - moderation needs it. The
  * "Live now" list never passes it: browsing, an admin still sees only their own spaces.
+ *
+ * `followers: false` leaves the accepted followers of a member's live OUT: the part of the audience
+ * read from PROFILE facts alone. For an answer that goes back to someone else about an account they
+ * chose (`liveMentionRecipientsSql('suggest')`): who follows a person is that person's and the
+ * follower's to know, and nobody else's.
  */
 export function liveVisibleToUserSql(
   live: string,
   user: string,
-  opts: ReadOpts & { adminSeesCohort?: boolean } = {}
+  opts: ReadOpts & { adminSeesCohort?: boolean; followers?: boolean } = {}
 ): string {
   const cohortClause = opts.adminSeesCohort
     ? `
     OR (${isAdminSql(user)} AND ${inReviewCohortSql(`${live}."broadcasterId"`)})`
     : '';
+  const followerClause =
+    opts.followers === false
+      ? ''
+      : `
+      OR ${acceptedFollowerOfAuthorSql(`${live}."broadcasterId"`, user)}`;
   return `(${live}."broadcasterId" = ${user}.id${cohortClause}
-    OR (${live}."associationId" IS NULL AND (${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)}
-      OR ${acceptedFollowerOfAuthorSql(`${live}."broadcasterId"`, user)}))
+    OR (${live}."associationId" IS NULL AND (${sharesSpaceWithAuthorSql(`${live}."broadcasterId"`, user)}${followerClause}))
     OR (${live}."associationId" IS NOT NULL AND ${associationVisibleToUserSql(`${live}."associationId"`, user, { readGrants: opts.readGrants })}))`;
 }
 
@@ -921,9 +1025,16 @@ export function liveVisibleToViewerSql(
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${liveVisibleToUserSql(live, 'vis_viewer', { readGrants: true, ...opts })})`;
 }
 
-/** Association `association` is visible to the viewer whose id is the placeholder `viewer`. */
+/**
+ * Association `association` is visible to the viewer whose id is the placeholder `viewer`.
+ *
+ * A READ PATH, so it counts nominative read grants like every other `*ToViewerSql` (owner,
+ * 2026-11-14: a grant opens everything of its cell): the association directory, the shop, the
+ * partnerships and the association booking spaces all ask it. What must NOT count a grant - who is
+ * notified, who is suggested an association - asks {@link associationVisibleToUserSql}, plain.
+ */
 export function associationVisibleToViewerSql(association: string, viewer: string): string {
-  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer')})`;
+  return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${associationVisibleToUserSql(association, 'vis_viewer', { readGrants: true })})`;
 }
 
 /**
@@ -958,13 +1069,51 @@ export function sameCampusAsViewerSql(owner: string, viewer: string): string {
  * `association_calendar_event_co_owners` (it lives in `proposals`), so it adds nothing; one that
  * leaves takes its row and its audience with it, and the next read is recomputed without it.
  *
+ * AN INSTITUTION'S REACH (owner, 2026-11-13; migration 165) - the SAME two gates a post of it has,
+ * built from the same fragments:
+ * - its PUBLIC ({@link institutionReachAdmitsUserSql}) gates every door, and "students" closes the
+ *   read-grant door ({@link institutionReachNotForStudentsSql}), as on a post. The organiser's
+ *   members read it whatever the public (D21, inside the fragment) - and so do an ACCEPTED
+ *   co-organiser's members: they co-own the event, edit it from the partner side (E2) and list it on
+ *   their own page, which a public they are not part of must not hide from them;
+ * - its SPACES narrow the ORGANISER's own door - rules and read grant - to the ticked spaces
+ *   ({@link institutionReachHoldsSpaceSql}), as a post's narrow the post's own institution door. An
+ *   accepted co-organiser's door keeps its own audience: the institution invited it, which is the
+ *   event's widening mechanism exactly as a republication is a post's (G4). Only the public follows
+ *   the event there.
+ * The staff-by-campus door of a post (owner, 2026-11-14) is NOT spliced here: the owner decided it
+ * for POSTS only, and an event's "Personnel" keeps the doors its readers already had.
+ * Read from the row at every query: an edit narrows or widens the event for every path at once.
+ *
  * Status and dates are NOT decided here: each caller keeps its own (validated only, a window).
  */
 export function eventVisibleToUserSql(event: string, user: string, opts: ReadOpts = {}): string {
-  return `(${associationVisibleToUserSql(`${event}."associationId"`, user, opts)}
+  const grantGuard = opts.grantGuard
+    ? `(${opts.grantGuard} AND ${institutionReachNotForStudentsSql(event)})`
+    : institutionReachNotForStudentsSql(event);
+  const coOpts: ReadOpts = { ...opts, grantGuard };
+  const ownOpts: ReadOpts = {
+    ...coOpts,
+    spaceFilter: (space) => institutionReachHoldsSpaceSql(event, space),
+  };
+  const coOrganiserMember = `EXISTS (SELECT 1 FROM association_calendar_event_co_owners vis_comember
+      WHERE vis_comember.event_id = ${event}.id
+        AND ${isMemberSql('vis_comember.association_id', user)})`;
+  return `((${institutionReachAdmitsUserSql(event, user)} OR ${coOrganiserMember})
+    AND (${associationVisibleToUserSql(`${event}."associationId"`, user, ownOpts)}
     OR EXISTS (SELECT 1 FROM association_calendar_event_co_owners vis_coorg
       WHERE vis_coorg.event_id = ${event}.id
-        AND ${associationVisibleToUserSql('vis_coorg.association_id', user, opts)}))`;
+        AND ${associationVisibleToUserSql('vis_coorg.association_id', user, coOpts)})))`;
+}
+
+/**
+ * THE EVENT CARD ON A POST, AND THE EVENT A POST LINKS (owner, 2026-11-13): an event carrying no
+ * reach is shown wherever its post is, as before; one an institution gave a reach is shown only to a
+ * viewer (placeholder `viewer`) the event's own predicate admits ({@link eventVisibleToViewerSql}) -
+ * "an event announced by a post keeps its own visibility". An absent viewer sees no reached event.
+ */
+export function eventCardShownToViewerSql(event: string, viewer: string): string {
+  return `(${event}."reachPublic" IS NULL OR ${eventVisibleToViewerSql(event, viewer)})`;
 }
 
 /**
@@ -981,8 +1130,10 @@ export function eventVisibleToViewerSql(event: string, viewer: string): string {
  * read grant (WP7), a review account (whose cohort is a space of its own), or - since WP-F5 - the
  * holder of at least one ACCEPTED follow (one made before follow requests existed included). Without that last one a
  * staff member with no space and no membership was PUSHED a followed person's post and then refused
- * the feed that holds it (F3 of the WP-F5 review): the push and the read now agree. Which posts
- * they get is still the per-post predicate. Answers `inAudience`.
+ * the feed that holds it (F3 of the WP-F5 review): the push and the read now agree. And - since the
+ * staff-by-campus door (owner, 2026-11-14) - staff of a campus that an INSTITUTION's rules reach: an
+ * institution's "Tous" or "Personnel" post may reach them, so they are told of it and must be able to
+ * open it. Which posts they get is still the per-post predicate. Answers `inAudience`.
  */
 export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_user WHERE gate_user.id = $1 AND (
     ${isAdminSql('gate_user')}
@@ -992,6 +1143,10 @@ export const IN_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users gate_use
     OR EXISTS (SELECT 1 FROM read_grants gate_grant WHERE gate_grant.user_id = gate_user.id)
     OR EXISTS (SELECT 1 FROM user_follows gate_follow
       WHERE gate_follow."followerUserId" = gate_user.id AND ${acceptedFollowSql('gate_follow')})
+    OR (${isCampusStaffSql('gate_user')} AND EXISTS (SELECT 1 FROM associations gate_inst
+      JOIN association_audiences gate_rule ON gate_rule."associationId" = gate_inst.id
+      JOIN spaces gate_cspace ON ${ruleReachesSpaceSql('gate_rule', 'gate_cspace')}
+      WHERE gate_inst.type = 'institution' AND gate_cspace.campus = gate_user.campus))
   )) AS "inAudience"`;
 
 /**

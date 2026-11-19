@@ -44,6 +44,8 @@ import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
+import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from '../entities/uninvited-entry.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
@@ -52,6 +54,7 @@ import { writePendingSeats } from '../utils/group-membership';
 import { externalCommitFrame, memberCommitFrame, mlsFrame } from '../testing/mlsFrameFixture';
 import { isEntitledToDistributionGroup } from '../internal/distribution-entitlement';
 import { globToRegExp } from '../testing/memoryRedis';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../testing/lockWait';
 
 // social-service's entitlement answer, held by each case: what an HTTP call does outside the lock.
 jest.mock('../internal/distribution-entitlement', () => ({
@@ -156,23 +159,34 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
   };
 
   /**
-   * Resolves once at least `count` backends are WAITING on a lock - read from the server's own lock
-   * table, so the test knows the other side is parked rather than hoping a pause was long enough.
-   * Each round is a real query, never a sleep; jest's timeout bounds it.
+   * Resolves once at least `count` sessions OF THIS SUITE are WAITING on a lock - read from the
+   * server's own lock table, so the test knows the other side is parked rather than hoping a pause
+   * was long enough. The suites share one database, a schema each, so the question names this
+   * suite's sessions (`application_name`, set on the pool and on every `holder`): asked of the
+   * whole database, another suite's parked session answered for this one in a parallel run.
+   * Each round is a real query, never a sleep. `operation` is the call that must park: when it
+   * settles first the wait fails with a message (it never waited), and so does a bound of reads
+   * with the server's activity in it ({@link untilWaiting}) - never a bare jest timeout.
    */
-  const parked = async (count: number) => {
-    for (;;) {
-      const [row]: { n: string }[] = await q(
-        `SELECT count(*) AS n FROM pg_stat_activity
-         WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0`
-      );
-      if (Number(row.n) >= count) return;
-    }
-  };
+  const parked = (count: number, operation: Promise<unknown>) =>
+    untilWaiting({
+      what: 'the call under test',
+      atLeast: count,
+      settled: settledFlag(operation),
+      waiting: async () => {
+        const [row]: { n: string }[] = await q(
+          `SELECT count(*) AS n FROM pg_stat_activity
+           WHERE application_name = $1 AND cardinality(pg_blocking_pids(pid)) > 0`,
+          [schema]
+        );
+        return Number(row.n);
+      },
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
 
   /** A raw client in the test schema holding the group's seat lock in an open transaction. */
   const holder = async (mode: 'exclusive' | 'shared'): Promise<Client> => {
-    const client = new Client({ connectionString: URL });
+    const client = new Client({ connectionString: URL, application_name: schema });
     await client.connect();
     await client.query(`SET search_path TO ${schema}`);
     await client.query('BEGIN');
@@ -272,11 +286,15 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         UserDismissedGroup,
         // The key groups a revoked device held (migration 041), which an erasure deletes too.
         RevokedDeviceGroup,
+        // One row per named application frame (migration 048): the send route records it, and an erasure deletes it.
+        SentFrameReceipt,
+        // The uninvited-entry count (migration 053): an erasure deletes the account's rows.
+        UninvitedEntry,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
+      extra: { options: `-c search_path=${schema}`, application_name: schema },
     });
     await ds.initialize();
     await ds.synchronize();
@@ -327,7 +345,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     try {
       await evicting.query(BUMP, [GROUP]);
       const checked = withSeatLock(ds.manager, GROUP, (m) => seatClaimHolds(m, claim));
-      await parked(1);
+      await parked(1, checked);
       await evicting.query('COMMIT');
 
       await expect(checked).resolves.toBe('evicted_since_claim');
@@ -365,7 +383,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         undefined,
         { seats: { exempt: new Set() } }
       );
-      await parked(1);
+      await parked(1, sending);
       await evicting.query('COMMIT');
 
       await expect(sending).resolves.toEqual([]);
@@ -379,7 +397,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     const sending = await holder('shared');
     try {
       const evicted = service.evictSeats(GROUP, PEER.userId, 'begin');
-      await parked(1);
+      await parked(1, evicted);
       await sending.query(
         `INSERT INTO queued_message ("recipientId", "deviceId", "groupId", proto) VALUES ($1, $2, $3, 'x')`,
         [PEER.userId, PEER.deviceId, GROUP]
@@ -426,7 +444,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         [GROUP, PEER.userId]
       );
       const restoring = seams().restoreRoutes(GROUP, [SENDER, PEER]);
-      await parked(1);
+      await parked(1, restoring);
       await evicting.query('COMMIT');
 
       await expect(restoring).resolves.toEqual({
@@ -447,7 +465,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     try {
       await evicting.query(BUMP, [GROUP]);
       const storing = storeWelcome(PEER, claim);
-      await parked(1);
+      await parked(1, storing);
       await evicting.query('COMMIT');
 
       await expect(storing).rejects.toMatchObject({
@@ -503,9 +521,9 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     let results: Awaited<ReturnType<typeof commitAs>>[];
     try {
       const first = commitAs(SENDER);
-      await parked(1);
+      await parked(1, first);
       const second = commitAs(PEER);
-      await parked(2);
+      await parked(2, Promise.all([first, second]));
       await evicting.query('COMMIT');
       results = await Promise.all([first, second]);
     } finally {
@@ -564,7 +582,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
     let first: Promise<unknown>;
     try {
       first = commit();
-      await parked(1);
+      await parked(1, first);
       await removing.query(BUMP, [GROUP]);
       await removing.query('COMMIT');
     } finally {
@@ -672,7 +690,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
           authority: 'accepted_commit',
           claim,
         });
-        await parked(1);
+        await parked(1, activating);
         await internal().deleteUserData(NEW.userId, SECRET);
         await held.query('COMMIT');
       } finally {
@@ -997,9 +1015,6 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
 
   describe('a pending seat is written under the seat lock, never after an eviction', () => {
     const NEWCOMER = { userId: 'newcomer', deviceId: 'dev-n' };
-    /** Resolves `'parked'` once the call waits on a lock, `'finished'` if it never had to. */
-    const waitsOrFinishes = (call: Promise<unknown>) =>
-      Promise.race([parked(1).then(() => 'parked' as const), call.then(() => 'finished' as const)]);
     const seatsOfGroup = async (who: { userId: string }): Promise<number> => seatsOf(who);
 
     const invitations = () =>
@@ -1049,21 +1064,19 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
             .create({ groupId: GROUP, token: `it-${schema}`, createdBy: SENDER.userId })
         );
       const ending = await holder('exclusive');
-      let outcome: 'parked' | 'finished';
       let accepting: Promise<unknown>;
       try {
         await ending.query(`UPDATE dm_groups SET "deletedAt" = now() WHERE id = $1`, [GROUP]);
         accepting = invitations()
           .acceptGroupInvite(invite.token, NEWCOMER.userId)
           .catch((e: unknown) => e);
-        outcome = await waitsOrFinishes(accepting);
+        await parked(1, accepting);
         await ending.query('COMMIT');
       } finally {
         await release(ending);
       }
       await accepting;
 
-      expect(outcome).toBe('parked');
       expect(await seatsOfGroup(NEWCOMER)).toBe(0);
       const roster: unknown[] = await q(
         `SELECT 1 FROM dm_group_members WHERE "groupId" = $1 AND "userId" = $2`,
@@ -1078,7 +1091,6 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         [GROUP, NEWCOMER.userId]
       );
       const removing = await holder('exclusive');
-      let outcome: 'parked' | 'finished';
       let registering: Promise<unknown>;
       try {
         await removing.query(
@@ -1091,14 +1103,13 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
             NEWCOMER.userId
           )
           .catch((e: unknown) => e);
-        outcome = await waitsOrFinishes(registering);
+        await parked(1, registering);
         await removing.query('COMMIT');
       } finally {
         await release(removing);
       }
       await registering;
 
-      expect(outcome).toBe('parked');
       expect(await seatsOfGroup(NEWCOMER)).toBe(0);
     });
 
@@ -1152,7 +1163,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
           },
           SENDER.userId
         );
-        await parked(1);
+        await parked(1, committing);
         await q(`DELETE FROM key_package WHERE "userId" = $1`, [GONE.userId]);
         await held.query('COMMIT');
       } finally {
@@ -1210,7 +1221,7 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         creating = service.activateDeviceMembership(GONE.userId, GONE.deviceId, GROUP, {
           authority: 'group_creator',
         });
-        await parked(1);
+        await parked(1, creating);
         await q(`DELETE FROM key_package WHERE "userId" = $1`, [GONE.userId]);
         await held.query('COMMIT');
       } finally {

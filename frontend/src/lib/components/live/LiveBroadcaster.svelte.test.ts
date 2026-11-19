@@ -10,13 +10,16 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import LiveBroadcaster from './LiveBroadcaster.svelte';
 import LiveOverlay from './LiveOverlay.svelte';
 import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
+import LiveOverlayHandle from './LiveOverlayHandle.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
 import { shareLiveLink } from '$lib/live/shareLive';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
+import { FakeMediaStream, studioOn } from '$lib/live/liveStudio.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
+import { getLocale } from '$lib/paraglide/runtime';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -151,6 +154,48 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-close]')).toBeNull();
   });
 
+  it('on air, the controls are ONE column on the right edge, End first, and nothing wraps (390 pt, 360 px)', async () => {
+    // happy-dom has no layout: this pins the STRUCTURE and the classes that make the column (owner,
+    // 2026-11-19); the pixels are owed to the phone reading (iPhone 12 and Mi 9T, both orientations).
+    const { broadcast } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    const bar = q('[data-live-top-bar]')!;
+    const identity = q('[data-live-top-identity]')!;
+    const actions = q('[data-live-top-actions]')!;
+    expect(identity.parentElement).toBe(bar);
+    expect(actions.parentElement).toBe(bar);
+    expect(bar.classList.contains('flex-wrap')).toBe(false);
+    expect(actions.classList.contains('ml-auto')).toBe(false);
+    expect(identity.classList.contains('min-w-0')).toBe(true);
+    expect(actions.classList.contains('flex-col')).toBe(true);
+    expect(actions.classList.contains('shrink-0')).toBe(true);
+    expect(actions.classList.contains('flex-wrap')).toBe(false);
+    expect(actions.classList.contains('overflow-y-auto')).toBe(true);
+    const order = Array.from(actions.children).map((el) =>
+      ['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end'].find((sel) =>
+        el.hasAttribute(`data-live-${sel}`)
+      )
+    );
+    expect(order[0]).toBe('end');
+    expect(new Set(order)).toEqual(
+      new Set(['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end'])
+    );
+  });
+
+  it('before going live, the controls stay a ROW pushed to the right (ml-auto), not the on-air column', async () => {
+    // Structure only: happy-dom has no layout.
+    screen();
+    await settle();
+    const actions = q('[data-live-top-actions]')!;
+    expect(q('[data-live-end]')).toBeNull();
+    expect(actions.classList.contains('ml-auto')).toBe(true);
+    expect(actions.classList.contains('flex-col')).toBe(false);
+    expect(q('[data-live-top-bar]')!.classList.contains('flex-wrap')).toBe(true);
+  });
+
   it('as an association: its name and the association audience rule', async () => {
     screen(null, 'asso-1');
     await settle();
@@ -220,6 +265,76 @@ describe('LiveBroadcaster', () => {
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
     expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null);
+  });
+
+  it('a suspended member reads it BEFORE Start, with its date; Start is disabled until a re-read clears it', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 2,
+      suspendedUntil: '2026-11-20T10:00:00.000Z',
+      withdrawnAt: null,
+    });
+    const cam = fakeCamera();
+    const broadcast = new LiveBroadcast(cam.session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: {
+          broadcast,
+          associationId: null,
+          associationName: null,
+          onclose: vi.fn(),
+          readBattery: () => Promise.resolve(null),
+        },
+      })
+    );
+    await settle();
+    const date = new Intl.DateTimeFormat(getLocale(), { day: 'numeric', month: 'long' }).format(
+      new Date('2026-11-20T10:00:00.000Z')
+    );
+    expect(q('[data-live-standing]')!.textContent).toContain(m.live_start_suspended({ date }));
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(true);
+    expect(q('[data-live-start-problem]')).toBeNull();
+    expect(f.deps.startLive).not.toHaveBeenCalled();
+
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 2,
+      suspendedUntil: null,
+      withdrawnAt: null,
+    });
+    q<HTMLButtonElement>('[data-live-standing-retry]')!.click();
+    await settle();
+    expect(q('[data-live-standing]')).toBeNull();
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(false);
+  });
+
+  it('a withdrawn member reads the withdrawal before Start', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveStanding.mockResolvedValue({
+      cutsOnRecord: 3,
+      suspendedUntil: null,
+      withdrawnAt: '2026-11-01T08:00:00.000Z',
+    });
+    const broadcast = new LiveBroadcast(fakeCamera().session, null, f.deps);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveBroadcaster, {
+        target,
+        props: {
+          broadcast,
+          associationId: null,
+          associationName: null,
+          onclose: vi.fn(),
+          readBattery: () => Promise.resolve(null),
+        },
+      })
+    );
+    await settle();
+    expect(q('[data-live-standing]')!.textContent).toContain(m.live_start_withdrawn());
+    expect(q<HTMLButtonElement>('[data-live-start]')!.disabled).toBe(true);
   });
 
   it('a rules refusal at the start shows the sheet again with its sentence', async () => {
@@ -551,11 +666,18 @@ describe('LiveOverlay', () => {
   });
 });
 
-describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
-  /** A preview on a desktop browser (can share a screen) or on a phone (cannot). */
-  function sheet(canShare: boolean) {
+describe('LiveBroadcaster - the scenes on a desktop (owner, 2026-11-14)', () => {
+  /** A preview on a desktop browser (a real studio on fakes) or on a phone (no studio). */
+  function sheet(desktop: boolean) {
+    vi.stubGlobal('MediaStream', FakeMediaStream);
     const f = fakeDeps();
-    f.deps.screenShareAvailable.mockReturnValue(canShare);
+    let made: ReturnType<typeof studioOn> | null = null;
+    if (desktop) {
+      f.deps.createStudio.mockImplementation((camera) => {
+        made = studioOn(camera);
+        return made.studio;
+      });
+    }
     const cam = fakeCamera();
     const broadcast = new LiveBroadcast(cam.session, null, f.deps);
     const target = document.createElement('div');
@@ -566,27 +688,236 @@ describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
         props: { broadcast, onclose: vi.fn(), readBattery: () => Promise.resolve(null) },
       })
     );
-    return { ...f, cam, broadcast };
+    return { ...f, cam, broadcast, s: made as ReturnType<typeof studioOn> | null };
   }
 
-  it('a phone keeps the camera: no choice is drawn', async () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('a phone draws no scene bar, and offers the microphone and camera switches', async () => {
     sheet(false);
     await settle();
-    expect(q('[data-live-source-group]')).toBeNull();
+    expect(q('[data-live-scene-bar]')).toBeNull();
+    expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('off');
+    expect(q('[data-live-mic-toggle]')).not.toBeNull();
+    expect(q('[data-live-camera-toggle]')).not.toBeNull();
   });
 
-  it('a desktop browser offers Caméra and Écran, and Écran opens the screen with its hint', async () => {
-    const { broadcast, deps } = sheet(true);
+  it('a desktop offers the four scenes with the hint, opens its microphone, and Écran opens the picker', async () => {
+    const { s } = sheet(true);
     await settle();
-    expect(q('[data-live-source="camera"]')!.textContent).toContain(m.live_source_camera());
-    expect(q('[data-live-source="screen"]')!.textContent).toContain(m.live_source_screen());
-    expect(q('[data-live-source-hint]')).toBeNull();
-    q<HTMLButtonElement>('[data-live-source="screen"]')!.click();
-    await vi.waitFor(() => expect(broadcast.source).toBe('screen'));
+    expect(q('[data-live-scenes]')!.dataset.liveScenes).toBe('on');
+    // Icon-only (owner, 2026-11-16): the name is the aria-label and the tooltip, never visible text.
+    for (const [scene, name] of [
+      ['camera', m.live_scene_camera()],
+      ['screen', m.live_scene_screen()],
+      ['screen-camera', m.live_scene_screen_camera()],
+      ['pause', m.live_scene_pause()],
+    ] as const) {
+      const button = q(`[data-live-scene="${scene}"]`)!;
+      expect(button.getAttribute('aria-label')).toBe(name);
+      expect(button.getAttribute('title')).toBe(name);
+      expect(button.textContent?.trim()).toBe('');
+    }
+    expect(q('[data-live-scene="camera"]')!.getAttribute('aria-checked')).toBe('true');
+    expect(q('[data-live-scene="pause"]')!.getAttribute('aria-checked')).toBe('false');
+    // ONE row, never wrapping onto a second line.
+    expect(q('[data-live-scene-bar] [role="radiogroup"]')!.className).not.toContain('flex-wrap');
+    expect(q('[data-live-scene-hint]')!.textContent).toContain(m.live_scene_screen_hint());
+    expect(s!.deps.openMicrophone).toHaveBeenCalledTimes(1);
+    q<HTMLButtonElement>('[data-live-scene="screen"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen'));
     await settle();
-    expect(deps.openScreen).toHaveBeenCalledTimes(1);
-    expect(q('[data-live-source="screen"]')!.getAttribute('aria-checked')).toBe('true');
-    expect(q('[data-live-source-hint]')!.textContent).toContain(m.live_source_screen_hint());
+    expect(s!.deps.openDisplay).toHaveBeenCalledTimes(1);
+    expect(q('[data-live-scene="screen"]')!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('the preview shows the COMPOSED picture, contain and unmirrored: exactly what is sent', async () => {
+    const { s } = sheet(true);
+    await settle();
+    const video = q<HTMLVideoElement>('video')!;
+    expect(video.srcObject).toBe(s!.studio.previewStream);
+    expect(video.className).toContain('object-contain');
+    expect(video.className).not.toContain('object-cover');
+    expect(video.className).not.toContain('-scale-x-100');
+  });
+
+  it('the four scenes are ONE tab stop the arrows walk, moving focus only - Enter chooses', async () => {
+    const { s } = sheet(true);
+    await settle();
+    const radios = [...document.querySelectorAll<HTMLButtonElement>('[data-live-scene]')];
+    expect(radios.map((r) => r.tabIndex)).toEqual([0, -1, -1, -1]);
+    radios[0].focus();
+    radios[0].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[3]);
+    radios[3].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[0]);
+    radios[0].dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    );
+    expect(document.activeElement).toBe(radios[1]);
+    // Passing over a scene never chooses it (a screen scene would open the picker).
+    await settle();
+    expect(s!.studio.scene).toBe('camera');
+    expect(s!.deps.openDisplay).not.toHaveBeenCalled();
+  });
+
+  it('screen + camera offers the overlay options and a handle the arrow keys move', async () => {
+    const { s } = sheet(true);
+    await settle();
+    expect(q('[data-live-overlay-options]')).toBeNull();
+    q<HTMLButtonElement>('[data-live-scene="screen-camera"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen-camera'));
+    await settle();
+    const choice = (group: string, label: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>(`[${group}] [role="radio"]`)].find(
+        (b) => b.getAttribute('aria-label') === label
+      )!;
+    expect(
+      choice('data-live-overlay-sizes', m.live_scene_overlay_large()).textContent?.trim()
+    ).toBe('');
+    choice('data-live-overlay-sizes', m.live_scene_overlay_large()).click();
+    choice('data-live-overlay-shapes', m.live_scene_overlay_rect()).click();
+    await settle();
+    // One fill per row: the chosen scene, the chosen size, the chosen shape.
+    expect(document.querySelectorAll('[data-live-scene-bar] .bg-accent')).toHaveLength(3);
+    expect(
+      choice('data-live-overlay-sizes', m.live_scene_overlay_large()).getAttribute('aria-checked')
+    ).toBe('true');
+    expect(s!.studio.overlay).toMatchObject({ size: 'large', shape: 'rect' });
+  });
+
+  it('on air the scene bar stays, and a share stopped from the browser says the live is paused', async () => {
+    const { s, broadcast } = sheet(true);
+    await settle();
+    q<HTMLButtonElement>('[data-live-scene="screen"]')!.click();
+    await vi.waitFor(() => expect(s!.studio.scene).toBe('screen'));
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    expect(q('[data-live-onair-scenes] [data-live-scene-bar]')).not.toBeNull();
+    s!.screens[0].video.end();
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    expect(q('[data-live-screen-ended]')!.textContent).toContain(m.live_scene_screen_ended());
+    expect(q('[data-live-scene="pause"]')!.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('a sound that does not run keeps the live AWAY with its sentence, and the Retry click wakes it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { s, broadcast } = sheet(true);
+    s!.mixer.state = 'suspended';
+    s!.mixer.wakeTo = 'suspended';
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('away'));
+    await settle();
+    expect(q('[data-live-away-problem]')!.textContent).toContain(m.live_away_audio());
+    s!.mixer.wakeTo = 'running';
+    q<HTMLButtonElement>('[data-live-retry-camera]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+  });
+
+  it('the switches change their label and their pressed state, and never end the live', async () => {
+    const { broadcast } = sheet(true);
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    const mic = q<HTMLButtonElement>('[data-live-mic-toggle]')!;
+    expect(mic.getAttribute('aria-label')).toBe(m.live_mic_mute_label());
+    mic.click();
+    await settle();
+    expect(mic.getAttribute('aria-pressed')).toBe('true');
+    expect(mic.getAttribute('aria-label')).toBe(m.live_mic_unmute_label());
+    q<HTMLButtonElement>('[data-live-camera-toggle]')!.click();
+    await settle();
+    expect(broadcast.cameraOff).toBe(true);
+    expect(broadcast.phase).toBe('live');
+  });
+});
+
+describe('LiveBroadcaster - a phone on air (owner, 2026-11-14)', () => {
+  it('offers the lens on air and flips it on the same live; the camera switched off says so', async () => {
+    const { cam, broadcast, recorders } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await vi.waitFor(() => expect(broadcast.phase).toBe('live'));
+    await settle();
+    q<HTMLButtonElement>('[data-live-switch]')!.click();
+    await vi.waitFor(() => expect(recorders).toHaveLength(2));
+    await settle();
+    expect(broadcast.phase).toBe('live');
+    expect(cam.session.facing).toBe('environment');
+    q<HTMLButtonElement>('[data-live-camera-toggle]')!.click();
+    await settle();
+    expect(q('[data-live-camera-off]')!.textContent).toContain(m.live_scene_camera_off_card());
+  });
+});
+
+describe('LiveOverlayHandle - drag and snap (owner, 2026-11-14)', () => {
+  function handle() {
+    vi.stubGlobal('MediaStream', FakeMediaStream);
+    const cam = fakeCamera();
+    const { studio } = studioOn(cam.session);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(
+      mount(LiveOverlayHandle, { target, props: { studio, display: { width: 1280, height: 720 } } })
+    );
+    return { studio, el: () => q<HTMLElement>('[data-live-overlay-handle]')! };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function pointer(el: Element, type: string, x: number, y: number) {
+    el.dispatchEvent(
+      new PointerEvent(type, { pointerId: 7, bubbles: true, clientX: x, clientY: y })
+    );
+  }
+
+  it('sits over the overlay, and a drag let go SNAPS to the nearest corner', async () => {
+    const { studio, el } = handle();
+    await settle();
+    expect(el().getAttribute('aria-label')).toBe(m.live_scene_overlay_move_label());
+    // From the bottom right, dragged far up and left: the top-left corner.
+    pointer(el(), 'pointerdown', 1100, 600);
+    pointer(el(), 'pointermove', 300, 100);
+    await settle();
+    // Nothing reaches the picture during the drag.
+    expect(studio.overlay.corner).toBe('bottom-right');
+    pointer(el(), 'pointerup', 300, 100);
+    await settle();
+    expect(studio.overlay.corner).toBe('top-left');
+  });
+
+  it('a small drag stays in its corner, and the arrow keys move it corner to corner', async () => {
+    const { studio, el } = handle();
+    await settle();
+    pointer(el(), 'pointerdown', 1100, 600);
+    pointer(el(), 'pointermove', 1050, 560);
+    pointer(el(), 'pointerup', 1050, 560);
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-right');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-left');
+  });
+
+  it("Enter and Space - a button's activation - move it to the next corner clockwise", async () => {
+    const { studio, el } = handle();
+    await settle();
+    expect(el().getAttribute('aria-keyshortcuts')).toContain('Enter');
+    expect(studio.overlay.corner).toBe('bottom-right');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('bottom-left');
+    el().dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await settle();
+    expect(studio.overlay.corner).toBe('top-left');
   });
 });
 

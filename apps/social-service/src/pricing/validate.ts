@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { OTHERS_BUCKET_ID, type AudienceCondition, type Dimension } from './audience';
+import { SPACE_FORMATIONS } from '../spaces/space.entity';
 import {
   assertMatrixValid,
   type CellValue,
@@ -65,6 +66,31 @@ function asStringArray(value: unknown, where: string): string[] {
   }
   if (value.length === 0) throw new BadRequestException(`${where} cannot be empty.`);
   return value as string[];
+}
+
+/**
+ * The `code` of the 400 a criterion gets when it names a formation no profile can carry. Worded by
+ * the client through Paraglide (`paymentRefusal.ts`).
+ */
+export const AUDIENCE_FORMATION_UNKNOWN = 'AUDIENCE_FORMATION_UNKNOWN';
+
+/**
+ * Formation values: each one of the formations a profile may name (`SPACE_FORMATIONS`, the list a
+ * cursus is validated against). Any other string matches NOBODY, for ever - a question nobody sees,
+ * a form nobody may submit, a priced cell nobody falls in - so it is refused where it is written,
+ * for a condition and for a grid dimension alike.
+ */
+function asFormationValues(value: unknown, where: string): string[] {
+  const values = asStringArray(value, where);
+  const known: readonly string[] = SPACE_FORMATIONS;
+  const unknown = values.filter((v) => !known.includes(v));
+  if (unknown.length > 0) {
+    throw new BadRequestException({
+      code: AUDIENCE_FORMATION_UNKNOWN,
+      message: `${where} names a formation no profile carries; known: ${known.join(', ')}.`,
+    });
+  }
+  return values;
 }
 
 /** Cotisation keys: strings, or `null` for the base tier - which is a value, not a missing one. */
@@ -179,7 +205,7 @@ export function parseAudienceCondition(
   }
   if (doc.formation !== undefined) {
     const f = asRecord(doc.formation, `${where}.formation`);
-    condition.formation = { values: asStringArray(f.values, `${where}.formation.values`) };
+    condition.formation = { values: asFormationValues(f.values, `${where}.formation.values`) };
   }
   if (doc.answer !== undefined) {
     const a = asRecord(doc.answer, `${where}.answer`);
@@ -275,7 +301,7 @@ export function parseDimension(raw: unknown, ctx: CriteriaContext, where: string
           return {
             id: bucketId,
             label,
-            values: asStringArray(b.values, `${where}.buckets[${i}].values`),
+            values: asFormationValues(b.values, `${where}.buckets[${i}].values`),
           };
         }),
       };

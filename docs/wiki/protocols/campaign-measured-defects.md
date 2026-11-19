@@ -95,8 +95,9 @@ and none has grown. The twelve plaintexts exist only on the peer's iPhone, and t
 13:10 four cannot be established retroactively - a fix written against a suspected arm is exactly what the
 text above forbids. The standing ERROR line is the DESIGNED front of that report (a new hole lands first
 and the known ones age out with the retention floor), so it is not a second defect. The one question
-left, whether a device that dropped a frame should say so, is parked in
-[open-questions](../open-questions.md#should-a-device-that-dropped-a-frame-say-so).
+left, whether a device that dropped a frame should say so, was answered by the owner on 2026-11-19:
+it does not; the server reports the drop to the team
+([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
 
 ## A new device's join reaches the commit gate before its KeyPackage (2026-10-09)
 
@@ -123,6 +124,11 @@ What the server logged in the previous 32 hours (`canari-prod-chat-delivery-serv
 **Measured on prod 2026-10-10 (read-only, `canari-prod`, window since the `v1.2.1` deploy at 13:13 UTC).** Community key-group external joins (commit log, MLS sender type 4, groups in `channel_workspaces`/`channels` `distributionGroupId`): 33-96 per day over 2026-09-27..10-08 (median about 69), 82 on 10-09, and 30 between 13:18 and 22:36 UTC on 10-09 (about 77/day pace). **`v1.2.1` did not move the number, and it should not have: #1666 is NOT in `v1.2.1`** (it is in `v1.2.2-alpha.1`, dev only); `v1.2.1` carries #1686, which is about a native cold start re-joining groups it already holds. `[MEMBERSHIP_ACTIVE] REFUSED no_key_package`: **2 in the 9.7 h since the deploy, both on community key groups, both of a new device with the PURGE_PREKEYS -> COMMIT -> REFUSED -> REGISTER_DEVICE sequence** (web 1.2.1 on Windows at 20:01 UTC, iOS 1.1.0 at 20:46 UTC) - the unfixed behaviour, as expected. `[SENDER_MISMATCH]` and any `REFUSED` in `canari-prod-chat-gateway-1`: 0 (that line is client-side; nothing server-side carries it); 0 `SENDER MISMATCH` in chat-delivery either. Logs cover only since the container start (13:13 UTC), 10-09 - so the comparison to the 32 h before it is 2 vs 6.
 
 **Owed after it ships in a stable:** the same read; `REFUSED no_key_package` on a key group of an `isNew=true` device must be zero for devices on the fixed version (a device on an older version keeps producing it until the floor moves).
+
+**Read on production, 2026-11-14 (`v1.6.11`, floor `1.6.6`): closed.** 0
+`[MEMBERSHIP_ACTIVE] REFUSED` of any reason in the 15.5 hours of chat-delivery log since the deploy,
+against 15 seat activations and 14 key-group entitlement answers in the same window (2 refusals in
+9.7 hours on 2026-10-09, before #1666 and #1700).
 
 ## A device holds a distribution group the group holds no row for (2026-08-29)
 

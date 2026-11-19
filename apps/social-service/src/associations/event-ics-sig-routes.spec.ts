@@ -86,7 +86,7 @@ describe('the routes that serve an event serve its .ics signature', () => {
   it('GET /forms/:id/calendar-link, for a reader the event reaches', async () => {
     const findCalendarEventByLinkedForm = jest.fn(() => Promise.resolve(validated));
     const controller = new FormsController(
-      {} as never,
+      { mayRead: () => Promise.resolve(true) } as never,
       { findCalendarEventByLinkedForm } as never,
       {} as never,
       {} as never,
@@ -104,7 +104,7 @@ describe('the routes that serve an event serve its .ics signature', () => {
 
   it('GET /forms/:id/calendar-link answers null for a reader outside the audience', async () => {
     const controller = new FormsController(
-      {} as never,
+      { mayRead: () => Promise.resolve(true) } as never,
       { findCalendarEventByLinkedForm: jest.fn(() => Promise.resolve(null)) } as never,
       {} as never,
       {} as never,
@@ -114,5 +114,23 @@ describe('the routes that serve an event serve its .ics signature', () => {
     await expect(controller.getFormCalendarLink(FORM, 'outsider')).resolves.toEqual({
       linkedEvent: null,
     });
+  });
+
+  // A form the reader may not read (a draft, one of an archived association) answers what an absent
+  // one answers, and its event is never looked up: the form read decides first.
+  it('GET /forms/:id/calendar-link answers null for a form the reader may not read', async () => {
+    const findCalendarEventByLinkedForm = jest.fn(() => Promise.resolve(validated));
+    const controller = new FormsController(
+      { mayRead: () => Promise.resolve(false) } as never,
+      { findCalendarEventByLinkedForm } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+    await expect(controller.getFormCalendarLink(FORM, 'reader')).resolves.toEqual({
+      linkedEvent: null,
+    });
+    expect(findCalendarEventByLinkedForm).not.toHaveBeenCalled();
   });
 });

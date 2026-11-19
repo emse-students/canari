@@ -17,7 +17,8 @@ import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
 import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
-import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
+import { isAssociationArchived } from '../associations/association-archived';
+import { matchesCondition, needsProfile, NO_CURSUS, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
   normaliseCondition,
@@ -287,8 +288,8 @@ export class BookingsService {
   /**
    * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
    * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
-   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
-   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * a member of it, D21, its rules reach one of their spaces, or a nominative read grant of theirs
+   * reaches it (owner, 2026-11-14) - the directory's predicate, the one `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
    * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
    * manager - the owner of a personal space - never reaches here (`assertMayUse`).
    *
@@ -304,6 +305,20 @@ export class BookingsService {
    * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
    */
   private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
+    // An ARCHIVED association's space opens to nobody but its managers, whoever holds its link -
+    // the linked account of a column included: the archive ended the association's active life, as
+    // it already took the space out of the listing (`listedSpaces`). A booking already made is
+    // still its people's to read and cancel (`mine`, `cancel`, `withdraw`, the calendar link),
+    // as for a holder the audience no longer admits.
+    if (
+      space.associationId !== null &&
+      (await isAssociationArchived(this.spaces.manager, space.associationId))
+    ) {
+      this.logger.log(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} refused to ${userId.slice(0, 8)}: its association is archived`
+      );
+      throw new NotFoundException({ code: 'space-not-found' });
+    }
     const visible =
       space.associationId !== null
         ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
@@ -322,6 +337,26 @@ export class BookingsService {
     this.logger.log(
       `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
         `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
+  }
+
+  /**
+   * Inside a booker's write (`book`, a holder's `edit`), before the space's lock: reads the space's
+   * association `FOR SHARE` and refuses (404 `space-not-found`, what `assertSpaceVisible` answered
+   * before the lock) one ARCHIVED since. `AssociationsService.update` writes `archived` under
+   * `FOR UPDATE` on that row, so a booking is decided either before the archive commits or after
+   * it, never across it (`isAssociationArchived`). A personal space has no association.
+   */
+  private async assertAssociationLiveUnderLock(
+    m: EntityManager,
+    space: Pick<BookingSpace, 'id' | 'associationId'>,
+    what: string
+  ): Promise<void> {
+    if (space.associationId === null) return;
+    if (!(await isAssociationArchived(m, space.associationId, 'share'))) return;
+    this.logger.log(
+      `[BOOKINGS] ${what} refused under the lock: space=${space.id.slice(0, 8)} its association was archived`
     );
     throw new NotFoundException({ code: 'space-not-found' });
   }
@@ -527,6 +562,10 @@ export class BookingsService {
           // their own row; null = none. A linked account that is neither has none to set.
           reminderMinutes:
             b.holderId === actor.userId ? b.reminderMinutes : (own?.reminderMinutes ?? null),
+          // When THIS person's reminder went out (null = not yet), so the list never shows a
+          // past reminder time as pending (2026-11-15).
+          reminderSentAt:
+            (b.holderId === actor.userId ? b.reminderSentAt : own?.reminderSentAt) ?? null,
           space: { id: space.id, name: space.name, timeZone: space.timeZone },
           resource: { id: resource.id, name: resource.name },
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
@@ -541,7 +580,8 @@ export class BookingsService {
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
    * - an association space only while its association is not ARCHIVED, and only when that
    *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
-   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   predicate: a member of it, D21, its rules reach one of their spaces, or a nominative read
+   *   grant of theirs reaches it - owner, 2026-10-31 and 2026-11-14);
    *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
    *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
@@ -597,8 +637,8 @@ export class BookingsService {
       (s) => s.associationId !== null && !managed.has(s.associationId) && s.audience
     );
     const needProfile = judged.some((s) => needsProfile(s.audience));
-    const [profile, tiers] = await Promise.all([
-      this.pricingFacts.profileFor(actor.userId, needProfile).catch((e: unknown) => {
+    const [cursus, tiers] = await Promise.all([
+      this.pricingFacts.cursusFor(actor.userId, needProfile).catch((e: unknown) => {
         this.logger.error(
           `[BOOKINGS] listedSpaces: profile unavailable, the spaces whose audience needs it are ` +
             `left out of this answer: ${e instanceof Error ? e.message : String(e)}`
@@ -613,10 +653,10 @@ export class BookingsService {
     ]);
     const open = rows.filter((s) => {
       if (!judged.includes(s)) return true;
-      if (needsProfile(s.audience) && profile === null) return false;
+      if (needsProfile(s.audience) && cursus === null) return false;
       return matchesCondition(s.audience!, {
-        promo: profile?.promo ?? null,
-        formation: profile?.formation ?? null,
+        // Every cursus (D32): a space open to either of a person's cursus is open to them.
+        cursus: cursus ?? NO_CURSUS,
         cotisationTiers: tiers.get(s.associationId as string) ?? [],
         answers: {},
       });
@@ -716,7 +756,9 @@ export class BookingsService {
     }
     if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
     return bookingIcs({
-      bookingId,
+      // The row's own id, never the request's spelling of it: what is written into the file comes
+      // from the database, and an id asked for in upper case yields the same calendar entry.
+      bookingId: booking.id,
       spaceId: space.id,
       spaceName: space.name,
       resourceName: resource.name,
@@ -1092,6 +1134,9 @@ export class BookingsService {
 
     try {
       const booked = await this.bookings.manager.transaction(async (m) => {
+        // A booker's archive check, again under the association's row lock, BEFORE the space's
+        // (the association first, as its delete takes them): ordered against the archive.
+        if (!canManage) await this.assertAssociationLiveUnderLock(m, before, 'book');
         const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
         if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
           throw new ConflictException({ code: 'space-changed' });
@@ -1306,6 +1351,7 @@ export class BookingsService {
 
     try {
       const outcome = await this.bookings.manager.transaction(async (m) => {
+        if (!manages) await this.assertAssociationLiveUnderLock(m, before, 'edit');
         const { space, resource } = await this.lockResource(m, place.spaceId, place.resourceId);
         const [booking]: Booking[] = await m.query(
           `SELECT * FROM bookings WHERE id = $1 FOR UPDATE`,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FormItem } from '$lib/forms/api';
   import { formatAmount } from '$lib/forms/fillAnswers';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { associationLogoSrc } from '$lib/associations/api';
   import {
     cellQuantity,
@@ -65,6 +66,8 @@
     layout = 'responsive',
   }: Props = $props();
 
+  /** Whether this estate stores each grid's own switch, so the asterisk says something ([LEGACY]). */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
   /** The product photo, resolved to the media base: a relative path loads only on the web. */
   const productImageSrc = $derived(associationLogoSrc(item.imageUrl));
 
@@ -297,12 +300,17 @@
   {/if}
   <div class="flex flex-col gap-3 p-4 sm:px-6 sm:py-5">
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <!-- No asterisk: a grid is never required on its own, the ORDER is (`firstMissingAnswer`). -->
+      <!-- The asterisk of a grid switched "Obligatoire" (owner, 2026-11-13), as every question's - on
+           an estate that stores the switch ([LEGACY] `gridRequiredSwitchOn`; an older one stores
+           every grid required, meaning nothing). -->
       <h2
         id={headingId}
         class="text-text-main flex-1 text-sm font-bold whitespace-pre-line sm:text-base"
       >
         {item.label}
+        {#if item.required && gridSwitch}<span class="text-red-err ml-0.5" aria-hidden="true"
+            >*</span
+          >{/if}
       </h2>
       {#if headerPrice}
         <span class="text-text-main text-sm font-bold sm:text-base" data-grid-price

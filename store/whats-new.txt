@@ -1,3 +1,3 @@
-version: 1.6.11
+version: 1.7.0
 
-Les vidéos en paysage se regardent en plein écran : le téléphone tourne avec elles. Vidéos et vocaux jouent à un volume proche. On peut modifier la légende d'une photo ou vidéo envoyée et mentionner quelqu'un par son nom. Les publications programmées s'affichent en haut du fil pour ceux qui peuvent les modifier. Sur une connexion lente, l'app s'ouvre plus vite. Corrigé : des conversations en double, un appel qui raccrochait, l'export Excel de certains formulaires.
+Depuis « Envoyer à… », on envoie un post ou un CanaReel à plusieurs conversations d'un coup, et les CanaReels s'ouvrent dans les discussions. Les vidéos et les lives suivent la rotation du téléphone. Sur ordinateur, un live peut passer de la caméra à l'écran partagé. Les pièces jointes d'un post forment des cartes alignées, et une réponse ou une mention sur votre post sonne à part. MiGallery s'ouvre sans nouvelle connexion, et l'icône est plus nette.

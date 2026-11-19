@@ -12,6 +12,8 @@
     UserPlus,
     Cake,
     UserX,
+    UserPen,
+    ShieldAlert,
     CalendarCog,
     Newspaper,
     Repeat2,
@@ -39,7 +41,7 @@
     isKnownNotificationType,
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
-  import { formatNoticeSlot, readBookingNoticeMeta } from '$lib/bookings/noticeText';
+  import { formatNoticeSlot, readBookingNoticeMeta, reminderWhen } from '$lib/bookings/noticeText';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import type { ReportReason } from '$lib/moderation/reasons';
@@ -74,7 +76,8 @@
 
   /**
    * THE STRIKE LADDER'S THREE NOTICES TO A BROADCASTER: a live a moderator cut (`live_cut`), the
-   * right to broadcast suspended (`live_suspended`, WP-L8b) or withdrawn (`live_withdrawn`). The
+   * right to broadcast suspended (`live_suspended`, WP-L8b), withdrawn (`live_withdrawn`) or given
+   * back (`live_reinstated`, 1.7.0). The
    * server writes each with NO actor (`actorId` and `actorName` are `''`: which moderator acted is
    * not the broadcaster's to read) and `text` = the reason CODE, so the whole sentence is built
    * here, in the reader's locale, and the avatar is a neutral disc. None has a destination (a cut
@@ -85,6 +88,7 @@
     live_cut: m.notif_live_cut_text,
     live_suspended: m.notif_live_suspended_text,
     live_withdrawn: m.notif_live_withdrawn_text,
+    live_reinstated: m.notif_live_reinstated_text,
   };
   const liveModerationText = $derived(
     Object.hasOwn(LIVE_MODERATION_TEXT, notif.type) ? LIVE_MODERATION_TEXT[notif.type]() : null
@@ -103,6 +107,22 @@
       : null
   );
   const isInert = $derived(isUnknownNotif || isLiveModerationNotif);
+
+  /**
+   * A NEW ITEM IN A GLOBAL ADMIN'S QUEUE (owner, 2026-11-18): a profile correction asked for, a
+   * subject reported. The platform is the actor and the row carries no text - who asked and what
+   * was reported are the queue's to show - so the whole sentence is built here, and the row opens the
+   * queue (`notificationHref`). The server serves it only while the item waits, so it leaves this
+   * list for every admin once one of them handles it.
+   */
+  const ADMIN_QUEUE_TEXT: Readonly<Record<string, () => string>> = {
+    admin_profile_correction: m.notif_admin_profile_correction_text,
+    admin_report: m.notif_admin_report_text,
+  };
+  const adminQueueText = $derived(
+    Object.hasOwn(ADMIN_QUEUE_TEXT, notif.type) ? ADMIN_QUEUE_TEXT[notif.type]() : null
+  );
+  const isAdminQueueNotif = $derived(adminQueueText !== null);
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -261,6 +281,8 @@
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
     (notif.type === 'association_post' ||
+      // A mention in an association's post names the association, never its writer (decision 11).
+      notif.type === 'mention' ||
       isRepostNotif ||
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||
@@ -278,7 +300,7 @@
   );
   $effect(() => {
     if (notif.type === 'booking_reminder' && !notif.associationId) {
-      Log.d('[NOTIF] booking reminder without an association: neutral avatar', {
+      Log.d('NOTIF', 'booking reminder without an association: neutral avatar', {
         id: notif.id,
       });
     }
@@ -332,7 +354,11 @@
     notif.type === 'lydia_payments_active'
       ? m.notif_lydia_payments_active_text({ name: notif.text })
       : notif.type === 'lydia_payments_paused'
-        ? m.notif_lydia_payments_paused_text({ name: notif.text })
+        ? // A bridge's switch back (`meta.bridge`): payments did NOT stop, the historical account
+          // collects again - a global admin's row, worded as such.
+          notif.meta?.bridge === 'switched-back'
+          ? m.notif_lydia_bridge_switched_back_text({ name: notif.text })
+          : m.notif_lydia_payments_paused_text({ name: notif.text })
         : notif.type === 'delegation_revoked'
           ? m.notif_delegation_revoked_text({ name: notif.text })
           : notif.type === 'delegation_receiver_not_ready'
@@ -349,6 +375,28 @@
   const bookingNotice = $derived(
     isBookingNotif && !isBookingReminder ? readBookingNoticeMeta(notif.meta) : null
   );
+  /**
+   * The reminder's sentence, as of its sending (`createdAt`). A row written before the reminder
+   * carried `meta` (or one whose zone this runtime refuses) keeps the old sentence: a data gap,
+   * logged at debug so it is counted rather than silent.
+   */
+  const reminderSentence = $derived.by(() => {
+    if (!isBookingReminder) return null;
+    const meta = readBookingNoticeMeta(notif.meta);
+    const when = meta
+      ? reminderWhen(meta.startsAt, notif.createdAt, meta.timeZone, meta.reminderMinutes)
+      : null;
+    if (!when) {
+      if (notif.meta == null) {
+        Log.d('NOTIF', 'booking reminder without meta (old row): the old sentence', {
+          id: notif.id,
+        });
+      } else {
+        Log.w('NOTIF', 'booking reminder meta unusable: the old sentence', { id: notif.id });
+      }
+    }
+    return when;
+  });
   const bookingSlot = $derived(
     bookingNotice ? formatNoticeSlot(bookingNotice.startsAt, bookingNotice.timeZone) : null
   );
@@ -398,11 +446,13 @@
                         ? 'bg-accent text-on-accent'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
-                          : isUnknownNotif
-                            ? 'bg-gray-500 text-white'
-                            : isLiveModerationNotif
-                              ? 'bg-red-500 text-white'
-                              : 'bg-green-600 text-white'
+                          : isAdminQueueNotif
+                            ? 'bg-accent text-on-accent'
+                            : isUnknownNotif
+                              ? 'bg-gray-500 text-white'
+                              : isLiveModerationNotif
+                                ? 'bg-red-500 text-white'
+                                : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -487,6 +537,10 @@
         <UserCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'profile_correction_refused'}
         <UserX size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'admin_profile_correction'}
+        <UserPen size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'admin_report'}
+        <ShieldAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_request'}
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}
@@ -536,7 +590,7 @@
       {:else if isLiveModerationNotif}
         <span class="font-semibold">{liveModerationText}</span>
       {:else if isBookingReminder}
-        <span class="font-semibold">{m.notif_booking_reminder_text()}</span>
+        <span class="font-semibold">{reminderSentence ?? m.notif_booking_reminder_text()}</span>
       {:else if isLydiaPaymentsNotif}
         <span class="font-semibold"><EmojiText text={lydiaNoticeText} /></span>
       {:else if isLydiaRefundNotif}
@@ -545,12 +599,14 @@
         >
       {:else if isCampusTrend}
         <span class="font-semibold">{m.notif_campus_trend_text()}</span>
+      {:else if isAdminQueueNotif}
+        <span class="font-semibold">{adminQueueText}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif || isCampusTrend}
+      {#if isUnknownNotif || isLiveModerationNotif || isBookingReminder || isLydiaPaymentsNotif || isLydiaRefundNotif || isCampusTrend || isAdminQueueNotif}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -570,7 +626,7 @@
              from the type and the form's title - the only data the server stores on the row. -->
         {m.notif_form_paid_over_capacity_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
-      {:else if isLydiaPaymentsNotif || isLydiaRefundNotif}
+      {:else if isLydiaPaymentsNotif || isLydiaRefundNotif || isAdminQueueNotif}
         <!-- The whole sentence is the first span above; nothing follows it. -->
       {:else if isLiveModerationNotif}
         {#if liveModerationReason}&#8212; {liveModerationReason}{/if}

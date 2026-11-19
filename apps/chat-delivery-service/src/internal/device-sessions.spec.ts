@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 
-import { DeviceSessionsNotEndedError, endDeviceSessions } from './device-sessions';
+import {
+  DeviceSessionsNotEndedError,
+  SessionBindingUnknownError,
+  endDeviceSessions,
+  sessionBoundDevice,
+} from './device-sessions';
 
 /** Puts an environment variable back as it was - unset stays unset, never the string "undefined". */
 function restore(name: string, value: string | undefined): void {
@@ -71,5 +76,47 @@ describe('endDeviceSessions', () => {
       DeviceSessionsNotEndedError
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/** The binding the owner's device delete reads to refuse banning the caller's own device. */
+describe('sessionBoundDevice', () => {
+  const previousSecret = process.env.INTERNAL_SECRET;
+  const previousUrl = process.env.CORE_SERVICE_INTERNAL_URL;
+  let fetchMock: jest.SpyInstance;
+
+  beforeEach(() => {
+    process.env.INTERNAL_SECRET = 'secret';
+    process.env.CORE_SERVICE_INTERNAL_URL = 'http://core.test:3012';
+    fetchMock = jest.spyOn(globalThis, 'fetch');
+  });
+  afterEach(() => {
+    fetchMock.mockRestore();
+    restore('INTERNAL_SECRET', previousSecret);
+    restore('CORE_SERVICE_INTERNAL_URL', previousUrl);
+  });
+
+  const answer = (status: number, body: unknown) =>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status }));
+
+  it('asks core-service with the internal secret and returns the bound id, or null', async () => {
+    answer(200, { deviceId: 'web-a' });
+    await expect(sessionBoundDevice('u1', 'sid-1')).resolves.toBe('web-a');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://core.test:3012/api/internal/sessions/users/u1/sessions/sid-1/device');
+    expect(init.headers).toEqual({ 'x-internal-secret': 'secret' });
+    answer(200, { deviceId: null });
+    await expect(sessionBoundDevice('u1', 'sid-1')).resolves.toBeNull();
+  });
+
+  it.each([
+    ['a non-2xx answer', () => answer(500, {})],
+    ['an answer without the field', () => answer(200, {})],
+    ['core unreachable', () => fetchMock.mockRejectedValue(new TypeError('fetch failed'))],
+  ])('throws the typed error on %s', async (_label, arrange) => {
+    arrange();
+    await expect(sessionBoundDevice('u1', 'sid-1')).rejects.toBeInstanceOf(
+      SessionBindingUnknownError
+    );
   });
 });

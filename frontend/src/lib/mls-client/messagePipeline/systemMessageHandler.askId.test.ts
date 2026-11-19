@@ -15,6 +15,10 @@ import { flushMacrotask } from '../../../test/flush';
  * put a frame on the wire. An ask without one is therefore refused where it is parsed: nothing is
  * stored for an answerer to elect, and nothing is answered - its asker would refuse an addressed
  * answer that names no ask anyway.
+ *
+ * **THE SAME FOR ITS `answerKey`** (option B, #3775, first in the stable `v1.7.0`, now the floor): an
+ * answer to an ask is sealed to the key it carried, so an ask without one is malformed and answered
+ * nothing - never in clear (docs/wiki/legacy-compatibility.md history).
  */
 
 const { answerHistoryDigest, pullFromOverheardDigest, sendHistoryBundleForIds } = vi.hoisted(
@@ -40,6 +44,8 @@ const PEER_USER = 'peer';
 const PEER = digestIdentity(PEER_USER, 'device-peer');
 const GROUP = 'g1';
 const ASK = 'ask-00000001';
+/** A well-formed `answerKey` (32 bytes, base64). */
+const KEY = 'a'.repeat(43) + '=';
 
 function makeCtx() {
   const conversations = new Map<string, any>();
@@ -72,9 +78,20 @@ function makeCtx() {
 const refusedLine = (ctx: ReturnType<typeof makeCtx>, tag: string) =>
   ctx.log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith(`[${tag}] No request id`));
 
-const DIGEST = { from: PEER, digest: { mode: 'ids', ids: ['m1', 'm2'] }, since: 0 };
-const PULL = { from: PEER, to: digestIdentity(ME, MY_DEVICE), ids: ['m1'], since: 0 };
-const RANGE = { from: PEER, before: 9000, limit: 50, since: 0 };
+const DIGEST = {
+  from: PEER,
+  digest: { mode: 'ids', ids: ['m1', 'm2'] },
+  since: 0,
+  answerKey: KEY,
+};
+const PULL = {
+  from: PEER,
+  to: digestIdentity(ME, MY_DEVICE),
+  ids: ['m1'],
+  since: 0,
+  answerKey: KEY,
+};
+const RANGE = { from: PEER, before: 9000, limit: 50, since: 0, answerKey: KEY };
 
 beforeEach(() => {
   resetHistoryDigestRendezvousForTests();
@@ -123,6 +140,7 @@ describe('a history ask is read only with its request id (D211)', () => {
       to: PEER,
       since: 0,
       requestId: ASK,
+      seal: { answerKey: KEY, answerer: digestIdentity(ME, MY_DEVICE) },
     });
   });
 
@@ -144,6 +162,7 @@ describe('a history ask is read only with its request id (D211)', () => {
       limit: 50,
       since: 0,
       requestId: ASK,
+      answerKey: KEY,
     });
   });
 
@@ -156,6 +175,61 @@ describe('a history ask is read only with its request id (D211)', () => {
     await handleSystemEvent('history_range', { ...RANGE, requestId }, ctx as any);
 
     expect(refusedLine(ctx, 'HISTORY_RANGE')).toHaveLength(1);
+    await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
+  });
+});
+
+/** The keyless-ask lines said at ERROR under `tag` (every floor build keys its asks: a defect). */
+const keylessLine = (_ctx: ReturnType<typeof makeCtx>, tag: string) =>
+  errorSpy.mock.calls
+    .map((c) => String(c[0]))
+    .filter((l) => l.startsWith(`[${tag}] No answer key`));
+let errorSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
+
+describe('a history ask is read only with its answer key (option B, the 1.7.0 floor)', () => {
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  const keyless = <T extends { answerKey: string }>(ask: T) => {
+    const { answerKey: _dropped, ...rest } = ask;
+    return { ...rest, requestId: ASK };
+  };
+
+  it('a digest with no key is refused: no probe stored, nothing pulled or answered', async () => {
+    const ctx = makeCtx();
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    await flushMacrotask();
+
+    expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(1);
+    expect(pullFromOverheardDigest).not.toHaveBeenCalled();
+    expect(answerHistoryDigest).not.toHaveBeenCalled();
+    await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
+  });
+
+  it('a pull with no key is refused: nothing is sent, sealed or in clear', async () => {
+    const ctx = makeCtx();
+    await handleSystemEvent('history_pull', keyless(PULL), ctx as any);
+    await flushMacrotask();
+
+    expect(keylessLine(ctx, 'HISTORY_PULL')).toHaveLength(1);
+    expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['not 32 bytes', 'AAAA'],
+    ['not a string', 12345678],
+  ])('a range whose key is %s is refused: no probe stored', async (_what, answerKey) => {
+    const ctx = makeCtx();
+    await handleSystemEvent(
+      'history_range',
+      { ...keyless(RANGE), ...(answerKey !== undefined ? { answerKey } : {}) },
+      ctx as any
+    );
+
+    expect(keylessLine(ctx, 'HISTORY_RANGE')).toHaveLength(1);
     await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
   });
 });

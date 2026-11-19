@@ -1,3 +1,9 @@
+const { noteRepairLanded } = vi.hoisted(() => ({ noteRepairLanded: vi.fn() }));
+vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>()),
+  noteRepairLanded,
+}));
+
 import { handleSystemEvent } from './systemMessageHandler';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
@@ -7,6 +13,8 @@ import {
 } from '$lib/utils/chat/historyAddressing';
 import { historyStateKey } from '$lib/utils/chat/historyStateKey';
 import { m } from '$lib/paraglide/messages';
+import { historySealAad, mintHistoryAnswerKey, sealHistoryContent } from '$lib/crypto/historySeal';
+import { fakeHistorySealEngine } from '$lib/mls-client/test/fixtures/fakeHistorySealEngine';
 
 /**
  * A `history_bundle` reaches the rows memory does not show, and carries a deletion onto a row this
@@ -21,6 +29,8 @@ const ME = 'me';
 const MY_DEVICE = 'device-me';
 const GROUP = 'g1';
 const AUTHOR = 'alice';
+/** The seal's rules without its cryptography: every answer to an ask is sealed to its key. */
+const sealEngine = fakeHistorySealEngine();
 
 function makeCtx(senderNorm: string, rows: Record<string, any>, shown: any[] = []) {
   const conversations = new Map<string, any>();
@@ -55,6 +65,7 @@ function makeCtx(senderNorm: string, rows: Record<string, any>, shown: any[] = [
   const ctx = {
     mlsService: {
       getDeviceId: () => MY_DEVICE,
+      historySealEngine: () => sealEngine,
       getGroupWithheld: vi.fn().mockResolvedValue(new Map([[ME, []]])),
     },
     storage,
@@ -96,6 +107,26 @@ const TOMBSTONE = {
 
 beforeEach(() => {
   forgetHistoryAsks();
+  noteRepairLanded.mockClear();
+});
+
+describe('history_bundle - the repair landing', () => {
+  // THE ONE DISCHARGE of a proof of incompleteness (HEAL-repair): this device's store changed, so
+  // every member that said it holds nothing we lack compared against a store we no longer have.
+  it('discharges the proof when it ADDS a message, and only then', async () => {
+    const { ctx } = makeCtx(AUTHOR, { m1: STORED });
+
+    await handleSystemEvent('history_bundle', { messages: [TOMBSTONE] }, ctx as any);
+    expect(noteRepairLanded).not.toHaveBeenCalled();
+
+    await handleSystemEvent(
+      'history_bundle',
+      { messages: [{ id: 'm2', senderId: AUTHOR, content: 'new', timestamp: 2000 }] },
+      ctx as any
+    );
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
+    expect(noteRepairLanded).toHaveBeenCalledWith(GROUP, AUTHOR, expect.any(Function));
+  });
 });
 
 describe('history_bundle - rows memory does not show', () => {
@@ -119,13 +150,24 @@ describe('history_bundle - rows memory does not show', () => {
 });
 
 describe('history_bundle - an addressed answer carries a deletion onto a held row', () => {
-  /** An answer to the digest this device asked, as the reconciliation exchange delivers it. */
+  /**
+   * An answer to the digest this device asked, as the reconciliation exchange delivers it: sealed to
+   * the ask's key by the answering device (`ctx.senderNorm` on `device-alice`).
+   */
   async function answer(ctx: any, messages: unknown[]) {
     const requestId = mintHistoryRequestId();
-    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 });
+    const key = await mintHistoryAnswerKey(sealEngine);
+    noteHistoryAsk(GROUP, requestId, { kind: 'digest', since: 0, askedAt: 1_000_000 }, key.secret);
+    const to = digestIdentity(ME, MY_DEVICE);
+    const sealed = await sealHistoryContent(
+      sealEngine,
+      key.answerKey,
+      historySealAad(GROUP, requestId, to, digestIdentity(ctx.senderNorm, 'device-alice')),
+      { messages }
+    );
     await handleSystemEvent(
       'history_bundle',
-      { messages, requestId, to: digestIdentity(ME, MY_DEVICE), last: true },
+      { sealed, requestId, to, last: true },
       { ...ctx, deliveryMeta: { addressed: true, senderDeviceId: 'device-alice' } }
     );
   }

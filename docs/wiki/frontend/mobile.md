@@ -276,9 +276,11 @@ and why this won:
 | WebView `fetch` for binary bodies to first-party origins | **Chosen.** One predicate, no native code, the same path web users run today (including the 401-refresh retry in `fetchUpload`), and no copy at all. |
 
 **Which origin the release builds bake (read from the workflows and the relay, 2026-10-10).** `android.yml` and
-`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret for a stable (the classifier
-accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to `canari.emse.fr` on 2026-09-25) and
-`DEV_BASE_URL` for a pre-release, which must be `dev.canari-emse.fr` (the only dev name the classifier knows).
+`ios.yml` write the SAME `APP_URL` into every `VITE_*_URL`: the `BASE_URL` secret, read from the `production`
+environment for a stable (the classifier accepts `canari.emse.fr` or `canari-emse.fr`; `BASE_URL` moved to
+`canari.emse.fr` on 2026-09-25) and from the `development` environment for a pre-release, where it must be
+`dev.canari-emse.fr` (the only dev name the classifier knows; it was the `DEV_BASE_URL` secret until 2026-11-13,
+[cicd](../cicd.md#where-a-secret-lives-and-why)).
 Measured with a 2 MB POST to `/api/media/upload`: `canari.emse.fr` answers `401` (straight to the Portail-etu
 host, no cap), while `dev.canari-emse.fr` and `canari-emse.fr` answer **`413`** - both still go through the old
 VM's nginx relay (`canari-relay-dev.conf`, `canari-relay-prod.conf`), which sets no `client_max_body_size` and
@@ -317,7 +319,7 @@ service answers the preflight an `Authorization` header raises from the three We
 (`cors-origins.ts` in the Nest services, `chat_gateway_cors_layer`), measured from the Android origin for the
 whole cold start (0 warnings, every read answered). A cross-origin client sees only the safelisted response
 headers plus the exposed ones: the reads consume `Content-Type` and `Content-Length` (safelisted),
-`X-History-Head` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`) and
+`X-History-Head` and `Date` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`; `Date` is the server's clock a group row read states, `GroupMeta.serverNow`) and
 `Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
 read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
 
@@ -328,7 +330,7 @@ read depends on must be added to its service's `exposedHeaders`, or the phone re
 | The preflight names `Authorization` back. A `*` in `Access-Control-Allow-Headers` does NOT cover it (Fetch standard) | Nest: `corsOptions` in `apps/*/src/cors-origins.ts` leaves `allowedHeaders` unset, so `cors` mirrors the request (asserted in `cors-origins.spec.ts`). The chat gateway answered `*` and now mirrors (`AllowHeaders::mirror_request()`, test `names_back_the_authorization_header_a_bearer_read_preflights`): `GET /api/presence` carries a Bearer token |
 | The preflight is cached | `Access-Control-Max-Age: 7200` on the four Nest services and the gateway (Chromium caps it at 2 h, WebKit at 10 min). Without it Chromium kept a preflight 5 s per URL |
 | An error nginx makes ITSELF is readable | A 502/504 while a service restarts, or the 500 of a failed `auth_request` (maintenance included), carried no CORS header, so a native read got a `TypeError` - "unreachable" - where the status was an answer. `error_page 500/502/503/504` at server level now answers through `@api_error_<code>` with `Access-Control-Allow-Origin` mapped from an ALLOWLIST of the three WebView origins (`$api_error_cors_origin`). Gate: `.github/scripts/tests/api-error-cors.test.mjs`, which also holds the map equal to `TAURI_WEBVIEW_ORIGINS`. Checked with `nginx -t` and a container: a failed auth sub-request answers `500` with `Access-Control-Allow-Origin: http://tauri.localhost`, and nothing for a foreign origin |
-| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` (chat-delivery) |
+| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` and `Date` (chat-delivery) |
 
 Not covered by this repository: a 502 made by the HOST proxy in front of the container (the Portail-etu host's
 own nginx, the Cloudflare edge) while this container itself is down, which still reaches a native read as a
@@ -693,9 +695,9 @@ through to default navigation *inside* the WebView. Nothing renders such an href
 from user content goes through `messageDisplay.ts`, which emits `https://` only - but that is a
 property of the renderers, not of that function, which is exactly why the guarantee lives in Rust.
 
-## What the app claims over `canari-emse.fr`
+## What the app claims over `canari.emse.fr` (and the legacy `canari-emse.fr`)
 
-Tapping an `https://canari-emse.fr/…` link on a phone with the app installed opens the **app**, not
+Tapping an `https://canari.emse.fr/…` link (or one on the legacy `canari-emse.fr`, which `MOBILE_APP_LINK_HOSTS` still claims) on a phone with the app installed opens the **app**, not
 the browser, for every path the app claims. The claim is one decision carried in three files that no
 compiler compares:
 
@@ -725,7 +727,7 @@ verification state on a device, and Google's Digital Asset Links API answers for
 
 ```
 https://digitalassetlinks.googleapis.com/v1/statements:list
-  ?source.web.site=https://canari-emse.fr&relation=delegate_permission/common.handle_all_urls
+  ?source.web.site=https://canari.emse.fr&relation=delegate_permission/common.handle_all_urls
 ```
 
 Both association files are prerendered by SvelteKit (`routes/.well-known/`) and served by nginx from
@@ -1081,6 +1083,28 @@ Notification Center over an open app was lost. The fix:
 - **Mark-as-read from the banner over an open app is still native.** Its watermark goes through the
   same outbox mirror, so the same refusal and erasure apply to it. It is OPEN
   ([backlog](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md)).
+- **A notification response is completed ON THE MAIN THREAD (2026-11-15).** Read on the iPhone 12
+  (TestFlight `1.6.12-alpha.2`): "Marquer comme lu" from a KILLED app did all its work - the
+  conversation's notification cleared, the badge at 0, the watermark at the sender's instant drained -
+  then the app aborted 1 ms later, `NSInternalInconsistencyException` "Call must be made on main
+  thread" (`UIApplication.m`): the mark-read branch called `completionHandler()` on the global queue
+  it worked on, and iOS asserts the main thread inside it. The quick reply had the same flaw on every
+  path it completes off main (a refused or natively sent reply, a lost hand-over, the page's
+  settlement arriving from Rust). Both branches now keep their work off main and hand out
+  `CanariFinishOnMain(completionHandler, what)` instead of the raw handler: it runs at once on the
+  main thread, else is queued onto the main queue - no timer, no call counting, each path calling it
+  once by construction (the reply's hold is removed under a lock by whoever releases it first). Every
+  other `completionHandler` in `didReceiveNotificationResponse` and `willPresentNotification` is
+  called synchronously in the callback iOS delivers on main. `iosNotificationDelegate.test.ts` holds
+  it on the source: no block that can run off main names the raw handler, every registered action has
+  a branch finishing through the wrapper, and the wrapper hops with no timer. Two orderings were
+  tightened in review: a held reply's completion is now taken and run ON MAIN in the same step that
+  ends its background task (`CanariEndQuickReplyTaskOnMain`), so an expiry racing a settlement off
+  main can no longer end the task with the response outstanding; and mark read completes only once
+  the conversation's notification removal has run (`CanariCancelConversationNotification`'s `done`,
+  joined with the watermark drain by a dispatch group), never before it. **Code fixed, not yet
+  shipped: the reading is the same gesture on the FIRST pre-release carrying it - no crash, no
+  "Canari Crashed" prompt at the next open, and the read mark observed on the peer.**
 
 Source-shape tests: `iosNotificationDelegate.test.ts`.
 
@@ -1179,6 +1203,8 @@ destination column is what the app opens, the coverage column is what a test or 
 | `event_validated/rejected/updated/deleted/pending` | FCM + APNs | same | `/calendar` | same | routes |
 | `profile_correction_applied/refused` | none (`skipPush`) | `requestId` | in-app row only, `/profile` | `notificationTarget.test` | no push by design |
 | `live_cut`, `live_suspended`, `live_withdrawn` (WP-L8b, 2026-10-21) | FCM + APNs | `target: 'notifications'` (wins over `postId`, the live's or the member's id) | `/notifications`, where the inert row says it | `push-target.spec`, `deepLinkRoutes.test`, `deepLinkHostsDeclared.test` | never run on a phone; never muted by a category ([lives](../services/lives.md#the-three-pushes-a-broadcaster-gets-wp-l8b)) |
+
+A push whose target is `notifications`, tapped while `/notifications` is ALREADY the open page, is a `goto` to the same route: the page does not remount, so its `onMount` read never runs. The page re-reads on `afterNavigate` when the navigation lands on the route it left (`isReentryOfSameRoute`), once, and a fresh mount from another route is not a re-entry (fixed 2026-11-18; [entry, closed by the S5 readings](../device-verification.md#the-phone-readings-of-2026-11-18-s5-170-alpha12-the-alpha12-fixes-on-both-phones)).
 | Incoming call | FCM silent frame | `groupId`, `callId` | `/chat`, accept recorded | NOTIF rows | HELD: `CALLS_ENABLED = false` |
 | Browser (web) notification | `new Notification` from a WebSocket frame, **no service worker, no web push** | `conversationId` | `chatDeepLinkRoute` | `useNotifications.webClick.test` | **was `/chat` for a salon, fixed on the branch**; a closed tab gets nothing |
 
@@ -1353,7 +1379,8 @@ slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an acco
 module `slot_file` in `concurrency.rs`, whose only other item is the follower-taking writer - it
 replaced a source scan (`only_the_slot_writer_writes_mls_bin`) that did the same job one layer lower.
 The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its time is in the
-`[MLS_ACCOUNT]` debug line. The activation mirror stays for the seeds and the secret; its `mls.bin`
+`[MLS_ACCOUNT]` debug line. The activation mirror stays for the secret (the seed mirror lives in the App Group since 2026-11-17,
+[channel-encryption section 27](../protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)); its `mls.bin`
 and `push_context.json` halves re-copy files that are already followed. The bench
 commands' deliberate damage (`commands/bench.rs`) is not followed: a CORRUPT row measures the app.
 
@@ -1419,7 +1446,7 @@ three answers and reason codes as Android:
 Only the JSON literal `true` proves (a CFBoolean: `isJSONTrue`, and the same test in `canari_push.mm`; a
 JSON `1` does not). An older native library answers without `authorProven`, which reads as not proven: such a build
 names nobody rather than the server's claim. **Compiled by the App Store workflow only, owed a
-reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+reading on the iPhone 12** ([backlog](../plan.md#readings-owed)).
 
 #### What the extension did, in the app's log (2026-11-01)
 
@@ -1587,7 +1614,7 @@ Android has no equivalent restriction.
 
 **In the iOS app the bottom bar is a native `UITabBar`, not HTML** (user, 2026-09-29: the Apple
 Liquid Glass chantier). It comes from `tauri-plugin-system-components` and floats over the WebView:
-a Liquid Glass pill on iOS 26 when the app is built with Xcode 26, the classic translucent bar
+a Liquid Glass pill on iOS 26 when the app is built with Xcode 26 or later, the classic translucent bar
 before. Everything else - web, Android, an iPad at `md` width - keeps `BottomNav`.
 
 | Concern | Where it lives |
@@ -1599,7 +1626,7 @@ before. Everything else - web, Android, an iPad at `md` width - keeps `BottomNav
 | The bar | `components/navigation/NativeTabBar.svelte`, mounted by `routes/+layout.svelte` |
 | The places, the glyphs and the dot | `MOBILE_NAV_PLACES` (`navigation/places.ts`), `PLACE_ICONS` (`navigation/placeIcons.ts`) and `placeBadge` (`navigation/placeBadge.svelte.ts`), all shared with `BottomNav` |
 | The glyphs as bitmaps, and the yellow | `mobile/nativeTabIcons.ts` |
-| The Xcode | `ios.yml` requires `^26.0`: an older toolchain builds the classic bar WITHOUT an error |
+| The Xcode | `ios.yml` and `ci.yml` require `^27.0` on the `xcode-27` runner (the iOS 27 SDK App Store Connect requires from April 2027, ITMS-90725); a toolchain older than 26 builds the classic bar WITHOUT an error ([cicd](../cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171)) |
 
 **The same bar, drawn natively.** The four places, the unread dot (an EMPTY `badgeValue`, UIKit's
 dot, never a count), and the same visibility: not on the login page (not mounted there, so it
@@ -2300,7 +2327,7 @@ already built, #2184, and only the Mi 9T reading below is owed).
   (no back-forward swipe), the iOS Back is the app's own `swipeBack`, only in a conversation, so the
   feed's left edge already belongs to the page. The bridge is absent there and the call is a no-op.
 - **Owed:** a Mi 9T reading on the next pre-release
-  ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+  ([backlog](../plan.md#readings-owed)).
 
 ### One Back with the message sheet open closed the sheet AND the conversation, and ten more surfaces shared the cause (2026-10-13)
 
@@ -2399,39 +2426,59 @@ runs on every change of the scroll view's offset and content size (KVO) and at t
 keyboard animation, puts an offset outside `[-inset.top, contentSize - bounds + inset.bottom]` back
 on its edge, and leaves a drag, its deceleration and its bounce to UIKit.
 
-Stateless on purpose - the target is recomputed from the superview's bounds on every event, so there is
-no remembered frame to restore and nothing that can drift. `UIKeyboardWillChangeFrame` alone covers
+**A rise from no keyboard is handed to the page first (2026-11-13).** Animating the frame on a rise
+drew the page one keyboard overlap lower and slid it up behind the keyboard, the composer hidden for
+~150 ms on the iPhone 12; the page now lays itself out for the keyboard (`window.canariImeTarget`, the
+contract Android uses) and the frame is set without animation once a screen-update proof says it is
+drawn. A fall is announced first with the keyboard's own duration and curve, the frame snaps, and the
+page rides its composer and thread down with the keys; height changes while open still animate the
+frame ([keyboard-and-send-motion](keyboard-and-send-motion.md#5-ios-measured-on-the-iphone-12-2026-11-13)).
+
+The target is recomputed from the superview's bounds on every event, so there is no remembered frame
+to restore and nothing that can drift; the only state is the sequence that lets a late answer to a
+rise tell it was superseded. `UIKeyboardWillChangeFrame` alone covers
 appearing, disappearing, height changes and interactive dismissal: on the way out the end frame is
 off-screen, the intersection is empty, and the overlap is zero. One path, both directions.
 
 #### `android:windowSoftInputMode="adjustResize"` IS INERT, and the manifest still carries it
 
-Since Android 15 an edge-to-edge window is never resized for the IME. The attribute is not an error
-and not a warning; `dumpsys window` states the outcome plainly, printing `EDGE_TO_EDGE_ENFORCED`
-right next to the `adjust=resize` that was asked for. It is kept in the manifest because it still
-works below 15, and the listener below is a no-op there (the IME inset reads 0 once the window has
-already been resized).
+An edge-to-edge window is not resized for the IME. From Android 15 the attribute is not an error and
+not a warning; `dumpsys window` states the outcome plainly, printing `EDGE_TO_EDGE_ENFORCED` right
+next to the `adjust=resize` that was asked for. **Below 15 it is just as inert for this window**, which
+this page used to deny (it said the attribute "still works below 15" and the listener was a no-op
+there). Measured by the lead on 2026-11-14 on an API 34 emulator (Android 14, `google_apis` x86_64,
+Android System WebView 113.0.5672.136), the keyboard-ride debug build at `16dd910d7`, with
+`enableEdgeToEdge`, an injected fixed input on `/login`, a per-frame CDP probe and logcat: with the
+keyboard open the WebView does NOT resize - `innerHeight` and `visualViewport.height` both stay 915
+CSS px, open and closed; the listener reads an 883 px IME inset; `onPrepare` announces the compat
+animation as 285 ms with a `PathInterpolator`; the page takes the target (`keyboard over the window:
+336.38`), reveals the focused field, and the field sits above the keys; on close the inset is 0 and
+the page takes 0. So the overlay contract below holds on 14 exactly as on 15+. The attribute stays in
+the manifest as a statement of intent that nothing reads.
 
 ONE cause wore two faces, which is why they were one item: the composer sat under the keyboard, and
 the page could be scrolled onto a white band. Nothing resized, so the WebView's own scroll-the-focused-
 field-into-view ran the document past the end of its content onto the Activity background - visible
 because `onWebViewCreate` makes the WebView transparent on purpose (that is the startup-flash fix).
 
-`applyKeyboardInsets()` sets an `OnApplyWindowInsetsListener` on `android.R.id.content` and pads it by
-the IME inset. **It also withdraws the navigation-bar inset while the keyboard is up, and that half is
-not cosmetic**: the web layer reserves a strip through `env(safe-area-inset-bottom)`, which is right
-when the bar is at the bottom of the app and wrong the moment the keyboard is - the bar is then behind
-the keyboard and the strip is an empty band the page can be scrolled by, revealing the reserved footer
-while hiding part of the header. "The keyboard is up" is known here and nowhere else, so the inset is
-zeroed on the way down rather than left for CSS to guess at. The status bar is deliberately untouched:
-it is still on screen. The early `if (ime == 0) return ... insets` is what gives the strip back.
-
-Verified on hardware 2026-08-17 (v0.14.0 debug build, Android 15): `IME inset: 988 -> content padding`
-in logcat with the composer focused, and the user confirmed the band is gone.
+`applyKeyboardInsets()` sets an `OnApplyWindowInsetsListener` on `android.R.id.content`. **Since
+2026-11-14 (#3556) it pads nothing and withdraws nothing**: it announces each change of the IME inset to
+the page (`window.canariImeTarget({ px, durationMs, curve })`) and passes the insets on untouched, and
+the page lays itself out over the keyboard and rides it
+([keyboard-and-send-motion](keyboard-and-send-motion.md#6-android-since-2026-11-14---the-keyboard-covers-the-webview-and-the-page-rides-it)).
+Before that it padded the content by the IME inset (a resize that showed a cropped or stretched last
+frame for 8 to 13 frames) and withdrew the navigation-bar inset while the keyboard was up, because the
+web layer's `env(safe-area-inset-bottom)` strip is wrong the moment the bar is behind the keyboard -
+an empty band the page could be scrolled by (verified 2026-08-17, v0.14.0, Android 15: the band gone).
+That fact still holds; it is now said by the PAGE, which pins `--safe-area-inset-bottom` to 0 while the
+keyboard covers the window (`keyboardSafeAreaBottomOverride`), in the announcement's own task. The
+native withdrawal reached `env()` a frame or more after the announcement, and that frame was a 12 px
+step under the keyboard ride (Mi 9T, review D2). The status bar is untouched: it is still on screen.
 
 #### A floating panel follows the keyboard from the VISUAL viewport (2026-11-10)
 
-The padding above has a cost the composer never shows: **the layout viewport learns about the
+(Measured while the app still padded the WebView - the overlay note closes this section.) The
+padding had a cost the composer never shows: **the layout viewport learns about the
 keyboard late.** The inset listener pads the content once the IME's inset is dispatched; the
 WebView's visual viewport has already shrunk by then. Read on the Mi 9T (`1.6.9` dev pre-release,
 Android 16, over the WebView's DevTools socket), focusing the reaction picker's search field:
@@ -2457,8 +2504,13 @@ a fresh `innerHeight` with a stale inset. It is the same geometry as the snapsho
 not 343) and a pinch-zoom is not a keyboard. The action also re-runs on `visualViewport` `resize`.
 Every panel it places gains it: both emoji pickers, the reactor list, the menus, the autocomplete.
 `fixedPopover.test.ts` drives the four events above and asserts the panel's `top` after each.
-**Owed: one reading on a phone** - the picker's search focused, the panel above the keyboard as it
-lands.
+
+**Since #3556 the Android app's keyboard fires none of those events**: the WebView is never resized
+and its visual viewport never shrinks, so the action also re-places on the keyboard store's own
+`onKeyboardInsetChange`, on the next frame (the placement reads layout, and the store has just written
+its variables) - review F4, `fixedPopover.test.ts` drives an overlay announcement. In the app the band
+is the announced height (`keyboardInsetBottom` returns `overlayPx`). **Owed: one reading on a phone** -
+the picker's search focused, the panel above the keyboard as it lands.
 
 #### The bottom nav reserves nothing
 
@@ -2953,6 +3005,10 @@ What it still cannot see, and the test says so in its own header: a French liter
 exists in no table at all. On Android the accent heuristic catches most of those; on iOS nothing
 does.
 
+**Read on production, 2026-11-14:** all 475 `[PUSH_REGISTER]` lines of the 15.5 hours after the
+`v1.6.11` deploy carry `locale=fr` (376) or `locale=en` (99), none `unstated`, on both platforms.
+The visible half (the sentence a failed NSE shows) cannot be provoked on demand.
+
 #### The face on a notification, and what happens when there is none
 
 Every notification that names a person tries to show that person. **When it cannot, a coloured disc
@@ -3044,25 +3100,23 @@ and none with a face. Three defects, three fixes:
   (`push-content.ts`) converts once on the server; a spec reads the frontend's `REACTIONS` and
   fails if the two lists drift, and an unknown type logs at `warn` and is drawn as the heart the app
   draws.
-- **Six notifications**: `showPostReactionNotification` (Kotlin) keys ONE notification on the post
-  (`postReactionNotifKey`, stable id like `reactionNotifKey` does for a conversation). The actors
-  accumulate in SharedPreferences (`canari_post_reactions`, bounded to 50 posts and 50 actors) and
-  the sentence is `A a reagi 🔨 ...` / `A et B ...` / `A, B et C ...` / `A, B et N autres ...`
-  (newest first, `N >= 2`). **The group ends on the SHADE, not on a clock**: a reaction joins the
-  ledger only when that notification is still posted, so a swipe or a tap starts a fresh group.
-  The large icon is the actor's face for one person and a collage of up to three faces for several,
-  through the same `fetchAvatar` and the same initials disc (logged) as every other path. The pure
-  half - ledger, sentence shape, faces, encoding - is `push/PostReactionGroup.kt`, compiled by the
-  JVM test project (`PostReactionGroupTest`).
+- **Six notifications**: since 2026-11-14 the SERVER decides it, for reactions and comments alike
+  ([one live notification per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)): every push about the
+  reader's own post carries `collapseId = post_activity_<postId>`, `quiet` while the post's bell rows
+  stay unread, and `contentCount` (the other people of the same kind). Android keys the notification
+  on `collapsedNotifKey(collapseId)` and posts a quiet one with `setSilent(true)`; the title reads
+  "A et N autres ont commenté" / "N réactions". The client ledger of 2026-10-08
+  (`PostReactionGroup.kt`, SharedPreferences `canari_post_reactions`, the face collage) is DELETED:
+  it grouped on the shade, a second source of truth, and the bell's read state is now the only one.
+  A device that ran the old build keeps an orphan `canari_post_reactions` preferences file, never
+  read again.
 
-An un-react does not shrink an already-shown group: removing a reaction sends no push, so "A, B et 4 autres" stays until the notification is swiped or opened.
-
-**iOS** gets the cheap half only: `buildInternalApnsRequest` files a `social_reaction` under the
-thread `post_reaction_<postId>`, so the notification centre stacks the reactions to one post, and
-`attachSocialIcon` already draws the one actor's face from `iconUserId`. What it does not get is ONE
-banner updated in place with "A, B et N autres": that needs the NSE to read the delivered
-notifications of the thread and rewrite its text and a face collage, which is new native code that
-nothing here can run without an iPhone ([backlog](../backlog.md)).
+**iOS** gets the same identity: chat-delivery sends the push with the `apns-collapse-id` header and
+the `thread-id` both set to the `collapseId`, so a later push REPLACES the delivered one; a quiet one
+carries `interruption-level: passive` and no sound. The NSE writes the count line and keeps a quiet
+one passive; with the app alive, `canari_push.mm` posts its local twin under the same identifier
+(`CanariPostLocalNotification`) and files a passive one in the list only. **Inferred, not yet read on
+an iPhone**: that a local request whose identifier equals the collapse id replaces the remote one.
 
 **"NO PICTURE" IS REMEMBERED ON ANDROID, AND NOTHING ELSE THAT IS NOT A PICTURE IS (2026-10-01).**
 `cachedRemoteIcon` used to write its file only on a `200`, so a person with no photo - every bench
@@ -3214,6 +3268,119 @@ reaction), and both compose the sentence in the app's own Français/English rath
 `pushContextFields.test.ts` pins the `locale` field across the Rust writer and all three native
 readers. The push carries an id, an emoji and who reacted - never the message text, since the
 recipient is its author and already holds it.
+
+**THE FOREGROUND SUPPRESSION IS COARSER THAN ITS REASON, AND THAT IS A DEFECT (measured 2026-11-17).**
+The guard says the bubble on screen already carries the reaction, which is true only while THAT
+conversation is open; `MainActivity.isInForeground` (and iOS `willPresent`) is true on the feed and in
+any other conversation too. A message has a second trigger for exactly that case - the WebSocket frame,
+decided by `canSeeArrival` ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts)) -
+and a reaction has none: its MLS frame is silent and `notifyInbound` never sees it. So a reaction that
+lands while the app is open anywhere notifies nobody, and the web and desktop are never told at all.
+Production, 2026-11-17: a reaction push left `sendPushToUser` for an Android account three seconds
+after that phone's app socket opened, and the socket closed 20 s later - the push was suppressed and
+nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
+reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
+heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
+notifications. Fixed for `1.7.1` by the frame trigger below ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+
+#### The frame trigger of a reaction (2026-11-17)
+
+A reaction now has the second trigger a message has. Every applied reaction frame - the MLS path
+(`setupMessageHandler` -> `applyReactionFrame`, which returns what it changed and whose message it
+landed on) and the live salon path (`channelEventHandler`, `channel.message.created`) - is handed to
+`useMessaging.notifyInboundReaction`, and the decision is
+[reactionNotification.ts](../../../frontend/src/lib/utils/chat/reactionNotification.ts), pure, with
+its whole matrix asserted beside it:
+
+| term | refused when |
+| --- | --- |
+| the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
+| live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing, except the ONE row that arrived live before its seed (below) |
+| the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+
+**A live salon reaction that arrives BEFORE its seed is still decided live (2026-11-18).** The first
+frame of a reactor's new seed session (the distribution epoch moved: a member added or removed) often
+lands before the seed that opens it. The live open then fails as repairable, the seed lands in the
+same drain, and the repair re-reads the salon as history, which raises nothing - so neither trigger
+drew it (Mi 9T, `1.7.0-alpha.10`). The fact "this row arrived live" is now carried, never guessed:
+`channelEventHandler` parks the row's decision under its server id when `reportUnreadableChannelMessage`
+answers REPAIRABLE (a missing seed, classified from the error's type) and the row is `silent` (the
+only thing the server knows about a body, and a line is never silent), in
+[owedLiveFrames.ts](../../../frontend/src/lib/utils/chat/owedLiveFrames.ts). Whichever history reader
+opens THAT row first (`useConversations`' page load or search) takes the decision - only that id,
+only once - and hands it the reaction it read and what applying it changed; the decision raises it
+through the same `raiseLiveChannelReaction` as an opened live frame, `live: true`. Every other row of
+a page finds nothing parked, so history still raises nothing. Emptied at sign-out with the seed layer
+(`setGraineRuntime(null)`), and a handler still awaiting its open when the session ends does not park
+(a session generation captured before the await). **No age term, deliberately:** the decision fires
+when the row first opens, so a seed a peer answers hours later announces the reaction hours late -
+once, since the push was dropped in front; principle 2 (the essential is never lost) over a
+notification that reads as old. Tests: `channelEventHandler.reaction.test.ts`,
+`useConversations.owedLiveReaction.svelte.test.ts`.
+
+**A salon's level is not applied**, on either path: the server cannot read it for a reaction
+(`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
+decided by the route ([durable-rules](../durable-rules.md)).
+
+**Deduplicated by identity, never by a flag read at two moments (review of #3792, round 2).** The
+first design made the two triggers disjoint on a foreground flag: the page deferred while the app
+was not active, the push drew only then. But the page decides when the frame lands and the push gate
+when the push lands - a page that deferred while iOS was inactive (Control Center) or Android just
+paused, then a push landing after the user came back, was dropped as foreground too: nobody
+announced it. So the frame trigger ignores the app's state, both may post, and the REACTION's own
+identity makes the two posts one:
+
+- **Android**: both stamp the line with the reaction's own instant (`ReactionMsg.at`; the push carries
+  it as `at`, forwarded by `notify-reaction`), and post the ONE composition `showReactionNotification`
+  (`notif_reaction_body`, `CHANNEL_REACTIONS`, no quick actions) under the ONE key `reaction:<groupId>`
+  and ONE lock (`REACTION_POST_LOCK`), so whichever lands second is recognised by `alreadyPosted` or,
+  once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
+  `reaction = true`.
+- **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
+  the id is `stableNotifId(reaction:<messageId>:<reactor>)` (`reactionCollapseId`), and the
+  server sends the push with `apns-collapse-id` = the same decimal (`reactionCollapseId` in
+  `push-payload.ts`, from the `messageId` the reactor posts to `notify-reaction`; none when it names
+  no message), so the system files both under one request and replaces one by the other, as a post's
+  local twin already does (`CanariPostLocalNotification`). The two copies of the hash are held
+  together by one vector asserted in both test suites. **The key is the reacted-to MESSAGE, never the
+  conversation** (round 3): the id rides the content-free wake as a header Apple reads, and a call
+  ring names the group and the caller in clear, so a hash over `<group>:<reactor>:<at>` could be
+  confirmed by trying a few thousand instants. No wake and no ring names the message
+  ([content-free-push](../protocols/content-free-push.md)). **One slot per reactor and message, no
+  instant (2026-11-18):** with `<at>` in the key a reactor who changed one emoji for another left TWO
+  entries in Notification Center (iPhone 12, `1.7.0-alpha.11`, locked and killed), where Android
+  replaces the line; now the newer reaction replaces the older, as Android's does. The page's post is
+  still throttled per reaction (`<slot>:<at>`), so a quick second emoji replaces the first rather than
+  being swallowed by the 800 ms window (`useNotifications.reactionSlot.svelte.test.ts`). The web tag
+  and the desktop id follow the same slot, so there too a reactor's second reaction replaces the first
+  (a same-tag replacement in a browser does not alert again: no `renotify`). **The slot holds the
+  LAST arrival, not the newest reaction:** a push of an older reaction delayed by APNs past the page's
+  post of a newer one fills the slot with the older emoji - still a reaction that stands (several emoji
+  per reactor may), stale rather than false; ordering pushes is not in APNs' gift. `willPresent`'s
+  `List` answer now covers both a twin and the reactor's older reaction (`CanariPresentForegroundPush`
+  says so). **Skew, both ways:** a `1.7.0` iPhone (page id with `<at>`) under a `1.7.1` server (push id
+  without it), or a `1.7.1` iPhone under a `1.7.0` server (dev between a tester build and the server
+  deploy), can show two entries for ONE reaction in the narrow windows where both triggers draw
+  (Control Center, a push landing just as the app comes back); both end once app and server match.
+- **iOS, while ACTIVE**: `willPresent` never answers a push with `None` blind - should iOS have
+  replaced the page's delivered request by the push, that would erase the record. It reads the
+  delivered notifications (`CanariPresentForegroundPush`, completed on the main queue) for EVERY
+  active push, by identifier and never by data (a wake whose fetch failed or answered `gone` keeps
+  `type=wake` yet carries the reaction's collapse id): the same identifier delivered -> `List`, none
+  -> `None`. Worst case a double, never a loss.
+- A frame with no `at` (a reactor predating it, whose push carries none either) cannot be made one with
+  its push: on a phone it is left to the push, as before #3792. `notify-reaction` forwards `at` only
+  as a positive integer at most a day ahead of the server (`REACTION_AT_MAX_AHEAD_MS`).
+
+**Desktop and the browser** post the plain one too, with the same per-reaction id/tag; they have no
+push, so the frame is their only trigger and a hidden tab or an idle window is told.
+
+**What only a phone can say** (the background reading,
+[readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11); the iOS
+identity reading, read PASS on `1.7.0-alpha.10` ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha10-both-phones-and-the-rig)). That iOS replaces a delivered LOCAL notification by a remote one with the same
+`apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
+test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
+acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
 
 #### Background MLS decrypt ladder
 
@@ -3381,11 +3548,60 @@ are the truth.
 
 Native log lines - logcat, os_log and the Rust log - carry ids (truncated) and counts only
 (`chars=${text.length}`, `named=true`), never message text, a name or a key.
-`nativeLogContent.test.ts` scans every Kotlin, Swift, Objective-C++ and Rust log call for an
-interpolated content-bearing name (`text`, `body`, `senderName`, `seed`, `token` ...) and fails on
-one; a measure (`.length`, `isEmpty`) is allowed, and a name that is not content is allowlisted
-by `file|expression` with its reason. The harness rules reading those lines (`watch.mjs`) match
-these shapes.
+`nativeLogContent.test.ts` is an **ALLOWLIST** (2026-11-15; it was a denylist of content names until
+a Kotlin lambda's `it` printed a sender's real name and the `e.message` of an `org.json` exception,
+which quotes the whole input, was never inspected): it scans every Kotlin, Swift, Objective-C++ and
+Rust log call and fails on any interpolated expression that is not one of
+
+- a measure or a flag (`.length`, `.len()`, `isEmpty`, `!= null`, `hasVideo`, a comparison, an outcome
+  chosen between two literals);
+- a count, a size, a position or a duration (`epoch`, `index`, `.as_millis()`), a status or a code;
+- an id (`groupId`, `callId`; `.take(8)` / `.prefix(8)` when it is a user's), a constant, a class name
+  (`e.javaClass.simpleName`, `NSStringFromClass`), or the domain and code of an Apple error
+  (`CanariErrorReason`, `errorReason`);
+- a Swift `Logger` interpolation marked `.private` (redacted in release);
+- a Rust error value (`e`, `err`): the one reviewed category, because every error type this tree logs
+  is io, openmls, serde, SQLite, keystore or an own enum that quotes no payload;
+- a value in the small named sets of the test (`SAFE_LOCALS`, `SAFE_LABELS`), or the exact
+  `file|expression` of the reviewed table (`REVIEWED_GROUPS`, each group saying why).
+
+**Everything else fails, including `$it`, `${e.message}`, a bare Kotlin `e` as a `Log` throwable
+(its message and stack are printed whole) and an `NSError` handed to `%@`.** The way out is never
+adding the word by reflex: read where the value comes from, then either rewrite the line to a shape
+above (`e.javaClass.simpleName` is almost always enough: the class names the failure, the stack
+names the line) or annotate the call with `// log-safe: <why>` on its own lines - a reason of at
+least ten characters, or the annotation does not count. A Kotlin `catch` that parses (`JSONObject`,
+`Base64.decode`, `Instant.parse`, a file read of user data) never logs its message: org.json,
+`java.time` and the Base64 decoder echo their input. The harness rules reading those lines
+(`watch.mjs`) match these shapes.
+
+**What the scan reads, and what it cannot (review of 2026-11-15).** A measure or a comparison counts
+only as the WHOLE value - `if (name != null) name else ""`, `body.take(body.length - 1)` and
+`names.filter { it != me }` print content; a conditional is judged by its two branches. A local
+named like a pass-through call (`suffix`, `description`) is still a value. Besides the platform
+loggers it reads stdout and stderr (`println`, `print!`, `dbg!`, `printStackTrace`, `log::log!`)
+and the app's line-taking wrappers (`output.log`, the ladders' `log` lambda, `sayOnce`), and a line
+handed in as a local (`val line = "..."` then `Log.w(TAG, line)`) is read where it was assembled.
+A table key carries its line count (`3x file|expr`), so the next line spelling a reviewed word in
+that file fails. A throwable handed to a logger (a Kotlin `Log.*`'s third argument,
+`x.printStackTrace()`) is judged by its POSITION, whatever the local is called. A second review
+(same day) closed the shapes that still walked past: a measure ending a concatenation
+(`body + body.length`), a `var` reassigned after its literal, a statement continued on the next
+line, Rust's `{{{text}}}` and `'"'`, a ternary written tight (`ok ? body:"none"`), an annotation
+spelled inside the logged string, a name merely ending in "id" (`said`), and the restore plugin and
+the plugins' Rust, which were not read at all. **Two gaps no regex closes**: a value laundered
+through a NAME that is trusted (`why`, `reason`, `detail` - a parameter filled with a message by a
+caller, as `CallBridge.parse` did with an org.json message until that review, or a local assigned
+one; following every such local to its right-hand side flags 18 safe lines), and a wrapper with a new
+name - both are review questions, and a new wrapper is added to `CALL_START`. **A catch-all over a
+body that parses** (a push lane, a notification redraw, a broadcast receiver) cannot vouch for an
+exception's message, so it logs `throwableSite(e)` (`push/ThrowableSite.kt`: the class and the
+app's frame that threw) and does not hand the throwable to `Log`, whose stack starts with the
+message.
+
+**A URL is logged WITHOUT its query and fragment (2026-11-15)**: the WebView navigation handler
+logged every URL it allowed, and the redirect back from the identity provider carries a one-time
+`code` there (`navigation.rs`, `loggable_url`).
 
 **An Apple error's TEXT is content (2026-10-24)**: a `localizedDescription` (or
 `localizedFailureReason`, `localizedRecoverySuggestion`) often quotes the file it failed on - a
@@ -3456,7 +3672,7 @@ id": the envelope was logged as `Duplicate ignored during a bulk ingest`, droppe
 answered `true`. The frame was acknowledged and deleted server-side, and all three recovery routes
 shut in the same instant - the queue row gone, the generation spent, and the archive replay
 skipping the fingerprint for ever because the drain had marked it consumed
-(`saveSeenCipherHashes` is durable). The bubble reads `📷 Photo` for good, on a device that
+(the seen marks are durable - inside the MLS state since KILL-2). The bubble reads `📷 Photo` for good, on a device that
 never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
 path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
 buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no
@@ -4199,7 +4415,7 @@ from it. A refusal now logs the origin once, budget-capped, at a level that accu
 500 on the request itself, which is a separate incident this repo already had (prod 2026-08-19, on
 `GET /api/media/public/:id`).
 
-Rules, in [`durable-rules.md`](../durable-rules.md#mobile-and-native---frontendmobile): a server's origin allowlist is a
+Rules, in [`durable-rules.md`](../durable-rules.md): a server's origin allowlist is a
 fact about its CLIENTS, and a Tauri client has one origin per platform; and platform parity is not a
 property of the native project.
 
@@ -4387,7 +4603,7 @@ two of the three are edited by a machine outside it, and one of those is edited 
 
 | | what settles it |
 | --- | --- |
-| production web | `curl -s https://canari-emse.fr/api/version` |
+| production web | `curl -s https://canari.emse.fr/api/version` |
 | dev web | `curl -s https://dev.canari-emse.fr/api/version` |
 | Google Play | `bun tools/play-vitals/vitals.mjs` - the `production` track line |
 | App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run, plus App Store Connect for whether Apple has since APPROVED what was submitted |
@@ -4454,7 +4670,7 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 
 | Workflow | Output |
 |---|---|
-| `release.yml` | the ONE entry point: six gates, then the version bump, then the three arms below as jobs of the same run |
+| `release.yml` | the ONE entry point: seven gates, then the version bump, then the three arms below as jobs of the same run |
 | `ios.yml` | `.ipa` to App Store Connect (`altool`), then for a STABLE the App Store version created, the build attached and the whole thing submitted for review |
 | `android.yml` | `.aab` to Google Play - `internal` track for a pre-release, `production` for a stable |
 
@@ -4613,3 +4829,7 @@ width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 p
 - [`frontend/modules/calls.md`](modules/calls.md) — CallKit and call signaling
 - [`services/chat-delivery.md`](../services/chat-delivery.md) — Push notification backend (FCM, APNs VoIP)
 - [`cicd.md`](../cicd.md) — Mobile build workflows
+
+## Back at a root tab goes to the background (owner, 2026-11-14)
+
+Back at a root tab with no history used to reach `super.onBackPressed()`, which finishes `MainActivity`; tao's Android event loop then ends with `std::process::exit`, so the process died about 400 ms later and the next launch was a cold start (read on the Mi 9T, 2026-11-14). The owner chose "Arriere-plan, comme Messenger": `MainActivity.onBackPressed` now calls `moveTaskToBack(true)` on every API level once the page has no overlay left to close, and logs the decision (`Back at the root with no history ... moving the task to the background`). The overlay hand-over to the page and the pre-Android-12 call branch are unchanged. `MainActivity.kt` is compiled by no PR gate: the reading (Back at a root tab, the app listed in Recents, the process alive, a warm reopen) is taken on a phone after the next pre-release.

@@ -86,6 +86,19 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
+    // The respondent `where` reads the form's association's archive (`respondentFormWhere`).
+    await ds.query(
+      `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
+    );
+    // The `users` table social-service shares with core-service (same database): a member's
+    // submit reads the names its form joins there (`sharedAccountFields`, migration 174).
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+    );
+    await ds.query(
+      `INSERT INTO users (id, "firstName", "lastName") VALUES ($1, 'Cleo', 'COTISANT'), ($2, 'Max', 'MEMBER')`,
+      [COTISANT, MEMBER]
+    );
     // Migration 137 from a table WITHOUT its column, twice: `synchronize` built it from the entity.
     await ds.query(`ALTER TABLE submissions DROP COLUMN lines`);
     const migration = readFileSync(
@@ -107,14 +120,14 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,
+        noteLydiaRequestIssued: async () => undefined,
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
       // The cotisant holds the base tier; anybody else none.
       {
         build: async (input: { userId?: string; answers: Record<string, string[]> }) => ({
-          promo: null,
-          formation: null,
+          cursus: [{ promo: null, formation: null }],
           cotisationTiers: input.userId === COTISANT ? [null] : [],
           answers: input.answers,
         }),
@@ -253,6 +266,30 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       [formId]
     );
     expect(count).toBe(1);
+  });
+
+  // Each grid's own switch (owner, 2026-11-13): a send with every grid OPTIONAL and empty is an
+  // answer, stored 'free' at 0. On a form answered once per person that row IS the person's answer
+  // (`answerHoldingWhere` counts 'free'), so a later real order is refused ALREADY_ANSWERED - the
+  // same as a once-only form whose other questions were sent without an article. Pinned so the
+  // behaviour is a decision, not an accident: the editor turns "plusieurs reponses" on when a grid
+  // is added, so a manager reaches this only by turning it back off.
+  it('an empty send on optional grids is the answer of a once-only form: a later order is refused', async () => {
+    const formId = await gridForm({
+      allowMultipleSubmissions: false,
+      items: [{ ...GRID_ITEM, required: false }] as any,
+    });
+    const empty: any = await service.submit(formId, { userId: MEMBER, answers: {} } as any);
+    const stored = await row(empty.submissionId);
+    expect(stored.paymentStatus).toBe('free');
+    expect(stored.totalPaid).toBe(0);
+    expect(stored.lines).toBeNull();
+    const before = charged.length;
+    await expect(
+      service.submit(formId, { userId: MEMBER, answers: { 'q-grid': { 'vert:m': 1 } } } as any)
+    ).rejects.toMatchObject({ response: { code: 'ALREADY_ANSWERED' } });
+    // Nothing was asked of Lydia for the refused order.
+    expect(charged.length).toBe(before);
   });
 
   it('a paid order holds its seat, and the seat a refund frees is taken again', async () => {

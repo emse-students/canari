@@ -242,16 +242,20 @@
           />
         {/if}
 
-        <PayoutFeeHint
-          grossEuros={priceMatrix ? (gridRange?.max ?? 0) : basePrice}
-          grossEurosMember={gridRange && gridRange.min !== gridRange.max ? gridRange.min : ''}
-          showOptionSupplementNote={true}
-        />
+        <!-- No estimate without an association: the money has nowhere to land (the blocker above
+             says so), and the fee schedule is answered to an association's price editors only. -->
+        {#if associationName}
+          <PayoutFeeHint
+            grossEuros={priceMatrix ? (gridRange?.max ?? 0) : basePrice}
+            grossEurosMember={gridRange && gridRange.min !== gridRange.max ? gridRange.min : ''}
+            showOptionSupplementNote={true}
+          />
+        {/if}
 
         <div class="border-cn-border space-y-3 border-t-2 pt-4">
           <p class="text-text-main text-sm font-bold">{m.form_payment_methods_heading()}</p>
           <!-- ONE non-selectable line: online payment is Lydia ("Paiement Canari"), there is no
-           provider to choose. Unavailable (a leftover stripe, or disabled) is said, not hidden. -->
+           provider to choose. Unavailable (disabled) is said, not hidden. -->
           <div
             data-testid="online-payment-line"
             data-state={onlineCopy.state}

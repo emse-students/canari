@@ -136,6 +136,7 @@
   onVoteClick={handleVoteClick}
   onSubmitVote={submitVote}
   isOver={() => isClosed}
+  inset="px-5 py-4"
 />
 
 {#if canClose && !isClosed}

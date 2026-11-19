@@ -2,6 +2,7 @@
 import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { bindFixedPopover, computeFixedPopoverPosition } from './fixedPopover';
 import { initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+import { rideKeyframes } from '$lib/stores/keyboardRide';
 
 /** The OS the keyboard store asks about - a desktop has no on-screen keyboard, so no band. */
 const platform = vi.hoisted(() => ({ os: 'linux' }));
@@ -92,6 +93,32 @@ describe('computeFixedPopoverPosition', () => {
       side: 'top',
       bottom: 360 - 8,
     });
+  });
+
+  it("ends above the iOS native tab bar's band, which a web z-index cannot cover", () => {
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 200,
+        bottom: 240,
+        left: 40,
+        right: 180,
+        width: 140,
+        height: 40,
+        x: 40,
+        y: 200,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 224, offsetHeight: 300 } as HTMLElement;
+
+    // 600 tall with a 100 px bar: the last row of a 300 px menu is held to end at 500 - 8 (its height may shrink), not at 548.
+    const withBar = computeFixedPopoverPosition(anchor, panel, {}, 0, 100);
+    expect(withBar.top + Math.min(300, withBar.maxHeight)).toBeLessThanOrEqual(600 - 100 - 8);
+    const without = computeFixedPopoverPosition(anchor, panel, {}, 0, 0);
+    expect(without.top + 300).toBeGreaterThan(600 - 100 - 8);
+    // The keyboard replaces the bar on screen: the larger band wins, they never add up.
+    const both = computeFixedPopoverPosition(anchor, panel, {}, 240, 100);
+    expect(both.top + Math.min(300, both.maxHeight)).toBeLessThanOrEqual(600 - 240 - 8);
   });
 
   it('opens downward when there is room below', () => {
@@ -571,6 +598,76 @@ describe('an anchor with no box', () => {
     ]);
     unbind();
     teardown();
+    platform.os = 'linux';
+  });
+
+  it("follows the Android app's overlay keyboard, which fires no viewport event at all (F4)", () => {
+    platform.os = 'android';
+    vi.stubGlobal('innerHeight', 945);
+    const vv = Object.assign(new EventTarget(), { height: 945, offsetTop: 0, scale: 1 });
+    vi.stubGlobal('visualViewport', vv);
+    const reactions: (() => void)[] = [];
+    const teardown = initKeyboardViewport({
+      afterLayout: (_targets, start) => (reactions.push(start), () => {}),
+    });
+    const panel = panelNode();
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(300, 40), dockBottom: true });
+    expect(panel.style.top).toBe(`${945 - 8 - 360}px`);
+    // The shell announces the keyboard; the WebView keeps 945, nothing fires on `window`.
+    const take = (window as unknown as { canariImeTarget: (v: unknown) => boolean })
+      .canariImeTarget;
+    expect(take({ px: 357 })).toBe(true);
+    // Not inside the announcement - the placement reads layout - but once its layout is in.
+    expect(panel.style.top).toBe(`${945 - 8 - 360}px`);
+    for (const run of reactions.splice(0)) run();
+    expect(panel.style.top).toBe(`${945 - 357 - 8 - 360}px`);
+    unbind();
+    teardown();
+    platform.os = 'linux';
+  });
+
+  it('rides an animated Android keyboard from where it was drawn, placed before the ride reads it (N2)', () => {
+    platform.os = 'android';
+    vi.stubGlobal('innerHeight', 945);
+    const vv = Object.assign(new EventTarget(), { height: 945, offsetTop: 0, scale: 1 });
+    vi.stubGlobal('visualViewport', vv);
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const reactions: (() => void)[] = [];
+    const teardown = initKeyboardViewport({
+      afterLayout: (_targets, start) => (reactions.push(start), () => {}),
+      now: () => 0,
+    });
+    const panel = panelNode();
+    document.body.append(panel);
+    // The panel's drawn box is its inline top and its 360 px: what the ride reads (its bottom edge)
+    // before and after the placement.
+    panel.getBoundingClientRect = () => {
+      const top = parseFloat(panel.style.top);
+      return { top, bottom: top + 360 } as DOMRect;
+    };
+    const animate = vi.fn(() => ({
+      finished: new Promise(() => {}),
+      ready: Promise.resolve(),
+      cancel() {},
+    }));
+    (panel as unknown as { animate: typeof animate }).animate = animate;
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(300, 40), dockBottom: true });
+    const take = (window as unknown as { canariImeTarget: (v: unknown) => boolean })
+      .canariImeTarget;
+    expect(take({ px: 357, durationMs: 285, curve: [0, 0.5, 1] })).toBe(true);
+    // In the announcement's task: captured where it stands, not moved.
+    expect(panel.style.top).toBe(`${945 - 8 - 360}px`);
+    expect(animate).not.toHaveBeenCalled();
+    // The rendering update's layout reactions: the placement first, then the ride from the old top.
+    for (const run of reactions.splice(0)) run();
+    expect(panel.style.top).toBe(`${945 - 357 - 8 - 360}px`);
+    expect(animate).toHaveBeenCalledWith(rideKeyframes(-357), {
+      duration: 285,
+      easing: 'linear(0, 0.5, 1)',
+    });
+    unbind();
+    teardown();
+    panel.remove();
     platform.os = 'linux';
   });
 });

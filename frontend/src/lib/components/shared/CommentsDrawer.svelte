@@ -17,8 +17,14 @@
    * post's thread): it is portalled to the body and dims the interface, `aria-modal`, the focus
    * held inside (`focusTrap`) and given back to the opener on close.
    *
-   * THE KEYBOARD: the drawer rides it (`keyboard-aware-bottom`) and is never taller than what the
-   * keyboard leaves (`--app-viewport-height`), so the composer stays above the keys.
+   * THE KEYBOARD: the drawer stands on it (`keyboard-aware-bottom`) and is never taller than what the
+   * keyboard leaves (`--app-viewport-height` less `--keyboard-occlusion-bottom`, the part of the window
+   * the Android app's keyboard covers without resizing it), so the composer stays above the keys.
+   * It RIDES the keyboard (`data-keyboard-ride="box"`, `keyboardRide.ts`): it moves with the keys'
+   * own duration and curve, at their phase, instead of jumping to its new place a frame late (#3556,
+   * N4, Mi 9T: a jump 68 ms after the announcement on a rise, 138 ms on a fall). It rides by its
+   * BOTTOM edge (`rideEdgeOf`): the cap above also shrinks it as the keyboard rises, and ridden by its
+   * top its bottom stood ~57 px above the keys at the ride's start.
    */
   import { onMount, tick, type Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
@@ -217,7 +223,7 @@
   <div
     bind:this={sheet}
     use:holdFocus={scrim}
-    class="motion-sheet-in keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] max-h-[calc(var(--app-viewport-height,100dvh)-var(--safe-area-inset-top,0px)-3rem)] flex-col rounded-t-3xl pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl outline-none"
+    class="motion-sheet-in keyboard-aware-bottom bg-cn-surface text-text-main absolute inset-x-0 bottom-0 flex h-[60dvh] flex-col rounded-t-3xl shadow-2xl outline-none"
     style:transform="translate3d(0, {dragY}px, 0)"
     style:transition={settling
       ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
@@ -228,6 +234,8 @@
     aria-labelledby="comments-drawer-title"
     tabindex="-1"
     data-comments-drawer-sheet
+    data-keyboard-ride="box"
+    data-keyboard-leaf
   >
     <div
       class="flex shrink-0 cursor-grab touch-none flex-col items-center px-2 pt-2 select-none"

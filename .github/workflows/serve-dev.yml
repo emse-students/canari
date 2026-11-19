@@ -83,9 +83,8 @@ jobs:
   # value is visible in the run log: whether a second estate is being deployed is not a secret, and
   # a silent gate is one nobody can debug.
   #
-  # WHAT IS DELIBERATELY NOT HERE: no Stripe (dev has no payment credentials at all), and no
-  # separate BACKEND images - both estates deploy the same image by its commit sha, which is why
-  # `docker-compose.dev.yml` pins `TAG` exactly as production's does.
+  # WHAT IS DELIBERATELY NOT HERE: no separate BACKEND images - both estates deploy the same image
+  # by its commit sha, which is why `docker-compose.dev.yml` pins `TAG` exactly as production's does.
   # ════════════════════════════════════════════════════════════════════════════════════════════
 
   deploy-dev:
@@ -131,7 +130,11 @@ jobs:
           git reset --hard "$INPUT_SHA"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
-      # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only.
+      # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only -
+      # secrets of the `development` environment this job declares (2026-11-13). The DEV_ prefix is
+      # KEPT inside the environment: while production's bare names still exist at repository level, a
+      # bare name `development` lacked would be read from there, production's value. The unification
+      # and its precondition: docs/wiki/cicd.md#where-a-secret-lives-and-why.
       # The list is the manifest's own `secret:` rows that dev does not skip; a row added there and
       # not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives this block.
       #
@@ -165,7 +168,10 @@ jobs:
           DEV_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DEV_CLOUDFLARE_ACCOUNT_ID }}
           DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${{ secrets.DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN }}
           DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${{ secrets.DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB }}
+          DEV_CLOUDFLARE_SFU_APP_ID: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_ID }}
+          DEV_CLOUDFLARE_SFU_APP_SECRET: ${{ secrets.DEV_CLOUDFLARE_SFU_APP_SECRET }}
           DEV_LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.DEV_LIVE_REPLAY_TOTAL_MAX_GB }}
+          DEV_CAMPUS_TREND_THRESHOLD: ${{ secrets.DEV_CAMPUS_TREND_THRESHOLD }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           # Private `id=file.png,...` list for the dev-only avatar override (bench account ids). Optional.
           DEV_AVATAR_OVERRIDE_EXTRA: ${{ secrets.DEV_AVATAR_OVERRIDE_EXTRA }}

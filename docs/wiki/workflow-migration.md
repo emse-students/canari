@@ -54,7 +54,7 @@ undoing a decision, not finishing the work.
 | 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** It holds a fictional seed, reloaded on demand by `scheduled.yml`'s `dev-reset` job; the weekly copy of production that fed it until 2026-10-16 was deleted for GDPR ([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)). |
 | 4 | How a release starts | **A GitHub Release published on a tag** - the mechanism that already exists, with the push-triggered deploy removed. |
 | 5 | Local database | **A full production dump**, PII included - the one copy of production left since the dev copy was deleted on 2026-10-16, and the owner's to decide on. |
-| 6 | Hooks | **`pre-commit` minimal (format only), `pre-push` DELETED**, replaced by a CI that also runs at merge on `main`. |
+| 6 | Hooks | **`pre-commit` minimal (format only), `pre-push` DELETED**, replaced by a CI that also runs at merge on `main`. **Reversed by the owner on 2026-11-15**: the commit runs path-scoped checks and a pre-push hook is back, running what CI runs ([cicd](cicd.md#checks-at-commit-at-push-and-in-ci-only)). |
 | 7 | `main` protection | **PR required + required checks, with admin bypass** for the emergency path. |
 | 8 | Local authentication | **A dedicated `canari-local` OIDC client on the PRODUCTION Authentik**, redirect URIs on `localhost`. No local IdP. |
 | 9 | Tester programmes | **alpha -> internal channels only**: Play *internal testing* and a TestFlight INTERNAL group. No Beta App Review in the loop. |

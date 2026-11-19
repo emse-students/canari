@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   LYDIA_CALL_TIMEOUT_MS,
+  LYDIA_REMOVAL_STEP_TIMEOUT_MS,
   LYDIA_MAX_AMOUNT_CENTS,
   LYDIA_MIN_AMOUNT_CENTS,
   LYDIA_BUSINESS_CREATED_UNLINKED,
@@ -164,7 +165,7 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     expect(sent.get('type')).toBe('email');
     expect(sent.get('order_ref')).toBe('submission-42');
     // The receiver for these lives in webhook.controller.ts (lydia-request-callback) - registered
-    // per-request since Lydia has no global webhook config like Stripe's dashboard-configured one.
+    // per-request, since Lydia has no global webhook configuration.
     expect(sent.get('confirm_url')).toContain(
       '/api/payments/lydia-request-callback?outcome=confirm'
     );
@@ -1232,6 +1233,14 @@ describe('LydiaPaymentProvider - cashier roles and removal (lot 3)', () => {
       verified: true,
       held: 0,
     });
+    // Each of the three calls bounded so the removal answers within social-service's wait.
+    expect(
+      mockedAxios.post.mock.calls.map((call) => (call[2] as { timeout?: number }).timeout)
+    ).toEqual([
+      LYDIA_REMOVAL_STEP_TIMEOUT_MS,
+      LYDIA_REMOVAL_STEP_TIMEOUT_MS,
+      LYDIA_REMOVAL_STEP_TIMEOUT_MS,
+    ]);
     const urls = mockedAxios.post.mock.calls.map(([url]) => String(url));
     expect(urls[0]).toMatch(/\/api\/business\/getpermission\.json$/);
     expect(

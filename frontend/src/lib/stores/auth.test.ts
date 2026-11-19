@@ -44,6 +44,8 @@ const {
   setSessionExpiredHandler,
   setToken,
   isRefreshCredentialProvenDead,
+  noteAccountErasedOnServer,
+  isAccountErasedOnServer,
   clearAuth,
 } = await import('$lib/stores/auth');
 const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/tokenIdentity.svelte');
@@ -307,6 +309,20 @@ describe('the dead-credential latch, as a fact a caller can read', () => {
   });
 });
 
+describe('the erased-account latch, which spares a sign-out its push deregistration', () => {
+  it('reads true once the deletion was answered, and false again with a new credential', () => {
+    setToken(liveToken());
+    expect(isAccountErasedOnServer()).toBe(false);
+
+    noteAccountErasedOnServer();
+    expect(isAccountErasedOnServer()).toBe(true);
+
+    // A new credential is a new account (or a restored one): the verdict is about the old one.
+    setToken(liveToken());
+    expect(isAccountErasedOnServer()).toBe(false);
+  });
+});
+
 describe('the fetch a refresh is made with', () => {
   it("uses the caller's fetch when one is handed over - the root load's `event.fetch`", async () => {
     // Runs after the latch was lifted above. SvelteKit warns on every navigation when a `load`
@@ -385,7 +401,7 @@ describe('a token for another account than the local identity', () => {
 
   it('is lifted by the sign-out, and a matching token is then accepted', async () => {
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
-    await clearAuth();
+    await clearAuth('chosen');
     expect(getIdentitySplit()).toBeNull();
 
     currentUserId.mockReturnValue('delta');
@@ -433,7 +449,7 @@ describe('the sign-out handler', () => {
       });
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSignOutHandler(null);
 
     // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
@@ -457,7 +473,7 @@ describe('the sign-out handler', () => {
     });
     setSignOutHandler(() => deregistration);
 
-    const signingOut = clearAuth();
+    const signingOut = clearAuth('chosen');
     // The revocation must not have been sent while the deregistration is still pending.
     await flushMacrotask();
     expect(order).toEqual([]);
@@ -476,7 +492,7 @@ describe('the sign-out handler', () => {
       throw new Error('boom');
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSignOutHandler(null);
 
     // The server-side revocation still went out, and the throw was accused rather than swallowed.
@@ -503,7 +519,7 @@ describe('the local identity at sign-out', () => {
       return new Response('', { status: 200 });
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
 
     expect(identityAtLogout).toBeNull();
     expect(clearUserLocally).toHaveBeenCalledTimes(1);
@@ -526,7 +542,7 @@ describe('the local identity at sign-out', () => {
       return answer(401);
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSessionExpiredHandler(null);
 
     expect(logouts).toBe(1);
@@ -551,7 +567,7 @@ describe('the local identity at sign-out', () => {
       return answer(200);
     });
 
-    await clearAuth();
+    await clearAuth('chosen');
     setSessionExpiredHandler(null);
 
     // Not sent at all: the answer is known, and a 200 would rotate the session being revoked.
@@ -582,7 +598,7 @@ describe('the local identity at sign-out', () => {
     const inFlight = refresh().catch((e: unknown) => e);
     // Let the refresh reach its request before the sign-out starts.
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const signOut = clearAuth();
+    const signOut = clearAuth('chosen');
     answerRefresh(answer(200));
     const outcome = await inFlight;
     await signOut;
@@ -621,9 +637,9 @@ describe('the local identity at sign-out', () => {
       return Promise.resolve(answer(200));
     });
 
-    const signOutA = clearAuth();
+    const signOutA = clearAuth('chosen');
     await vi.waitFor(() => expect(logouts).toBe(1));
-    await clearAuth();
+    await clearAuth('chosen');
 
     await expect(refresh()).rejects.toBeInstanceOf(SignOutInProgressError);
     expect(refreshes).toBe(0);
@@ -632,5 +648,32 @@ describe('the local identity at sign-out', () => {
 
     releaseA(new Response('', { status: 200 }));
     await signOutA;
+  });
+});
+
+/**
+ * A VERDICT REACHED BEFORE ITS HANDLER KEEPS ITS TARGET (Mi 9T, 2026-11-15). On a cold start the
+ * first refresh 401s before the app shell registers the handler. The fallback used to `goto('/login')`
+ * bare, and the handler replayed later from a location that was already `/login`: the page a tapped
+ * push was going to was lost in 2 of 4 taps. The verdict is now queued WITH its target, and the
+ * handler - the one place that decides the redirect - is handed it.
+ */
+describe('a verdict that arrives before its handler', () => {
+  it('is queued with the page in flight and handed to the handler that registers later', async () => {
+    setToken(liveToken()); // lifts the latch the blocks above left armed
+    setSessionExpiredHandler(null);
+    history.replaceState(null, '', '/posts/p1?comment=c1');
+    fetchMock.mockResolvedValue(answer(401));
+
+    await expect(refresh()).rejects.toThrow();
+    // The location moves on (a fallback redirect, or the guard) before the handler registers.
+    history.replaceState(null, '', '/login');
+
+    const late = vi.fn();
+    setSessionExpiredHandler(late);
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(late).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: '/posts/p1', search: '?comment=c1' })
+    );
   });
 });

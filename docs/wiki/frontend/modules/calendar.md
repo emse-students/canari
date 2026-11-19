@@ -397,6 +397,12 @@ agenda) were two implementations of the same form under three names, 840 and 732
 same six fields twice - and neither could do what the other could. They are now one component,
 `$lib/components/calendar/EventFormModal.svelte`, over one module, `$lib/calendar/eventForm.ts`.
 
+**An institution's event chooses its reach** (owner, 2026-11-13): when "Au nom de" is an institution,
+the form draws the posts' `InstitutionReachPicker` (`subject="event"`, options from
+`getEventReachOptions`) and "Déposer" stays disabled until a space and a public are chosen
+(`canSetReach`, `offersReach`, `reachBlocksSave`). The model, the predicate and the co-organiser
+rules are in [profiles-and-access](../../profiles-and-access.md#an-institutions-reach-per-calendar-event-as-built-owner-2026-11-13).
+
 It draws its own panel rather than the shared `Modal`, and reads the keyboard the way `Modal` does:
 `focusTrap` on the panel (Tab stays inside, the focus goes back when the form is gone), and a
 `keydown` on the panel that stops the key and closes on Escape - one Escape, one dialog
@@ -732,31 +738,36 @@ the same aggregated feed as `GET /api/associations/calendar/feed` (JSON), with a
 `from`/`to` are optional on both routes: a "subscribe by URL" link is saved once by the calendar app
 and re-polled forever with the exact same URL, so the caller can never add parameters to it after the
 fact. When omitted, `AssociationsService.defaultCalendarFeedRange()` supplies a rolling
-3-months-back/12-months-forward window - the same window the frontend computes for the link it
-builds (`icsSubscriptionRangeISO()` in `frontend/src/lib/associations/api.ts`, shared by
-`AssociationCalendarSection.svelte` and `routes/calendar/+page.svelte`).
+3-months-back/12-months-forward window. Since 2026-11-14 the subscription link the frontend builds
+carries NO window (`agendaSubscriptionIcsPath`, the token alone), so a link saved today still shows the
+coming months a year later.
 
 ## The subscription link is SIGNED, and the selector offers only the reader's own spaces (2026-10-06)
 
 `feed.ics` refuses a campus / formation / association selection without the `sig` the server made for
 it, and signs only the reader's own spaces (design and codes:
 [profiles-and-access, D40 amended](../../profiles-and-access.md#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)).
-In the frontend: `signAgendaFeed` (`associations/api.ts`) calls `POST /api/associations/calendar/feed-signature`;
-`createFeedSigner` (`calendar/signedFeedUrl.svelte.ts`) asks while the subscribe modal is open and holds
-`sig` apart from the selection it was made for, so a URL is never built from the PREVIOUS choice;
-`/calendar` and the association's calendar section pass `sig` to `aggregatedCalendarFeedIcsAbsoluteUrl`.
-`CalendarSubscribeModal` takes `signing` and states that links saved before 2026-10-06 stopped working.
+**Since 2026-11-14 the link is its HOLDER's** ([D40 re-decided](../../profiles-and-access.md#d40-re-decided-2026-11-14---the-link-is-its-holders)).
+In the frontend: `requestAgendaSubscription` (`associations/api.ts`) calls `POST /api/associations/calendar/subscription`
+and answers the token; `createSubscriptionLink` (`calendar/subscriptionLink.svelte.ts`) asks ONLY on
+the reader's tap (`ask()`, the modal's "Obtenir mon lien d'abonnement"; opening the modal leaves no
+live bearer row) and for the selection shown at that tap, and holds the token apart from that selection,
+so a URL is never built from the PREVIOUS choice; `/calendar` and the association's calendar section build the URL with
+`agendaSubscriptionIcsAbsoluteUrl(token)` - the token alone. `CalendarSubscribeModal` takes `signing`,
+`onAsk`, `onRevoke` and `revokeStatus`: it says a link shows what its holder sees, and its revoke button,
+once `showConfirm` is answered yes, calls `revokeAgendaSubscriptions` (`DELETE
+/api/associations/calendar/subscriptions`); the next link is asked like the first.
 `AgendaSelectionFields` takes the `reader` and offers `campusSelectOptions(reader)` /
 `formationSelectOptions(reader)` - "any" plus the reader's own values - on both the modal and the PDF export.
-The one-event link (`eventIcsAbsoluteUrl`) stays unsigned.
+The one-event link (`eventIcsAbsoluteUrl`) carries its own event signature (`icsSig`, 2026-11-02).
 
 ## A post links an event; the event does not link a post
 
 `Post.linkedCalendarEventId` is the only column - there is no `linkedPostId` on
 `AssociationCalendarEvent`, unlike `linkedFormId`, which the event DOES carry (see above).
 `resolvePostCalendarEventLink` requires an `associationId` to set it, so a post carrying this field
-is always an association post, never a personal or anonymous one - `mustHideAnonymousAuthor` never
-has an opinion about it.
+is always an association post, never a personal or anonymous one - its writer is served like any
+association post's (`viewerSeesWriter`: to its moderators and its writer only).
 
 **The event's own card shows the post by asking, not by reading a column** - reported by a user
 2026-09-18 after the reverse direction rendered nothing. `PostsService.findPostLinkedToCalendarEvent`
@@ -875,14 +886,59 @@ it serves; (3) the pending queue (`GET calendar/pending`) lists an association's
 its own members who may open it, so a BDE member there who is no steward receives a neutral row
 MASKED, yet knows it is the BDE's by the queue it came in.
 
+### The colour of neutral events is the BDE's choice (owner, 2026-11-14)
+
+Every neutral event used to wear one accent derived from the fixed key `campus`, which rendered an
+ugly yellow on the month grid. Each BDE now chooses it ("Réglage du BDE"):
+
+- **Stored** on the association: `associations."neutralEventColor"` varchar(7), nullable, migration
+  171 (additive, idempotent, a `#rrggbb` CHECK added NOT VALID then validated). NULL is the derived
+  accent, so nothing changes until a BDE chooses.
+- **Written** through `PATCH /associations/:id` as the field `neutralEventColor`, placed in the ONE
+  table `UPDATE_FIELD_RIGHTS` (server and client mirror) under `EDIT_PROFILE` - the right that already
+  edits the association's colour and logo, so a non-holder is refused by the existing per-field
+  check. The service refuses a VALUE on a non-BDE (`CALENDAR_NEUTRAL_COLOUR_NOT_A_BDE`, 403; a clear
+  is let through, so an association that stopped being a BDE can drop the colour its past events
+  wear), refuses a colour equal to the association's own `color`, either field changing
+  (`CALENDAR_NEUTRAL_COLOUR_IS_THE_BDE_COLOUR`, 400 - `color` is in every member read and paints
+  the BDE's own events, so equal colours would name it; the form disables that swatch and says so
+  before sending), accepts
+  `#rrggbb` only (the association colour's `@Matches`), clears on `""`/`null`, logs `[ASSO]` on a
+  change. The field is NOT in the association projection (`toAssociationView`): a member read that
+  carried it would let anyone match a masked event's colour to the BDE (review of #3539). The
+  settings form reads it from `GET /associations/:id/neutral-event-colour` (EDIT_PROFILE), gets it
+  back in `PATCH :id`'s answer only when it wrote it, and sends it only when it changed.
+- **Carried** on each neutral row as `neutralEventColor` (`neutralColourOfRow`: the owner's value on a
+  neutral row, `null` on every other row so an association event never discloses it). It SURVIVES
+  `maskNeutralEvent`, deliberately: it is the one thing a reader needs to paint the event.
+- **Painted** by `eventOwners`' neutral identity, the single list every surface reads (month grid,
+  day panel, schedule list, detail modal chip, PDF/PNG export), so there is no per-surface copy. The
+  month grid takes it as the cell's fill and still draws NO watermark (#3823); the day panel, list
+  and modal chip tint their `NeutralEventMark` disc with it (white icon), and keep the muted disc
+  when the BDE chose nothing - a colour derived from "Campus" is what that mark refuses.
+- **UI**: `EditProfileTab` shows "Couleur des événements Campus" (presets, `ColorPicker`, reset) on a
+  BDE only.
+
+**Accepted limit of the owner's choice (masking)**: the colour is a per-BDE value readable by every
+reader of a neutral event. On a campus with TWO BDEs that chose different colours, a distinctive
+colour is a fingerprint of which BDE filed an event. This sits beside the limits above (the audience
+already tells a reader the BDE's spaces; one BDE per campus is unmasked by the `.ics`) and adds
+nothing on a campus with one BDE. The `.ics` carries no colour. Readers learn the colour, never the
+BDE's id, name, slug or logo, and no member read lists the colours against the associations (only
+the EDIT_PROFILE holders of the BDE read its own; a BDE member who is no steward still learns it
+from its BDE's masked rows in the pending queue, as that queue already tells them whose rows they
+are). Not an owner answer: the lead's reversible call,
+recorded in [the decisions of 2026-11-14](../../backlog.d/owner-decisions-of-2026-11-14.md#the-colour-of-neutral-campus-events-3539).
+
 ### Every surface that names an organiser, checked
 
 | Surface | What it shows for a neutral event |
 | --- | --- |
-| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13), one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
-| detail modal | a "Campus" chip (the same `NeutralEventMark`) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
+| month grid cell (`MonthCalendarGridRich`) | the BDE's chosen colour (else the derived "Campus" accent) only: no logo watermark and no initials, as on the export (the cell kept its watermark after #3455 and wore a translucent "CA" until 1.7.1, owner 2026-11-18; `MonthCalendarGridRich.neutral.svelte.test.ts`) |
+| day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, drawn with `NeutralEventMark` (a generic calendar icon in a muted disc, never the orange initials an avatar falls back to, owner 2026-11-13; the disc wears the BDE's chosen colour when there is one), the accent the BDE chose or else one derived from that key - the same for a steward, who receives the owner but is shown what readers see |
+| detail modal | a "Campus" chip (the same `NeutralEventMark`, tinted with the BDE's chosen colour when there is one) that links nowhere; the share / add-to-calendar source URL is `/calendar` |
 | `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
-| PDF / PNG export (`calendarExport.ts`) | the "Campus" colour band only: no logo watermark, no initials, no mark, no missing-logo warning |
+| PDF / PNG export (`calendarExport.ts`) | the colour band only (the BDE's chosen colour, else the derived "Campus" accent): no logo watermark, no initials, no mark, no missing-logo warning |
 | pending queue (`/admin/agenda`) | "Campus" and, for a steward, "Déposé par <BDE>"; a masked row offers no association link and no delete |
 | post composer's event picker | neutral events are not offered (`listLinkableValidatedCalendarEvents`) |
 | notifications and pushes | unchanged and safe: every event notice (`event_proposed`, `event_validated` / `updated` / `deleted` / `rejected`, the reopen notices) goes to the BDE's own proposers or to its validators - stewards - and carries the TITLE only |

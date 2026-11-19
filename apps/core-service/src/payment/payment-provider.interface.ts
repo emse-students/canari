@@ -1,10 +1,7 @@
 /**
  * Lifecycle of an association's payout account, as the edit UI renders it.
  *
- * Defined HERE, in the provider-agnostic contract, rather than in the Stripe module it started in:
- * `LydiaPaymentProvider` implements this method too, and importing a type called
- * `StripeConnectStatusResponse` to do it made the neutral contract depend on one implementation.
- * The shape was already neutral - only its name was not.
+ * Defined HERE, in the provider-agnostic contract, so no implementation's module owns the shape.
  */
 export type ConnectAccountStatus =
   | 'not_started'
@@ -159,8 +156,7 @@ export interface ConnectBalanceSummary {
 
 /**
  * Provider-agnostic surface for Connect-style onboarding and one-off checkout. `Lydia` is the only
- * live implementation since Stripe left the product (docs/wiki/stripe-archive.md); `disabled`
- * refuses everything. `PaymentService` is the only caller.
+ * live implementation; `disabled` refuses everything. `PaymentService` is the only caller.
  */
 export type PaymentProviderId = 'lydia' | 'disabled';
 
@@ -186,8 +182,8 @@ export interface PaymentProvider {
 }
 
 /**
- * The line-item shape social-service sends over the internal wire (`price_data` naming, kept from
- * the Stripe era so no caller changed). Collapsed into a `CheckoutLineItem` by `PaymentService`.
+ * The line-item shape social-service sends over the internal wire (`price_data` naming, a historic
+ * shape kept so no caller changed). Collapsed into a `CheckoutLineItem` by `PaymentService`.
  */
 export interface WireLineItem {
   quantity?: number;

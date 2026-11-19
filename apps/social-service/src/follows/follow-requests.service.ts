@@ -6,6 +6,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
+import { dropFeedPagesOfReader } from './follow-feed-cache';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService, short } from './follows.service';
@@ -212,6 +213,8 @@ export class FollowRequestsService {
       throw new NotFoundException('Follow request not found');
     }
     this.logger.log(`[FOLLOW-REQ] ${short(userId)} accepted ${short(followerUserId)}`);
+    // The follow exists from this write: the new follower's pages were computed without it.
+    await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'an acceptance');
     await this.notifyQuietly(followerUserId, userId, FOLLOW_ACCEPTED_NOTIFICATION);
     return { ok: true };
   }

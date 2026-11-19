@@ -15,7 +15,7 @@ const HANDOFF_NOT_OFFERED = 'HANDOFF_NOT_OFFERED';
  * The mint answered with a URL that is not on the site asked for - which the server never composes.
  * Typed at the throw, so the open is plain and the line names the defect.
  */
-export class HandoffUrlMismatchError extends Error {
+class HandoffUrlMismatchError extends Error {
   constructor(site: EcosystemSite['id']) {
     super(`the handoff URL is not on ${site}'s origin`);
     this.name = 'HandoffUrlMismatchError';
@@ -37,7 +37,7 @@ export function plainSiteUrl(site: EcosystemSite, dest: string): string {
  * composed by the server from its closed registry; it is still checked to be on the site's origin,
  * because this is the one place a credential is about to leave the app.
  */
-export async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<string> {
+async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<string> {
   Log.d('ecosystemSite.mint', { site: site.id, dest });
   const res = await apiFetch(`${coreUrl()}/api/auth/handoff`, {
     method: 'POST',

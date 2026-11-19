@@ -89,6 +89,7 @@ import {
   UploadGaveUpError,
   UploadNetworkError,
   UploadStalledError,
+  type UploadProgress,
   type XhrUploadOptions,
 } from '$lib/utils/uploadXhr';
 import {
@@ -105,6 +106,7 @@ import {
 import {
   getIsTabLeader,
   getTabLeadership,
+  requestLeaderHandover,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
 import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
@@ -119,6 +121,7 @@ import {
   acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
 import { MessageWrittenError, OutboxEntryWrittenAloneError } from './messageWrittenError';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
@@ -681,9 +684,9 @@ export interface OutboxController {
   resumeGroup: (conversationId: string) => Promise<void>;
   /**
    * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
-   * that is on the wire but stalled. The bytes already sent are lost - the media route has no
-   * offset - so a retry restarts the upload at zero; a chat reel's resumable session (RC-5) is the
-   * exception, and sends only the parts the server does not hold.
+   * that is on the wire but stalled. A file over one request body (and every chat reel) resumes
+   * through its session and sends only the parts the server does not hold; a smaller file is one
+   * request and is sent again whole.
    */
   retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
@@ -1010,6 +1013,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let theElection: Promise<void> | null = null;
 
   /**
+   * Whether this controller already said it hands its flushes to the leader. A follower asks on
+   * every trigger (each enqueue, wake-up, reconnect), and the line said so on each one - twenty
+   * identical lines in three minutes in the owner's log of 2026-11-10, hiding the one that mattered
+   * (no `Flush requested by a follower tab` answered any of them). The fact is the ROLE, which
+   * changes only through a reload, so it is said once per controller; each queued entry has its own
+   * `Queued` line.
+   */
+  let saidFollowerHandsOver = false;
+
+  /**
    * Ids withdrawn by `cancelPending` that a flush already running may still be holding.
    *
    * The durable row is deleted by the cancellation itself, which is what stops every FUTURE flush -
@@ -1107,6 +1120,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /** {@link patchUploadView} on every bubble of `id` ({@link viewIdsOf}). */
   function patchUpload(id: string, patch: Parameters<typeof patchUploadView>[1]): void {
     for (const view of viewIdsOf(id)) patchUploadView(view, patch);
+  }
+
+  /**
+   * WHAT THE BUBBLE SAYS HAS GONE (2026-11-16): the iPhone's 13 MB send read 50 %, then 6 %, because
+   * every attempt reported from zero.
+   * - A RESUMABLE SESSION (the report carries `committed`) never goes backwards: the figure is the
+   *   furthest point any attempt of this page life reached for the same body, and the next attempt
+   *   reports from the server's committed bytes. What it may show above them is only the part(s)
+   *   that were in flight when an attempt ended, until the next attempt passes them - a pause of the
+   *   bar, never a drop. After a reload there is no view, and the first figure is the server's.
+   * - A ONE-SHOT REQUEST (no `committed`) keeps nothing on a failure, so its figure is the current
+   *   attempt's bytes and a restart shows from zero: the bar never claims bytes no server kept.
+   * A different `total` (another body) starts again.
+   */
+  function advanceUpload(id: string, progress: UploadProgress): void {
+    const { loaded, total, committed } = progress;
+    for (const view of viewIdsOf(id)) {
+      const prev = viewOfUpload(view);
+      const floor = committed !== undefined && prev && prev.total === total ? prev.loaded : 0;
+      patchUploadView(view, { phase: 'uploading', loaded: Math.max(floor, loaded), total });
+    }
   }
 
   /** {@link clearUploadView} on every bubble of `id` ({@link viewIdsOf}). */
@@ -1901,12 +1935,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Withdrawn (or retried) while it waited for a slot: nothing left the device.
       if (control.signal.aborted) throw new UploadAbortedError(control.signal.reason);
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
-      patchUpload(entry.id, {
-        phase: 'preparing',
-        loaded: 0,
-        total: 0,
-        attempt: entry.attempts + 1,
-      });
+      // `loaded`/`total` are KEPT: the figure of the previous attempt stays until this one passes it.
+      patchUpload(entry.id, { phase: 'preparing', attempt: entry.attempts + 1 });
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
@@ -1925,15 +1955,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         media,
         {
           signal: control.signal,
-          onProgress: ({ loaded, total }) => {
+          onProgress: (progress) => {
             // A WITHDRAWN TRANSFER REPORTS NOTHING: a late progress event of a request that has not
             // yet answered its abort would recreate the view `clearUpload` just removed, for an entry
             // that is gone. (`persist` below is NOT guarded the same way: a session opened after the
             // abort must still be remembered in `openSessions`, because that is what releases it.)
             if (control.signal.aborted) return;
             lastMoved = Date.now();
-            attemptLoaded = Math.max(attemptLoaded, loaded);
-            patchUpload(entry.id, { phase: 'uploading', loaded, total });
+            attemptLoaded = Math.max(attemptLoaded, progress.loaded);
+            advanceUpload(entry.id, progress);
           },
         },
         {
@@ -2311,8 +2341,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
     if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
-    // An attachment still to upload shows that its next attempt is queued (and starts from zero -
-    // except a chat reel's resumable session, which resumes at the parts the server lacks).
+    // An attachment still to upload shows that its next attempt is queued. Its bytes so far are kept
+    // in the view: a file over one request body resumes at the parts the server holds.
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
     // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
     // network, only a "not now" answer the server; a group repair and any other failure each say
@@ -2321,7 +2351,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // no upload view is written for it: `unavailable` only ever names a TEXT's wait.
     const phase = opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying';
     if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
-      patchUpload(entry.id, { phase, loaded: 0, attempt: entry.attempts + 1 });
+      patchUpload(entry.id, { phase, attempt: entry.attempts + 1 });
     } else if (isTypedEntry(entry)) {
       // A TYPED MESSAGE has no upload, so it says only what it waits for, and only when that is
       // the link or the server (R05, 2026-11-09): "en attente" alone read the same during a deploy
@@ -2869,6 +2899,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         log(`[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn just before the send - not delivered`);
         return 'gone';
       }
+      // THE LEAD MAY HAVE LEFT DURING THE AWAITS ABOVE (an upload, the gates): a page the browser
+      // froze released the lock (`tabLeader.ts`, `watchPageLifecycle`) and resumed here. The entry
+      // stays queued for the tab that leads now; the service refuses the same thing at the encrypt.
+      // The state's fact, as at the top of the flush: a tab promoted in place does not send either.
+      if (refusesCommitsHere()) throw new FollowerTabSendError(terminalId, 'lead-lost');
       // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
       // through `persistSent` and its own delete, and a withdrawal reading it there was answered
       // "never sent" for a frame the peers already had - so no `delete_message` went out.
@@ -2981,6 +3016,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
     // flush learning of it. Retry: not a failure at all - the member asked for another attempt
     // now, so the backoff is skipped and the lane re-runs at once.
+    // THIS DOCUMENT STOPPED LEADING MID-SEND: nothing was posted (a frame sealed before the lead left
+    // is counted and dropped, `BaseMlsService.emitFrame`), so the entry is the leader's to send.
+    // No attempt is counted and nothing is written - a follower never flushes, so nothing here would
+    // ever read it.
+    if (e instanceof FollowerTabSendError) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… not sent here: this tab stopped leading during the send - it stays queued for the leader`
+      );
+      return 'skip';
+    }
     if (e instanceof UploadAbortedError) {
       if (e.reason === 'retry') {
         log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
@@ -3314,8 +3359,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
         return;
       }
-      log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
+      if (!saidFollowerHandsOver) {
+        saidFollowerHandsOver = true;
+        log(
+          '[OUTBOX] Follower tab - every flush is asked of the leader tab, which drains the shared queue (said once).'
+        );
+      }
       requestLeaderOutboxFlush();
+      // AND THE LEAD GOES WHERE THE MEMBER IS when something waits on it (owner, Firefox, 2026-11-10:
+      // a photo queued here stayed unsent until the HIDDEN leader tab was brought forward). A hidden
+      // leader hands the lead over, a visible one ignores the ask (`tabLeader.ts`, `watchHandover`).
+      // Asked only while the shared queue holds an entry that is due - never for a text failed on
+      // 5xx, which waits for the member's Retry, not for a leader. And NEVER WHILE THIS TAB IS
+      // OFFLINE: the entry then waits on the link, not on the leader - a lead taken would not send it
+      // (the leader's own flush refuses offline, below), and both tabs would RELOAD with no network
+      // to load from, leaving two browser error pages where the app was (review of #3321).
+      if (connectivity.isOffline) return;
+      void readQueue('handover ask').then((entries) => {
+        if (entries.some((e) => e.kind !== 'reel-take' && !isServerFailureTerminal(e))) {
+          requestLeaderHandover(log);
+        }
+      });
       return;
     }
     // THE TAKE RECORDS ARE THE LEADER'S, kept once per page life at its first flush (L2, L3).

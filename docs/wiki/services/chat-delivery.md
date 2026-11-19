@@ -21,7 +21,7 @@ The chat-delivery-service is the MLS API layer. It:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)) |
+| PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, NotificationPreference, RevokedDevice, RevokedDeviceGroup (the key groups a revoked device held, [mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)), SentFrameReceipt (one row per application frame a sender named by its `messageId`, [below](#a-message-sent-twice-under-one-id-is-stored-once-migration-048-2026-11-13)) |
 | Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
@@ -30,7 +30,7 @@ The chat-delivery-service is the MLS API layer. It:
 | Interval | Task |
 |---|---|
 | 1h | Detect stale devices -> reset to pending |
-| 1h | Clean expired queued messages |
+| 1h | Clean expired queued messages, and the sent-frame receipts of the same age |
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
 | 1h | Report stranded pending device memberships (observation only, deletes nothing) |
@@ -439,6 +439,103 @@ The discriminator was in the row the server already reads to address the recipie
 rule about never learning by failing what a fact could have told you, applied to a seam that held
 the fact and forwarded the frame anyway.
 
+### A message sent twice under one id is stored once (migration 048, 2026-11-13)
+
+**The defect.** A native background send - the notification quick reply, an outbox drain while the
+app is shut (`sendQueuedMessagePush` in `CanariFirebaseMessagingService.kt`, its twin in
+`canari_push.mm`) - POSTs `mls/push/send` with a 10 s `readTimeout`. An answer that arrives later
+is read as a failure, the entry stays in `outbox_pending.ndjson`, and the next drain sends the SAME
+`messageId` again. Each send re-encrypts, so the second copy is a fresh MLS ciphertext: until this
+change the server queued it like a new message, every receiver decrypted it, deduplicated it on the
+id inside, and kept one of two server times - which one decided where the message was drawn
+([chat](../frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)).
+
+**What the server knew and did not use.** The 2026-11-12 triage wrote that the server never sees a
+`messageId`. True of the foreground route (`POST mls/send` carries none), false of the native one:
+both native senders have always put `messageId` in the clear JSON beside the ciphertext, and the
+route logged it and dropped it.
+
+**The mechanism.** `sendMessage` takes an optional `messageId` (validated by `readSentMessageId`:
+1-128 of `[A-Za-z0-9_-]`, anything else is a typed `400 message_id_invalid`, never read as absent).
+For an application frame naming one, `enqueueForLiveGroup` inserts
+`(groupId, senderId, senderDeviceId, messageId, receivedAt, protoSha256)` into `dm_sent_frame_receipt` in the
+SAME transaction that queues the copies, after the group's liveness check and before any row
+(`claimSentFrameReceipt`, `utils/sent-frame-receipt.ts`). `ON CONFLICT DO NOTHING` on the primary
+key is the whole mechanism:
+
+- a repeat finds the row: the transaction throws `FrameAlreadyReceived` (a type, caught by type),
+  writes nothing, and `sendMessage` answers `queued: 0` with the FIRST copy's `receivedAt`. The
+  native sender marks the entry sent with the receive time every receiver already holds. What else
+  it does depends on whether the first send FINISHED (below);
+- two concurrent sends of one id serialise on the key: the second waits for the first transaction,
+  then finds its committed row, or inserts its own if the first rolled back;
+- a first send REFUSED inside the transaction (a deleted group, an evicted seat) leaves no receipt,
+  so its retry is queued.
+
+Keyed on the device as well as the author: the same id from another device of the same person is
+not a repeat. The authenticated caller is the `senderId` when there is one. Logged at warn as
+`REPEATED_MESSAGE_ID`, with the first receive time and the gap: a repeat is the visible end of an
+answer the sender lost upstream, and that line is the count the triage asked for.
+
+**A first send that died between its commit and its delivery is finished by its repeat.** The
+receipt and the queued copies commit together, but the history append, the live delivery and the push
+come after that commit; a process killed in between leaves the copies queued and nothing else done.
+So the receipt carries `settled`, set once those steps ran (`markSentFrameSettled`), and
+`protoSha256`, the SHA-256 of the first copy's ciphertext. A repeat of a SETTLED receipt is answered
+alone - no row, no append, no push.
+
+**`settled = false` means "not finished yet", never "the first send died"** - a repeat arriving
+while a slow first send is still in its delivery steps sees the same row. The proof that the first send
+is GONE is a PostgreSQL session advisory lock (`takeSentFrameLock`), keyed on the first 8 bytes of a
+SHA-256 over `group|sender|device|messageId` and held by every named send from before its claim until
+after its settlement, on ONE dedicated connection (a query runner held for the phase: a session lock
+taken through the pool could be released on another connection). A repeat tries the same lock:
+
+- it CANNOT take it - the first send is alive. It finishes nothing: a committed receipt is answered as
+  a plain repeat (`REPEATED_MESSAGE_ID`); none committed yet is `503 send_in_flight`
+  (`SEND_IN_FLIGHT` at warn), and the sender keeps the message and retries;
+- it TAKES it and the receipt is unsettled - the session that wrote it ended, and PostgreSQL ended its
+  lock with it. No clock: the process death IS the release. That repeat finishes the first copy
+  (`finishFirstCopy`).
+
+The lock is released in a `finally`; an unlock that fails destroys the connection instead of handing
+it back to the pool (`SENT_FRAME_UNLOCK_FAILED` at error), which ends the session and its lock. The
+finish:
+
+- TAKES the settlement atomically (`UPDATE ... WHERE settled = false`, by its row count). A crash
+  after that take and before the steps loses the push and the history entry; the queued copies
+  survive it and go out on each device's next pull;
+- delivers and pushes the copies STILL QUEUED: the group's rows from that device dated at the first
+  copy's instant whose ciphertext hashes to `protoSha256` (another frame received at the same instant
+  is not touched); a copy already pulled and acknowledged is gone, and nothing is done for it;
+- appends to `history:{groupId}` only when no entry from that device carries the first copy's
+  `timestamp` and a `content` hashing to `protoSha256` (`historyHoldsFirstCopy`, an `XRANGE` from the
+  first copy's instant - an append comes after its receive time), with the first copy's own
+  ciphertext when a queued row still holds it.
+
+It logs `REPEAT_FINISHED_FIRST_COPY` at warn with what it found. A crash in the MIDDLE of a fan-out
+(some devices pushed, the rest not) is finished the same way, so the devices pushed before the crash
+are pushed once more - the queued row, the only copy a device decrypts, stays one.
+
+**Two consequences, written down.** A frame sealed beyond the past-epoch window is REPORTED
+(`STALE_EPOCH_FRAME`), not refused, so it still claims its receipt: a repeat that re-sealed the same
+message at the group's current epoch is then answered as a repeat, and the members at that epoch keep
+only the stale copy they cannot open. That is the stale-epoch report's measurement to settle, not
+this one's. And `RECEIPT_VANISHED` (below) can let ONE duplicate through: its 503 makes the sender
+insert afresh, behind a receipt deleted by the retention sweep or an erasure.
+
+**Bounded.** Rows older than the retention window go with the hourly queue sweep
+(`cleanupExpiredQueuedMessages`) - past it there is no queued copy left to duplicate. The table is in
+`GROUP_OWNED_TABLES` (it goes with the group) and the account erasure deletes the sender's rows. A
+`RECEIPT_VANISHED` error (a conflict whose row a sweep deleted before it was read back) answers 503,
+so the sender keeps the frame and inserts afresh.
+
+**What is not covered yet.** The foreground route accepts `messageId` (`CLIENT_SEND_FIELDS`), but no
+foreground client sends it: a store build reaches phones before production's server deploys, and an
+older server refuses an unknown field (`send_field_refused`). So an orphan the app ADOPTS from the
+native mirror (`adoptOrphanedMirrorEntries`) and resends through the foreground flusher can still be
+queued a second time - [backlog](../backlog.d/p3-the-foreground-send-does-not-name-its-message-id.md).
+
 ### Who a frame is queued for, and who owns the gateway's routing set
 
 Two different questions that a single `sadd` used to blur together.
@@ -829,7 +926,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   forgets its own stage and never a later one of the same group. The warm mark is STICKY for a
   signed-in session (set by the foreground load, cleared only when the native session ends -
   `end_native_session`, 2026-10-27), so a process Android keeps alive refuses every background
-  Welcome; its rate is owed a measurement ([backlog](../backlog.md#p3---the-background-welcomes-warm-process-refusal-its-rate-its-wasted-round-trip-and-the-old-pin-path-review-of-2329-2026-10-24)).
+  Welcome; its rate is owed a measurement ([backlog](../backlog.d/p3-the-background-welcome-s-warm-process-refusal-its-rate-its-wasted-round-trip.md)).
 - **What the background cannot settle, the foreground does - and nothing waits.** No answer read, a
   busy state lock, a foreground that started or wrote inside the round trip: the stage stays in
   `mls.bin`, and whoever loads it next holds it. The foreground settles it as it settles its own
@@ -936,7 +1033,7 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   background's answer, `ACCEPTED AND NOT HELD`; at the next load, `is ABSENT`. The device recovers
   through the usual ladder. The same write loses any background advance, not only this one; it is its
   own work package
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+  ([backlog](../backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)).
   iOS has no background re-add (its branch was unreachable and is deleted).
 
 ### A key-group frame is stored once (migration 034, 2026-10-22)
@@ -1241,8 +1338,10 @@ rows and the roster rows of an awaiting seat carry it too.
 
 - `group.join_ask` from `acceptGroupInvite`, after the seat is written, beside the existing
   `welcome_request` to ONE elected device (that election now only answers a member's own devices);
-- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn` only
-  and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
+- `group.join_ask.settled` with `outcome: 'declined'` from `declineJoinRequest` on `withdrawn`, and on
+  `removed` (a seat that is not an ask, removed on the member's tree epoch - `askId` is then the seat's
+  id, which clears the entries that hold no identity;
+  [mls-protocol](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)), and from `removeGroupMember` on an awaiting seat removed by someone else; `withdrawn` when the asker
   removes their own awaiting seat; `expired` for each seat `expireUnansweredAsks` deletes; and
   `admitted` after the transaction in which `liftAwaitingAdmission` cleared a flag commits - the
   commit door and the Welcome door, which return the asks they lifted, so a second Add announces
@@ -1439,7 +1538,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 `auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
 and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
 guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
-Lydia payment errors ([WP-LYDIA-1](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)), and anything in social-service, account
+Lydia payment errors ([WP-LYDIA-1](../frontend/modules/payments.md)), and anything in social-service, account
 erasure, lives or reels.
 
 ## No platform-admin bypass on conversation data (owner, 2026-11-02)
@@ -1489,6 +1588,51 @@ request naming no caller refused 401),
 `members.controller.group-rosters.spec.ts` and `invitations.controller.vouch.spec.ts` (an admin
 non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
 single and batch, the stream never read).
+
+## Path parameters are declared (2026-11-15)
+
+The mechanism is social-service's ([there](social-service.md#path-parameters-are-declared-and-one-global-guard-reads-the-declaration-2026-11-14), with the reasons): each
+controller says what its path parameters are with `@RouteParams`, a global guard answers `400`
+naming the parameter when a `uuid` is not one, before any other guard, and
+`src/route-params.coverage.spec.ts` fails on a parameter no declaration names. That spec imports
+`AppModule` inside `beforeAll`, after setting a placeholder `POSTGRES_URL`: the module reads the
+variable when its decorator is evaluated, and only its metadata is read.
+
+**What is a uuid here, and what is not.**
+
+| Name | Kind | Why |
+| --- | --- | --- |
+| `groupId` | `uuid` | `dm_groups.id`, minted by this service. A salon's `channel_<id>` travels in bodies and push data, never in a path |
+| `scopeId` | `uuid` | the community or salon a key-distribution group belongs to, a uuid column |
+| `sessionId` | `uuid` | the session of the internal sign-out route; its handler still lower-cases it |
+| `dismissedGroupId` | `opaque` | `user_dismissed_groups.groupId` is text, and the un-dismiss route is a "make sure it is not there" a Welcome calls for any id |
+| `userId`, `targetUserId` | `opaque` | the identity provider's subject, not a uuid |
+| `deviceId` | `opaque` | built by the client from its platform, the user id and a suffix (`libs/contracts/device-id.json` is its contract), not a uuid |
+| `token`, `scope`, `departure`, `mediaId` | `opaque` | an invitation token, an enum, a positive integer and a media id, each judged by its handler |
+
+**A name means one thing in the whole service**, which the coverage spec holds: the un-dismiss
+route's parameter is `dismissedGroupId`, not `groupId` (the URL does not change), because `groupId`
+is a uuid everywhere else.
+
+**No hand-written check was removed.** This service's own checks do more than judge a shape:
+`isGroupUuid` narrows to the `GroupUuid` type its writers ask for, `sanitizeQueryValue` trims, and
+`assertCallerActsOnGroup` is also reached with ids that arrive in a body. They stay, behind the
+guard.
+
+**What changed for a caller**, all of it on ids no client of ours builds:
+
+- a `groupId` or `scopeId` that is not a uuid is answered `400` before the handler, where most
+  routes handed it to a uuid column and answered the database's refusal as a `500`
+  (`groups.route-params.http.spec.ts` shows it over HTTP: no lookup is built, and the session guard
+  has not run);
+- the routes that go through `assertCallerActsOnGroup` before any query (rename, photo,
+  `revoked-leaves`, ending another user's device membership) answered such an id `403
+  NOT_A_MEMBER`; they answer `400` now. The two exits a client replays (`DELETE mls/groups/:groupId`
+  and `DELETE mls/groups/:groupId/members/:userId`) did NOT answer `403` to a malformed id - their
+  first read is a uuid column - so the client's reading of an exit (`pendingGroupExits`: only a
+  `403` of this service means "already done") is unchanged;
+- the `400` comes before `HeaderAuthGuard`, the internal-secret checks and the per-user throttle: a
+  malformed path is refused whoever asks.
 
 ## Routes
 
@@ -1593,7 +1737,7 @@ unlocked check followed by a tombstone would end a conversation someone had just
 | GET | `/api/mls/users/:userId/groups` | List user's groups |
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group as dismissed |
-| DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
+| DELETE | `/api/mls/users/:userId/dismissed-groups/:dismissedGroupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the group's recorded creator (`createdBy`), into an empty roster |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
@@ -1819,6 +1963,122 @@ returns a typed `PushRegistrationOutcome` rather than a boolean, and only the ex
 reports. Tests: `push.controller.unavailable.spec.ts` (server, including that it writes nothing) and
 `PushNotificationService.unavailable.test.ts` (client - in its own file, because `pushAttempted` is
 module state that latches).
+
+**A status the registration gets is an answer, and the ladder obeys it** (2026-11-13). Each attempt
+reads the session's CURRENT token (`PushAuth`, built once as `sessionPushAuth`), never one captured
+when the service started - the ladder lasts minutes and outlives an access token. A `401` is renewed
+once and sent again through the one 401 rule (`renewOn401.ts`); a `401` on the renewed token, or a
+session with no token left to renew, ends the ladder as `unauthorized` and sends NO report (it would
+be refused with the same bearer). Any other `4xx` ends it as `refused`, reported. Only a `5xx`, a
+transport failure or a renewal that got no verdict is retried. Tests:
+`PushNotificationService.refusal.test.ts`.
+
+#### The server's row decides whether a registration is owed (2026-11-15)
+
+**Measured on production, read-only, 2026-11-15.** 25 of the 65 `1.6.12` phones that used a session
+that day held no `push_token` row (Android 14 of 43, iOS 11 of 22); every one of 209 phones on an
+older build held one. **That comparison was unsound, and is re-measured here.** A row is sticky - it
+says "this device registered once and nothing deleted it since" - so the older builds' zero proved
+only that their rows were written before. The predicate written for the question "did this build
+register after it ran" is the key package: `register-device` resets `key_package.createdAt` at every
+unlock and every renewal, and the registration follows it within the ladder. By that predicate
+(`utils/push-coverage.ts`, the same SQL the daily report runs) every older build read **0**, and
+`1.6.12` read **14 of 38 Android, 10 of 20 iOS**. And by the server's own lines over the same day:
+21 of the 24 tokenless phones launched (one to more than five `[REGISTER_DEVICE]`) and sent **no**
+`[PUSH_REGISTER]`, no `[PUSH_UNAVAILABLE]` and met no `[AUTH_GUARD]` denial; nothing deleted their rows
+in the window (no `[PUSH_SESSION_END]`, no invalid-token deletion, no purge naming them), and 16 of
+them were signed in before `1.6.12` existed. On every older build, each phone that launched sent a
+registration. So the loss is real (no row, no push of any kind to that phone) and on the CLIENT, and
+the only change on that path in `1.6.12` is `#3464` above, whose `unauthorized` branch ends the
+ladder **without a request and without a report**. Which of its sub-branches fired could not be read
+from the server - and that is the defect this section closes.
+
+**What was missing, twice.** The client trusted its own copy of a server fact - the skip key
+(`canari_fcm_token` in `sessionStorage`) says "this token was registered once in this WebView" - and
+a ladder that ended in silence was never re-driven for as long as the WebView lived. And nothing on
+the server could say a phone was silent, which is how a third of a build went unseen.
+
+**The fix: the fact travels on a call the phone already makes.**
+
+- `POST /api/mls/register-device` (every unlock, every key-package renewal) answers
+  `{status, push: {registered}}` - whether a `push_token` row exists for `(userId, deviceId)`. On
+  `false` the client drops the skip key and runs the registration again
+  (`reconcilePushRegistration`, called from `TauriMlsService.publishKeyPackage`). Deterministic,
+  from durable state, never a timer; a server that does not say (an older one, or a row lookup that
+  failed - the registration is still answered, the lookup failure logged as an error) answers
+  `null` and changes nothing, said at info. **Not re-driven**: a registration already running
+  (`in-progress`), and the two outcomes another attempt cannot change - `refused` (the server's own
+  4xx) and `no-token` (the OS gave none; each process start asks it again). A first registration
+  (`none`) is said at info, any other lost one at warn.
+- The phone states what its last registration came to, `pushOutcome`, kept in `localStorage`
+  (`canari_push_outcome`) across processes: the last FINAL one - `registered`, a
+  `PushRegistrationFailure`, `deferred` (an owed sign-out deletion), `no-user`. **A final outcome is
+  never overwritten by a ladder that starts**: the login starts the ladder before the socket opens and
+  a `no-token` ladder lasts four minutes, so a marker written over it would put an unknown state on
+  the server for a known one at every short session, and the daily report would WARN for a phone with
+  no Play services. With no final outcome since the sign-out (which clears both keys), the phone
+  states `in-progress` while THIS process registers, `started` when an earlier process began a ladder
+  and died inside it (a marker kept apart, `canari_push_started`), else `none`. **Accepted, stated so
+  it is not reopened**: a phone whose last final outcome was a failure states that failure on the
+  first `register-device` of a new process, and gets one `[PUSH_MISSING]` WARN before its ladder
+  succeeds - an accusation about a real past state, not noise. An
+  allowlist on the server; anything else prints `invalid`, an older build `unstated`. The server
+  keeps the last stated one on the device's key package (`key_package."pushOutcome"`, migration
+  `052`, additive). **`051` is reserved by the held #3518** (`051_departed_seats_removed.sql`,
+  decided with the owner); the ledger is keyed by filename, so whichever lands second is still
+  applied on its deploy.
+- **A sign-out supersedes the ladder of the account that left.** `endPushRegistration` bumps a
+  session generation; a ladder whose generation is gone records nothing, stops between attempts and
+  sends nothing - it would otherwise write account A's outcome into account B's state, and send A's
+  `x-user-id` with B's bearer. The next account runs its own ladder (`pushAttempted` is reset), and
+  never joins a registration still in flight for the account that left. An answer that comes back for it
+  after the sign-out is dropped before its push secret is stored, so the native secret is always
+  the one the server holds for the signed-in account's row.
+- When a phone holds no row, `register-device` prints `[PUSH_MISSING] user device os build last=<outcome>`:
+  at `log` for the expected states (`none`, a fresh sign-in; `in-progress`; `no-token`, a phone its
+  OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
+  `registered` accuses a server-side deletion, any failure the client's attempt.
+- `[PUSH_COVERAGE]` (daily, and in the initial sweep): one line for the fleet, and one WARN per
+  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. A
+  phone whose stated outcome is `no-token` is **counted apart** (`noOsToken`, on the log line, never
+  a WARN): its state is known and no fix of ours changes it. A live session counts only when it is
+  the device's OWN account's (`s."userId" = k."userId"`). Each WARN carries `last:`, the tally of
+  what its unregistered phones last stated (`key_package."pushOutcome"`), so the branch is read from
+  the report itself, with no access to the per-device lines.
+
+**Re-measured 2026-11-17 (production read-only, still on `1.6.12`).** Same shape: of the phones that
+ran in 24 h, every older build holds a row (0 of 117), `1.6.12` does not on 15 of 75 Android and 12
+of 59 iOS. Three facts the earlier reads did not have. **No request leaves these phones**: 26 of the
+27 called `register-device` (204 lines since the last restart) and not one `[PUSH_REGISTER]`,
+`[PUSH_UNAVAILABLE]` or row deletion names them; the edge's access log shows 4 `401` on
+`POST /api/mls/push/register` against 224 `201` over the same hours - so the ladder ends before the
+request, or waits forever before it. **Mostly one launch each**: 13 of them made one
+`register-device`, 6 two. **Not only new enrolments**: over the phones that ran in 72 h, grouped by
+the device's earliest session row,
+`1.6.12` phones whose first session predates the `1.6.12` deploy are tokenless too (15 of 100 since
+before 2026-11-07, 18 of 34 from the week before), while the phones of the same enrolment weeks still
+on an older build hold their row (0 of 145) - so the build, not the enrolment, carries it.
+
+**Why `last=` was not enough, and what it now says.** The client-side branches that end without a
+request are an `unauthorized` ladder (the session's token source threw, or a renewed token was
+refused) and a ladder parked on an await (the permission rationale or dialog, the OS token, the
+session token, the request itself). The bare terms merged them:
+`unauthorized` covered six causes and `in-progress` / `started` named no await. They are now
+QUALIFIED - `unauthorized:<session-expired|device-revoked|signing-out|identity-split|renewed-refused|other>`
+(the token source's verdict, a `tokenVerdict` field each of its error types sets at the throw -
+`utils/tokenVerdict.ts` - since the auth store cannot be imported by the push service, and a class
+name would turn into `other` on a rename) and `in-progress:<stage>` / `started:<stage>` with
+`permission`, `os-token`, `session-token`, `sending` (the durable `started` marker carries the
+stage, so a process that died parked leaves where). No stage names the pause between two attempts:
+each failed attempt records its final outcome first, which the report states over any stage. The server allowlists the qualifier per term (`parsePushOutcome`); an older
+build's bare term is still accepted.
+
+Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegistered.test.ts`,
+`TauriMlsService.pushReconcile.test.ts` (client); `devices.controller.push-presence.spec.ts`,
+`utils/push-coverage.spec.ts`, `utils/push-coverage.integration.spec.ts` (the predicate against
+PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
+lines reading zero for the build that ships this, and their `last:` tally naming the branch and
+the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
 #### Transport — single gateway (FCM)
 
@@ -2154,6 +2414,38 @@ per member token:
   no FCM alert instead) - [calls](../frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22).
 - **iOS without `voipToken`** (legacy builds) → FCM alert banner ("📞 Appel entrant").
 
+**A dead FCM token is told by its CODE, never by its prose** (2026-11-17). A ring or ring-end send
+that FCM refuses deletes the `push_token` row only when `isTerminalPushTokenError`
+(`src/utils/fcm-errors.ts`, the ONE classifier, shared with the message pushes of
+`MessagingService`) reads `messaging/registration-token-not-registered` or
+`messaging/invalid-registration-token` from the error's structured `code`. The ring path used to
+read `String(e)`, and a real `FirebaseMessagingError` stringifies to `Error: Requested entity was
+not found.` - so a ring never removed a dead token; it also deleted on a bare `invalid-argument`,
+which the v1 endpoint returns for a malformed PAYLOAD as well, an allowlist it did not have. Every
+other failure is a WARN naming the code, and the row stays.
+
+**A token FCM calls malformed (`invalid-argument`) is kept, and that is measured, not assumed.**
+FCM v1 answers `INVALID_ARGUMENT` -> `messaging/invalid-argument` both for a garbage token and for a
+bad payload, and nothing structured tells the two apart, so no path deletes on it: a ring would
+retry such a token, with one WARN per ring. Measured read-only on production chat-delivery
+2026-11-17: the reachable log is the running container's (32 h - a deploy replaces the container and
+its log, so seven days do not exist anywhere), holding 1195 sends and ONE failure, a social push to
+a token FCM called not registered; **zero** `invalid-argument`, on zero tokens; the dev container,
+zero failures. A discriminator (the same ring payload accepted for another token, or a durable
+per-token strike cleared by a success) would be machinery for a case that has not happened.
+**What reveals it later:** every FCM failure line, on every path (`[ring]`, `[ring-end]`,
+`[PUSH_SEND]`, `[WELCOME_REQ]`, `[SOCIAL_PUSH]`), now carries `code=` (`describeFcmFailure`, the
+same file); before, the message paths printed only the prose, so this very count could not be
+taken from them. `grep 'FCM failed' | grep -c 'code=messaging/invalid-argument'` over a window, and
+the distinct `device=` values, answer it; a non-zero count with a recurring device is the trigger.
+
+**A refused credential is OUR misconfiguration, logged at ERROR** (2026-11-17).
+`messaging/mismatched-credential`, `third-party-auth-error` (the APNs key Firebase holds for us) and
+`authentication-error` (our service account) blame the project, not the device: every device fails
+the same way until a human fixes the configuration. They were a WARN reading `FCM failed ... err=`
+like any token's failure; `describeFcmFailure` now logs them at ERROR, saying `OUR credentials were
+refused ... not this device's token`, and none of them deletes a row.
+
 `/api/calls/ring-end` (reason `answered`/`cancelled`/`ended`) is sent to **all** members
 including the caller's own devices and stops the ring everywhere; both platforms also arm a
 local 60 s timeout as a safety net. Ordering gotcha: `call_ring_end` must be processed **before**
@@ -2217,9 +2509,11 @@ group summary, avatar/initials fallback, and sender-name subtitles inside group 
     `@"canari_messages"` when empty), mirroring the NSE. Social/form notifications keep their own
     threads (`canari_social`/`canari_forms`).
 
-**Reactions to a post** (2026-10-08): both platforms group them per POST. Android keeps one
-notification per post updated in place; iOS files them under the APNs thread `post_reaction_<postId>`
-(`buildInternalApnsRequest`). Detail and what iOS still lacks: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
+**Comments and reactions on your own post** (2026-11-14): ONE notification per post on both
+platforms, decided by the server ([one per post](../engagement.md#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)). The push carries `collapseId`
+(`post_activity_<postId>`) and `quiet`; `buildInternalApnsRequest` sets the `apns-collapse-id`
+header and the `thread-id` from it, and a quiet one gets `interruption-level: passive` and no sound.
+Client detail: [mobile](../frontend/mobile.md#the-face-on-a-notification-and-what-happens-when-there-is-none).
 
 **Group summary**
 
@@ -2377,6 +2671,30 @@ the top: every outbound call inside `resolveLinkPreview` goes through its `reach
 "the site said something unusable" and "the site said nothing" cannot be confused by the handler.
 An unexpected error - a parser fault, a bug in this file - is neither cached nor blamed on the
 caller: it is a `500`, logged at `error`.
+
+**The guard's own DNS lookup is classified at the throw too** (2026-11-17). `assertSafeExternalUrl`
+resolves the host before anything is fetched, and that lookup used to fail RAW: measured in
+production on 2026-11-16, a one-minute outbound degradation (image fetches timing out to other
+hosts in the same seconds - the only outbound failures of that container's first day) made it
+throw Bun's `DNSException: getaddrinfo EAI_AGAIN` on `link-preview` and `link-safety`, and Nest's
+`ExceptionsHandler` printed an ERROR stack and answered `500` for each. It was a passing resolver
+hiccup, not a URL that can never resolve (that is `ENOTFOUND`, of which there were none), so the fix
+is code, not container DNS. The guard now answers `ENOTFOUND`/`ENODATA` (the name has no address)
+as the caller's `400`, and every other resolver failure - an error carrying a `code` and
+`syscall: 'getaddrinfo'`, as node and bun both throw it - as an `UpstreamUnreachableError` carrying
+the host and the resolver code; anything else thrown by the lookup is a bug of ours and is rethrown
+untouched, never dressed as an outage (each route's last `throw error` is that path, tested); `link-preview` and `link-safety` turn it into a `502`, `no-store`,
+with one WARN (`... unreachable (dns EAI_AGAIN)`), the image proxy into a `502` instead of the `400`
+of a refused URL, and the GIF relay types it rather than inferring it by elimination.
+
+**The oEmbed follow-up never fails silently either** (2026-11-17). `fetchOEmbedData` used to catch
+everything into `null`, so a page pointing at a private address, an endpoint that said nothing and a
+site answering HTML read the same: as nothing. It now returns an `OEmbedUnavailable` typed where the
+failure happens - `refused` (the guard refused the declared endpoint), `unreachable` (DNS, connect,
+abort, a body that died), `status` / `not-json` / `malformed` (it answered, unusably). The preview is
+served either way; `resolveLinkPreview` logs one line per resolution (the preview is then cached):
+WARN for `refused` and `unreachable`, debug for a third party's unusable answer, which nobody here
+can act on.
 
 **One budget, and every mechanism that can enforce it agrees.** `OUTBOUND_BUDGET_MS` (4 000 ms) arms
 the endpoint's `AbortController` for the whole operation - redirect chain and oEmbed follow-up - AND
@@ -2592,9 +2910,9 @@ host, text and preview card.
 `frontend/src/lib/utils/ecosystemHosts.ts` maps the four hosts we share users with -
 `gallery.mitv.fr`, `sky.mitv.fr`, `cercle.canari-emse.fr`, `portail-etu.emse.fr` - to the name the
 reader knows them by. The badge rule below is unchanged; `sky.mitv.fr` simply names the destination
-to nobody but whoever deployed it. The registry also carries the paths worth a cover-first card
-(`EcosystemCoverPreview.svelte`, a MiGallery album today), which is what the hostname compared in
-place used to decide. Adding a fifth site is one entry there. It carries no bundled logos on
+to nobody but whoever deployed it. The registry also carries the paths worth a cover-first card (a
+MiGallery album today: its square cover is the tile, and the hero's banner, of the one card family,
+`AttachmentCard`), which is what the hostname compared in place used to decide. Adding a fifth site is one entry there. It carries no bundled logos on
 purpose: the card already resolves each site's own favicon, which survives a rebrand.
 
 #### Favicons come from the site, never from an icon service
@@ -2668,6 +2986,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
 | POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
+| POST, PUT, GET | `/api/calls/sfu/session`, `/tracks`, `/renegotiate`, `/tracks/close`, `/roster`, `/leave` | The Cloudflare Realtime proxy of a group call whose room says `mode: cloudflare` (`call_relay = cloudflare`): a seat per user claimed with the room token, the sessions/tracks API driven with the app secret this service alone holds, every pull checked against the room's seats; 503/502 `GROUP_CALL_RELAY_UNAVAILABLE`, 409 `GROUP_CALL_ROOM_FULL` ([calls](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)) |
 
 **The kill switch.** `initiate`, `room-token`, `ring` and `ice-servers` first read
 `platform_config.calls_mode` (core-service's row, plain SQL, every request): `off` answers 403

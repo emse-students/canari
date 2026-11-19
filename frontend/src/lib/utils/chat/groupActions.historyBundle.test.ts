@@ -9,10 +9,58 @@ import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceSt
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
 import { bindHistoryWithheld, withholdHistoryFrom } from './historyWithheld';
+import {
+  historySealAad,
+  mintHistoryAnswerKey,
+  openHistoryContent,
+  type HistoryAnswerKey,
+} from '$lib/crypto/historySeal';
+import { fakeHistorySealEngine } from '$lib/mls-client/test/fixtures/fakeHistorySealEngine';
 
 const GROUP = 'g1';
 /** The device that asked - every bundle is addressed at one, never at the group at large. */
 const REQUESTER = 'user-b:device-b';
+/** This device as the seal binds an answerer: its user and its device. */
+const ANSWERER = 'user-a:device-a';
+
+/**
+ * The key every ask of this file carried: since the floor reached option B (`1.7.0`) every ask
+ * carries one, and every answer to it is sealed - there is no unsealed answer to build.
+ */
+let ASK_KEY: HistoryAnswerKey;
+beforeAll(async () => {
+  ASK_KEY = await mintHistoryAnswerKey(fakeHistorySealEngine());
+});
+/** The seal of an answer to {@link ASK_KEY}, bound to this answerer. */
+const SEAL = () => ({ answerKey: ASK_KEY.answerKey, answerer: ANSWERER });
+
+/**
+ * One sent `history_bundle` frame's payload, its sealed content opened under {@link ASK_KEY} (an
+ * answer to an ask), or read in clear (the join push, which answers none).
+ */
+async function openFrame(bytes: Uint8Array): Promise<{
+  event: string | null | undefined;
+  data: { messages: unknown[]; to?: string };
+}> {
+  const decoded = decodeAppMessage(bytes);
+  const frame = JSON.parse(decoded?.system?.data || '{}') as Record<string, unknown>;
+  const content =
+    typeof frame.sealed === 'string'
+      ? await openHistoryContent(
+          fakeHistorySealEngine(),
+          ASK_KEY.secret,
+          historySealAad(GROUP, String(frame.requestId), String(frame.to), ANSWERER),
+          frame.sealed
+        )
+      : frame;
+  return {
+    event: decoded?.system?.event,
+    data: { ...content, to: frame.to as string | undefined } as {
+      messages: unknown[];
+      to?: string;
+    },
+  };
+}
 
 function storageWith(messages: StoredMessage[] | Error): IStorage {
   const read = (since: number) =>
@@ -37,12 +85,7 @@ function storedMessage(id: string, timestamp = 1_700_000_000_000): StoredMessage
 
 /** Decodes the `history_bundle` payload of the single message the stub was asked to send. */
 function sentBundle(mlsService: ReturnType<typeof createMlsServiceStub>) {
-  const bytes = vi.mocked(mlsService.sendMessage).mock.calls[0][1] as Uint8Array;
-  const decoded = decodeAppMessage(bytes);
-  return {
-    event: decoded?.system?.event,
-    data: JSON.parse(decoded?.system?.data || '{}') as { messages: unknown[]; to?: string },
-  };
+  return openFrame(vi.mocked(mlsService.sendMessage).mock.calls[0][1] as Uint8Array);
 }
 
 describe('sendFullHistoryBundle', () => {
@@ -62,29 +105,22 @@ describe('sendFullHistoryBundle', () => {
     });
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    const { event, data } = sentBundle(mlsService);
+    const { event, data } = await sentBundle(mlsService);
     expect(event).toBe('history_bundle');
     expect(data.messages).toEqual([]);
     expect(data.to).toBe(REQUESTER);
   });
 
-  it('stays silent when the local read fails - a failed read proves nothing', async () => {
+  /**
+   * THE PUSH CARRIES THE STATE AND NO MESSAGE (2026-11-17, history-answer-addressing.md, "What is
+   * not sealed"): it answers no ask, so it cannot be sealed, and the newcomer's own reconciliation -
+   * whose answers are - brings the messages. The store is not even read.
+   */
+  it('pushes the state and NO message, whatever the store holds - it never reads the messages', async () => {
     const mlsService = createMlsServiceStub();
+    const storage = storageWith([storedMessage('m1'), storedMessage('m2')]);
     await sendFullHistoryBundle(GROUP, {
-      storage: storageWith(new Error('sqlite locked')),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
-
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('sends the real history when there is some', async () => {
-    const mlsService = createMlsServiceStub();
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([storedMessage('m1'), storedMessage('m2')]),
+      storage,
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
@@ -92,10 +128,11 @@ describe('sendFullHistoryBundle', () => {
     });
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    const { event, data } = sentBundle(mlsService);
+    const { event, data } = await sentBundle(mlsService);
     expect(event).toBe('history_bundle');
-    expect(data.messages).toHaveLength(2);
+    expect(data.messages).toEqual([]);
     expect(data.to).toBe(REQUESTER);
+    expect(storage.getMessages).not.toHaveBeenCalled();
   });
 
   it('carries the edit time with the edit flag, and every reaction including the withdrawn ones', async () => {
@@ -114,15 +151,14 @@ describe('sendFullHistoryBundle', () => {
       ],
     } as StoredMessage;
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([edited]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['m1'],
+      { storage: storageWith([edited]), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', seal: SEAL() }
+    );
 
-    const { data } = sentBundle(mlsService);
+    const { data } = await sentBundle(mlsService);
     expect(data.messages[0]).toMatchObject({
       isEdited: true,
       editedAt: 1_700_000_042_000,
@@ -139,15 +175,19 @@ describe('sendFullHistoryBundle', () => {
     const mlsService = createMlsServiceStub();
     const unverified = { ...storedMessage('m1'), restoredUnverified: true } as StoredMessage;
 
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([unverified, storedMessage('m2')]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      to: REQUESTER,
-    });
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['m1', 'm2'],
+      {
+        storage: storageWith([unverified, storedMessage('m2')]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', seal: SEAL() }
+    );
 
-    const { data } = sentBundle(mlsService);
+    const { data } = await sentBundle(mlsService);
     const rows = data.messages as Array<Record<string, unknown>>;
     expect(rows.find((r) => r.id === 'm1')?.authorUnproven).toBe(true);
     expect(rows.find((r) => r.id === 'm2')).not.toHaveProperty('authorUnproven');
@@ -173,7 +213,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
         GROUP,
         allIds(msgs),
         { storage: storageWith(msgs), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-        { to: REQUESTER, since, requestId: 'req-0001' }
+        { to: REQUESTER, since, requestId: 'req-0001', seal: SEAL() }
       ),
     };
   }
@@ -185,7 +225,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     );
     await done;
 
-    const { data } = sentBundle(mlsService);
+    const { data } = await sentBundle(mlsService);
     expect(data.messages).toHaveLength(1);
     expect(data.messages[0]).toMatchObject({ id: 'new' });
   });
@@ -194,7 +234,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     const { mlsService, done } = serve([storedMessage('exactly-at', SINCE)], SINCE);
     await done;
 
-    expect(data0(mlsService)).toMatchObject({ id: 'exactly-at' });
+    expect(await data0(mlsService)).toMatchObject({ id: 'exactly-at' });
   });
 
   it('answers in full for an asker whose window opens at the beginning', async () => {
@@ -208,7 +248,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     );
     await done;
 
-    expect(sentBundle(mlsService).data.messages).toHaveLength(2);
+    expect((await sentBundle(mlsService)).data.messages).toHaveLength(2);
   });
 
   it('sends NOTHING when the clip is what emptied the answer', async () => {
@@ -230,12 +270,12 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     );
     await done;
 
-    expect(data0(mlsService)).toMatchObject({ id: 'undated' });
+    expect(await data0(mlsService)).toMatchObject({ id: 'undated' });
   });
 
   /** First message of the single bundle the stub was asked to send. */
-  function data0(mlsService: ReturnType<typeof createMlsServiceStub>) {
-    return sentBundle(mlsService).data.messages[0];
+  async function data0(mlsService: ReturnType<typeof createMlsServiceStub>) {
+    return (await sentBundle(mlsService)).data.messages[0];
   }
 });
 
@@ -261,7 +301,7 @@ describe('history is withheld from an unverified device', () => {
         GROUP,
         ['m1'],
         { storage: storageWith([storedMessage('m1')]), deviceKeyB64: 'k', mlsService, log },
-        { to, since: 0, requestId: 'req-0001' }
+        { to, since: 0, requestId: 'req-0001', seal: SEAL() }
       ),
     };
   }
@@ -326,37 +366,21 @@ describe('history is withheld from an unverified device', () => {
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('broadcasts nothing where a device is withheld - every leaf reads a broadcast', async () => {
+  // An answer to an ask is sealed AND addressed, or not sent (the `1.7.0` floor retired the
+  // unsealed answer): a server that would broadcast it gets nothing, withheld device or not - so no
+  // broadcast ever reaches a withheld leaf from this path.
+  it.each([
+    ['a device there is withheld', GROUP],
+    ['nothing there is withheld', 'another-group'],
+  ])('answers nothing from a server that would broadcast - %s', async (_, withheldIn) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
-    const { mlsService, log, done } = serveTo(REQUESTER, 'broadcast');
-    await done;
-
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('Not broadcasting history'));
-    vi.restoreAllMocks();
-  });
-
-  it('broadcasts again once the withheld device has left the tree', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await withholdHistoryFrom(GROUP, 'user-b:another-device', 'fp-1', stillThere);
-    const { mlsService, done } = serveTo(REQUESTER, 'broadcast', [REQUESTER]);
-    await done;
-
-    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    vi.restoreAllMocks();
-  });
-
-  it('still broadcasts in a conversation where nothing is withheld', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    await withholdHistoryFrom('another-group', REQUESTER, 'fp-1', stillThere);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await withholdHistoryFrom(withheldIn, 'user-b:another-device', 'fp-1', stillThere);
     const { mlsService, done } = serveTo(REQUESTER, 'broadcast');
     await done;
 
-    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(error.mock.calls.join(' ')).toContain('answering nothing rather than unsealed');
     vi.restoreAllMocks();
   });
 
@@ -395,10 +419,12 @@ describe('sendHistoryBundleForIds - the tombstones a digest answer carries', () 
         mlsService,
         log: vi.fn(),
       },
-      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+      { to: REQUESTER, since: 0, requestId: 'req-0001', seal: SEAL(), withTombstones: true }
     );
 
-    const ids = (sentBundle(mlsService).data.messages as Array<{ id: string }>).map((r) => r.id);
+    const ids = ((await sentBundle(mlsService)).data.messages as Array<{ id: string }>).map(
+      (r) => r.id
+    );
     expect(ids.sort()).toEqual(['deleted', 'lacked']);
   });
 
@@ -413,10 +439,10 @@ describe('sendHistoryBundleForIds - the tombstones a digest answer carries', () 
         mlsService,
         log: vi.fn(),
       },
-      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+      { to: REQUESTER, since: 0, requestId: 'req-0001', seal: SEAL(), withTombstones: true }
     );
 
-    expect(sentBundle(mlsService).data.messages).toHaveLength(1);
+    expect((await sentBundle(mlsService)).data.messages).toHaveLength(1);
   });
 });
 
@@ -428,7 +454,7 @@ describe('sendHistoryBundleForIds - what one answer reads and carries is bounded
       GROUP,
       ['m1'],
       { storage, deviceKeyB64: 'k', mlsService, log: vi.fn() },
-      { to: REQUESTER, since: 1_000, requestId: 'req-0001' }
+      { to: REQUESTER, since: 1_000, requestId: 'req-0001', seal: SEAL() }
     );
 
     expect(storage.getMessagesSince).toHaveBeenCalledWith(GROUP, 1_000, 'k');
@@ -452,19 +478,14 @@ describe('sendHistoryBundleForIds - what one answer reads and carries is bounded
         mlsService,
         log: vi.fn(),
       },
-      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+      { to: REQUESTER, since: 0, requestId: 'req-0001', seal: SEAL(), withTombstones: true }
     );
 
-    const sent = vi
-      .mocked(mlsService.sendMessage)
-      .mock.calls.flatMap(
-        (call) =>
-          JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data || '{}')
-            .messages as Array<{
-            id: string;
-          }>
-      )
-      .map((r) => r.id);
+    const sent: string[] = [];
+    for (const call of vi.mocked(mlsService.sendMessage).mock.calls) {
+      const { data } = await openFrame(call[1] as Uint8Array);
+      sent.push(...(data.messages as Array<{ id: string }>).map((r) => r.id));
+    }
     expect(sent).toHaveLength(HISTORY_TOMBSTONES_PER_ANSWER + 1);
     expect(sent).toContain('lacked');
     expect(sent).not.toContain('t0');

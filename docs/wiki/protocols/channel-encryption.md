@@ -359,6 +359,93 @@ arrival is counted only when the store holds the seed now.
   other salon behind it. They wait for the same link anyway, and a per-group flush would buy little
   for a second accumulator to keep in step.
 
+**A SALON ROW WITH NO SEED WAITS FOR IT TOO (2026-11-16).** The request waiting for the drain
+removed the needless asks, not the read they came from: a salon opened on a cold start or a resume
+still DECODED its page while the key group's queue was being drained, so every row of a session
+whose seed sat in that queue was warned `unreadable - missing seed` (1.6.11 logs, 2026-11-14) and
+drawn only by the re-read the drain's end announced (`holdGraineRepairs`, section WP-33) - a race
+that healed cleanly. What made the two paths overlap was that nothing ordered the verdict "missing"
+after the drain. **The seed store is the discriminator, so only the rows it cannot open wait**:
+`loadChannelHistory` reads `salonKeysNow` (`utils/graine/salonReadGate.ts`) - from state, after
+`whenSalonEntryDecided` has registered the salon - and while the key group carrying the salon's seeds
+is still draining, `decodeChannelMessagePage` DEFERS each row whose seed is missing (by its index:
+answered `null`, neither warned nor asked for) and decodes every other row at once. The page is
+drawn and the skeleton lowered at once with what the store holds - offline or on a socket still
+reconnecting, exactly as before the gate (principle 2, and the slow-link rule that no screen waits
+for the network to draw). The deferred rows are decoded again once `drained()` resolves - the SAME
+proof the request waits on, `whenGroupDrained` - and merged by the same load (no refetch): each
+reads with the seed the drain brought, or is a seed this device was never sent, and the warning
+and the request then say something true. A page whose every seed is held registers no waiter.
+
+- **Decided from state or by an event, never from a clock, and never waited where it cannot end**:
+  no session (`no-runtime`), a salon no community registered (`no-scope`), a key group not
+  registered here (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing),
+  and, DURING the wait, a demotion of this tab (`follower` again, settled by `onLeaderTabChanged`:
+  the demoted tab closes its socket, so the group would never read drained here) or the service
+  closing (`closed`, `GroupDrainAbandonedError`). The non-routine ones are said in the log
+  (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that deferred rows
+  says how many, and again when they are decoded after the drain. A demotion decodes the deferred
+  rows as a follower would (reported, never asked); `closed` decodes NOTHING more - the session
+  ended (sign-out, client reset) before anything proved the seeds missing, so a warning would be
+  false, and the next session's load reads the page again.
+- **What bounds the wait**: `whenGroupDrained` needs a pull of the whole mailbox on an OPEN socket
+  and the key group idle in the scheduler. Idle includes frames parked behind a Welcome, and that
+  park is bounded by the scheduler's termination proof, not a clock: a Welcome closes the window it
+  opened on success or failure, and a window that survives a drain which emptied every queue is
+  released at once (`releaseStrandedWelcomeBuffers`). While the link is down only the deferred rows
+  wait - rows this device could not have drawn anyway.
+- **A load started meanwhile supersedes the deferred pass** (it decoded the whole page after this
+  one): the older load decodes nothing more and merges nothing.
+- **The second pass ADDS the deferred rows and takes nothing else of the page again.** The page was
+  fetched before a wait that lasts as long as the link is down, and the page stays interactive
+  meanwhile, so a live deletion's tombstone, an edit (the reader's own included, sent over HTTP
+  while the socket is down) or a read mark can move on screen after it. Merging the whole page again
+  (as the first cut of this design did) took each old row verbatim through `mergeMessagePage` and
+  resurrected the deleted row, undid the edit, and re-marked the salon fresh over a stale mark. So a
+  deferred row is inserted only where nothing holds it yet, its edit rows go through
+  `applyChannelEdits` (whose precedence keeps a later edit), its reactions and poll tallies come from
+  its own rows only, the read marks and `channelHistoryLoadedAt` are the first pass's alone, and the
+  stored page is rewritten from what is on screen (deleted rows left out).
+- **A row removed live while a page is in hand is never put back, and a tally voted live is never
+  rewound** (2026-11-16) - by either pass, and by the whole-history search. The server hard-deletes
+  a salon row, and a live removal could only mark a copy already on screen: a deferred row deleted
+  during the wait, or a held row deleted while the page decoded, found nothing to mark and was
+  inserted by the page that still carried it, until the next load removed it - a race that healed,
+  so a defect. Every page read now opens a watch BEFORE its request leaves
+  (`utils/chat/salonRemovals.ts`); `markChannelMessageDeleted` - the one path the reader's own
+  delete and the `channel.message.deleted` broadcast both take - notes the id in every open watch
+  FIRST, whether or not a copy is on screen; the reader skips the noted ids (a removed row is gone
+  for good on the server, whatever the page says) and closes the watch when it ends, so it holds
+  only what was removed during its own life. Poll tallies carry no version, so `pollStore` orders
+  writes on one counter: a live write (`channel.poll.vote`, a poll arriving live, a vote's answer,
+  an optimistic vote) takes the next value, a page's write the value its request left at
+  (`setPollMetaFromPage`), and a page never writes over a tally written after that.
+- **A salon left during the wait is not decoded again**: a removal from a private salon, a dropped
+  community or a sign-out purges the conversation and its seeds, so decoding the deferred rows then
+  would warn `missing seed` and ask for it for a salon this device no longer holds. The pass ends
+  with a log line and draws nothing.
+- **The repair re-read stays, and it is not the same path.** `announceGraineRepair` re-reads a salon
+  when a SEED is stored for it - the only path for rows dropped outside a gated load (a live row
+  that arrived before its seed, an answer a peer sends minutes later, a salon decoded on an earlier
+  link). The deferred pass is the only path that reports a seed still missing AFTER the drain, which
+  no seed arrival would ever announce. When both fire for one salon (a seed of the drain stored
+  for a salon whose load deferred rows), the cost is one extra page fetch, never a false warning or
+  a dropped row.
+- The whole-history search uses the same discriminator WITHOUT the wait: it is one answer to one
+  query, so it searches the rows it can open, leaves the deferred ones unwarned and unasked (the
+  history load owns that), and says how many it could not search yet.
+- Pinned by `salonReadGate.test.ts` (state answers, the wait, the demotion during and before it, the
+  service closing), `channelCrypto.test.ts` (a missing seed deferred, unwarned and unasked, every
+  other class reported) and `useConversations.salonReadAfterDrain.svelte.test.ts` (the held row
+  drawn and the skeleton down before the drain, the queued row drawn after it with no warning, a
+  seed the drain did not bring reported only then, one fetch, a newer load superseding the deferred
+  pass, a deletion made during the wait kept, a stale mark made during it kept, a closed service
+  ending the pass with no decode and no warning, a salon left during the wait never decoded again,
+  a row removed live during the wait or the decode never inserted - search included - and a live
+  vote never rewound by an older page), `salonRemovals.test.ts` and `pollStore.svelte.test.ts`
+  (the two orderings), and `useChannelWorkspaces.svelte.test.ts` (a live removal noted with no row
+  on screen).
+
 ### 4.6 Ordering rule: remove, THEN distribute
 
 When a sender rotates because a member left, the removal commit on the distribution group must land
@@ -915,6 +1002,12 @@ nobody, which is exactly the shape of row the 2026-08-17 purge had to find by ha
 re-joins by external commit instead. That is the intended rung for this group - it holds seeds, not
 a conversation - but it is a difference from ordinary groups, not an oversight.
 
+**Read on production, 2026-11-14, read-only.** The commit limit: over the 30 days of
+`mls_commit_log` (1924 commits), the busiest user-minute held 99 commits (p99 17) against the 600
+limit, and 0 `[THROTTLE] REFUSED` on production or dev. The entitlement gate: 0
+`[ENTITLEMENT] UNANSWERED` on production (14 key-group entitlement questions, all answered
+`entitled=true`, in the 15.5 hours of log since `v1.6.11`) and on dev.
+
 #### WP-22, and the race that had no election
 
 **The client joins where the community is loaded** (`useChannelWorkspaces`), through one function,
@@ -1059,13 +1152,14 @@ before the column existed was minted under a roster nobody recorded, which is th
 exists for; the codec keeps absent absent rather than letting `Number(null)` turn it into a real
 epoch.
 
-**Three orderings in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
+**Four rules in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
 
 | Rule | What the other order costs |
 | --- | --- |
 | Serialised per (channel, sender) | Two racing sends read one `sentCount`, seal two messages under one AES-GCM key. No symptom at either end. |
 | Distribute the seed, THEN persist the session | Persisting first leaves a session in hand that nobody can read; it is reused, so every message under it is lost, permanently. Distributing first means a failure leaves the seed nowhere and the next attempt mints again. |
 | Burn the index before the send, and leave it burned on failure | A gap costs nothing - every message carries its index and the key is derived directly. Re-handing one out after a send that the server did receive costs the session. |
+| The count is written by compare-and-swap (2026-11-17) | The chain above serialises ONE document. Two tabs share the store, and only the leader writes it (`mayWrite`), but leadership is read at the write: between a lock steal and the rejection that tells it, the old leader still answers "I lead". Resumed with the count it read before the new leader sent, it wrote that count back, and both tabs then handed out indices already sealed (refused by the server as `CHANNEL_MESSAGE_KEY_REUSED`, so lost sends rather than a repeated nonce - every seal draws a fresh one). `saveGraineSession(..., sentCountWas)` reads and writes the row in ONE transaction (one `UPDATE ... WHERE sent_count = $n` on SQLite) and refuses with `StoreWriteRefusedError` when the count moved or the row is gone, logged `[GRAINE] session ... not written: its count moved` at `error` - two writers overlapped, which the lead guard exists to prevent. The seal answers it as the lead lost during the reservation (`main-tab-lead-lost`, nothing sealed, Retry safe). Pinned by `sessionManager.twoTabs.test.ts`, two module instances over one IndexedDB. |
 
 **The sender id is lower-cased at the one place a session is written and the one place it is looked
 up.** A row stored as `Alice` and searched for as `alice` is never found, so every send mints - a
@@ -1166,6 +1260,13 @@ decision, rather than learning it by failing:
   offline and park again, in a loop;
 - a row the server returned WITHOUT the flag is elected as if online and accused at warn level: that
   is a social service predating the field, and a bandwidth decision must not strand a want on it.
+
+**Read on the rig on 2026-11-14** (local estate at `ad2053fc0`, two web seats): a newcomer reaching a
+salon whose only holder was closed logged `wait for a holder to come online - 1 member(s) could
+answer and none has a device online` and showed nothing from before; once the holder came back it
+answered and the salon filled, and every ask of the day's rows named one online device. That is the
+production shape of 2026-09-24 reproduced on demand, so the reading closed on it; that community
+itself, as it stood that day, cannot be re-staged.
 
 **What presence does not see.** A backgrounded Android can hold its socket open, so `user:online` can
 be true for a device that will not process the frame (the DM history election randomises for that
@@ -2532,6 +2633,15 @@ it is decided (`noteHistoryHeldNothing`, `noteSeedUnavailable`).
 seed. That assertion could not hold on any wording, because the only line it could match belongs to
 the path a mid-salon grant never takes.
 
+**A re-granted member gets the seed by the history ask, and that is the design (decided 2026-11-15, reversible; WP-REGRANT-2 closed).**
+**Confirmed by the owner on 2026-11-15** (decided under delegation in #3588): no longer pending.
+A seed travels WITH the message that needs it ([section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)),
+so a member granted mid-salon holds no seed until it meets a row it cannot open; it then asks and absorbs the answer
+([section 25](#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)). That is the
+route every COMM-8 pass in the ledger has taken (`seedAfterTheGrant: repaired`, never `distributed`), and the one COMM-22's four
+grant/revoke cycles read green on. COMM-8 asserts the seed was STORED (`distributed` or `repaired`), not which route brought it, and
+it was re-run on dev on 2026-11-15: every assertion held, `repaired`. A grant that left a member unable to read would still fail the row. Charter ([principes](../../principes.md)): principle 1 holds because the ask and its answer travel as ciphertext between members and the server learns nothing new; principle 2 holds because the row still fails if the member cannot read what was said. Reverting means restoring the `distributed` expectation in `archive/comm8.mjs` and the grant's seed frame, which section 19 already describes.
+
 ### The creator prepared nothing, so the first message in a new community was refused - FIXED 2026-08-20
 
 Creating a community selects its default salon and leaves the composer ready. A public salon seals
@@ -3452,6 +3562,47 @@ three places treated it as a conversation:
 Left open - a Welcome whose row is unreadable for a group this session does not know either - is
 in [backlog](../backlog.md).
 
+### A Welcome arriving while this device's own external commit awaits the gate was thrown away - FIXED 2026-11-16
+
+Read on the iPhone 12, `1.7.0-alpha.5`, a private salon granted right after an in-session community
+join (entry (entry deleted 2026-11-18, every half read)):
+`[WELCOME] ... is a KEY-DISTRIBUTION group - installing it as a seed carrier`, `key group ... already
+held - redelivered Welcome ignored (idempotent)`, then `dropped local state for ... (the server refused
+the external commit)`, `externalJoin REFUSED ... reason epoch_mismatch, group at 3`, and the retry
+`a Welcome is owed to this device (welcome-queued) - not joining by external commit`. The salon stayed
+unreadable (`Group not found`, `no seed`) for good.
+
+**One door at a time held; the predicate on the other side did not.** The newcomer's external commit
+was built on a base read before the admitter's Add, so the seat it was served said nothing was owed,
+and the gate refused it as designed. But an external commit is applied to the instance that builds it,
+under the MLS lock, and submitted OUTSIDE it: for the whole round trip `holdsGroupState` and
+`isGroupActive` both answer `true` for a group nobody has accepted. "Held" there means "I asked to be
+in", not "I am in". The admitter's Welcome landed in that span, read the first as the second, and was
+ACKed as a redelivery; the refusal then dropped the state, and the only door left was the Welcome just
+spent. Section 20's "already held" lines of 2026-10-25..29 were the same window with the other
+outcome: the commit was accepted, so ignoring the Welcome cost nothing.
+
+**The fix** (`frontend/src/lib/utils/chat/externalCommitVerdict.ts`): `externalJoin` opens a window
+per group under the MLS lock BEFORE the build, and closes it in a `finally` once the gate's answer
+has been applied - merged on acceptance, dropped on a refusal or an unreachable gate, or never built.
+`handleDistributionWelcome` and `handleWelcome` await `awaitExternalCommitVerdict` before asking
+whether the group is held, so the question is asked of a settled group: accepted means joined (the
+Welcome is redundant, the idempotent path), refused means not held (the Welcome installs, its
+KeyPackage still unconsumed). No clock: the wait ends on the gate's answer, which `submitCommit`
+always returns or throws. When the race is met, the handler logs `[WELCOME] <group> arrived while this
+device's own external commit awaited the gate - read after its answer, held now: <bool>`, which is
+what a reading counts. **The settled read and the install are two steps**, so the install asks again
+under the lock (`externalCommitAwaitsVerdict`, synchronous, where the window opens): a join whose base
+predated the Add can take the lock between them and build, and an install then hit a group held by an
+unanswered commit - refused by the engine, ACKed, gone. A window found open there logs `own external
+commit took the MLS lock before the install - read again after its answer` and the handler starts over;
+each return costs that join one of its bounded attempts (found in review). **The cost:** a Welcome runs
+in the serial inbound drain, so while it waits every later frame waits with it, for one commit round
+trip under the `write` deadline - only when a Welcome for a group lands inside this device's own
+external join of it. Tests: `externalCommitVerdict.test.ts`, the window cases in
+`BaseMlsService.externalJoin.test.ts`, and both Welcome paths in `setupMessageHandler.test.ts`
+(written failing first).
+
 ## 21. Graine v2: an author that is proven, a ciphertext bound to its place - DECIDED BY THE USER 2026-09-28
 
 **Why.** §7's table: v1 hides the content from the server and authenticates nothing about who wrote
@@ -3493,8 +3644,9 @@ otherwise keep minting v1 sessions to forge an author; the v1 seeds already held
 rows until those age out of the 365-day window, and the v1 reader goes with the last of them
 ([legacy-compatibility](../legacy-compatibility.md)). **The verified MLS sender is MEASURED before it
 refuses**: one release logs every envelope that contradicts it and refuses nothing, because a
-legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are in
-the [backlog](../backlog.md#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28).
+legitimate mismatch nobody foresaw would otherwise lose messages. The work packages, WP-G2-0 to WP-G2-6, are all built and are
+the sections below; the chantier closed on 2026-11-15, when the rig re-run on dev read GRAINE-AUTH-1, -2, -3, -6 and -7 (the two
+refusals, the replay door, the history notice and the unsigned door) against a build carrying #1802, and the production count read 0 unsigned rows written since 2026-10-10.
 
 ### 21.1 The verified sender, measured then refused (WP-G2-1, G2-1b)
 
@@ -3519,8 +3671,11 @@ An alpha deploys dev alone, so production cannot run it before a stable: the pre
 evidence is the INDIRECT reading - zero `[SENDER_MISMATCH]` of any kind on chat-delivery from
 2026-10-10 to 2026-10-24, the `live` path comparing the same envelope field throughout. The order is
 alpha, `path=distribution` read on dev (weak: a fictional seed plus testers), the stable, then the
-same line read on production AFTER it, a nonzero count triaged as the
-[backlog](../backlog.md#p3---the-distribution-paths-device-check-read-dev-on-the-alpha-production-after-the-stable) says. Three kinds:
+same line read on production AFTER it. **Read 2026-11-14, `v1.6.11` (#2090 is in every stable since
+`v1.5.0`): 0 `[SENDER_MISMATCH]` of any path or kind on production and on dev, and 0
+`POST /api/mls/sender-mismatch` in either access log.** A nonzero `kind=device` later is triaged from
+its reports before any further stable: an honest client disagreeing with its own credential reverts
+the device hand-over in a patch release; a sibling naming another device is the case it refuses. Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
@@ -3646,9 +3801,12 @@ nothing verifies anything. That is G2-4.
   - `storeIncomingSeed` extends G2-0's refusal: a copy whose endorsement, key, device or minter
     differs from the one held is `[GRAINE] REFUSED` (`'endorsement'`), as a different seed already
     was. So a relayed copy cannot downgrade a v2 session, nor re-attribute it.
-- **The restored secret cannot reuse a key.** A backup import carries no `distributionEpoch`, so a
-  restored session always rotates before it seals again, and the same index is never signed twice
-  from two installs.
+- **The restored secret cannot reuse a key.** A backup import writes no `sentCount` (2026-11-15), so
+  a restored session is one this device READS and the first send after a restore mints a new
+  session; the same index is never signed twice from two installs. The argument this bullet made
+  before - "no `distributionEpoch`, so it rotates" - stopped holding on 2026-10-22, when the verdict
+  moved to the rotation anchor, which the backup carries inside the sealed blob
+  ([backup](../frontend/backup.md#a-seed-comes-back-to-read-never-to-seal-under---2026-11-15)).
 - **In the native mirror.** A `graine_seeds.json` entry becomes
   `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
   `accounts[, unattributed]`, its writers' labels
@@ -4749,11 +4907,18 @@ one parked ask per device, bounded; the creator is a root; an unreadable roster 
 `BaseMlsService.groupDrained.test.ts` (the drained fact and its event), `rosterReconcile.test.ts`
 (the sync feeds the ledger), `inviteFragment.test.ts`, `historyOverlayStack.test.ts` and
 `appLinkNavigation.test.ts` (the fragment), `useChannelWorkspaces.svelte.test.ts`,
-`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Owed on the rig** (proposed
-COMM-26..31): a fresh link with its fragment gives the past, on the web and through the app's link
-handler; an old link joins and reads from arrival; a member's add gives the past; a new device of a
-rooted member gets the past; a kicked member re-added with their old voucher reads from arrival; the
-`admission is not proven` line on the answerer for an unproven newcomer.
+`channel.service.spec.ts` and `mls-device-guard.spec.ts`. **Read on the rig on 2026-11-14** (local
+estate at `ad2053fc0`, web seats): a fresh link WITH its fragment gave the newcomer a message written
+before the join once a holder was online (COMM-26, web), and an unproven salon grantee was answered
+`admission is not proven ... answering as 'joined', nothing from before their arrival` (COMM-31's
+line). The other proposed rows have no runner and are pinned by named cases instead, so the reading
+was closed on them: the app's link handler keeping the fragment (`appLinkNavigation.test.ts`, "keeps
+an invite link fragment"); an old link reading from arrival (`frameHandler.test.ts`, "hands an
+unproven newcomer ... what spans their arrival" and "answers an unproven repair as joined"); a
+member's add giving the past ("hands the past to a newcomer a rooted member admitted directly"); a
+rooted member's new device ("hands a member's NEW device everything since that member arrived"); a
+re-added member's old voucher (`graineAdmission.test.ts`, "does not verify once moved to another
+place in the history").
 
 ## 26. A shut phone joins a salon's key group from the push - DECIDED BY THE USER 2026-10-22
 
@@ -4834,3 +4999,184 @@ Device readings: on the Mi 9T, a member whose phone never opened community X rec
 for X - a generic banner, `joinKeyGroupFromPush: settled joined`, the next push readable, and the
 app's next start logging `[KEY_GROUP_PUSH_JOIN] ... registered`; on the iPhone, the generic banner
 and the join at the next foreground.
+
+## 27. The iPhone held two seed mirrors, and the one without the extension's seeds won - FIXED 2026-11-17
+
+**The question the [`[PUSH_BLIND]`](#14-the-seed-was-pushed-to-a-shut-phone-and-the-push-service-threw-it-away-unread---fixed-2026-09-21-android)
+count left open.** Since `v1.6.5` every blind salon banner on production read
+`missing=seed refused=none` - the seed was not in the mirror, so no open ran - mostly on iOS
+(8 lines on 2026-11-14, 6 of them iOS; the one line of 2026-11-16, iOS). The line could not say WHY
+the seed was absent, when [section 19](#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)
+puts the seed's frame on every message.
+
+**Read on production, 2026-11-16, read-only.** One salon, one iPhone receiver, one sender session:
+
+| time (UTC) | what the server logs say |
+| --- | --- |
+| 13:06:39 | session `S` index 0 sealed; `[CHANNEL_PUSH] ... seedFrame=<n>ch`, the iPhone's push `inline=true` - no blind report |
+| 13:08:08 | `S` index 1, same - no blind report: the seed was held |
+| 13:08:15-19 | the iPhone comes to the FOREGROUND: `PUSH_REFRESH`, `PUSH_REGISTER`, `MSG_FETCH count=2`, `ACK deleted=2` |
+| 13:08:19.7 | `S` index 2 sealed, its frame attached; the push leaves at 13:08:20.06 |
+| 13:08:20.66 | `[PUSH_BLIND] platform=ios missing=seed held=false refused=none` |
+
+The key group had not moved since the day before (its last commit 21 hours earlier), so no epoch gap
+explains it. The seed was HELD at 13:08:08 and ABSENT at 13:08:20, and the only thing between the two
+is the app becoming active.
+
+**The cause, in the code.** iOS kept TWO copies of `graine_seeds.json`: the app's
+(`app_data_dir`), written by the foreground, and the App Group's, which the notification extension
+reads and writes - it is where `openSeedFrame` stores a seed it opened from a frame. Every
+`didBecomeActive` and `willResignActive` copied the app's file over the group's AS BYTES
+(`CanariMirrorPushStateToAppGroup` -> `sync_seed_mirror_copy`). So:
+
+- a seed the extension stored while the app was shut was ERASED the moment the app came to the
+  foreground - the 13:08:15 activation above;
+- the frame on the next push could not stand in for it: the foreground had just drained the key
+  group (`ACK deleted=2`) and applied that very frame, so the state the extension decrypts with no
+  longer opens it (an MLS application secret is deleted once used);
+- and a seed the foreground absorbed reached the extension only at the next lifecycle copy.
+
+A STATE that lasts until the next lifecycle copy, on the phone that matters most to an active
+salon: the one being opened. That fits the shape of the 2026-11-14 lines too - six in fifteen
+minutes in ONE salon, three accounts.
+
+**The fix deletes the overlap rather than reconciling it.** One file per install, as Android has
+always had: on iOS the foreground now writes the App Group's file (`seed_mirror_home`, `push.rs`), the
+extension writes the same file, and every writer already holds its `graine_seeds.lock`
+(section 19's lock, which orders processes). The lifecycle copy of the seeds is gone, and the
+app-alive push path in `canari_push.mm` (`CanariGraineSeedHeld`, `CanariHandleChannelMessage`) reads
+the App Group's file. The copy an older build left in `app_data_dir` was folded in ONCE, at the first
+foreground edit, as a union under both writers' locks, until the floor reached `1.7.0`. **Since that
+floor it is deleted unread** (`remove_graine_mirror` in `seed_mirror_home`, under the mirror lock): a
+store update skips versions, so the floor does not prove every install folded, but the App Group's
+copy holds what the last lifecycle copy put there, and a failed delete is said at error and
+tried again at the next edit; `migrate_legacy_files` deletes it at the first start too. **Accepted
+loss:** a seed the older foreground stored after that last copy (a background task, a crash) was in
+the deleted file only, so that session's pushes show the generic banner until it rotates - the app
+itself still opens it. An account's wipe edits the one file
+([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)),
+and the factory wipe now deletes it under its lock (`storage::wipe_app_group`): with no lifecycle copy
+left to replace it, it would otherwise outlive the wipe. Retiring the fold is in
+[legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170).
+
+**What the union could not undo, stated (while it ran, before the `1.7.0` floor).** A removal the older build made in its OWN copy only - a salon
+left, a session the retention sweep forgot, after the last lifecycle copy and before the upgrade -
+is not in the app's file, while the group's still holds the entry, so the union keeps it. Nothing
+in the two files tells that entry from a seed the extension stored meanwhile, and the forgets were
+never recorded, so they cannot be re-run. What it costs: sealed seeds of a salon this account once
+read, at most `GRAINE_MIRROR_SESSIONS_PER_CHANNEL` (20) per channel, in a file only Rust opens; no
+push of a salon left reaches the phone to use them. It ends with the per-channel bound when that
+channel is written again, an account's wipe, or the factory wipe - and nothing else, which is the
+window, said rather than guessed around.
+
+**Every foreground edit now takes a lock IN the App Group, so it holds background time.** An app
+suspended while it holds a lock on a shared-container file is killed (`0xdead10cc`) - the rule the
+Share Extension's capture already obeys under `performExpiringActivity`
+([sharing](../frontend/sharing.md)). An edit can start in the seconds after the app leaves the
+screen (a frame the page absorbs on its way out), so `with_app_mirror` holds a
+`beginBackgroundTaskWithName:` assertion (`app_group::BackgroundTime`) across the old copy's delete and the edit,
+and ends it when the edit returns; its expiry, never the expected path for a lock held milliseconds,
+is said at ERROR and the task ended as the API requires.
+
+**What is proved where, and what is not compiled here.** The home the foreground writes is chosen
+under `cfg(target_os = "ios")` (`seed_mirror_home`), and so is the background-time assertion: no
+host build or test compiles either. The ONLY proof that the foreground writes the App Group is the
+source scan in `iosMlsMirror.test.ts`; the iOS branch is first compiled by the release's iOS build,
+and first run on the iPhone reading below. The old copy's delete and the factory
+wipe's removal run in host tests.
+
+**What holds it.** `deleting_the_apps_former_mirror_leaves_the_groups_seeds_whole` (`push.rs`, born red against the
+byte copy as `a_seed_the_extension_stored_survives_the_app_becoming_active`), and
+`iosMlsMirror.test.ts`, which reads the Objective-C no CI compiles: the activation mirror names no
+seed file, and the app-alive path reads `CanariAppGroupPath()`.
+
+**Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
+file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
+The bench run against a key group of production size, which this section does not cover, is
+[section 28](#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17). What is owed for
+this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).
+
+## 28. A salon push's catch-up against a key group of production size - MEASURED 2026-11-17
+
+**The question.** Section 27's bench reached the seed frame's commit catch-up only with a key group
+of a few devices, at epochs 6 to 9. A shut phone re-applies EVERY key-group commit since the app
+last ran, in memory, on EVERY salon push (`decrypt_push_message_with_commits_with_key`; nothing in
+the background persists a commit), under `MlsStateLock` on Android and inside the notification
+extension's time and memory on iOS. Does it still open the frame at production's size, and at what
+cost?
+
+**Production, read-only aggregates, 2026-11-17.** The largest key group stood at epoch 403 with 206
+active devices and took 3 commits in a day, 28 in a week, 148 in thirty days; the next one 107
+devices, 23 a week. Their commits averaged 6.2 KB in the log (base64), 7.3 KB at most: a phone shut
+for a month asks `POST mls/push/commits` for ~0.9 MB.
+
+**The bench** is `frontend/mls-core/tests/push_catchup_at_scale.rs`, on a workstation, no phone:
+every member enters by its own external commit as a key group is entered, 200 more join and leave
+(every other leaf, so the tree carries the blanks departures leave), the measured device is sealed
+at epoch E, K device joins land, a member seals a frame at E + K, and the push path's own sequence
+runs on the sealed bytes - `load_with_key`, K x `process_incoming_message`, the frame. A counting
+allocator gives the peak heap. Its churn is heavier than production's (~21 KB per commit against
+6.2 KB), so its wire column is pessimistic.
+
+```
+cargo test --release --test push_catchup_at_scale -- --ignored --nocapture
+```
+
+**The frame always opened. The cost did not hold, and one observer was 85-95% of it.** Every figure
+below is from ONE workstation (release build), shared with other work while it ran: the "after"
+column is the range of two runs, and a second reviewer's machine measured 1.4-2x slower. A phone is
+slower again, roughly 3-5x.
+
+| key group | behind | apply, before | apply, after | per commit, after | peak heap |
+| --- | --- | --- | --- | --- | --- |
+| 206 devices | 30 (a week) | 0.6 s | 0.10-0.19 s | 3.3-6.2 ms | 2.0 MiB |
+| 206 devices | 150 (a month) | 4.5 s | 0.57-0.89 s | 3.8-6.0 ms | 2.7 MiB |
+| 206 devices | 400 | 31.5 s | 2.4-3.5 s | 5.9-8.8 ms | 4.9 MiB |
+| 400 devices | 150 | 11.4 s | 0.87-2.8 s | 5.8-18.9 ms | 4.6 MiB |
+| 400 devices | 400 | 56.7 s | 2.8-4.0 s | 7.1-10.1 ms | 6.7 MiB |
+| 400 devices + 2535 KeyPackages | 400 | 87.7 s | 2.7-3.1 s | 6.9-7.9 ms | 12.2 MiB |
+
+Before, a phone a month behind in production's largest community spent an estimated 15-20 s per
+salon push replaying commits - every push again, on a lane that serialises them; an iPhone's
+extension has ~30 s in all. **The cause was not MLS**: instrumented, a commit's openmls work
+(`process_message` + `merge_staged_commit`) was under 4 ms on a 400-device tree, and the
+device-trust observer that runs on every merged commit (`DeviceTrust::observe_merged_commit`,
+`record_departures`) took ~74 ms. It compared each leaf after the commit with each leaf before it
+through `same_identity` - and each new leaf with each leaf before it through `same_user` - both of
+which normalise (allocate) the two identities on every call: quadratic in the tree, 325 612
+normalisations for one commit at 400 leaves on `main`.
+
+**The fix normalises the tree before the commit ONCE** - its devices with their keys, and the set of
+its user halves - and every question of the loop asks those sets: the same predicates (an identity
+that is not well formed matches no device, as `same_identity` answers; a user half compares as
+`same_user` compares it), linear in the tree. Pinned in a unit of work, not a clock:
+`a_merged_commit_is_observed_in_time_linear_in_the_tree` counts every normalisation (both
+`canonical_identity` and the user half), on a commit bringing 120 leaves of every kind the loop
+tells apart, under a bound of 20 per leaf; the shape with only the first scan removed still
+counted 134 524. The rule is in
+[durable-rules](../durable-rules.md#mls-state-and-keys---mls-protocol-auth).
+
+**Why a commit costs more the further behind the device is.** In the bench the key group GROWS by one
+device per commit behind (206 to 606), and every term rises with it in proportion: instrumented over
+400 commits, openmls's merge went from ~0.8 to ~2.4 ms, the observer from ~0.7 to ~2.0 ms, Graine's
+departure tracker from ~0.16 to ~0.42 ms - all linear in the tree, none in the distance. Two scans
+inside the observer are bounded rather than linear: `device_left_group` reads the recorded departures
+(at most `MAX_RECORDED_DEPARTURES`, 8192) once per NEW device, and `insert_pin` the pruned list (at
+most `MAX_REMEMBERED_PRUNED`, 8192) once per first sight - plain string comparisons, no allocation,
+and empty on the bench's device.
+
+**What it leaves, said.** (1) The replay is still paid on every push: a month behind production's
+largest key group could take 3-6 s on a phone. Persisting it from the background would make a
+second writer of `mls.bin`, which section 26's compare-and-swap install shows is possible but is a
+design of its own, decided on the phone readings below. (2) The fetch: ~0.9 MB for a month at
+production's commit size, under a 5 s read timeout - a slow link fails it and the banner is
+generic; that belongs to the slow-link chantier. (3) Heap: 12.2 MiB peak with 2535 KeyPackages in
+the state, the Rust heap only; a state the size of the 15.5 MB one a store phone carried is not
+measured here. The log line the phones are read by (`catchup: replay since epoch=... took ... ms`,
+added to the Android service and the iOS extension; it is written for a refused replay too) was
+read on both bench phones on `1.7.0-alpha.9`, 32 commits behind: 363 ms on the Mi 9T and 67 ms in
+the iPhone 12's extension (peak 3 MB), the banner showing the text on both
+([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha9-both-phones-and-the-rig)).
+Neither figure is near the ~10 s that would make persisting the catch-up the next step.
+
+**`dropGroupState`'s reason is the caller's (2026-11-18).** `forgetDistributionGroupById(groupId, reason)` takes the reason the `[MLS] dropped local state` line prints: `absent from server` for a 1:1 or group the server no longer lists, its own sentence for each key-group re-join, `distribution group left` only for a community leaving.

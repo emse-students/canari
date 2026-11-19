@@ -24,6 +24,7 @@ import { Space } from '../spaces/space.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -75,6 +76,9 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     // `clearLydiaAccount` closes the cashiers of the unlinked Business.
     await admin.query(migration('118_lydia_cashiers_and_readiness.sql'));
     await admin.query(migration('119_lydia_cashiers_lot3.sql'));
+    // The bridge's table (lydia-account-bridge.ts), read by every Lydia path: twice, idempotent.
+    await admin.query(migration('167_lydia_account_bridge.sql'));
+    await admin.query(migration('167_lydia_account_bridge.sql'));
     await admin.query('RESET lock_timeout');
     // A readiness revert reports to the platform admins, read from core's `users` (a stand-in here).
     await admin.query(
@@ -369,28 +373,32 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       [LIST]
     );
     tellDelegation.mockClear();
-    let settled = false;
-    const readiness = associations
-      .setLydiaReadiness('vendor-receiver', true, 'admin', { path: 'admin' })
-      .finally(() => {
-        settled = true;
-      });
+    const readiness = associations.setLydiaReadiness('vendor-receiver', true, 'admin', {
+      path: 'admin',
+    });
     // Until the readiness waits on the revoke's lock - or finishes without waiting, which is the
-    // defect, and the assertions below then fail.
-    for (;;) {
-      const {
-        rows: [{ waiting }],
-      } = await admin.query(
-        `SELECT count(*)::int AS waiting FROM pg_stat_activity
-          WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-        [schema]
-      );
-      if (waiting > 0 || settled) break;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    // defect: that outcome is RETURNED (the revoke's connection is released below either way) and
+    // ASSERTED once it is.
+    const waited = await untilWaiting({
+      what: 'the readiness',
+      settled: settledFlag(readiness),
+      onAbsent: 'return',
+      waiting: async () => {
+        const {
+          rows: [{ waiting }],
+        } = await admin.query(
+          `SELECT count(*)::int AS waiting FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [schema]
+        );
+        return waiting;
+      },
+      dump: async () => (await admin.query(ACTIVITY_DUMP_SQL)).rows,
+    });
     await revoke.query('COMMIT');
     await revoke.end();
     await readiness;
+    expect(waited).toMatchObject({ outcome: 'waiting' });
 
     expect(await productState(tee.id)).toEqual({ isActive: false, activationWithheld: true });
     expect(tellDelegation).not.toHaveBeenCalledWith(

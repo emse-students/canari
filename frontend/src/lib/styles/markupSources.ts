@@ -28,42 +28,11 @@
  * does is visible rather than inferred from a quantifier - which is the honest answer to a rule
  * that cannot tell a lazy regex from a greedy one.
  *
- * Test-only, deliberately: no runtime code reads its own source tree.
+ * Test-only, deliberately: no runtime code reads its own source tree. PURE - it imports nothing, so a
+ * harness script (`tools/cross-client-harness/archive/*-selftest.mjs`) can use the strippers on a
+ * fresh checkout under bun. The walkers over the run's snapshot, which need vitest, are in
+ * `./markupTree.ts`.
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
-
-/**
- * Every `.svelte` file under `dir`, recursively.
- *
- * THE DIRECTORY LISTING SAYS WHAT EACH ENTRY IS (`withFileTypes`), SO NOTHING IS `stat`-ED. The walk
- * used to `statSync` every entry, and `src` holds some 6 000 files - 4 000 of them generated
- * Paraglide modules no gate reads. On Windows each `stat` is a filesystem call the antivirus
- * inspects: a walk cost ~0.8 s alone and over 10 s with other workers reading the disk, which made
- * the tree-reading gates (`callBarLayer`, `pageColumn`) time out under the full suite while
- * asserting nothing wrong.
- */
-export function svelteFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) svelteFiles(full, out);
-    else if (entry.name.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
-
-/**
- * Every shipped source file under `dir`, recursively: `.svelte` and `.ts`, tests excluded (a test
- * may quote the very idiom a gate forbids). For the gates that read CODE as well as markup.
- */
-export function shippedSourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) shippedSourceFiles(full, out);
-    else if (/\.(svelte|ts)$/.test(entry.name) && !entry.name.endsWith('.test.ts')) out.push(full);
-  }
-  return out;
-}
 
 /**
  * Cut every `open ... close` region out of `source`, first-close-wins.
@@ -97,16 +66,6 @@ function stripRegions(source: string, open: string, close: string): string {
  */
 export function withoutComments(source: string): string {
   return stripRegions(stripRegions(source, '<!--', '-->'), '/*', '*/');
-}
-
-/** One entry per `.svelte` file under `lib` and `routes`, comment-free, path relative to `src`. */
-export function allMarkup(src: string): { file: string; body: string }[] {
-  return svelteFiles(join(src, 'lib'))
-    .concat(svelteFiles(join(src, 'routes')))
-    .map((file) => ({
-      file: relative(src, file),
-      body: withoutComments(readFileSync(file, 'utf8')),
-    }));
 }
 
 /**

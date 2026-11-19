@@ -2,6 +2,8 @@
   import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
+  import { createLiveStreamGapEdge } from '$lib/utils/chat/liveStreamGapEdge';
+  import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
   import { drainNativePushLog } from '$lib/mobile/nativePushLog';
   import { resolve } from '$app/paths';
@@ -26,7 +28,7 @@
   import { isBiometricPromptDue } from '$lib/services/biometricCadence';
   import {
     loadDeviceKey,
-    isDeviceKeyPersistenceEnabled,
+    pinGateStaySignedInDefault,
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
   import type { SessionExpiredOutcome } from '$lib/composables/session/sessionTypes';
@@ -56,6 +58,7 @@
     getToken,
     clearAuth,
     setSessionExpiredHandler,
+    type SessionExpiredTarget,
     setSignOutHandler,
     isRefreshCredentialProvenDead,
     leaveSignedOut,
@@ -106,9 +109,10 @@
     type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
-  import { registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { readGroupMembersOnceReady, registerReelSendHost } from '$lib/reels/reelSendBridge';
+  import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
   import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
-  import { MlsSessionVacantError, type BulkIngestPhase } from '$lib/mls-client';
+  import { MlsSessionVacantError } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
   import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
@@ -133,6 +137,10 @@
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { buildConversationRow } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import {
+    mirrorStoredNicknames,
+    noteSalonCommunities,
+  } from '$lib/utils/users/conversationNicknames.svelte';
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { callView } from '$lib/stores/callView.svelte';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -455,17 +463,32 @@
   $effect(() => {
     if (globalSession.isLoggedIn) keyReadRefused = false;
   });
+  // A NOTIFICATION NAMES A MEMBER BY THEIR NICKNAME IN THAT CONVERSATION (owner, 2026-11-14), and
+  // the native push path reads it from the device's copy (`nicknameMirror.ts`): every register this
+  // account stores is restated once per signed-in account, and every salon is placed in its
+  // community whenever the list changes (a salon push names the salon, never its community).
+  $effect(() => {
+    const accountId = globalSession.userId;
+    if (!globalSession.isLoggedIn || !accountId) return;
+    untrack(() => mirrorStoredNicknames());
+  });
+  $effect(() => {
+    if (!globalSession.isLoggedIn) return;
+    noteSalonCommunities(globalChannels.channelWorkspaces);
+  });
   let pinLoading = $state(false);
   /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */
   let pinEntry = $state('');
   let pinStep = $state('');
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
-  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
+  // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice,
+  // and, on an install that never made one, TICKED in the app and UNTICKED on the web (owner,
+  // 2026-11-16, decisions 14 and 24; docs/wiki/sessions.md).
   // Disabled once biometrics are configured, because the saved PIN would never be used (the
   // biometric flow takes over at the next launch).
   let showStaySignedIn = $derived(!biometricConfigured);
-  let pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled());
+  let pinStaySignedIn = $state(pinGateStaySignedInDefault());
 
   // Post-login biometric enrolment offer sheet (Tauri only)
   let showBiometricEnrollSheet = $state(false);
@@ -732,7 +755,10 @@
    * reset must not depend on which came first. Measured on DEV-2 (2026-10-25): the frame's check met
    * the dead session, read "not revoked", and this generic sign-out kept every local store.
    */
-  async function handleSessionExpired(outcome?: SessionExpiredOutcome) {
+  async function handleSessionExpired(
+    outcome?: SessionExpiredOutcome,
+    verdictTarget?: SessionExpiredTarget | null
+  ) {
     // RELEASING THIS CALLER IS NOT THE LOGOUT, AND DEDUPLICATING THEM TOGETHER SILENCED THE
     // TRIGGER. `_sessionExpiredHandled` answers "has a logout already run for this expiry" -
     // several observers reach the same verdict at once (the global notifier, the promotion path, a
@@ -771,11 +797,9 @@
     // usually still in flight here (its `load` is what met the 401), and `navigating.to` is the
     // only place that target lives. A bare `/login` dropped a tapped post push (Mi 9T, 2026-10-08).
     const loginPath = loginAfterSessionExpiry(
-      (navigating.to?.url ?? (typeof window === 'undefined' ? null : window.location)) as {
-        pathname: string;
-        search: string;
-        hash: string;
-      } | null
+      navigating.to?.url ??
+        verdictTarget ??
+        (typeof window === 'undefined' ? null : window.location)
     );
     // A session the server ended BECAUSE ITS OWNER REVOKED THIS DEVICE resets the device first. The
     // account is the refused credential's: on a cold start no login has named it to the session yet.
@@ -876,7 +900,7 @@
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
-    await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
+    await clearAuth('pin-gate').catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
     await leaveSignedOut();
     dismissAuthPrompts();
     pinError = '';
@@ -994,6 +1018,7 @@
       playReceiveTone: globalNotifs.playReceiveTone,
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
+      sendReactionNotification: globalNotifs.sendReactionNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
       onChannelWriteRefused: globalChannels.handleChannelWriteRefused,
     };
@@ -1108,10 +1133,7 @@
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
         globalMessaging.drainOrphanMessages(convoKey, msgCtx()),
-      beginBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.beginBulkMessageIngest(phase),
-      endBulkMessageIngest: (phase: BulkIngestPhase) =>
-        globalMessaging.endBulkMessageIngest(msgCtx(), phase),
+      messageIngestObserver: globalMessaging.bulkIngestObserver(msgCtx),
       batchAddMessages: (
         msgs: Parameters<typeof globalMessaging.batchAddMessages>[0],
         contactName: string,
@@ -1391,6 +1413,10 @@
         // One request for every salon, whichever community was cleared: the answer is per account.
         void globalChannels.refreshSalonUnread(channelsCtx(), 'community cleared on a device');
       },
+      onSalonArrivalUncounted: (event: { channelId: string; messageId: string }) => {
+        // The row is not drawn yet, so only the server's count can raise its badge.
+        void globalChannels.refreshSalonUnreadForUncountedArrival(channelsCtx(), event.channelId);
+      },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;
         roleName: string;
@@ -1427,6 +1453,8 @@
         if (e.conversationKey !== globalConvs.selectedContact) return;
         globalNotifs.playReadTone();
       },
+      onInboundReaction: (reaction: InboundReaction) =>
+        globalMessaging.notifyInboundReaction(reaction, msgCtx()),
       onSendError: (msg: string) => {
         globalConvs.sendError = msg;
       },
@@ -1495,13 +1523,19 @@
   // the gap itself - a pause, a drop, a reconnect - is what marks it stale. See
   // `noteLiveStreamTransition`. The first reading is a baseline, not a transition.
   let lastLiveStreamUp: boolean | null = null;
+  const liveStreamGapEdge = createLiveStreamGapEdge();
   $effect(() => {
     const up = globalSession.isWsConnected;
+    const loggedIn = globalSession.isLoggedIn;
     untrack(() => {
       const previous = lastLiveStreamUp;
       lastLiveStreamUp = up;
-      if (previous === null || previous === up || !globalSession.isLoggedIn) return;
+      // A gap loses every `channel.member.*` event by construction, so the RETURN from one re-lists
+      // the communities; the first connect of a session is not a return (`liveStreamGapEdge.ts`).
+      const isReturn = liveStreamGapEdge.observe(up, loggedIn);
+      if (previous === null || previous === up || !loggedIn) return;
       void globalConvs.noteLiveStreamTransition(up, convCtx());
+      if (isReturn) void globalChannels.resyncAfterLiveStreamGap(channelsCtx());
     });
   });
 
@@ -1539,7 +1573,7 @@
     // from any caller - a background poll, a socket reconnect, a native auto-login. Wiring the
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
-    setSessionExpiredHandler(() => void handleSessionExpired());
+    setSessionExpiredHandler((target) => void handleSessionExpired(undefined, target));
     // A signed-in session whose MLS session is lost is NOT an expired one - that is a status, this a
     // local fact (`mlsSessionLoss.ts`) - so it ends on this device only and reopens at the PIN gate.
     setMlsSessionLostHandler((why) => void handleMlsSessionLost(why));
@@ -1553,8 +1587,17 @@
         globalSession.isLoggedIn
           ? globalMessaging.sendChatReelTakeTo(file, keys, msgCtx(), opts)
           : Promise.resolve(null),
+      sendImage: (file, keys) =>
+        globalSession.isLoggedIn
+          ? globalMessaging.sendImageTo(file, keys, msgCtx())
+          : Promise.resolve(null),
       adopt: adoptOutboxPublishedUpload,
       endWait: endOutboxPublishWait,
+      groupMembers: (ids) =>
+        readGroupMembersOnceReady(ids, {
+          whenReady: whenMlsReady,
+          readTree: (id) => globalSession.ensureMls().getGroupMemberIdentities(id),
+        }),
     });
 
     return () => {

@@ -3,6 +3,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -38,7 +39,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
@@ -71,7 +75,12 @@
     firstItemsFaultQuestion,
     refusedProductGridFault,
   } from '$lib/forms/questionFault';
-  import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    gridRequiredPayload,
+    fromFormItems,
+    revisionItems,
+    toFormItemsPayload,
+  } from '$lib/forms/itemsPayload';
   import {
     firstProductGridProblem,
     multipleSubmissionsAfterGridAdded,
@@ -94,7 +103,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { editorChoicesOf, respondentSettingsPayload } from '$lib/forms/respondentFields';
   import {
     draftRefusalMessage,
     formViewHref,
@@ -111,7 +120,9 @@
   } from '$lib/forms/draftCopies';
   import { tellCopyDropped } from '$lib/forms/draftResend';
   import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
-  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { answerEditPayload } from '$lib/forms/answerEditGate';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
@@ -123,6 +134,8 @@
    * (docs/wiki/legacy-compatibility.md).
    */
   const formDrafts = serverFormDrafts() === true;
+  /** Whether this estate stores each priced grid's own switch ([LEGACY] gate, `gridRequiredGate.ts`). */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
 
   let form = $state<Form | null>(null);
   let loadError = $state('');
@@ -132,11 +145,18 @@
   let description = $state('');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
+  /** The closing date; the manager's "Clore" writes it too, so see `closedAtPayload`. */
+  let closedAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 166). */
+  let allowAnswerEdit = $state(false);
+  /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
+  const answerEditAvailable = serverFormAnswerEdit() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /** "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). */
+  let identityChoices = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -242,7 +262,15 @@
       // else the unpublished revision, else the form as published (owner, 2026-11-08).
       const copy = revision ? await unsentCopy(id, revision) : null;
       const typed = copy?.document ?? revision?.document;
-      const f: Form = typed ? ({ ...stored, ...typed } as Form) : stored;
+      // A revision an older editor saved carries `required: true` on every grid, meaning nothing:
+      // each grid opens with the flag the form stores ([LEGACY], `revisionItems`).
+      const f: Form = typed
+        ? ({
+            ...stored,
+            ...typed,
+            items: revisionItems(typed, stored.items) ?? stored.items,
+          } as Form)
+        : stored;
       const userId = currentUserId();
       if (revision) {
         autosave = new FormAutosave({
@@ -294,14 +322,14 @@
   });
 
   /**
-   * The associations a draft may be moved to: the builder's memberships (the server asks membership
-   * of both sides), with the draft's own one even when it is not among them - a global admin's, or
+   * The associations a draft may be moved to: those whose forms the builder manages (the server asks
+   * MANAGE_FORMS of both sides, `formManagedAssociations`), with the draft's own one even when it is not among them - a global admin's, or
    * one the builder has left - so the picker always names where the draft is.
    */
   async function draftAssociationChoices(): Promise<Association[]> {
     let mine: Association[] = [];
     try {
-      mine = await listMyAssociations();
+      mine = formManagedAssociations(await listMyAssociations());
     } catch (e) {
       console.warn(
         `[forms-editor] memberships not loaded; the draft's own association alone is offered: ${e}`
@@ -392,12 +420,14 @@
     submitCondition = f.submitCondition ?? null;
     maxSubmissions = f.maxSubmissions;
     opensAt = isoToDatetimeLocal(f.opensAt);
+    closedAt = isoToDatetimeLocal(f.closedAt);
     allowCashPayment = f.allowCashPayment ?? false;
     allowOnlinePayment = f.allowOnlinePayment ?? true;
     allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
+    allowAnswerEdit = f.allowAnswerEdit ?? false;
     anonymous = f.anonymous ?? false;
     isPublic = f.isPublic ?? false;
-    guestFields = askedGuestFields(f.guestFields);
+    identityChoices = editorChoicesOf(f);
     cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
     fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
     imageUrl = f.imageUrl ?? null;
@@ -442,6 +472,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -500,6 +531,10 @@
     }
     if (requiresPayment && !association) {
       error = m.form_error_association_required();
+      return;
+    }
+    if (formWindowInvalid(opensAt, closedAt)) {
+      error = m.form_closed_at_before_open();
       return;
     }
     const itemsProblem = formItemsProblem(items);
@@ -605,9 +640,21 @@
     goto(resolve('/forms'));
   }
 
+  /**
+   * The end is sent ONLY when the field differs from the published form's: the manager's "Clore"
+   * (list) writes `closedAt` apart from the revision, so a payload repeating the stored value would
+   * undo a close made since. Absent keeps it; a cleared field sends `null`.
+   */
+  function closedAtPayload(): { closedAt?: string | null } {
+    if (closedAt === isoToDatetimeLocal(form?.closedAt)) return {};
+    return { closedAt: closedAt ? new Date(closedAt).toISOString() : null };
+  }
+
   /** The editor's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
+      // Each priced grid's "Obligatoire" switch is the manager's, on an estate that stores it.
+      ...gridRequiredPayload(gridSwitch),
       title,
       description,
       basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -615,13 +662,15 @@
       submitCondition,
       ...cotisationPayload(cotisation, requiresPayment),
       currency: 'eur',
-      items: toFormItemsPayload(items),
+      items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
+      ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      ...closedAtPayload(),
       requiresPayment,
       ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
       ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
@@ -957,12 +1006,15 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
+      {answerEditAvailable}
       bind:anonymous
       anonymousFixed={!isDraft}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
+      bind:closedAt
       bind:submitCondition
       bind:settings={cotisation}
       {tiers}

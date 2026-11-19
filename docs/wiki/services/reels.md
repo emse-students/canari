@@ -19,7 +19,7 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 | Conversations one "Envoyer à..." press may reach | 15 ([reels-in-chat 15.2](../frontend/modules/reels-in-chat.md#152-the-outbox-one-take-n-sends); served as `chatReelMaxTargets` since RC-14, absent from an older server) | `CHAT_REEL_MAX_TARGETS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
 | Widest reel | `width / height` <= 0.8, i.e. 4:5 (owner, 2026-11-09; served as `maxAspectRatio`, absent from an older server) | `REEL_MAX_ASPECT_RATIO`, same file | same route |
-| Kept for | **365 days** (owner, 2026-11-09; was 30, C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
+| Kept for | **365 days by default** (owner, 2026-11-09; was 30, C6) - **an admin setting since 2026-11-14**, read at each publication and stamped into `expiresAt`, so a change applies to new reels only ([retention-settings](../retention-settings.md)) | `platform_config.retention_reel_days` (core migration 025); `REEL_RETENTION_DAYS` is the year migration 158 used | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
 | Blob ceiling | 50 MB of ciphertext | media-service `MEDIA_MAX_SIZE_MB` | `GET /api/media/limits` (unchanged) |
 
@@ -32,10 +32,58 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
+{ "rule": "vertical-or-short", "maxDurationMs": 90000, "maxVerticalDurationMs": 180000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
 ```
 
-### The rule: what is a CanaReel (owner, 2026-11-09)
+`rule` and `maxVerticalDurationMs` are served since 2026-11-14; `retentionDays` is the admin setting
+in force ([retention-settings](../retention-settings.md)).
+
+### The rule: what is a CanaReel
+
+**Decided by the owner, 2026-11-14 - it WIDENS the rule of 2026-11-09 below: "Toute vidéo verticale
+et/ou inférieure à 90 s est un CanaReel, y compris depuis la galerie".** A video is a CanaReel when
+it is **VERTICAL OR 90 s or shorter**: a short landscape or square video is one (drawn with bars -
+the reel pane is `object-contain` over a blurred copy of the frame, `ReelMediaPane`, `ReelBackdrop`),
+and so is a long vertical one, filmed or picked from the gallery alike. Only a **long landscape or
+square** video, or a vertical one past 3 minutes, stays an ordinary post video.
+
+- **The door** (`assertCreateKindShape`, `isReelVideo` in `posts/reel.constants.ts`): a declared reel
+  is accepted when its declared frame is vertical and its declared length is 1 ms to
+  `REEL_VERTICAL_MAX_DURATION_MS` (**3 min**, owner 2026-11-14: *"3 minutes"*), or whatever its frame when its length is 1 ms to
+  `REEL_MAX_DURATION_MS` (90 s). The frame read is the `width`/`height` the media element carries,
+  which is what is stored on the post.
+- **The version-skew gate**: the OR is served as `rule: 'vertical-or-short'` with
+  `maxVerticalDurationMs`, and a client applies it ONLY when it reads that value (`reelRuleOf`). A
+  client older than the change reads `maxDurationMs` and `maxAspectRatio` alone and keeps the
+  2026-11-09 rule - vertical AND 90 s or less - whose reels the new door still accepts; a new client
+  against an older server (the days between the stores and the deploy) keeps it too, so it never
+  sends a landscape reel a door would refuse.
+- **The client**: the composers' publish queue (`reelDeclarationFor`) and the composer notice
+  (`reelRuleNotice`) read the rule as served; the CanaReels tab's gallery pick (`reelPickRefusal`)
+  takes a short landscape video and a long vertical one and refuses only a long landscape one
+  (`reels_capture_long_landscape`) or a vertical one past its 3 min; `publishReel` prepares a pick
+  under `longestReelMs` and decides on the PREPARED frame and length (`reelCapForFrame`), publishing
+  a take outside the rule as a post with a WARN. **The camera's own cap is unchanged** (90 s, C4): the
+  rule decides what a video IS, not how long the camera films. A take for a conversation keeps the
+  2026-11-09 rule and the 60 s chat cap.
+- **The videos already posted become CanaReels** ("Oui, toutes"): HELD migration 176
+  (`176_gallery_videos_become_reels.sql`, `-- canari:hold-for-owner`) converts every published post
+  whose ONLY content is one video into a reel expiring **one year after its publication** - so a
+  video older than a year is deleted at the reel worker's next tick, which the owner accepted. **A
+  post with several media (a video beside photos, two videos) STAYS A POST** (owner, 2026-11-14:
+  *"Rester des posts"*); so does a post
+  with a poll, a form, an attached form, a linked event or a later schedule. A converted reel carries
+  **no `durationMs`** (nobody declared it; `posts_kind_shape` is widened by exactly that, and the
+  NULL marks the migration's rows for the rollback). The file carries the read-only count, by age
+  band, of what it converts and what it would delete at once, and its rollback. Its approval line is
+  the owner's, not written here.
+  **Confirmed by the owner on 2026-11-19** ("Oui, toutes"), having seen production examples of what
+  it converts, horizontal clips included: EVERY already-posted single-video post, whatever its frame
+  and length. The read of 2026-11-19 on production: **47 posts would convert** (10 landscape or
+  square, 37 vertical), and none is a year old, so **nothing is deleted before about November 2027**.
+
+The rule of 2026-11-09, as it stood until then (the "Existing posts are not converted" line is
+superseded by migration 176, and "every other video stays a post" by the OR above):
 
 **Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
 the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
@@ -74,8 +122,7 @@ YEAR** (was C6's month); the reels already published were moved to the year by m
   - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
   capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
   publish the video as a post from "Nouvelle publication".
-- **Existing posts are not converted**: a vertical video published as a post before the rule stays a
-  post (it already shows in the pager through `singleMedia`, below, and never expires).
+- ~~**Existing posts are not converted**~~ - superseded 2026-11-14 by held migration 176, above.
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 
@@ -114,11 +161,13 @@ deleted by this feature.
 `503`, never a reel stored without its blob.
 
 The response is the created post, now carrying `kind`, `durationMs`, `expiresAt`
-(`createdAt + 365 days`, set ONCE at creation; 30 days before 2026-11-09).
+(`createdAt` + the `retention_reel_days` setting in force, 365 by default, set ONCE at creation; 30
+days before 2026-11-09).
 
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a
 reel is a `400` - the video, its duration and its expiry are fixed at publication.
+**The editor honours it (2026-11-16):** `EditPostForm` sends a reel's caption (and the students-only switch, the reach) and nothing else - no `media`, `polls`, `scheduledAt`, `attachedFormId` - and draws no attachment chip, media strip, drop target or "1/10" attachment counter (`PostComposerBar` `captionOnly`; the video is not an attachment the author edits - the counter was still drawn on 1.7.0-alpha.5). It used to resend the reel's own video as `media`, so every caption save answered 400. The server rule is unchanged on purpose: the client is the one that knows it changed nothing else. The save is held while the caption is blank (the server refuses an empty body naming no media, and a reel edit may not name one). Ordinary posts keep sending their media. Test: `EditPostForm.reel.svelte.test.ts`.
 
 ### Reading
 

@@ -3,7 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -16,14 +16,21 @@
     getFormDraft,
     submitForm as submitFormService,
     checkSubmission,
-    type PricingView,
+    type CursusSlice,
     getSubmission,
     cancelPendingSubmission,
     confirmSubmissionPayment,
+    editFormAnswer,
+    getMyEditableAnswers,
+    type EditableAnswer,
     type Form,
   } from '$lib/forms/api';
-  import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
-  import type { ProductGridPrices } from '$lib/forms/productGridContract';
+  import {
+    cursusSlicesOf,
+    fillPriceState,
+    NO_PRICING_SLICE,
+    optionModifierOf,
+  } from '$lib/forms/fillPricing';
   import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
@@ -46,8 +53,17 @@
   import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
+  import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
+  import RespondentNotice from '$lib/components/forms/RespondentNotice.svelte';
+  import {
+    askedDeclaredFields,
+    declaredPayload,
+    emptyDeclaredValues,
+    firstDeclaredProblem,
+  } from '$lib/forms/respondentFields';
   import {
     allRequiredAnswered as allRequiredAnsweredOf,
+    editedAnswers,
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
@@ -61,6 +77,8 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
     ArrowLeft,
     Check,
@@ -72,6 +90,7 @@
     Lock,
     Ban,
     QrCode,
+    Pencil,
   } from '@lucide/svelte';
   import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
@@ -85,6 +104,8 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import { offersAnswerEdit } from '$lib/forms/answerEditGate';
+  import { serverFormAnswerEdit } from '$lib/stores/appVersionCheck.svelte';
   import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
@@ -100,8 +121,12 @@
   }
 
   let form = $state<Form | null>(null);
+  /** The window of the form: the server's verdict of the load, or of the last typed refusal. */
+  const win = useFormWindow(() => form, 'FormView');
   const opensLaterIso = $derived(form?.opensAt ? formOpensAtIso(form.opensAt) : null);
-  const isNotOpenYet = $derived(!!opensLaterIso);
+  const isNotOpenYet = $derived(win.notYet);
+  /** The end has passed (the manager's close or a date that came): the rule of the public page and the list. */
+  const isClosed = $derived(win.closed);
   const reminder = useFormReminder(() => formId ?? '');
   let selections = $state<Record<string, any>>({});
   let submitted = $state(false);
@@ -131,21 +156,29 @@
   let paidOverCapacity = $state(false);
   let formFull = $state(false);
   /**
-   * This submitter's slice of the pricing grid, from the server. Null when the form has one price.
+   * This submitter's slices of the pricing grid, from the server: one per distinct cursus (D32), the
+   * page showing the cheapest (`fillPriceState`). A slice's `pricing` is null when the form has one
+   * price; its `productGridPrices` are this member's prices on each priced grid.
    *
    * The page derives no pricing RULE of its own: everything about who the person is has already been
    * resolved server-side (cotisation, promo, formation - none of which a browser can be trusted
    * with), and what is left is their own answers, which the page resolves as they click. The server
    * recomputes the whole thing at submit and that figure is what gets charged.
    */
-  let pricing = $state<PricingView | null>(null);
-  /** This member's prices on each priced grid (`product_grid`), their category resolved server-side. */
-  let productGridPrices = $state<ProductGridPrices>({});
+  let slices = $state<readonly CursusSlice[]>(NO_PRICING_SLICE);
   /**
    * The required question the last send stopped on: its card says why, until it is answered. Kept
    * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
    */
   let missingAnswer = $state<MissingAnswer | null>(null);
+  /**
+   * What an ANONYMOUS form asks each respondent to declare (owner, 2026-11-16): its answers are
+   * joined to no account, so the promo and formation, status and campus it wants are typed here.
+   * A named form asks nothing: the server reads them from the account (`RespondentNotice`).
+   */
+  const askedDeclared = $derived(form?.anonymous ? askedDeclaredFields(form.guestFields) : []);
+  let declared = $state(emptyDeclaredValues());
+  let declaredChecked = $state(false);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
   let hiddenItemIds = $state<string[]>([]);
   /** False when a `submitCondition` excludes them from the form entirely. */
@@ -156,6 +189,15 @@
    */
   let cotisationHeld = $state(false);
   let submitting = $state(false);
+  /**
+   * The caller's answers they may still change (forms.md, "A respondent changes their own
+   * answer"): empty unless the form allows it, is not anonymous and is open - the server decides.
+   */
+  let editableAnswers = $state<EditableAnswer[]>([]);
+  /** The answer being changed, or null: the questions then draw IT, its price-setting ones locked. */
+  let editing = $state<EditableAnswer | null>(null);
+  /** The locked questions of the answer being changed: drawn read-only, never sent. */
+  const editLocked = $derived(new Set(editing?.lockedItemIds ?? []));
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
@@ -292,6 +334,7 @@
    */
   function resetFormState(): void {
     form = null;
+    win.clear();
     selections = {};
     submitted = false;
     paymentPending = false;
@@ -299,8 +342,7 @@
     pendingCheckout = null;
     paidOverCapacity = false;
     formFull = false;
-    pricing = null;
-    productGridPrices = {};
+    slices = NO_PRICING_SLICE;
     missingAnswer = null;
     hiddenItemIds = [];
     maySubmit = true;
@@ -340,6 +382,7 @@
       const f = await getForm(id);
       if (stale()) return;
       form = f;
+      win.clear();
       selections = initialSelections(f.items);
       // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
       // building is drawn when THIS reader may read it. The flag alone never shuts a published
@@ -404,18 +447,16 @@
         hasSubmitted,
         paymentStatus,
         formFull: full,
-        pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
         refusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
-      pricing = view;
+      slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
       cotisationHeld = refusalCode === FORM_COTISATION_HELD;
-      productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
         watchCheckout(submission.submissionId, null);
@@ -425,6 +466,7 @@
       if (!hasSubmitted && formOpensAtIso(f.opensAt)) {
         void reminder.load();
       }
+      if (offersAnswerEdit(f, !!userId, serverFormAnswerEdit())) void loadEditableAnswers(f.id);
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
@@ -456,28 +498,29 @@
   const visibleItems = $derived(
     // Nothing to fill in when the form is not open to this person - the questions would only
     // invite an answer the server is going to refuse.
-    form && maySubmit ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds)) : []
+    form && (maySubmit || editing)
+      ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds))
+      : []
   );
 
   /**
-   * Everything the page shows about the price, from the slice the server sent (`fillPriceState`,
+   * Everything the page shows about the price, from the slices the server sent (`fillPriceState`,
    * shared with the guest's page): the cell their answers land on, whether it is decided or does
    * not exist, the options that would close it, and the total the pay button names.
    */
   const price = $derived(
     fillPriceState({
       basePrice: form?.basePrice ?? 0,
-      pricing,
+      slices,
       items: form?.items ?? [],
       visibleItems,
       selections,
-      productGridPrices,
     })
   );
   /** Whether the form holds a priced grid this member sees: the bar then totals the order. */
   const hasProductGrid = $derived(visibleItems.some(isProductGrid));
   /** The categories this member is charged under, for the read-only line under the header. */
-  const tierLabels = $derived(appliedTierLabels(visibleItems, productGridPrices));
+  const tierLabels = $derived(appliedTierLabels(visibleItems, price.productGridPrices));
   const priceUnavailable = $derived(price.priceUnavailable);
   const appliedPricingLabel = $derived(price.appliedLabel);
 
@@ -587,6 +630,75 @@
     }
   }
 
+  /** Reads which of the caller's answers they may still change; a failure offers no change. */
+  async function loadEditableAnswers(id: string) {
+    try {
+      editableAnswers = await getMyEditableAnswers(id);
+      Log.d('FormView', `editable answers: ${editableAnswers.length}`);
+    } catch (err) {
+      console.warn(
+        `[FormView] editable answers read failed status=${refusalStatus(err) ?? 'transport'}`,
+        err
+      );
+      editableAnswers = [];
+    }
+  }
+
+  /** Opens one of the caller's answers for change: its values drawn, its locked questions shut. */
+  function startEdit(answer: EditableAnswer) {
+    if (!form) return;
+    Log.d('FormView', `edit opened: ${answer.lockedItemIds.length} locked question(s)`);
+    editing = answer;
+    selections = selectionsFromAnswers(form.items, answer.answers as Record<string, any>);
+    error = '';
+    successMessage = '';
+    missingAnswer = null;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /**
+   * Leaves the change: a single-answer form keeps drawing the answer (as saved, or as it was), a
+   * form taking several goes back to a blank answer.
+   */
+  function stopEdit(saved: Record<string, unknown> | null) {
+    if (!form || !editing) return;
+    Log.d('FormView', saved ? 'edit closed after a save' : 'edit cancelled');
+    const shown = saved ?? editing.answers;
+    editing = null;
+    missingAnswer = null;
+    error = '';
+    selections = submitted
+      ? selectionsFromAnswers(form.items, shown as Record<string, any>)
+      : initialSelections(form.items);
+  }
+
+  /** Sends the changed answer; nothing about the price or the payment moves (server-enforced). */
+  async function saveEdit() {
+    if (!form || !editing) return;
+    const answer = editing;
+    error = '';
+    if (isClosed) {
+      Log.d('FormView', 'answer change refused: the form is closed');
+      error = m.form_refusal_closed();
+      return;
+    }
+    submitting = true;
+    try {
+      const sent = editedAnswers(visibleItems, selections, answer.lockedItemIds);
+      await editFormAnswer(form.id, answer.id, sent);
+      Log.d('FormView', 'answer changed');
+      showToast(m.form_view_edit_saved(), 'info');
+      stopEdit({ ...selections });
+      void loadEditableAnswers(form.id);
+    } catch (e: unknown) {
+      Log.d('FormView', `answer change refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
+    } finally {
+      submitting = false;
+    }
+  }
+
   /** Lydia's payer page again, for a payer who came back before confirming. */
   async function reopenCheckout(): Promise<void> {
     const url = pendingCheckout?.checkoutUrl;
@@ -622,8 +734,15 @@
       error = m.form_file_wait_upload();
       return;
     }
-    if (isNotOpenYet && form.opensAt) {
-      error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
+    if (isNotOpenYet) {
+      error = form.opensAt
+        ? m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) })
+        : m.form_view_not_open_yet();
+      return;
+    }
+    if (isClosed) {
+      Log.d('FormView', 'submit refused: the form is closed');
+      error = m.form_refusal_closed();
       return;
     }
     if (!userId.trim()) {
@@ -631,7 +750,7 @@
       return;
     }
 
-    const missing = firstMissingAnswer(visibleItems, selections);
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
     missingAnswer = missing;
     if (missing?.itemId === null) {
       // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
@@ -647,6 +766,22 @@
       document
         .getElementById(`q-${missing.itemId}`)
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // What an anonymous form asks to be declared, said on its own fields, brought into view.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('FormView', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (editing) {
+      // A change neither prices nor pays: the payment steps below are not reached.
+      await saveEdit();
       return;
     }
 
@@ -666,15 +801,16 @@
         email: '',
         ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
+        ...declaredPayload(askedDeclared, declared),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
       if (res.checkoutUrl) {
-        const { navigateExternal } = await import('$lib/utils/openExternal');
-        await navigateExternal(res.checkoutUrl);
         // On a native app the page stays behind the browser: it says the payment is in progress,
         // keeps Lydia's page to reopen, and reads the answer when the payer comes back. On the web
-        // the window has already left for Lydia, and the return page takes over.
+        // the window has already left for Lydia, and the return page takes over. The watch starts
+        // BEFORE the hand-off: the browser may open and the call still reject, or resolve after the
+        // app already returned to the screen - neither may lose it.
         if (res.submissionId) {
           Log.d('FormView', 'payer handed to Lydia, the answer waits for the return');
           paymentRetry = null;
@@ -684,6 +820,8 @@
         } else {
           console.warn('[FormView] a checkout came back without its submission id');
         }
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
         // The previous request of this answer was found PAID while settling it: no new one.
@@ -695,6 +833,7 @@
       }
     } catch (e: unknown) {
       Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
       // Worded from the refusal's CODE, never from the server's English (D6).
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
@@ -709,7 +848,8 @@
    * answer, where the form accepts one, is not paused - it never reaches an account.
    */
   const onlinePaymentPaused = $derived(
-    !!form?.paymentsPaused &&
+    !editing &&
+      !!form?.paymentsPaused &&
       calculateTotal() > 0 &&
       !(form.allowCashPayment && paymentMethodChoice === 'cash')
   );
@@ -718,9 +858,15 @@
     if (!form) return 0;
     return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
+  /**
+   * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
+   * it), a grid's flag means nothing and the ORDER is held empty-or-not across the grids.
+   */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
   /** What `reachedEnd` waits on: `handleSubmit`'s own validation as a yes/no - every visible
-   * REQUIRED question answered and, on a grid form, one unit across the grids (no grid on its own). */
-  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections));
+   * REQUIRED question answered - a required grid one unit of its own, or, before the switch
+   * ([LEGACY] `gridSwitch` off), one unit across the grids. */
+  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections, gridSwitch));
   /**
    * The empty-order sentence, shown after a send refused for it and only while the order is still
    * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
@@ -778,18 +924,18 @@
     variant="primary"
     class="shrink-0"
     disabled={preview ||
-      submitted ||
-      formFull ||
       submitting ||
       isNotOpenYet ||
-      !maySubmit ||
-      priceUnavailable ||
-      onlinePaymentPaused}
+      isClosed ||
+      (!editing &&
+        (submitted || formFull || !maySubmit || priceUnavailable || onlinePaymentPaused))}
     loading={submitting}
     onclick={() => void handleSubmit()}
   >
     {#if preview}
       {m.form_preview_submit_disabled()}
+    {:else if editing}
+      <Check size={16} class="mr-1.5" />{m.form_view_edit_save()}
     {:else if paymentPending}
       <Check size={16} class="mr-1.5" />{m.form_view_pending()}
     {:else if submitted}
@@ -888,7 +1034,7 @@
     <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
     <!-- ── Progress bar ── -->
-    {#if !submitted && totalCount > 0}
+    {#if (!submitted || editing) && totalCount > 0}
       <div class="mb-5 flex items-center gap-3">
         <div class="bg-cn-border/60 h-2 flex-1 overflow-hidden rounded-full">
           <div
@@ -926,12 +1072,29 @@
       </a>
     {/if}
 
+    <!-- ── Closed (the manager's close or a date that came) ── -->
+    {#if isClosed}
+      <p
+        class="text-text-muted mb-4 text-center text-sm font-medium"
+        data-testid="form-closed-notice"
+      >
+        {m.form_view_closed()}
+      </p>
+    {/if}
+
     <!-- ── Not open yet ── -->
-    {#if isNotOpenYet && form.opensAt}
+    {#if isNotOpenYet && !form.opensAt}
+      <p
+        class="border-accent/40 bg-accent/20 text-accent-text mb-4 rounded-2xl border px-4 py-4 text-sm font-semibold"
+        data-testid="form-not-open-notice"
+      >
+        {m.form_view_not_open_yet()}
+      </p>
+    {:else if isNotOpenYet && form.opensAt}
       <div
         class="border-accent/40 bg-accent/20 mb-4 flex items-center justify-between gap-4 rounded-2xl border px-4 py-4"
       >
-        <p class="text-accent-text text-sm font-semibold">
+        <p class="text-accent-text text-sm font-semibold" data-testid="form-not-open-notice">
           {m.form_view_opens_at({ date: formatFormOpensAt(form.opensAt) })}
         </p>
         {#if reminder.loaded}
@@ -975,7 +1138,7 @@
     <!-- The combination they answered their way into does not exist. Separate from the block above
          on purpose: that one is about who they ARE and is fixed for the whole visit, this one moves
          as they answer and is theirs to undo. -->
-    {#if maySubmit && priceUnavailable && !submitted}
+    {#if maySubmit && priceUnavailable && !submitted && !editing}
       <div
         class="border-cn-border bg-cn-border/10 mb-4 flex items-start gap-3 rounded-2xl border px-5 py-4"
       >
@@ -984,6 +1147,41 @@
           <p class="text-text-main text-sm font-bold">{m.form_view_combination_closed_title()}</p>
           <p class="text-text-muted mt-1 text-xs">{m.form_view_combination_closed_desc()}</p>
         </div>
+      </div>
+    {/if}
+
+    <!-- ── Changing an answer: what is changed, and the way out ── -->
+    {#if editing}
+      <div
+        class="border-accent/40 bg-accent/10 mb-4 flex items-start justify-between gap-3 rounded-2xl border px-4 py-3"
+        role="status"
+        data-testid="form-edit-banner"
+      >
+        <p class="text-text-main text-sm font-medium">
+          {form.requiresPayment
+            ? m.form_view_edit_banner({ date: formatFormOpensAt(editing.createdAt) })
+            : m.form_view_edit_banner_free({ date: formatFormOpensAt(editing.createdAt) })}
+        </p>
+        <Button variant="ghost" size="compact" class="shrink-0" onclick={() => stopEdit(null)}>
+          {m.form_view_edit_cancel()}
+        </Button>
+      </div>
+    {:else if form.allowMultipleSubmissions && editableAnswers.length > 0}
+      <!-- A form taking several answers: each is changed separately. -->
+      <div class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-4 py-3">
+        <p class="text-text-main mb-2 text-sm font-bold">{m.form_view_my_answers_title()}</p>
+        <ul class="space-y-1">
+          {#each editableAnswers as answer (answer.id)}
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-text-muted text-sm">
+                {m.form_view_my_answer_row({ date: formatFormOpensAt(answer.createdAt) })}
+              </span>
+              <Button variant="soft" size="compact" onclick={() => startEdit(answer)}>
+                <Pencil size={14} class="mr-1" />{m.form_view_edit_answer_short()}
+              </Button>
+            </li>
+          {/each}
+        </ul>
       </div>
     {/if}
 
@@ -1015,8 +1213,11 @@
             {item}
             grid={item.productGrid}
             bind:value={selections[item.id]}
-            disabled={submitted || isNotOpenYet}
-            prices={productGridPrices[item.id]}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
+            prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
           />
@@ -1025,7 +1226,10 @@
             {item}
             index={qi}
             bind:value={selections[item.id]}
-            disabled={submitted || isNotOpenYet}
+            disabled={(submitted && !editing) ||
+              isNotOpenYet ||
+              isClosed ||
+              editLocked.has(item.id)}
             formId={form.id}
             currency={form.currency}
             fileRetentionDays={form.fileRetentionDays}
@@ -1036,11 +1240,17 @@
               busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
           />
         {/if}
+        <!-- A question that set the price stays as answered: no top-up, no partial refund. -->
+        {#if editLocked.has(item.id)}
+          <p class="text-text-muted -mt-1 flex items-center gap-1.5 px-1 text-xs">
+            <Lock size={12} />{m.form_view_edit_locked_note()}
+          </p>
+        {/if}
       {/each}
     </div>
 
     <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
-    {#if onlinePaymentPaused && !submitted}
+    {#if onlinePaymentPaused && !submitted && !editing}
       <div
         class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text mt-4 rounded-2xl border px-4 py-3 text-sm"
         role="status"
@@ -1050,8 +1260,21 @@
       </div>
     {/if}
 
+    <!-- ── Who answered: declared on an anonymous form, joined from the account (and said) on a
+         named one ── -->
+    {#if !submitted && !editing}
+      <DeclaredIdentityFields
+        asked={askedDeclared}
+        bind:values={declared}
+        showErrors={declaredChecked}
+        anonymous
+        disabled={submitting || preview}
+      />
+      <RespondentNotice respondentFields={form.respondentFields} />
+    {/if}
+
     <!-- ── Payment method (cash vs online) ── -->
-    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly}
+    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly && !editing}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
     {/if}
 
@@ -1104,14 +1327,13 @@
     at every breakpoint for the same reason.
   -->
   <div
-    class="keyboard-aware-bottom mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd ||
-    hasProductGrid
+    class="mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd || hasProductGrid
       ? 'sticky bottom-0 z-50 md:pb-5'
       : ''}"
   >
     <!-- AN ORDER IS TOTALLED WHERE IT IS PAID, from the first item (owner's mockup, 2026-11-06): a
          form with a priced grid keeps the bar stuck from the start, with the order's recap. -->
-    {#if hasProductGrid && !submitted && !priceUnavailable}
+    {#if hasProductGrid && !submitted && !priceUnavailable && !editing}
       <ProductGridOrderBar
         lines={price.gridLines}
         totalCents={calculateTotal()}
@@ -1124,10 +1346,27 @@
         class="border-cn-border/60 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg"
       >
         <div class="min-w-0 flex-1">
-          {#if submitted}
-            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
-              ><Check size={16} /> {m.form_view_response_sent()}</span
-            >
+          {#if editing}
+            <span class="text-text-main text-sm font-semibold">{m.form_view_edit_answer()}</span>
+          {:else if submitted}
+            <!-- ONE LINE when it fits, wraps when it does not (owner, 2026-11-14): status and short edit action share a row; the sent button already carries the check, so neither text carries an icon. -->
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span class="text-green-ok text-sm font-bold whitespace-nowrap"
+                >{m.form_view_response_sent()}</span
+              >
+              <!-- One answer to this form: it is reopened from here (several: the list above). -->
+              {#if !form.allowMultipleSubmissions && editableAnswers.length > 0}
+                <Button
+                  variant="link"
+                  size="compact"
+                  class="whitespace-nowrap"
+                  data-testid="form-edit-open"
+                  onclick={() => startEdit(editableAnswers[0])}
+                >
+                  {m.form_view_edit_answer_short()}
+                </Button>
+              {/if}
+            </div>
           {:else if priceUnavailable}
             <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
           {:else if calculateTotal() > 0}
@@ -1180,7 +1419,7 @@
           ? m.form_view_payment_declined_note()
           : m.form_view_payment_ended_note()}
       </p>
-    {:else if formFull && !submitted}
+    {:else if formFull && !submitted && !editing}
       <p class="text-text-muted mt-2 text-center text-sm font-medium">
         {m.form_view_form_full_note()}
       </p>

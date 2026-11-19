@@ -3,7 +3,8 @@ import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
 import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
-import type { GuestIdentityField } from './guestIdentity';
+import type { RespondentChoice, RespondentIdentity } from './respondentFields';
+import { CAMPUSES, campusLabel } from '$lib/profile/miconnectProfile';
 
 export interface FormOption {
   label: string;
@@ -89,6 +90,11 @@ export interface AudienceCondition {
 }
 
 export interface CreateFormPayload {
+  /**
+   * `true` from this editor, which draws each priced grid's "Obligatoire" switch: the `required`
+   * it sends on a grid is the manager's choice (`GRID_REQUIRED_SWITCH`). Never stored.
+   */
+  gridRequiredSwitch?: boolean;
   title: string;
   description?: string;
   basePrice: number;
@@ -97,6 +103,11 @@ export interface CreateFormPayload {
   maxSubmissions?: number;
   /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
+  /**
+   * ISO 8601 - submissions blocked after this instant, after `opensAt`. On an EDIT, absent keeps
+   * the stored end (the manager's close included) and `null` clears it.
+   */
+  closedAt?: string | null;
   requiresPayment?: boolean;
   /**
    * The association the form belongs to. A create names it or nothing; an edit leaves it when
@@ -108,6 +119,11 @@ export interface CreateFormPayload {
   /** Allow the same user to submit multiple times (e.g. product orders). */
   allowMultipleSubmissions?: boolean;
   /**
+   * A respondent with an account may change their own answer while the form is open, the questions
+   * that touch the price excepted (migration 166). Refused beside `anonymous`.
+   */
+  allowAnswerEdit?: boolean;
+  /**
    * Answers are stored without their author, address or exact time. Free forms only and fixed at
    * creation: the edit screen never sends it and shows it read-only.
    */
@@ -118,10 +134,17 @@ export interface CreateFormPayload {
    */
   isPublic?: boolean;
   /**
-   * What a public form asks a guest about who they are (`guestIdentity.ts`): any of `lastName`,
-   * `firstName`, `email`, each required once asked. Null or absent asks nothing, the default.
+   * What the form ASKS of whoever it cannot read from an account (`respondentFields.ts`): a guest's
+   * `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` (a guest, or any
+   * respondent of an anonymous form), each required once asked. Null or absent asks nothing.
    */
-  guestFields?: GuestIdentityField[] | null;
+  guestFields?: RespondentChoice[] | null;
+  /**
+   * What the form JOINS from a member's account to each answer (owner, 2026-11-16): any of
+   * `lastName`, `firstName`, `cursus`, `status`, `campus`, read by the server when they send.
+   * Served empty on an anonymous form; absent from a server older than it.
+   */
+  respondentFields?: Exclude<RespondentChoice, 'email'>[];
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /**
@@ -181,7 +204,8 @@ export interface Form extends CreateFormPayload {
   createdAt: string;
   updatedAt: string;
   /**
-   * Display name of the linked association, resolved server-side for the list.
+   * Display name of the linked association, resolved server-side for the list AND the single read
+   * (`GET /forms/:id`, which the link-preview card draws its "Ouvert · <association>" from).
    *
    * The list covers forms reachable through MANAGE_FORMS as well as one's own, so a row has to say
    * whose form it is - and it says it by NAME. Null for a personal form, and also for a form whose
@@ -190,6 +214,14 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** When a manager closed the form (`GET /forms/:id`); absent or null while it takes answers. */
+  closedAt?: string | null;
+  /**
+   * Whether the form takes answers NOW, judged by the server (every read and the close answer
+   * carry it; absent only from a server that predates it, `formWindow.ts`). Never derive it from
+   * `opensAt` / `closedAt` against the device clock.
+   */
+  windowState?: 'open' | 'not-yet' | 'closed';
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
@@ -221,6 +253,7 @@ export interface FormDraft {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
@@ -318,7 +351,7 @@ export async function getFormDraft(id: string): Promise<FormDraft> {
  * keepalive requests in flight at 64 KiB together. A larger revision is not lost - the device copy
  * holds it until the next send (`draftCopies.ts`).
  */
-export const KEEPALIVE_BODY_MAX = 60_000;
+const KEEPALIVE_BODY_MAX = 60_000;
 
 /**
  * The autosave: stores `document` as the revision after `baseRevision`, under the client's `saveId`.
@@ -453,6 +486,21 @@ export async function deleteForm(id: string): Promise<{ ok: boolean }> {
   return res.json();
 }
 
+/**
+ * "Clore le formulaire" (`closed`) or "Rouvrir": sets or clears the form's end on the server, apart
+ * from the editor's unpublished revision. Returns the stored `closedAt` and the server's `windowState`.
+ */
+export async function setFormClosed(
+  id: string,
+  closed: boolean
+): Promise<{ id: string; closedAt: string | null; windowState?: Form['windowState'] }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/${closed ? 'close' : 'reopen'}`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res, closed ? 'Failed to close form' : 'Failed to reopen form');
+  return res.json();
+}
+
 /** Removes the banner image from a form. */
 export async function deleteFormImage(id: string): Promise<Form> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/image`, { method: 'DELETE' });
@@ -500,14 +548,29 @@ export interface PricingView {
   ignoredModifierQuestionIds: string[];
 }
 
+/**
+ * The page's pricing through ONE of the person's cursus (D32): its grid row and its grid prices.
+ * `/check` and the public read serve one per distinct cursus, and the page shows the cheapest
+ * (`fillPriceState`).
+ */
+export interface CursusSlice {
+  pricing: PricingView | null;
+  productGridPrices: ProductGridPrices;
+}
+
 export async function checkSubmission(formId: string): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
   /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
   submissionId?: string;
   formFull: boolean;
-  /** Null when the form has one price for everybody. */
+  /**
+   * [LEGACY] The FIRST cursus slice alone, read only from a server older than D32
+   * (`cursusSlicesOf`). Null when the form has one price for everybody.
+   */
   pricing: PricingView | null;
+  /** Every distinct cursus slice (D32). Absent from a server older than it. */
+  cursusSlices?: CursusSlice[];
   /** Questions hidden from this submitter by a profile criterion, answers aside. */
   hiddenItemIds: string[];
   /** False when a `submitCondition` excludes them. */
@@ -545,12 +608,19 @@ export interface Submission {
   /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
   lines?: ProductGridLine[] | null;
   createdAt: string;
+  /** When the respondent last changed the answer (migration 166); null if never. */
+  editedAt?: string | null;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
   /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
   guestLastName?: string | null;
   guestFirstName?: string | null;
   guestEmail?: string | null;
+  /**
+   * What the form kept of who answered (migration 174): joined from the account at submit time, or
+   * declared by a guest or an anonymous form's respondent. Null on an answer older than it.
+   */
+  respondentIdentity?: RespondentIdentity | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -645,12 +715,29 @@ export interface ExportLabels {
   email: string;
   /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
   guest: string;
+  /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
+  edited: string;
+  /** The words of the respondent's identity columns, mirrored by `export-labels.ts`. */
+  identity: IdentityExportLabels;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
    * (`EXPORT_LABELS_PRODUCT_GRID_MISSING`), and checks them, unused, on any other form.
    */
   productGrid: ProductGridExportLabels;
+}
+
+/** The words of the identity columns (promo, formation, status, campus), mirrored by the server. */
+export interface IdentityExportLabels {
+  promo: string;
+  formation: string;
+  status: string;
+  campus: string;
+  student: string;
+  staff: string;
+  campuses: Record<string, string>;
+  /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
+  notDeclared: string;
 }
 
 /** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
@@ -686,6 +773,17 @@ export function exportLabels(): ExportLabels {
     fileDeleted: m.form_answer_file_deleted(),
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
+    edited: m.form_export_col_edited(),
+    identity: {
+      promo: m.form_respondent_promo_label(),
+      formation: m.form_respondent_formation_label(),
+      status: m.form_respondent_field_status(),
+      campus: m.form_respondent_field_campus(),
+      student: m.form_respondent_status_student(),
+      staff: m.form_respondent_status_staff(),
+      campuses: Object.fromEntries(CAMPUSES.map((c) => [c, campusLabel(c)])),
+      notDeclared: m.form_respondent_not_declared(),
+    },
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),
@@ -848,6 +946,46 @@ export async function cancelPendingSubmission(
   return res.json();
 }
 
+/** One of the caller's own answers they may still change, as `GET :id/my-answers` serves it. */
+export interface EditableAnswer {
+  id: string;
+  formId: string;
+  answers: Record<string, unknown>;
+  totalPaid: number;
+  paymentStatus: string;
+  createdAt: string;
+  editedAt?: string | null;
+  /** The questions that touch the price: drawn read-only, never sent changed. */
+  lockedItemIds: string[];
+}
+
+/**
+ * The caller's answers to this form they may still change - empty when the form does not allow it,
+ * is anonymous or is closed. Newest first; one on a single-answer form.
+ */
+export async function getMyEditableAnswers(formId: string): Promise<EditableAnswer[]> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/my-answers`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch your answers');
+  return res.json();
+}
+
+/**
+ * Changes the caller's own answer in place. Refusals carry a `code` (`FORM_ANSWER_LOCKED`, ...),
+ * worded by `formSubmitRefusalMessage`; nothing about payment is sent or changed.
+ */
+export async function editFormAnswer(
+  formId: string,
+  submissionId: string,
+  answers: Record<string, unknown>
+): Promise<{ submissionId: string; editedAt: string | null }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/answers`,
+    { method: 'PUT', body: JSON.stringify({ answers }) }
+  );
+  if (!res.ok) throw await refusal(res, 'Answer change failed');
+  return res.json();
+}
+
 export async function submitForm(
   id: string,
   payload: {
@@ -858,10 +996,18 @@ export async function submitForm(
     successUrl?: string;
     cancelUrl?: string;
     paymentMethod?: 'online' | 'cash';
+    /** On an anonymous form, what it asks to be declared (`declaredPayload`); never otherwise. */
+    declaredFormation?: string;
+    declaredPromo?: number;
+    declaredStatus?: string;
+    declaredCampus?: string;
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {
     method: 'POST',
+    // The build is named: the server takes an answer without the declared fields only from a
+    // build older than the questions that ask them (`respondent-identity.ts`).
+    headers: withClientVersionHeader(),
     body: JSON.stringify(payload),
   });
   // Through the one builder, so a payment refusal (`code`, and the amount bounds) is worded by
@@ -890,10 +1036,14 @@ export type PublicForm = Pick<
   | 'paymentsPaused'
 > & {
   closedAt?: string | null;
-  /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
-  guestFields: GuestIdentityField[];
+  windowState?: 'open' | 'not-yet' | 'closed';
+  /** What the page asks a guest about who they are; [] asks nothing (`respondentFields.ts`). */
+  guestFields: RespondentChoice[];
   formFull: boolean;
+  /** [LEGACY] the one slice, read only from a server older than D32 (`cursusSlicesOf`). */
   pricing: PricingView | null;
+  /** A guest's slices - one, a guest having no cursus. Absent from a server older than D32. */
+  cursusSlices?: CursusSlice[];
   /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
   productGridPrices?: ProductGridPrices;
 };
@@ -977,11 +1127,17 @@ export async function submitPublicForm(
     guestLastName?: string;
     guestFirstName?: string;
     guestEmail?: string;
+    /** What the form asks a guest to declare (`declaredPayload`); the server refuses any other. */
+    declaredFormation?: string;
+    declaredPromo?: number;
+    declaredStatus?: string;
+    declaredCampus?: string;
   }
 ): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // Named, as a member's submit is (`submitForm`).
+    headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Submission failed');

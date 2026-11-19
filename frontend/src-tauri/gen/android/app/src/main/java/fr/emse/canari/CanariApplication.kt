@@ -71,7 +71,7 @@ class CanariApplication : Application() {
         try {
             NativeCacheKey.ensure(this)
         } catch (e: Exception) {
-            Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e)
+            Log.e(TAG, "NativeCacheKey.ensure: exception: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
         // A SALON TAKES NO CONVERSATION SHORTCUT SINCE 2026-11-01 (`showMessageNotification`), and the
         // ones the socket trigger published before it would hold the shared dynamic budget until the
@@ -87,7 +87,7 @@ class CanariApplication : Application() {
                     Log.d(TAG, "salon conversation shortcuts: retired ($removed) - not asked again")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "salon conversation shortcuts: not retired: ${e.message}", e)
+                Log.e(TAG, "salon conversation shortcuts: not retired: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
     }
@@ -112,7 +112,7 @@ class CanariApplication : Application() {
             )
         } catch (e: Exception) {
             // Never fatal: the next process start does the work anyway.
-            Log.e(TAG, "registerUnlockReceiver: ${e.message}", e)
+            Log.e(TAG, "registerUnlockReceiver: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -142,7 +142,7 @@ class CanariApplication : Application() {
                 .writeText(installer ?: "")
             Log.d(TAG, "recordInstallerPackage: installed by ${installer ?: "(none - sideload)"}")
         } catch (e: Exception) {
-            Log.e(TAG, "recordInstallerPackage: exception: ${e.message}", e)
+            Log.e(TAG, "recordInstallerPackage: exception: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -180,7 +180,7 @@ class CanariApplication : Application() {
                 Log.e(TAG, "checkKeystoreHealth: Keystore lost - background push disabled")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "checkKeystoreHealth: exception: ${e.message}", e)
+            Log.e(TAG, "checkKeystoreHealth: exception: ${e.javaClass.simpleName}")
         }
     }
 
@@ -201,7 +201,7 @@ class CanariApplication : Application() {
                 file.writeBytes(ByteArray(rawBytes.size) { 0 })
                 file.delete()
             } catch (e: Exception) {
-                Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.message}", e)
+                Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.javaClass.simpleName}")
             }
         }
     }
@@ -241,7 +241,7 @@ class CanariApplication : Application() {
                 manager.deleteNotificationChannel(PLUGIN_DEFAULT_CHANNEL_ID)
                 Log.d(TAG, "removePluginDefaultChannel: deleted the plugin's \"Default\" channel")
             } catch (e: Exception) {
-                Log.e(TAG, "removePluginDefaultChannel: exception: ${e.message}", e)
+                Log.e(TAG, "removePluginDefaultChannel: exception: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
         }
 

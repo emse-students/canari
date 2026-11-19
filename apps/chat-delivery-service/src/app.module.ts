@@ -15,9 +15,11 @@ import { MessagingController } from './controllers/messaging.controller';
 import { MessagingService } from './services/messaging.service';
 import { DeviceSignatureKeysService } from './services/device-signature-keys.service';
 import { CallsService } from './services/calls.service';
+import { CloudflareSfuService } from './services/cloudflare-sfu.service';
 import { ApnsVoipService } from './services/apns-voip.service';
 import { TurnUsageMeter } from './services/turn-usage-meter.service';
 import { CallsController } from './controllers/calls.controller';
+import { CloudflareSfuController } from './controllers/cloudflare-sfu.controller';
 import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
 import { AdminStorageController } from './controllers/admin-storage.controller';
@@ -43,9 +45,12 @@ import { SeatEviction } from './entities/seat-eviction.entity';
 import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { PushEnvelope } from './entities/push-envelope.entity';
+import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
+import { UninvitedEntry } from './entities/uninvited-entry.entity';
 import { ReportAccusation } from './entities/report-accusation.entity';
 import Redis from 'ioredis';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 const RedisProvider: Provider = {
   provide: 'REDIS_CLIENT',
@@ -111,6 +116,8 @@ class RedisShutdown implements OnModuleDestroy {
         JoinAskPush,
         RevokedDeviceGroup,
         PushEnvelope,
+        SentFrameReceipt,
+        UninvitedEntry,
         ReportAccusation,
       ],
       synchronize: typeormSynchronize(),
@@ -153,13 +160,16 @@ class RedisShutdown implements OnModuleDestroy {
     InternalController,
     AdminStorageController,
     CallsController,
+    CloudflareSfuController,
   ],
   providers: [
+    ROUTE_PARAMS_GUARD,
     RedisProvider,
     RedisShutdown,
     MessagingService,
     DeviceSignatureKeysService,
     CallsService,
+    CloudflareSfuService,
     ApnsVoipService,
     TurnUsageMeter,
   ],

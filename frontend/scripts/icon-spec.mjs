@@ -7,28 +7,38 @@
  * in two scripts drifted apart without a review ever showing it. They live here now, and
  * `appIcons.test.ts` pins them.
  *
- * Chosen on a contact sheet at 40, 50 and 60 percent (user, 2026-09-30): 50.
+ * Then it was too SMALL (owner, 2026-11-15): measured on the home screens, the bird filled 36 % of
+ * the Mi 9T launcher disc and 49 % of the iPhone tile, where the apps around it fill a median 75 %.
+ * The numbers below are that decision; `docs/wiki/frontend/app-icons.md` has the measurement.
  */
 import sharp from 'sharp';
 
-/** Width of the bird, as a fraction of the part of the icon a person actually SEES. */
-export const BIRD_ICON_FILL = 0.5;
+/**
+ * Width of the bird, as a fraction of the square icon a person SEES on iOS and the web (the
+ * apple-touch-icon, the App Store master, the Icon Composer layer). 0.5 from 2026-09-30, raised to
+ * 0.66 on 2026-11-15: its tips then reach 0.44 of the edge from the centre, inside the squircle.
+ */
+export const BIRD_ICON_FILL = 0.66;
 
 /**
- * Fraction of an Android adaptive-icon canvas the launcher shows whatever mask it applies: the
- * canvas is 108 dp and the always-visible window 72 dp. A foreground sized against the canvas
- * instead of the window comes out a third too large.
+ * The adaptive-icon canvas, in dp. The launcher always shows its central 72 dp, whatever mask it
+ * applies, so anything sized against the whole canvas comes out a third too large.
  */
-export const ANDROID_VISIBLE = 72 / 108;
+export const ANDROID_CANVAS_DP = 108;
 
 /**
- * What the Mi 9T launcher (Launcher3 Quickstep, Android 16) does on top of that, MEASURED on a
- * capture of its drawer: a bird sized at 0.5 of the window rendered at 0.74 of the round icon,
- * tail and beak on the edge - the launcher zooms the layers about 1.48x. The Android bird is
- * drawn at this fraction of the spec so its extremities sit near three quarters of the radius
- * there, and still clear the edge on a launcher that does not zoom.
+ * Width of the Android bird, in dp of the 108 dp canvas: Google's MINIMUM logo size ("at least
+ * 48x48 dp. It must not exceed 66x66 dp", developer.android.com, adaptive icons), 2/3 of the
+ * window (owner, 2026-11-15). The bird's enclosing circle is 0.667 of its width, so its tips reach
+ * 32.4 dp from the centre - inside the 33 dp safe circle no OEM mask cuts. 49 dp is the ceiling.
+ *
+ * It replaced a "launcher zoom compensation" of 0.75, which rested on a misread capture: today's
+ * Mi 9T drawer shows the window 1:1, exactly as the platform defines it.
  */
-export const ANDROID_LAUNCHER_ZOOM_COMPENSATION = 0.75;
+export const ANDROID_BIRD_DP = 48;
+
+/** Radius of the adaptive-icon safe zone, in dp: the 66 dp circle no launcher mask ever cuts. */
+export const ANDROID_SAFE_RADIUS_DP = 33;
 
 /**
  * The brand navy, `--color-cn-ink` in `app.css` and the `theme-color` in `app.html`, as the

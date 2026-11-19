@@ -211,7 +211,8 @@ per call. The full reading is in the community-opening report of PR #1824.
   answer is the state when the lock is taken, inside the call-to-result interval in either shape.
   The epoch readers already order concurrent readings with cache stamps.
 - **The history replay's marks** are now captured BEFORE the write (`snapshotPendingHistoryMarks`,
-  paired like `snapshotEmitted`). A replay page can now decrypt while the seal runs, and its mark
+  paired like `snapshotEmitted`; since KILL-2 both are staged INTO the state the write carries,
+  `stagePendingHistoryMarks` and `readEmitted`). A replay page can now decrypt while the seal runs, and its mark
   must not be declared durable by a write that lacks its advance. Web sealed in a worker and already
   had this window.
 
@@ -275,7 +276,7 @@ string timestamp; the plan). Owed: the 28-31 ms per page re-measured on a 5k con
 
 **10 - the live mark waits for the checkpoint.** `markHistoryFrameConsumed` no longer flushes on
 its own microtask: it registers with the checkpoint-bound marks the replay already used
-(`commitPendingHistoryMarks`), so a drain of N frames writes each touched ledger ONCE, at the
+(`commitPendingHistoryMarks`, since KILL-2 `stagePendingHistoryMarks` into the state itself), so a drain of N frames writes each touched ledger ONCE, at the
 checkpoint that makes their ratchet advance durable - and never before it, which was the direction
 [history-reconciliation](../protocols/history-reconciliation.md#a-cold-start-re-accuses-frames-it-already-read-the-mark-must-be-one-write-with-the-advance-tab-3b-measured-2026-09-08)
 names as the worse one. Pinned by `history.consumedFrames.test.ts` (40 frames with an await between

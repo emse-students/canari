@@ -116,8 +116,8 @@ describe('localFileAddressesFromTransfer', () => {
     expect(
       localFileAddressesFromTransfer(
         stringDrop({
-          'text/uri-list': 'https://canari-emse.fr',
-          'text/plain': 'https://canari-emse.fr',
+          'text/uri-list': 'https://canari.emse.fr',
+          'text/plain': 'https://canari.emse.fr',
         })
       )
     ).toEqual([]);

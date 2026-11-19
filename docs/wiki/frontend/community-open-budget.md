@@ -299,7 +299,11 @@ open on this build, and also on `main` when the tap was fast (one main run in th
   is lost until the next load.
   - Now `loadChannelHistory` fetches the page at once but DECODES it only when no listing or entry
     still in flight can enter the salon (`whenSalonEntryDecided` in `salonSendGate.ts`).
-  - An entered salon waits for nothing, and nothing ever waits for a listing that has not started.
+  - An entered salon waits for no listing, and nothing ever waits for a listing that has not started.
+    Since 2026-11-16 a row whose seed is MISSING while the salon's key group is still draining is
+    deferred and decoded after the drain (`salonKeysNow`); every other row is drawn at once, so no
+    row reads `missing seed` for a seed still in the queue and nothing else waits
+    ([channel-encryption 4.5](../protocols/channel-encryption.md#45-a-missing-seed-is-requested-and-said-out-loud)).
   - **The wait is bounded by LISTING STATE, not by a clock.** It ends when the salon is entered,
     when the last listing or entry in flight settles, or when the session ends
     (`resetSalonSendGate` wakes every reader). A listing whose fetch HANGS therefore holds
@@ -435,6 +439,17 @@ the F4 build adds this change on top. Each figure is the median of 3 runs, in ms
 The tab (`tap>salons`) is unchanged within noise: 556/619, 1765/1719 and 1851/1902. That is
 expected, because F4 only touches the salon pane. In the airplane condition, one run of three timed
 out at `tap>target salons` in both builds, so the airplane medians cover 2 runs.
+
+**The one unexplained FAIL in 44 (a refused salon row still drawn), closed 2026-11-14.** Its two
+candidates are both answered: a drawn row left by two overlapping loads is fixed by #2245 (its test
+fails on the old code; 35 instrumented runs never had the tampered row in the drawn copy), and a live
+row verified on arrival and kept by the merge's window rule is this section's design. Every path a
+salon message reaches memory by was read on 2026-10-22: the live frame (`openChannelMessage`), the
+history page, search and reconnect (`decodeChannelMessageRow`), reactions and edits are checked
+before they are shown; the stored-page draw is withdrawn by the next merged page (#2245); the own
+echo, the tab sync from the leader and a v1 session's rows are the documented exceptions. A
+recurrence carries its evidence: GRAINE-AUTH's trail keeps the load lines and every line naming the
+tampered row.
 
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
@@ -898,9 +913,11 @@ still deliverable in that step.
   phone seed. A few ms of desktop gesture do not pay for that.
 - **The thread observer's reads are where the layout is paid, not extra layouts.** Removing them
   hands the same layout to the fill's measure. Its `MutationObserver` judgement outside an entry
-  must stay synchronous anyway: a prepend (`loadOlderGroups`, a widen step) restores `scrollTop` by
-  absolute assignment after its own `await tick()` in the same task, so a judgement deferred to the
-  layout step always runs after that restore and adds the prepend's height a second time.
+  must stay synchronous anyway: a widen step restores `scrollTop` by absolute assignment after its
+  own `await tick()` in the same task, so a judgement deferred to the layout step always runs after
+  that restore and adds the prepend's height a second time. (`loadOlderGroups` made the same write
+  for the store's page until 2026-11-14; it now leaves the prepend to the observer's row anchor -
+  [chat](modules/chat.md#a-short-thread-sits-at-the-bottom-and-asks-for-its-past-at-entry-2026-11-14).)
 
 **Where the mount's time is, then:** the template pass (Svelte creating the rows, `MessageBubble`
 and `MessageTextBody` first), and the style recalculations that each write of a measured value
@@ -1075,9 +1092,45 @@ an app defect, and the same on both arms.
   attributes through Svelte's `get_attributes`/`get_setters`. A bubble or row icon drawn as a plain
   inline SVG is the candidate, to be counted (how many icons does a first open mount?) before it is
   built.
-- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above);
+- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above;
+  built 2026-11-17, [below](#the-four-closed-overlays-mounted-on-first-intent-2026-11-17));
   (2) the `Icon` count and cost; (3) the Mi 9T first-open reading that names the 190 ms before the
   pane on `1.6.8-alpha.1`, which no desktop bench can.
+
+### The four closed overlays, mounted on first intent (2026-11-17)
+
+**What changed.** Step (1) of the list above. `MessageBubble` mounts the reaction picker, the info
+panel, the actions sheet and the delete confirmation under `{#if overlaysMounted}`, which turns true
+on the bubble's first `pointerdown` or `focusin` (capture phase, on the bubble's root) and stays true
+for the bubble's life. Every opener - a tap, a hold, a right-click, a toolbar button, the video
+chip, a key on the focused bubble - starts with one of those events, in an EARLIER event than the
+open, so the overlay is mounted closed first and its local intro still plays (Svelte plays a local
+transition only when its own `{#if}` is created after its parent has run; the reason the "Not
+moved" note above refused a plain `{#if open}`). The open states are part of `overlaysMounted` too,
+as a guarantee and not a path: an open with no intent before it (an assistive-technology click, a
+test's `.click()`) still draws its overlay, without the intro. Nothing else moves:
+`bindHistoryOverlay` in the sheet now registers at the first intent instead of at the mount, both
+times closed, so the history stack sees the same entries. A first touch on a bubble while
+scrolling mounts that one bubble's four, once, outside any open. Pinned by
+`MessageBubble.overlaysOnIntent.svelte.test.ts` (none mounted with the bubble, all four on a
+pointerdown or a focusin, once, and on an open with no intent).
+
+**Measured** (`frontend/bench/salon-mount`, 200 one-line own rows, x4, 9 runs interleaved against
+`origin/main` at `0ac9830b9`, this workstation shared with other sessions - the arms against each
+other only):
+
+| scene | open | gesture task, base -> this | reveal | long tasks after the gesture |
+| --- | --- | --- | --- | --- |
+| hub | first | 487 -> 434 | 502 -> 449 | 3 (254 ms) -> 1 (104 ms) |
+| hub | reopen | 174 -> 166 | 183 -> 171 | 2 (214 ms) -> 3 (209 ms) |
+| pane | first | 511 -> 512 | 562 -> 530 | 2 (217 ms) -> 3 (181 ms) |
+| pane | reopen | 106 -> 109 | 144 -> 130 | 3 (195 ms) -> 1 (70 ms) |
+
+Layouts and style recalculations are unchanged (same counts on every row). The run-to-run spread on
+this machine was 100-400 ms, so the profile's estimate (~0.3 ms a bubble at x4, 60 bubbles once the
+widen has run) is the size of the gain and these medians only say it is not negative. **Owed on the
+Mi 9T** with the next pre-release: `community-open.mjs`, cold and warm, `salon>msgs` and the long
+tasks inside the salon open, against the `1.7.0-alpha.7` reading taken in the same sitting.
 
 ## 7. Not measured, and owed
 

@@ -21,6 +21,8 @@ import {
   LYDIA_ACCOUNT_ALREADY_LINKED,
   LYDIA_BUSINESS_CHANGED,
   LYDIA_ENROLMENT_IN_FLIGHT,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
   LYDIA_NO_BUSINESS,
   LYDIA_RESPONSABLE_ALREADY_SET,
   LYDIA_RESPONSABLE_NOT_A_CASHIER,
@@ -28,6 +30,7 @@ import {
   LYDIA_RESPONSABLE_PHONE_LOCKED,
   LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
   LYDIA_CASHIER_IN_FLIGHT,
+  LYDIA_CASHIERS_LIVE,
   PAYOUT_ACCOUNT_UNREADABLE,
   PaymentController,
   SESSION_ID_RE,
@@ -53,7 +56,7 @@ describe('SESSION_ID_RE', () => {
     expect(SESSION_ID_RE.test('')).toBe(false);
     // The dashed RFC 4122 shape it used to require: no Lydia request has ever had one.
     expect(SESSION_ID_RE.test('11111111-1111-1111-1111-111111111111')).toBe(false);
-    // The Stripe-era `cs_...` id is no longer a session this service can have issued.
+    // A prefixed id is not a Lydia `request_uuid`.
     expect(SESSION_ID_RE.test('cs_test_a1B2c3')).toBe(false);
   });
 });
@@ -405,7 +408,7 @@ describe('PaymentController.cancelRequest', () => {
  * Sixteen nginx locations carry `auth_request /internal/auth/verify`, and that sub-request answers
  * 200 for a logged-OUT caller too - it IDENTIFIES, it never refuses. So a payments route with no
  * guard is reachable by anybody, which is how four of them reached a LIVE payment account on
- * 2026-09-10 (Stripe, then; the processor has since left). The guard is the only thing standing
+ * 2026-09-10. The guard is the only thing standing
  * between the two facts, so its presence is asserted here rather than assumed from a decorator being visible in a diff.
  */
 describe('PaymentController - every money route is guarded', () => {
@@ -426,6 +429,37 @@ describe('PaymentController - every money route is guarded', () => {
 
   it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
     expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('passes social-service`s typed 409 HOLDS_PAYMENTS through, any other failure stays a 400', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = new PaymentController({} as unknown as PaymentService);
+    const asso = 'd1f769ce-6cb6-47b8-b20b-7636f59548da';
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('409'), {
+        response: { status: 409, data: { code: LYDIA_BUSINESS_HOLDS_PAYMENTS } },
+      })
+    );
+    await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_BUSINESS_HOLDS_PAYMENTS },
+    });
+    // The cashier refusals of the unlink (review of the 1.7.1 flip) pass through the same way.
+    for (const code of [LYDIA_CASHIERS_LIVE, LYDIA_CASHIER_IN_FLIGHT]) {
+      mockedAxios.post.mockRejectedValueOnce(
+        Object.assign(new Error('409'), { response: { status: 409, data: { code } } })
+      );
+      await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({
+        status: 409,
+        response: { code },
+      });
+    }
+    mockedAxios.post.mockRejectedValueOnce(
+      Object.assign(new Error('500'), { response: { status: 500, data: {} } })
+    );
+    await expect(controller.disconnectLydiaAccount(asso)).rejects.toMatchObject({ status: 400 });
+    mockedAxios.post.mockReset();
   });
 
   it('disconnectLydiaAccount is for a global admin only, behind NginxAuthGuard', () => {
@@ -554,6 +588,19 @@ describe('PaymentController.createOnboarding - one Business per association, its
     await expect(
       controller.createOnboarding({ associationId: id, legalProfile }, req)
     ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_ENROLMENT_IN_FLIGHT } });
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
+  });
+
+  it('a Business still pending validation on a bridge is the TYPED 409, and no second Business', async () => {
+    socialAnswers({ status: 409, data: { code: LYDIA_BUSINESS_PENDING_VALIDATION } });
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, paymentService } = makeController();
+    await expect(
+      controller.createOnboarding({ associationId: id, legalProfile }, req)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_BUSINESS_PENDING_VALIDATION },
+    });
     expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
   });
 
@@ -1150,15 +1197,31 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
     }).toEqual(contract.core);
     expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
+    expect(LYDIA_CASHIERS_LIVE).toBe(contract.social.cashiersLiveOnDelete);
     expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(
       (contract as unknown as { switches: { cashierAddEnabled: boolean } }).switches
         .cashierAddEnabled
     );
     expect(LYDIA_ENROLMENT_IN_FLIGHT).toBe(contract.social.enrolmentInFlight);
     expect(LYDIA_ENROLMENT_PENDING).toBe(contract.social.enrolmentPending);
+    expect(LYDIA_BUSINESS_PENDING_VALIDATION).toBe(contract.social.businessPendingValidation);
+    expect(LYDIA_BUSINESS_HOLDS_PAYMENTS).toBe(contract.social.businessHoldsPayments);
     expect(LYDIA_RESPONSABLE_ALREADY_SET).toBe(contract.social.responsableAlreadySet);
     expect(LYDIA_RESPONSABLE_PHONE_LOCKED).toBe(contract.social.responsablePhoneLocked);
     expect(LYDIA_BUSINESS_CHANGED).toBe(contract.social.businessChanged);
+  });
+
+  it("a removal's three Lydia calls answer within social-service's wait, with a margin", () => {
+    const wait = (
+      JSON.parse(
+        readFileSync(
+          join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
+          'utf8'
+        )
+      ) as { timeouts: { cashierRemovalWaitMs: number } }
+    ).timeouts.cashierRemovalWaitMs;
+    // Three bounded calls plus core's own work and the hop back: at least two seconds to spare.
+    expect(3 * provider.LYDIA_REMOVAL_STEP_TIMEOUT_MS).toBeLessThanOrEqual(wait - 2_000);
   });
 });
 
@@ -1222,7 +1285,8 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
       removeLydiaCashier: jest.fn().mockResolvedValue(removal),
     };
     const controller = new PaymentController(paymentService as unknown as PaymentService);
-    if (opts.open !== false) jest.spyOn(controller, 'numberChangeEnabled').mockReturnValue(true);
+    // The gate as shipped (ON since 1.7.1) unless a spec closes it to pin the refusal a revert answers.
+    if (opts.open === false) jest.spyOn(controller, 'numberChangeEnabled').mockReturnValue(false);
     return { controller, paymentService };
   }
   const postsTo = (suffix: string) =>
@@ -1239,8 +1303,12 @@ describe('PaymentController.setLydiaResponsable - changing the number (lot 3)', 
     mockedAxios.get.mockReset();
   });
 
-  it('ships OFF with the add gate: the typed 409 PHONE_LOCKED older clients word, the claim released, Lydia never asked', async () => {
-    expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(false);
+  it('ships ON with the add gate (1.7.1): the number change is offered', () => {
+    expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(true);
+    expect(setup({ verified: true, held: 0 }).controller.numberChangeEnabled()).toBe(true);
+  });
+
+  it('gate off: the typed 409 PHONE_LOCKED older clients word, the claim released, Lydia never asked', async () => {
     const { controller, paymentService } = setup({ verified: true, held: 0 }, { open: false });
     expect(controller.numberChangeEnabled()).toBe(false);
     await expect(

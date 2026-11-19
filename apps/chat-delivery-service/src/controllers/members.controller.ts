@@ -46,20 +46,14 @@ import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
 import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
+import { readSeatGeneration, withSeatLock } from '../utils/seat-eviction';
 import {
-  bumpSeatGeneration,
-  readSeatGeneration,
-  recordSeatEviction,
-  withSeatLock,
-} from '../utils/seat-eviction';
-import {
-  endDeviceMemberships,
-  endGroupMembership,
+  declineSeat,
   exclusionWindows,
   openMissingIntervals,
   stretchStart,
   partingKey,
-  withdrawAwaitingSeat,
+  removeSeat,
   writePendingSeats,
   assertCallerActsOnGroup,
   callerSeatStanding,
@@ -67,13 +61,14 @@ import {
   seatStillAwaits,
   withheldWindows,
   withholdsArrivalSpan,
-  type AwaitingSeatWithdrawal,
   type ExclusionWindow,
+  type JoinDecline,
 } from '../utils/group-membership';
 import { RepeatCounter, cutUserId } from '../utils/log-repeat';
 import { announceJoinAskSettled } from '../utils/join-ask-announce';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { RouteParams } from '../common/route-params';
 
 /**
  * The most groups `POST /api/mls/group-rosters` answers in one request.
@@ -113,6 +108,17 @@ interface DeviceSeatFacts {
   awaitingAdmission: boolean;
 }
 
+/**
+ * The `treeEpoch` a member's Decline carries ({@link declineSeat}): absent is `null` (a client older
+ * than the field); anything but a non-negative safe integer is a `400 tree_epoch_invalid`, never read
+ * as absent - a malformed proof is not the lack of one.
+ */
+function treeEpochOf(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0) return raw;
+  throw new BadRequestException({ error: 'tree_epoch_invalid' });
+}
+
 /** One row of `GET mls/groups/:groupId/user-members`. */
 export interface UserMemberRow {
   userId: string;
@@ -122,6 +128,7 @@ export interface UserMemberRow {
 }
 
 /** Group membership management: add/remove members, list members, list user groups. */
+@RouteParams({ userId: 'opaque', groupId: 'uuid', dismissedGroupId: 'opaque' })
 @Controller()
 export class MembersController {
   private readonly logger = new Logger(MembersController.name);
@@ -543,11 +550,11 @@ export class MembersController {
   }
 
   @UseGuards(HeaderAuthGuard)
-  @Delete('mls/users/:userId/dismissed-groups/:groupId')
+  @Delete('mls/users/:userId/dismissed-groups/:dismissedGroupId')
   /** Un-dismisses a group (called when the user is re-added via a fresh Welcome - they want it back). */
   async undismissGroup(
     @Param('userId') userId: string,
-    @Param('groupId') groupId: string,
+    @Param('dismissedGroupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -1086,6 +1093,19 @@ export class MembersController {
     }));
   }
 
+  /**
+   * Takes every device of `userId` out of `groupId`'s routing set (`group:members:<groupId>`), after
+   * their seat was removed. Returns how many routes went, for the caller's log line.
+   */
+  private async dropRoutes(groupId: string, userId: string): Promise<number> {
+    const routed = await this.redis.smembers(`group:members:${groupId}`);
+    const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
+    if (toRemove.length > 0) {
+      await this.redis.srem(`group:members:${groupId}`, ...toRemove);
+    }
+    return toRemove.length;
+  }
+
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/groups/:groupId/members/:userId')
   /** Removes a user from a group server-side (deletes their GroupMember record). */
@@ -1162,19 +1182,10 @@ export class MembersController {
           where: { groupId: safeGroupId, userId: safeUserId },
           select: { id: true, awaitingAdmission: true },
         });
-        await bumpSeatGeneration(manager, safeGroupId);
-        const closed = await endGroupMembership(manager, safeGroupId, safeUserId);
-        const gone = await endDeviceMemberships(
-          manager,
-          { userId: safeUserId, groupId: safeGroupId },
-          'welcomes'
-        );
-        const gen = await recordSeatEviction(manager, safeGroupId, safeUserId, false);
+        const removal = await removeSeat(manager, safeGroupId, safeUserId);
         return {
-          devices: gone,
-          ended: closed,
-          generation: gen,
-          endedAsk: seat?.awaitingAdmission === true && closed.deleted > 0 ? seat.id : null,
+          ...removal,
+          endedAsk: seat?.awaitingAdmission === true && removal.ended.deleted > 0 ? seat.id : null,
         };
       }
     );
@@ -1199,15 +1210,10 @@ export class MembersController {
       );
     }
 
-    // Remove all devices of this user from the Redis set
-    const members = await this.redis.smembers(`group:members:${safeGroupId}`);
-    const toRemove = members.filter((m) => m.startsWith(`${safeUserId}:`));
-    if (toRemove.length > 0) {
-      await this.redis.srem(`group:members:${safeGroupId}`, ...toRemove);
-    }
+    const toRemove = await this.dropRoutes(safeGroupId, safeUserId);
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued} evictionGeneration=${generation}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove} deviceMembershipsDeleted=${devices.memberships} intervalClosed=${ended.closed} queuedWelcomesDropped=${devices.queued} evictionGeneration=${generation}`
     );
     return { status: 'removed' };
   }
@@ -1217,7 +1223,7 @@ export class MembersController {
   /**
    * A MEMBER DECLINES A PERSON WHO ASKED TO JOIN BY INVITATION LINK - never the removal above.
    *
-   * The ask is the seat `awaitingAdmission`; the Decline withdraws it ({@link withdrawAwaitingSeat})
+   * The ask is the seat `awaitingAdmission`; the Decline withdraws it (`withdrawAwaitingSeat`)
    * under the group's seat lock, ONLY while it still awaits a member. A member's Add lifts the flag
    * in its commit's transaction under the same lock, so an Add that came first (another member,
    * whose epoch this device has not processed yet) is answered `already-admitted` and nothing is
@@ -1226,16 +1232,23 @@ export class MembersController {
    * seat generation and records it, so an Add built before it enrols nobody after it (review of
    * #2419: `departed_since_base` at the commit gate).
    *
+   * A SEAT THAT IS NOT AN ASK - a person whose leaves are all gone while their seat stands, raised
+   * to the members as an ask since 2026-11-19 - is REMOVED when the body carries `treeEpoch`, the
+   * epoch of the tree the member read them absent from, and that is still the group's epoch
+   * ({@link declineSeat}): `removed`, or `epoch-moved` with nothing touched.
+   *
    * Every outcome is an ANSWER (200, `outcome`), so the client reads a type, never a status
    * sentence. The caller must be an ADMITTED member - a seat still awaiting a member decides nothing.
    */
   async declineJoinRequest(
     @Param('groupId') groupId: string,
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string
-  ): Promise<{ outcome: AwaitingSeatWithdrawal }> {
+    @Headers('x-user-id') headerUserId?: string,
+    @Body() body?: { treeEpoch?: unknown }
+  ): Promise<{ outcome: JoinDecline }> {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const treeEpoch = treeEpochOf(body?.treeEpoch);
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const standing = caller
       ? await callerSeatStanding(this.groupMemberRepo, safeGroupId, caller)
@@ -1260,14 +1273,19 @@ export class MembersController {
       );
     }
     const { outcome, askId } = await withSeatLock(this.dataSource.manager, safeGroupId, (m) =>
-      withdrawAwaitingSeat(m, safeGroupId, safeUserId, 'declined')
+      declineSeat(m, safeGroupId, safeUserId, treeEpoch)
     );
+    // A removed seat's devices leave the routing set too, as the removal route's do.
+    const unrouted = outcome === 'removed' ? await this.dropRoutes(safeGroupId, safeUserId) : 0;
     this.logger.log(
-      `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}`
+      `[JOIN_DECLINE] group=${safeGroupId} caller=${caller} target=${safeUserId} outcome=${outcome}` +
+        (treeEpoch === null ? '' : ` treeEpoch=${treeEpoch}`) +
+        (outcome === 'removed' ? ` redisRemoved=${unrouted}` : '')
     );
     // Committed: every other online member's ask settles on it now, not at its next sweep - started,
-    // not awaited, so this answer does not wait on it.
-    if (outcome === 'withdrawn' && askId !== null) {
+    // not awaited, so this answer does not wait on it. A removed seat settles the same way: the
+    // other members' screens hold that ask under no identity, and a settlement clears such an entry.
+    if ((outcome === 'withdrawn' || outcome === 'removed') && askId !== null) {
       announceJoinAskSettled(
         this.dataSource.manager,
         this.redis,

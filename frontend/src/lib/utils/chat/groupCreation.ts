@@ -22,10 +22,13 @@ import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { holdsGroupState } from './groupUsability';
+import { markGroupInCreation } from './groupsInCreation';
+import { noteGroupsAudited } from './historyReconcile';
 import {
   CommitOutcomeUnknownError,
   FollowerTabCommitError,
   PreviousCommitUnresolvedError,
+  type CommitInvitation,
 } from '$lib/mls-client/commitSubmission';
 import type { OwedInvitation } from '$lib/mls-client/owedInvitations';
 import { CommitRefusedError, isCommitRaceRefusal } from '$lib/mls-client/CommitRefusedError';
@@ -198,9 +201,36 @@ async function readDevicesWithRetry(
 }
 
 /**
- * Creates a new named MLS multi-user group on the server, initialises the local
+ * A GROUP THIS DEVICE CREATED OWES NO HISTORY AUDIT - recorded on SUCCESS only.
+ *
+ * The audit (`groupsOwingAudit`, run by every connection pass) asks a member whether this device holds
+ * the same history as everyone else, once per local group it has never asked about. A group this
+ * device created has no past anybody else could hold, so the ask is empty by construction - and it was
+ * made: LEAF-REFRESH-1 (2026-11-16) showed the next connection asking about a group created just
+ * before it. While the creation runs, the pass leaves the group out by the creation's mark
+ * (`initializeConnection`), not by this record.
+ *
+ * WRITTEN ONLY ONCE THE CREATION SUCCEEDED, after its row is written and before the mark is released.
+ * Written earlier, a tab that died mid-creation while the server group survived would come back to a
+ * group it rejoins by Welcome under a discovery placeholder - a path that skips the post-Welcome
+ * history ask because a row exists - with the audit already discharged: the messages its other
+ * devices sent would never be asked for. A failed creation records nothing, so such a group is still
+ * owed. Both creation paths run on the leading tab, a follower's included (delegated to these same
+ * functions).
+ */
+function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, groupId: string) {
+  noteGroupsAudited(userId, mlsService.getDeviceId(), [groupId]);
+}
+
+/**
+ * Creates a new MLS multi-user group on the server, initialises the local
  * MLS state, and automatically adds all other devices belonging to the current user
  * in a single bulk commit to avoid epoch fragmentation.
+ *
+ * A BLANK `name` CREATES AN UNNAMED GROUP (owner, 2026-11-17): no name is sent to the server and the
+ * row stores none, and every device draws it by its members' first names
+ * (`resolveConversationListPresentation`, `groupTreeMembers.ts`). An unnamed group is never
+ * a duplicate of another: two groups of the same people are two groups, as in any messenger.
  *
  * On failure the partially-created group is cleaned up server-side and the
  * conversation is removed from the reactive map, and the caller is told WHICH failure it was so the
@@ -220,13 +250,14 @@ export async function createNewGroup(
     log,
   } = deps;
 
-  if (!name.trim()) return { ok: true, key: null };
   const groupDisplayName = name.trim();
-  const duplicateGroup = Array.from(conversations.values()).find(
-    (c) =>
-      (c.conversationType ?? 'group') === 'group' &&
-      c.name.toLowerCase() === groupDisplayName.toLowerCase()
-  );
+  const duplicateGroup =
+    groupDisplayName &&
+    Array.from(conversations.values()).find(
+      (c) =>
+        (c.conversationType ?? 'group') === 'group' &&
+        c.name.toLowerCase() === groupDisplayName.toLowerCase()
+    );
   if (duplicateGroup) {
     log(`Group not created: one with this name already exists.`);
     return { ok: false, reason: 'duplicate-group-name' };
@@ -234,10 +265,16 @@ export async function createNewGroup(
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
 
   try {
-    groupId = await mlsService.createRemoteGroup(groupDisplayName, true); // true = multi-user group
+    // `null` for an unnamed group: the server is never told a name the members did not choose.
+    groupId = await mlsService.createRemoteGroup(groupDisplayName || null, true); // true = multi-user group
     conversationKey = groupId;
+    // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
+    // group deleted: the connection sweeps read this mark rather than take the listed, rowless group
+    // for one this device lost (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
 
     // THE MEMBERSHIP IS REGISTERED BEFORE THE LOCAL GROUP EXISTS, AND THE ORDER IS AN INVARIANT.
     //
@@ -355,6 +392,7 @@ export async function createNewGroup(
     );
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Group ${groupId} created.`);
     console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
@@ -380,6 +418,8 @@ export async function createNewGroup(
       }
     }
     return { ok: false, reason: creationRefusal(e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }
 
@@ -396,6 +436,13 @@ export type BulkAdditionRefusal =
   | 'no-devices'
   /** Another device holds the group's add lock: nothing was staged, the invite can be retried. */
   | 'add-lock-busy'
+  /**
+   * Another device holds the group's add lock, and this FIRST invitation was recorded as owed
+   * (`owedInvitations.ts`): nothing staged YET, and nothing for the member to retry - it is
+   * re-planned when that lock ends, by an event (its server-stated end, a commit applied in the
+   * group, the next connection), and every ending that does not complete it is told.
+   */
+  | 'add-lock-owed'
   /** The add-lock request got no answer (transport error, non-2xx): nothing is known of another device. */
   | 'add-lock-unanswered'
   /** The commit added no device - every key package was skipped (logged per device). */
@@ -518,6 +565,13 @@ function narrateBulkAddition(
     });
     console.warn(
       `[GROUP] an invitation in ${where} added ${outcome.addedUsers.length} person(s) and left out ${named.join(', ')}`
+    );
+    return;
+  }
+  // OWED IS NOT REFUSED: nothing is wrong, the invitation waits on another device's Add.
+  if (outcome.reason === 'add-lock-owed') {
+    console.info(
+      `[GROUP] an invitation in ${where} waits on another device's add lock - owed, re-planned when that lock ends`
     );
     return;
   }
@@ -672,12 +726,23 @@ async function attemptBulkAddition(
       return notAdded(unreadDevicesReason(unread), unread[0]);
     }
 
+    // A MEMBER'S FIRST INVITATION THAT MEETS ANOTHER DEVICE'S LOCK IS OWED, NOT REFUSED: it takes the
+    // path a lost invitation waiting on `add-lock` already takes (`replanLostInvitation`), lifted by
+    // the events that end that lock - never a retry on a clock. A creation is the case that made it
+    // necessary: any real Add by one of the creator's other devices in that second would otherwise
+    // create the group holding its creator alone (1.7.0-alpha.10). Not for a re-plan (it already IS
+    // an owed entry) nor for a join ask's answer (the member tapped it, and is told it is busy).
+    const oweIfHeld =
+      resumed === undefined && answering === undefined
+        ? () => owedInvitationOf(mlsService, conversation.id, targetUsers, log)
+        : undefined;
     const lock = await mlsService
-      .acquireAddLockAnswer(conversation.id)
+      .acquireAddLockAnswer(conversation.id, oweIfHeld)
       .catch(() => 'unanswered' as const);
     // ONLY AN ANSWERED REFUSAL IS "ANOTHER DEVICE IS ADDING": a lock request that got no answer says
     // nothing about anyone else, and is a failure the member may retry. Said once, by the outcome's
     // own line (`narrateBulkAddition`).
+    if (lock === 'owed') return notAdded('add-lock-owed');
     if (lock !== 'taken')
       return notAdded(lock === 'held' ? 'add-lock-busy' : 'add-lock-unanswered');
 
@@ -1074,6 +1139,38 @@ async function rosterPremise(
 }
 
 /**
+ * The invitation a first gesture refused by another device's add lock is owed as
+ * (`acquireAddLockAnswer`'s `oweIfHeld`): the people, and the roster baseline and seat generation
+ * {@link rosterPremise} would have read for it - the re-plan's premise is checked against them, so a
+ * person removed before it runs is never re-admitted. `null` when that roster cannot be read: an
+ * entry without a baseline could never be re-planned (`premise-unreadable`), so nothing is recorded
+ * and the refusal is the member's to retry.
+ */
+async function owedInvitationOf(
+  mlsService: IMlsService,
+  groupId: string,
+  users: readonly string[],
+  log: (msg: string) => void
+): Promise<CommitInvitation | null> {
+  try {
+    const read = await mlsService.getGroupRosterAtGeneration(groupId);
+    const atGesture = new Set(read.members.map((m) => m.userId));
+    return {
+      users: [...users],
+      rostered: users.filter((u) => atGesture.has(u)),
+      ...(read.seatGeneration !== null && read.seatGeneration !== undefined
+        ? { seatGeneration: read.seatGeneration }
+        : {}),
+    };
+  } catch (e) {
+    log(
+      `[SYNC] roster of ${groupId.slice(0, 8)}... unreadable - the invitation the add lock refused is not recorded: ${String(e).slice(0, 100)}`
+    );
+    return null;
+  }
+}
+
+/**
  * A member's invitation whose kept commit did not land, re-planned at the epoch that won
  * ({@link replanLostInvitation}): the epoch its commit was staged on, and the roster baseline and
  * seat generation its intent recorded (absent when they could not be read then).
@@ -1410,8 +1507,11 @@ export async function startNewConversation(
 
   const groupName = `${userId}::${contact}`;
   let groupId: string | undefined;
+  let releaseCreationMark: (() => void) | undefined;
   try {
     groupId = await mlsService.createRemoteGroup(groupName, false); // false = 1-to-1 direct conversation
+    // The same mark as `createNewGroup`, for the same window (`groupsInCreation.ts`).
+    releaseCreationMark = markGroupInCreation(groupId);
     console.log(`[DM] createRemoteGroup → groupId=${groupId}`);
     log(`[DM] Remote group created: ${groupId}`);
     const conversationKey = groupId;
@@ -1489,6 +1589,7 @@ export async function startNewConversation(
     );
     maybeSelect(conversationKey);
     saveConversation(conversationKey);
+    dischargeCreatedGroupAudit(mlsService, userId, groupId);
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
     return { ok: true, key: conversationKey };
@@ -1514,5 +1615,7 @@ export async function startNewConversation(
       }
     }
     return { ok: false, reason: creationRefusal(_e) };
+  } finally {
+    releaseCreationMark?.();
   }
 }

@@ -38,6 +38,7 @@ import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
+import type { SignOutCause } from '$lib/stores/signOutCause';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { openCustomTab, type CustomTabOutcome } from '$lib/services/customTabsCommands';
 import {
@@ -61,6 +62,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import { setAvatarToken } from '$lib/utils/avatarUrl';
+import type { TokenVerdict } from '$lib/utils/tokenVerdict';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -265,9 +267,15 @@ function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessag
  * a definitively dead session.
  */
 export class SessionExpiredError extends Error {
-  constructor() {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict;
+
+  constructor(
+    verdict: Extract<TokenVerdict, 'session-expired' | 'device-revoked'> = 'session-expired'
+  ) {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+    this.tokenVerdict = verdict;
   }
 }
 
@@ -287,7 +295,7 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
    *   which is not necessarily the device asking (its id may have rotated since the session opened).
    */
   constructor(readonly revoked: RevokedDeviceIdentity) {
-    super();
+    super('device-revoked');
     this.message = 'A device was revoked by its owner - this session has ended';
     this.name = 'SessionEndedByDeviceRevocationError';
   }
@@ -308,6 +316,9 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
  * nothing else - no logout, no redirect, no retry, no error shown.
  */
 export class SignOutInProgressError extends Error {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict = 'signing-out';
+
   constructor(stage: string) {
     super(`refresh ${stage} dropped - a sign-out is in progress`);
     this.name = 'SignOutInProgressError';
@@ -326,9 +337,24 @@ const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
 
 /** Fires once when the refresh cookie is proven dead. Set by the app shell. */
-type SessionExpiredHandler = () => void;
+/**
+ * Where the user was (or was going) when the verdict was reached - the target a sign-in must bring
+ * them back to. Captured AT the verdict, because a handler that registers later reads a location a
+ * redirect may already have moved.
+ */
+export type SessionExpiredTarget = { pathname: string; search: string; hash: string };
+type SessionExpiredHandler = (target: SessionExpiredTarget | null) => void;
 let _sessionExpiredHandler: SessionExpiredHandler | null = null;
 let _sessionExpiredNotified = false;
+/** The target of the verdict, kept for a handler that registers after it. */
+let _sessionExpiredTarget: SessionExpiredTarget | null = null;
+
+/** The page in flight when a verdict lands (`window.location`), or null where there is none. */
+function currentTarget(): SessionExpiredTarget | null {
+  if (typeof window === 'undefined') return null;
+  const { pathname, search, hash } = window.location;
+  return { pathname, search, hash };
+}
 
 /**
  * Latched the moment the SERVER proves the refresh credential is dead (401/403 on `/api/auth/refresh`).
@@ -389,6 +415,26 @@ export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
   return _sessionEndedByDeviceRevocation;
 }
 
+/**
+ * Latched when the server ANSWERED 204 to this account's deletion: the account is gone, so the
+ * sign-out that follows can only have its bearer refused, whatever state the device's push-token row
+ * is in (chat-delivery's erasure job, queued with the 204, deletes it). Read by {@link isAccountErasedOnServer} to SKIP the push deregistration - the fact is
+ * carried from where it is known (the deletion's answer) to where the decision is made, instead of
+ * sending a call certain to earn a 401 and reading the refusal. In memory only, cleared with the
+ * credential verdicts when a new credential arrives.
+ */
+let _accountErasedOnServer = false;
+
+/** Records that the server erased the signed-in account; see {@link isAccountErasedOnServer}. */
+export function noteAccountErasedOnServer(): void {
+  _accountErasedOnServer = true;
+}
+
+/** True once the server answered this account's deletion and no new credential has arrived. */
+export function isAccountErasedOnServer(): boolean {
+  return _accountErasedOnServer;
+}
+
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
 let _signOutHandler: (() => void | Promise<void>) | null = null;
 
@@ -420,7 +466,9 @@ export function setSignOutHandler(fn: (() => void | Promise<void>) | null): void
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
   _sessionEndedByDeviceRevocation = null;
+  _accountErasedOnServer = false;
   _sessionExpiredNotified = false;
+  _sessionExpiredTarget = null;
 }
 
 /**
@@ -435,13 +483,14 @@ function noteRefreshCredentialAlive(): void {
 export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void {
   _sessionExpiredHandler = fn;
   // The verdict can be reached before anything is listening: on a cold start the first refresh
-  // runs before the app shell mounts, so the fallback below is what reacts - and a bare redirect
-  // is NOT the same reaction. It leaves the PIN modal open over `/login`, covering the sign-in
-  // button, and never clears the stale auth state. Measured on Android 2026-08-06. So a handler
-  // that arrives late is told immediately; running it twice is the handler's own problem to guard.
+  // runs before the app shell mounts. It is QUEUED with its target and the handler - the ONE place
+  // that decides the login redirect - is told the moment it registers. A bare redirect here was the
+  // other reaction: it left the PIN modal open over `/login`, never cleared the stale auth state
+  // (Android, 2026-08-06) and dropped the page a tapped push was going to (Mi 9T, 2026-11-15).
+  // Running it twice is the handler's own problem to guard.
   if (fn && _sessionExpiredNotified) {
     awarn('session-expired handler registered after the verdict - replaying it');
-    fn();
+    fn(_sessionExpiredTarget);
   }
 }
 
@@ -454,19 +503,19 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
   _sessionExpiredNotified = true;
+  _sessionExpiredTarget = currentTarget();
   awarn(
     _sessionEndedByDeviceRevocation
       ? 'session dead: a device was revoked by its owner → reset if it is this one'
       : 'session dead → logout'
   );
   if (_sessionExpiredHandler) {
-    _sessionExpiredHandler();
+    _sessionExpiredHandler(_sessionExpiredTarget);
     return;
   }
-  // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
-  // anyway rather than leave the user on a shell that can no longer load anything.
-  awarn('no session-expired handler registered - redirecting directly');
-  void import('$app/navigation').then(({ goto }) => goto('/login', { replace: true }));
+  // No handler yet is the cold start: the verdict stays queued and `setSessionExpiredHandler`
+  // replays it. There is deliberately NO redirect of our own - a fallback is a signal, never a path.
+  awarn('no session-expired handler registered yet - verdict queued with its target');
 }
 
 /**
@@ -1027,7 +1076,7 @@ export async function leaveSignedOut(): Promise<void> {
 export async function signOutByChoice(): Promise<void> {
   alog('signout requested by the user');
   try {
-    await clearAuth();
+    await clearAuth('chosen');
     await leaveSignedOut();
   } catch (e) {
     console.error('[auth] sign-out the user chose failed:', e);
@@ -1388,9 +1437,12 @@ export function setToken(token: string): void {
  * Logs the user out: clears the in-memory token and WebSocket cookie,
  * calls the backend logout endpoint to revoke the HttpOnly refresh cookie,
  * and erases all locally persisted user data.
+ *
+ * `cause` names who decided it (see {@link SignOutCause}): printed here and handed to the native
+ * push-registration end, whose line is the only one a phone's logcat carries.
  */
-export async function clearAuth(): Promise<void> {
-  alog('clear');
+export async function clearAuth(cause: SignOutCause): Promise<void> {
+  alog(`clear (${cause})`);
   // FIRST OF ALL, before the handler: every refresh from here to the end of the revocation is moot -
   // one asked for is not sent, one already in flight drops its answer (`_signOutGeneration`).
   //
@@ -1399,7 +1451,7 @@ export async function clearAuth(): Promise<void> {
   // let a refresh be sent while the other was still revoking - and that refresh captured the CURRENT
   // generation, so nothing dropped its answer and it re-saved the user. The refusal holds until the
   // LAST sign-out under way has finished.
-  await clearAuthCounted({ revokeServerSession: true });
+  await clearAuthCounted({ revokeServerSession: true, cause });
 }
 
 /**
@@ -1412,12 +1464,16 @@ export async function clearAuth(): Promise<void> {
  * signed in since - a second logout here would end THAT account's session for nothing.
  */
 export async function clearAuthLocally(): Promise<void> {
-  alog('clear (local only - another tab ended this account)');
-  await clearAuthCounted({ revokeServerSession: false });
+  const cause: SignOutCause = 'account-deleted-in-another-tab';
+  alog(`clear (${cause}) - local only`);
+  await clearAuthCounted({ revokeServerSession: false, cause });
 }
 
 /** Counts one sign-out under way around {@link clearAuthUnderway} - see {@link clearAuth}. */
-async function clearAuthCounted(options: { revokeServerSession: boolean }): Promise<void> {
+async function clearAuthCounted(options: {
+  revokeServerSession: boolean;
+  cause: SignOutCause;
+}): Promise<void> {
   _signOutGeneration++;
   _signOutsUnderway++;
   try {
@@ -1428,7 +1484,10 @@ async function clearAuthCounted(options: { revokeServerSession: boolean }): Prom
 }
 
 /** The body of {@link clearAuth}, run while it is counted in `_signOutsUnderway`. */
-async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
+async function clearAuthUnderway(options: {
+  revokeServerSession: boolean;
+  cause: SignOutCause;
+}): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
   let handlerSettled: void | Promise<void> = undefined;
@@ -1446,7 +1505,7 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
-  void endPushRegistration();
+  void endPushRegistration(options.cause);
   // Whose account is leaving, read before the identity below is forgotten.
   const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The

@@ -67,7 +67,7 @@
 
   /** True when this association already receives delegated payments and so cannot delegate its own. */
   const isParent = $derived(children.length > 0);
-  /** Parent-side approvals require this association's own Stripe Connect to be ready. */
+  /** Parent-side approvals require this association's own payout account to be ready. */
   const canReceiveDelegation = $derived(isPaymentAccountReady(asso, activePaymentProvider.current));
   /** A list holds no Lydia account, so it can only delegate, never receive (server: LIST_NO_OWN_LYDIA_ACCOUNT). */
   const receivesNever = $derived(asso.type === 'list');
@@ -191,9 +191,8 @@
   }
 
   function paymentMethodLabel(method: AssociationPurchase['paymentMethod']): string {
-    if (method === 'cash') return m.asso_achats_payment_cash();
-    if (method === 'online' || method === 'stripe') return m.asso_achats_payment_online();
-    return method;
+    // Every non-cash value is an online payment: `online`, or the historic `stripe` kept at rest.
+    return method === 'cash' ? m.asso_achats_payment_cash() : m.asso_achats_payment_online();
   }
 </script>
 

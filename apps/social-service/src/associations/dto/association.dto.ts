@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -148,6 +149,15 @@ export class UpdateAssociationDto {
   @Matches(/^(#[0-9A-Fa-f]{6})?$/)
   color?: string | null;
 
+  /**
+   * Hex colour of a BDE's neutral ("Campus") events; `""` or `null` clears it (the derived accent).
+   * Accepted only on a BDE, and by the same right as `color` (EDIT_PROFILE).
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(/^(#[0-9A-Fa-f]{6})?$/)
+  neutralEventColor?: string | null;
+
   /** When true, archives the association (moves it to "Anciennes", hides from "Mes associations"). */
   @IsBoolean()
   @IsOptional()
@@ -226,8 +236,13 @@ export class AddMemberDto {
   @Min(0)
   @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
-  // inert unless the association is the BDE of a space (`spaces/bde.ts`), and then reach only
-  // what that space governs (MODERATE too since 2026-11-02, `spaces/bde-moderation.ts`).
+  // inert unless the association is the BDE of a space (`spaces/bde.ts`). MANAGE_ASSO then reaches the
+  // associations it is the PARENT of (WP-D2); MODERATE reaches what those associations publish AND
+  // the people of every space it governs, with their personal posts (`bdeModeratesUserSql`,
+  // `spaces/bde-moderation.ts`). Two exceptions by kind (owner, 2026-11-15): MODERATE in an
+  // INSTITUTION reaches that institution's own content, governing a space or not, and never a
+  // person (`institutionModeratesOwnSql`); VALIDATE_EVENTS in an institution governing a space keeps
+  // that space's agenda.
   permissions: number;
 }
 
@@ -358,6 +373,15 @@ export class CreateAssociationCalendarEventDto {
   presentation?: AssociationCalendarEventPresentation;
 
   /**
+   * An institution's reach (owner, 2026-11-13): `{ spaces: [{formation, campus}], public }`,
+   * MANDATORY on an institution's event and refused on any other - judged, with its typed codes, by
+   * `resolveInstitutionReachWrite`, the posts' own decision.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
+
+  /**
    * Associations ASKED to co-organise this event (D39): each gets a `coorganise` proposal and
    * co-organises only once its publishers accept it. The array bound (10) is only a transport
    * sanity limit: THE CAP IS `MAX_CO_ORGANISERS`, enforced by the service so the refusal is a typed
@@ -412,6 +436,15 @@ export class UpdateAssociationCalendarEventDto {
   @ArrayMaxSize(10)
   @IsUUID('all', { each: true })
   coOwnerIds?: string[];
+
+  /**
+   * An institution's reach, changed after filing or validation, both ways (owner, 2026-11-13): the
+   * organiser side only. Absent leaves the stored reach alone; present replaces it, judged as at the
+   * filing. The event does not go back to validation, and nobody is told again.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
 
   /** Changes how the event is presented; the organiser side only. Omit to leave it unchanged. */
   @IsOptional()

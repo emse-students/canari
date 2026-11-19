@@ -225,7 +225,9 @@
     };
   }
 
+  /** Idempotent: a double tap, or a tap on a viewer still mounting, opens ONE viewer. */
   function openViewer() {
+    if (showLightbox) return;
     const own = ownViewerItem();
     if (!own || !blobUrl) return;
     viewerItems = [own];
@@ -410,7 +412,7 @@
             </button>
           {:else if blobUrl}
             <!-- CANARI'S PLAYER, NOT THE ENGINE'S (2026-10-01): played when asked, its sound its
-                 own, the expand chip opening the viewer (`VideoPlayer` `chat`). ITS OWN SHAPE, NEVER
+                 own, a tap opening the viewer (`VideoPlayer` `chat`). ITS OWN SHAPE, NEVER
                  CROPPED (user, 2026-10-02): CONTAINED in the frame, so past the height ceiling it
                  letterboxes on the black rather than losing its edges. -->
             <div class="absolute inset-0">
@@ -715,7 +717,7 @@
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />
         {:else}
-          <MessageInlineText text={segment.value} />
+          <MessageInlineText text={segment.value} onOwnBubble={onAmber} />
         {/if}
       {/each}
     </p>

@@ -100,7 +100,7 @@ export function eventCoversDay(event: AssociationCalendarFeedEvent, day: Date): 
  * where {@link dayOccupancy} - the only reader that matters - could not reach it without importing
  * the PDF module.
  */
-export const HALF_DAY_PIVOT_HOUR = 13;
+const HALF_DAY_PIVOT_HOUR = 13;
 
 /** Which part of ONE day an event actually fills. */
 export type DayOccupancy = 'morning' | 'afternoon' | 'full';
@@ -169,7 +169,7 @@ export function dayOccupancy(event: AssociationCalendarFeedEvent, day: Date): Da
  * window that crosses months, and that pair cannot name the 3rd of the NEXT month. `eventsOnDay`
  * below is this function narrowed to a month's square, which is all the grid ever asks for.
  */
-export function eventsOnDate(
+function eventsOnDate(
   events: AssociationCalendarFeedEvent[],
   date: Date
 ): AssociationCalendarFeedEvent[] {
@@ -284,14 +284,17 @@ export function isNeutralEvent(event: Pick<AssociationCalendarFeedEvent, 'presen
 /**
  * The ONE identity a neutral event shows, whoever reads it - a reader outside the BDE's agenda
  * managers receives blanks in the owner fields anyway, and a manager is shown what everybody else
- * sees. Its colour derives from the fixed key, so every neutral event wears the same accent.
+ * sees. Its colour is the owning BDE's `neutralEventColor` when it chose one, else it derives from
+ * the fixed key (one accent for every neutral event).
  */
-function neutralOwnerIdentity(): EventOwnerIdentity {
+function neutralOwnerIdentity(event: AssociationCalendarFeedEvent): EventOwnerIdentity {
   return {
     associationId: NEUTRAL_EVENT_OWNER_KEY,
     name: m.calendar_neutral_label(),
     slug: '',
-    color: null,
+    // The owning BDE's chosen colour (owner, 2026-11-14), carried on the row by the server and kept
+    // when the owner is masked; null -> the accent derived from the fixed key.
+    color: event.neutralEventColor ?? null,
     logoUrl: null,
     neutral: true,
   };
@@ -306,7 +309,7 @@ function neutralOwnerIdentity(): EventOwnerIdentity {
  * second one.
  */
 export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIdentity[] {
-  if (isNeutralEvent(event)) return [neutralOwnerIdentity()];
+  if (isNeutralEvent(event)) return [neutralOwnerIdentity(event)];
   return [
     {
       associationId: event.associationId,
@@ -329,7 +332,7 @@ export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIden
  * Index of the owner in a grid block's display order: the middle one from three associations up,
  * the first below that (two bands have no middle).
  */
-export function organiserDisplayIndex(count: number): number {
+function organiserDisplayIndex(count: number): number {
   return count >= 3 ? Math.floor(count / 2) : 0;
 }
 
@@ -379,7 +382,7 @@ export function eventOwnersLabel(
  * {@link organisersFullList}, carried by the title and the aria-label next to it, and by the detail
  * modal, the one place every name is guaranteed visible.
  */
-export function organisersLabel(owners: EventOwnerIdentity[]): string {
+function organisersLabel(owners: EventOwnerIdentity[]): string {
   if (owners.length <= 2) return owners.map((owner) => owner.name).join(' + ');
   return m.calendar_owners_and_others({ first: owners[0].name, count: owners.length - 1 });
 }

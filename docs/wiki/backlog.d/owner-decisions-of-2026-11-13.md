@@ -1,5 +1,7 @@
 ## The owner's decisions of 2026-11-13
 
+target: 1.7.1
+
 The owner handed the lead full autonomy after this day's questions: no further question is asked
 until the owner is back. A new design question takes the recommended option when reversible (written
 to the wiki) and is parked in [open-questions](../open-questions.md) when not.

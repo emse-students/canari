@@ -1,8 +1,13 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
-  import { clampFraction, formatVideoTime } from '$lib/utils/videoPlayback';
-  import { videoGlass } from '$lib/utils/videoGlass';
+  import {
+    clampFraction,
+    formatVideoTime,
+    playedFraction,
+    type LoadedSpan,
+  } from '$lib/utils/videoPlayback';
   import { Log } from '$lib/utils/Log';
+  import { videoGlass } from '$lib/utils/videoGlass';
   import { SEEK_LINE_TOUCH_REM } from './seekLineGeometry';
 
   /**
@@ -13,8 +18,11 @@
    *   while touched or focused from the keyboard.
    * - `bar`: the full-screen viewer's - a 4px track with what is buffered, inside the glass bar.
    *
-   * THE PLAYED PART IS THE BRAND YELLOW in both, the one place the player spends its accent; buffered is
-   * white at a third. While a finger (or the mouse) drags, a small glass bubble above the handle says
+   * THE PLAYED PART IS THE BRAND YELLOW in both, the one place the player spends its accent; what is
+   * LOADED is grey under it, one stretch per loaded range, on the SAME track (YouTube's, owner,
+   * 2026-11-18). The track is the video's TOTAL length, fixed from the first frame (`barLength`): a
+   * length nobody knows yet (`duration` 0) draws no played part and no loaded part - never a
+   * line mapped onto what has loaded so far, which grows and rewinds. While a finger (or the mouse) drags, a small glass bubble above the handle says
    * the time it would land on - the time only, never a frame thumbnail (owner: a second decoder costs
    * the Mi 9T, and YouTube's own press-and-slide shows the time).
    *
@@ -25,8 +33,8 @@
   interface Props {
     currentTime: number;
     duration: number;
-    /** How far the buffered range under the playhead reaches, as a fraction (`bufferedFraction`). */
-    buffered?: number;
+    /** Every loaded range as fractions of `duration` (`loadedSpans`): the grey part. */
+    loaded?: LoadedSpan[];
     variant: 'line' | 'bar';
     /** Moves the playhead. */
     onSeek: (seconds: number) => void;
@@ -38,7 +46,7 @@
   let {
     currentTime,
     duration,
-    buffered = 0,
+    loaded = [],
     variant,
     onSeek,
     onScrubbingChange,
@@ -49,7 +57,7 @@
   let scrubbing = $state(false);
 
   const known = $derived(Number.isFinite(duration) && duration > 0);
-  const played = $derived(known ? clampFraction(currentTime / duration) : 0);
+  const played = $derived(playedFraction(currentTime, duration));
   const timeText = $derived(
     m.video_time_value({
       elapsed: formatVideoTime(currentTime),
@@ -92,6 +100,7 @@
   class="relative {klass}"
   data-video-controls
   data-video-progress={variant}
+  data-video-length={known ? 'known' : 'unknown'}
   onclick={(e) => e.stopPropagation()}
   role="presentation"
 >
@@ -126,7 +135,7 @@
     onpointercancel={onPointerEnd}
   >
     <div
-      class="relative w-full overflow-hidden bg-white/30 drop-shadow-sm transition-[height] duration-150 motion-reduce:transition-none {variant ===
+      class="relative w-full overflow-hidden bg-white/20 drop-shadow-sm transition-[height] duration-150 motion-reduce:transition-none {variant ===
       'line'
         ? scrubbing
           ? 'h-1.5'
@@ -134,9 +143,13 @@
         : 'h-1 rounded-full'}"
       data-video-line
     >
-      {#if variant === 'bar'}
-        <div class="absolute inset-y-0 left-0 bg-white/35" style="width: {buffered * 100}%"></div>
-      {/if}
+      {#each loaded as span, i (i)}
+        <div
+          class="absolute inset-y-0 bg-white/50"
+          style="left: {span.from * 100}%; width: {(span.to - span.from) * 100}%"
+          data-video-loaded
+        ></div>
+      {/each}
       <div
         class="bg-accent absolute inset-y-0 left-0"
         style="width: {played * 100}%"

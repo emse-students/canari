@@ -1,3 +1,7 @@
+import {
+  AdminQueueSignal,
+  type AdminQueueChange,
+} from '../admin-queues/admin-queue-signal.service';
 import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
@@ -6,6 +10,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Inject,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -52,10 +57,15 @@ import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
+  agendaSubscriptionToken,
+  assertAgendaSigningKey,
+  legacyAgendaLinkShape,
   selectionWithinSpaces,
   signAgendaSelection,
 } from './agenda-signature';
 import { Association } from './entities/association.entity';
+import { isForeignKeyViolation } from '../common/pg-errors';
+import { agendaSelectionKey } from './entities/agenda-subscription.entity';
 import {
   assertReviewerReachesAssociation,
   assertRosterStaysOnOneSide,
@@ -68,8 +78,13 @@ import {
 } from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
+import type {
+  LydiaCashierDeparturePort,
+  LydiaCashierDepartureTrigger,
+} from './lydia-cashier-departures.port';
 import {
   LYDIA_CASHIER_PHONE_IN_USE,
+  assertNoCashierOwed,
   claimLost,
   claimTokenOf,
   clearClaim,
@@ -84,6 +99,21 @@ import {
   paymentsNotReady,
   type LydiaReadinessCause,
 } from './lydia-readiness';
+import {
+  HELD_BUSINESSES_SQL,
+  LYDIA_BRIDGE_LOG_TAG,
+  LYDIA_BUSINESS_HOLDS_PAYMENTS,
+  LYDIA_BUSINESS_PENDING_VALIDATION,
+  bridgeJoinSql,
+  bridgeOfEnrolled,
+  lockBridge,
+  managedVendorTokenSql,
+  swapBridge,
+  vendorTokensHeldBy,
+  type HeldBusinessRole,
+  type LydiaBridgeState,
+} from './lydia-account-bridge';
+import { recordEnrolledBusiness } from './lydia-contract-flux';
 import {
   approvedDelegateIds,
   collectsThrough,
@@ -120,7 +150,9 @@ import {
   EVERY_EVENT_STEWARDSHIP,
   eventStewardshipOf,
   isNeutralEvent,
+  neutralColourOfRow,
   NO_EVENT_STEWARDSHIP,
+  CALENDAR_NEUTRAL_ERROR_CODES,
   presentEventsForReader,
   type EventStewardship,
   type PresentableEventRow,
@@ -149,6 +181,7 @@ import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
+import { assertFormOfAssociation } from '../forms/form-ownership';
 import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
 import {
   AddMemberDto,
@@ -181,6 +214,7 @@ import {
   associationRulesReachSpaceMatchingSql,
   eventReachesSpaceMatchingSql,
   associationVisibleToViewerSql,
+  eventCardShownToViewerSql,
   eventVisibleToViewerSql,
   READER_PROFILE_SQL,
   AGENDA_REACHED_SPACES_SQL,
@@ -189,7 +223,17 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
+import {
+  institutionReachOptionsOffered,
+  resolveInstitutionReachWrite,
+  servedInstitutionReach,
+  type InstitutionReachSpace,
+} from '../spaces/institution-reach';
+import {
+  assertAudienceAllowedForType,
+  defaultCampusRules,
+  defaultSpacesFromParent,
+} from '../spaces/audience-policy';
 import { normaliseRules, smallestRules } from '../spaces/spaces.service';
 import { writeDependencyJournal } from '../spaces/dependency-journal';
 import {
@@ -215,11 +259,15 @@ import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
 import {
   BDE_MODERATED_ASSOCIATION_IDS_SQL,
   BDE_MODERATED_POST_IDS_SQL,
+  BDE_MODERATION_READ_OPENS_POST_SQL,
   BDE_MODERATED_USER_IDS_SQL,
   BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
+  MODERATED_INSTITUTION_IDS_SQL,
+  MODERATES_SOMEWHERE_SQL,
   MODERATION_OUT_OF_SCOPE,
+  MODERATION_OUTSIDE_OWN_INSTITUTION,
   MODERATION_RESERVED_SQL,
   MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   MODERATOR_REQUIRED,
@@ -395,6 +443,14 @@ function calendarDateRefusal(
  * an anonymous reader - so this is optional by construction, and an absent viewer gets the whole
  * window exactly as before. The limit itself is `promoCutoffFor`, shared with the posts feed.
  */
+/** What a subscription link reads of its row: the holder and the selection. */
+export interface AgendaSubscriptionRow {
+  userId: string;
+  campus: SpaceSelection['campus'];
+  formation: SpaceSelection['formation'];
+  associationId: string | null;
+}
+
 export interface CalendarViewer {
   userId?: string;
   isGlobalAdmin?: boolean;
@@ -435,6 +491,14 @@ export const LYDIA_RESPONSABLE_IN_FLIGHT = 'LYDIA_RESPONSABLE_IN_FLIGHT';
 /** The `code` of the 409 answered when the linked Business changed between two steps. */
 export const LYDIA_BUSINESS_CHANGED = 'LYDIA_BUSINESS_CHANGED';
 
+/**
+ * SQL predicate over `associations` (unaliased, an UPDATE's target): its managers hold NO Business
+ * - the ONE definition (`managedVendorTokenSql`) read as a scalar subquery, so a bridge's historical
+ * account never counts as theirs and its enrolled Business does.
+ */
+const MANAGES_NO_BUSINESS_SQL = `(SELECT ${managedVendorTokenSql('x', 'b')}
+     FROM associations x ${bridgeJoinSql('x', 'b')} WHERE x.id = associations.id) IS NULL`;
+
 function responsableAlreadySet(): ConflictException {
   return new ConflictException({
     code: LYDIA_RESPONSABLE_ALREADY_SET,
@@ -459,8 +523,8 @@ function lydiaBusinessChanged(): ConflictException {
 /** HKDF purpose of a cashier phone's encryption key (migration 118); bump the suffix to rotate. */
 export const LYDIA_CASHIER_PHONE_PURPOSE = 'lydia-cashier-phone/v1';
 
-/** What a cashier phone must look like when stored: E.164, as core-service validated it. */
-const E164_RE = /^\+[1-9]\d{7,14}$/;
+/** What a cashier phone must look like when stored: E.164, no French trunk `0`, as core-service validated it. */
+const E164_RE = /^\+(?!330)[1-9]\d{7,14}$/;
 
 /** Where a readiness change came from, for its log line. */
 export interface LydiaReadinessRef {
@@ -477,6 +541,11 @@ export type LydiaReadinessOutcome =
       associationId: string;
       previousCause: LydiaReadinessCause | null;
       previousAt: Date | null;
+      /**
+       * Set when this transition SWITCHED a bridge to its enrolled Business (the token was the
+       * pending one; lydia-account-bridge.ts): the historical account stopped collecting with it.
+       */
+      bridgeSwitched?: true;
     }
   | {
       /** An unsigned VALIDATED over a holder Lydia itself reported: nothing written. */
@@ -485,7 +554,46 @@ export type LydiaReadinessOutcome =
       previousCause: LydiaReadinessCause | null;
       previousAt: Date | null;
     }
+  | {
+      /**
+       * Error 5 on the Business a bridge switch made active: the historical account collects again
+       * (`already`: a concurrent refusal switched it back first). The caller re-issues the SAME
+       * payment once on it - the owner's decision for this bridge, never a general fallback.
+       */
+      kind: 'switched-back';
+      associationId: string;
+      already: boolean;
+    }
   | { kind: 'no-holder' | 'no-holder-enrolment-in-flight' };
+
+/** The holder of a vendor token as the readiness writer reads it, locked `FOR UPDATE`. */
+interface LydiaReadinessHolder {
+  id: string;
+  name: string;
+  ready: boolean;
+  cause: LydiaReadinessCause | null;
+  at: Date | string | null;
+  type: Association['type'];
+  paymentDelegationStatus: Association['paymentDelegationStatus'];
+  paymentParentAssociationId: string | null;
+}
+
+/** What a bridge's switch back did in its transaction (`switchBackOnRefusal`). */
+interface BridgeSwitchBack {
+  /** The historical account's readiness, restored from the standby columns. */
+  historicalReady: boolean;
+  /** `switchBackCount` after this one. */
+  switchBackCount: number;
+  /**
+   * Whether the enrolled Business had PROVEN itself (`enrolledProvenAt`, a request/do Lydia issued
+   * on it) - its managers were then told "active", and are owed the counter-notice.
+   */
+  wasProven: boolean;
+  withheld: number;
+  admins: number;
+  delegates: string[];
+  delegatesWithheld: Map<string, number>;
+}
 
 /** The Responsable of an association's CURRENT Business, as the payments screen reads it. */
 export interface LydiaResponsableView {
@@ -547,6 +655,21 @@ export function shownParentId(
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
+  /**
+   * The admin badges' signal (`AdminQueueSignal`), injected by PROPERTY so the specs that build this
+   * service by hand need no new argument. NOT optional: Nest refuses to boot without it (a global
+   * module provides it; `admin-queue-signal.wiring.spec` asserts the dependency is declared), so it
+   * is absent only in a spec built by hand.
+   */
+  @Inject(AdminQueueSignal) private readonly adminQueueSignal?: AdminQueueSignal;
+
+  /** An item entered or left an admin queue: whoever may act on it recounts. Never throws. */
+  private async tellAdminQueues(change: AdminQueueChange): Promise<void> {
+    // Absent only outside Nest (a spec that builds this service by hand): Nest refuses to boot
+    // without it, which `admin-queue-signal.wiring.spec` holds. No production path skips it.
+    await this.adminQueueSignal?.changed(change);
+  }
+
   constructor(
     @InjectRepository(Association)
     private readonly assoRepo: Repository<Association>,
@@ -583,6 +706,52 @@ export class AssociationsService {
     if (this.coOrganisers) throw new Error('co-organisers registered twice');
     this.coOrganisers = port;
     this.logger.log('[COORG] co-organisation registered');
+  }
+
+  /** The Lydia cashiers' departure debt, registered at boot by `LydiaCashiersService` - see its port. */
+  private cashierDepartures: LydiaCashierDeparturePort | null = null;
+
+  /** Called once, by `LydiaCashiersService`. A second registration is a wiring defect. */
+  registerCashierDepartures(port: LydiaCashierDeparturePort): void {
+    if (this.cashierDepartures) throw new Error('Lydia cashier departures registered twice');
+    this.cashierDepartures = port;
+    this.logger.log('[LYDIA-CASHIER] departure removals registered');
+  }
+
+  /**
+   * Asks the Lydia cashiers to settle association `associationId`'s departure debt, WITHOUT waiting:
+   * the membership write it follows has committed and is never held by a call to Lydia. The port
+   * never rejects; an unregistered one is a wiring defect, said at ERROR - the debt stays in the rows
+   * and the next payments-card read retries it.
+   */
+  private settleCashierDepartures(
+    associationId: string,
+    trigger: LydiaCashierDepartureTrigger,
+    departedUserId?: string
+  ): void {
+    const port = this.cashierDepartures;
+    if (!port) {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals are not ` +
+          `registered (LydiaCashiersService missing) - the debt stays owed (${trigger})`
+      );
+      return;
+    }
+    void port.settleDepartures(associationId, trigger, departedUserId).catch((err: unknown) => {
+      this.logger.error(
+        `[LYDIA-CASHIER] association ${sanitizeLog(associationId)}: departure removals threw ` +
+          `(${trigger}) - the debt stays owed`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    });
+  }
+
+  /**
+   * A step holding the association's cashier claim released it (the Responsable's): a departure
+   * that met it busy is owed now. Never waits, never throws.
+   */
+  afterCashierClaimReleased(associationId: string): void {
+    this.settleCashierDepartures(associationId, 'claim-released');
   }
 
   private coOrganiserPort(): CoOrganiserPort {
@@ -879,7 +1048,16 @@ export class AssociationsService {
         const governed = await manager.find(Space, {
           where: { bdeAssociationId: dependency.parentId },
         });
-        const fromParent = smallestRules(governed);
+        // One campus per association or list (decision 3): a parent governing spaces of two
+        // campuses hands its child the ones of the CREATOR's campus, read only then. A creator
+        // whose profile names neither is refused, typed; thrown here, the row saved above rolls back.
+        const spansCampuses = new Set(governed.map((s) => s.campus)).size > 1;
+        const [creator] = spansCampuses
+          ? ((await manager.query(READER_PROFILE_SQL, [userId])) as { campus: string | null }[])
+          : [];
+        const fromParent = smallestRules(
+          defaultSpacesFromParent(governed, creator?.campus ?? null)
+        );
         this.logger.log(
           `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
         );
@@ -1076,9 +1254,10 @@ export class AssociationsService {
    * Pass `type` to restrict to regular associations or promo lists; omit for both.
    *
    * `opts.viewerId` makes it THE DIRECTORY of that reader (D37): an association is kept when its
-   * rules reach one of the reader's spaces or the reader is a member of it -
-   * `associationVisibleToViewerSql`, the agenda's predicate, so the two never disagree. A global
-   * admin is an ordinary reader here. No viewer is the whole catalogue (the public listing and
+   * rules reach one of the reader's spaces, the reader is a member of it, or a nominative read
+   * grant of the reader reaches it (owner, 2026-11-14: a grant opens everything of its cell) -
+   * `associationVisibleToViewerSql`, which counts read grants as the signed-in agenda does, so
+   * the two never disagree. A global admin is an ordinary reader here. No viewer is the whole catalogue (the public listing and
    * `?scope=all`). `opts.campus` / `opts.formation` keep the associations whose OWN rules reach a
    * space matching them (the association map).
    */
@@ -1182,9 +1361,9 @@ export class AssociationsService {
 
   /** Loads one association by its URL slug and appends a memberCount. */
   /**
-   * The ids of the associations of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): type `association`,
-   * audience reaching the space, archived ones included - the carte's set plus the archived
-   * associations of the same space. Read by the public directory a showcase filters by its space.
+   * The ids of the entities of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): EVERY type (owner,
+   * 2026-11-14), audience reaching the space, archived ones included - for associations, the
+   * carte's set plus the archived ones. Read by the public directory a showcase filters by its space.
    */
   async offeredInSpace(space: PublicSpaceKey): Promise<Set<string>> {
     const rows: { id: string }[] = await this.assoRepo.query(OFFERED_BY_SPACE_KEY_SQL, [
@@ -1192,7 +1371,7 @@ export class AssociationsService {
       space.campus,
     ]);
     this.logger.debug(
-      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} association(s)`
+      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} entities`
     );
     return new Set(rows.map((r) => r.id));
   }
@@ -1236,6 +1415,41 @@ export class AssociationsService {
     }
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
+    }
+    if (dto.neutralEventColor !== undefined) {
+      // The colour of neutral events is a BDE's setting (owner, 2026-11-14): another association
+      // owns no neutral event, so a VALUE stored there would be dead and misleading - refused, typed
+      // at the throw. A CLEAR is let through, so an association that stopped being a BDE (the
+      // designation moved) can still drop the colour its past neutral events wear.
+      const colour = dto.neutralEventColor?.trim() ?? '';
+      if (!asso.isBDE && colour !== '') {
+        this.logger.warn(
+          `[ASSO] association=${id.slice(0, 8)} refused neutralEventColor: not a BDE`
+        );
+        throw new ForbiddenException({
+          code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_NOT_A_BDE,
+          message: 'Only a BDE chooses the colour of neutral events',
+        });
+      }
+      patch.neutralEventColor = colour === '' ? null : colour;
+      this.logger.log(
+        `[ASSO] association=${id.slice(0, 8)} neutralEventColor=${patch.neutralEventColor ?? 'default'}`
+      );
+    }
+    // THE MASK HOLDS ONLY IF THE TWO COLOURS DIFFER (review of #3539): `color` is in every member
+    // read and paints the BDE's own events, so a neutral colour equal to it names the BDE behind
+    // every masked event. Judged on the colours AFTER this write, so either field's change is caught.
+    const nextColour = patch.color !== undefined ? patch.color : asso.color;
+    const nextNeutral =
+      patch.neutralEventColor !== undefined ? patch.neutralEventColor : asso.neutralEventColor;
+    if (nextColour && nextNeutral && nextColour.toLowerCase() === nextNeutral.toLowerCase()) {
+      this.logger.warn(
+        `[ASSO] association=${id.slice(0, 8)} refused: the neutral events colour would equal the association colour`
+      );
+      throw new BadRequestException({
+        code: CALENDAR_NEUTRAL_ERROR_CODES.COLOUR_IS_THE_BDE_COLOUR,
+        message: 'The colour of neutral events must differ from the association colour',
+      });
     }
     if (
       dto.contactEmail !== undefined &&
@@ -1411,19 +1625,13 @@ export class AssociationsService {
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
       await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
-      // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
-      // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
-      // phone.
-      const liveCashiers: Array<{ vendorToken: string }> = await manager.query(
-        `SELECT "vendorToken" FROM lydia_cashiers WHERE "associationId" = $1 AND "removedAt" IS NULL`,
-        [id]
-      );
-      for (const cashier of liveCashiers) {
-        this.logger.error(
-          `[AUDIT] [LYDIA] association ${sanitizeLog(id)} deleted with a LIVE cashier row: ` +
-            `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
-        );
-      }
+      // Its Lydia cashier rows go with it (ON DELETE CASCADE), and with them every membership: a
+      // Tresorier, a Vendeur or a Responsable's other number still live would keep its rights at
+      // Lydia with nothing left to remove them, and a cashier step in flight would record on a row
+      // the delete took - so the delete is refused, typed, until neither holds (review of the 1.7.1
+      // flip). Read under the association's lock, with the same rows the cascade would take.
+      const liveCashiers = await this.refuseOnCashierDebt(manager, id, 'DELETE');
+      this.sayCashiersKeptAtLydia(id, 'deleted', liveCashiers);
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
@@ -1745,8 +1953,9 @@ export class AssociationsService {
    * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
    * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
    * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
-   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
-   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * random id, the showcase's list key. The account id and the joining date are read
+   * here (the review-cohort filter, the order) and NEVER served (`PublicMember`). Never the raw
+   * permission bitmask.
    * Ordered like the public members grid (sortOrder, then createdAt). See
    * docs/wiki/anonymous-surface.md.
    */
@@ -1769,7 +1978,6 @@ export class AssociationsService {
       .filter((r) => !isInReviewCohort(r.m_userId))
       .map((r) => ({
         id: r.m_id,
-        userId: r.m_userId,
         role: r.m_role,
         isAdmin: Number(r.m_permissions ?? 0) > 0,
         // The same precedence every other surface uses - this line built its own, preferring
@@ -1778,7 +1986,6 @@ export class AssociationsService {
         firstName: r.firstName || null,
         lastName: r.lastName || null,
         promo: r.promo ?? null,
-        createdAt: r.m_createdAt,
         avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
   }
@@ -2037,6 +2244,10 @@ export class AssociationsService {
     }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
+    // A cashier of the association's Lydia Business who is no longer a member owes the removal of
+    // their numbers (review of the 1.7.1 flip): asked now, never holding this answer; the debt is
+    // the rows themselves, so a failure here is retried by the next payments-card read.
+    this.settleCashierDepartures(associationId, 'departure', targetUserId);
     return { ok: true };
   }
 
@@ -2324,6 +2535,9 @@ export class AssociationsService {
       rejectedBy: e.rejectedBy ?? null,
       rejectionReason: e.rejectionReason ?? null,
       imageUrl: e.imageUrl ?? null,
+      // An institution's reach (owner, 2026-11-13), served to every reader as posts serve theirs, so
+      // the event says who it is for: `null` when the event carries none.
+      reach: servedInstitutionReach(e),
       coOwners: coOwners.map((co) => ({
         associationId: co.associationId,
         name: co.association?.name ?? '',
@@ -2406,19 +2620,13 @@ export class AssociationsService {
    * `AssociationCalendarFeedEvent` shape that modal already renders, association identity
    * included, not the narrower object other callers of `serializeCalendarEvent` are content with.
    */
-  async findCalendarEventByLinkedPost(postId: string) {
+  async findCalendarEventByLinkedPost(postId: string, viewerId: string | undefined) {
     const post = await this.postRepo.findOne({
       where: { id: postId },
       select: { id: true, linkedCalendarEventId: true },
     });
     if (!post?.linkedCalendarEventId) return null;
-    const ev = await this.calendarRepo.findOne({
-      where: {
-        id: post.linkedCalendarEventId,
-        status: AssociationCalendarEventStatus.Validated,
-        presentation: AssociationCalendarEventPresentation.Association,
-      },
-    });
+    const ev = await this.findShownLinkedEvent(post.linkedCalendarEventId, viewerId);
     if (!ev) return null;
     const [coOwners, ownerById] = await Promise.all([
       this.batchLoadCoOwners([ev.id]),
@@ -2434,15 +2642,38 @@ export class AssociationsService {
     };
   }
 
-  /** Minimal event payload for post cards (validated events only). */
-  async findValidatedCalendarEventSummary(eventId: string) {
-    const ev = await this.calendarRepo.findOne({
-      where: {
-        id: eventId,
-        status: AssociationCalendarEventStatus.Validated,
-        presentation: AssociationCalendarEventPresentation.Association,
-      },
-    });
+  /**
+   * THE EVENT A POST LINKS, AS ITS READER MAY BE SHOWN IT: validated, presented in its association's
+   * name, and - for an event an institution gave a reach (owner, 2026-11-13) - admitted by the
+   * event's own predicate for `viewerId` (`eventCardShownToViewerSql`): "an event announced by a
+   * post keeps its own visibility". An event with no reach is shown wherever its post is, as before.
+   */
+  private async findShownLinkedEvent(
+    eventId: string,
+    viewerId: string | undefined
+  ): Promise<AssociationCalendarEvent | null> {
+    const ev = await this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e.id = :eventId', { eventId })
+      .andWhere('e.status = :validated', { validated: AssociationCalendarEventStatus.Validated })
+      .andWhere('e.presentation = :presented', {
+        presented: AssociationCalendarEventPresentation.Association,
+      })
+      .andWhere(eventCardShownToViewerSql('e', ':cardViewerId'), {
+        cardViewerId: viewerId?.trim() || null,
+      })
+      .getOne();
+    if (!ev) {
+      this.logger.debug(
+        `[AGENDA] linked event ${sanitizeLog(eventId.slice(0, 8))} not shown to ${viewerId ? sanitizeLog(viewerId.slice(0, 8)) : 'an anonymous reader'}`
+      );
+    }
+    return ev;
+  }
+
+  /** Minimal event payload for post cards (validated events the reader may be shown only). */
+  async findValidatedCalendarEventSummary(eventId: string, viewerId: string | undefined) {
+    const ev = await this.findShownLinkedEvent(eventId, viewerId);
     if (!ev) return null;
     const asso = await this.assoRepo.findOne({
       where: { id: ev.associationId },
@@ -2478,14 +2709,13 @@ export class AssociationsService {
     associationId: string,
     manager?: EntityManager
   ) {
-    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
-      where: { id: formId },
-      select: { id: true, associationId: true, status: true },
-    });
-    if (!f) throw new BadRequestException('Linked form not found');
-    if (f.associationId !== associationId) {
-      throw new BadRequestException('Form must belong to this association');
-    }
+    // The ONE ownership rule, shared with a post's attachment (`form-ownership.ts`).
+    const f = await assertFormOfAssociation(
+      manager ?? this.formRepo.manager,
+      formId,
+      associationId,
+      'an agenda event link'
+    );
     // An agenda entry is read by the association's audience: a DRAFT linked to it would hand them a
     // link to a form they cannot open. Published first, linked after (`form-status.ts`).
     if (f.status === FORM_DRAFT) {
@@ -2573,6 +2803,7 @@ export class AssociationsService {
         associationSlug: owner?.slug ?? '',
         associationColor: owner?.color ?? null,
         associationLogoUrl: owner?.logoUrl ?? null,
+        neutralEventColor: neutralColourOfRow(e, owner?.neutralEventColor),
       };
     });
     // THIS association's own agenda: a neutral event of it is not listed to a non-steward at all.
@@ -2634,12 +2865,24 @@ export class AssociationsService {
    */
   private async batchLoadEventOwners(
     associationIds: string[]
-  ): Promise<Map<string, Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl'>>> {
+  ): Promise<
+    Map<
+      string,
+      Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl' | 'neutralEventColor'>
+    >
+  > {
     const unique = [...new Set(associationIds)];
     if (unique.length === 0) return new Map();
     const owners = await this.assoRepo.find({
       where: { id: In(unique) },
-      select: { id: true, name: true, slug: true, color: true, logoUrl: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        color: true,
+        logoUrl: true,
+        neutralEventColor: true,
+      },
     });
     return new Map(owners.map((a) => [a.id, a]));
   }
@@ -2703,6 +2946,25 @@ export class AssociationsService {
     );
   }
 
+  /**
+   * AN ANONYMOUS READ NEVER CARRIES A "STUDENTS" OR "STAFF" EVENT (owner, 2026-11-13; the lead's
+   * "same rules as posts", review of #3460): a post whose public is students or staff never reaches
+   * an anonymous reader (the link preview refuses it), and neither does an event. An association-only
+   * link and a campus/formation selection feed alike are signed over the SELECTION, not a reader, and
+   * are shareable, so neither names a public: both withhold such an event, whatever space it ticks.
+   * A signed-in reader is judged by their own predicate. The one-event link (`signedEvent`, signed
+   * for that event and handed out by a reader who saw it) is left whole, deliberately: it shares one
+   * event its holder could already read, as a forwarded invitation does.
+   */
+  private restrictAnonymousToPublicReach(
+    qb: SelectQueryBuilder<AssociationCalendarEvent>,
+    opts: { viewer?: CalendarViewer; signedEvent?: boolean } | undefined
+  ): void {
+    if (opts?.viewer?.userId?.trim() || opts?.viewer?.isGlobalAdmin || opts?.signedEvent) return;
+    this.logger.debug('[AGENDA] anonymous read: events for students or staff withheld');
+    qb.andWhere(`(e."reachPublic" IS NULL OR e."reachPublic" = 'all')`);
+  }
+
   /** Max span for aggregated calendar queries (abuse guard). */
   private static readonly CALENDAR_FEED_MAX_MS = 550 * 24 * 60 * 60 * 1000;
 
@@ -2710,8 +2972,8 @@ export class AssociationsService {
    * Default window for the aggregated calendar feed when `from`/`to` are omitted: 3 months back
    * to the end of the 12th month ahead. A "subscribe by URL" feed (`.ics`) is saved once by the
    * calendar app and re-polled with the exact same URL forever - requiring the caller to always
-   * supply a window defeats that, since nothing ever adds one after the first save. Mirrors the
-   * range the frontend itself computes for the same purpose (`icsSubscriptionRangeISO`).
+   * supply a window defeats that, since nothing ever adds one after the first save. This is the ONE
+   * definition of a subscription's window: the links the frontend builds carry no `from`/`to`.
    */
   private static defaultCalendarFeedRange(): { from: Date; to: Date } {
     const now = new Date();
@@ -2985,6 +3247,34 @@ export class AssociationsService {
       .map((a) => ({ id: a.id, name: a.name }));
   }
 
+  /**
+   * MAY `userId` EDIT A PRICE SOMEWHERE - the one predicate the payout estimate's fee schedule is
+   * answered on (core-service `LydiaFeeScheduleController`, docs/wiki/lydia-contract-flux.md; owner,
+   * 2026-11-14: the fees are a confidential contract term, shown to those who need them). Built from
+   * the rights that guard the price editors, never a new axis:
+   * - a global admin (every editor, the Cercle top-up page included);
+   * - a BDE super-admin (`isAssociationSuperAdmin`): `mayAct` grants them MANAGE_PRODUCTS and
+   *   MANAGE_FORMS on the associations they govern;
+   * - a member holding MANAGE_PRODUCTS (the shop, the cotisation tiers) or MANAGE_FORMS (paid forms)
+   *   in an association or a list - not an institution, which collects nothing (TYPE_EXCLUDED_FLAGS).
+   * A form's creator is not one by being its creator: an association's form is edited by MANAGE_FORMS
+   * alone (`FormsService.managesForm`, owner 2026-11-14), and a personal form is offered no price
+   * (the editor asks for an association first, `FormPaymentSection`).
+   */
+  async mayEditAPrice(userId: string, isGlobalAdmin: boolean): Promise<boolean> {
+    if (isGlobalAdmin) return true;
+    if (!userId) return false;
+    const priceFlags =
+      AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_FORMS;
+    const mine = await this.listByUser(userId);
+    if (mine.some((a) => a.type !== 'institution' && (a.permissions & priceFlags) !== 0)) {
+      return true;
+    }
+    const may = await this.isAssociationSuperAdmin(userId);
+    this.logger.debug(`[PERM] may edit a price user=${userId.slice(0, 8)}: ${may}`);
+    return may;
+  }
+
   /** Returns true if userId is a member of the given association (any role). */
   async isMember(userId: string, associationId: string): Promise<boolean> {
     const m = await this.memberRepo.findOne({ where: { associationId, userId } });
@@ -2992,9 +3282,11 @@ export class AssociationsService {
   }
 
   /**
-   * Returns true if userId holds `flag` in ANY BDE association. For `MANAGE_ASSO` - management - an
-   * institution governing a space does not count: it answers for that space's agenda and people,
-   * and manages nothing (reform 2.3, `governorIsAnAssociationSql`).
+   * Returns true if userId holds `flag` in ANY BDE association - of type `association`: an
+   * institution governing a space answers for that space's agenda only, and neither manages nor
+   * moderates anything as a BDE (reform 2.3, `governorIsAnAssociationSql`; owner, 2026-11-15,
+   * decision 3). The moderation door, which an institution's own moderators also pass, is
+   * `isContentModerator`.
    */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
     const qb = this.memberRepo
@@ -3002,8 +3294,8 @@ export class AssociationsService {
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
       .andWhere(isBdeAssociationSql('a'))
+      .andWhere(`a.type = 'association'`)
       .andWhere('(m.permissions & :flag) <> 0', { flag });
-    if (flag === AssociationPermissionFlag.MANAGE_ASSO) qb.andWhere(`a.type = 'association'`);
     return (await qb.getCount()) > 0;
   }
 
@@ -3030,8 +3322,9 @@ export class AssociationsService {
   }
 
   /**
-   * Does `userId` moderate SOMEWHERE - a platform administrator, or a member holding `MODERATE` in
-   * the BDE of at least one space?
+   * Does `userId` moderate SOMEWHERE - a platform administrator, a member holding `MODERATE` in the
+   * BDE of at least one space, or in an INSTITUTION, which moderates its own content (owner,
+   * 2026-11-15, decision 4; `MODERATES_SOMEWHERE_SQL`)?
    *
    * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
    * this answers only who may open the moderation surfaces at all - the queue, the lists - and
@@ -3043,7 +3336,26 @@ export class AssociationsService {
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
-    return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+    const standing = await this.moderationStanding(userId);
+    return standing.asBde || standing.asInstitution;
+  }
+
+  /** Where `userId` moderates (`MODERATES_SOMEWHERE_SQL`): as a BDE, as an institution, both or neither. */
+  private async moderationStanding(
+    userId: string
+  ): Promise<{ asBde: boolean; asInstitution: boolean }> {
+    const rows: { asBde: boolean; asInstitution: boolean }[] = await this.memberRepo.query(
+      MODERATES_SOMEWHERE_SQL,
+      [userId]
+    );
+    const standing = {
+      asBde: rows[0]?.asBde === true,
+      asInstitution: rows[0]?.asInstitution === true,
+    };
+    this.logger.debug(
+      `[MODERATION] door user=${sanitizeLog(userId.slice(0, 8))} bde=${standing.asBde} institution=${standing.asInstitution}`
+    );
+    return standing;
   }
 
   /**
@@ -3070,6 +3382,35 @@ export class AssociationsService {
       `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} posts=${unique.length} moderated=${rows.length}`
     );
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * THE MODERATION READ'S ONE QUESTION - may `userId` open post `postId` to moderate it: by id, its
+   * comments, its replay (owner, 2026-11-15: "Oui, dans ses espaces"). Asked by every such read
+   * (`PostsService.getById` / `listComments`, `LivesService.replay`), never by a write.
+   * - A platform admin: always, a post scheduled later included - the owner's exclusion below names
+   *   the BDE moderator, and the admin's read is left as it was.
+   * - A BDE `MODERATE` holder: a post in its scope, EXCEPT an unpublished scheduled one that no open
+   *   report targets (owner, 2026-11-15: *"Exclure les posts programmes"*) -
+   *   `BDE_MODERATION_READ_OPENS_POST_SQL`, one statement. Hiding and deleting keep the unnarrowed
+   *   scope (`mayModeratePost`).
+   */
+  async mayReadToModeratePost(
+    userId: string | undefined,
+    postId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { reads: boolean }[] = await this.memberRepo.query(
+      BDE_MODERATION_READ_OPENS_POST_SQL,
+      [userId, postId.toLowerCase()]
+    );
+    const reads = rows[0]?.reads === true;
+    this.logger.debug(
+      `[MODERATION] read scope user=${sanitizeLog(userId.slice(0, 8))} post=${sanitizeLog(postId.slice(0, 8))} reads=${String(reads)}`
+    );
+    return reads;
   }
 
   /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */
@@ -3125,7 +3466,9 @@ export class AssociationsService {
 
   /**
    * Of `userIds`, the people `userId` may moderate as people (mute, withdraw a broadcast right): all
-   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces.
+   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces; for an
+   * institution's `MODERATE` member, none - not even the people of a space the institution governs
+   * (owner, 2026-11-15, decision 3; `bdeModeratesUserSql`).
    */
   async moderatedUserIds(
     userId: string | undefined,
@@ -3180,10 +3523,11 @@ export class AssociationsService {
   }
 
   /**
-   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
-   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its governed spaces
-   * reach - never an institution, never another BDE. What `commentRights` reads for a comment in an
-   * association's name; empty for an unknown caller.
+   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`moderatesPublisherSql`):
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its BDE is the
+   * PARENT of (WP-D2) and the BDE itself - never an institution, never another BDE; for an
+   * institution's `MODERATE` member, that institution (decision 4). What `commentRights` reads for a
+   * comment in an association's name under a post the reader moderates; empty for an unknown caller.
    */
   async moderatedAssociationIds(
     userId: string | undefined,
@@ -3204,31 +3548,62 @@ export class AssociationsService {
   }
 
   /**
+   * Of `associationIds`, the INSTITUTIONS in which `userId` holds `MODERATE`
+   * (`MODERATED_INSTITUTION_IDS_SQL`): a comment in such a name is that institution's content
+   * wherever it sits, so `commentRights` reads this set without asking the post (owner, 2026-11-15,
+   * decision 4). Every one for a platform admin; empty for an unknown caller.
+   */
+  async moderatedInstitutionIds(
+    userId: string | undefined,
+    associationIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean).map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(MODERATED_INSTITUTION_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] institutions user=${sanitizeLog(userId.slice(0, 8))} asked=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
    * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
    * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
-   * in an institution's or a BDE's name (owner, 2026-11-03: only the platform admin moderates those);
-   * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
-   * the target's kind, never its content.
+   * in an institution's or a BDE's name (owner, 2026-11-03 and 2026-11-15: only its own moderators,
+   * who pass the act, and the platform admin moderate those); 403 `MODERATION_OUT_OF_SCOPE` for a BDE
+   * moderator otherwise - outside the spaces its BDE governs; 403
+   * `MODERATION_OUTSIDE_OWN_INSTITUTION` for a caller who moderates only as an institution, which
+   * reaches its own content and no person (decisions 3 and 4). Logged with the target's kind, never
+   * its content.
    */
   async refuseModeration(userId: string | undefined, target: ModerationTarget): Promise<never> {
-    const somewhere = !!userId && (await this.isContentModerator(userId));
+    const standing = userId
+      ? await this.moderationStanding(userId)
+      : { asBde: false, asInstitution: false };
+    const somewhere = standing.asBde || standing.asInstitution;
     const reserved = somewhere && (await this.isReservedToPlatformAdmin(target));
-    const code = !somewhere
-      ? MODERATOR_REQUIRED
+    const [code, message] = !somewhere
+      ? [MODERATOR_REQUIRED, 'MODERATE in a BDE or an institution, or global admin, required']
       : reserved
-        ? MODERATION_RESERVED_TO_PLATFORM_ADMIN
-        : MODERATION_OUT_OF_SCOPE;
+        ? [
+            MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+            "Content in an institution's or a BDE's name is moderated by its own moderators and the platform admin only",
+          ]
+        : standing.asBde
+          ? [MODERATION_OUT_OF_SCOPE, 'Outside the spaces your BDE governs']
+          : [
+              MODERATION_OUTSIDE_OWN_INSTITUTION,
+              'An institution moderates its own content only, and no person',
+            ];
     this.logger.log(
       `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${target.kind}:${sanitizeLog(target.id)} code=${code}`
     );
-    throw new ForbiddenException({
-      code,
-      message: !somewhere
-        ? 'BDE MODERATE permission or global admin required'
-        : reserved
-          ? "Content in an institution's or a BDE's name is moderated by the platform admin only"
-          : 'Outside the spaces your BDE governs',
-    });
+    throw new ForbiddenException({ code, message });
   }
 
   /** Is `target` published in an institution's or a BDE's name (`MODERATION_RESERVED_SQL`)? */
@@ -3316,8 +3691,61 @@ export class AssociationsService {
     flag: AssociationPermissionFlag,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<Set<string>> {
+    return (await this.actOnAny(userId, associationIds, flag, opts)).granted;
+  }
+
+  /**
+   * A comment thread's two standings over the associations its comments speak for, in ONE membership
+   * read (owner, 2026-11-15, decision 4): `postAs`, where the reader holds `POST_AS_ASSO` (`mayActOnAny`,
+   * the comment's author); `moderatedInstitutions`, the INSTITUTIONS among them whose `MODERATE` the
+   * reader holds - a comment in such a name is that institution's content wherever it sits. The kinds
+   * are read only when a membership row carries `MODERATE` at all, so an ordinary reader pays the
+   * membership read the pencil already cost and nothing more. `POST_AS_ASSO` has no super-admin tier
+   * and no kind excludes it, so the rows cover every id asked.
+   */
+  async commentStandings(
+    userId: string | undefined,
+    associationIds: string[]
+  ): Promise<{ postAs: Set<string>; moderatedInstitutions: Set<string> }> {
+    const { granted, rows } = await this.actOnAny(
+      userId,
+      associationIds,
+      AssociationPermissionFlag.POST_AS_ASSO
+    );
+    const moderating = rows
+      .filter((r) => (r.permissions & AssociationPermissionFlag.MODERATE) !== 0)
+      .map((r) => r.associationId);
+    if (moderating.length === 0) return { postAs: granted, moderatedInstitutions: new Set() };
+    const kinds = await this.assoRepo.find({
+      where: { id: In(moderating) },
+      select: { id: true, type: true },
+    });
+    const moderatedInstitutions = new Set(
+      kinds.filter((k) => k.type === 'institution').map((k) => k.id.toLowerCase())
+    );
+    this.logger.debug(
+      `[MODERATION] comment standings user=${sanitizeLog((userId ?? '').slice(0, 8))} moderate-rows=${moderating.length} institutions=${moderatedInstitutions.size}`
+    );
+    return { postAs: granted, moderatedInstitutions };
+  }
+
+  /**
+   * `mayActOnAny`'s three tiers, with the caller's own membership rows they read (empty when no row
+   * was read: an admin, an anonymous caller, nothing to judge) - so `commentStandings` answers a
+   * second question from the same read.
+   */
+  private async actOnAny(
+    userId: string | undefined,
+    associationIds: string[],
+    flag: AssociationPermissionFlag,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<{
+    granted: Set<string>;
+    rows: { associationId: string; permissions: number }[];
+  }> {
+    const none = { granted: new Set<string>(), rows: [] };
     let unique = [...new Set(associationIds.filter(Boolean))];
-    if (unique.length === 0) return new Set();
+    if (unique.length === 0) return none;
     if ((flag & ANY_TYPE_EXCLUDED_FLAGS) !== 0) {
       // The kind's exclusion, as in `mayAct`: nobody holds the flag on a kind that excludes it.
       const kinds = await this.assoRepo.find({
@@ -3332,11 +3760,11 @@ export class AssociationsService {
           `[PERM] flag=${flag} held by nobody on ${excluded.size}/${unique.length} assocs (kind)`
         );
         unique = unique.filter((id) => !excluded.has(id));
-        if (unique.length === 0) return new Set();
+        if (unique.length === 0) return none;
       }
     }
-    if (opts?.isGlobalAdmin) return new Set(unique);
-    if (!userId) return new Set();
+    if (opts?.isGlobalAdmin) return { granted: new Set(unique), rows: [] };
+    if (!userId) return none;
 
     // The super-admin tier is scoped per association too: the associations among `unique` that a BDE
     // where the caller holds MANAGE_ASSO governs - never all of them because it governs some.
@@ -3353,7 +3781,7 @@ export class AssociationsService {
         `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${granted.size}/${unique.length} assocs`
       );
     }
-    if (rest.length === 0) return granted;
+    if (rest.length === 0) return { granted, rows: [] };
 
     const rows = await this.memberRepo.find({
       where: { userId, associationId: In(rest) },
@@ -3365,7 +3793,7 @@ export class AssociationsService {
     this.logger.debug(
       `[PERM] user=${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
     );
-    return granted;
+    return { granted, rows };
   }
 
   /**
@@ -3420,9 +3848,12 @@ export class AssociationsService {
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('e.presentation', 'presentation')
+      .addSelect('e.reachPublic', 'reachPublic')
+      .addSelect('e.reachSpaces', 'reachSpaces')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .addSelect(opts?.isGlobalAdmin ? 'true' : governs, 'canValidate')
       .getRawMany();
@@ -3449,6 +3880,8 @@ export class AssociationsService {
         imageUrl: (r.imageUrl as string | null) ?? null,
         imageMediaId: (r.imageMediaId as string | null) ?? null,
         presentation: this.rawPresentation(r.presentation),
+        reachPublic: (r.reachPublic as AssociationCalendarEvent['reachPublic']) ?? null,
+        reachSpaces: (r.reachSpaces as AssociationCalendarEvent['reachSpaces']) ?? null,
       });
       return {
         ...base,
@@ -3456,6 +3889,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
         // `=== true` and nothing looser: a driver answering 't' must not widen the button.
         canValidate: r.canValidate === true,
       };
@@ -3477,17 +3914,17 @@ export class AssociationsService {
   }
 
   /**
-   * Signs the agenda selection a signed-in reader asks to subscribe to (D40 amended 2026-10-06).
-   * Only selections inside the reader's OWN spaces are signed - their campus, their formations, a
-   * pair of both (`READER_SPACES_SQL`, the twin of `readerSpaces`); an association needs no
-   * membership, only to exist. A reader with a campus and NO cursus (EMSE staff) is signed their
-   * own campus alone, no formation = every formation of it (user, 2026-10-07). The returned `sig` goes into the feed URL unchanged.
+   * THE BOUND ON WHAT A SUBSCRIPTION SELECTOR MAY NAME (D40 amended 2026-10-06, tightened 2026-10-07):
+   * a pair that is one of the reader's OWN spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`),
+   * or - for a reader with a campus and NO cursus (EMSE staff) - their own campus alone; an
+   * association needs no membership, only to exist (404 otherwise). 403 `AGENDA_SELECTION_FORBIDDEN`
+   * outside it. It bounds the SELECTOR only: what a link serves is decided at every read.
    */
-  async signAgendaFeedSelection(
+  private async assertAgendaSelectionAllowed(
     userId: string,
     selection: SpaceSelection,
     associationId: string | null
-  ): Promise<{ sig: string }> {
+  ): Promise<void> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
     // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
@@ -3503,14 +3940,103 @@ export class AssociationsService {
     }
     if (!selectionWithinSpaces(selection, spaces, campusWide)) {
       this.logger.warn(
-        `[AGENDA_SIG] refused to sign campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
+        `[AGENDA_SIG] refused campus=${selection.campus} formation=${selection.formation} for ${userId.slice(0, 8)}: outside their spaces`
       );
       throw new ForbiddenException({
         code: AGENDA_SELECTION_FORBIDDEN,
         message: 'You can only subscribe to the agenda of your own campus and formations',
       });
     }
+  }
+
+  /**
+   * LEGACY (docs/wiki/legacy-compatibility.md): signs a selection for the store builds that still
+   * build `sig` links - a PAIR only (a campus AND a formation, with or without an association), the
+   * one shape a `sig` still serves anything for (`AssociationsController.legacySelectionRead`). Any
+   * other shape is the typed 403 `AGENDA_SELECTION_FORBIDDEN` the old modal already shows: minting a
+   * link that would serve nothing, silently, is worse than a refusal.
+   */
+  async signAgendaFeedSelection(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ sig: string }> {
+    if (selection.campus === null || selection.formation === null) {
+      this.logger.warn(
+        `[AGENDA_SIG] refused a legacy signature for ${userId.slice(0, 8)}: not a pair (shape=${legacyAgendaLinkShape(selection)})`
+      );
+      throw new ForbiddenException({
+        code: AGENDA_SELECTION_FORBIDDEN,
+        message: 'Update the app to subscribe to this agenda',
+      });
+    }
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
     return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
+   * THE HOLDER'S SUBSCRIPTION LINK (owner, 2026-11-14, "Respecter les publics"): the row of
+   * `agenda_subscriptions` for (reader, selection), created on first ask, and its token. ONE statement:
+   * the same selection meets the unique key (`"userId"`, `"selectionKey"`, `agendaSelectionKey`) and
+   * gives the same row back, so the same link, until the reader revokes. The signing key is checked
+   * BEFORE the write, so a misconfigured estate leaves no row behind its 503. An association deleted
+   * between the check and the write is the 404 `findById` gives (classified by SQLSTATE). The
+   * selection is bounded as the legacy one was; what the link SERVES is the holder's signed-in agenda,
+   * read at every poll.
+   */
+  async subscribeAgenda(
+    userId: string,
+    selection: SpaceSelection,
+    associationId: string | null
+  ): Promise<{ token: string }> {
+    await this.assertAgendaSelectionAllowed(userId, selection, associationId);
+    assertAgendaSigningKey();
+    const key = agendaSelectionKey({ ...selection, associationId });
+    let rows: Array<{ id: string }>;
+    try {
+      rows = (await this.assoRepo.manager.query(
+        `INSERT INTO agenda_subscriptions ("userId", campus, formation, "associationId", "selectionKey")
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT ("userId", "selectionKey") DO UPDATE SET "userId" = EXCLUDED."userId"
+           RETURNING id`,
+        [userId, selection.campus, selection.formation, associationId, key]
+      )) as Array<{ id: string }>;
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        this.logger.warn(
+          `[AGENDA_SUBSCRIPTION] association ${associationId?.slice(0, 8)} deleted while ${userId.slice(0, 8)} subscribed`
+        );
+        throw new NotFoundException('Association not found');
+      }
+      throw err;
+    }
+    this.logger.debug(
+      `[AGENDA_SUBSCRIPTION] link ${rows[0].id.slice(0, 8)} for ${userId.slice(0, 8)} campus=${selection.campus ?? '-'} formation=${selection.formation ?? '-'} association=${associationId ? associationId.slice(0, 8) : '-'}`
+    );
+    return { token: agendaSubscriptionToken(rows[0].id) };
+  }
+
+  /**
+   * Revokes every subscription link of the reader: their rows go, so every link they handed out
+   * answers 403, and the next {@link subscribeAgenda} mints a new id, hence a new link.
+   */
+  async revokeAgendaSubscriptions(userId: string): Promise<{ revoked: number }> {
+    const result = (await this.assoRepo.manager.query(
+      `DELETE FROM agenda_subscriptions WHERE "userId" = $1 RETURNING id`,
+      [userId]
+    )) as [unknown[], number];
+    const revoked = result[1];
+    this.logger.log(`[AGENDA_SUBSCRIPTION] ${userId.slice(0, 8)} revoked ${revoked} link(s)`);
+    return { revoked };
+  }
+
+  /** The subscription row a verified token names, or null when it is gone (revoked, erased). */
+  async findAgendaSubscription(id: string): Promise<AgendaSubscriptionRow | null> {
+    const rows = (await this.assoRepo.manager.query(
+      `SELECT "userId", campus, formation, "associationId" FROM agenda_subscriptions WHERE id = $1`,
+      [id]
+    )) as AgendaSubscriptionRow[];
+    return rows[0] ?? null;
   }
 
   /**
@@ -3534,7 +4060,13 @@ export class AssociationsService {
     fromIso?: string,
     toIso?: string,
     associationId?: string,
-    opts?: { includePending?: boolean; viewer?: CalendarViewer; selection?: SpaceSelection }
+    opts?: {
+      includePending?: boolean;
+      viewer?: CalendarViewer;
+      selection?: SpaceSelection;
+      /** The one-event `.ics` link, signed for that event: no public is withheld from it. */
+      signedEvent?: boolean;
+    }
   ) {
     const defaultRange = AssociationsService.defaultCalendarFeedRange();
     const from = fromIso?.trim() ? new Date(fromIso.trim()) : defaultRange.from;
@@ -3571,6 +4103,7 @@ export class AssociationsService {
     }
     this.restrictToViewerSpaces(qb, opts?.viewer);
     this.restrictToSelection(qb, opts?.selection);
+    this.restrictAnonymousToPublicReach(qb, opts);
     // Default: validated events only. Members allowed to propose can also see pending
     // events (greyed in UI); rejected events are never shown here.
     if (opts?.includePending) {
@@ -3610,9 +4143,12 @@ export class AssociationsService {
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
       .addSelect('e.presentation', 'presentation')
+      .addSelect('e.reachPublic', 'reachPublic')
+      .addSelect('e.reachSpaces', 'reachSpaces')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
+      .addSelect('a.neutralEventColor', 'ownerNeutralEventColor')
       .addSelect('a.logoUrl', 'associationLogoUrl')
       .getRawMany();
 
@@ -3644,6 +4180,8 @@ export class AssociationsService {
           imageUrl: (r.imageUrl as string | null) ?? null,
           imageMediaId: (r.imageMediaId as string | null) ?? null,
           presentation: this.rawPresentation(r.presentation),
+          reachPublic: (r.reachPublic as AssociationCalendarEvent['reachPublic']) ?? null,
+          reachSpaces: (r.reachSpaces as AssociationCalendarEvent['reachSpaces']) ?? null,
         },
         coOwnerMap.get(r.id as string) ?? []
       );
@@ -3653,6 +4191,10 @@ export class AssociationsService {
         associationSlug: this.rawQueryString(r.associationSlug),
         associationColor: (r.associationColor as string | null) ?? null,
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
+        neutralEventColor: neutralColourOfRow(
+          { presentation: this.rawPresentation(r.presentation) },
+          r.ownerNeutralEventColor as string | null
+        ),
       };
     });
     // The anonymous `.ics` passes no viewer and so reads every neutral event masked; a filter on one
@@ -3760,6 +4302,8 @@ ${rejectionReason}`
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
         err instanceof Error ? err.stack : String(err)
       );
+      // Not announced, but the write that reopened it committed: the badges still recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       return;
     }
     if (current?.status !== AssociationCalendarEventStatus.Pending) {
@@ -3771,27 +4315,50 @@ ${rejectionReason}`
     this.logger.log(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
     );
+    // The parties are read ONCE, before anything is written, and that one set decides both writes
+    // below: which validators' rows replace a party's (`toldAsParty`), and who is left to tell.
+    let partyIds: ReadonlySet<string>;
+    try {
+      partyIds = await this.eventPartyIds(ev);
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties could not be read, not announced`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      await this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
+      return;
+    }
     // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
     // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
     // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
     // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
     // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
     // the reason, but not the actionable one.
-    const validatorIds: string[] = await (async () => {
-      // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
-      // own typed notice; a date move keeps the proposal's.
-      return reason === 'coorganiser_joined'
-        ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
-            type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
-            meta: { reason, audience: 'validators' },
-            // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
-            // on the validation queue, as for a proposal, never on the plain agenda.
-            pushData: { associationId: ev.associationId, action: 'proposed', reason },
-          })
-        : this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
-    })();
+    const validatorIds: string[] = await this.notifyEventValidatorsOfProposal(
+      ev.associationId,
+      actorId,
+      ev.title,
+      {
+        // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has
+        // its own typed notice; a date move keeps the proposal's.
+        type:
+          reason === 'coorganiser_joined'
+            ? EVENT_REOPEN_NOTIFICATION_TYPE[reason]
+            : 'event_proposed',
+        // `eventId` on EVERY reopening: the row of a validator the dedupe took out of the parties
+        // (`toldAsParty`, added per recipient) stays while either right holds (`BELL_ROW_GATE`).
+        meta: { reason, audience: 'validators', eventId: ev.id },
+        // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+        // on the validation queue, as for a proposal, never on the plain agenda.
+        pushData:
+          reason === 'coorganiser_joined'
+            ? { associationId: ev.associationId, action: 'proposed', reason }
+            : { associationId: ev.associationId, action: 'proposed' },
+      },
+      partyIds
+    );
     try {
-      await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
+      await this.notifyEventReopenedParties(ev, reason, actorId, partyIds, new Set(validatorIds));
     } catch (err) {
       this.logger.warn(
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
@@ -3811,32 +4378,42 @@ ${rejectionReason}`
     ev: ReopenedEvent,
     reason: EventReopenReason,
     actorId: string,
+    partyIds: ReadonlySet<string>,
     alreadyTold: ReadonlySet<string>
   ): Promise<void> {
-    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
-    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
-    const members = await this.memberRepo.find({
-      where: { associationId: In(associationIds) },
-      select: { userId: true, permissions: true },
-    });
-    const recipientIds = [
-      ...new Set(
-        members
-          .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
-          .map((m) => m.userId)
-      ),
-    ].filter((id) => !alreadyTold.has(id));
+    const recipientIds = [...partyIds].filter((id) => !alreadyTold.has(id));
     const written = await this.notifications.createNotifications({
       recipientIds,
       type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
       postId: ev.associationId,
       actorId,
       text: ev.title,
-      meta: { reason },
+      // `eventId`: what the bell re-asks at every read - a partner's row is shown while its reader
+      // still holds PROPOSE_EVENT in an accepted co-organiser of THIS event (`BELL_ROW_GATE`).
+      meta: { reason, eventId: ev.id },
       pushData: { associationId: ev.associationId, action: 'pending', reason },
     });
     this.logger.debug(
       `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): ${written} organiser/partner notice(s) written`
+    );
+  }
+
+  /**
+   * AN EVENT'S PARTIES: the `PROPOSE_EVENT` holders of its organiser and of each ACCEPTED partner -
+   * the people `notifyEventReopenedParties` tells, read once by `announceEventReopened` so the
+   * validators' write and the parties' write agree on who is both.
+   */
+  private async eventPartyIds(ev: ReopenedEvent): Promise<ReadonlySet<string>> {
+    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
+    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
+    const members = await this.memberRepo.find({
+      where: { associationId: In(associationIds) },
+      select: { userId: true, permissions: true },
+    });
+    return new Set(
+      members
+        .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+        .map((m) => m.userId)
     );
   }
 
@@ -3858,6 +4435,11 @@ ${rejectionReason}`
    * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
    * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
    * for the one case where nobody at all could be told.
+   *
+   * `parties` (a reopening only): the event's parties. A validator among them is told HERE and not as
+   * a party, so their row records it (`meta.toldAsParty`) - the fact the bell's gate reads to keep
+   * that row while either right holds, and to serve it as the party notice it replaced once only the
+   * party right is left (`PostNotificationsService.getNotifications`).
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
@@ -3867,25 +4449,33 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
     // (social-service has no handler) and a notice's failure must never fail a committed write.
-    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    // Every failure is logged at WARN with its stack, and it returns no ids. THE NOTICE IS TWO WRITES
+    // (validators who are also parties, then the others), so a failure may have told one group and
+    // not the other: returning no ids makes the parties' notice tell every party, and the log says
+    // "not all", which is what is known here.
     try {
       return await this.notifyEventValidatorsOfProposalOrThrow(
         associationId,
         actorId,
         eventTitle,
-        notice
+        notice,
+        parties
       );
     } catch (err) {
       this.logger.warn(
-        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not all told about an event waiting for validation`,
         err instanceof Error ? err.stack : String(err)
       );
       return [];
+    } finally {
+      // THE ONE PLACE AN EVENT STARTS WAITING (a proposal, a reopening): the agenda badges recount.
+      await this.tellAdminQueues({ queue: 'agenda', associationId });
     }
   }
 
@@ -3898,7 +4488,8 @@ ${rejectionReason}`
       type: NotificationType;
       meta: Record<string, unknown>;
       pushData: Record<string, string>;
-    }
+    },
+    parties?: ReadonlySet<string>
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
@@ -3914,28 +4505,47 @@ ${rejectionReason}`
       `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
     );
 
-    let written: number;
-    try {
-      written = await this.notifications.createNotifications({
-        recipientIds,
-        type: notice?.type ?? 'event_proposed',
-        postId: associationId,
-        actorId,
-        text: eventTitle,
-        ...(notice ? { meta: notice.meta } : {}),
-        pushData: notice?.pushData ?? { associationId, action: 'proposed' },
-      });
-    } catch (err) {
-      // The rows are saved and only the push failed: the validators HAVE their notice in the bell,
-      // so they are still returned (a validator who is also a party must not get a second row).
-      // Anything else wrote nothing and propagates, and then nobody is excluded.
-      if (!(err instanceof NotificationPushFailedError)) throw err;
-      this.logger.warn(
-        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
-        err.stack
+    // Two groups, one notice: the validators who are also parties carry `toldAsParty` (see the doc
+    // above); a first proposal names no parties, so it is one group.
+    const asParty = recipientIds.filter((id) => parties?.has(id) === true);
+    const onlyValidators = recipientIds.filter((id) => parties?.has(id) !== true);
+    const write = async (ids: string[], meta?: Record<string, unknown>): Promise<number> => {
+      try {
+        return await this.notifications.createNotifications({
+          recipientIds: ids,
+          type: notice?.type ?? 'event_proposed',
+          postId: associationId,
+          actorId,
+          text: eventTitle,
+          ...(meta ? { meta } : {}),
+          pushData: notice?.pushData ?? { associationId, action: 'proposed' },
+        });
+      } catch (err) {
+        // The rows are saved and only the push failed: the validators HAVE their notice in the
+        // bell, so they are still returned (a validator who is also a party must not get a second
+        // row). Anything else wrote nothing and propagates, and then nobody is excluded.
+        if (!(err instanceof NotificationPushFailedError)) throw err;
+        this.logger.warn(
+          `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
+          err.stack
+        );
+        return err.recipientIds.length;
+      }
+    };
+    if (asParty.length > 0) {
+      this.logger.debug(
+        `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${asParty.length} validator(s) told in place of their party notice`
       );
-      written = err.recipientIds.length;
     }
+    // One write per non-empty group, and always one (an empty notice is how "nobody could be told"
+    // reaches the warning below).
+    const written =
+      (onlyValidators.length > 0 || asParty.length === 0
+        ? await write(onlyValidators, notice?.meta)
+        : 0) +
+      (asParty.length > 0
+        ? await write(asParty, notice ? { ...notice.meta, toldAsParty: true } : undefined)
+        : 0);
     if (written === 0) {
       // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
       // or the only one is the proposer. The exact shape of the defect this method was written for.
@@ -4013,6 +4623,16 @@ ${rejectionReason}`
       linkedFormId,
       linkedByPost: false,
     });
+    // AN INSTITUTION'S REACH (owner, 2026-11-13): mandatory on an institution's event, refused on any
+    // other, never wider than its audience - the posts' own decision and codes, judged on the OWNER
+    // (the target of a deposit). Before the transaction, like the cap.
+    const reach = await resolveInstitutionReachWrite(this.calendarRepo.manager, {
+      mode: 'create',
+      associationId: targetId,
+      associationType: owner.type ?? null,
+      raw: dto.reach,
+      subject: 'event',
+    });
     // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
     // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
     // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
@@ -4032,6 +4652,8 @@ ${rejectionReason}`
         createdBy: userId,
         kind,
         presentation,
+        reachPublic: reach?.reachPublic ?? null,
+        reachSpaces: reach?.reachSpaces ?? null,
         linkedFormId,
         // The three validation columns are written in ONE place, and this is not it. Spelling
         // `null` here rather than leaving them to the entity default is deliberate: a default is
@@ -4248,6 +4870,8 @@ ${rejectionReason}`
     // The presentation is the organiser's, and a neutral event is checked as it WILL be (its partners
     // and its form link after this write) - read-only, so it sits with the refusals below.
     await this.assertEventPresentationAfterUpdate(manager, ev, dto, associationId, side);
+    // The reach is the organiser's too, and is judged before any write (owner, 2026-11-13).
+    await this.applyEventReachUpdate(manager, ev, dto.reach, side);
 
     // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
     // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
@@ -4297,6 +4921,79 @@ ${rejectionReason}`
       : () => Promise.resolve();
     const saved = await repo.save(ev);
     return { saved, demoted, afterCommit };
+  }
+
+  /**
+   * The reach half of `applyCalendarEventUpdate` (owner, 2026-11-13): absent leaves the stored reach
+   * alone (an older client never clears it, and an event filed before the reach keeps its whole
+   * audience until an edit chooses one); present replaces it, both ways, judged as at the filing -
+   * on the organiser side only (E2). Nothing else moves: the status stays (an edit of the reach does
+   * NOT send the event back to validation) and nobody is told - every reader path re-asks the
+   * predicate, so a narrowing withdraws the event from the excluded readers at once. Sets the two
+   * columns on `ev`; the caller saves.
+   */
+  private async applyEventReachUpdate(
+    manager: EntityManager,
+    ev: AssociationCalendarEvent,
+    raw: unknown,
+    side: EventWriteSide
+  ): Promise<void> {
+    if (raw === undefined) return;
+    if (side === 'partner') {
+      this.logger.debug(
+        `[PERM] partner refused a reach change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('reach');
+    }
+    const [owner] = (await manager.query(`SELECT type FROM associations WHERE id = $1`, [
+      ev.associationId,
+    ])) as { type: string }[];
+    const reach = await resolveInstitutionReachWrite(manager, {
+      mode: 'edit',
+      associationId: ev.associationId,
+      associationType: owner?.type ?? null,
+      raw,
+      subject: 'event',
+    });
+    if (!reach) return;
+    const before = servedInstitutionReach(ev);
+    this.logger.log(
+      `[INSTITUTION_REACH] event ${sanitizeLog(ev.id.slice(0, 8))}: reach ${before ? `${before.public}/${before.spaces.length}` : 'none'} -> ${reach.reachPublic}/${reach.reachSpaces.length} space(s), read at once by every path, nobody told`
+    );
+    ev.reachPublic = reach.reachPublic;
+    ev.reachSpaces = reach.reachSpaces;
+  }
+
+  /**
+   * The spaces an institution's event may target, for the event form (owner, 2026-11-13): the SAME
+   * statement the write checks a reach against (`institutionReachOptionsOffered`, shared with the
+   * composer's route). Asked of the OWNER `associationId` by whoever may file or write its events: a
+   * platform admin, `PROPOSE_EVENT` on it (the route's own right), or the BDE agenda right over it
+   * (a validator depositing through `targetAssocId`, or editing it) - 403 otherwise; 400
+   * `institution_reach_not_offered` for an owner that is not an institution.
+   */
+  async listEventReachOptions(
+    userId: string,
+    associationId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ spaces: InstitutionReachSpace[] }> {
+    const owner = await this.findById(associationId);
+    const mayFile =
+      isGlobalAdmin ||
+      (await this.mayAct(userId, associationId, AssociationPermissionFlag.PROPOSE_EVENT)) ||
+      (await this.mayValidateEventsOf(userId, associationId));
+    if (!mayFile) {
+      this.logger.debug(
+        `[INSTITUTION_REACH] event options of ${sanitizeLog(associationId.slice(0, 8))}: ${sanitizeLog(userId.slice(0, 8))} files none of its events`
+      );
+      throw new ForbiddenException('You may not file events for this association');
+    }
+    return institutionReachOptionsOffered(
+      this.calendarRepo.manager,
+      associationId,
+      owner.type ?? null,
+      'event'
+    );
   }
 
   /**
@@ -4375,6 +5072,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     // Notify asso admins that their event has been validated
     void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
@@ -4403,6 +5101,7 @@ ${rejectionReason}`
     if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
     const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
+    void this.tellAdminQueues({ queue: 'agenda', associationId: saved.associationId });
     void this.notifyAssocAdminsOfEventAction(
       saved.associationId,
       userId,
@@ -4432,6 +5131,9 @@ ${rejectionReason}`
       const targetAssocId = ev.associationId;
       const title = ev.title;
       await this.calendarRepo.delete({ id: eventId });
+      // Told whatever the status READ above: the row was read unlocked, so a demotion committed
+      // since would make "it was not pending" a guess - and a deletion is rare.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: targetAssocId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -4454,6 +5156,8 @@ ${rejectionReason}`
         throw partnerOrganiserOnlyRefusal('delete');
       }
       await this.calendarRepo.delete({ id: eventId });
+      // Whatever the status read above, as for a cross-association deletion.
+      void this.tellAdminQueues({ queue: 'agenda', associationId: ev.associationId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
       );
@@ -4847,8 +5551,9 @@ ${rejectionReason}`
   }
 
   // ── Lydia helpers ────────────────────────────────────────────────────────
-  // The payout account columns: `lydiaAccountId` and `lydiaOnboardingComplete`. The historic
-  // `stripe*` pair is no longer mapped (docs/wiki/stripe-archive.md).
+  // The payout account columns: `lydiaAccountId` and `lydiaOnboardingComplete` - THE ACTIVE
+  // collecting Business. A bridge's other Business lives in `lydia_account_bridges`
+  // (lydia-account-bridge.ts).
 
   /**
    * Links the Business `business/create` just made to an association: its vendor_token, its
@@ -4857,9 +5562,11 @@ ${rejectionReason}`
    * (`secret-box.ts`), bound to this association and this vendor token, never logged - the one way
    * a key is written since the paste route was retired.
    *
-   * ONE statement, and only onto an association with NO Business linked: a second onboarding is a
-   * typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED`, never a silent replacement - and being one UPDATE, two
-   * concurrent onboardings cannot both win. Every refusal is decided before anything is written.
+   * ONE transaction holding the association row's lock, and only onto an association whose
+   * managers hold NO Business: a second onboarding is a typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED`,
+   * never a silent replacement - two concurrent onboardings cannot both win. An association whose
+   * HISTORICAL account collects (a bridge, lydia-account-bridge.ts) gets the new Business as its
+   * PENDING one, in the bridge row: it collects only once Lydia validates it.
    */
   async setLydiaAccountId(
     id: string,
@@ -4895,22 +5602,60 @@ ${rejectionReason}`
       lydiaBusinessKeyContext(id, vendorToken),
       key
     );
-    const result: unknown[] = await this.assoRepo.query(
-      `UPDATE associations
-          SET "lydiaAccountId" = $2,
-              "lydiaDashboardUrl" = COALESCE($3, "lydiaDashboardUrl"),
-              "lydiaBusinessKeyCiphertext" = $4,
-              "lydiaEnrolmentStartedAt" = NULL,
-              "lydiaEnrolmentVendorToken" = NULL
-        WHERE id = $1 AND "lydiaAccountId" IS NULL
-        RETURNING id`,
-      [id, vendorToken, dashboardUrl, sealed]
+    // The association row locked, then its bridge: the order of every bridge transition.
+    const linked = await this.assoRepo.manager.transaction(
+      async (manager): Promise<'missing' | 'taken' | 'active' | 'pending'> => {
+        const [row]: Array<{
+          active: string | null;
+          state: LydiaBridgeState | null;
+          enrolled: string | null;
+        }> = await manager.query(
+          `SELECT a."lydiaAccountId" AS active, b.state, b."enrolledVendorToken" AS enrolled
+             FROM associations a ${bridgeJoinSql()} WHERE a.id = $1 FOR UPDATE OF a`,
+          [id]
+        );
+        if (!row) return 'missing';
+        if (row.state === 'historical') {
+          // A historical account collects: the new Business waits, PENDING, for Lydia's
+          // validation (lydia-account-bridge.ts); it never collects before it.
+          if (row.enrolled) return 'taken';
+          await manager.query(
+            `UPDATE lydia_account_bridges
+                SET "enrolledVendorToken" = $2, "standbyKeyCiphertext" = $3,
+                    "standbyDashboardUrl" = $4, "standbyReady" = false,
+                    "standbyReadinessCause" = NULL, "standbyReadinessAt" = NULL
+              WHERE "associationId" = $1 AND state = 'historical' AND "enrolledVendorToken" IS NULL`,
+            [id, vendorToken, sealed, dashboardUrl]
+          );
+          await manager.query(
+            `UPDATE associations SET "lydiaEnrolmentStartedAt" = NULL, "lydiaEnrolmentVendorToken" = NULL
+              WHERE id = $1`,
+            [id]
+          );
+          await recordEnrolledBusiness(
+            (sql, params) => manager.query(sql, params),
+            id,
+            vendorToken
+          );
+          return 'pending';
+        }
+        if (row.active) return 'taken';
+        await manager.query(
+          `UPDATE associations
+              SET "lydiaAccountId" = $2,
+                  "lydiaDashboardUrl" = COALESCE($3, "lydiaDashboardUrl"),
+                  "lydiaBusinessKeyCiphertext" = $4,
+                  "lydiaEnrolmentStartedAt" = NULL,
+                  "lydiaEnrolmentVendorToken" = NULL
+            WHERE id = $1`,
+          [id, vendorToken, dashboardUrl, sealed]
+        );
+        await recordEnrolledBusiness((sql, params) => manager.query(sql, params), id, vendorToken);
+        return 'active';
+      }
     );
-    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
-    const written = Array.isArray(result[0]) ? (result[0] as unknown[]).length : result.length;
-    if (written === 0) {
-      const exists = await this.assoRepo.findOne({ where: { id }, select: { id: true } });
-      if (!exists) throw new NotFoundException('Association not found');
+    if (linked === 'missing') throw new NotFoundException('Association not found');
+    if (linked === 'taken') {
       this.logger.warn(
         `[LYDIA] Business link refused on association ${sanitizeLog(id)}: a Business is already linked`
       );
@@ -4919,6 +5664,14 @@ ${rejectionReason}`
         message: 'A Lydia Business is already linked to this association',
       });
     }
+    if (linked === 'pending') {
+      this.logger.log(
+        `[AUDIT] ${LYDIA_BRIDGE_LOG_TAG} Lydia Business linked on association ${sanitizeLog(id)} as ` +
+          `the PENDING Business of its bridge, its key SET at creation; the historical account ` +
+          `collects until Lydia validates it`
+      );
+      return;
+    }
     this.logger.log(
       `[AUDIT] Lydia Business linked on association ${sanitizeLog(id)}, its key SET at creation`
     );
@@ -4926,28 +5679,37 @@ ${rejectionReason}`
   }
 
   /**
-   * Which association holds `vendorToken`, and whether its onboarding is marked complete - for the
-   * log line of Lydia's UNSIGNED business webhook (core-service). A SELECT and nothing else: the
-   * webhook decides nothing. Null when none holds it, or when two do (refused, not guessed).
+   * Which association holds `vendorToken`, whether that Business is marked ready, and its role
+   * (`active`, or a bridge's `pending` / `retired` standby Business) - for the log line of Lydia's
+   * UNSIGNED business webhook (core-service). A SELECT and nothing else: the webhook decides
+   * nothing. Null when none holds it, or when two do (refused, not guessed).
    */
-  async lydiaBusinessOfVendorToken(
-    vendorToken: string
-  ): Promise<{ associationId: string; onboardingComplete: boolean } | null> {
+  async lydiaBusinessOfVendorToken(vendorToken: string): Promise<{
+    associationId: string;
+    onboardingComplete: boolean;
+    role: HeldBusinessRole;
+  } | null> {
     if (!vendorToken) return null;
-    const rows: Array<{ id: string; complete: boolean }> = await this.assoRepo.query(
-      `SELECT id, "lydiaOnboardingComplete" AS complete FROM associations WHERE "lydiaAccountId" = $1`,
-      [vendorToken]
-    );
+    const rows: Array<{ id: string; ready: boolean; role: HeldBusinessRole }> =
+      await this.assoRepo.query(
+        `SELECT h."associationId" AS id, h.ready, h.role FROM ${HELD_BUSINESSES_SQL} h
+          WHERE h."vendorToken" = $1`,
+        [vendorToken]
+      );
     if (rows.length !== 1) {
       if (rows.length > 1) {
         this.logger.error(
-          `[LYDIA] ${rows.length} associations hold ONE vendor token ` +
-            `(${rows.map((r) => sanitizeLog(r.id)).join(', ')}) - a Business is one association`
+          `[LYDIA] ${rows.length} Businesses of ours hold ONE vendor token ` +
+            `(${rows.map((r) => `${sanitizeLog(r.id)} ${r.role}`).join(', ')}) - a Business is one association's`
         );
       }
       return null;
     }
-    return { associationId: rows[0].id, onboardingComplete: rows[0].complete === true };
+    return {
+      associationId: rows[0].id,
+      onboardingComplete: rows[0].ready === true,
+      role: rows[0].role,
+    };
   }
 
   /**
@@ -4956,48 +5718,80 @@ ${rejectionReason}`
    * (name, the phone's last two digits and whether Lydia confirmed it, never more), the last
    * readiness change and the two in-flight markers - ONE read the payments screen draws every step
    * from.
+   *
+   * The Business is the one the managers MANAGE (`managedVendorTokenSql`): on a bridge whose
+   * historical account collects, the enrolled Business - drawn not ready, with no readiness change,
+   * while Lydia has not validated it - or none before the enrolment; the historical account is
+   * never shown to them (owner, 2026-11-13). A global admin also reads `bridge`, both states.
    */
-  async getPayoutAccount(id: string): Promise<AssociationPayoutAccount> {
-    const asso = await this.assoRepo.findOne({
-      where: { id },
-      select: {
-        id: true,
-        lydiaAccountId: true,
-        lydiaDashboardUrl: true,
-        lydiaOnboardingComplete: true,
-        lydiaReadinessCause: true,
-        lydiaReadinessAt: true,
-        lydiaEnrolmentStartedAt: true,
-        lydiaResponsableStartedAt: true,
-      },
-    });
-    if (!asso) throw new NotFoundException('Association not found');
-    const responsable = asso.lydiaAccountId
-      ? await this.lydiaResponsableOf(id, asso.lydiaAccountId)
-      : null;
-    const cashiers = asso.lydiaAccountId
-      ? await listLydiaCashiers(
-          (sql, params) => this.assoRepo.query(sql, params),
-          id,
-          asso.lydiaAccountId
-        )
+  async getPayoutAccount(
+    id: string,
+    opts: { isGlobalAdmin?: boolean } = {}
+  ): Promise<AssociationPayoutAccount> {
+    const [row]: Array<{
+      active: string | null;
+      activeUrl: string | null;
+      activeReady: boolean;
+      activeCause: LydiaReadinessCause | null;
+      activeAt: Date | string | null;
+      enrolmentStartedAt: Date | string | null;
+      responsableStartedAt: Date | string | null;
+      state: LydiaBridgeState | null;
+      enrolled: string | null;
+      standbyUrl: string | null;
+      standbyReady: boolean | null;
+      switchedAt: Date | string | null;
+      switchCount: number | null;
+      switchBackCount: number | null;
+      reissueCount: number | null;
+    }> = await this.assoRepo.query(
+      `SELECT a."lydiaAccountId" AS active, a."lydiaDashboardUrl" AS "activeUrl",
+              a."lydiaOnboardingComplete" AS "activeReady", a."lydiaReadinessCause" AS "activeCause",
+              a."lydiaReadinessAt" AS "activeAt", a."lydiaEnrolmentStartedAt" AS "enrolmentStartedAt",
+              a."lydiaResponsableStartedAt" AS "responsableStartedAt", b.state,
+              b."enrolledVendorToken" AS enrolled, b."standbyDashboardUrl" AS "standbyUrl",
+              b."standbyReady" AS "standbyReady", b."switchedAt" AS "switchedAt",
+              b."switchCount" AS "switchCount", b."switchBackCount" AS "switchBackCount",
+              b."reissueCount" AS "reissueCount"
+         FROM associations a ${bridgeJoinSql()} WHERE a.id = $1`,
+      [id]
+    );
+    if (!row) throw new NotFoundException('Association not found');
+    const historicalCollects = row.state === 'historical';
+    const business = historicalCollects ? row.enrolled : row.active;
+    const iso = (at: Date | string | null) => (at ? new Date(at).toISOString() : null);
+    const responsable = business ? await this.lydiaResponsableOf(id, business) : null;
+    const cashiers = business
+      ? await listLydiaCashiers((sql, params) => this.assoRepo.query(sql, params), id, business)
       : [];
+    // The card draws a departure's debt; opening it retries the removal (idempotent, never awaited).
+    if (cashiers.some((c) => c.departureUntried)) this.settleCashierDepartures(id, 'payout-read');
     return {
-      lydiaAccountId: asso.lydiaAccountId,
-      lydiaDashboardUrl: asso.lydiaDashboardUrl,
-      lydiaOnboardingComplete: asso.lydiaOnboardingComplete,
+      lydiaAccountId: business,
+      lydiaDashboardUrl: historicalCollects ? row.standbyUrl : row.activeUrl,
+      // A pending Business is not validated, whatever the historical account's state.
+      lydiaOnboardingComplete: historicalCollects ? false : row.activeReady,
       responsable,
       cashiers,
       readiness:
-        asso.lydiaReadinessCause && asso.lydiaReadinessAt
-          ? { cause: asso.lydiaReadinessCause, at: new Date(asso.lydiaReadinessAt).toISOString() }
+        !historicalCollects && row.activeCause && row.activeAt
+          ? { cause: row.activeCause, at: iso(row.activeAt) as string }
           : null,
-      enrolmentInFlightSince: asso.lydiaEnrolmentStartedAt
-        ? new Date(asso.lydiaEnrolmentStartedAt).toISOString()
-        : null,
-      responsableInFlightSince: asso.lydiaResponsableStartedAt
-        ? new Date(asso.lydiaResponsableStartedAt).toISOString()
-        : null,
+      enrolmentInFlightSince: iso(row.enrolmentStartedAt),
+      responsableInFlightSince: iso(row.responsableStartedAt),
+      ...(opts.isGlobalAdmin && row.state
+        ? {
+            bridge: {
+              state: row.state,
+              historicalReady: historicalCollects ? row.activeReady : row.standbyReady === true,
+              enrolledLinked: row.enrolled !== null,
+              switchedAt: iso(row.switchedAt),
+              switchCount: row.switchCount ?? 0,
+              switchBackCount: row.switchBackCount ?? 0,
+              reissueCount: row.reissueCount ?? 0,
+            },
+          }
+        : {}),
     };
   }
 
@@ -5025,6 +5819,18 @@ ${rejectionReason}`
    * logs loudly and notifies the payout managers; a replay is a debug line. No holder, or two
    * (refused, never guessed), writes nothing; no holder for the token a pending `business/create` answered (`lydiaEnrolmentVendorToken`) is
    * `no-holder-enrolment-in-flight`, which the webhook route answers 503 so Lydia retries.
+   *
+   * THE BRIDGE (owner, 2026-11-13; lydia-account-bridge.ts) adds two transitions, in the same
+   * transaction and under the same lock (the association row, then its bridge row):
+   * - `ready` for the ENROLLED Business of a bridge whose historical account collects SWITCHES it in
+   *   (`swapBridge`), then runs the ordinary transition on it - so the release, the managers'
+   *   "active" notice and the replay rule are the ones above, and the held-by-lydia rule is skipped
+   *   for it: a later VALIDATED switches again (the owner's decision). The delegates are told only
+   *   when their collecting changed (the historical account was not ready);
+   * - `request-refused` (error 5) on the Business a switch made active SWITCHES BACK to the
+   *   historical account (`switched-back`), with a bell row to every global admin; the caller
+   *   re-issues the same payment on it once. A 2701 is the ordinary revert (a pause): routing around
+   *   Lydia's block onto another account is not the bridge's to decide.
    */
   async setLydiaReadiness(
     vendorToken: string,
@@ -5036,19 +5842,18 @@ ${rejectionReason}`
     this.logger.debug(
       `${LYDIA_READINESS_LOG_TAG} set ready=${ready} cause=${cause} asked by ${where}`
     );
-    type Holder = {
-      id: string;
-      name: string;
-      ready: boolean;
-      cause: LydiaReadinessCause | null;
-      at: Date | string | null;
-      type: Association['type'];
-      paymentDelegationStatus: Association['paymentDelegationStatus'];
-      paymentParentAssociationId: string | null;
-    };
+    type Holder = LydiaReadinessHolder;
     type Step =
       | { kind: 'none'; inFlight: boolean }
       | { kind: 'held'; holder: Holder }
+      | { kind: 'standby-refused'; associationId: string }
+      | {
+          kind: 'standby-held';
+          associationId: string;
+          cause: LydiaReadinessCause;
+          at: Date | string | null;
+        }
+      | ({ kind: 'switched-back'; holder: Holder } & BridgeSwitchBack)
       | {
           kind: 'done';
           holder: Holder;
@@ -5061,15 +5866,40 @@ ${rejectionReason}`
           /** Per approved delegate, what was withheld (going not ready) or released (ready). */
           delegatesWithheld: Map<string, number>;
           delegatesReleased: Map<string, number>;
+          /** Set when this transaction switched a bridge in: whether the historical was ready. */
+          switched: { historicalWasReady: boolean; switchCount: number } | null;
         };
     const step: Step = await this.assoRepo.manager.transaction(async (manager): Promise<Step> => {
-      const holders: Holder[] = await manager.query(
-        `SELECT id, name, "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
-                "lydiaReadinessAt" AS at, type, "paymentDelegationStatus",
-                "paymentParentAssociationId"
-           FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
-        [vendorToken]
-      );
+      const selectHolders = (): Promise<Holder[]> =>
+        manager.query(
+          `SELECT id, name, "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
+                  "lydiaReadinessAt" AS at, type, "paymentDelegationStatus",
+                  "paymentParentAssociationId"
+             FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
+          [vendorToken]
+        );
+      let holders = await selectHolders();
+      let switched: { historicalWasReady: boolean; switchCount: number } | null = null;
+      if (holders.length === 0) {
+        // Not an ACTIVE Business: perhaps the standby of a bridge (lydia-account-bridge.ts).
+        const standby = await this.standbyReadinessStep(manager, vendorToken, ready, cause, where);
+        if (standby.kind === 'switched') {
+          switched = standby;
+          holders = await selectHolders();
+        } else if (standby.kind === 'now-active') {
+          // A concurrent switch committed it into the association's columns meanwhile.
+          holders = await selectHolders();
+        } else if (standby.kind === 'refused') {
+          return { kind: 'standby-refused', associationId: standby.associationId };
+        } else if (standby.kind === 'held') {
+          return {
+            kind: 'standby-held',
+            associationId: standby.associationId,
+            cause: standby.cause,
+            at: standby.at,
+          };
+        }
+      }
       if (holders.length !== 1) {
         if (holders.length > 1) {
           this.logger.error(
@@ -5092,7 +5922,12 @@ ${rejectionReason}`
         return { kind: 'none', inFlight: n > 0 };
       }
       const [holder] = holders;
+      if (!ready && cause === 'request-refused') {
+        const back = await this.switchBackOnRefusal(manager, holder, vendorToken, where);
+        if (back) return { kind: 'switched-back', holder, ...back };
+      }
       if (
+        !switched &&
         ready &&
         cause === 'webhook-validated' &&
         !holder.ready &&
@@ -5159,10 +5994,36 @@ ${rejectionReason}`
         delegates: delegateIds,
         delegatesWithheld,
         delegatesReleased,
+        switched,
       };
     });
     if (step.kind === 'none') {
       return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
+    }
+    if (step.kind === 'standby-held') {
+      // Lydia's own refusal of the enrolled Business is on record: an UNSIGNED VALIDATED does not
+      // clear it (the held-by-lydia rule, applied to the standby). A global admin switches by hand.
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(step.associationId)}: an unsigned ` +
+          `BUSINESS_VALIDATED does not switch onto its enrolled Business, which Lydia itself ` +
+          `refused (${step.cause}) - nothing written (${where}); a global admin re-checks and ` +
+          `validates by hand`
+      );
+      return {
+        kind: 'held-by-lydia',
+        associationId: step.associationId,
+        previousCause: step.cause,
+        previousAt: step.at ? new Date(step.at) : null,
+      };
+    }
+    if (step.kind === 'standby-refused') {
+      // A request decided while the enrolled Business was active, answered after a concurrent
+      // error 5 switched the bridge back: the historical account collects, the payment goes there.
+      return { kind: 'switched-back', associationId: step.associationId, already: true };
+    }
+    if (step.kind === 'switched-back') {
+      await this.afterSwitchBack(step.holder, step, where);
+      return { kind: 'switched-back', associationId: step.holder.id, already: false };
     }
     const { holder } = step;
     const previousAt = holder.at ? new Date(holder.at) : null;
@@ -5183,11 +6044,21 @@ ${rejectionReason}`
       delegates,
       delegatesWithheld,
       delegatesReleased,
+      switched,
     } = step;
+    if (switched) {
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)} SWITCHED to its enrolled ` +
+          `Business by ${cause} (${where}), switch #${switched.switchCount}: the historical account ` +
+          `stops collecting and is kept to refund the payments it took (it was ` +
+          `${switched.historicalWasReady ? 'ready' : 'NOT ready'})`
+      );
+    }
     // Those who collect THROUGH this holder (a list paid by delegation) collect again exactly when
     // the holder TRANSITIONS to ready - they route through it - whatever products they have (a
-    // forms-only list included). A replay changes nobody's collecting, so it tells nobody.
-    if (transitioned && ready) {
+    // forms-only list included). A replay changes nobody's collecting, so it tells nobody; nor does
+    // a bridge switch from a historical account that was collecting already.
+    if (transitioned && ready && !(switched && switched.historicalWasReady)) {
       await this.tellDelegates(delegates, 'resumed', 'receiver ready', delegatesReleased);
     }
     if (!transitioned) {
@@ -5197,40 +6068,44 @@ ${rejectionReason}`
       );
       return { kind: 'replay', ...previous };
     }
-    const before = `${holder.cause ?? 'nothing recorded'} at ${previousAt ? previousAt.toISOString() : 'no date'}`;
-    const switchedOff = this.lydiaNotifier.enabled()
-      ? ''
-      : ' - managers NOT notified, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off';
+    // The state before this transition, said plainly: a holder never marked has no cause on record.
+    const before = holder.cause
+      ? `was marked by ${holder.cause} at ${previousAt ? previousAt.toISOString() : 'an unrecorded date'}`
+      : 'no earlier marking on record';
+    // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
+    // stated fact on the line, never a reason to raise its level.
+    // Written BEFORE the notice is attempted, so it says what is next, never that it was sent; a
+    // bridge switch tells the managers only at the first request Lydia issues (below).
+    const notices = !this.lydiaNotifier.enabled()
+      ? 'managers not notified (notices off by switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)'
+      : switched
+        ? 'managers told at the first request Lydia issues on it'
+        : 'managers told next';
     if (ready) {
-      this.logger.warn(
+      // The designed path (the webhook or an admin validation): INFO. An anomaly on this path is
+      // logged where it is decided - the held refusal and the bridge switch above, at WARN.
+      this.logger.log(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} marked READY by ${cause} ` +
-          `(${where}); before: ${before}${switchedOff}`
+          `(${where}); before: ${before}; ${notices}`
       );
     } else {
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} reverted: request/do answered ` +
-          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); it had been marked ready ` +
-          `by ${before}; ${withheld} on-sale product(s) withheld; ${admins} global admin(s) told` +
-          switchedOff
+          `error ${cause === 'request-blocked' ? '2701' : '5'} (${where}); before: ${before}; ` +
+          `${withheld} on-sale product(s) withheld; ${admins} global admin(s) told; ${notices}`
       );
     }
     await this.invalidatePostListCaches();
-    try {
-      const recipients = await this.listFlagHolders(
-        holder.id,
-        AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT
+    if (switched) {
+      // A switch is believed on an UNSIGNED webhook: the managers are told "active" once the
+      // enrolled Business has PROVEN itself - the first request/do Lydia issues on it
+      // (`noteLydiaRequestIssued`) - never on the switch, which a forged VALIDATED can make.
+      this.logger.debug(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)}: managers told "active" ` +
+          `at the first request Lydia issues on the switched-to Business`
       );
-      await this.lydiaNotifier.tell(
-        { id: holder.id, name: holder.name },
-        ready ? 'active' : 'paused',
-        recipients
-      );
-    } catch (err: unknown) {
-      // The state is committed; a notice that could not be written is said, never retried here.
-      this.logger.error(
-        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)}: the managers' notice could not ` +
-          `be written: ${err instanceof Error ? err.message : String(err)}`
-      );
+    } else {
+      await this.tellPayoutManagers(holder, ready ? 'active' : 'paused');
     }
     // Those who collect THROUGH this holder stop collecting with it (owner, 2026-11-02), products
     // or none - their paid forms pause too.
@@ -5242,7 +6117,263 @@ ${rejectionReason}`
         delegatesWithheld
       );
     }
-    return { kind: 'transitioned', ...previous };
+    return {
+      kind: 'transitioned',
+      ...previous,
+      ...(switched ? { bridgeSwitched: true as const } : {}),
+    };
+  }
+
+  /** The payout managers' Lydia notice; a failure is said, never retried (the state is committed). */
+  private async tellPayoutManagers(
+    holder: { id: string; name: string },
+    kind: 'active' | 'paused'
+  ): Promise<void> {
+    try {
+      const recipients = await this.listFlagHolders(
+        holder.id,
+        AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT
+      );
+      await this.lydiaNotifier.tell({ id: holder.id, name: holder.name }, kind, recipients);
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)}: the managers' notice could not ` +
+          `be written: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  /**
+   * The readiness step for a token NO association holds as its active Business: the standby of a
+   * bridge, read with the association locked first and its bridge after (the order of every bridge
+   * transition). `ready` for the ENROLLED Business while the historical account collects switches it
+   * in (`swapBridge`), keeping the historical account's readiness in the standby columns so a switch
+   * back restores it. A refusal naming it (the enrolled Business is pending again: a request decided
+   * while it was active, answered after a concurrent switch back) is `refused`: the caller re-issues
+   * on the historical account, counted. Anything else is `none` and the ordinary no-holder answer.
+   */
+  private async standbyReadinessStep(
+    manager: EntityManager,
+    vendorToken: string,
+    ready: boolean,
+    cause: LydiaReadinessCause,
+    where: string
+  ): Promise<
+    | { kind: 'none' }
+    | { kind: 'now-active' }
+    | { kind: 'refused'; associationId: string }
+    | { kind: 'held'; associationId: string; cause: LydiaReadinessCause; at: Date | string | null }
+    | { kind: 'switched'; historicalWasReady: boolean; switchCount: number }
+  > {
+    const associationId = await bridgeOfEnrolled(manager, vendorToken);
+    if (!associationId) return { kind: 'none' };
+    const [active]: Array<{ ready: boolean; cause: LydiaReadinessCause | null; at: Date | null }> =
+      await manager.query(
+        `SELECT "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
+                "lydiaReadinessAt" AS at
+           FROM associations WHERE id = $1 FOR UPDATE`,
+        [associationId]
+      );
+    const bridge = await lockBridge(manager, associationId);
+    if (!active || !bridge || bridge.enrolledVendorToken !== vendorToken) return { kind: 'none' };
+    if (bridge.state === 'switched') return { kind: 'now-active' };
+    if (!ready) {
+      if (cause !== 'request-refused') {
+        // 2701 on the enrolled Business after a switch back: recorded on it, nothing re-issued.
+        await manager.query(
+          `UPDATE lydia_account_bridges SET "standbyReadinessCause" = $2, "standbyReadinessAt" = now()
+            WHERE "associationId" = $1`,
+          [associationId, cause]
+        );
+        this.logger.warn(
+          `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(associationId)}: ${cause} on its ` +
+            `enrolled Business, pending again since a switch back (${where}) - recorded on it, ` +
+            `nothing re-issued`
+        );
+        return { kind: 'none' };
+      }
+      await this.countBridgeReissue(manager, associationId);
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(associationId)}: error 5 on its enrolled ` +
+          `Business, already switched back by a concurrent refusal (${where}) - the payment is ` +
+          `re-issued on the historical account`
+      );
+      return { kind: 'refused', associationId };
+    }
+    const lydiaRefusedIt =
+      bridge.standbyReadinessCause === 'request-refused' ||
+      bridge.standbyReadinessCause === 'request-blocked';
+    if (lydiaRefusedIt && cause !== 'admin') {
+      // Lydia itself answered error 5 or 2701 for this Business (a switch back, or a block recorded
+      // on it since): an unsigned VALIDATED does not overrule Lydia - otherwise a stream of forged
+      // ones re-switches after every switch back. Only a global admin, who re-checked with Lydia,
+      // switches it (the same rule `held-by-lydia` applies to an active Business).
+      return {
+        kind: 'held',
+        associationId,
+        cause: bridge.standbyReadinessCause as LydiaReadinessCause,
+        at: bridge.standbyReadinessAt,
+      };
+    }
+    await swapBridge(manager, bridge, 'switched', {
+      ready: active.ready,
+      cause: active.cause,
+      at: active.at,
+    });
+    return {
+      kind: 'switched',
+      historicalWasReady: active.ready,
+      switchCount: bridge.switchCount + 1,
+    };
+  }
+
+  /**
+   * Lydia answered error 5 for the Business a bridge switch made ACTIVE (the holder is locked by the
+   * caller): switches BACK to the historical account, in the caller's transaction (the bridge row
+   * locked after the association). The enrolled Business returns to the standby columns NOT ready,
+   * cause `request-refused`, so the managers see it waiting for Lydia again and a later VALIDATED
+   * switches again. The historical account comes back with the readiness it had at the switch: not
+   * ready, the holder's and its delegates' on-sale products are withheld as a revert does. Every
+   * global admin gets the revert's bell row, marked `bridge: switched-back`. Null when the holder is
+   * on no bridge, or its active Business is not the bridge's enrolled one: the ordinary revert.
+   */
+  private async switchBackOnRefusal(
+    manager: EntityManager,
+    holder: LydiaReadinessHolder,
+    vendorToken: string,
+    where: string
+  ): Promise<BridgeSwitchBack | null> {
+    const bridge = await lockBridge(manager, holder.id);
+    if (!bridge || bridge.state !== 'switched' || bridge.enrolledVendorToken !== vendorToken) {
+      return null;
+    }
+    await swapBridge(manager, bridge, 'historical', {
+      ready: false,
+      cause: 'request-refused',
+      at: null,
+    });
+    await this.countBridgeReissue(manager, holder.id);
+    const historicalReady = bridge.standbyReady;
+    const wasProven = bridge.enrolledProvenAt != null;
+    const delegates = await approvedDelegateIds(manager, holder.id);
+    let delegatesWithheld = new Map<string, number>();
+    let withheld = 0;
+    if (!historicalReady) {
+      const byId = await withholdOnSaleProductsOf(manager, [holder.id, ...delegates]);
+      withheld = [...byId.values()].reduce((sum, n) => sum + n, 0);
+      delegatesWithheld = new Map([...byId].filter(([id]) => id !== holder.id));
+    }
+    const admins = await this.reportRevertToGlobalAdmins(
+      manager,
+      holder,
+      'request-refused',
+      where,
+      'switched-back'
+    );
+    return {
+      historicalReady,
+      switchBackCount: bridge.switchBackCount + 1,
+      wasProven,
+      withheld,
+      admins,
+      delegates,
+      delegatesWithheld,
+    };
+  }
+
+  /**
+   * Whether a purchase refused `PAYMENT_ROUTING_CHANGED` was moved by a bridge's SWITCH BACK - and
+   * if so counts its re-issue (`reissueCount`), in ONE statement, so the proof and the count are
+   * the same write. True only when every fact agrees: the same payee association, provider and
+   * delegation on both sides, `from` naming that association's bridge's ENROLLED Business, `to` its
+   * HISTORICAL account, and the bridge reading `historical` now. Any other routing change is false:
+   * the caller keeps the 409 (lead, 2026-11-14, docs/wiki/frontend/modules/payments.md). Never
+   * throws: a failure is an ERROR line and false, so the payer gets the 409 as before.
+   */
+  async countReissueAfterSwitchBack(from: PaymentTarget, to: PaymentTarget): Promise<boolean> {
+    const shapeAgrees =
+      from.provider === 'lydia' &&
+      to.provider === 'lydia' &&
+      from.targetAssociationId === to.targetAssociationId &&
+      from.delegated === to.delegated &&
+      to.ready &&
+      !!from.connectAccountId &&
+      !!to.connectAccountId &&
+      from.connectAccountId !== to.connectAccountId;
+    if (!shapeAgrees) {
+      this.logger.debug(
+        `${LYDIA_BRIDGE_LOG_TAG} routing change on ${sanitizeLog(from.targetAssociationId)} -> ` +
+          `${sanitizeLog(to.targetAssociationId)} is not a switch back - the 409 stands`
+      );
+      return false;
+    }
+    try {
+      const updated: unknown[] = await this.assoRepo.query(
+        `UPDATE lydia_account_bridges SET "reissueCount" = "reissueCount" + 1
+          WHERE "associationId" = $1 AND state = 'historical'
+            AND "enrolledVendorToken" = $2 AND "historicalVendorToken" = $3
+          RETURNING "associationId"`,
+        [from.targetAssociationId, from.connectAccountId, to.connectAccountId]
+      );
+      // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+      const rows = Array.isArray(updated[0]) ? (updated[0] as unknown[]) : updated;
+      const switchedBack = rows.length > 0;
+      this.logger.log(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: routing ` +
+          `change ${switchedBack ? 'IS its switch back - re-issue counted' : 'is not its switch back - the 409 stands'}`
+      );
+      return switchedBack;
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(from.targetAssociationId)}: reading a ` +
+          `routing change against its bridge FAILED - the 409 stands: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+      return false;
+    }
+  }
+
+  /** Counts one payment re-issued on a bridge's historical account (`reissueCount`, migration 167). */
+  private async countBridgeReissue(manager: EntityManager, associationId: string): Promise<void> {
+    await manager.query(
+      `UPDATE lydia_account_bridges SET "reissueCount" = "reissueCount" + 1 WHERE "associationId" = $1`,
+      [associationId]
+    );
+  }
+
+  /**
+   * What a switch back owes once committed: its ERROR line (the cause, the count, and that the
+   * payment is re-issued by the owner's decision, never a fallback), and - only when the historical
+   * account comes back NOT ready, so nothing collects now - the managers' pause and the delegates'
+   * notice, as a revert would.
+   */
+  private async afterSwitchBack(
+    holder: LydiaReadinessHolder,
+    back: BridgeSwitchBack,
+    where: string
+  ): Promise<void> {
+    this.logger.error(
+      `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)} switched BACK to its ` +
+        `historical account: request/do answered error 5 on the enrolled Business a switch had made ` +
+        `active (${where}); switch back #${back.switchBackCount}; the SAME payment is re-issued on ` +
+        `the historical account (the owner's decision for this bridge, 2026-11-13 - not a fallback); ` +
+        `the historical account is ${back.historicalReady ? 'ready' : `NOT ready, ${back.withheld} on-sale product(s) withheld`}; ` +
+        `${back.admins} global admin(s) told`
+    );
+    await this.invalidatePostListCaches();
+    // The managers manage the ENROLLED Business: told "active" once it proved itself, they are owed
+    // the counter-notice now that it waits for Lydia again; and when nothing collects at all.
+    if (back.wasProven || !back.historicalReady) {
+      await this.tellPayoutManagers(holder, 'paused');
+    }
+    if (!back.historicalReady) {
+      await this.tellDelegates(
+        back.delegates,
+        'receiver-not-ready',
+        'bridge switched back to a historical account that is not ready',
+        back.delegatesWithheld
+      );
+    }
   }
 
   /**
@@ -5251,13 +6382,15 @@ ${rejectionReason}`
    * report commit together, and never pushed. Unlike the managers' notice it is not behind
    * `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`: the web client renders the type now, and an older native
    * build shows the neutral unknown-type row, which still names the association. Answers how many
-   * admins were told; zero is said at ERROR by the caller's line.
+   * admins were told; zero is said at ERROR by the caller's line. `bridge` marks a bridge's switch
+   * back (`meta.bridge`), which a current client words as such - payments did not stop.
    */
   private async reportRevertToGlobalAdmins(
     manager: EntityManager,
     holder: { id: string; name: string },
     cause: LydiaReadinessCause,
-    where: string
+    where: string,
+    bridge?: 'switched-back'
   ): Promise<number> {
     const admins: Array<{ id: string }> = await manager.query(
       `SELECT id FROM users WHERE admin = true`
@@ -5275,7 +6408,12 @@ ${rejectionReason}`
           associationId: null,
           associationLogoUrl: null,
           text: holder.name,
-          meta: { cause, reportedBy: where, audience: 'global-admin' },
+          meta: {
+            cause,
+            reportedBy: where,
+            audience: 'global-admin',
+            ...(bridge ? { bridge } : {}),
+          },
         })
       )
     );
@@ -5288,42 +6426,97 @@ ${rejectionReason}`
    * HOLDER of the vendor token the request was sent to (an approved parent's, when delegating).
    * Never throws: the payer's typed refusal is what the caller rethrows, and a failure here is an
    * ERROR line, not a second answer.
+   *
+   * Answers whether the caller RE-ISSUES the same payment, once, on the account that collects now:
+   * true only when the refusal was error 5 on a bridge's enrolled Business and the historical
+   * account collects again (`switched-back`) - the owner's decision for the bridge (2026-11-13).
+   * Error 5 is answered before any request exists, so the re-issue charges nobody twice.
    */
   async revertLydiaReadinessAfterRefusal(
     vendorToken: string,
     cause: 'request-refused' | 'request-blocked',
     ref: LydiaReadinessRef
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
-      await this.setLydiaReadiness(vendorToken, false, cause, ref);
+      const outcome = await this.setLydiaReadiness(vendorToken, false, cause, ref);
+      return outcome.kind === 'switched-back';
     } catch (err: unknown) {
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} revert after ${cause} (${ref.path} ${sanitizeLog(ref.id ?? '')}) ` +
           `FAILED - the holder still reads ready: ${err instanceof Error ? err.message : String(err)}`
       );
+      return false;
     }
   }
 
-  /** The vendor token linked to an association, or null; 404 when the association does not exist. */
+  /**
+   * The vendor token of the Business the global admin's "Valider l'onboarding" names, or null; 404
+   * when the association does not exist: the one its managers manage (`managedVendorTokenSql` - on
+   * a bridge whose historical account collects, the ENROLLED Business, so validating it switches
+   * it in), else the active one (a bridge before its enrolment: the historical account itself).
+   */
   async lydiaVendorTokenOf(id: string): Promise<string | null> {
-    const asso = await this.assoRepo.findOne({
-      where: { id },
-      select: { id: true, lydiaAccountId: true },
-    });
-    if (!asso) throw new NotFoundException('Association not found');
-    return asso.lydiaAccountId?.trim() || null;
+    const [row]: Array<{ managed: string | null; active: string | null }> =
+      await this.assoRepo.query(
+        `SELECT ${managedVendorTokenSql()} AS managed, a."lydiaAccountId" AS active
+           FROM associations a ${bridgeJoinSql()} WHERE a.id = $1`,
+        [id]
+      );
+    if (!row) throw new NotFoundException('Association not found');
+    return row.managed?.trim() || row.active?.trim() || null;
+  }
+
+  /**
+   * Called after Lydia ISSUED a request on `vendorToken` (a `request/do` answered with a request):
+   * the proof that a Business a bridge switch made active really is validated
+   * (lydia-account-bridge.ts). The FIRST such request after a switch stamps `enrolledProvenAt` -
+   * one statement, so the stamp is the idempotence - and tells the payout managers "active", the
+   * notice the switch itself withheld because an unsigned VALIDATED can be forged. Any other
+   * token matches no row. Never throws: the payer's request is issued, and a failure here is an
+   * ERROR line, not a second answer.
+   */
+  async noteLydiaRequestIssued(vendorToken: string): Promise<void> {
+    try {
+      const updated: unknown[] = await this.assoRepo.query(
+        `UPDATE lydia_account_bridges b SET "enrolledProvenAt" = now()
+           FROM associations a
+          WHERE b."enrolledVendorToken" = $1 AND b.state = 'switched'
+            AND b."enrolledProvenAt" IS NULL AND a.id = b."associationId"
+          RETURNING a.id, a.name`,
+        [vendorToken]
+      );
+      const rows = (Array.isArray(updated[0]) ? updated[0] : updated) as Array<{
+        id: string;
+        name: string;
+      }>;
+      if (rows.length === 0) return;
+      const [holder] = rows;
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} association ${sanitizeLog(holder.id)}: its switched-to Business ` +
+          `PROVED itself (Lydia issued a request on it) - the payout managers are told "active"`
+      );
+      await this.tellPayoutManagers(holder, 'active');
+    } catch (err: unknown) {
+      this.logger.error(
+        `${LYDIA_BRIDGE_LOG_TAG} the proof of an issued request could not be recorded: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   /**
    * Claims the "enrolment in flight" marker BEFORE core-service calls `business/create`: ONE
-   * statement, only where no marker is set and no Business is linked, so two enrolments cannot both
-   * create a Business. Refused with the typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED` (a Business is
-   * linked) or `LYDIA_ENROLMENT_IN_FLIGHT` (another create's outcome is not known).
+   * statement, only where no marker is set and the managers hold no Business
+   * (`managedVendorTokenSql`: none linked, or a bridge's historical account collecting with no
+   * enrolled Business yet), so two enrolments cannot both create a Business. Refused with the typed
+   * 409 `LYDIA_BUSINESS_PENDING_VALIDATION` (a bridge's enrolled Business waits for Lydia),
+   * `LYDIA_ACCOUNT_ALREADY_LINKED` (a Business is linked) or `LYDIA_ENROLMENT_IN_FLIGHT` (another
+   * create's outcome is not known).
    */
   async claimLydiaEnrolment(id: string): Promise<void> {
     const result: unknown[] = await this.assoRepo.query(
       `UPDATE associations SET "lydiaEnrolmentStartedAt" = now()
-        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NULL AND "lydiaAccountId" IS NULL
+        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NULL AND ${MANAGES_NO_BUSINESS_SQL}
         RETURNING id`,
       [id]
     );
@@ -5332,12 +6525,28 @@ ${rejectionReason}`
       this.logger.log(`[LYDIA] enrolment claimed on association ${sanitizeLog(id)}`);
       return;
     }
-    const asso = await this.assoRepo.findOne({
-      where: { id },
-      select: { id: true, lydiaAccountId: true, lydiaEnrolmentStartedAt: true },
-    });
+    const [asso]: Array<{
+      managed: string | null;
+      state: LydiaBridgeState | null;
+      startedAt: Date | string | null;
+    }> = await this.assoRepo.query(
+      `SELECT ${managedVendorTokenSql()} AS managed, b.state,
+              a."lydiaEnrolmentStartedAt" AS "startedAt"
+         FROM associations a ${bridgeJoinSql()} WHERE a.id = $1`,
+      [id]
+    );
     if (!asso) throw new NotFoundException('Association not found');
-    if (asso.lydiaAccountId) {
+    if (asso.managed && asso.state === 'historical') {
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} enrolment refused on association ${sanitizeLog(id)}: its enrolled ` +
+          `Business still waits for Lydia's validation`
+      );
+      throw new ConflictException({
+        code: LYDIA_BUSINESS_PENDING_VALIDATION,
+        message: 'The Lydia Business of this association is waiting for Lydia to validate it',
+      });
+    }
+    if (asso.managed) {
       this.logger.warn(
         `[LYDIA] enrolment refused on association ${sanitizeLog(id)}: a Business is linked`
       );
@@ -5348,7 +6557,7 @@ ${rejectionReason}`
     }
     this.logger.warn(
       `[LYDIA] enrolment refused on association ${sanitizeLog(id)}: another one is in flight since ` +
-        `${asso.lydiaEnrolmentStartedAt ? new Date(asso.lydiaEnrolmentStartedAt).toISOString() : 'an unknown time'}`
+        `${asso.startedAt ? new Date(asso.startedAt).toISOString() : 'an unknown time'}`
     );
     throw new ConflictException({
       code: LYDIA_ENROLMENT_IN_FLIGHT,
@@ -5387,7 +6596,7 @@ ${rejectionReason}`
   async recordLydiaEnrolmentVendorToken(id: string, vendorToken: string): Promise<boolean> {
     const result: unknown[] = await this.assoRepo.query(
       `UPDATE associations SET "lydiaEnrolmentVendorToken" = $2
-        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NOT NULL AND "lydiaAccountId" IS NULL
+        WHERE id = $1 AND "lydiaEnrolmentStartedAt" IS NOT NULL AND ${MANAGES_NO_BUSINESS_SQL}
         RETURNING id`,
       [id, vendorToken]
     );
@@ -5873,6 +7082,9 @@ ${rejectionReason}`
    * onboarding from scratch. Local unlink only - the Lydia Business itself is left untouched.
    */
   async clearLydiaAccount(id: string) {
+    // On a bridge whose historical account collects, the Business the managers hold is the ENROLLED
+    // one: that is what is unlinked, and the historical account keeps collecting, untouched.
+    if (await this.clearEnrolledBusinessOfBridge(id)) return;
     // The unlink and the pause commit together: the holder's own on-sale products and its approved
     // delegates' (a list paid through it among them) are withheld exactly as a readiness revert
     // withholds them (`setLydiaReadiness`), and the same release puts them back once a Business is
@@ -5880,6 +7092,10 @@ ${rejectionReason}`
     const { delegates, withheld, byId, wasReady } = await this.assoRepo.manager.transaction(
       async (manager) => {
         const holder = await this.lockAssociation(manager, id);
+        // The cashier rows of THAT Business are closed below: refused while one still owes a
+        // removal at Lydia, or a cashier step is in flight (review of the 1.7.1 flip).
+        const kept = await this.refuseOnCashierDebt(manager, id, 'unlink');
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
         await manager.update(Association, id, {
           lydiaAccountId: null,
           lydiaOnboardingComplete: false,
@@ -5932,10 +7148,135 @@ ${rejectionReason}`
     }
   }
 
+  /**
+   * The unlink of an association on a bridge whose HISTORICAL account collects: the enrolled
+   * Business is removed from the bridge (its key, dashboard URL and readiness with it) and its
+   * cashier rows closed, phones cleared - the enrolment may start again. The historical account, its
+   * products and its delegates are not touched: it is not the managers' Business. Nothing enrolled
+   * yet: nothing to unlink, said at WARN (the historical account is removed by the documented
+   * procedure, never by this button). Answers false when the association is on no such bridge -
+   * the ordinary unlink runs.
+   */
+  private async clearEnrolledBusinessOfBridge(id: string): Promise<boolean> {
+    const enrolled = await this.assoRepo.manager.transaction(
+      async (manager): Promise<string | null | false> => {
+        const holder = await manager.query(`SELECT id FROM associations WHERE id = $1 FOR UPDATE`, [
+          id,
+        ]);
+        if ((holder as unknown[]).length === 0) return false;
+        const bridge = await lockBridge(manager, id);
+        if (!bridge || bridge.state !== 'historical') return false;
+        if (!bridge.enrolledVendorToken) return null;
+        // A Business that TOOK payments (collecting between a switch and a switch back) keeps its
+        // key while a payment it took can still be confirmed or refunded: the unlink is refused,
+        // typed, rather than leaving those rows with no key (lydia-account-bridge.ts).
+        const [taken]: Array<{ n: number }> = await manager.query(
+          `SELECT ((SELECT count(*) FROM product_checkouts
+                     WHERE "vendorToken" = $1 AND status NOT IN ('cancelled', 'expired', 'declined'))
+                 + (SELECT count(*) FROM submissions WHERE "lydiaVendorToken" = $1))::int AS n`,
+          [bridge.enrolledVendorToken]
+        );
+        if (taken.n > 0) {
+          throw new ConflictException({
+            code: LYDIA_BUSINESS_HOLDS_PAYMENTS,
+            message: 'This Lydia Business took payments that may still be confirmed or refunded',
+          });
+        }
+        // Its cashier rows are closed below: refused while one still owes a removal at Lydia.
+        const kept = await this.refuseOnCashierDebt(
+          manager,
+          id,
+          'unlink',
+          bridge.enrolledVendorToken
+        );
+        this.sayCashiersKeptAtLydia(id, 'unlinked', kept);
+        await manager.query(
+          `UPDATE lydia_account_bridges
+              SET "enrolledVendorToken" = NULL, "standbyKeyCiphertext" = NULL,
+                  "standbyDashboardUrl" = NULL, "standbyReady" = false,
+                  "standbyReadinessCause" = NULL, "standbyReadinessAt" = NULL
+            WHERE "associationId" = $1`,
+          [id]
+        );
+        await manager.query(
+          `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
+                      "previousPhoneSealed" = NULL, "previousPhoneEnd" = NULL
+            WHERE "associationId" = $1 AND "vendorToken" = $2 AND "removedAt" IS NULL`,
+          [id, bridge.enrolledVendorToken]
+        );
+        await manager.query(
+          `UPDATE associations SET "lydiaResponsableStartedAt" = NULL, "lydiaCashierClaimToken" = NULL
+            WHERE id = $1`,
+          [id]
+        );
+        return bridge.enrolledVendorToken;
+      }
+    );
+    if (enrolled === false) return false;
+    if (enrolled === null) {
+      this.logger.warn(
+        `${LYDIA_BRIDGE_LOG_TAG} unlink on association ${sanitizeLog(id)}: no enrolled Business to ` +
+          `unlink; its historical account collects and is not the managers' to unlink`
+      );
+      return true;
+    }
+    this.logger.warn(
+      `[AUDIT] ${LYDIA_BRIDGE_LOG_TAG} the enrolled (pending) Lydia Business of association ` +
+        `${sanitizeLog(id)} unlinked, its key and cashier rows cleared; the historical account ` +
+        `keeps collecting`
+    );
+    return true;
+  }
+
+  /**
+   * `assertNoCashierOwed` for the association's delete or unlink, the refusal said at INFO - an
+   * answer the global admin acts on (remove the cashiers, or clear a stuck claim), not a failure.
+   */
+  private async refuseOnCashierDebt(
+    manager: EntityManager,
+    id: string,
+    act: 'DELETE' | 'unlink',
+    vendorToken: string | null = null
+  ): Promise<Array<{ vendorToken: string }>> {
+    try {
+      return await assertNoCashierOwed(manager, id, vendorToken);
+    } catch (err: unknown) {
+      if (err instanceof ConflictException) {
+        const code = (err.getResponse() as { code?: unknown }).code;
+        this.logger.log(
+          `[ASSO] ${act} ${sanitizeLog(id)} refused: ${String(code)} - the Lydia cashiers first`
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The Responsable's current number alone remained when association `id` was `act`: a cashier Lydia
+   * still lists on that Business, which nothing in Canari tracks afterwards - said at ERROR, never
+   * the phone.
+   */
+  private sayCashiersKeptAtLydia(
+    id: string,
+    act: 'deleted' | 'unlinked',
+    live: Array<{ vendorToken: string }>
+  ): void {
+    for (const cashier of live) {
+      this.logger.error(
+        `[AUDIT] [LYDIA] association ${sanitizeLog(id)} ${act} with a LIVE cashier row: ` +
+          `Business ${sanitizeLog(cashier.vendorToken)} - Lydia still lists that cashier`
+      );
+    }
+  }
+
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
   async isLydiaBusinessKeySet(id: string): Promise<boolean> {
+    // The MANAGED Business's key: on a bridge whose historical account collects, the enrolled
+    // one's - the historical account is invisible to the managers, even as a flag.
     const rows: Array<{ set: boolean }> = await this.assoRepo.query(
-      `SELECT ("lydiaBusinessKeyCiphertext" IS NOT NULL) AS "set" FROM associations WHERE id = $1`,
+      `SELECT (CASE WHEN b.state = 'historical' THEN b."standbyKeyCiphertext"
+                    ELSE a."lydiaBusinessKeyCiphertext" END IS NOT NULL) AS "set"
+         FROM associations a ${bridgeJoinSql()} WHERE a.id = $1`,
       [id]
     );
     if (rows.length === 0) throw new NotFoundException('Association not found');
@@ -5943,18 +7284,21 @@ ${rejectionReason}`
   }
 
   /**
-   * The DECRYPTED Business private token of the association holding `vendorToken`, for
-   * core-service to verify a Lydia callback with (internal route only). Null when no association
-   * holds that token with a key, when two do (ambiguous: refuse rather than guess), or when the
-   * ciphertext does not open (another secret, or sealed for another vendor token). THROWS a 503
-   * when the server has no encryption secret: a configuration failure is not a verdict about the
-   * callback. The value is never logged, never cached.
+   * The DECRYPTED Business private token of the Business `vendorToken` names, for core-service to
+   * verify a Lydia callback, read a request's state or refund a payment with (internal route only):
+   * an association's ACTIVE Business, or a bridge's standby one (`HELD_BUSINESSES_SQL`) - so a row
+   * taken on a historical account is still refunded and verified with ITS key after the switch, by
+   * the row's own vendor token. Null when no Business of ours holds that token with a key, when two
+   * do (ambiguous: refuse rather than guess), or when the ciphertext does not open (another secret,
+   * or sealed for another vendor token). THROWS a 503 when the server has no encryption secret: a
+   * configuration failure is not a verdict about the callback. The value is never logged, never
+   * cached.
    */
   async lydiaCallbackKey(vendorToken: string): Promise<string | null> {
     if (!vendorToken) return null;
     const rows: Array<{ id: string; sealed: string }> = await this.assoRepo.query(
-      `SELECT id, "lydiaBusinessKeyCiphertext" AS sealed FROM associations
-        WHERE "lydiaAccountId" = $1 AND "lydiaBusinessKeyCiphertext" IS NOT NULL`,
+      `SELECT h."associationId" AS id, h.sealed FROM ${HELD_BUSINESSES_SQL} h
+        WHERE h."vendorToken" = $1 AND h.sealed IS NOT NULL`,
       [vendorToken]
     );
     if (rows.length === 0) {
@@ -6642,14 +7986,16 @@ ${rejectionReason}`
     if (child.paymentParentAssociationId === parentId && isDelegating(child)) {
       return { onlyRecordIds: null };
     }
-    const parent = await this.assoRepo.findOne({
-      where: { id: parentId },
-      select: { id: true, lydiaAccountId: true },
-    });
-    const business = parent?.lydiaAccountId?.trim();
-    const taken = business
-      ? await purchaseIdsTakenBy(this.assoRepo.manager, childId, business)
-      : [];
+    // Every Business the former receiver holds - a bridge's historical account included, which
+    // still holds (and refunds) what it took (lydia-account-bridge.ts).
+    const businesses = await vendorTokensHeldBy(
+      (sql, p) => this.assoRepo.manager.query(sql, p),
+      parentId
+    );
+    const taken: string[] = [];
+    for (const business of businesses) {
+      taken.push(...(await purchaseIdsTakenBy(this.assoRepo.manager, childId, business)));
+    }
     if (taken.length === 0) {
       this.logger.debug(
         `[DELEGATION] accounting of ${childId.slice(0, 8)} refused to ${parentId.slice(0, 8)}: ` +

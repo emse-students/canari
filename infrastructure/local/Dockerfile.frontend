@@ -1202,6 +1202,11 @@ server {\n\
     \n\
     location = /api/associations/calendar/feed.ics {\n\
     # Public ICS feed - strip client-supplied trust headers (no server-level inheritance).\n\
+    # THE ERROR LOG MUST NOT RECORD THIS REQUEST LINE: a subscription link's bearer token rides in the\n\
+    # query (2026-11-14), and the redaction of the access log ($logged_request_uri) does not reach the\n\
+    # error log, which prints the raw request line (an upstream reset or timeout is an `error` naming\n\
+    # it). `crit` records only what stops nginx itself - docs/wiki/infrastructure/logging.md.\n\
+    error_log /var/log/nginx/error.log crit;\n\
     proxy_set_header X-User-Id "";\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\

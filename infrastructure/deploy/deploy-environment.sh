@@ -241,11 +241,11 @@ fi
 
 # ── How each service may be replaced, and the proxies' replica lists ─────────
 # Read BEFORE ANY `up`, for two reasons. A declaration two replicas could not honour is refused while
-# nothing has changed. And the frontend and the edge include their replica list unconditionally, so a
+# nothing has changed. And the frontend, the edge and the mesh include their replica list unconditionally, so a
 # list that does not exist - a fresh host, a lost directory - is a proxy that cannot start:
 # rotation_seed writes every list in its resting form (each service by its DNS name) first.
 #
-# Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
+# Where rolling.sh writes the lists: inside edge/, which the edge and the mesh already mount, and mounted
 # read-only into the frontend as /etc/nginx/targets (both compose files). Not tracked by git, so
 # `git reset --hard` leaves the lists the running proxies were reloaded on. edge/rotation/ holds the
 # `upstream` lists of 1.6.2, which this library never touches: a frontend of that release still reads
@@ -274,6 +274,38 @@ rotation_seed <<<"$REPLACE_PLAN" || {
   printf '::error::the replica lists in %s could not be written or loaded - nothing was changed\n' "$ROTATION_DIR" >&2
   exit 1
 }
+
+# ── A pinned image the host does not hold is fetched HERE, before any `up` ───
+# The pull above names only what the release built. A pinned service (a datastore, the edge) names
+# an image by digest that this repository does not build, and the day that digest moves the host
+# does not hold it: `up -d` would then fetch it itself, as an unnamed side effect of the step that
+# replaces the database - outside `with_registry_retry`, so a registry that hiccups reads as a
+# broken change (exit 1, not 75) and is not re-attempted. Asked of the daemon as a fact (`image
+# inspect`), so an ordinary release pulls nothing here and reaches no registry for these images.
+#
+# pinned_services_missing_image - reads the replacement plan on stdin, prints each pinned service
+# whose image the daemon does not hold, one per line.
+pinned_services_missing_image() {
+  local service mode image
+  while read -r service mode _ _ image; do
+    [ "$mode" = pinned ] || continue
+    case "$image" in "" | "-") continue ;; esac
+    $DOCKER_CLI image inspect "$image" >/dev/null 2>&1 || printf '%s\n' "$service"
+  done
+}
+
+PINNED_TO_PULL="$(pinned_services_missing_image <<<"$REPLACE_PLAN" | tr '\n' ' ')"
+PINNED_TO_PULL="${PINNED_TO_PULL% }"
+if [ -n "$PINNED_TO_PULL" ]; then
+  printf '\npulling pinned images this host does not hold yet: %s\n' "$PINNED_TO_PULL"
+  # The assignment lasts for this one call: these images come from their own registries, and the
+  # annotation of a failure names what did not answer.
+  # shellcheck disable=SC2086 # deliberate word splitting: a service list
+  REGISTRY="the registry of a pinned image ($PINNED_TO_PULL)" \
+    with_registry_retry "pinned image pull" dc pull $PINNED_TO_PULL
+else
+  printf '\nevery pinned image is already on this host - not pulling\n'
+fi
 
 # ── The database first, and its migrations BEFORE any application service ──────
 # Services used to start first and migrate after, so a deploy had a window in which new code met the
@@ -385,13 +417,16 @@ if ! replace_services <<<"$REPLACE_PLAN"; then
   exit 1
 fi
 
-# THE EDGE IS NOT REPLACED, SO ITS CONFIGURATION IS RELOADED: `edge/` is bind-mounted from this
-# checkout, which `git reset --hard` has just moved. `nginx -t` first, so a broken file is refused by
-# a test while the running configuration keeps serving; `-s reload` is graceful - the old workers
-# finish their connections.
+# THE EDGE AND THE MESH ARE NOT REPLACED, SO THEIR CONFIGURATIONS ARE RELOADED: `edge/` is
+# bind-mounted from this checkout, which `git reset --hard` has just moved. `nginx -t` first, so a
+# broken file is refused by a test while the running configuration keeps serving; `-s reload` is
+# graceful - the old workers finish their connections, and the listening sockets pass to the new ones.
 printf '\nreloading the edge configuration\n'
 dc exec -T edge nginx -t -c /etc/nginx/edge/nginx.conf
 dc exec -T edge nginx -s reload -c /etc/nginx/edge/nginx.conf
+printf '\nreloading the mesh configuration\n'
+dc exec -T mesh nginx -t -c /etc/nginx/edge/mesh.conf
+dc exec -T mesh nginx -s reload -c /etc/nginx/edge/mesh.conf
 
 # Anything this file no longer declares (`--remove-orphans`), and nothing else: every declared service
 # is already running what this release asked for, and `--no-recreate` keeps this from replacing any
@@ -507,6 +542,29 @@ retry_http "media-service /touch route present" '^401$' \
 # serving - the frontend answered 200 throughout a 33-minute outage nobody was told about.
 retry_http "api/version answers, which needs the database" '^200$' \
   "curl -s -o /dev/null -w '%{http_code}' $BASE/api/version"
+
+# AND THE PATH EVERY SERVICE-TO-SERVICE CALL TAKES (2026-11-07 review of the mesh). Every check above
+# goes through the edge and the frontend, never through the mesh: a mesh routing a port nowhere, or
+# not at all, left `/` and `/api/version` at 200 while every payment, presence read and delivery
+# between services failed - a deploy green on an estate that does not work. So each route the plan
+# gives the mesh is asked, from INSIDE the service it routes to (a caller of the mesh like any other,
+# on the runtime the callers run), for that service's own health, through the mesh.
+# mesh_route_status <service> <port> - the HTTP status the mesh answers for <service>'s health on
+# <port>, asked from a running replica of <service>; 000 when nothing answered.
+mesh_route_status() {
+  local cid
+  cid="$(containers_of "$1" running | sed -n 1p)"
+  [ -n "$cid" ] || {
+    echo 000
+    return 0
+  }
+  # shellcheck disable=SC2086 # DOCKER_CLI may be "sudo docker"
+  $DOCKER_CLI exec "$cid" node -e "fetch('http://mesh:$2/api/health').then(r => console.log(r.status)).catch(() => console.log('000'))" 2>/dev/null || echo 000
+}
+while read -r route_service route_proxy route_port; do
+  [ "$route_proxy" = mesh ] || continue
+  retry_http "the mesh routes port $route_port to $route_service" '^200$' "mesh_route_status $route_service $route_port"
+done <<<"$ROTATION_ROUTES"
 
 # ── Housekeeping ─────────────────────────────────────────────────────────────
 # HOST-WIDE, not per estate, and safe for both: `-a` removes only images no container references, so

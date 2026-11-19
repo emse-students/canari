@@ -70,11 +70,12 @@ accepted word, not the value.
 
 **A provider's name is true in exactly one layer.** The message catalogue says "prestataire de
 paiement" / "payment provider"; the neutral contract (`ConnectAccountStatusResponse`) lives in the
-interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the unmapped columns,
-the `stripe` deep-link host) are listed with
+interface; log tags on shared paths are `[Payments]`. The names deliberately kept (the two columns that hold the
+live Lydia references, the return-URL placeholder) are listed with
 their reasons in [stripe-archive](../../stripe-archive.md#the-names-that-outlived-the-processor---what-2026-10-09-renamed-and-what-stays).
-`PayoutFeeHint.svelte` shows the Lydia fee (0,10 EUR + 1 %, `lydiaFees.ts`) only once
-`GET /api/payments/provider` has answered `lydia`.
+`PayoutFeeHint.svelte` shows the estimate only once `GET /api/payments/provider` has answered
+`lydia`, with the fees a global admin entered as the platform's Lydia contract terms, VAT included
+([lydia-contract-flux](../../lydia-contract-flux.md#the-payout-estimate)).
 
 ## Product purchase flow
 
@@ -440,7 +441,7 @@ expires on its own (`expire_time 3600`).
 
 ## Which onboarding flag a screen reads (2026-10-03)
 
-Stripe and Lydia kept independent account ids and `*OnboardingComplete` flags (migration 037; only Lydia is read now), so
+Stripe and Lydia kept independent account ids and `*OnboardingComplete` flags (migration 037; the Stripe pair is dropped by the held migration 177), so
 "is this association ready" is a question about the ACTIVE provider. `isPaymentAccountReady(asso,
 provider)` in `lib/associations/api.ts` is the one answer; the provider comes from
 `activePaymentProvider.svelte.ts` (fetched once, `null` until known and on failure - which reads as
@@ -624,8 +625,10 @@ to come from the same mechanism.
 
 **The verification** (`lydia-callback-verification.ts`, core-service): the signed set is whatever
 arrived minus `sig` - not a list the code chooses - and every value must be a string (16 fields, 512
-characters each at most). The key is the one of the association whose `lydiaAccountId` is the body's
-`vendor_token`, asked of social-service over `POST /api/internal/associations/lydia-callback-key`
+characters each at most). The key is the one of the Business the body's `vendor_token` names - an association's active
+`lydiaAccountId`, or the standby Business of a
+[historical-account bridge](#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13)
+(`HELD_BUSINESSES_SQL`) - asked of social-service over `POST /api/internal/associations/lydia-callback-key`
 (`X-Internal-Secret`, `Cache-Control: no-store`, under `/api/internal/`, which no nginx `location`
 routes). Resolving the key FROM the body is sound because the signature is the proof: naming a vendor
 token is not signing for it. **Every failure is ONE 400 `Invalid
@@ -842,14 +845,19 @@ after error 5) updates the cause and its date, with no transition and no second 
   of its APPROVED delegates, on every call, replays included (owner review of #2967): a commit never
   leaves one withheld, so nothing has to heal afterwards (`activationWithheld` is the allowlist, so a
   second release finds nothing). The holder row is locked FOR UPDATE by both the readiness and the
-  revert, so the two serialise (an integration spec races them).
+  revert, so the two serialise (an integration spec races them). The transition is the designed
+  path, logged at INFO (1.7.1; it was a WARN that production read as an alarm):
+  `[LYDIA-READINESS] holder <id> marked READY by <cause> (<where>); before: <the earlier marking, or
+  "no earlier marking on record">; managers told next` (`at the first request Lydia issues on it` after a bridge switch), or `managers not notified (notices off by
+  switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)` while that switch waits on its floor. The anomalies
+  of this path keep their level: the held refusal and the bridge switch at WARN, the revert at ERROR.
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
   `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
   from a form (member or guest): the unissued attempt is released, then the HOLDER of the vendor token
   the request went to (an approved parent's, when delegating) is set not ready, its on-sale products
   and its approved delegates' withheld in the same transaction - through `approvedDelegateIds`, the
   SAME predicate the release reads, a spec spying on both. Logged at ERROR, `[LYDIA-READINESS] holder
-  <id> reverted: request/do answered error 5 (...); it had been marked ready by <cause> at <date>`.
+  <id> reverted: request/do answered error 5 (...); before: was marked by <cause> at <date>; ...`.
   **Error 5 pauses the WHOLE holder** (the owner's decision). Its meaning - "the Business is not
   validated" - comes from ONE homologation measurement and is believed to be a property of the
   Business, not of the payer's input; nothing yet rules out a payer-side cause, which is why the
@@ -989,12 +997,79 @@ removal flag (`revokeUnconfirmedAt`): the number holds the new role's rights aga
 Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`), and never a row whose number is one of the
 Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`).
 
-**The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
+**The owner's gate: adding, changing a role and changing the Responsable's number are ON since 1.7.1**
+(owner, 2026-11-18). One switch in three places, changed together: `LYDIA_CASHIER_ADD_ENABLED` in core,
 the frontend constant of the same name, and `switches.cashierAddEnabled` in
-`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec; refused with the
-typed 409 `LYDIA_CASHIER_ADD_DISABLED`, nothing sent to Lydia). **They flip, together, only after ONE
-removal has been observed in production.** Removing is live: it only takes rights away. Changing the
-Responsable's number is behind the same gate (below).
+`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec. Off, the add
+and the role change are the typed 409 `LYDIA_CASHIER_ADD_DISABLED` (nothing sent to Lydia) and the
+number change the 409 `LYDIA_RESPONSABLE_PHONE_LOCKED` (below); the specs pin both refusals with the
+gate closed by a spy, and run the ON paths against the shipped value. Removing is never gated: it only
+takes rights away. **Why it flipped before a production removal:** lot 3 shipped OFF until ONE removal
+was observed in production, a condition nothing could meet - every production association held only
+its Responsable, whose current number is never removed, so nothing was removable while adding was off.
+The removal path was measured on Lydia homologation (2026-10-30), and the owner takes the first
+production removal himself on 1.7.1
+([reading](../../backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)).
+
+**Reading a removal in the logs** (core, then social; phones only by their last two digits):
+
+1. core `[LYDIA-CASHIER] association <id>: removal of phone ending NN asked` (INFO), after the
+   preconditions read back as expected (DEBUG `removal preconditions met`);
+2. the `business/getpermission` RE-READ of that number, and its verdict: `... removal of phone ending NN:
+   confirmed, 0 rights` (INFO) - the ONLY line that is a removal. `the re-read still shows N right(s)`,
+   `the re-read failed` or an unreadable answer are each an ERROR, the row stays live, flagged;
+3. core `Lydia cashiers of <id>: removal of a current number confirmed` (INFO);
+4. social `[AUDIT] Lydia cashier removal on association <id>: row <8 chars> (current number), by <8
+   chars> - confirmed by Lydia (0 rights)` (INFO), the row closed.
+
+A WARN `Lydia did not accept the call (...) - the re-read decides` between 1 and 2 is not a failure by
+itself: the re-read decides. An add reads the same way: `adding a vendeur (phone ending NN, 1 right(s))`,
+then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia cashier added ...`; with
+the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
+
+**A membership that ends owes its Lydia rights** (review of the flip, built with it in 1.7.1). The debt
+is DURABLE STATE, not a job: a live `lydia_cashiers` row of the managed Business whose person holds no
+`association_members` row of that association (`CASHIER_DEPARTED_SQL`, `lydia-cashiers-list.ts`) owes
+the removal of its numbers - every number of a Tresorier or Vendeur, a Responsable's OTHER number,
+never the Responsable's current one (`owesDepartureRemoval`). Re-joining ends the debt by the same
+predicate. `LydiaCashiersService.settleDepartures` pays it through the SAME verified path as "Retirer"
+(the claim and `revokeTarget`'s checks, core's internal `revoke` route with `reason: departure`, the
+`getpermission` re-read, `recordRevoke`): 0 rights closes the row; anything else - rights still read,
+core's typed refusal, no answer - is recorded NOT confirmed (flagged, ERROR), so the card shows it;
+a flagged number is asked again only by a new departure or by "Retirer", never by a card read or a
+release (`CURRENT_UNTRIED_SQL`, `PREVIOUS_UNTRIED_SQL`), so opening the card never calls Lydia for it. Each number takes its own claim WITHOUT waiting and re-reads, under the
+association's lock, that the row is live and its person still not a member (a member back, or a row
+closed meanwhile, is no longer owed). The run re-reads the debt until nothing it has not attempted is
+left, so it terminates. Three triggers read the debt, none awaited and none able to fail the write it
+follows (`LydiaCashierDeparturePort`, registered at boot - `LydiaCashiersService` depends on
+`AssociationsService`, so the port breaks the cycle): `removeMember` once its delete committed
+(leaving goes through it); every payments-card read that finds a row owing one; and every release of
+the cashier claim (`claim-released`: a step's record or release, the Responsable's - except a
+Responsable record answering `removeOther`, whose removal of the replaced number claims next and asks
+on its own release), so a departure
+that met the claim busy (INFO) is paid when the holder lets go. **A Responsable who leaves** keeps
+their current number (the Business needs a manager; changing the Responsable to another person is not
+offered): the departure says so at ERROR, once, for the person who left, and the card reads "a new
+Responsable is needed, contact a platform administrator". core bounds each of the removal's three
+Lydia calls (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`) so their sum answers within social-service's wait
+(`timeouts.cashierRemovalWaitMs` in `libs/contracts/lydia-refusal-codes.json`, asserted on both
+sides): a core still talking to Lydia after social released the claim would act outside it. The other
+paths that end a membership or close the rows: **an account erasure** removes the numbers first
+(`revokeBeforeErasure`, unchanged - see the entry below for what it does not surface); **deleting the
+association** and **unlinking its Business** (a global admin's) are refused, typed, while a Tresorier, a
+Vendeur or a Responsable's other number is live (`LYDIA_CASHIERS_LIVE`: the rows would go and the
+rights stay) or a cashier step holds the claim (`LYDIA_CASHIER_IN_FLIGHT`: its record would land on a
+row the act took) - `assertNoCashierOwed`, under the association's lock; core passes both through to
+the admin's screen. A role change re-checks membership (`LYDIA_CASHIER_NOT_A_MEMBER`).
+
+**What the gate does not cover yet** (owed in 1.7.1:
+[entry](../../backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)): the member check
+binds the person, not the number typed, while the cashier notice is off; an add does not read the
+number first, so a number Lydia lists outside Canari has its rights replaced - blocked on telling a
+never-added number from an unreadable answer (measured on dev 2026-11-18: `getpermission` answers
+`status: error`, `code: 1`, "Parametre manquant" for a never-added number, and no known number was
+available as a control). A French number typed with its trunk 0 (`+330...`) is refused by every
+server check and rewritten by the client, so one line has one spelling for the number-in-use check.
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.
@@ -1011,8 +1086,8 @@ still holds the number removed, compared sealed-to-opened inside the locking tra
 (`LYDIA_CASHIER_RESPONSABLE_NUMBER`, also when the number to remove IS that number): it is managed by
 its own step, below.
 
-**Changing the Responsable's number** (the lot 2 route, the same person with another number). OFF while
-`LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
+**Changing the Responsable's number** (the lot 2 route, the same person with another number). ON with
+the gate since 1.7.1; OFF whenever `LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
 than lot 3 already word as "cannot be changed yet"; the claim released, Lydia never asked; the screen
 then offers only "Renvoyer le SMS"). Once on, only the
 Responsable themselves (the caller IS the row's `userId`) or a global admin may change it - a
@@ -1219,7 +1294,7 @@ here:** a request/do that reaches Lydia after core's 60 s bound (Lydia's own pro
 Canari's wait) may still create a request after the 3-minute window; if that attempt was meanwhile
 read `not-found` and closed, a payment for it is still recorded by its callback (paid over a closed
 row, at ERROR). A crash between a top-up's commit and its Cercle dispatch loses the dispatch with no
-line ([backlog](../../backlog.md#p2---a-crash-between-a-top-ups-purchase-commit-and-its-cercle-dispatch-loses-the-top-up-silently-review-of-2218-2026-10-21)).
+line ([backlog](../../backlog.d/p2-a-crash-between-a-top-up-s-purchase-commit-and-its-cercle-dispatch-loses-the.md)).
 Concurrent attempts of DIFFERENT buyers can still oversell `maxPurchasesTotal`, as before this lot.
 
 ## A form answer sends one order_ref per request (2026-10-27)
@@ -1259,7 +1334,9 @@ purchases screen (`EditAchatsTab`, itself a `MANAGE_PRODUCTS` screen) asks `GET
 /associations/:id/refunds`; a 403 hides every refund control and the statement, never the list.
 
 **Which payments.** Only a payment Lydia CONFIRMED (`paid` or `paid_not_granted`, method `online`)
-whose Lydia transaction Canari can name, on the Business the association holds NOW:
+whose Lydia transaction Canari can name, on a Business the association holds NOW - its active one, or
+the historical account a [bridge](#a-historical-account-collects-until-the-enrolled-business-is-validated-owner-2026-11-13) switched away from, kept for exactly this
+(`vendorTokensHeldBy`):
 
 | Reason a payment shows no "Rembourser" | What it means |
 | --- | --- |
@@ -1387,3 +1464,174 @@ request, and a CSV - text, unlike their xlsx - built from request words is reque
 
 **Not built:** a refund screen for a delegated child's payments in the parent's delegation tab (the
 route works for the parent, which holds the Business); refunding a booking (bookings take no payment).
+
+## A historical account collects until the enrolled Business is validated (owner, 2026-11-13)
+
+**TEMPORARY** ([legacy-compatibility](../../legacy-compatibility.md#removal-once-no-association-is-left-with-a-historical-active-account---the-lydia-account-bridge-owner-2026-11-13)).
+Some associations (the BDE and Le Cercle today) collected through a Lydia account they held before
+Canari's enrolment existed. They enrol through Canari like everyone else
+([above](#enrolment-goes-through-canari-and-only-through-it-2026-10-23)), and Canari keeps collecting
+on the historical account until Lydia VALIDATES the new Business, then switches by itself. A Business
+Lydia has not validated answers every `request/do` with error 5, so its tokens never collect before
+then. Generic: nothing names an association; a person opens the bridge (below).
+
+**The model** (migration 167, `lydia_account_bridges`, `lydia-account-bridge.ts`). The association's
+`lydiaAccountId` and its columns (key, dashboard URL, readiness) stay THE ACTIVE collecting Business,
+so every collection path still resolves through ONE function, `resolvePaymentTarget`
+(`payment-delegation.util.ts`), unchanged - a delegate of an approved parent included. One bridge row
+per association holds the OTHER Business, the "standby": the enrolled one while `state =
+'historical'`, the historical one once `'switched'`. Three questions, each answered once:
+
+| Question | Answer |
+| --- | --- |
+| Which Business COLLECTS | the association's columns (`resolvePaymentTarget`) |
+| Which Business the MANAGERS manage (enrolment, Responsable, cashiers, readiness shown) | `managedVendorTokenSql`: the enrolled one on a bridge, NEVER the historical account |
+| Which Business a ROW's vendor token names (callback key, `request/state`, refund, the sweep's key check) | `HELD_BUSINESSES_SQL`: every Business held, `active`, `pending` or `retired` |
+
+**The transitions**, in `AssociationsService.setLydiaReadiness`'s ONE transaction, under the lock
+every readiness write, cashier claim and purchase decision already takes - the association row
+`FOR UPDATE`, then its bridge row `FOR UPDATE` (always that order, so two never deadlock):
+
+- **Enrolment while the historical account collects.** The claim is allowed (no Business is managed
+  yet); the link writes the new Business into the bridge as PENDING, never into the association's
+  columns. A second enrolment while it waits is the typed 409 `LYDIA_BUSINESS_PENDING_VALIDATION`.
+- **Switch.** `BUSINESS_VALIDATED` (or a global admin's "Valider l'onboarding", which names the
+  managed Business) for the PENDING Business swaps the two (`swapBridge`): the enrolled Business's
+  token, sealed key, URL and readiness go into the association's columns, the historical account's
+  into the bridge. The ordinary ready transition then runs on it - the withheld products of the
+  association and its approved delegates released, a replay a replay. The managers are NOT told
+  "active" at the switch, which an unsigned VALIDATED can make: they are told ONCE, when the enrolled
+  Business PROVES itself - the first `request/do` Lydia issues on it (`noteLydiaRequestIssued`,
+  products and forms, stamping `enrolledProvenAt`, which every swap clears). The delegates are told "resumed" only if the historical account was NOT collecting (their
+  collecting did not change otherwise). N concurrent VALIDATED: the losers find the Business active
+  and are replays. Logged WARN `[LYDIA-BRIDGE] ... SWITCHED`.
+- **A forged VALIDATED costs nothing.** The webhook is unsigned (accepted 2026-10-30). If a switched
+  Business answers a real `request/do` with **error 5**, the same transaction SWITCHES BACK
+  (`switchBackOnRefusal`): the historical account returns with the readiness it had, the enrolled
+  Business goes back to PENDING (`request-refused`), every global admin gets the bell row
+  `lydia_payments_paused` with `meta.bridge = 'switched-back'` (worded as a switch back); the
+  delegates are told nothing unless the historical account was not ready, the managers "paused" if
+  the Business had proven itself (the counter-notice to their "active") or the historical account was
+  not ready.
+- **Lydia's refusal is not overruled by an unsigned VALIDATED** (review of #3470). Lydia has no read
+  of a Business's validation state ([lydia-api](../../lydia-api.md)), so a VALIDATED cannot be
+  verified. Once Lydia itself answered error 5 (a switch back) or 2701 for the standby Business
+  (`standbyReadinessCause` `request-refused` / `request-blocked`), a webhook VALIDATED for it is
+  HELD - the outcome `held-by-lydia`, a WARN, nothing written - so a stream of forged ones cannot
+  flap the routing, and the bridge never switches onto a blocked Business. Only a global admin's
+  "Valider l'onboarding" (who re-checked with Lydia) switches it: the same rule `held-by-lydia`
+  applies to an active Business. A Business enrolled anew starts with no cause, so its first real
+  VALIDATED switches.
+- **The re-issue is the OWNER'S EXPLICIT DECISION (2026-11-13), scoped to error 5 on a just-switched
+  Business. It is NOT a general fallback.** The SAME payment is re-issued at once, ONCE, on the
+  historical account: the shop re-opens the purchase from the start (`openCheckoutAttempt(...,
+  bridgeReissue = true)`: re-resolved and re-decided, a new attempt row and `order_ref`), a form
+  re-issues its answer with a new `order_ref` on the re-resolved account. Each is logged
+  (`[LYDIA-BRIDGE]` WARN at the re-issue, ERROR at the switch back) and counted (`reissueCount`,
+  `switchBackCount` on the bridge row). `reissueCount` counts re-issues ATTEMPTED: both rules
+  (`switchBackOnRefusal`, `countReissueAfterSwitchBack` below) write it when the re-issue is
+  decided, before the re-entry runs, so a re-entry that then ends refused is counted, and none goes
+  uncounted. **No double charge:** Lydia answers error 5 BEFORE any request
+  exists, so the first attempt holds nothing payable (it is released, `cancelled`), and a re-issued
+  purchase that meets a second switch back is refused, never issued a third time. A purchase whose
+  error 5 is answered after a CONCURRENT refusal already switched back finds the Business pending
+  again and is re-issued the same way.
+- **A purchase PREPARED on the switched Business and DECIDED after a concurrent switch back is
+  re-issued too (lead, 2026-11-14, under the owner's absence delegation; reversible).** Before, it got
+  the typed 409 `PAYMENT_ROUTING_CHANGED` (below) and the payer tapped again, while a purchase
+  decided a moment earlier was re-issued by the server; the same switch back now costs both the
+  same. The conditions, each in the code: the refusal is caught by its TYPE
+  (`PaymentRoutingChangedException`, carrying both routings), never a message; the bridge's durable
+  state must prove it is ITS switch back - same payee association, provider and delegation, the
+  prepared routing naming the bridge's ENROLLED Business, the routing read under the lock its
+  HISTORICAL account, and the bridge reading `historical` (`countReissueAfterSwitchBack`, ONE
+  `UPDATE ... RETURNING` that is both the proof and the `reissueCount`); exactly ONE re-entry
+  (`openCheckoutAttempt(..., bridgeReissue = true)`, which a second refusal of any kind propagates
+  from); logged `[LYDIA-BRIDGE]` WARN by `openCheckoutAttempt` after the attempt's transaction rolled
+  back, just before it re-enters (the proof itself logs a LOG line). Any other routing change - a forward switch,
+  a delegation that ended, a relinked account - keeps the 409. **Safe because nothing used the stale
+  routing:** the refusal is thrown inside the attempt's transaction, before its row is saved, and
+  the request to Lydia is sent only after that transaction commits; the rollback leaves no row and
+  no request, so the re-entry is the purchase's first and only attempt at Lydia. When the
+  historical account is NOT ready, the decision reads the readiness before the routing and answers
+  the payments-not-ready refusal (`PAYMENTS_NOT_ACTIVATED` / `PAYMENTS_BLOCKED`): nothing re-enters.
+  Neither this re-issue nor the withheld product's not-ready answer (below) has been read on a dev
+  estate yet: both are proven by the integration spec on PostgreSQL only.
+- **A switch back onto a historical account that is not ready withholds the products**
+  (`withholdOnSaleProductsOf`, `isActive = false, activationWithheld = true`). The re-issue, and
+  every retry, then answers the typed payments-not-ready refusal, never "Product not found": the
+  purchase's preparation (`preparePurchase`) judges a WITHHELD product after the readiness, as its
+  decision under the lock does, carrying the fact (`activationWithheld`) the revert wrote. A
+  product a manager took off sale stays "not found" whatever the readiness, and so does a withheld
+  one whose association reads ready again before the release reached it. The check that the caller
+  may reach the association (`assertReviewerReachesAssociation`) runs before any of this. Until
+  2026-11-14 the preparation checked `isActive` first and the payer read a 404 for a product that
+  was only waiting for its payments (any revert, not only the bridge's). **What the changed answer
+  tells:** a caller who holds a withheld product's id and reaches its association now reads the
+  payments-not-ready refusal where it read a 404 - a product CREATED while payments were not ready,
+  and so never on sale, included. Nothing becomes buyable: a withheld product of an association
+  that reads ready again is still the 404, and `decidePurchase` still refuses an inactive product
+  under the lock. **Rows from before migration 057:** that migration marked every then-inactive
+  product withheld, so a product a manager took off sale BEFORE it answers the not-ready refusal
+  while its association is not ready, and the 404 once it is.
+- **What the integration spec proves** (`lydia-account-bridge.integration.spec.ts`), with each
+  interleaving forced rather than hoped for: three purchases DECIDED on the switched Business and
+  answered error 5 together (the fake core holds the three refusals until all three arrived) make
+  ONE switch back and three re-issues, one request at Lydia each; a purchase prepared before
+  another's error 5 and decided after it is re-issued once on the historical account, counted,
+  own and delegated; a forward switch keeps the 409, and a second change during the re-entry
+  propagates it; and a switch back onto a historical account that is not ready answers the
+  re-issue, a straddling purchase and the retries (own and delegated) with the typed not-ready
+  refusal, one request at Lydia in all (the error 5).
+- **Why the spec forces the interleaving (flake of 2026-11-14).** The first version of the
+  three-purchase test fired three purchases with `Promise.all` and asserted all three issued on the
+  historical account. That holds only when no purchase's preparation precedes, and its decision
+  follows, another purchase's switch back; in one CI run of 1574 tests one did, and the routing
+  check under the lock refused it `PAYMENT_ROUTING_CHANGED` - the documented outcome of a switch
+  racing a purchase, not a defect: no row, no request, nothing payable. The race was in the TEST's
+  assertion, which demanded one interleaving out of three. That outcome is now re-issued by the
+  server (above), and the spec forces each interleaving.
+- **2701** on a switched Business is the ordinary revert (a pause), never a switch back: routing
+  around Lydia's block onto another account is not the bridge's to decide. A 2701 naming a PENDING
+  Business (after a switch back) is recorded on it, nothing re-issued, and holds it (above).
+- **`BUSINESS_UNVALIDATED`** for a pending Business changes nothing and logs a WARN naming its role
+  (core-service `webhook.controller.ts`), as for any Business.
+- **A switch racing a purchase.** The purchase decision re-reads the routing under a SHARE lock on the
+  payee row (the parent's too, for a delegate): a switch committed between the preparation and the
+  decision is the typed 409 `PAYMENT_ROUTING_CHANGED`, no row and no request - the payer retries and
+  the retry goes to the new Business (a bridge's switch back alone is re-issued by the server,
+  above). Every request issued names the Business its row names.
+
+**The platform's Lydia flux never counts a historical account's payments** - they belong to the
+association's earlier contract - and counts the enrolled Business's from its link
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)).
+
+**After the switch** the historical account's tokens are KEPT, sealed, ONLY to refund the payments
+taken on it and to verify their callbacks: a refund resolves the key by the ROW's vendor token
+(`vendorTokensHeldBy`, `lydiaCallbackKey`). No new payment goes to it, except the switch-back re-issue.
+The same holds the other way: an enrolled Business that collected between a switch and a switch back
+cannot be UNLINKED while a checkout it took (not `cancelled`, `expired` or `declined`) or a form
+answer names it - the typed 409 `LYDIA_BUSINESS_HOLDS_PAYMENTS`, passed through core-service's
+disconnect route and worded on the admin's screen. Refusing, rather than keeping the key in a
+"retired" role, because the bridge has ONE standby slot: a new enrolment would need it.
+
+**Who sees what.** The managers see ONLY the new Business and its enrolment: while it is pending, the
+payout account shows it not validated (no readiness change), the historical account nowhere. A global
+admin's read adds `bridge` (state, whether the historical account is ready, whether the enrolment
+linked, the switch date and the three counts), drawn as a panel on the payments screen.
+
+**Opening a bridge, by hand** (generic; production values never in the repository). In order:
+validate the historical account through the admin route first if it is not ready (once the row exists
+that button names the enrolled Business); then `INSERT INTO lydia_account_bridges ("associationId",
+"historicalVendorToken") VALUES (<id>, <its current lydiaAccountId>)`. A Business already created
+outside a live enrolment can be put PENDING directly: `UPDATE lydia_account_bridges SET
+"enrolledVendorToken" = <token>, "standbyKeyCiphertext" = <its sealed key, bound to <id>:<token>>,
+"standbyDashboardUrl" = <url>, "standbyReady" = false WHERE "associationId" = <id> AND state =
+'historical' AND "enrolledVendorToken" IS NULL`, its cashier rows re-inserted under its token, and,
+in the same transaction, its row in the platform's flux ledger (`INSERT INTO lydia_enrolled_businesses
+("vendorToken", "associationId") VALUES (<token>, <id>) ON CONFLICT DO NOTHING`, migration 168,
+[lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)) - the link
+writes it for an enrolment, a hand edit must.
+**Removing the historical account**, later, by an admin: `DELETE FROM lydia_account_bridges WHERE
+"associationId" = <id> AND state = 'switched'`, once no payment it took can still be refunded. A copy
+of production empties the table (`copy-strips.sh`).

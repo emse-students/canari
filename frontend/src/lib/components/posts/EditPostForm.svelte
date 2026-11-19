@@ -7,7 +7,6 @@
     admitAttachments,
     attachmentCapNotice,
   } from '$lib/posts/attachmentCap';
-  import { usesCompactDocumentRows } from '$lib/utils/posts/documentRows';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
@@ -15,6 +14,7 @@
   import { preparedMediaPlaceholder } from '$lib/reels/reelFirstFrame';
   import { getToken } from '$lib/stores/auth';
   import {
+    isReel,
     updatePost,
     type PostEntity,
     type PostMediaRef,
@@ -23,7 +23,7 @@
   import { getForm, getForms, type Form } from '$lib/forms/api';
   // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
   import { publishedForms } from '$lib/forms/publish';
-  import { withAttachedForm } from '$lib/posts/editableForms';
+  import { attachableForms, withAttachedForm } from '$lib/posts/editableForms';
   import { buildCreateFormHref } from '$lib/posts/postComposerDraft';
   import {
     listLinkableValidatedCalendarEvents,
@@ -90,6 +90,14 @@
   }
 
   let { post, authToken = '', onSaved, onCancel }: Props = $props();
+
+  /**
+   * A reel's caption is the only thing an edit may change (`assertReelEditShape`, docs/wiki/services/reels.md):
+   * the form sends the caption alone, draws no attachment chip and no media strip, and takes no dropped
+   * or pasted file. The server answers a body naming `media` on a reel with a 400, and a reel's own
+   * video is exactly what an ordinary post's body would carry back.
+   */
+  const reel = untrack(() => isReel(post));
 
   // --- Text ---
   let markdown = $state(untrack(() => post.markdown ?? ''));
@@ -222,8 +230,13 @@
     }
 
     try {
+      // The post's identity is fixed: only the forms it may attach, plus the one it carries (kept as
+      // is, even from before the rule - the server judges only a CHANGED form).
       availableForms = await withAttachedForm(
-        publishedForms(await getForms()),
+        attachableForms(publishedForms(await getForms()), {
+          associationId: post.associationId ?? null,
+          anonymous: post.anonymous === true,
+        }),
         post.attachedFormId,
         getForm
       );
@@ -250,7 +263,7 @@
    * image, so the only place one can go is this list (user, 2026-09-18).
    */
   function addFiles(incoming: File[]) {
-    if (incoming.length === 0) return;
+    if (reel || incoming.length === 0) return;
     // At most ten attachments a post, kept ones included: as many as fit are taken, the rest are said.
     const admitted = admitAttachments(existingMedia.length + newFiles.length, incoming);
     const notice = attachmentCapNotice(admitted);
@@ -265,9 +278,6 @@
     newFileThumbIcons = [...newFileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
     newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
   }
-
-  /** Two or more existing documents are rows that fetch nothing until tapped, as on the post card. */
-  const compactExisting = $derived(usesCompactDocumentRows(existingMedia));
 
   /** Removes an existing media item (already uploaded) by index. */
   function removeExistingMedia(i: number) {
@@ -348,15 +358,17 @@
 
       const allMedia = [...existingMedia, ...uploadedRefs];
 
-      const payload: UpdatePostPayload = {
-        markdown,
-        media: allMedia,
-        scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
-        attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
-        linkedCalendarEventId: selectedLinkedCalendarEventId || null,
-        // Named only where the switch is drawn: absent leaves the stored value as it is.
-        ...(studentsOnlyEditable ? { studentsOnly } : {}),
-      };
+      const payload: UpdatePostPayload = reel
+        ? { markdown, ...(studentsOnlyEditable ? { studentsOnly } : {}) }
+        : {
+            markdown,
+            media: allMedia,
+            scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+            attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
+            linkedCalendarEventId: selectedLinkedCalendarEventId || null,
+            // Named only where the switch is drawn: absent leaves the stored value as it is.
+            ...(studentsOnlyEditable ? { studentsOnly } : {}),
+          };
       if (studentsOnlyEditable && studentsOnly !== (post.studentsOnly === true)) {
         Log.d('STUDENTS_ONLY', `edit turns the switch ${studentsOnly ? 'ON' : 'off'}`);
       }
@@ -369,7 +381,9 @@
         );
       }
 
-      if (includePoll) {
+      if (reel) {
+        // A reel carries no poll: naming none is not naming `polls` at all.
+      } else if (includePoll) {
         const options = filledPollOptions(pollOptions);
         payload.polls = [
           {
@@ -427,11 +441,7 @@
   <div class="p-4 sm:p-5">
     {#if studentsOnlyEditable}
       <div class="mb-5">
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={post.association?.name ?? ''}
-          busy={saving}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} busy={saving} />
       </div>
     {/if}
     {#if reachEditable && post.associationId}
@@ -489,7 +499,7 @@
       />
 
       <!-- Existing media + newly added media. -->
-      {#if existingMedia.length > 0 || newFiles.length > 0}
+      {#if !reel && (existingMedia.length > 0 || newFiles.length > 0)}
         <div
           class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
           transition:slide={{ duration: 200 }}
@@ -504,11 +514,7 @@
               <div
                 class="group relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 shadow-sm dark:border-white/10"
               >
-                <PostMedia
-                  media={mediaItem}
-                  authToken={currentAuthToken}
-                  compact={compactExisting && resolveMediaType(mediaItem) === 'file'}
-                />
+                <PostMedia media={mediaItem} authToken={currentAuthToken} compact />
                 <MediaThumbRemoveButton
                   label={m.post_edit_remove_image_aria()}
                   title={m.common_delete_button()}
@@ -647,11 +653,14 @@
     <PostComposerBar
       onFiles={addFiles}
       attachmentCount={existingMedia.length + newFiles.length}
+      captionOnly={reel}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
       formActive={includeForm}
-      onToggleForm={() => (includeForm = !includeForm)}
+      onToggleForm={post.anonymous && !post.attachedFormId
+        ? undefined
+        : () => (includeForm = !includeForm)}
       bind:scheduledAt
     >
       {#snippet action()}
@@ -667,7 +676,7 @@
           class="shrink-0"
           disabled={saving ||
             reachPending ||
-            (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
+            (!markdown.trim() && (reel || (existingMedia.length === 0 && newFiles.length === 0)))}
           loading={saving}
           onclick={submitEdit}
         >

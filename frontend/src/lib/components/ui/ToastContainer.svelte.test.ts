@@ -47,3 +47,20 @@ it('a pinned toast has no close button, only its action', () => {
   action!.click();
   expect(run).toHaveBeenCalledTimes(1);
 });
+
+/**
+ * A TOAST COVERS WHAT IS UNDER IT: an error toast over the new-post dialog let the dialog's title
+ * read through its red text (2026-11-18). The error and warning surfaces are the opaque banner
+ * tokens, never an alpha modifier on a status colour.
+ */
+it('the error and warning toasts have an opaque surface', () => {
+  const target = render();
+  showToast('broken', 'error');
+  showToast('careful', 'warning');
+  flushSync();
+  const alerts = [...target.querySelectorAll('[role="alert"]')];
+  expect(alerts).toHaveLength(2);
+  expect(alerts[0].className).toContain('bg-banner-danger-soft');
+  expect(alerts[1].className).toContain('bg-banner-warn');
+  for (const alert of alerts) expect(alert.className).not.toMatch(/\bbg-[a-z-]+\/\d+/);
+});

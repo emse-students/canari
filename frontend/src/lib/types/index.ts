@@ -1,3 +1,4 @@
+import type { NameSync } from '$lib/utils/chat/groupName';
 /**
  * Lifecycle state of a conversation - the SINGLE source replacing the old
  * `(isReady, deletedRemotely)` pair.
@@ -194,6 +195,13 @@ export interface ChatMessage {
    * pin) is unavailable until `settleSalonEcho` re-keys it. Memory only, never persisted.
    */
   awaitingServerId?: boolean;
+  /**
+   * The key the thread drew this row under the first time, when that is no longer `id`: a salon echo
+   * keeps its client UUID here once `salonEcho` re-keys it to the server's id, so `ChatMessageGroups`
+   * updates the row instead of remounting it - a remount would replay its entrance at delivery
+   * (keyboard-and-send-motion.md). Memory only, never persisted.
+   */
+  renderKey?: string;
   /** See {@link AddMessageToChatOptions.restoredUnverified}: the row shows its author is unproven. */
   restoredUnverified?: boolean;
   /** When this device met this reel message's `410` - see `StoredMessage.mediaPurgedAt`. */
@@ -261,6 +269,19 @@ export interface Conversation {
    * and unknown ASKS, which is the safe direction.
    */
   startedAt?: number;
+  /**
+   * The server time of the MLS statement that set {@link Conversation.name} - a `groupRenamed` frame
+   * or the name a join push restates (`groupName.ts`). A GROUP row only. Absent means the name was
+   * never stated by a frame this device read: it came from the server's list or the creation, and
+   * that list still corrects it. Once present, only a later dated statement changes the name.
+   */
+  nameAt?: number;
+  /**
+   * What this device still owes about a rename it made (`groupName.ts`, `NameSync`): the server's
+   * copy of a name its members already hold, and/or a `groupRenamed` frame whose send ended with no
+   * answer. Settled by the next connection's sweep (`settleNameSync`). Absent: nothing owed.
+   */
+  nameSync?: NameSync;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

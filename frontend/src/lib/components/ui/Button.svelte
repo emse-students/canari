@@ -20,6 +20,10 @@
    *  - `link`      NO BOX: accent text inside a line of prose or metadata ("19 h · Suggestion ·
    *    Suivre", owner 2026-11-10). It drops `.ui-control`'s height, edge and padding and keeps the
    *    tap target with an invisible enlarged hit area, so a quiet action stays reachable on a phone.
+   *  - `bare`      NO BOX AND NO LOOK: a whole surface that is one tap and has no address to be a link
+   *    to - the row of an attachment card that opens a PDF viewer. It drops `.ui-control` and every
+   *    colour but the focus ring; the surface it wraps draws itself, the call site giving only its
+   *    layout.
    *
    * The height is a MIN-height (Android text zoom scales fonts, not lengths): a long label wraps and
    * grows the box instead of overflowing. `size="compact"` (2rem) is for a dense toolbar only. `icon`
@@ -41,7 +45,15 @@
     /** Slot content rendered inside the button. */
     children?: import('svelte').Snippet;
     /** Visual variant. */
-    variant?: 'primary' | 'secondary' | 'soft' | 'ghost' | 'danger' | 'danger-outline' | 'link';
+    variant?:
+      | 'primary'
+      | 'secondary'
+      | 'soft'
+      | 'ghost'
+      | 'danger'
+      | 'danger-outline'
+      | 'link'
+      | 'bare';
     /** `default` is 2.5rem, `compact` 2rem. */
     size?: 'default' | 'compact';
     /** A square holding one icon; the caller supplies `aria-label`. */
@@ -75,27 +87,34 @@
     'danger-outline':
       'border-red-err/50 bg-cn-surface text-red-solid hover:bg-red-err/10 dark:text-red-err',
     link: '',
+    bare: '',
   };
 
   /** The box-less variant: inline accent text, its hit area widened by a transparent `::before`. */
   const LINK_CLASSES =
     "relative inline cursor-pointer font-semibold text-accent-text before:absolute before:-inset-x-2 before:-inset-y-4 before:content-[''] hover:underline focus-visible:underline aria-disabled:pointer-events-none aria-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50";
 
+  /** The box-less, look-less variant: a tappable surface, the caller's layout and nothing else. */
+  const BARE_CLASSES =
+    'cursor-pointer outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-accent/50 aria-disabled:pointer-events-none aria-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50';
+
   const classes = $derived(
     variant === 'link'
       ? [LINK_CLASSES, className].filter(Boolean).join(' ')
-      : [
-          'ui-control',
-          size === 'compact' ? 'ui-control--compact text-sm' : 'text-base',
-          icon ? 'ui-control--icon' : '',
-          'inline-flex min-w-0 shrink-0 cursor-pointer items-center justify-center gap-2 text-center font-semibold',
-          icon ? '' : size === 'compact' ? 'py-1' : 'py-1.5',
-          'transition-colors active:scale-[0.98] aria-disabled:pointer-events-none aria-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50',
-          VARIANT[variant],
-          className,
-        ]
-          .filter(Boolean)
-          .join(' ')
+      : variant === 'bare'
+        ? [BARE_CLASSES, className].filter(Boolean).join(' ')
+        : [
+            'ui-control',
+            size === 'compact' ? 'ui-control--compact text-sm' : 'text-base',
+            icon ? 'ui-control--icon' : '',
+            'inline-flex min-w-0 shrink-0 cursor-pointer items-center justify-center gap-2 text-center font-semibold',
+            icon ? '' : size === 'compact' ? 'py-1' : 'py-1.5',
+            'transition-colors active:scale-[0.98] aria-disabled:pointer-events-none aria-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50',
+            VARIANT[variant],
+            className,
+          ]
+            .filter(Boolean)
+            .join(' ')
   );
 
   const inert = $derived(disabled || loading);

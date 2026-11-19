@@ -543,18 +543,32 @@ Users are managed in Authentik and synced to Canari's `users` table at each sign
 Read this table before touching a redirect URI anywhere: the defect below was a single row of it
 being different from the other two, and nothing outside Authentik's own database could see that.
 
-| Provider | `client_id` | Which client uses it | Authorized redirect URIs (all STRICT) |
-|---|---|---|---|
-| `Canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari-emse.fr/auth/callback`, `https://canari.emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
-| `Canari Dev` (pk 10) | `6cNHJotT...` | `dev.canari-emse.fr` - and every PRE-RELEASE build, TestFlight and the Play tester tracks | `https://dev.canari-emse.fr/auth/callback`, `https://tauri.localhost/auth/callback`, `http://tauri.localhost/auth/callback`, `http://localhost:1420/auth/callback`, `http://localhost:1421/auth/callback`, `fr.emse.canari://callback` |
-| `Canari Local` (pk 11) | `qqzuUBQp...` | the LOCAL estate on a workstation, and the harness APK | `http://localhost:1420/auth/callback`, `http://127.0.0.1:1420/auth/callback`, `http://localhost:1421/auth/callback`, `http://localhost:8081/auth/callback`, `fr.emse.canari://callback` |
+| Provider | `client_id` | Which client uses it | Authorized redirect URIs (all STRICT) | Authorization flow |
+|---|---|---|---|---|
+| `miconnect-canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari.emse.fr/auth/callback`, `https://canari-emse.fr/auth/callback` (the old origin, below), `fr.emse.canari://callback` | implicit consent (the terms are HELD) |
+| `miconnect-canari-dev` (pk 10) | `6cNHJotT...` | `dev.canari-emse.fr` - and every PRE-RELEASE build, TestFlight and the Play tester tracks | `https://dev.canari-emse.fr/auth/callback`, `fr.emse.canari://callback` | `miconnect-authorization` (asks for the terms) |
+| `miconnect-canari-local` (pk 11) | `qqzuUBQp...` | the LOCAL estate on a workstation, and the harness APK | `http://localhost:8081/auth/callback`, `http://localhost:1420/auth/callback`, `http://127.0.0.1:1420/auth/callback`, `fr.emse.canari://callback` | `miconnect-authorization` (asks for the terms) |
 
-Each also lists, since 2026-10-14, a `logout` redirect URI per web origin (`<origin>/login`) and
+Each also lists a `logout` redirect URI per web origin (`<origin>/login`) and
 `fr.emse.canari://signed-out`, and runs the invalidation flow `miconnect-invalidation-signout`:
 [below](#signing-out-of-canari-ends-the-miconnect-session-2026-10-14).
 
-**The three differ in exactly one dimension - the web origin(s) - and must not differ in any
-other.** `fr.emse.canari://callback` is on all three because the SAME packaged app talks to all
+**The set was cut to what clients use on 2026-11-18** (owner: *"nettoyer tous les endpoints autorises
+de tous les canari sur miconnect"*), on the identity provider's own record: every
+`authorize_application` event carries the redirect URI it ended on, from 2026-03-30 on. Removed:
+the `tauri.localhost` pair from production and dev (last seen 2026-04-25, Android builds from before
+the deep link; a Tauri WebView on a phone signs in through `fr.emse.canari://callback`, and no
+desktop build ships), and every loopback origin from production and dev (`1420` last used against
+production in 2026-09, against dev in 2026-11 - a developer signs in through the LOCAL client), and
+port `1421` everywhere (no sign-in through it since April; `strictPort` pins the dev server to 1420). **Kept on production on evidence:**
+`canari-emse.fr` answers a 301 to `canari.emse.fr`, yet a browser that still runs the app it cached
+there starts its sign-in from that origin, and one did on 2026-11-13; it goes when the
+[estate migration](estate-migration.md) retires the origin, after the same measurement. No provider
+uses a regex: every client comes back to a fixed URI. The rule is in
+[durable-rules](../durable-rules.md#object-storage-and-deleting-infrastructure---docker).
+
+**The three differ in the web origin(s) and, while the terms are held out of production, in the
+authorization flow - and must not differ in any other.** `fr.emse.canari://callback` is on all three because the SAME packaged app talks to all
 three: a build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an
 identifier. `Canari` (pk 1) carries TWO web origins since 2026-09-25, additively: `canari-emse.fr`
 stays until the estate migration's browser-storage rule
@@ -683,7 +697,7 @@ CID=<the Canari Dev client_id>
 for uri in "https://dev.canari-emse.fr/auth/callback" "fr.emse.canari://callback"; do
   enc=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$uri")
   curl -s -o /dev/null -w "$uri -> %{http_code} %{redirect_url}\n" \
-    "https://auth.canari-emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
+    "https://miconnect.emse.fr/application/o/authorize/?client_id=$CID&redirect_uri=$enc&response_type=code&scope=openid+profile&state=probe"
 done
 ```
 
@@ -957,7 +971,7 @@ printed in full (the rollback):**
   rest are real browsers, where the flow heals itself once on most clients and a client CAN stay out
   after repeated failures. The log stops at a NUL byte, so nothing after the container restart can be
   counted and the events table records only successes. Nothing was changed on MiConnect or the CAS.
-  Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09).
+  Open: [backlog](../backlog.d/p2-some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can.md).
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
@@ -1040,20 +1054,32 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 **Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
 collection of name and first name, as one required tick, for new AND existing accounts.
 
-> **HELD (user, 2026-10-17): stable 1.2.9 ships WITHOUT this stage.** The file waits in
-> `blueprints/held/45-consent.yaml`, which `apply-blueprints.sh` never sends and NAMES at every run
-> (a `::warning` on dev's dry-run and on the stable's apply), and the eight providers point back at
-> `default-provider-authorization-implicit-consent`. `.github/scripts/tests/held-blueprints.test.sh`
-> runs the real script on the real tree and fails if the file is sent, the run is silent, or an
-> active blueprint finds an object only the held one defines; `test-blueprints.sh` asserts on a
-> built instance (fresh AND upgraded from main) that no provider authorizes through
-> `miconnect-authorization`, in place of the driven test below. Dev signs in through the SAME
-> MiConnect, so the hold covers both. **Lifting it is `git revert` of the hold's commit**, after the
-> three conditions in [backlog](../backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16).
-> The page `/legal/miconnect` stays published.
+> **HELD OUT OF PRODUCTION (user, 2026-10-17), AND SINCE 2026-11-18 THE HOLD IS DECLARED PER PROVIDER.**
+> `blueprints/45-consent.yaml` builds the flow on every instance (a flow no provider names is
+> inert), and `50-providers.yaml` says which providers name it: **`miconnect-canari-dev` and
+> `miconnect-canari-local` ask for the terms; production's `miconnect-canari` and the six other
+> services keep `default-provider-authorization-implicit-consent`.** Dev is where every pre-release
+> build signs in, so the terms are read there on a phone, in the app, before production asks anybody.
+> From 2026-10-17 to 2026-11-18 the whole file waited in `blueprints/held/`, so a binding made by hand
+> for a reading was reset by the next stable's `apply-blueprints.sh` - the `1.7.0` stable did, at
+> 09:08 UTC on 2026-11-18, and the phone readings could not be taken; and the binding had been made on
+> the local provider, which no pre-release build uses. A declared binding survives every apply.
+> **The hold is asserted three times:** `.github/scripts/tests/held-blueprints.test.sh` reads the
+> providers naming the flow out of the blueprint (no Docker); `test-blueprints.sh` runs
+> `test-consent-flow.py` on a built instance (fresh AND upgraded from main), which asserts the exact
+> set (`BOUND`) and that production's provider signs in a person who never accepted without the page
+> and without a write. **Lifting the hold for production** is `miconnect-canari` (and the other
+> services, if the owner wants them) set to `miconnect-authorization` in `50-providers.yaml`, added
+> to `BOUND` in both tests, in one pull request, after the conditions in
+> [backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md).
+> A dev account that ticks the box has accepted the same text production will show, so it is not
+> asked again there. **The automated dev sign-ins answer it too**: `serve-dev.yml`'s smoke account
+> ticks it once per version ([cicd](../cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)),
+> the cross-client rig's accounts tick it in `tools/cross-client-harness/idpform.mjs`, and
+> `test-pkce.py` gives its probe user the current version. The page `/legal/miconnect` is published on both estates.
 
-- **Where:** `blueprints/45-consent.yaml` (HELD: `blueprints/held/`), flow `miconnect-authorization`, which the eight OAuth2
-  providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
+- **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, named by the providers
+  `50-providers.yaml` binds to it (above) instead of `default-provider-authorization-implicit-consent`. The enrolment flow
   would have been wrong: it runs once, at the first sign-in, so existing accounts and a new version
   of the text would never be asked.
 - **State:** `attributes.cgu_version` and `attributes.cgu_accepted_at` on the account. The stages

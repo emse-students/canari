@@ -3,8 +3,11 @@
   import { resolve } from '$app/paths';
   import '../app.css';
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
-  import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
+  import { ensureMyAssociations, retryFailedMyAssociationsProbe } from '$lib/associations/api';
+  import { followAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
+  import { onArrivedAtEntry, onLeavingEntry } from '$lib/navigation/navigationMemory';
+  import { cancelRestore } from '$lib/navigation/scrollMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
   import { markRouterReady } from '$lib/navigation/routerReady';
@@ -54,7 +57,13 @@
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
-  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import {
+    currentUserId,
+    isAssociationSuperAdmin,
+    isContentModerator,
+    isEventValidator,
+    isGlobalAdmin,
+  } from '$lib/stores/user';
   import { feedStoreAccess } from '$lib/posts/feedStore';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import { bindPeerNames } from '$lib/utils/users/peerNameStore';
@@ -71,6 +80,8 @@
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
+    bindSwipeNavTouchListeners,
+    standDownForDndDrag,
     createSwipeNavGestureState,
     isSwipeNavActive,
     isSwipeNavArmed,
@@ -93,6 +104,7 @@
 
   import { globalSession, globalConvs } from '$lib/stores/globalChatSingleton.svelte';
   import { startPushService } from '$lib/services/PushNotificationService';
+  import { sessionPushAuth } from '$lib/services/sessionPushAuth';
   import { setTabUnread, startTabIndicator } from '$lib/stores/tabIndicator';
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
@@ -150,8 +162,9 @@
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
   beforeNavigate(({ from, to, shallow, type }) => {
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
+    // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`,
+    // which ignores a shallow navigation of any type itself).
+    onLeavingEntry({ type, shallow, from, to }, pageScrollWrap?.scrollTop ?? 0, pageScrollWrap);
     if (shallow && type === 'goto') return;
     // A membership probe that failed is owed one retry on the next navigation (never a timer).
     void retryFailedMyAssociationsProbe();
@@ -230,6 +243,7 @@
     });
 
     return () => {
+      cancelRestore(); // a restore left running would keep its document key listener
       disposePressedClickGuard();
       stopOwedDmMarkDrain();
       stopDeletedAccountGuards();
@@ -286,6 +300,26 @@
     );
   });
 
+  // ── The admin queues' pending counts (owner, 2026-11-18) ───────────────────────────
+  // Followed while the session's account holds an admin tier - the same four `/admin` admits on
+  // (`ensureMayOpenAdmin`), read from the REACTIVE tier stores, so a tier published late (a
+  // membership probe retried after a failure) starts following and a lost one stops it; a member is
+  // asked nothing. The membership probe is warmed once per account so the BDE tiers get published.
+  const adminCountsAccount = $derived(
+    globalSession.isLoggedIn && globalSession.authToken ? globalSession.userId || null : null
+  );
+  const followsAdminCounts = $derived(
+    !!adminCountsAccount &&
+      (isGlobalAdmin() || isAssociationSuperAdmin() || isContentModerator() || isEventValidator())
+  );
+  $effect(() => {
+    if (adminCountsAccount) void ensureMyAssociations();
+  });
+  $effect(() => {
+    if (!followsAdminCounts) return;
+    return followAdminQueueCounts();
+  });
+
   // ── Push notification init ───────────────────────────────────────────────────
   $effect(() => {
     // Wait until the session is fully established (logged in + user info + token present).
@@ -298,7 +332,7 @@
           // so the production origin that used to stand behind it here was a fallback that could
           // only ever have sent a dev or local build's push registration to production.
           globalSession.historyBaseUrl,
-          globalSession.authToken,
+          sessionPushAuth,
           globalSession.myDeviceId
         ).catch((err) => console.error('[Push] Init error:', err));
       }, 500);
@@ -504,6 +538,17 @@
       return;
     }
 
+    const standing = standDownForDndDrag(swipeGesture);
+    if (standing !== swipeGesture) {
+      // A reorder picked the finger up: release whatever the swipe had already claimed.
+      swipeGesture = standing;
+      if (pageScrollWrap.classList.contains('swipe-nav-dragging')) {
+        pageScrollWrap.classList.remove('swipe-nav-dragging');
+        snapSwipeBack();
+      }
+      return;
+    }
+
     const updated = updateSwipeNavGesture(swipeGesture, e.touches[0].clientX, e.touches[0].clientY);
     swipeGesture = updated;
 
@@ -695,9 +740,11 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(({ shallow, type }) => {
-    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
-    // change on the same page: not a page the hook is about.
+  afterNavigate((nav) => {
+    const { shallow, type } = nav;
+    // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
+    // ignores a shallow navigation of any type itself.
+    onArrivedAtEntry(nav, pageScrollWrap);
     if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
@@ -724,14 +771,12 @@
     const node = appShell;
     if (!node || !swipeNavArmed) return;
 
-    node.addEventListener('touchstart', handleTouchStart, { passive: true });
-    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    const unbindTouch = bindSwipeNavTouchListeners(node, handleTouchStart, handleTouchMove);
     const stopSelectionWatch = onTextSelectionActive(abandonSwipeForSelection);
 
     return () => {
       stopSelectionWatch();
-      node.removeEventListener('touchstart', handleTouchStart);
-      node.removeEventListener('touchmove', handleTouchMove);
+      unbindTouch();
       releaseGestureEnd?.();
       releaseGestureEnd = null;
       // DISARMING MID-GESTURE NEVER SEES ITS `touchend`, so the state that handler would have

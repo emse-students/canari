@@ -25,8 +25,7 @@ import {
   LydiaCashierAddedUnconfirmedException,
   type LydiaCashierRole,
 } from './lydia-payment-provider';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { RouteParams } from '../common/route-params';
 
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
 function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> | null {
@@ -39,8 +38,9 @@ function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> |
  * a number - for MANAGE_PAYOUT_ACCOUNT holders (the removal an account's erasure asks for is
  * `InternalLydiaCashiersController`, not routed by nginx). social-service holds the rows, the sealed numbers and the claim; Lydia is
  * called from here only. Adding and changing a role are behind {@link LYDIA_CASHIER_ADD_ENABLED}
- * (OFF until one production removal has been observed); removing is live.
+ * (ON since 1.7.1, owner 2026-11-18); removing is never gated.
  */
+@RouteParams({ associationId: 'uuid', cashierId: 'uuid' })
 @Controller('payments')
 export class LydiaCashiersController {
   private readonly logger = new Logger(LydiaCashiersController.name);
@@ -50,7 +50,7 @@ export class LydiaCashiersController {
     this.ops = new LydiaCashierOps(paymentService);
   }
 
-  /** The owner's gate, read through a method so a spec can open it. */
+  /** The owner's gate (ON since 1.7.1), read through a method so a spec can close it. */
   cashierAddEnabled(): boolean {
     return LYDIA_CASHIER_ADD_ENABLED;
   }
@@ -79,7 +79,6 @@ export class LydiaCashiersController {
     @Body() body: { userId?: unknown; phone?: unknown; role?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId)) throw new BadRequestException('Invalid associationId');
     await assertCanManageAssociation(req, associationId, this.logger);
     this.assertAddEnabled(associationId);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
@@ -132,9 +131,6 @@ export class LydiaCashiersController {
     @Body() body: { role?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId) || !UUID_RE.test(cashierId)) {
-      throw new BadRequestException('Invalid id');
-    }
     await assertCanManageAssociation(req, associationId, this.logger);
     this.assertAddEnabled(associationId);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
@@ -226,9 +222,6 @@ export class LydiaCashiersController {
     @Body() body: { number?: unknown },
     @Req() req: Request
   ) {
-    if (!UUID_RE.test(associationId) || !UUID_RE.test(cashierId)) {
-      throw new BadRequestException('Invalid id');
-    }
     await assertCanManageAssociation(req, associationId, this.logger);
     const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
     const number: LydiaCashierNumber = body?.number === 'previous' ? 'previous' : 'current';

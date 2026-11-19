@@ -22,6 +22,7 @@ import { AssociationsService } from './associations.service';
 import { AssociationMember, AssociationPermissionFlag } from './entities/association-member.entity';
 import { LAST_MEMBER_MANAGER } from './member-flag-ceiling';
 import { ERASURE_ASSOCIATION_LOCK_SQL, ERASURE_ROW_STATEMENTS } from '../internal/account-erasure';
+import { settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -104,6 +105,9 @@ maybe('the last member manager against PostgreSQL', () => {
       unused,
       { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
+    // The Lydia cashiers' departure debt (registered at boot by `LydiaCashiersService`): not this
+    // spec's subject, so a removal asks nothing of it.
+    service.registerCashierDepartures({ settleDepartures: () => Promise.resolve() });
     // Nobody here is a BDE super-admin: the passation is between ordinary members.
     jest.spyOn(service, 'isAssociationSuperAdminOf').mockResolvedValue(false);
     jest
@@ -139,19 +143,25 @@ maybe('the last member manager against PostgreSQL', () => {
       await holder.query('BEGIN');
       await holder.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [asso]);
       const outcomes = writes().map(settle);
-      let settled = 0;
-      for (const outcome of outcomes) void outcome.then(() => (settled += 1));
+      const finished = outcomes.map(settledFlag);
       let waiting = 0;
       // Ends on an event - every write either blocked or settled - never on a timer; a write that
       // fails fast while the other blocks ends it too, and the `waiting` assertion then says so.
-      while (waiting + settled < outcomes.length) {
-        const { rows } = await admin.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-          [schema]
-        );
-        waiting = rows[0].n;
-      }
+      // The bound of reads RETURNS ('return') rather than throws; the `waiting` count is asserted by the caller.
+      await untilWaiting({
+        what: 'the writes',
+        atLeast: outcomes.length,
+        onAbsent: 'return',
+        waiting: async () => {
+          const { rows } = await admin.query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+            [schema]
+          );
+          waiting = rows[0].n;
+          return waiting + finished.filter((done) => done()).length;
+        },
+      });
       await holder.query('COMMIT');
       return { waiting, outcomes: await Promise.all(outcomes) };
     } finally {
@@ -221,17 +231,21 @@ maybe('the last member manager against PostgreSQL', () => {
       );
       await erasure.query(memberDelete!.sql, ['a']);
       const leave = settle(service.leaveAssociation(asso, 'b'));
-      let settledFirst = false;
-      void leave.then(() => (settledFirst = true));
-      let waiting = 0;
-      while (waiting < 1 && !settledFirst) {
-        const { rows } = await admin.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
-          [schema]
-        );
-        waiting = rows[0].n;
-      }
+      // The assertion below reads the verdict, as it always did: a wait that does not come is
+      // RETURNED ('return'), not thrown.
+      const { seen: waiting } = await untilWaiting({
+        what: 'the leave',
+        settled: settledFlag(leave),
+        onAbsent: 'return',
+        waiting: async () => {
+          const { rows } = await admin.query<{ n: number }>(
+            `SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+            [schema]
+          );
+          return rows[0].n;
+        },
+      });
       expect(waiting).toBe(1);
       await erasure.query('COMMIT');
       expect(await leave).toBe(LAST_MEMBER_MANAGER);

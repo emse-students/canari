@@ -7,6 +7,9 @@ import {
   isSolvableWithoutGuessing,
   verifySolve,
   hashSeedToU32,
+  solveTiered,
+  createSolverContext,
+  LATEST_GENERATOR_VERSION,
   DEFAULT_CONFIG,
   CHALLENGE,
   type MinesweeperBoard,
@@ -263,4 +266,107 @@ describe('minesweeper', () => {
     expect(verifySolve('seed', []).ok).toBe(false);
     expect(verifySolve('seed', [{ type: 'flag', x: 0, y: 0 }]).ok).toBe(false);
   });
+});
+
+describe('generator v2 (2026-11-13)', () => {
+  const fixtures: Array<[string, number, number, number]> = [
+    ['8601e326fcef5ef936a1c69d6ab6ac41', 0, 31, 3181686381],
+    ['8601e326fcef5ef936a1c69d6ab6ac41', 9, 16, 434082617],
+    ['ranked-golden-fixture-002', 17, 0, 3207965141],
+  ];
+  const layoutOf = (board: MinesweeperBoard) =>
+    board.cells.map((c) => (c.mine ? '1' : '0')).join('');
+
+  it('is opt-in: a board made without a version uses generator 1, and v2 is the latest', () => {
+    expect(createBoard(CHALLENGE, 'seed').generator).toBe(1);
+    expect(LATEST_GENERATOR_VERSION).toBe(2);
+  });
+
+  it('seeded v2 boards match their recorded fingerprints', () => {
+    // Same rule as v1: the server replays on what ITS generator makes from (seed, first click, version),
+    // so ANY change to v2 - a tier, a weight, the swap order, a draw from the RNG - rejects every v2
+    // challenge open at deploy time. A change of that kind is a NEW version, never an edit of this one.
+    for (const [seed, x, y, fingerprint] of fixtures) {
+      const board = createBoard(CHALLENGE, seed, 2);
+      revealCell(board, x, y);
+      expect(hashSeedToU32(layoutOf(board))).toBe(fingerprint);
+    }
+  }, 60_000);
+
+  it('the same seed gives different boards under v1 and v2', () => {
+    const [seed, x, y] = fixtures[1];
+    const v1 = createBoard(CHALLENGE, seed, 1);
+    const v2 = createBoard(CHALLENGE, seed, 2);
+    revealCell(v1, x, y);
+    revealCell(v2, x, y);
+    expect(layoutOf(v1)).not.toBe(layoutOf(v2));
+  }, 30_000);
+
+  it('a v2 board is clearable without guessing and reaches the target score', () => {
+    for (const [seed, x, y] of fixtures) {
+      const board = createBoard(CHALLENGE, seed, 2);
+      revealCell(board, x, y);
+      const report = board.generationReport!;
+      expect(report.fellBack).toBe(false);
+      expect(report.reachedTarget).toBe(true);
+      // Solved again from the finished layout, so the claim is about the board and not the climb.
+      const solve = solveTiered(board, y * board.width + x, createSolverContext());
+      expect(solve.won).toBe(true);
+      expect(solve.score).toBe(report.score);
+      expect(solve.score).toBeGreaterThanOrEqual(report.targetScore);
+    }
+  }, 60_000);
+
+  it('keeps the first click and its neighbours free of mines', () => {
+    const board = createBoard(CHALLENGE, 'v2-safe-zone', 2);
+    revealCell(board, 0, 0);
+    for (const i of [0, 1, CHALLENGE.width, CHALLENGE.width + 1])
+      expect(board.cells[i].mine).toBe(false);
+    expect(board.cells.filter((c) => c.mine)).toHaveLength(CHALLENGE.mineCount);
+  }, 30_000);
+
+  it('verifySolve replays on the version named: the board of one is a loss on the other', () => {
+    const [seed, x, y] = fixtures[0];
+    const made = createBoard(CHALLENGE, seed, 2);
+    revealCell(made, x, y);
+    // A winning log for the v2 board: the first click, then every other safe cell.
+    const moves: Array<{ type: 'reveal'; x: number; y: number }> = [{ type: 'reveal', x, y }];
+    made.cells.forEach((c, i) => {
+      if (!c.mine) moves.push({ type: 'reveal', x: i % made.width, y: Math.floor(i / made.width) });
+    });
+    expect(verifySolve(seed, moves, CHALLENGE, 2).ok).toBe(true);
+    expect(verifySolve(seed, moves, CHALLENGE, 1).ok).toBe(false);
+  }, 60_000);
+
+  it('fails loudly on a generator version it does not know, never playing it as another', () => {
+    const board = createBoard(CHALLENGE, 'seed', 3 as never);
+    expect(() => revealCell(board, 0, 0)).toThrow(/unknown minesweeper generator version 3/);
+  });
+
+  it('a spent search budget only makes the solver deduce less, never wrongly', () => {
+    const [seed, x, y] = fixtures[1];
+    const board = createBoard(CHALLENGE, seed, 2);
+    revealCell(board, x, y);
+    const full = solveTiered(board, y * board.width + x, createSolverContext());
+    const spent = createSolverContext();
+    spent.nodesLeft = 0;
+    const starved = solveTiered(board, y * board.width + x, spent);
+    expect(full.won).toBe(true);
+    // Refusing every enumeration cannot clear MORE than enumerating can.
+    expect(starved.won && starved.score > full.score).toBe(false);
+  }, 30_000);
+
+  it('verifySolve hands back what generation did, so the server can log a fall-back', () => {
+    const [seed, x, y] = fixtures[0];
+    const made = createBoard(CHALLENGE, seed, 2);
+    revealCell(made, x, y);
+    const moves: Array<{ type: 'reveal'; x: number; y: number }> = [{ type: 'reveal', x, y }];
+    made.cells.forEach((c, i) => {
+      if (!c.mine) moves.push({ type: 'reveal', x: i % made.width, y: Math.floor(i / made.width) });
+    });
+    const verdict = verifySolve(seed, moves, CHALLENGE, 2);
+    expect(verdict.generation).toMatchObject({ fellBack: false, reachedTarget: true });
+    expect(verdict.generation!.searchNodes).toBeGreaterThan(0);
+    expect(verifySolve('seed', []).generation).toBeUndefined();
+  }, 60_000);
 });

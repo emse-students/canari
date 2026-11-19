@@ -28,7 +28,8 @@ async function askOne(
 
 /**
  * Whether association `associationId` is visible to `userId` (`associationVisibleToViewerSql`: a
- * member of it, D21, or its rules reach one of the user's spaces) - the directory's and the
+ * member of it, D21, its rules reach one of the user's spaces, or a nominative read grant of the
+ * user reaches it) - the directory's and the
  * agenda's predicate, asked for ONE association by a path that acts on one row by its id (a
  * partnership claim, a booking). A review account has no real space, so for it this is
  * membership alone, which is what the review cohort's own narrowing says too.

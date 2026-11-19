@@ -3,7 +3,7 @@
   import { videoGlass } from '$lib/utils/videoGlass';
 
   /**
-   * A ROUND CONTROL ON A PLAYING VIDEO - the speaker, the expand chip, the lightbox bar's buttons
+   * A ROUND CONTROL ON A PLAYING VIDEO - the speaker, the actions chip, the lightbox bar's buttons
    * (owner, 2026-11-09). The kit's one button, so every surface's speaker is the same object.
    *
    * THE TARGET IS 44px, THE DRAWING IS SMALLER: the `<button>` is a `.ui-icon-button` (44px on a touch

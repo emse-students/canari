@@ -25,6 +25,12 @@ const signOutByChoice = vi.hoisted(() => vi.fn());
 const loadNotifs = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/stores/auth', () => ({ signOutByChoice }));
+// The badges' store is pinned by its own test; here it answers nothing, so no request leaves.
+const loadAdminQueueCounts = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('$lib/admin/adminQueueCounts.svelte', () => ({
+  adminQueueCounts: { counts: {}, total: 0 },
+  loadAdminQueueCounts,
+}));
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => 'u-1',
   getSavedDisplayName: () => 'Ada Lovelace',
@@ -136,6 +142,7 @@ describe('dashboard hub', () => {
       'bookings',
       'games',
       'notifications',
+      'directory',
       'settings',
       'sign-out',
     ]);
@@ -166,10 +173,10 @@ describe('dashboard hub', () => {
       ['managed-l', '/lists/ma-liste/edit'],
     ]);
     expect(document.body.textContent).toContain('Présidente');
-    expect(keys()).not.toContain('directory');
+    expect(rows()).toContainEqual(['directory', '/directory']);
   });
 
-  it('adds the admin group and the directory for staff, and Documents for a reviewer', async () => {
+  it('adds the admin group for staff, and Documents for a reviewer', async () => {
     state.mayOpenAdmin = true;
     state.reviewer = true;
     await render();
@@ -177,7 +184,6 @@ describe('dashboard hub', () => {
     expect(groupHeadings()).toEqual(['explore', 'account']);
     expect(rows()).toContainEqual(['admin', '/admin']);
     expect(document.querySelector('section[aria-labelledby="group-admin"]')).toBeNull();
-    expect(rows()).toContainEqual(['directory', '/directory']);
     // Documents sits with the probed groups, above Compte: arriving, it never pushes sign-out.
     expect(keys().slice(-4)).toEqual(['admin', 'documents', 'settings', 'sign-out']);
   });
@@ -205,7 +211,7 @@ describe('dashboard hub', () => {
     state.hold = new Promise<void>((r) => (release = r));
     state.mayOpenAdmin = true;
     await render();
-    expect(keys().slice(-3)).toEqual(['notifications', 'settings', 'sign-out']);
+    expect(keys().slice(-3)).toEqual(['directory', 'settings', 'sign-out']);
     // While waiting: a screen-reader status only, out of the flow - nothing that could collapse
     // later and pull sign-out up under a finger.
     const pending = document.querySelector('[data-dashboard-pending]');

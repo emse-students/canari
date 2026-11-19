@@ -5,6 +5,7 @@ import {
   firstRowBelow,
   isPinnedToBottom,
   keyboardChangeResponse,
+  ownMessageAppended,
   respondToNewMessage,
   stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
@@ -93,12 +94,25 @@ describe('threadGrowthResponse', () => {
 
   /**
    * THE ONE CASE WHERE GROWTH MEANS THE OPPOSITE, and the reason this is a predicate rather than a
-   * comparison at the call site: `loadOlderGroups` adds height ABOVE the reader and puts `scrollTop`
-   * back by exactly that much. On a conversation short enough for the reader to be near the bottom
+   * comparison at the call site: `loadOlderGroups` adds height ABOVE the reader, whose row is kept
+   * where it stood. On a conversation short enough for the reader to be near the bottom
    * while also being near the top, following the bottom would discard the history it just fetched.
    */
   it('refuses while older messages are being prepended, even from the bottom', () => {
     expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true })).toBe('keep-row');
+  });
+
+  it('follows a box change under a reader at the bottom while the store is read', () => {
+    // The keyboard moving during the await, alone or in the same change as the prepend (#3545).
+    const box = { ...settled, currentReach: settled.previousReach + 357, isLoadingOlder: true };
+    expect(threadGrowthResponse({ ...box, boxChanged: true })).toBe('follow-bottom');
+    expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true, boxChanged: true })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...box, boxChanged: false })).toBe('keep-row');
+    expect(threadGrowthResponse({ ...box, boxChanged: true, wasNearBottom: false })).toBe(
+      'keep-row'
+    );
   });
 
   /**
@@ -118,7 +132,7 @@ describe('threadGrowthResponse', () => {
     );
   });
 
-  it('still leaves a prepend during the entry to its own restore', () => {
+  it('still keeps the row for a prepend during the entry', () => {
     expect(threadGrowthResponse({ ...grew(4000), isEntering: true, isLoadingOlder: true })).toBe(
       'keep-row'
     );
@@ -179,6 +193,25 @@ const settledReader: NewMessageState = {
   isNearBottom: true,
   ownMessageAdded: false,
 };
+
+describe('ownMessageAppended', () => {
+  const mine = { id: 'm9', isOwn: true };
+
+  it('is true when a message of the reader became the newest', () => {
+    expect(ownMessageAppended('m8', mine)).toBe(true);
+    expect(ownMessageAppended(undefined, mine)).toBe(true);
+  });
+
+  it('is false when the list grew and the newest message did not change: an older page', () => {
+    expect(ownMessageAppended('m9', mine)).toBe(false);
+  });
+
+  it('is false when the message that became the newest is somebody else', () => {
+    expect(ownMessageAppended('m8', { id: 'm9', isOwn: false })).toBe(false);
+    expect(ownMessageAppended('m8', { id: 'm9' })).toBe(false);
+    expect(ownMessageAppended('m8', undefined)).toBe(false);
+  });
+});
 
 describe('respondToNewMessage', () => {
   it('follows the bottom for a live message under a reader who is at the bottom', () => {
@@ -287,18 +320,27 @@ describe('chatViewCountLine', () => {
 });
 
 describe('keyboardChangeResponse', () => {
-  it('a keyboard rising for a focused composer goes to the end, wherever the reader was', () => {
+  it('a keyboard rising for a focused composer takes a reader ABOVE the bottom to the end', () => {
     // The Android case: the field stayed focused after Back, the reader was 138 px up (> the slack),
     // and the next tap raised the keyboard with no focus event - the last messages went under it.
-    for (const isNearBottom of [true, false]) {
+    expect(
+      keyboardChangeResponse({
+        wasOpen: false,
+        isOpen: true,
+        composerFocused: true,
+        isNearBottom: false,
+      })
+    ).toBe('follow-bottom');
+  });
+
+  it("a reader AT the bottom is the observer's alone: no second writer of the bottom (D2)", () => {
+    for (const [wasOpen, isOpen] of [
+      [false, true],
+      [true, false],
+    ]) {
       expect(
-        keyboardChangeResponse({
-          wasOpen: false,
-          isOpen: true,
-          composerFocused: true,
-          isNearBottom,
-        })
-      ).toBe('follow-bottom');
+        keyboardChangeResponse({ wasOpen, isOpen, composerFocused: true, isNearBottom: true })
+      ).toBe('stay');
     }
   });
 
@@ -313,15 +355,7 @@ describe('keyboardChangeResponse', () => {
     ).toBe('stay');
   });
 
-  it('a keyboard falling follows only a reader at the bottom', () => {
-    expect(
-      keyboardChangeResponse({
-        wasOpen: true,
-        isOpen: false,
-        composerFocused: true,
-        isNearBottom: true,
-      })
-    ).toBe('follow-bottom');
+  it('a keyboard falling never scrolls a reader in history', () => {
     expect(
       keyboardChangeResponse({
         wasOpen: true,

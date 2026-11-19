@@ -1,6 +1,7 @@
 pub mod security;
 
 pub mod admission;
+pub mod app_ledgers;
 pub mod authorship;
 pub(crate) mod byte_compat;
 pub mod crypto;
@@ -9,8 +10,10 @@ pub mod fork_check;
 pub mod graine_run;
 pub mod graine_signature;
 pub mod group;
+pub mod history_seal;
 pub mod keystore;
 pub mod logging;
+pub mod member_sightings;
 pub mod members;
 pub mod messaging;
 pub mod owed_welcome;
@@ -27,6 +30,7 @@ mod external_join_pending_tests;
 pub use admission::{AdmissionPolicy, AdmissionVerdict, judge_external_commit};
 pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
+pub use member_sightings::MembershipEvidence;
 pub use messaging::IncomingApplication;
 pub use self_update::StagedSelfUpdateResult;
 pub use state::DatedKeyPackage;

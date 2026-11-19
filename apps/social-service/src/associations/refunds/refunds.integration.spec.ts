@@ -71,7 +71,9 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await others.destroy();
     await admin.query(
       `CREATE TABLE associations (id uuid PRIMARY KEY, name text NOT NULL, "lydiaAccountId" varchar NULL,
-         "paymentParentAssociationId" uuid NULL, "paymentDelegationStatus" varchar NULL)`
+         "paymentParentAssociationId" uuid NULL, "paymentDelegationStatus" varchar NULL,
+         "lydiaBusinessKeyCiphertext" text NULL,
+         "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
     );
     await admin.query(
       `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false)`
@@ -84,6 +86,10 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await admin.query(migration);
     await admin.query(migration);
+    // The bridge's table (lydia-account-bridge.ts): a refund resolves the Businesses the payee holds.
+    await admin.query(
+      readFileSync(join(__dirname, '../../migrations/167_lydia_account_bridge.sql'), 'utf8')
+    );
     await admin.query('RESET lock_timeout');
     await admin.query(
       `INSERT INTO associations (id, name, "lydiaAccountId") VALUES ($1, 'BDE', $2)`,
@@ -514,6 +520,36 @@ maybe('Lydia refunds against PostgreSQL', () => {
       response: { code: LYDIA_REFUND_NOT_REFUNDABLE, reason: 'untraceable' },
     });
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('after a bridge switch, a payment the historical account took is refunded with ITS vendor token', async () => {
+    // A bridge (lydia-account-bridge.ts) switched: the enrolled Business collects, the historical
+    // account is kept, standby, to refund what it took. The row's vendor token decides the key.
+    const { record: historical } = await boutiquePayment('other', 700, ASSO, VENDOR);
+    const { record: form } = await formPayment(false, 600, ASSO, VENDOR);
+    await ds.query(`UPDATE associations SET "lydiaAccountId" = 'vendor-enrolled' WHERE id = $1`, [
+      ASSO,
+    ]);
+    await ds.query(
+      `INSERT INTO lydia_account_bridges ("associationId", "historicalVendorToken",
+         "enrolledVendorToken", state, "standbyKeyCiphertext")
+       VALUES ($1, $2, 'vendor-enrolled', 'switched', 'sealed-historical')`,
+      [ASSO, VENDOR]
+    );
+    try {
+      await service.refund(ASSO, historical.id, MANAGER, total());
+      await service.refund(ASSO, form.id, MANAGER, total());
+      expect(post.mock.calls.map(([, body]) => body.vendorToken)).toEqual([VENDOR, VENDOR]);
+      // A Business the association holds in NEITHER role is still refused.
+      const { record: stranger } = await boutiquePayment('other', 500, ASSO, 'vendor-stranger');
+      await expect(service.refund(ASSO, stranger.id, MANAGER, total())).rejects.toMatchObject({
+        response: { code: LYDIA_REFUND_NOT_REFUNDABLE, reason: 'other-business' },
+      });
+      expect(post).toHaveBeenCalledTimes(2);
+    } finally {
+      await ds.query(`DELETE FROM lydia_account_bridges WHERE "associationId" = $1`, [ASSO]);
+      await ds.query(`UPDATE associations SET "lydiaAccountId" = $2 WHERE id = $1`, [ASSO, VENDOR]);
+    }
   });
 
   it('describes each payment: refundable or why not, and what a total refund withdraws', async () => {

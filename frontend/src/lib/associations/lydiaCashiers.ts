@@ -7,16 +7,15 @@ import type {
 } from './api';
 
 /**
- * THE OWNER'S GATE (Lydia enrolment lot 3): adding a cashier, and changing a cashier's role, ship
- * HIDDEN. A cashier Canari adds must be removable, and no removal has been observed in production
- * yet: this flips to `true` only after one production removal (revoke) has been seen to succeed.
+ * THE OWNER'S GATE (Lydia enrolment lot 3), ON since 1.7.1 (owner, 2026-11-18): adding a cashier,
+ * changing a cashier's role and changing the Responsable's number are offered.
  *
- * It flips in ONE pull request together with core-service's `LYDIA_CASHIER_ADD_ENABLED` (which
+ * It moves in ONE pull request together with core-service's `LYDIA_CASHIER_ADD_ENABLED` (which
  * refuses the add and the role change with the typed `LYDIA_CASHIER_ADD_DISABLED` while off) and
  * `switches.cashierAddEnabled` in `libs/contracts/lydia-refusal-codes.json`, which
  * `lydiaCodes.contract.test.ts` asserts this equals. Removal is NOT gated: it only takes rights away.
  */
-export const LYDIA_CASHIER_ADD_ENABLED = false;
+export const LYDIA_CASHIER_ADD_ENABLED = true;
 
 /**
  * The Responsable's resend control, in the reader's language. Changing the Responsable's number is
@@ -43,7 +42,7 @@ export const LYDIA_ADDABLE_CASHIER_ROLES: readonly LydiaAddableCashierRole[] = [
 ];
 
 /** One row of the "Caissiers" section and the actions it offers. */
-export interface LydiaCashierRowView {
+interface LydiaCashierRowView {
   cashier: LydiaCashier;
   /** "Changer le rôle": gate on, and never the Responsable (whose role is all the rights). */
   canChangeRole: boolean;
@@ -51,6 +50,12 @@ export interface LydiaCashierRowView {
   canRevokeCurrent: boolean;
   /** "Retirer" for the older number a Responsable number change left behind. */
   canRevokePrevious: boolean;
+  /**
+   * The person left the association: `cashier`, their access is being removed at Lydia (the
+   * row's own state says whether Lydia confirmed it); `responsable`, they keep the Business's
+   * current number and a new Responsable is needed. Null for a member.
+   */
+  departed: 'cashier' | 'responsable' | null;
 }
 
 /** Everything the "Caissiers" section draws, from ONE payout-account read. */
@@ -82,9 +87,16 @@ export function lydiaCashiersView(
     .sort((a, b) => rank(a.role) - rank(b.role) || a.addedAt.localeCompare(b.addedAt))
     .map((cashier) => ({
       cashier,
-      canChangeRole: addEnabled && cashier.role !== 'responsable',
+      // A person who left is never given a role (social-service refuses it, `NOT_A_MEMBER`).
+      canChangeRole: addEnabled && cashier.role !== 'responsable' && cashier.departed !== true,
       canRevokeCurrent: cashier.role !== 'responsable',
       canRevokePrevious: cashier.previousPhoneEnd != null,
+      departed:
+        cashier.departed === true
+          ? cashier.role === 'responsable'
+            ? ('responsable' as const)
+            : ('cashier' as const)
+          : null,
     }));
   return { visible, canAdd: addEnabled, rows };
 }

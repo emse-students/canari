@@ -1,5 +1,14 @@
 ## P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)
 
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_The same day the owner moved the community-open **200 ms budget** here: the
+[community entry](p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
+closes for `1.7.0` on #3769's reading, and its "what is left" list (the `Icon` count, whatever the
+`--chain` run names, the section 7 readings of
+[community-open-budget](../frontend/community-open-budget.md)) is carried on by this chantier._
+
 **Decision.** The owner, 2026-11-10: *"a slow connection is common and a real plague"*. The chantier
 starts right after `1.6.10` and is carried to the end, not abandoned at the first improvement.
 
@@ -85,6 +94,10 @@ the WASM by ORDER, not by data (WP-W3, diagnosed, not built,
 and the runs its section 8 still owes - delivery at the peer, and the Android and iPhone send, kill
 and relaunch rows on a shaped link
 ([section 8](../frontend/offline-and-weak-network.md#8-not-measured-and-owed)).
+Re-measured 2026-11-09 ([section 23](../frontend/offline-and-weak-network.md#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)):
+the WASM preload took 12-13 s of the JavaScript's bandwidth on Slow 3G, so it now runs only on `/chat`
+and `/communities` and a cold `/` boots at 33.1 s instead of 46.1 s; owed, the real-phone reading of
+a cold `/` on a throttled link (the route list re-checked against `main` on 2026-11-14, no other route waits on the engine for its first screen); next there, a bundle budget (WP-W5) and the on-demand features.
 
 **Carried from the attachment-path audit (2026-10-10, its entry closed into this one on
 2026-11-11).** The upload bubble, the 8 MiB body budget, navigation never waiting on a post and

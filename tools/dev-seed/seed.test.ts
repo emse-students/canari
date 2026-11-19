@@ -197,6 +197,18 @@ const oneOf =
   (column: string, values: string[], nullable = false) =>
   (row: Record<string, SqlValue>) =>
     nullable && !given(row[column]) ? true : values.includes(row[column] as string);
+/** An institution's ticked spaces (posts 162, events 165): absent, or a non-empty array. */
+const reachSpacesShapeHolds = (r: Record<string, SqlValue>) => {
+  if (!given(r.reachSpaces)) return true;
+  const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
+  return Array.isArray(v) && v.length > 0;
+};
+/** A retention duration in days (core 025): left out, it takes its in-range column default. */
+const daysWithin =
+  (column: string, min: number, max: number) => (row: Record<string, SqlValue>) => {
+    const v = row[column];
+    return !given(v) || (typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max);
+  };
 const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
 const CAMPUSES = ['saint-etienne', 'gardanne'];
 
@@ -224,6 +236,12 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "type IN ('association', 'list', 'institution')",
     holds: oneOf('type', ['association', 'list', 'institution']),
   },
+  // A BDE's colour for its neutral events (social 171): left out, it is NULL (no default).
+  associations_neutral_event_colour_check: {
+    sql: `"neutralEventColor" IS NULL OR "neutralEventColor" ~ '^#[0-9A-Fa-f]{6}$'`,
+    holds: (r) =>
+      !given(r.neutralEventColor) || /^#[0-9A-Fa-f]{6}$/.test(String(r.neutralEventColor)),
+  },
   CHK_platform_config_calls_mode: {
     sql: "calls_mode IN ('off', 'audio', 'audio_video')",
     holds: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
@@ -243,6 +261,30 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   CHK_platform_config_live_replays_mode: {
     sql: "live_replays_mode IN ('off', 'on')",
     holds: oneOf('live_replays_mode', ['off', 'on']),
+  },
+  CHK_platform_config_group_calls_mode: {
+    sql: "group_calls_mode IN ('off', 'mesh')",
+    holds: oneOf('group_calls_mode', ['off', 'mesh']),
+  },
+  CHK_platform_config_call_relay: {
+    sql: "call_relay IN ('none', 'call-service', 'cloudflare')",
+    holds: oneOf('call_relay', ['none', 'call-service', 'cloudflare']),
+  },
+  CHK_platform_config_retention_reel_days: {
+    sql: 'retention_reel_days BETWEEN 1 AND 3650',
+    holds: daysWithin('retention_reel_days', 1, 3650),
+  },
+  CHK_platform_config_retention_live_replay_days: {
+    sql: 'retention_live_replay_days BETWEEN 1 AND 365',
+    holds: daysWithin('retention_live_replay_days', 1, 365),
+  },
+  CHK_platform_config_retention_chat_reel_days: {
+    sql: 'retention_chat_reel_days BETWEEN 1 AND 365',
+    holds: daysWithin('retention_chat_reel_days', 1, 365),
+  },
+  CHK_platform_config_retention_idle_file_days: {
+    sql: 'retention_idle_file_days BETWEEN 1 AND 3650',
+    holds: daysWithin('retention_idle_file_days', 1, 3650),
   },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
@@ -282,16 +324,27 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `"reachSpaces" IS NULL
     OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
          THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
-    holds: (r) => {
-      if (!given(r.reachSpaces)) return true;
-      const v = typeof r.reachSpaces === 'string' ? JSON.parse(r.reachSpaces) : r.reachSpaces;
-      return Array.isArray(v) && v.length > 0;
-    },
+    holds: reachSpacesShapeHolds,
   },
   // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
   association_calendar_events_presentation_check: {
     sql: "presentation IN ('association', 'neutral')",
     holds: oneOf('presentation', ['association', 'neutral'], true),
+  },
+  // An institution event's reach (migration 165) mirrors the posts' columns; the seed writes none.
+  CHK_calendar_events_reach_public: {
+    sql: `"reachPublic" IS NULL OR "reachPublic" IN ('all', 'students', 'staff')`,
+    holds: oneOf('reachPublic', ['all', 'students', 'staff'], true),
+  },
+  CHK_calendar_events_reach_together: {
+    sql: `("reachPublic" IS NULL) = ("reachSpaces" IS NULL)`,
+    holds: (r) => given(r.reachPublic) === given(r.reachSpaces),
+  },
+  CHK_calendar_events_reach_spaces_shape: {
+    sql: `"reachSpaces" IS NULL
+    OR CASE WHEN jsonb_typeof("reachSpaces") = 'array'
+         THEN jsonb_array_length("reachSpaces") > 0 ELSE false END`,
+    holds: reachSpacesShapeHolds,
   },
   association_calendar_events_neutral_no_form_check: {
     sql: `presentation <> 'neutral' OR "linkedFormId" IS NULL`,
@@ -300,7 +353,7 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   // `kind` defaults to 'post'.
   posts_kind_shape: {
     sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL AND "liveId" IS NULL)
-       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+       OR (kind = 'reel' AND ("durationMs" IS NULL OR "durationMs" > 0) AND "expiresAt" IS NOT NULL
            AND "liveId" IS NULL)
        OR (kind = 'replay' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
            AND "liveId" IS NOT NULL)`,
@@ -308,7 +361,11 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
       const kind = r.kind ?? 'post';
       if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt) && !given(r.liveId);
       const timed = typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt);
-      if (kind === 'reel') return timed && !given(r.liveId);
+      // A reel may carry no length: the posts held migration 176 converted (nobody declared one).
+      if (kind === 'reel') {
+        const length = !given(r.durationMs) || (typeof r.durationMs === 'number' && r.durationMs > 0);
+        return length && given(r.expiresAt) && !given(r.liveId);
+      }
       return kind === 'replay' && timed && given(r.liveId);
     },
   },

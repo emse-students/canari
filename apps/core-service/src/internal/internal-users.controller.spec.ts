@@ -31,7 +31,16 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
 
   function makeController() {
     const findOne = jest.fn(({ where }: { where: { id: string } }) =>
-      Promise.resolve({ id: where.id, displayName: 'Name', promo: 2024, formation: 'F' } as User)
+      Promise.resolve({
+        id: where.id,
+        displayName: 'Name',
+        promo: 2024,
+        formation: 'F',
+        cursus: [
+          { formation: 'F', promo: 2024 },
+          { formation: 'G', promo: 2025 },
+        ],
+      } as User)
     );
     const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
     return { controller, findOne };
@@ -45,13 +54,66 @@ describe('InternalUsersController.publicProfile and the review cohort', () => {
     expect(findOne).not.toHaveBeenCalled();
   });
 
-  it("answers a member's preview as before", async () => {
+  // D32: social-service prices on EVERY cursus, so the whole list is served beside the first entry.
+  it("answers a member's preview, with every cursus entry", async () => {
     const { controller } = makeController();
     await expect(controller.publicProfile('member', SECRET)).resolves.toEqual({
       id: 'member',
       displayName: 'Name',
       promo: 2024,
       formation: 'F',
+      cursusViews: [
+        { promo: 2024, formation: 'F' },
+        { promo: 2025, formation: 'G' },
+      ],
+    });
+  });
+});
+
+/**
+ * THE ACCOUNT FIELDS A FORM JOINS TO AN ANSWER (owner, 2026-11-16) come from the account row, read
+ * here, never from the respondent's request: names, campus, the posts that tell staff, and every
+ * cursus through the one reconciliation pricing reads.
+ */
+describe('InternalUsersController.respondentIdentity', () => {
+  const SECRET = 'internal-secret-for-tests';
+  const saved = process.env.INTERNAL_SECRET;
+  beforeEach(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = saved;
+  });
+
+  it('serves the names, the campus, the posts and every cursus of the account', async () => {
+    const findOne = jest.fn(() =>
+      Promise.resolve({
+        id: 'member',
+        firstName: 'Marie',
+        lastName: 'CURIE',
+        campus: 'gardanne',
+        posts: ['EMSE'],
+        promo: 2024,
+        formation: 'ISMIN',
+        cursus: [{ formation: 'ISMIN', promo: 2024 }],
+      } as User)
+    );
+    const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
+    await expect(controller.respondentIdentity('member', SECRET)).resolves.toEqual({
+      firstName: 'Marie',
+      lastName: 'CURIE',
+      campus: 'gardanne',
+      posts: ['EMSE'],
+      cursusViews: [{ promo: 2024, formation: 'ISMIN' }],
+    });
+  });
+
+  it('answers a typed 404 for an unknown account', async () => {
+    const findOne = jest.fn(() => Promise.resolve(null));
+    const controller = new InternalUsersController({ findOne } as unknown as Repository<User>);
+    await expect(controller.respondentIdentity('nobody', SECRET)).rejects.toMatchObject({
+      response: { code: 'RESPONDENT_UNKNOWN' },
     });
   });
 });

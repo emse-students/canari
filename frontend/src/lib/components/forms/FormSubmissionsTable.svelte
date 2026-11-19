@@ -26,6 +26,11 @@
     submitterName,
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
+  import {
+    identityCellText,
+    respondentChoiceLabel,
+    type DeclaredField,
+  } from '$lib/forms/respondentFields';
 
   /**
    * ONE FORM'S RESPONSES, AND THE ANSWERS IN THEM.
@@ -76,6 +81,11 @@
      * owns them (`FormResponsesPanel.svelte`), beside the delete control.
      */
     rowActions?: Snippet<[Submission]>;
+    /**
+     * Who answered, as the form kept it (owner, 2026-11-16): the promo and formation, status and
+     * campus columns, after the name - `identityColumnsOf`, decided by the form like every column.
+     */
+    identityColumns?: DeclaredField[];
   }
 
   let {
@@ -87,6 +97,7 @@
     deletingId,
     onDelete,
     rowActions,
+    identityColumns = [],
   }: Props = $props();
 
   const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
@@ -200,6 +211,16 @@
 <!-- The submitter, and a GUEST's answer (a public form's link, no account) marked as one: its name
      is what the guest typed when the form asked (owner, 2026-11-06), ALWAYS beside the reference it
      was given when it paid and the badge, so a typed name never passes for an account's. -->
+<!-- When the respondent changed their answer afterwards (migration 166): the date of the last
+     change, under the date it was sent. No history is kept, only the last moment. -->
+{#snippet editedMark(sub: Submission)}
+  {#if sub.editedAt}
+    <span class="block font-sans italic">
+      {m.form_responses_edited_at({ date: formatDate(sub.editedAt) })}
+    </span>
+  {/if}
+{/snippet}
+
 {#snippet submitter(sub: Submission)}
   {#if isGuestAnswer(sub, anonymous)}
     {@const given = guestShownName(sub)}
@@ -295,6 +316,11 @@
         {#if !anonymous}
           <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
         {/if}
+        {#each identityColumns as field (field)}
+          <th class="pr-4 pb-2 whitespace-nowrap" data-testid="identity-col-{field}">
+            {respondentChoiceLabel(field)}
+          </th>
+        {/each}
         {#each columns as column (column.id)}
           <!-- The width lives on a DIV, not on the cell: `max-width` on a `<th>` or `<td>` is a
                suggestion under auto table layout and the browser widens it anyway, so the column was
@@ -316,11 +342,17 @@
         <tr class="text-text-main">
           <td class="py-2">{@render expandControl(sub, answered, columns)}</td>
           <td class="text-text-muted py-2 pr-4 font-mono text-xs whitespace-nowrap"
-            >{formatDate(sub.createdAt)}</td
+            >{formatDate(sub.createdAt)}{@render editedMark(sub)}</td
           >
           {#if !anonymous}
             <td class="py-2 pr-4 whitespace-nowrap">{@render submitter(sub)}</td>
           {/if}
+          {#each identityColumns as field (field)}
+            {@const text = identityCellText(sub.respondentIdentity, field)}
+            <td class="py-2 pr-4 text-xs whitespace-nowrap">
+              {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
+            </td>
+          {/each}
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
             <td class="py-2 pr-4">
@@ -353,7 +385,10 @@
         {#if expanded[sub.id]}
           <tr>
             <td
-              colspan={columns.length + (requiresPayment ? 6 : 4) - (anonymous ? 1 : 0)}
+              colspan={columns.length +
+                identityColumns.length +
+                (requiresPayment ? 6 : 4) -
+                (anonymous ? 1 : 0)}
               class="bg-cn-border/10 px-3 py-3"
             >
               {@render answersPanel(sub)}
@@ -372,9 +407,19 @@
     <li class="border-cn-border rounded-2xl border bg-(--cn-surface) p-3">
       <div class="flex items-start gap-2">
         <div class="min-w-0 flex-1">
-          <p class="text-text-muted text-2xs font-mono">{formatDate(sub.createdAt)}</p>
+          <p class="text-text-muted text-2xs font-mono">
+            {formatDate(sub.createdAt)}{@render editedMark(sub)}
+          </p>
           {#if !anonymous}
             <p class="text-text-main truncate font-semibold">{@render submitter(sub)}</p>
+          {/if}
+          {#if identityColumns.length > 0}
+            <p class="text-text-muted text-xs">
+              {identityColumns
+                .map((field) => identityCellText(sub.respondentIdentity, field))
+                .filter(Boolean)
+                .join(' · ')}
+            </p>
           {/if}
           {#if requiresPayment}
             <p class="mt-1 flex items-center gap-2">

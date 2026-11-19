@@ -1,5 +1,7 @@
 ## P2 - a CanaReel that never loads (owner, Android, 1.6.8, 2026-11-09): the outcome line is built, the cause is owed one reading
 
+target: 1.10.0
+
 **Reported:** on an Android phone running `1.6.8`, CanaReels videos "did not load" - mostly a reel
 that stays on its poster or spinner, not an error. His exported in-app log (a week, `L/I/W/E`) held
 NO line about any reel: every reel diagnostic was `Log.d`, and the in-app log records no debug. What

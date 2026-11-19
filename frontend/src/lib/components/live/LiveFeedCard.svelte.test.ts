@@ -3,8 +3,8 @@
  * The feed's LIVE card as a reader meets it (owner, 2026-11-07): nothing at all with no live on air;
  * ONE live is a large card (preview, EN DIRECT, viewer count, title, who broadcasts); SEVERAL are a
  * carousel of cards; no title reads "X est en live". A tap opens the viewer; a lost answer keeps the
- * cards, a refusal removes them; and the list is re-read on a timer ONLY while the card is on screen
- * in a visible page.
+ * cards, a refusal removes them; and the list is re-read on a timer ONLY while the card's place is on screen
+ * in a visible page, and once on each entry into that state.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -134,6 +134,32 @@ describe('LiveFeedCard', () => {
     expect(onOpen).toHaveBeenCalledWith(live);
   });
 
+  it('a poster under a second old reads "just now", never "0 s"', async () => {
+    const live = item('l1', 'u1', null, {
+      poster: { name: 'p1', ageMs: 300 },
+      posterKey: 'ab'.repeat(32),
+    });
+    render([{ kind: 'answered', lives: [live] }]);
+    await settle();
+    const [card] = cards();
+    expect(card.querySelector('[data-live-poster-age]')?.textContent).toBe(
+      m.live_card_preview_age_now()
+    );
+  });
+
+  it('a poster of 500 ms rounds to "1 s", the first age that is not "just now"', async () => {
+    const live = item('l1', 'u1', null, {
+      poster: { name: 'p1', ageMs: 500 },
+      posterKey: 'ab'.repeat(32),
+    });
+    render([{ kind: 'answered', lives: [live] }]);
+    await settle();
+    const [card] = cards();
+    expect(card.querySelector('[data-live-poster-age]')?.textContent).toBe(
+      m.live_card_preview_age_seconds({ seconds: 1 })
+    );
+  });
+
   it('a live with no title reads "X est en live", and no poster asks nothing', async () => {
     const { loadPoster } = render([{ kind: 'answered', lives: [item('l1', 'u1')] }]);
     await settle();
@@ -197,30 +223,78 @@ describe('LiveFeedCard', () => {
     expect(load).toHaveBeenCalledTimes(1);
     onScreen(true);
     await settle();
-    await vi.advanceTimersByTimeAsync(15_000);
-    await settle();
+    // The ENTRY into the watched state reads at once.
     expect(load).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(15_000);
     await settle();
     expect(load).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await settle();
+    expect(load).toHaveBeenCalledTimes(4);
     // Scrolled away: the timer stops.
     onScreen(false);
     await settle();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenCalledTimes(4);
     // On screen again, but the page hidden: still nothing.
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
     document.dispatchEvent(new Event('visibilitychange'));
     onScreen(true);
     await settle();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(load).toHaveBeenCalledTimes(3);
+    expect(load).toHaveBeenCalledTimes(4);
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     document.dispatchEvent(new Event('visibilitychange'));
     await settle();
+    expect(load).toHaveBeenCalledTimes(5);
     await vi.advanceTimersByTimeAsync(15_000);
     await settle();
-    expect(load).toHaveBeenCalledTimes(4);
+    expect(load).toHaveBeenCalledTimes(6);
+  });
+
+  it('a live that STARTS while no card is drawn appears with no relaunch (alpha.6 oddity b)', async () => {
+    vi.useFakeTimers();
+    const { load, onScreen } = render(
+      [
+        { kind: 'answered', lives: [] },
+        { kind: 'answered', lives: [] },
+        { kind: 'answered', lives: [item('l1', 'u1'), item('l2', 'u2')] },
+      ],
+      15_000
+    );
+    await settle();
+    expect(document.querySelector('[data-live-feed-card]')).toBeNull();
+    // The anchor exists with nothing on air: it is what the observer watches.
+    expect(document.querySelector('[data-live-feed-anchor]')).not.toBeNull();
+    onScreen(true);
+    await settle();
+    await vi.advanceTimersByTimeAsync(15_000);
+    await settle();
+    expect(load.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(cards()).toHaveLength(2);
+    expect(
+      document.querySelector('[data-live-feed-card]')?.getAttribute('data-live-feed-layout')
+    ).toBe('carousel');
+  });
+
+  it('a live that ENDED while the place was not watched leaves the moment it is watched again (alpha.6 oddity a)', async () => {
+    vi.useFakeTimers();
+    const { load, onScreen } = render(
+      [
+        { kind: 'answered', lives: [item('l1', 'u1')] },
+        { kind: 'answered', lives: [] },
+      ],
+      15_000
+    );
+    await settle();
+    expect(cards()).toHaveLength(1);
+    // Never on screen, so no timer ran: only the ENTRY into the watched state can read the end.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(load).toHaveBeenCalledTimes(1);
+    onScreen(true);
+    await settle();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('[data-live-feed-card]')).toBeNull();
   });
 
   it('with no period in the limits, it refreshes with the feed only', async () => {
@@ -230,6 +304,7 @@ describe('LiveFeedCard', () => {
     onScreen(true);
     await settle();
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(load).toHaveBeenCalledTimes(1);
+    // The entry read only: with no period there is no timer.
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });

@@ -216,7 +216,11 @@ try {
   // history of N single-member commits that no user produces, and every row standing on it would
   // inherit that shape. FLOOR-2 asks the bulk-Add question on a group of its own (`archive/floor.mjs`).
   for (const g of SPEC.groups) {
-    if (!seen.groups[g.name]) await createGroup(owner, g.name, { label: 'campaign-fixtures' });
+    if (!seen.groups[g.name]) await createGroup(owner, g.name, {
+        label: 'campaign-fixtures',
+        // The panel chooses people first; the owner is never offered to themselves.
+        members: g.members.filter((k) => k !== 'owner').map((k) => name[k]),
+      });
     const held = observe().seen.groups[g.name] ?? [];
     const missing = g.members.filter((m) => !held.includes(m));
     if (!missing.length) continue;

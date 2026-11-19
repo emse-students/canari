@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-7 and RC-12 to RC-14 merged, the writer ON in dev builds only; what stands between `main` and the production flip is section 21)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-7 and RC-12 to RC-14 merged, the writer ON in dev builds only; what stands between `main` and the production flip is section 21; the two paths into "Envoyer à...", decided 2026-11-16, are section 22)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -60,7 +60,7 @@ What the review of #1936 added:
 - **Leaving a thread ends the salon selection on every exit** (`onThreadLeft`, registered once in `globalChatSingleton`): the history close (Android's Back, the iOS swipe) left the salon row highlighted, since only the in-app back cleared it.
 - **The iOS app writes NO history entry for an overlay** (`initHistoryOverlayStack({ systemBack: false })`): nothing there ever pops one, and closing N nested overlays by swipe left N ghosts of which only the one under the pointer is taken again - N-1 entries for good per cycle.
 
-Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **A `Modal` or sheet portalled over a conversation** carries the same `swipeBack` since 2026-10-17 (`Modal.svelte`, when narrow and `dismissible`); its iPhone reading is a row of [the verification table](../../backlog.md#owed-a-verification-and-nothing-else). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
+Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **A `Modal` or sheet portalled over a conversation** carries the same `swipeBack` since 2026-10-17 (`Modal.svelte`, when narrow and `dismissible`); its iPhone reading is a row of [the readings owed](../../plan.md#readings-owed). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
 
 ### The iPhone 12 reading of v1.2.9-alpha.3 - one gesture, one close (2026-10-16)
 
@@ -538,6 +538,9 @@ phones (the Mi 9T and the iPhone 12), before any stable carries it.** RC-9 close
 
 #### The writer switch for dev only (owner, 2026-11-02)
 
+**Superseded by the production flip for `1.7.0` ([21.1](#211-the-switch-and-the-flip-pr)): the line is
+`true` in every build. What follows is the dev-only period's history.**
+
 The owner's decision of 2026-11-02: the switch turns on **for dev only**, once the bench readings pass;
 production stays off until he says so. **Mechanism: the build's environment, the precedent of
 `CALLS_ENABLED`'s lot 1.** `CHAT_REEL_WRITER_ENABLED = deployEnvironment() === 'development'`: a
@@ -810,6 +813,13 @@ new field lives in the encrypted outbox payload.
   only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
   slot). A permanent failure that deletes the
   row (group deleted, eviction, an unpreparable take) releases it the same way.
+  **A cancel that lands while the preparation's row write is held** (`reelResume` test "A CANCEL DURING
+  THE PREPARATION'S WRITE", rewritten 2026-11-15 so the TEST holds and releases the write through a
+  promise, never an assertion inside the storage hook, which the outbox swallowed): the write lands
+  first under the take's lock, the settles of the withdrawn sends follow, the transfer is aborted
+  before the server stored anything, and the session it opened is released. Nothing is left on the
+  server. A cancel that arrives AFTER the last send reached the wire answers "too late" and keeps the
+  take as its sent record: that stored file is held for the sent message, not an orphan.
   **The release is owed in DURABLE STATE (2026-11-01, `utils/chat/uploadReleaseMarks.ts`).** The
   outbox's `releaseUpload` is `releaseUploadDurably`: the session id is written to ONE device-wide
   `localStorage` key (`canari_upload_release_marks`, `{ ownerId: uploadId[] }`, ids only, no key)
@@ -939,6 +949,12 @@ place that leaned on "one blob, one conversation" is designed below rather than 
 Nothing here changes the wire contract of RC-1: each target receives an ordinary reel `MediaMsg`.
 
 ### 15.1 The flow
+
+**Superseded on the screens by [section 22](#22-the-two-paths-owner-2026-11-16) (owner, 2026-11-16):**
+the tab's review holds "Publier" AND "Envoyer à..." (not "Envoyer à..." in place of "Suivant"), the
+sheet's search is at the top and its first row reads "Publier", and the in-conversation camera's
+direct "Envoyer" is now a button carrying the conversation's name beside "Ajouter des destinataires".
+What a press writes (one take, N sends, the publish step for the feed) is unchanged.
 
 ```
 /camera tab (ReelCapture destination="feed")
@@ -1201,7 +1217,12 @@ sender's own fan-out. **Decided by the owner on 2026-10-30, the recommended opti
 
 ### 15.8 The sheet's list
 
-- **Row one, always: "Publier sur CanaReels".** Disabled with the composer's mute sentence when
+**The order and the labels below are superseded by [section 22](#22-the-two-paths-owner-2026-11-16)**
+(owner, 2026-11-16): the search first, a "CanaReels" section whose one row reads "Publier", then
+"Récents", then every other group and DM alphabetically; a group's row names a few members. The
+filters, the cap, the mute and block reads are as written here.
+
+- **Row one, always: "Publier sur CanaReels"** (labelled "Publier" since 2026-11-16). Disabled with the composer's mute sentence when
   the member is muted where it would publish (the check `publishReel` makes, asked when the sheet
   opens; the server answers again at the publish).
 - **Then one list in the conversation list's own order** (last activity first): DMs, groups and
@@ -1485,6 +1506,8 @@ unchanged (its conversation is the target, no sheet).
   carrying both `chatMaxDurationMs` and a usable `chatReelMaxTargets` (`chatReelTargetCap`, the smaller
   of the server's count and `REEL_TAKE_MAX_SENDS`; never a guessed number). A photo keeps "Suivant"
   (below). The review's action reads `reel_sendto_action`; the editor's Next goes to the sheet too.
+  **Superseded 2026-11-16 ([section 22](#22-the-two-paths-owner-2026-11-16)):** the review holds
+  "Publier" beside "Envoyer à...", and the editor's Next returns to that review.
 - **The sheet** (`ReelSendSheet.svelte`): its own history entry above the take's (Back returns to the
   review), the feed row first (disabled with its own sentence when the mute check says muted - asked
   once at open, the server answers again at the publish), a local search, one list in the conversation
@@ -1537,6 +1560,8 @@ adoption BEFORE `createPost`, Back after the sends, no host), `useMessaging.reel
 - **A photo from the tab through the sheet** (D-photo, 15.1): the outbox take is video-only
   (`MediaKind` video, `prepare: 'chat-reel'`); a photo send needs the take to carry an image and an
   `ephemeral` upload, a change to RC-13's rows. Until then a photo keeps "Suivant" and publishes.
+  **Built 2026-11-16 another way ([section 22](#22-the-two-paths-owner-2026-11-16)):** a photo is
+  sent as ordinary image messages, one per conversation, with no take row.
 - **Salons** wait for RC-8.
 - **"Suivant" is not renamed in the iOS/Android native strings** - nothing native changed.
 - **Owed**: the RC-9 hardware pass (the sheet on both phones, one take to a DM and a group, the feed
@@ -1602,6 +1627,22 @@ both reach production in the same flip, because they are ONE switch.
   with `chatReelWriter.test.ts` pinning it, in its own pull request, cut into a stable after a
   pre-release read on both phones. No server switch exists (the server mode of section 7 was not
   chosen).
+- **THE FLIP IS MERGED FOR `1.7.0` (2026-11-16): `CHAT_REEL_WRITER_ENABLED = true`, a constant.** Every
+  build films a CanaReel in a DM or a group and offers "Envoyer a..." on the camera tab - production
+  web and every stable store build included; a salon keeps its photo-only camera. The stable carries
+  it only if the flip is merged BEFORE the last `1.7.0` pre-release is cut (a compiled switch). Pinned
+  by `chatReelWriter.test.ts` (every `VITE_DEPLOY_ENVIRONMENT` label, production's unset value first,
+  turns it on; a salon never), `ReelCapture.sendTo.svelte.test.ts` (the real switch offers the sheet)
+  and `ChatComposer.attachMenu.svelte.test.ts` (a DM's camera reads the chat cap, a salon's does
+  not). **Preconditions re-read for the flip:** the readers at the floor - MET, both estates serve
+  `minClientVersion` `1.6.6` (read 2026-11-16), above the reader (`v1.2.2`), the push line
+  (`v1.3.1`) and the "CanaReel supprime" tombstone (`v1.6.3`), so no admitted client meets a reel
+  message it cannot draw and no legacy fallback text is owed ([legacy-compatibility](../../legacy-compatibility.md));
+  the floor need not move; the server half (RC-14 holds, `chatMaxDurationMs`, `chatReelMaxTargets`)
+  is in the `v1.6.12` production stable. **What the flip does not settle:** the 13 readings of 21.4
+  were not recorded when it was merged - they are owed on a `1.7.0` pre-release carrying it, and
+  nothing in this pull request claims them. No production kill switch exists short of a release
+  setting the line back to `false`.
 - **#2861 is NOT the flip PR any more, and must be closed and rebuilt.** It was opened on 2026-11-01
   before #2913: it stacks #2858 (the chat profile) and #2860 (the durable session release), both
   merged since, and flips the switch to a bare `true` over a line that has been rewritten - its diff
@@ -1625,7 +1666,7 @@ both reach production in the same flip, because they are ONE switch.
 | 11 | **`reel_sendto_same_as_post`** - the sheet says the chats get the published video itself when both are ticked (15.5 point 4) | **BUILT 2026-11-08** (21.3) |
 | 12 | RC-0 re-run at the chat profile | phone A measured (section 20: 7.3 MB in 24 s); phone B owed its split and output size (21.4, row 1) - a device measurement, nothing CI can run |
 | 13 | The bench readings | 21.4 |
-| - | **Not before the flip, said plainly** | **salons** (RC-8: the client salon send of a reel, D-salons-later) - the sheet lists no salon and the chat camera films in none, so no salon row can be read before RC-8; **a photo through the sheet** (D-photo: the take is video-only, a photo keeps "Suivant"); the caption on chat sends (none in v1, 15.1). None is a regression the flip creates |
+| - | **Not before the flip, said plainly** | **salons** (RC-8: the client salon send of a reel, D-salons-later) - the sheet lists no salon and the chat camera films in none, so no salon row can be read before RC-8; **a photo through the sheet** (D-photo: BUILT 2026-11-16 as ordinary image messages, section 22); the caption on chat sends (none in v1, 15.1). None is a regression the flip creates |
 
 ### 21.3 What was built on 2026-11-08 (the code items of 21.2)
 
@@ -1676,9 +1717,96 @@ each phone as the sender** unless it says otherwise; evidence in section 20's sh
 | 8 | **A moderator's purge, everywhere**: row 3's take, its feed post deleted by an ADMIN | the tile in G and the DM, tapped, reads "CanaReel supprimé", still so after a relaunch with the network cut - the RC-6 row section 20 could not produce (a feed moderation purges every hold, 15.4) |
 | 9 | **Weak network**: airplane toggles during "Envoi" of a 3-target take, then a kill mid-upload and a relaunch | each Retry resumes (`[UPLOAD-RESUME] ... the server holds k/n`), ONE object on the server, each send goes once |
 | 10 | **A kill during "Préparation NN %"**, relaunch | the take is prepared again, its sends wait, nothing is sent twice |
-| 11 | **The chat camera's single send** (in a DM, then in G) | unchanged: the ring stops at 60 s, one bubble, plays on the other phone |
+| 11 | **The chat camera's single send** (in a DM, then in G) - **RETAKE on section 22's screens** | the camera's header reads "Envoyer à" and the conversation; the ring stops at 60 s; the review's button carrying the conversation's name sends one bubble that plays on the other phone; "Ajouter des destinataires" opens the sheet with that conversation ticked, and a second target ticked there sends ONE take to both and returns to the conversation |
 | 12 | **The lock screen** (B-reel) for a take sent to G, B's app killed | "CanaReel" in FR and EN, under G's title |
 | 13 | **No salon is offered** | no salon in the sheet; a salon's camera still takes photos only |
 
 **The salon rows (a salon target, a salon moderator's purge read as a tombstone in a DM) wait for
 RC-8** and are not preconditions of this flip (D-salons-later).
+
+**Retaken on the screens of section 22 (2026-11-16).** The redesign moved the buttons and the list,
+not the outbox, the server or the push, so a row whose pass condition reads only those stands where
+it was read. **Rows 2, 3, 11 and 13 must be (re)taken on a pre-release carrying section 22**: 2 and 3
+press through the new review ("Envoyer à...", and "Publier" beside it) and the new list (sections,
+the "Publier" row, the "same as post" sentence); 11 is the conversation camera, whose review is new
+(its pass line above is rewritten); 13 reads the sheet's list and the salon camera. **Rows 1, 4 to 10
+and 12 are not retaken for the redesign**: a reading already taken on `1.7.0-alpha.5` (rows 1 and 12,
+iPhone 12) stands; one not yet taken is simply taken on the new screens. **Row 2 is retaken with a
+PHOTO too** (D-photo): a photo from the tab to a DM and G arrives in each as an ordinary image. An "Envoyer à..." reading
+the bench cannot stage falls under decision (20) of the owner's 2026-11-16 list and is deleted with
+a dated line; a real defect still blocks the flip.
+
+## 22. The two paths (owner, 2026-11-16)
+
+**Decided by the owner on 2026-11-16 from Snapchat's screens** (relayed in French): ONE review screen
+and ONE list; only the review's buttons depend on where the camera was opened. All of it is behind
+`CHAT_REEL_WRITER_ENABLED` - with the switch off (production) the tab's review is the one "Suivant"
+and the conversation camera takes photos, as before, and both are pinned by tests. This section
+supersedes the screens of 15.1, 15.8 and 19; what a press writes (one take, N sends, the publish step
+and its one file) is unchanged.
+
+| | Path 1 - film first, choose after | Path 2 - choose first, film after |
+| --- | --- | --- |
+| Opened from | the CanaReels tab (`/camera`, `destination="feed"`) | a conversation's composer camera (`CameraOverlay`, `destination="chat"`, a DM or a group) |
+| The camera | no recipient shown | a header "Envoyer à" with the conversation's name under it (`CameraScreen` `title`) |
+| The review of a video | secondary "Publier" (the publish step, what "Suivant" did); primary "Envoyer à..." (accent) opening the list. No save button | secondary "Ajouter des destinataires" opening the SAME list with this conversation ticked; primary = the conversation's name and a send arrow (accessible name "Envoyer à <name>"), sending there in one tap exactly as the direct "Envoyer" did (the take handed back, RC-5 queues it). No publish button |
+| A photo | the SAME review, "Publier" and "Envoyer à..." (D-photo, owner 2026-11-16); each chosen conversation gets an ORDINARY image message | keeps "Ajouter" (staged in the composer) |
+| After a send from the list | the camera is free again | the camera closes back onto the conversation |
+| "Publier" ticked | the publish step, then the feed | the publish step, then the camera closes back onto the conversation (`ReelPublishSheet` `onpublishedHere`), no navigation to the feed |
+
+- **A photo from the tab (D-photo, confirmed by the owner 2026-11-16)** takes the same review and the
+  same list. Its chat sends are NOT a take: the host's `sendImage` (`useMessaging.sendImageTo`)
+  prepares it once (the chat compression, its size and placeholder) and hands it to each chosen
+  conversation through the composer's own path (`handleSendChat` with `files`: an ordinary image
+  message, durably queued at the tap, the conversation's staging untouched). One upload per
+  conversation - a photo is small, and the one-file sharing (15.5) is the outbox's VIDEO take, which an
+  image does not enter; with "Publier" ticked too, the post is its own upload and the sheet does not
+  say "the published video itself". A conversation not held here is skipped, a sign-out during the
+  preparation sends nothing. **Each send is made `elsewhere`** (`handleSendChat` `opts.elsewhere`,
+  adversarial review 2026-11-17): the photo was not written in that conversation's composer, so the
+  reply armed there stays armed (it used to be consumed and the photo went out as an answer to it), a
+  refused file is never re-staged into it, no banner is raised on the conversation on screen, and the
+  answer is exact - `true` only when the file was queued (a file-only send used to answer `undefined`
+  either way, so a refused conversation was counted as sent). A refusal in some conversations is said
+  in a toast naming how many it missed (`reel_sendto_photo_partial`), and the take ends all the same:
+  the photo is already in the others. One send tone for the whole press.
+- **A ticked target's chip is named from the FULL list** (`listed`, the rows with no search), never
+  from the rows the search keeps: a target the search hid used to fall back to the conversation's
+  stored name, a raw id for a DM (iPhone 12 reading, 2026-11-16).
+- **The list** (`ReelSendSheet.svelte`, built on the share picker's rows - owner: *"reprendre le travail
+  déjà utilisé pour share"*): the search at the top; a "CanaReels" section with the one row "Publier"
+  (not "Publier sur CanaReels" - owner: *"on peut juste faire Publier"*); "Récents", the first
+  `REEL_SEND_RECENT_COUNT` (6) conversations by last activity; then "Groupes et discussions", every other
+  one alphabetically (`reelSendSections`). A typed search is one untitled list of the matches,
+  alphabetical, "Publier" still first. Round ticks on the right, multi-select, footer chips and
+  "Envoyer (N)". **A group's row names a few members** (three, never this account), read from this
+  device's LOCAL MLS trees through the host's `groupMembers` (`getGroupMemberIdentities`, no server
+  call) and only for an `active` group. **One batch for every listed group, read once MLS is ready**
+  (`readGroupMembersOnceReady` awaits `whenMlsReady`): a sheet opened while the login still runs asks
+  no tree until it can be answered, a session ending first costs one debug line, and the groups whose
+  tree this device lacks are said in ONE warn line for the batch, never one per group (review,
+  2026-11-17). **One name lookup per distinct member**, whatever groups they share, not three per group.
+- **One list component, two users.** `components/shared/ConversationPickList.svelte` draws the search,
+  the titled sections and the rows (avatar, name, community or subtitle, a trailing mark the caller
+  draws); it decides nothing (rows, order, role, disabled state and the tap are the caller's).
+  `ForwardMessageModal` uses it with ONE untitled section and its own arrow; its behaviour is
+  unchanged, and `ForwardMessageModal.svelte.test.ts` was run against the component before AND after
+  the refactor (7 of 7 both times). The list can draw a salon row (the forward picker does); the reel
+  sheet lists none until RC-8 ([reels-in-salons](../../backlog.d/reels-in-salons.md), `1.7.1`).
+- **Every rule of the sheet holds**: the cap (`chatReelTargetCap`; a pre-ticked conversation counts),
+  the mute check on "Publier", the 60 s limit and the silenced take withholding the chats, the block
+  read, one upload shared by every target, "Supprimer partout".
+- **The editor's Next returns to the review** whenever it holds two ways on, so the member chooses
+  there; switch off it opens the publish step as before.
+- **Not wanted** (owner): a camera icon on each row of the conversation list; a save button on the
+  review.
+- **Tests**: `ReelCapture.sendTo.svelte.test.ts` (both paths, the switch off on each, the one-tap
+  send, the pre-tick, "Publier" from a conversation staying there, no target count served),
+  `useMessaging.imageTo.svelte.test.ts` (a photo as one ordinary image message per held
+  conversation, the staging untouched, a sign-out), `ReelSendSheet.svelte.test.ts` (search on top, sections and order, the "Publier" label, the pre-tick,
+  the group subtitles), `ReelReview.svelte.test.ts` (one action vs two, the send glyph),
+  `reelSendTargets.test.ts` (`reelSendSections`, `reelSendKeyOf`, `userIdsOfIdentities`,
+  `readGroupMembersOnceReady`),
+  `ForwardMessageModal.svelte.test.ts` (the factored list, behaviour unchanged).
+- **Readings**: rows 2, 3, 11 and 13 of [21.4](#214-the-bench-readings-before-the-flip) are taken on
+  these screens; the others stand.

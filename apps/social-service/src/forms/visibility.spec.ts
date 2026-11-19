@@ -5,6 +5,7 @@ import {
   type ConditionalItem,
 } from './visibility';
 import type { PricingFacts } from '../pricing/audience';
+import { factsOf } from '../pricing/facts.it-fixture';
 
 /**
  * Server-side question visibility, which did not exist before the pricing grid needed it.
@@ -15,13 +16,7 @@ import type { PricingFacts } from '../pricing/audience';
  * to a hidden question was accepted and its price modifier charged.
  */
 describe('question visibility', () => {
-  const facts = (over: Partial<PricingFacts> = {}): PricingFacts => ({
-    promo: null,
-    formation: null,
-    cotisationTiers: [],
-    answers: {},
-    ...over,
-  });
+  const facts = factsOf;
 
   const ids = (items: ConditionalItem[], f: PricingFacts) => [...visibleItemIds(items, f)];
 
@@ -33,6 +28,28 @@ describe('question visibility', () => {
     const items: ConditionalItem[] = [{ id: 'q1', showIf: { formation: { values: ['ICM'] } } }];
     expect(ids(items, facts({ formation: 'ICM' }))).toEqual(['q1']);
     expect(ids(items, facts({ formation: 'ISMIN' }))).toEqual([]);
+  });
+
+  // D32: a question shown to any of a person's cursus is shown to them.
+  it('shows a question through the SECOND cursus', () => {
+    const items: ConditionalItem[] = [
+      { id: 'q1', showIf: { formation: { values: ['ICM'] }, promo: { values: [2025] } } },
+    ];
+    const twoCursus = (second: { formation: string; promo: number }) =>
+      facts({ cursus: [{ formation: 'ISMIN', promo: 2023 }, second] });
+    expect(ids(items, twoCursus({ formation: 'ICM', promo: 2025 }))).toEqual(['q1']);
+    // Promo of one cursus, formation of the other: not shown.
+    expect(
+      ids(
+        items,
+        facts({
+          cursus: [
+            { formation: 'ICM', promo: 2023 },
+            { formation: 'ISMIN', promo: 2025 },
+          ],
+        })
+      )
+    ).toEqual([]);
   });
 
   it('honours the legacy dependsOn pair exactly as showIf.answer', () => {

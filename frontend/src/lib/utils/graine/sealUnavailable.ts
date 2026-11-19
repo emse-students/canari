@@ -16,6 +16,9 @@
  *   sealing, it is locked or signed out, it cannot be asked, or it failed (`channelSeal.ts`).
  * - `main-tab-key-changed`: the leader tab could not open what this follower sealed for it - the
  *   device key changed in between (a PIN change); nothing was sealed.
+ * - `main-tab-lead-lost`: the leader tab lost the lead before sealing what this follower handed it
+ *   (a freeze, a handover) - or, in the leader tab itself, during its OWN seal's reservation; nothing
+ *   was sealed, and the gesture can be made again.
  * - `tab-reloading`: this tab has just become the leader and reloads to read the MLS state as it now
  *   stands; until then it may not seal, and no other tab would seal for it.
  */
@@ -31,6 +34,7 @@ export type GraineSealUnavailableReason =
   | 'main-tab-not-delegable'
   | 'main-tab-failed'
   | 'main-tab-key-changed'
+  | 'main-tab-lead-lost'
   | 'tab-reloading';
 
 /**

@@ -73,6 +73,19 @@ describe('GET /users/batch', () => {
     expect(JSON.stringify(answer.deleted)).not.toMatch(/firstName|displayName/);
   });
 
+  it('names a malformed id apart: never deleted, never queried, never echoed in the log', async () => {
+    const { controller, find } = makeController([row('alive')]);
+    const warn = jest.spyOn(controller['logger'], 'warn').mockImplementation(() => undefined);
+
+    const answer = await controller.findMany('alive,Jean Dupont,a:b,gone', 'viewer');
+
+    expect(answer.deleted).toEqual(['gone']);
+    expect(answer.malformed).toEqual(['Jean Dupont', 'a:b']);
+    expect(JSON.stringify(find.mock.calls)).not.toContain('Jean Dupont');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).not.toContain('Jean');
+  });
+
   it('answers an empty deleted list when every id is live', async () => {
     const { controller } = makeController([row('a')]);
 

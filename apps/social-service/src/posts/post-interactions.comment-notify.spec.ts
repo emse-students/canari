@@ -14,7 +14,7 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  * is the author of the row either way.
  */
 describe('PostInteractionsService.addComment notifications', () => {
-  function makeService(post: Record<string, unknown>) {
+  function makeService(post: Record<string, unknown>, authorTold = true) {
     const created: Array<{ recipientId: string; type: string }> = [];
     const notifications = {
       createNotification: jest.fn((n: { recipientId: string; type: string }) => {
@@ -30,13 +30,37 @@ describe('PostInteractionsService.addComment notifications', () => {
       ),
       // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+      // The author's door, proven in `entity-author-door.integration.spec.ts`.
+      postAuthorIsTold: jest.fn(() => Promise.resolve(authorTold)),
+      // The post's author: ONE notification per post (owner, 2026-11-14), its alert-or-quiet claim
+      // proven in `post-activity-notice.integration.spec.ts`. Here it writes the row and pushes as
+      // the first comment of an unread post does (the collapse fields are that spec's).
+      notifyPostActivity: jest.fn(),
     };
-    const push = { notifyContent: jest.fn(() => Promise.resolve()) };
+    const push = { notifyContent: jest.fn((..._args: unknown[]) => Promise.resolve()) };
+    notifications.notifyPostActivity.mockImplementation(
+      async (n: {
+        recipientId: string;
+        type: string;
+        postId: string;
+        content: (others: number) => unknown;
+        pushData?: Record<string, string>;
+      }) => {
+        await notifications.createNotification(n);
+        await push.notifyContent(n.recipientId, n.content(0), {
+          type: 'social',
+          postId: n.postId,
+          ...n.pushData,
+        });
+        return { alert: true, others: 0 };
+      }
+    );
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
       manager: lockedCommentsManager(post as { comments?: unknown[] }),
     };
+    const holdersOf = jest.fn(() => Promise.resolve([] as string[]));
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
       notifications as unknown as PostNotificationsService,
@@ -44,10 +68,10 @@ describe('PostInteractionsService.addComment notifications', () => {
       {} as PostMediaRetentionService,
       {
         serve: jest.fn((c: unknown[]) => Promise.resolve(c)),
-        holdersOf: jest.fn(() => Promise.resolve([] as string[])),
+        holdersOf,
       } as unknown as CommentIdentityService
     );
-    return { service, created, push, notifications };
+    return { service, created, push, notifications, holdersOf };
   }
 
   /** The notification block is fire-and-forget: let its microtasks finish. */
@@ -67,6 +91,30 @@ describe('PostInteractionsService.addComment notifications', () => {
         expect.objectContaining({ recipientId: 'author', type: 'comment' }),
       ]);
     }
+  });
+
+  it("tells nothing to the writer of an entity's post who is no longer a member there, and nothing in the bell either", async () => {
+    const { service, created, push, notifications } = makeService(
+      { id: 'p1', authorId: 'author', associationId: 'asso-1', comments: [] },
+      false
+    );
+    await service.addComment('p1', { userId: 'reader', text: 'hello' });
+    await flush();
+    expect(notifications.postAuthorIsTold).toHaveBeenCalledWith('p1');
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
+  });
+
+  it("a reaction tells the departed writer of an entity's post nothing either", async () => {
+    const { service, created, push } = makeService(
+      { id: 'p1', authorId: 'author', associationId: 'asso-1', comments: [], reactions: {} },
+      false
+    );
+    (service as unknown as { evaluateTrend: () => void }).evaluateTrend = () => undefined;
+    await service.addReaction('p1', 'reader', 'like');
+    await flush();
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
   });
 
   it('never notifies the author of their own comment', async () => {
@@ -145,7 +193,7 @@ describe('PostInteractionsService.addComment notifications', () => {
     expect(order).toEqual(['comment', 'reply', 'mention', 'trend']);
   });
 
-  it('asks the daily cap for every push, and a comment beyond it keeps its row only (owner, 2026-11-10)', async () => {
+  it('tells the post author through the per-post notice, never the daily cap; replies and mentions ask the cap (owner, 2026-11-14)', async () => {
     const { service, push, notifications } = makeService({
       id: 'p1',
       authorId: 'author',
@@ -153,21 +201,116 @@ describe('PostInteractionsService.addComment notifications', () => {
       comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
     });
     notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
-    // The budget the real table answers: a comment is counted (and spent here), a reply and a
-    // mention are not.
-    notifications.withinPushBudget.mockImplementation((type: string, ids: string[]) =>
-      Promise.resolve(type === 'comment' ? [] : ids)
-    );
     await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
     await flush();
     expect(notifications.withinPushBudget.mock.calls.map(([type]) => type).sort()).toEqual([
-      'comment',
       'mention',
       'reply',
     ]);
-    expect(notifications.createNotification).toHaveBeenCalledTimes(3);
+    expect(notifications.notifyPostActivity).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyPostActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientId: 'author', type: 'comment', postId: 'p1' })
+    );
     const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
-    expect(sent.map(([to]) => to).sort()).toEqual(['mentioned', 'parent-author']);
+    expect(sent.map(([to]) => to).sort()).toEqual(['author', 'mentioned', 'parent-author']);
+  });
+
+  it("a reply to the author's own comment, or a mention of them, rings of its own, outside the fold (owner, 2026-11-15)", async () => {
+    const reply = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    await reply.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(reply.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(reply.created).toEqual([
+      expect.objectContaining({ recipientId: 'author', type: 'reply' }),
+    ]);
+    expect(reply.push.notifyContent).toHaveBeenCalledTimes(1);
+
+    const mention = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [],
+    });
+    mention.notifications.resolveMentionedUserIds.mockReturnValue(['author']);
+    await mention.service.addComment('p1', { userId: 'reader', text: '@[author]' });
+    await flush();
+    expect(mention.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(mention.created).toEqual([
+      expect.objectContaining({ recipientId: 'author', type: 'mention' }),
+    ]);
+  });
+
+  it('a reply to a comment written for an association the author holds is a reply to the author', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'someone', associationId: 'asso-1', parentId: null }],
+    });
+    t.holdersOf.mockResolvedValue(['author']);
+    await t.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(t.created).toEqual([expect.objectContaining({ recipientId: 'author', type: 'reply' })]);
+    expect(t.holdersOf).toHaveBeenCalledTimes(1);
+  });
+
+  it('the author mentioned inside a reply to someone else gets exactly one mention', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'other', parentId: null }],
+    });
+    t.notifications.resolveMentionedUserIds.mockReturnValue(['author']);
+    await t.service.addComment('p1', { userId: 'reader', text: '@[author]', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.notifyPostActivity).not.toHaveBeenCalled();
+    expect(t.created.filter((n) => n.recipientId === 'author')).toEqual([
+      expect.objectContaining({ type: 'mention' }),
+    ]);
+    expect(t.created.filter((n) => n.recipientId === 'other')).toEqual([
+      expect.objectContaining({ type: 'reply' }),
+    ]);
+  });
+
+  it('a reply to the author asks the push budget (category switch): row kept, no push when refused', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    t.notifications.withinPushBudget.mockResolvedValue([]);
+    await t.service.addComment('p1', { userId: 'reader', text: 'hi', parentId: 'parent' });
+    await flush();
+    expect(t.notifications.withinPushBudget).toHaveBeenCalledWith('reply', ['author']);
+    expect(t.created).toHaveLength(1);
+    expect(t.push.notifyContent).not.toHaveBeenCalled();
+  });
+
+  it('an anonymous reply to the author stays masked in the row', async () => {
+    const t = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'author', parentId: null }],
+    });
+    await t.service.addComment('p1', {
+      userId: 'reader',
+      text: 'hi',
+      parentId: 'parent',
+      anonymous: true,
+    } as never);
+    await flush();
+    expect(t.created).toHaveLength(1);
+    expect(t.created[0]).toEqual(expect.objectContaining({ recipientId: 'author', type: 'reply' }));
+    expect((t.created[0] as unknown as { actorId: string }).actorId).not.toBe('reader');
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
@@ -272,9 +415,11 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
     process.env.SERVICE_ACCOUNT_USER_ID = cohort;
     try {
       const notifications = {
-        createNotification: jest.fn(() => Promise.resolve()),
+        notifyPostActivity: jest.fn(() => Promise.resolve({ alert: true, others: 0 })),
         resolveActorName: jest.fn(() => Promise.resolve('Actor')),
         withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
+        // A personal post: its author's door holds (`entity-author-door.integration.spec.ts`).
+        postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
       };
       const push = { notifyContent: jest.fn(() => Promise.resolve()) };
       const post = { id: 'p1', authorId: 'author', reactions: {} };
@@ -293,12 +438,18 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
       );
       await service.addReaction('p1', 'reader', 'Rire');
       await flush();
-      expect(notifications.createNotification).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
-      expect(push.notifyContent).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
-      // The daily cap is asked before the push, and only when there is one to send.
-      expect(notifications.withinPushBudget.mock.calls).toEqual(
-        cohort === '' ? [['reaction', ['author']]] : []
-      );
+      // ONE notification per post, never the daily cap (owner, 2026-11-14).
+      const told = [
+        expect.objectContaining({
+          recipientId: 'author',
+          type: 'reaction',
+          postId: 'p1',
+          actorId: 'reader',
+        }),
+      ];
+      expect(notifications.notifyPostActivity.mock.calls).toEqual(cohort === '' ? [told] : []);
+      expect(notifications.withinPushBudget).not.toHaveBeenCalled();
+      expect(push.notifyContent).not.toHaveBeenCalled();
     } finally {
       if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = saved;

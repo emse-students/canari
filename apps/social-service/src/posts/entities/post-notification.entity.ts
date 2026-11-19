@@ -30,9 +30,11 @@ export class PostNotification {
   actorName: string;
 
   /**
-   * Set only for `type === 'association_post'`. `actorId` on this row is the PUBLISHING MEMBER,
-   * not the association - see `PostAnnounceScheduler.announceAssociationPost`'s own docblock for
-   * why - so the association's own identity has nowhere else to live on this row.
+   * The association the row speaks for - an `association_post` or `association_repost`, a mention
+   * in an association's post, a proposal, a booking, an association's live. On the first two
+   * `actorId` is the MEMBER who acted in its name (see
+   * `PostAnnounceScheduler.announceAssociationPost`): stored, never served
+   * (`withholdPublishingMember`). A mention in an association's post stores no member at all.
    */
   @Column({ nullable: true })
   associationId: string | null;

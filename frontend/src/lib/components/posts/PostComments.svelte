@@ -57,7 +57,7 @@
     onDeleteComment: (commentId: string) => Promise<void>;
     /** Called when the user reports a comment. */
     onReport?: (commentId: string) => void;
-    /** Bearer token forwarded to PostImage for decrypting comment media. */
+    /** Bearer token forwarded to the comment media for decrypting comment media. */
     authToken?: string;
     /** Reads the next page of older threads; the "older comments" button and the sorts call it. */
     onLoadOlder?: () => Promise<void>;
@@ -90,6 +90,13 @@
     focusCommentId?: string;
     /** Put the caret in the box when the thread opens (the "write a comment" tap, an empty thread). */
     autofocusComposer?: boolean;
+    /**
+     * READ-ONLY: the reader may read the thread but not act in it - a moderator (a platform
+     * admin, a BDE moderator in scope) reading a post outside their own audience to moderate it
+     * (`canParticipate` false, 2026-11-14; owner, 2026-11-15). No composer, and every
+     * comment drawn read-only (`CommentItem`).
+     */
+    readOnly?: boolean;
   }
 
   let {
@@ -115,6 +122,7 @@
     pendingCommentIds,
     focusCommentId,
     autofocusComposer = false,
+    readOnly = false,
   }: Props = $props();
 
   /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
@@ -126,7 +134,8 @@
       // Deleted since the push, or not in this list: the thread is shown from the top, and the log
       // says why the page did not move.
       Log.d(
-        `[PostComments] focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
+        'PostComments',
+        `focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
       );
       focusHandled = id;
       return;
@@ -134,7 +143,7 @@
     focusHandled = id;
     void tick().then(() => {
       const el = document.getElementById(commentAnchorId(id));
-      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} found=${el !== null}`);
+      Log.d('PostComments', `focus comment ${id.slice(0, 8)} found=${el !== null}`);
       el?.scrollIntoView({ block: 'center' });
     });
   });
@@ -192,7 +201,8 @@
     const target = comments.find((c) => c.id === commentId);
     if (!target) {
       Log.d(
-        `[PostComments] draft reply target ${commentId.slice(0, 8)} is gone - draft kept as a comment`
+        'PostComments',
+        `draft reply target ${commentId.slice(0, 8)} is gone - draft kept as a comment`
       );
       return;
     }
@@ -306,6 +316,7 @@
               onEdit={onEditComment}
               onDelete={onDeleteComment}
               {onReport}
+              {readOnly}
             />
           </div>
         {/each}
@@ -325,26 +336,28 @@
     {/if}
   </div>
 
-  <!-- Input area. -->
-  <div class="shrink-0 pt-2">
-    <CommentComposer
-      bind:this={composer}
-      {postId}
-      value={commentText}
-      onChange={(text) => onCommentTextChange(text)}
-      placeholder={replyingToId
-        ? m.post_reply_placeholder()
-        : comments.length === 0
-          ? m.post_first_comment_placeholder()
-          : m.post_comment_placeholder()}
-      submitting={submittingComment}
-      {currentUserId}
-      replyTo={replyingToId ? { id: replyingToId, name: replyingToName } : null}
-      onCancelReply={cancelReply}
-      onRestoreReply={restoreReply}
-      onSubmit={handleSend}
-      {sendError}
-      {onKeyDown}
-    />
-  </div>
+  <!-- Input area: none on a read-only thread. -->
+  {#if !readOnly}
+    <div class="shrink-0 pt-2">
+      <CommentComposer
+        bind:this={composer}
+        {postId}
+        value={commentText}
+        onChange={(text) => onCommentTextChange(text)}
+        placeholder={replyingToId
+          ? m.post_reply_placeholder()
+          : comments.length === 0
+            ? m.post_first_comment_placeholder()
+            : m.post_comment_placeholder()}
+        submitting={submittingComment}
+        {currentUserId}
+        replyTo={replyingToId ? { id: replyingToId, name: replyingToName } : null}
+        onCancelReply={cancelReply}
+        onRestoreReply={restoreReply}
+        onSubmit={handleSend}
+        {sendError}
+        {onKeyDown}
+      />
+    </div>
+  {/if}
 </div>

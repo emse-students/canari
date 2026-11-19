@@ -25,6 +25,7 @@ import { parsePublicSpaceParam } from '../spaces/public-space';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
+import { RouteParams } from '../common/route-params';
 
 /**
  * Public projection of an association/list for the read-only showcase.
@@ -82,8 +83,11 @@ function toPublic(
   };
 }
 
-/** A card of the published carte, with the photo address of the public roster row behind it. */
-export type PublicCarteCard = PublishedCarteCard & { avatarUrl: string | null };
+/**
+ * A card of the published carte as served without an account: the photo address of the public
+ * roster row behind it, and NOT the account id the stored card is joined by.
+ */
+export type PublicCarteCard = Omit<PublishedCarteCard, 'userId'> & { avatarUrl: string | null };
 
 /** The published carte as served without an account: every card carries {@link PublicCarteCard}. */
 export type PublicCarteResponse = Omit<PublishedCarteResponse, 'units'> & {
@@ -120,6 +124,7 @@ function answerNoPhoto(res: Response): void {
  * The listing of recent posts that used to sit here was closed then. Route by route:
  * docs/wiki/anonymous-surface.md.
  */
+@RouteParams({ id: 'uuid', slug: 'opaque', memberId: 'opaque', postId: 'opaque' })
 @Controller('public')
 export class PublicController {
   private readonly logger = new Logger(PublicController.name);
@@ -148,12 +153,15 @@ export class PublicController {
   /**
    * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
    *
-   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps, among rows of type `association`, only
-   * those whose audience reaches the space - a carte's set of that space, plus its archived ones,
-   * which the showcase lists in its archived section (`spaces/public-space.ts`); lists and
-   * institutions are not filtered by it. The portail-etu showcase sends its space; without the
-   * parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap and SEO read
-   * it too. A malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`).
+   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps only the rows whose audience reaches the
+   * space, archived ones included - which the showcase lists in its archived section
+   * (`spaces/public-space.ts`). EVERY TYPE since 2026-11-14 (owner: "Filtrer comme les assos"): a
+   * list or an institution that does not address the space is left out like an association.
+   * Without the parameter the answer is the COMPLETE list, unchanged and FOR GOOD: Canari's own
+   * sitemap and SEO read it that way, so it is not a shim. The portail-etu showcase names its space
+   * for the directory from its `v1.0.9` only (measured 2026-11-14: its `v1.0.8` named it for the
+   * carte alone, and so listed every campus). A malformed `space` is a typed 400
+   * (`PUBLIC_SPACE_INVALID`).
    */
   @Get('associations')
   async listAssociations(
@@ -169,27 +177,22 @@ export class PublicController {
     const rows = await this.associations.list(filter);
     if (!space) return rows.map(toPublic);
     const offered = await this.associations.offeredInSpace(space);
-    return rows.filter((a) => a.type !== 'association' || offered.has(a.id)).map(toPublic);
+    return rows.filter((a) => offered.has(a.id)).map(toPublic);
   }
 
   /**
    * One association/list by slug, with its public members.
    *
-   * With `?space=`, an association (type `association`, archived or not) whose audience does not
-   * reach the space answers 404, the
-   * same as an unknown slug: the showcase of a space must not render another space's association
-   * by URL. Without it, every association answers - Canari's own pages read it.
+   * With `?space=`, an entity of any type (archived or not) whose audience does not reach the space
+   * answers 404, the same as an unknown slug: the showcase of a space must not render another
+   * space's association, list or institution by URL. Without it, every association answers - Canari's own pages read it.
    */
   @Get('associations/slug/:slug')
   async getBySlug(@Param('slug') slug: string, @Query('space') rawSpace?: unknown) {
     const space = parsePublicSpaceParam(rawSpace, 'GET public/associations/slug');
     this.logger.debug(`public getBySlug ${slug}`);
     const a = await this.associations.findBySlug(slug);
-    if (
-      space &&
-      a.type === 'association' &&
-      !(await this.associations.offeredInSpace(space)).has(a.id)
-    ) {
+    if (space && !(await this.associations.offeredInSpace(space)).has(a.id)) {
       this.logger.debug(
         `public getBySlug ${slug}: not offered by ${space.formation}:${space.campus} - 404`
       );
@@ -380,7 +383,7 @@ export class PublicController {
       }
     }
     // Each card's photo by its roster row, the address the public roster hands out. The card's
-    // `userId` is served beside it: the showcase keys its card list on that field.
+    // `userId` joins it here and is not served: the cards are drawn in order, keyed by nothing.
     const avatars = await this.associations.publicAvatarUrlsFor(
       carte.units.flatMap((u) =>
         u.cards.map((c) => ({ associationId: u.assoId, userId: c.userId }))
@@ -390,9 +393,9 @@ export class PublicController {
       ...carte,
       units: carte.units.map((u) => ({
         ...u,
-        cards: u.cards.map((c) => ({
-          ...c,
-          avatarUrl: avatars.get(`${u.assoId}:${c.userId}`) ?? null,
+        cards: u.cards.map(({ userId, ...card }) => ({
+          ...card,
+          avatarUrl: avatars.get(`${u.assoId}:${userId}`) ?? null,
         })),
       })),
     };

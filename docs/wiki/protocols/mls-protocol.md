@@ -706,6 +706,10 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   with the session (sign-out) and with the client (`destroy`). The holder's
   release sends no frame, and its Add commit lands BEFORE its release (the holder still persists,
   registers and sends Welcomes, 5-8 s), so the commit-applied wake alone would find the lock still up.
+- **A member's FIRST invitation refused by another device's add lock is owed the same way**
+  (`add-lock-owed`, 2026-11-17): recorded at the group's current epoch by `acquireAddLockAnswer`'s
+  `oweIfHeld` before the refusal arms its wake, and drained by the same events
+  ([chat](../frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
 - **The re-planner exists only on a RESTORED map** (`makeLostInvitationReplanner`, registered by
   `useConversations` after a restore that succeeded, removed at sign-out). It answers what happens to
   the entry (`ReplanVerdict`): a `pending` conversation, a row not there yet while the group is held,
@@ -978,6 +982,33 @@ sight.** The decision is Rust's (`frontend/mls-core/src/device_trust.rs`); the T
   Welcome, is absent. Never a device event and never shown. An empty answer is NOT SEEN, never
   "never happened". Rust
   `MlsManager::removal_epochs`, Tauri `epoques_departs`.
+- **Member sightings: `membershipEvidence(groupId, userId)`** (2026-11-14,
+  `mls-core/src/member_sightings.rs`). Every tree this device ACCEPTS records, per group and per
+  USER, the first epoch at which that user held a leaf of it: a Welcome's tree and the GroupInfo
+  tree of an external join it made (each signed by a member's leaf), both trees of every commit it
+  merges (the one the commit was built on at `epoch - 1`, the one it produced at `epoch`), a group it
+  creates, and every tree it holds at a load (idempotent). **Scoped to the LINEAGE the device holds**
+  (review of #3519): `forget_group` and every freshly joined tree (a Welcome, our own external join)
+  drop the group's sightings first, so epochs are only ever compared within one chain of trees and a
+  sighting from an earlier copy of the group - possibly a copy the server fabricated - never carries
+  into the next. **Retired is not proven** (owner, 2026-11-14): a commit by ANOTHER user that
+  removes every leaf of a user cancels that user's sighting, so their later entry alone is not
+  proven until a tree shows them again (a member's Add); a commit by the user's own device removing
+  their own leaves cancels nothing. A commit never removes its own sender, so a user's LAST leaf
+  always goes through another member's commit - a kick and a sweep of a revoked device alike - and
+  the own-device case keeps the sighting only while one of the user's devices stays in the tree. A
+  departure is therefore NOT evidence of membership, and none is folded in. A tree recovered from
+  orphan storage records nothing (it may be a refused join's tree). Kept in the sealed state
+  (`PersistedState.member_sightings`), so it follows the account's state through restarts, the
+  native background engine and an account switch. It answers `{ firstSeenEpoch, watchedFromEpoch }`:
+  the first sighting of the user and the first epoch the record covers for the group. A group
+  classified `Open` (a key group) records nothing FURTHER and KEEPS what it holds - that
+  classification follows what the server says of a group, so it must not erase evidence. Bounded by
+  the membership history of the conversations held: past 65536 sightings the load drops the groups no
+  longer held, a held group's are NEVER evicted (an evicted sighting is a member accused later), and
+  a WARN says when held groups alone pass it. `firstSeenEpoch: null` is NOT SEEN, never "never a
+  member". Rust `MlsManager::membership_evidence`, WASM `membership_evidence`, Tauri
+  `preuves_appartenance`.
 
 ### What each legitimate flow does
 
@@ -1360,13 +1391,52 @@ The user chose this (2026-10-23) for the group invitation link (`/g/join/<token>
 admit the person with no member involved. The Android background answer refuses such a request as
 `newcomer` and leaves it to the foreground's sweep. Only a GROUP conversation takes an ask
 (`askAMemberToAdmit`): a 1:1 conversation's `pending` rows and a key group's requests raise nothing -
-a DM ask's Add always failed and its Decline deleted the peer's own roster row. And only a seat the
-server holds AS an ask is asked about: the pending rows (`GET mls/invitations/pending`) and the roster
-read (`GET .../user-members`) carry `awaitingAdmission`, and a person absent from the tree whose seat
-is not flagged - a member's invite between its roster write and its Add, a seat written before
-migration 038, a member whose leaves were removed - is neither added nor asked about (logged "not an
-invitation-link ask"). A member's own invite brings such a person in. The line shows an ask only
-while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+a DM ask's Add always failed and its Decline deleted the peer's own roster row. The line shows an ask
+only while the chat page that answers it is mounted (`canAnswerJoinRequests`).
+
+**A seat that is not an ask is asked about too (step 2 of the fix-forward, 2026-11-19).** The pending
+rows (`GET mls/invitations/pending`) and the roster read (`GET .../user-members`) carry
+`awaitingAdmission`; a person absent from the tree whose seat is NOT flagged - a peer whose key
+package was skipped at creation, a member whose only device was revoked and swept, an only leaf
+evicted while the seat stands, a link seat written before migration 038 - used to be neither added
+nor asked about, so their own external commit was their only door, and the emission side of the
+fix-forward (below) would have stranded them. Such a person is now raised as the same card (owner,
+2026-11-17: "X veut rejoindre la conversation", Accepter / Refuser, no wording of its own), with no
+`askId` (the server names one only for a link ask). Two facts make it safe:
+
+- *The ask is raised only on a tree CONFIRMED at the server's epoch* (`readConfirmedTree`; the sweep's
+  per-pass `pendingAddFacts`, a fresh read for a `welcome_request`). Such a seat carries no flag a
+  commit lifts, so a member whose tree is behind the Add that just brought the person in would read
+  "no leaf" and raise a card for someone already in. An unconfirmed tree raises nothing this pass
+  ("not confirmed at the server's epoch: nobody is asked this pass"); a confirmed tree that holds the
+  person says the local tree was behind. Since ADM-3 no member's invite writes a seat before its
+  commit, so no Add in flight looks like such a seat.
+- *A Decline REMOVES the seat, on the member's proof* (owner, 2026-11-17). The Decline of an ask with
+  no `askId` reads the tree confirmed at the server's epoch and sends `{ treeEpoch }`, the epoch of
+  the tree the person is absent from (`declineJoinRequest` in `joinAnswers.ts`). Under the seat lock
+  - which every advance takes first - the server removes the seat as a removal does (`removeSeat`:
+  seat generation moved, roster row gone and its stretch closed, queued Welcomes and device rows
+  gone, eviction recorded) ONLY while `activeEpoch` is still `treeEpoch` (`removed`); once a commit
+  landed since, nothing is touched (`epoch-moved`) - never a removal of someone who may have just
+  come back in (`declineSeat`, `utils/group-membership.ts`). The client then reads the tree again and
+  sends the Decline ONCE more; a second `epoch-moved` is `raced` (the conversation moved under the
+  tap, the card stays). A malformed epoch is a `400 tree_epoch_invalid`. A tree that cannot be
+  confirmed sends nothing, and a tree confirmed AHEAD of the server is not proof either
+  (`readConfirmedTree` answers `unconfirmed`). A tree that holds the person declines nothing (a
+  Decline is no Remove): the card leaves WITHOUT a "Vous avez refusé" line (`settled: 'already-in'`),
+  as it does when a link ask answers `already-admitted`. Other members' cards leave on the `declined`
+  settlement frame, sent under the seat's id, which clears an entry that holds no identity. A Decline
+  with no epoch (a client older than this) is answered as before, `not-awaiting` or
+  `already-admitted`, nothing touched; a Decline WITH an epoch answered that way came from a server
+  older than this, which cannot remove the seat - the client accuses it at ERROR and keeps the card
+  (`unsupported`, toast `join_request_unsupported`), never recording a decline that did not happen.
+  This gives no member a new power: any admitted member may already remove any seat
+  (`DELETE .../members/:userId`).
+
+Accept is the member's own Add, as for a link ask; the commit gate leaves an admitted seat as it is,
+so the Add only gives the person a leaf. Until the emission side ships, such a person may still enter
+by their own external commit first; the card then leaves at the next sweep, and an Accept finds them
+in the tree.
 
 **An answer leaves the screen only when it happened** (`joinAnswers.ts`). The invite never throws; it
 returns a typed `BulkAdditionOutcome` (`added` with the users the merged commit put in the tree, or
@@ -1382,7 +1452,8 @@ accepted commit" below), `already-admitted`
 (a member's Add came first; nothing is touched, so a Decline can never strip an admitted person),
 `not-awaiting` (the flag was never set and the server holds no trace of an Add - no `active` device
 row, no `admittedAtEpoch`, no queued Welcome: the seat was never an ask, nothing is touched), or
-`gone`. All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
+`gone` - and, for a seat that is not an ask declined with its tree epoch, `removed` or `epoch-moved`
+(above). All four leave the screen; a refused or failed call keeps the ask. **A Decline holds against
 every Add decided before it, through every writer** (ADM-3, 2026-10-25): the gate orders it against
 the seat generation the inviting member READ (below), enrols nobody and lifts nothing for it, drops
 its admits, and the member-add route that used to undo it enrols nobody any more - see "The commit
@@ -1516,8 +1587,13 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 **What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
-   measured before anything else is built.
-2. **The emission side.** A user holding no leaf ASKS a member and waits for that member's Add,
+   measured before anything else is built. The count is durable since migration 053
+   ([the count is a table](#the-count-is-a-table-uninvited_entries-migration-053-2026-11-17)).
+2. **The emission side**, and BEFORE it the member side (found 2026-11-17, BUILT 2026-11-19: such a
+   seat is raised as an ask and its Decline removes it, [above](#who-admits-a-new-person-2026-10-23)).
+   The emission side waits until that build is the client floor - before it, an older member asks
+   nobody and the asker would wait for ever ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)).
+   A user holding no leaf ASKS a member and waits for that member's Add,
    never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
    device asks first but lets itself in when no member device can answer, because its user's leaf
    already vouches for it in every member's tree. A user with no leaf has nothing in the tree to vouch
@@ -1538,13 +1614,156 @@ and the dev build's `canari_admission_frozen` localStorage key is removed at ses
 (`setupMessageHandler`), so a dev device stops logging the verdict on legitimate joins.
 
 **A legitimate rejoin is not written, only counted.** The report carries a `kind`
-(`UninvitedEntryKind`): `returning` when this device saw the same user leave the tree at an earlier
-epoch (`removalEpochs`), `direct-peer` for the other person of a 1:1 conversation, `new-person`
-otherwise - and only `new-person` is written and logged at ERROR. A departure read that fails keeps
-the entry owed rather than guessing. A device that never saw the departure still reads a returning
-member as `new-person`. The server takes the report from a member of the group only (403
+(`UninvitedEntryKind`): `direct-peer` for the other person of a 1:1 conversation; `returning` for a
+member coming back; `new-person` otherwise - and only `new-person` is written and logged at ERROR.
+
+**`returning` is PROVEN ON THE DEVICE, never taken from the server** (owner, 2026-11-14: *"Preuve
+sur l'appareil. mais il faut un truc solide, robuste, et resilient"*; `decideUninvitedEntry` in
+`deviceNotices.svelte.ts`). It first read only the departures this device merged (`removalEpochs`),
+so a device that never merged the departure read a returning member as `new-person` - the one
+production line of 2026-11-14 was a member seated for two months whose own new web device joined by
+external commit. A first fix asked the server's roster (an admitted seat read as `returning`); its
+adversarial review named the trade-off - a server that lets an outsider in can seat them on the
+roster it serves, and the line went silent exactly when it mattered - and the owner chose the device.
+
+**The rule.** An entrant is `returning` when `membershipEvidence` (above) shows this device saw the
+entrant's USER hold a leaf of a tree of this group it accepted, at an epoch BEFORE the entering
+commit's, and no other member's commit retired them since. Anything else is `new-person`, which reads **NOT PROVEN a member by this device**: written
+in the conversation, logged at ERROR, reported. There is NO fallback to the roster or anything else
+the server returns: a fallback is a signal, never a path. A failed read of the evidence keeps the
+entry owed to the next delivery.
+
+**What it survives, by construction.**
+
+- *A member's new device, a reinstall, a new key, while one of their devices is still in the
+  tree*: the record is per USER, so any device of the member is the member. Once another member's
+  commit removed their last leaf - a kick, or a revoked device swept - they are retired (below).
+- *This device away, across restarts*: the sighting was written when the member was first seen
+  and stays in the sealed state; a restored state carries it too.
+- *A member cleaning up their own old device*: their own commit cancels nothing.
+- *An account switch*: each account has its own MLS state, and the record is in it.
+- *A conversation of any size*: one entry per distinct user ever seen in a held conversation; key
+  groups record nothing.
+
+**What it cannot prove, and how that is measured.** A member whose every device was removed by
+another member - kicked, or a revoked device swept - and who enters alone is not proven on any
+device, by the owner's rule: they come back through a member's Add. A device holds only what it saw. A device that
+joined after the person's every leaf left (a member's NEW device, the reporter's included, or a
+member who joined since), a device that REJOINED the group since (a heal, an external rejoin: a new
+lineage, deliberately), and a device whose sealed state was lost have no sighting, and accuse a
+returning member. That failure is NOISE, never a silent pass, and it is measured: the report carries
+`watchedFromEpoch` (printed `watched_from=` on the server line; `none` when the device holds no
+record of the group), and the server prints one line per (entry, kind), so members that disagree -
+one proving a return, one that cannot - show both. A `new-person` whose `watched_from` is later than
+the entrant's last departure in the commit log is a device that was not there yet; one whose record
+covers the departure watched and never saw them. The record starts at the first load of this build:
+departures before it are known only through the departure record above.
+
+**What a malicious server can and cannot do** (adversarial review of #3519, opus).
+
+- *It cannot write a sighting into the lineage a device holds*: every tree is accepted through a
+  member's signature (a Welcome's or a GroupInfo's signer, a commit's sender) checked against the tree
+  hash in the signed group context. Credentials are self-asserted (no certificate authority), so a
+  server able to hand a device a FABRICATED copy of a group (a GroupInfo signed by a leaf it made)
+  could plant a sighting in that copy - which is why a sighting never outlives the lineage it was
+  seen in: the heal back into the real group starts an empty record.
+- *It cannot erase one by anything it sends*: the record is in the sealed local state, a key-group
+  classification keeps it, and only this device's own `forget_group` or a fresh join drops it. It
+  CAN deny evidence - keep a device out until the person left, or push it into a heal - and that
+  only produces an accusation.
+- *What it still controls, unchanged by this design*: the conversation row. A row the server marks
+  as a key group or a channel makes the classifier return `not-a-conversation` before the evidence is
+  read, and `conversationType` / `directPeerId` come from the same row. That bypass predates the
+  sightings and is the same for every verdict here.
+- *Impersonation of a past member is silent*: the user half of `userId:deviceId` is self-asserted,
+  so an outsider entering under the user id of a member whose every leaf left is read as that member
+  `returning` - and then appears under that member's name. The roster verdict and the departure-only
+  verdict before it had the same hole. What closes it is **cross-signing of a user's devices**,
+  planned as **step 8 of the privacy chantier, after the sealed community state, designed in the
+  wiki first** (owner, 2026-11-14; [decisions](../backlog.d/owner-decisions-of-2026-11-14.md));
+  #3519 ships without it, and until then a `returning` entry writes nothing.
+
+**Designed, not built: a member's signed word for a device that was not there.** A member device
+that HOLDS a sighting of the entrant could post an MLS application message vouching for them
+("seen here since epoch e"), and a device with no sighting would accept a vouch from a member leaf
+as the proof - a member's word, which is what "admitted only by a member" already rests on, never
+the server's. Built only if the `watched_from` count shows the not-there-yet accusations are a
+population.
+
+Cases a reader must hold. A member REMOVED by another member who re-enters by their own commit is
+NOT proven (decided by the owner on 2026-11-14, *"Retiré = non prouvé"*, closing the
+[open question](../open-questions.md#decided-2026-11-14---a-members-removal-by-another-member-cancels-the-device-proof)).
+A member removed by another member right after their legitimate entry is retired by that commit.
+
+**What the rule implies, stated so nobody rediscovers it.** A self-admitted entrant holds no leaf in
+the tree before their commit, so every leaf of theirs left earlier - and a user's LAST leaf always
+leaves through another member's commit (a commit never removes its own sender). In the lineage a
+device holds, such a user was therefore always retired, and a device whose record starts after
+they left never saw them. So `returning` is in practice never reached for this classifier: every
+self-admitted entry of a user absent from the tree is `new-person`, written and reported, and the
+way back is a member's Add. The sightings still carry `watched_from`, and the own-device rule is
+kept exact for the day a removal reaches the device as the user's own (cross-signing, step 8).
+**A simplification the next reader may take:** while that holds, the verdict could drop the
+`firstSeenEpoch` comparison and keep the record for `watched_from` alone; it is kept so the rule
+the owner stated stays the code's rule when step 8 makes the own-commit case reachable.
+
+The server takes the report from a member of the group only (403
 `not-a-member` otherwise), accepts `kind` from that list alone, and writes one line per
-(group, entrant, epoch), so N members reporting one entry make one line, not N.
+(group, entrant, epoch, kind), so N members reporting one entry make one line per kind they reached,
+not N.
+
+#### The count is a table (`uninvited_entries`, migration 053, 2026-11-17)
+
+**Why.** The deduplication above lived in a `Set` in one replica's memory and the line in one
+container's log, so a deploy reset both: every reading of production covered the hours since the
+last deploy (4 h on 2026-11-01, 24 h on 2026-11-13, about 38 h on 2026-11-17), and the deploy-log
+archive that holds earlier windows is readable only by the deploy account. Item 1 of the fix-forward
+(below) cannot be closed on a count that never accumulates. Of the two fixes the backlog entry left
+open - an additive table, or one public line a day from a `scheduled.yml` job - the table was taken
+(2026-11-17, reversible, recorded here): it also makes the deduplication survive a deploy and hold
+across replicas, its history is not bounded by the Actions log retention, and it publishes nothing.
+
+**The mechanism.** `POST mls/uninvited-entry` claims the entry with ONE statement,
+`INSERT INTO uninvited_entries ... ON CONFLICT DO NOTHING RETURNING` on the primary key
+`(groupId, entrantUserDevice, epoch, kind)` (`claimUninvitedEntry`, `utils/uninvited-entries.ts`):
+the call that wrote the row prints the WARN line, every later report of the same entry under the
+same kind - any replica, any deploy - finds it and prints the DEBUG `repeat`. Two members reporting
+at the same instant serialise on the key, so it is one line, never two and never none.
+
+**Every value fits its column before the INSERT.** `epoch` and `watchedFrom` are a safe integer's
+digits or a fixed word (`unstated`, `none`, `invalid`; `uninvitedEntryEpochField`) - never the
+generic log sanitizer's 128-character string, which would overflow `VARCHAR(32)` and let any member
+turn every report into a failed write (review of #3774). A digit STRING is `invalid`: the client
+sends a JSON number.
+
+**A row that cannot be written is lost to the count, and said so on the server only.** Only a
+database failure reaches that branch. It is printed at ERROR as `[UNINVITED_ENTRY] NOT COUNTED` with
+all the line's evidence, and answered `{ recorded: false }` with a 2xx, NOT a 503. No client re-reports:
+`reportUninvitedEntry` sends an entry once per app session and never retries, so the count of THAT
+reporter's entry is lost whatever the status - another member's report of the same entry still
+counts it if theirs is written. A 503 would add only a warning in the reporter's console for a fault
+that is the server's and already accused at ERROR here (CLAUDE.md, noise is never acceptable).
+
+**What a row holds, and for how long.** Exactly what the line prints, sanitized the same way: the
+conversation, the entrant as `userId:deviceId` with the user id cut to eight characters (never a
+full user id), the epoch, the kind, and the first reporter's `watched_from`. **Pseudonymous, not
+anonymous**: the device id re-identifies the person while their key package exists. `firstSeenAt` is
+aged out, never compared. Rows are deleted past the retention window (90 days, the log line's own
+ceiling, on the DATABASE's clock: `pruneUninvitedEntries`, daily AND in the boot sweep, since a daily
+interval never fires in a service redeployed more often than daily), with the conversation
+(`GROUP_OWNED_TABLES`), and with the account at its erasure (`ACCOUNT_ERASURE_COVERAGE`, matched by
+the shortened user id; an account sharing those eight characters loses its rows of the count too).
+Register: C13 ([register-of-processing](../compliance/register-of-processing.md)).
+
+**Reading it** - read-only, any time, the whole window in one statement:
+
+```sql
+SELECT kind, "watchedFrom" = 'none' AS no_record, count(*)
+FROM uninvited_entries GROUP BY 1, 2 ORDER BY 1, 2;
+```
+
+The count starts at the deploy that carries migration 053; earlier windows stay in the readings the
+backlog entry records.
 
 **The rule holds for every client allowed to connect since the `1.6.6` floor** (#2358 is in every
 stable since `v1.5.0`, migration 038 with it): its compatibility entry closed on 2026-11-11, with
@@ -1552,8 +1771,8 @@ nothing to remove - the lift by the accepted commit's `admits` is how every Add 
 
 **A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
 every existing row to `false`, so a person who accepted a link before the deploy and had not entered
-yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
-`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
+yet holds an ORDINARY seat, not an ask. Since 2026-11-19 a member is asked about them like any seat
+with no leaf (above), and a Decline removes the seat. Neither the base nor the commit gate refuses them, so they may still enter by their
 own external commit exactly as before the rule, and the members then report it:
 `[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
 population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
@@ -1567,11 +1786,18 @@ WHERE NOT m."awaitingAdmission"
                     AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
 ```
 
-**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
-and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
-the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
-line after the floor is the rule failing. The list stays in the private operations notes with the
+**How the rollout count subtracts it:** an `[UNINVITED_ENTRY]` line whose `group` and entrant user
+(the `entrant` up to its `:`) are a pair of that list is this population entering the way it always
+could - not a bypass of the rule - and is counted apart. Each reporting device decides from its own
+sightings (2026-11-14), so such an entry may come as `kind=returning` from a device that saw the
+person and `kind=new-person` from one that did not: the pair list is matched against both. Every
+`new-person` line after the floor whose `watched_from` covers the entrant's last departure is the rule
+failing. The list stays in the private operations notes with the
 deploy date; only this query and the rule live here.
+
+**Counted on production, 2026-11-14, read-only: no awaiting seat at all** (0 `dm_group_members` rows
+with `awaitingAdmission`), so none holds no device row and an ask that never expires is not a
+population today. If one appears, record the ask's renewal on the seat and expire on it.
 
 ### A device of a member is added, never asked about (2026-10-31)
 
@@ -1604,6 +1830,11 @@ all shut iPhones waits for one of them to open the app.
   (`JoinRequestRow`), for an invitation-link ask
   ([who admits a new person](#who-admits-a-new-person-2026-10-23)). Never in a 1:1, where the other
   person is a member by definition.
+- **Read on the rig on 2026-11-14** (DEV-1, local estate at `ad2053fc0`): the owner's new device was
+  seated with no ask (133 ms), the line showed once on the contact and once on the owner's other
+  device, the alert was written to the owner's notifications, and no list preview carried the line.
+  **Production, the same day:** 24 to 128 further devices of an existing user enrolled per week over
+  the seven weeks from 2026-09-28 (`device_signature_key.firstSeenAt`, read-only count).
 
 **What "is a member" rests on, and why the new device cannot claim it.** The verdict reads the leaf
 credentials of the ratchet tree this device holds (`getGroupMemberIdentities`, `treeHoldsUser`),
@@ -2146,7 +2377,7 @@ leaves the base to a holder's repair, which is the one way that base could itsel
 social-service, and chat-delivery's base route refuses a key group by construction, so a check
 reading there failed every key-group removal before comparing anything. Reading it through the scope
 transport means **`diverged` now reaches key groups too**, which widens the forked-holder P2 in
-[backlog](../backlog.md#p2---a-forked-holders-republished-base-can-send-honest-members-to-rung-2-review-of-2269-2026-10-24-not-built).
+[backlog](../backlog.d/p2-a-forked-holder-s-republished-base-can-send-honest-members-to-rung-2-review.md).
 **A conversation that never published a base** has nothing to compare against: its departed-member
 removal is staged as before the check (logged), because refusing would keep the departed member's
 leaves forever - nothing publishes a base on a sweep's behalf; a key group's base is published with
@@ -2351,7 +2582,7 @@ guarantees at the one step that can do harm.
 re-fetched. That re-fetch pulls every row the server still holds for the group, including a frame
 live delivery read a moment earlier and has not acknowledged yet - a second read the client gives
 itself, which is a defect of its own, open in
-[backlog](../backlog.md#p3---a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already-delivered-dup-2-2026-10-25).
+[backlog](../backlog.d/p3-a-re-fetch-after-a-late-welcome-re-reads-frames-the-live-socket-already.md).
 What is fixed is what that second read was CALLED. MLS refuses it with `SecretReuseError`, which it
 can only reach after opening the frame's sender data under this device's copy of the epoch - so the
 frame is neither from a fork nor damaged. `messaging.rs` classifies it from the error's TYPE
@@ -2368,7 +2599,7 @@ whose adder holds no lock and has queued no Welcome leaves a seat with `admitted
 OpenMLS removes that leaf in the same commit - one leaf for the key, the routine rejoin of an active
 device (`tests/external_join.rs`, `an_admitted_joiner_joining_externally_leaves_exactly_one_leaf_for_its_key`).
 Whether any adder path reaches that state, and what its late Welcome then meets, is a verification
-in [backlog](../backlog.md#p3---verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own-leaf-dup-2-review-2026-10-25).
+in [backlog](../backlog.d/p3-verify-an-add-accepted-but-unannounced-lets-the-joiner-rejoin-over-its-own.md).
 
 ### An Add enrols its people with the accepted commit (2026-10-25)
 
@@ -2407,7 +2638,7 @@ group too (the `admitClaims` loop of `MessagingService`), and the key-group Add
 (`graine/distributionGroup.ts`) rebuilds without the named people the way `addDevicesRebuildingOnRace`
 does - it reads no `admit_refused` today, so the server half alone would stall every grant that
 races a kick. The `no_key_package` drop keeps its own reasoning (below) in both kinds of group.
-([backlog](../backlog.md#p3---key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review-2026-10-26)) **Every candidate is decided before anything
+([backlog](../backlog.d/p3-key-groups-still-accept-a-commit-with-a-refused-admit-dropped-adm-3-review.md)) **Every candidate is decided before anything
 is written**: a single refusal enrols nobody and logs no `ENROLLED` / `ADMITTED_UNDATED` line for the
 rolled-back advance. The client rebuilds the Add WITHOUT the named people (`addDevicesRebuildingOnRace`, below):
 
@@ -2877,8 +3108,9 @@ PIN-protected backup files. **The writer cannot move first**: an older build han
 reads the magic as a nonce and reports the state unopenable - this very defect, caused by a
 downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flipped
 once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 2 (PK1, 2026-10-17)**
-- `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`
-([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+- `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`. Read on the
+rig on 2026-11-14 (CORRUPT-2, local estate at `ad2053fc0`): one byte flipped inside a web state reads
+`STATE_ALTERED`, `init` rotates the device identity and the client comes up with no PIN asked.
 **Never roll a client back past `v0.18.18`.**
 
 **What each verdict does at `init`** (both platforms, `noFreshStart` set):
@@ -2962,7 +3194,7 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
   next `initialiser_mls` acts on the new manager, fenced only on the TypeScript side today
-  ([backlog](../backlog.md#p2---wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the-platform-2026-10-27-design-reviewed-four-times-nothing-built)).
+  ([backlog](../backlog.d/p2-wp-checkpoint-cas-one-owner-of-the-mls-state-per-process-handed-over-by-the.md)).
 
 The browser has no process-wide manager: the WASM client is a field of each `WebMlsService` instance,
 which the holder drops with its account, and the WASM module itself holds no manager or key.
@@ -3142,7 +3374,7 @@ their MLS client from ONE snapshot and a send from the tab whose ratchet is behi
 generation the peer has already consumed, then dropped silently (WP-MULTITAB-1).
 
 **The Web Locks API is the path every real browser takes**: one exclusive `canari-tab-leader` lock,
-held until `beforeunload`, with mutual exclusion guaranteed by the browser rather than by a
+held until `beforeunload` - or until it is HIDDEN and a visible tab asks for it (the asker steals it), or FROZEN by Chromium (released at `freeze`) ([chat](../frontend/modules/chat.md#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)) - with mutual exclusion guaranteed by the browser rather than by a
 read-modify-write on `localStorage`. The `BroadcastChannel` + heartbeat implementation is the
 fallback for engines without `navigator.locks` (Tauri WebKitGTK, very old browsers), and
 `canari-mls-tab` still carries the promotion messages on both paths (the take-over request was removed on 2026-11-08, with the follower banner).
@@ -3169,8 +3401,8 @@ kept commit is settled at the next connection by the existing machinery; running
 double commit. A `pending` record is run by the next leader, the one a handover elects included,
 and deleted unrun once the tab that asked is gone (its requester lock free). A leader that cannot
 serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
-has no executor for or a follower of another account. The mechanism, the refusals, the frozen
-background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
+has no executor for or a follower of another account. The mechanism, the refusals, the wedged
+leader it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
 
 ### A follower tab wrote its copy of the MLS state over the leader's - FIXED 2026-11-11
 
@@ -3215,7 +3447,8 @@ web device. Now:
 
 - `BaseMlsService.sendMessage` refuses in a tab that does not own the state, BEFORE the catch-up wait
   and the settle (which may resubmit a commit): `FollowerTabSendError`, at `error` - every path a
-  follower reaches is routed, so reaching it is a caller that was not.
+  follower reaches is routed, so reaching it is a caller that was not. A document that LED and lost
+  the lead is refused `lead-lost` at `warn` instead (see the leader's run below).
 - **One frame a gesture awaits** goes through `sendFrameFromThisTab` (`mls-client/frameFromAnyTab.ts`):
   `sendMessage` in the leader, the gesture handover (`tabCommitDelegation.ts`, kind `emit-frame`) in a
   follower - the leader sends it on its own state and answers the server's time. Used by the media
@@ -3235,8 +3468,13 @@ web device. Now:
   follower (no reset, no forget, no burn). An in-session PIN change is refused in a leader promoted in
   place, as in a follower.
 
-Not covered, filed: the leader lock is one per BROWSER, so a tab of another account is a follower its
-leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)).
+Not covered, and ACCEPTED by the owner on 2026-11-19: the leader lock (`canari-tab-leader`) is one per
+BROWSER, so a tab of another account is a follower its leader will not serve (`not-delegable`). Since the
+hand-over (#3321, 2026-11-14) a VISIBLE tab with a queued message takes the lead, so two accounts in one
+browser profile work in ordinary use; what remains is two accounts VISIBLE side by side, where only the
+leading one sends. *"Pour le moment, rien à faire, tout marche bien"* - a worker independent of the tabs
+may come later; a lock per account (`canari-tab-leader.<userId>`, one socket per signed-in account) is
+not planned ([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
 **And the second review of #3371, same day - order, the leader's own gate, the promotion window:**
 
 - **A follower's requests run in the order it made them.** A record was keyed by a random UUID and
@@ -3269,6 +3507,28 @@ leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-brow
 - **A device-key change between seal and open is an answer**, `{ unopened: 'device-key-changed' }`,
   not an executor throw logged at `error`: the frame is `FrameNotHandedError('device-key-changed')`,
   the seal `main-tab-key-changed` ("the PIN changed while sending").
+- **A leader that loses the lead WHILE it runs a follower's request answers `{ unsent: 'lead-lost' }`,
+  and never delegates** (review of #2515, 2026-11-15). The loss is monotonic (`lostLeadSinceLoad`: a
+  demoted document with a session reloads and never takes the lead back), so it is met as a TYPE at
+  every await of the run, never as an executor throw at `error` and never as a second request:
+  - `sendMessage` raises `FollowerTabSendError('lead-lost')` at its entry (a document that LED and
+    lost it, told apart from a copy loaded as a follower, which is still the routing defect at
+    `error`), after a kept commit's settlement the loss left unfinished, before the encrypt and after
+    the count. A loss during the post is a frame on the wire: sent. `sendMessage` never delegates.
+  - The salon seal, run `asExecutor`, refuses at its entry instead of handing on; the reservation's
+    write refuses at the put (`saveGraineSession`'s `onlyWhile`, `StoreWriteRefusedError`); a seal that
+    completed is read against the lead once, at its end, and dropped if it was lost.
+  - The follower reads it as `FrameNotHandedError('lead-lost')` / seal reason `main-tab-lead-lost`, and
+    hands nothing on: one gesture is one request, so the handover terminates whatever the lead does.
+- **The Graine session store is written only while leading, read AT the write.** A reservation is a
+  read-modify-write serialized within one document only; a leader frozen inside it and resumed after
+  the new leader sealed would write back a count read before those seals, rolling the index back to
+  one already used - two messages under one key. `reserveOutboundSlot`'s `mayWrite` reaches the put
+  itself (after the encrypt's await), so a write issued while leading is ordered before every read of
+  the next leader, and one issued after is refused, nothing written. The leader's OWN seal meeting
+  that refusal (or its seed's distribution refused `lead-lost`) is the typed seal refusal
+  `main-tab-lead-lost` - nothing sealed, nothing posted, its Retry safe - never a raw refusal the
+  salon send path would read as an outcome unknown (second review of #2515).
 - `sendHistoryBundleForIds` and `sendHistoryRangeBundle` are gated like the other history senders.
 - `GraineSealHandoverRefusedError` with `leader-gone` is NOT "nothing happened": the leader may have
   minted and distributed a seed before it died. A retry is safe - the message keeps its `messageId`

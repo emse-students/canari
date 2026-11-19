@@ -625,6 +625,25 @@ one-time bundles, last-resort), which would settle this entry, the blob entry an
 **And this handset can no longer answer the other half either**: its 19.5 MB blob went with the debug
 build, so the prune's reclaim is not observable here.
 
+**THE OWED OBSERVATION, MADE: NO LOOP ON THE HANDSET (Mi 9T, `1.6.12-alpha.2` on dev,
+2026-11-14).** The CDP console was read across two cold starts and three background/resume cycles
+(30 s away, under one second away, and a send 0.4 s before the background), with logcat beside it:
+
+- every connection logs `generateKeyPackage native batch path needed=0`, then natively
+  `republishing the held last-resort` and `done count=0 - pool full and last-resort valid, nothing
+  minted so no write owed`; no `REFUSED to purge` accusation and no `purged N/M` appears;
+- the census, printed once per cold start after `MLS ready` (`recenser_key_packages`), is identical
+  at 11:16 and 11:31: `1852 proven (1851 one-time, 1 last-resort); 0 expired, 0 undecodable; 39
+  mint instant(s), largest batch 100`, and every load's composition is the same
+  `5131487B total; KeyPackage 1852x4383551B, MessageSecrets 15x484416B, Tree 15x190327B`;
+- **ONE last-resort**: the per-connection fallback reuse (#458) holds on the handset as it does on the
+  web.
+
+So the minting loop is not running here. What the census does show is the ACCRUAL of the section
+below: 1851 one-time bundles in 39 top-ups are 85% of a 5.1 MB state holding 15 groups, bounded only
+by the 84-day prune. The per-process `publishedThisSession` residue named in item 1 stays a property
+of the guard, not an observation.
+
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
@@ -769,7 +788,7 @@ hour against 1 to 12 an hour the rest of the evening, 426 of them in two minutes
 
 None of this is a client retry loop gone wrong, and none of it is a large group: it is two reads
 that claim. The adder device stayed connected throughout, and a pool is refilled only at connection
-([backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable)).
+([backlog](../backlog.d/p2-a-device-s-one-time-keypackage-pool-is-topped-up-only-when-it-connects.md)).
 So the account's pools stayed empty until each device reconnected.
 
 **What changed.** The pending-invitation sweep and the `welcome_request` answer claim the one device
@@ -777,6 +796,15 @@ they add (`fetchDeviceKeyPackage`), never the account list. The list's 30-day cu
 request anyway, which is now gone. The own-publication read asks `?peek=1`, which answers the same
 refusals and the static row and touches no one-time row. A server without `peek` ignores the query
 and claims, as before, so no client floor is needed and nothing falls back.
+
+**A device that never published does not ask (2026-11-15).** `awaitOwnKeyPackagePublished` skips the
+peek on its first pass when the device id was minted in this process (`stateWasExpected` false) and no
+key package round has settled: the server cannot hold a package of it, so the read could only answer 404
+and a freshly enrolled web device logged three of them before its first publication (HEAL-NEW-0 of the
+cross-client rig reported it as FAIL). The skip used to apply only while the first round was running; a
+join landing before the round started asked anyway. The fact is read from durable state (the id was or was
+not stored), not from the server, so it is the "client knows" branch of NEVER LEARN BY FAILING, and the
+404 stays what it is for a returning device (a real "no package yet" answer there). Pass 2 onward reads.
 
 **What a static-row serve costs, and why it stays a WARN.** The row carries `last_resort`, so a
 device can join every group built on it (see the section above). The cost is in MLS: one HPKE init

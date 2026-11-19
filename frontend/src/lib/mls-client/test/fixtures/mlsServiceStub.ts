@@ -1,5 +1,6 @@
 import { vi } from 'vitest';
 import type { IMlsService } from '../../IMlsService';
+import { fakeHistorySealEngine } from './fakeHistorySealEngine';
 
 /** Builds an `IMlsService` mock with sensible defaults; shallow-merge `overrides` (e.g. `processWelcome`). */
 export function createMlsServiceStub(
@@ -26,6 +27,8 @@ export function createMlsServiceStub(
     pinnedSignatureKeys: vi.fn().mockResolvedValue(null),
     // Default: no departure seen.
     removalEpochs: vi.fn().mockResolvedValue([]),
+    // Default: this device never saw the user in the group, and holds no record of it.
+    membershipEvidence: vi.fn().mockResolvedValue({ firstSeenEpoch: null, watchedFromEpoch: null }),
     // Default: every group drained - a test about a held commit overrides it.
     isGroupDrained: vi.fn().mockReturnValue(true),
     whenGroupDrained: vi.fn().mockResolvedValue(undefined),
@@ -106,6 +109,8 @@ export function createMlsServiceStub(
     whenDistributionEpochSettled: vi.fn().mockResolvedValue(undefined),
     onDistributionGapVerdict: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
+    // The seal's refusals without its cryptography - `fakeHistorySealEngine` says what it keeps.
+    historySealEngine: vi.fn(() => fakeHistorySealEngine()),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     // Not destroyed by default: `openGatewayConnection` reads it outside its `try`.
@@ -175,6 +180,7 @@ export function createMlsServiceStub(
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
     onWelcomeProcessed: vi.fn(),
+    noteWelcomeInstalled: vi.fn(),
     onWelcomeDelivered: vi.fn(),
     sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     onWelcomeRequest: vi.fn(),
@@ -187,6 +193,7 @@ export function createMlsServiceStub(
     sendTyping: vi.fn(),
     onChannelEvent: undefined,
     addBulkIngestObserver: vi.fn(),
+    whenBulkIngestsClosed: vi.fn(async () => {}),
     beginBulkIngest: vi.fn(),
     endBulkIngest: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn(),

@@ -77,6 +77,17 @@ export function liveFailureOutcome(
   return { stop: { kind: 'unavailable', reason: 'refused' } };
 }
 
+/**
+ * Writes the line of a viewer's stop at the level its KIND deserves. `ended` is the ordinary close of
+ * every viewing (the broadcaster's own end, a `410 ended`): one `log`, next to the summary line, never
+ * a warning every viewer of every live would add. Every other kind of stop means something went wrong
+ * or was refused, and stays a `warn`. Decided from the typed kind, never from the error's words.
+ */
+export function logViewerStop(kind: LiveViewerState['kind'], line: string): void {
+  if (kind === 'ended') console.log(line);
+  else console.warn(line);
+}
+
 /** The wait before the n-th retry in a row (1, 2, ...): 1 s doubling, at most 8 s. */
 export function liveRetryDelayMs(attempt: number): number {
   return Math.min(1_000 * 2 ** Math.max(0, attempt - 1), 8_000);

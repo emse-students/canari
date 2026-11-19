@@ -33,7 +33,9 @@ import {
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
 } from './bde';
+import { AssociationAudience } from './association-audience.entity';
 import { SpacesService } from './spaces.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -94,14 +96,13 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     id: string,
     submitted: { formation: string | null; campus: string | null }[]
   ): Promise<string | null> => {
-    const [spaces, parentSpaces, governed, current] = await Promise.all([
-      standings(userId),
-      client
-        .query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [id, userId, MANAGE_ASSO])
-        .then((r) => r.rows as SpaceStanding[]),
-      governs(userId, id),
-      rulesOf(id),
-    ]);
+    // One after the other: `client` is one connection, which runs one query at a time.
+    const spaces = await standings(userId);
+    const parentSpaces = (
+      await client.query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [id, userId, MANAGE_ASSO])
+    ).rows as SpaceStanding[];
+    const governed = await governs(userId, id);
+    const current = await rulesOf(id);
     return codeOf(() =>
       assertBdeMayWriteAudience('association', spaces, parentSpaces, governed, current, submitted)
     );
@@ -343,6 +344,151 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
         await writeAs('icmOfficer', A.clubWide, [{ formation: 'ICM', campus: 'saint-etienne' }])
       ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
       expect(await writeAs('icmOfficer', A.clubWide, [])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+    });
+
+    it('judges a write on the rules it REPLACES: one that waited behind another write is judged on what that one stored', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const session = async () => {
+        const c = new Client({ connectionString: URL });
+        await c.connect();
+        await c.query(`SET search_path TO ${schema}, public`);
+        return c;
+      };
+      /**
+       * The real write, its transaction and everything read inside it on ONE session of this test.
+       * `hold`: the transaction's work is done and its COMMIT waits for `release()` - a write held
+       * open at the one point where another may overlap it. `worked` resolves when it got there.
+       */
+      const writerOn = (on: Client, hold = false) => {
+        const manager = {
+          query: (sql: string, params: unknown[]) => on.query(sql, params).then((r) => r.rows),
+          find: (
+            _entity: typeof AssociationAudience,
+            { where }: { where: { associationId: string } }
+          ) =>
+            on
+              .query(
+                `SELECT formation, campus FROM association_audiences WHERE "associationId" = $1`,
+                [where.associationId]
+              )
+              .then((r) => r.rows),
+          delete: (
+            _entity: typeof AssociationAudience,
+            { associationId }: { associationId: string }
+          ) =>
+            on.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [
+              associationId,
+            ]),
+          insert: async (
+            _entity: typeof AssociationAudience,
+            rows: { associationId: string; formation: string | null; campus: string | null }[]
+          ) => {
+            for (const r of rows) {
+              await on.query(
+                `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, $2, $3)`,
+                [r.associationId, r.formation, r.campus]
+              );
+            }
+          },
+        };
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        let reached!: () => void;
+        const worked = new Promise<void>((resolve) => (reached = resolve));
+        const built = spacesService() as unknown as {
+          dataSource: { transaction: unknown };
+          redis: unknown;
+        };
+        built.dataSource.transaction = async (
+          isolation: string,
+          work: (m: typeof manager) => Promise<unknown>
+        ) => {
+          // The isolation the service names, not this session's default.
+          await on.query(`BEGIN ISOLATION LEVEL ${isolation}`);
+          try {
+            const done = await work(manager);
+            reached();
+            if (hold) await released;
+            await on.query('COMMIT');
+            return done;
+          } catch (e) {
+            await on.query('ROLLBACK');
+            throw e;
+          }
+        };
+        built.redis = { incr: async () => 1, deleteByPattern: async () => 0 };
+        return { service: built as unknown as SpacesService, release, worked };
+      };
+      // Two sessions of this test's own: the platform admin's write, held open, and the star's.
+      const [adminSession, starSession] = await Promise.all([session(), session()]);
+      const starPid = (await starSession.query(`SELECT pg_backend_pid() AS pid`)).rows[0]
+        .pid as number;
+      const wide = { formation: null, campus: 'saint-etienne' } as const;
+      const inside = { formation: 'ICM', campus: 'saint-etienne' } as const;
+      const admin = writerOn(adminSession, true);
+      const star = writerOn(starSession);
+      const settledCode = (write: Promise<unknown>) =>
+        write.then(
+          () => ({ code: null as string | null }),
+          (e: unknown) => {
+            if (!(e instanceof HttpException)) throw e;
+            return { code: (e.getResponse() as { code: string }).code as string | null };
+          }
+        );
+      let waited: Awaited<ReturnType<typeof untilWaiting>>;
+      let starOutcome: { code: string | null };
+      let adminOutcome: { code: string | null };
+      try {
+        // The admin removes the whole-campus rule - the one rule of this club beyond the star's
+        // spaces - THROUGH THE SERVICE, and its transaction has not committed yet: whatever the
+        // star waits behind is what the admin's own write holds, nothing this test took by hand.
+        const adminWrite = settledCode(
+          admin.service.setAudiences(A.clubWide, [], { userId: 'admin', isGlobalAdmin: true })
+        );
+        await admin.worked;
+        // The star's editor still shows that rule: it submits it back, with one of its own.
+        const starWrite = settledCode(
+          star.service.setAudiences(A.clubWide, [wide, inside], {
+            userId: 'icmOfficer',
+            isGlobalAdmin: false,
+          })
+        );
+        try {
+          waited = await untilWaiting({
+            what: "the star's audience write behind the admin's",
+            waiting: async () =>
+              (
+                await client.query(
+                  `SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'`,
+                  [starPid]
+                )
+              ).rows[0].n as number,
+            settled: settledFlag(starWrite),
+            onAbsent: 'return',
+            dump: async () => (await client.query(ACTIVITY_DUMP_SQL)).rows,
+          });
+        } finally {
+          admin.release();
+          adminOutcome = await adminWrite;
+          starOutcome = await starWrite;
+        }
+        expect(adminOutcome).toEqual({ code: null });
+        expect(waited).toMatchObject({ outcome: 'waiting' });
+        // Judged on what the admin stored - no rule: the whole-campus one is now an ADDITION beyond
+        // the star's spaces, and nothing is written.
+        expect(starOutcome).toEqual({ code: 'AUDIENCE_RULE_BEYOND_BDE_SPACES' });
+        expect(await rulesOf(A.clubWide)).toEqual([]);
+      } finally {
+        await client.query(`DELETE FROM association_audiences WHERE "associationId" = $1`, [
+          A.clubWide,
+        ]);
+        await client.query(
+          `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, 'saint-etienne')`,
+          [A.clubWide]
+        );
+        await Promise.all([adminSession.end(), starSession.end()]);
+      }
     });
   });
 

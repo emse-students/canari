@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Controller,
   Delete,
+  Get,
   Headers,
   Logger,
   Param,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { AuthSessionsService, DEVICE_ID_PATTERN } from './auth-sessions.service';
+import { RouteParams } from '../common/route-params';
 
 /** A core-service session id: `auth_sessions.id`, a UUID minted by `randomUUID()`. */
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -17,6 +19,7 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
  * Session endings asked by another service, over the Docker network only (`/api/internal` has no
  * nginx location) and gated on `INTERNAL_SECRET`.
  */
+@RouteParams({ userId: 'opaque', deviceId: 'opaque', sessionId: 'uuid' })
 @Controller('internal/sessions')
 export class InternalSessionsController {
   private readonly logger = new Logger(InternalSessionsController.name);
@@ -49,5 +52,23 @@ export class InternalSessionsController {
         (except ? ` kept caller sid=${except}` : '')
     );
     return { ended };
+  }
+
+  /**
+   * The device id session `sessionId` of `userId` is bound to, or null when it is bound to none, no
+   * longer exists or is not that user's - read by chat-delivery's owner device delete, which refuses
+   * to ban the caller's own device from this fact rather than from the client's idea of its id.
+   */
+  @Get('users/:userId/sessions/:sessionId/device')
+  async sessionDevice(
+    @Param('userId') userId: string,
+    @Param('sessionId') sessionId: string,
+    @Headers('x-internal-secret') secret?: string
+  ): Promise<{ deviceId: string | null }> {
+    assertInternalSecret(secret);
+    if (!userId || userId.length > 255) throw new BadRequestException('userId');
+    const sid = (sessionId ?? '').trim().toLowerCase();
+    if (!SESSION_ID_PATTERN.test(sid)) throw new BadRequestException('sessionId');
+    return { deviceId: await this.sessions.boundDevice(userId, sid) };
   }
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
+import { bridgeJoinSql, managedVendorTokenSql } from './lydia-account-bridge';
 
 /**
  * THE ONE CLAIM OF EVERY LYDIA CASHIER OPERATION OF AN ASSOCIATION (lots 2 and 3): the
@@ -18,6 +19,17 @@ import type { EntityManager } from 'typeorm';
  */
 export const LYDIA_CASHIER_CLAIM_LOST = 'LYDIA_CASHIER_CLAIM_LOST';
 /**
+ * The `code` (409) of deleting an association, or unlinking its Business, while that Business still
+ * lists a Tresorier, a Vendeur or a Responsable's other number: the act would close the rows and
+ * leave the rights at Lydia with nothing in Canari to remove them. Lifted by removing those cashiers
+ * first ("Retirer"; a departed member's are removed by the departure run).
+ */
+export const LYDIA_CASHIERS_LIVE = 'LYDIA_CASHIERS_LIVE';
+
+/** The `code` (409) of a cashier operation (or a delete, an unlink) while one is in flight. */
+export const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
+
+/**
  * The `code` (409) of a removal whose number is no longer the one sealed on the row it names: what
  * was removed at Lydia is not recorded against another number.
  */
@@ -34,12 +46,19 @@ export const LYDIA_CASHIER_CONFIRMED_REQUIRED = 'LYDIA_CASHIER_CONFIRMED_REQUIRE
 
 /** The association row as a claim reads it, locked (`FOR UPDATE`) by the transaction. */
 export interface LockedAssociation {
+  /**
+   * The Business the managers MANAGE (`managedVendorTokenSql`): on a bridge whose historical
+   * account collects, the enrolled Business - never the historical account (owner, 2026-11-13).
+   */
   vendorToken: string | null;
   claimed: boolean;
   claimToken: string | null;
 }
 
-/** Locks association `id` in `manager`'s transaction; null when it does not exist. */
+/**
+ * Locks association `id` in `manager`'s transaction (its row only: a bridge row is locked after it
+ * by a bridge transition, never by a claim); null when it does not exist.
+ */
 export async function lockAssociation(
   manager: EntityManager,
   id: string
@@ -49,9 +68,9 @@ export async function lockAssociation(
     startedAt: Date | null;
     claimToken: string | null;
   }> = await manager.query(
-    `SELECT "lydiaAccountId" AS "vendorToken", "lydiaResponsableStartedAt" AS "startedAt",
-            "lydiaCashierClaimToken" AS "claimToken"
-       FROM associations WHERE id = $1 FOR UPDATE`,
+    `SELECT ${managedVendorTokenSql('a', 'b')} AS "vendorToken",
+            a."lydiaResponsableStartedAt" AS "startedAt", a."lydiaCashierClaimToken" AS "claimToken"
+       FROM associations a ${bridgeJoinSql('a', 'b')} WHERE a.id = $1 FOR UPDATE OF a`,
     [id]
   );
   if (rows.length === 0) return null;
@@ -60,6 +79,46 @@ export async function lockAssociation(
     claimed: rows[0].startedAt != null,
     claimToken: rows[0].claimToken ?? null,
   };
+}
+
+/**
+ * REFUSES AN ACT THAT WOULD CLOSE THE CASHIER ROWS WITHOUT REMOVING THEM AT LYDIA - the association's
+ * delete (the rows cascade) and the unlink of its Business (the rows are closed) - read under the
+ * association's lock `manager` holds. The typed 409 `LYDIA_CASHIER_IN_FLIGHT` while a cashier
+ * operation holds the claim: its record would land on a row the act took away, after Lydia acted
+ * (a global admin clears a stuck claim, `releaseLydiaEnrolment('admin')`). The typed 409
+ * `LYDIA_CASHIERS_LIVE` while a Tresorier, a Vendeur or a Responsable's other number is live.
+ * `vendorToken` narrows to one Business's rows (a bridge's enrolled one). Answers the live rows left
+ * - the Responsable's current number alone - for the caller to say.
+ */
+export async function assertNoCashierOwed(
+  manager: EntityManager,
+  id: string,
+  vendorToken: string | null = null
+): Promise<Array<{ vendorToken: string }>> {
+  const [claim]: Array<{ claimed: boolean }> = await manager.query(
+    `SELECT ("lydiaResponsableStartedAt" IS NOT NULL) AS claimed FROM associations WHERE id = $1`,
+    [id]
+  );
+  if (claim?.claimed === true) {
+    throw new ConflictException({
+      code: LYDIA_CASHIER_IN_FLIGHT,
+      message: 'A Lydia cashier operation of this association is in flight',
+    });
+  }
+  const live: Array<{ vendorToken: string; owed: boolean }> = await manager.query(
+    `SELECT "vendorToken", (role <> 'responsable' OR "previousPhoneSealed" IS NOT NULL) AS owed
+       FROM lydia_cashiers
+      WHERE "associationId" = $1 AND "removedAt" IS NULL AND ($2::text IS NULL OR "vendorToken" = $2::text)`,
+    [id, vendorToken]
+  );
+  if (live.some((row) => row.owed === true)) {
+    throw new ConflictException({
+      code: LYDIA_CASHIERS_LIVE,
+      message: 'Remove the Lydia cashiers of this association first',
+    });
+  }
+  return live.map((row) => ({ vendorToken: row.vendorToken }));
 }
 
 /** Writes the claim and a NEW token on the association row locked by `manager`; answers the token. */

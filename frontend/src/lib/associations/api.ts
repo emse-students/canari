@@ -1,3 +1,4 @@
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
@@ -17,6 +18,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { Form } from '$lib/forms/api';
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
@@ -45,7 +47,7 @@ export enum AssociationPermissionFlag {
 }
 
 /**
- * Non-BDE flags granted to association admins (excludes Stripe Connect).
+ * Non-BDE flags granted to association admins (excludes the payout account).
  * Mirrors backend `ALL_CORE_FLAGS`.
  */
 export const ALL_CORE_FLAGS =
@@ -59,7 +61,7 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_BOOKINGS |
   AssociationPermissionFlag.EDIT_PROFILE;
 
-/** Default admin preset when adding a member (core flags + Stripe Connect). */
+/** Default admin preset when adding a member (core flags + payout account). */
 export const ASSOCIATION_ADMIN_PRESET =
   ALL_CORE_FLAGS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT;
 
@@ -185,10 +187,48 @@ export function holdsBdeFlag(
   return !!findBdeAssociationWithFlag(myAssociations, flag);
 }
 
+/**
+ * Does the user moderate SOMEWHERE - the client mirror of the server's door
+ * (`MODERATES_SOMEWHERE_SQL`, `apps/social-service/src/spaces/bde-moderation.ts`): `MODERATE` in a
+ * BDE of type `association`, or in an INSTITUTION, whose own moderators moderate its content (owner,
+ * 2026-11-15, decision 4) whether or not it governs a space. An institution governing a space is no
+ * BDE here (decision 3). What each act may reach is the server's answer on that act.
+ */
+export function holdsModerationDoor(myAssociations: Association[]): boolean {
+  return myAssociations.some(
+    (a) =>
+      hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MODERATE) &&
+      (a.type === 'institution' || (a.type === 'association' && a.isBDE))
+  );
+}
+
+/**
+ * Does the members editor offer BDE-only flag `flag` on an entity of kind `kind` (`isBDE`: it
+ * governs a space)? Each flag where the server honours it: `VALIDATE_EVENTS` wherever a space is
+ * governed (an institution keeps its agenda right, owner 2026-11-03); `MANAGE_ASSO` in a BDE of type
+ * `association` only (reform 2.3); `MODERATE` there AND in any institution, whose own moderators
+ * moderate its content (owner, 2026-11-15, decision 4).
+ */
+export function offersBdeOnlyFlag(
+  kind: Association['type'],
+  isBDE: boolean,
+  flag: AssociationPermissionFlag
+): boolean {
+  const bde = isBDE && kind === 'association';
+  if (flag === AssociationPermissionFlag.VALIDATE_EVENTS) return isBDE;
+  if (flag === AssociationPermissionFlag.MODERATE) return bde || kind === 'institution';
+  return bde;
+}
+
 export interface AssociationMember {
   id: string;
   associationId: string;
   userId: string;
+  /**
+   * Set on the rows of a review account, only for a caller allowed to see them (the platform admin):
+   * no public roster carries one, so the carte leaves them out.
+   */
+  reviewAccount?: boolean;
   displayName: string | null;
   /** Given name from the users mirror, when the mirror has one. */
   firstName: string | null;
@@ -237,6 +277,12 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
+  /**
+   * A BDE's chosen colour for its neutral ("Campus") agenda events, or null (derived accent). NEVER in
+   * a member read (it would name the BDE a masked event hides): only `PATCH :id`'s answer to its
+   * writer carries it, and {@link getNeutralEventColour} reads it.
+   */
+  neutralEventColor?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
@@ -311,6 +357,8 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
+  /** A BDE only: the colour of its neutral ("Campus") agenda events; `""` or `null` clears it. */
+  neutralEventColor?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -396,6 +444,11 @@ export interface AssociationCalendarEvent {
   imageUrl: string | null;
   /** The ACCEPTED co-organisers (D39); one asked and not yet answering is not here. */
   coOwners: CalendarEventCoOwner[];
+  /**
+   * The spaces and the public an institution chose for this event (owner, 2026-11-13), served to
+   * every reader like a post's; `null` (or absent, from an older server) when it carries none.
+   */
+  reach?: InstitutionReach | null;
 }
 
 /** Row from `GET /api/associations/calendar/feed` (aggregated agenda). */
@@ -404,6 +457,11 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationSlug: string;
   /** Hex color set on the association, or null (frontend falls back to generateAvatarColor). */
   associationColor: string | null;
+  /**
+   * The colour the owning BDE chose for its NEUTRAL ("Campus") events (owner, 2026-11-14): present
+   * on a neutral row only, kept even when the owner is masked; null/absent -> the derived accent.
+   */
+  neutralEventColor?: string | null;
   /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
   associationLogoUrl: string | null;
   /**
@@ -431,6 +489,8 @@ export interface CreateAssociationCalendarEventPayload {
   coOwnerIds?: string[];
   /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
   presentation?: AssociationCalendarEventPresentation;
+  /** MANDATORY when the owner is an institution, refused otherwise (owner, 2026-11-13). */
+  reach?: InstitutionReach;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -442,6 +502,8 @@ export interface UpdateAssociationCalendarEventPayload {
   kind?: AssociationCalendarEventKind;
   /** Omitted unless the surface may decide it (`canSetPresentation`). */
   presentation?: AssociationCalendarEventPresentation;
+  /** An institution's reach, replaced both ways; omitted leaves it as stored (organiser side). */
+  reach?: InstitutionReach;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -531,7 +593,13 @@ export class SocialApiError extends ApiRefusalError {
      * definition refusal names its grid), so the editor draws the refusal under that question
      * instead of only in the page banner. Null when the body names none.
      */
-    readonly itemId: string | null = null
+    readonly itemId: string | null = null,
+    /**
+     * The associations a carte publish refused `CARTE_ROSTER_MISSING` names (`associationIds`): their
+     * rosters were sent empty while they have members, so the editor re-reads exactly those. Null
+     * when the body names none ({@link associationIdsOf}).
+     */
+    readonly associationIds: string[] | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
@@ -549,6 +617,15 @@ export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
  * payments may still land (at most about 35 minutes after it was opened).
  */
 export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the `associationIds` string array a refusal body carries; `null` when it carries none. */
+export function associationIdsOf(body: unknown): string[] | null {
+  if (!body || typeof body !== 'object') return null;
+  const { associationIds } = body as Record<string, unknown>;
+  if (!Array.isArray(associationIds)) return null;
+  const ids = associationIds.filter((id): id is string => typeof id === 'string');
+  return ids.length > 0 ? ids : null;
+}
 
 /** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
 export function holderCountOf(body: unknown): number | null {
@@ -593,6 +670,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
   let holderCount: number | null = null;
+  let associationIds: string[] | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -616,10 +694,20 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     amountBounds = amountBoundsOf(parsed);
     // A tier delete refused for its holders carries how many, as a number.
     holderCount = holderCountOf(parsed);
+    // A carte publish refused for a roster sent empty names the associations, as ids.
+    associationIds = associationIdsOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
+  return new SocialApiError(
+    message,
+    code,
+    res.status,
+    amountBounds,
+    holderCount,
+    null,
+    associationIds
+  );
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -698,7 +786,8 @@ export async function listAssociations(
 
 /**
  * THE READER'S DIRECTORY (D37): the associations whose audience reaches one of the reader's spaces,
- * plus the ones they belong to. Only the two directory pages (`/associations`, `/lists`) read it -
+ * plus the ones they belong to, plus the ones a nominative read grant of theirs reaches. Only the
+ * three directory pages (`/associations`, `/lists`, `/institutions`) read it -
  * a hidden association is not listed there, and its page stays reachable by its link.
  */
 export async function listAssociationDirectory(
@@ -781,7 +870,7 @@ export async function listAgendaReachedSpaces(): Promise<{ formation: string; ca
   return request<{ formation: string; campus: string }[]>('/api/associations/calendar/spaces');
 }
 
-/** The selection a subscription URL is signed for: a side left empty is "any". */
+/** The selection a subscription link is asked for: a side left empty is "any". */
 export interface AgendaFeedSelection {
   campus?: Campus | '' | null;
   formation?: Formation | '' | null;
@@ -789,72 +878,68 @@ export interface AgendaFeedSelection {
 }
 
 /**
- * Asks the server to SIGN a feed selection (D40 amended 2026-10-06): it answers only for the
- * reader's OWN campus, formations and pairs of them (403 `AGENDA_SELECTION_FORBIDDEN` otherwise), or
- * for an association, and the `sig` it returns goes into the `.ics` URL unchanged. Needs a session.
+ * Asks the server for the reader's SUBSCRIPTION LINK for a selection (owner, 2026-11-14, "Respecter
+ * les publics"): the token names a row bound to the reader's account, and the feed it opens is the
+ * reader's own agenda, re-read at every poll - never more than they see. The same selection answers
+ * the same token until the reader revokes. Bounded like the selector (403
+ * `AGENDA_SELECTION_FORBIDDEN` outside the reader's own spaces). Needs a session.
  */
-export async function signAgendaFeed(selection: AgendaFeedSelection): Promise<string> {
+export async function requestAgendaSubscription(selection: AgendaFeedSelection): Promise<string> {
   const body: Record<string, string> = {};
   if (selection.campus) body.campus = selection.campus;
   if (selection.formation) body.formation = selection.formation;
   if (selection.associationId?.trim()) body.associationId = selection.associationId.trim();
-  const res = await request<{ sig: string }>('/api/associations/calendar/feed-signature', {
+  const res = await request<{ token: string }>('/api/associations/calendar/subscription', {
     method: 'POST',
     body: JSON.stringify(body),
   });
-  return res.sig;
+  return res.token;
 }
 
 /**
- * Default window for an `.ics` subscription link: 3 months back to the end of the 12th month
- * ahead. The backend defaults to the same range when `from`/`to` are omitted, but a subscribe
- * link is built once and copied/saved by the user, so we still send an explicit window here -
- * it reads better in a calendar app's "range of this subscription" UI than a bare URL would.
+ * Revokes EVERY subscription link of the reader: each link they handed out stops answering, and
+ * the next {@link requestAgendaSubscription} answers a new one. Resolves to how many were revoked.
  */
-export function icsSubscriptionRangeISO(): { from: string; to: string } {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth() - 3, 1, 0, 0, 0, 0);
-  const to = new Date(now.getFullYear(), now.getMonth() + 12, 0, 23, 59, 59, 999);
-  return { from: from.toISOString(), to: to.toISOString() };
+export async function revokeAgendaSubscriptions(): Promise<number> {
+  const res = await request<{ revoked: number }>('/api/associations/calendar/subscriptions', {
+    method: 'DELETE',
+  });
+  return res.revoked;
 }
 
-/** Path + query for the dynamic iCalendar feed (same params as `listAggregatedCalendarFeed`). */
+/**
+ * The path of a subscription link: the token ALONE (the server refuses it beside a selection or a
+ * `sig`), and no window - the server serves its rolling one, so a link saved today still shows the
+ * coming months a year from now.
+ */
+export function agendaSubscriptionIcsPath(token: string): string {
+  return `/api/associations/calendar/feed.ics?${new URLSearchParams({ token }).toString()}`;
+}
+
+/** Absolute URL of a subscription link (`agendaSubscriptionIcsPath`), for a calendar app. */
+export function agendaSubscriptionIcsAbsoluteUrl(token: string): string {
+  return absoluteSocialUrl(agendaSubscriptionIcsPath(token));
+}
+
+/** Path + query of ONE event's `.ics` link (its window, its id and the server's signature of it). */
 export function aggregatedCalendarFeedIcsPath(opts: {
   from: string;
   to: string;
-  associationId?: string;
   /** Narrows the feed to this one event - the link that adds a single evening to a calendar. */
-  eventId?: string;
-  /** D40: the public feed is one per selection; the server REFUSES a bare one. */
-  campus?: Campus | null;
-  formation?: Formation | null;
-  /** The server's signature of that selection (`signAgendaFeed`); a selection feed is refused without it. */
-  sig?: string;
+  eventId: string;
+  /** The server's signature of that event's link (`icsSig`); the link is refused without it. */
+  sig: string;
 }): string {
   const q = new URLSearchParams();
   q.set('from', opts.from);
   q.set('to', opts.to);
-  if (opts.associationId?.trim()) q.set('associationId', opts.associationId.trim());
-  if (opts.campus) q.set('campus', opts.campus);
-  if (opts.formation) q.set('formation', opts.formation);
-  if (opts.eventId?.trim()) q.set('eventId', opts.eventId.trim());
-  if (opts.sig?.trim()) q.set('sig', opts.sig.trim());
+  q.set('eventId', opts.eventId.trim());
+  q.set('sig', opts.sig.trim());
   return `/api/associations/calendar/feed.ics?${q.toString()}`;
 }
 
-/**
- * Absolute URL to `feed.ics` for the given window. Prefer `socialUrl()` when set (Tauri / split API).
- */
-export function aggregatedCalendarFeedIcsAbsoluteUrl(opts: {
-  from: string;
-  to: string;
-  associationId?: string;
-  eventId?: string;
-  campus?: Campus | null;
-  formation?: Formation | null;
-  sig?: string;
-}): string {
-  const path = aggregatedCalendarFeedIcsPath(opts);
+/** `path` made absolute: `socialUrl()` when set (Tauri / split API), else this page's origin. */
+function absoluteSocialUrl(path: string): string {
   const base = socialUrl();
   if (base) return `${base}${path}`;
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -870,6 +955,19 @@ export async function createAssociationCalendarEvent(
   return request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events`,
     { method: 'POST', body: JSON.stringify(payload) }
+  );
+}
+
+/**
+ * The spaces an institution's EVENT may target (owner, 2026-11-13): its audience's, the statement
+ * the write checks a reach against. `associationId` is the event's owner; 403 for a caller who files
+ * none of its events, 400 `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getEventReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/reach-options`
   );
 }
 
@@ -930,10 +1028,13 @@ export async function validateAssociationCalendarEvent(
   associationId: string,
   eventId: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /** Rejects a pending calendar event with an optional reason (BDE or global admin only). */
@@ -942,10 +1043,13 @@ export async function rejectAssociationCalendarEvent(
   eventId: string,
   reason?: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/reject`,
     { method: 'POST', body: JSON.stringify({ reason: reason?.trim() || undefined }) }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /**
@@ -1193,7 +1297,7 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
     myAssociationsProbe = listMyAssociations()
       .then((assos) => {
         setAssociationSuperAdmin(holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO));
-        setContentModerator(holdsBdeFlag(assos, AssociationPermissionFlag.MODERATE));
+        setContentModerator(holdsModerationDoor(assos));
         setEventValidator(holdsBdeFlag(assos, AssociationPermissionFlag.VALIDATE_EVENTS));
         return assos;
       })
@@ -1225,14 +1329,14 @@ export async function ensureAssociationSuperAdmin(force = false): Promise<boolea
 }
 
 /**
- * Determines whether the current user may moderate content platform-wide (member of a BDE
- * association holding `MODERATE`) and publishes it so `isContentModerator()` reflects it.
+ * Determines whether the current user moderates somewhere (`holdsModerationDoor`: `MODERATE` in a
+ * BDE or in an institution) and publishes it so `isContentModerator()` reflects it.
  *
  * The client mirror of the server's `isContentModerator`: the moderation screen and the server's
  * guards must open to the same people, or the tier is reachable only by whoever knows the URL.
  */
 export async function ensureContentModerator(force = false): Promise<boolean> {
-  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MODERATE);
+  return holdsModerationDoor(await ensureMyAssociations(force));
 }
 
 /** Determines whether the current user may validate pending calendar events. */
@@ -2805,6 +2909,25 @@ export interface AssociationPayoutAccount {
    * server older than lot 3: read as none.
    */
   cashiers?: LydiaCashier[];
+  /**
+   * A GLOBAL ADMIN's read only, on an association whose historical Lydia account collects until the
+   * enrolled Business is validated (the bridge, owner 2026-11-13). The managers never receive it:
+   * the historical account is invisible to them. Absent on a server older than the bridge.
+   */
+  bridge?: LydiaAccountBridge;
+}
+
+/** Which Business of a bridge collects, and what it did - the global admin's panel. */
+export interface LydiaAccountBridge {
+  /** `historical`: the historical account collects; `switched`: the enrolled Business does. */
+  state: 'historical' | 'switched';
+  historicalReady: boolean;
+  /** Whether the enrolment linked its Business yet. */
+  enrolledLinked: boolean;
+  switchedAt: string | null;
+  switchCount: number;
+  switchBackCount: number;
+  reissueCount: number;
 }
 
 /** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
@@ -2833,6 +2956,12 @@ export interface LydiaCashier {
   /** ISO instant the cashier was added. */
   addedAt: string;
   addedByName: string;
+  /**
+   * The person is no longer a member of the association: their numbers are being removed at Lydia
+   * (a Responsable keeps their current one, and a new Responsable is needed). Absent from a server
+   * older than 1.7.1, read as false.
+   */
+  departed?: boolean;
 }
 
 /** The cause of the last readiness change of a Lydia Business. */
@@ -2852,6 +2981,18 @@ export interface LydiaResponsable {
    * same-number resend confirms it. Absent reads as confirmed.
    */
   confirmed?: boolean;
+}
+
+/**
+ * Reads a BDE's colour for its neutral ("Campus") events (EDIT_PROFILE, 403 otherwise; `null` is the
+ * derived default). Its own read because the member reads never carry it: a masked neutral event
+ * carries the colour, so a colour every member could list would name the BDE (review of #3539).
+ */
+export async function getNeutralEventColour(associationId: string): Promise<string | null> {
+  const body = await request<{ neutralEventColor: string | null }>(
+    `/api/associations/${encodeURIComponent(associationId)}/neutral-event-colour`
+  );
+  return body.neutralEventColor ?? null;
 }
 
 /**
@@ -2877,9 +3018,12 @@ export async function disconnectLydiaConnect(associationId: string): Promise<voi
     { method: 'POST' }
   );
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(
-      (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    const body = (await res.json().catch(() => ({}))) as { message?: string; code?: unknown };
+    // Typed, so the screen can say WHY (LYDIA_BUSINESS_HOLDS_PAYMENTS) and never reads the prose.
+    throw new SocialApiError(
+      body?.message || `Lydia disconnect failed (${res.status})`,
+      typeof body?.code === 'string' ? body.code : null,
+      res.status
     );
   }
 }
@@ -3080,6 +3224,11 @@ export interface PosterProject {
    * by a client older than 2026-09-28. Null therefore means "unknown", never "unchanged".
    */
   publicationFingerprint?: string | null;
+  /**
+   * The document that is live, as STORED (a publish keeps only current members); null when offline.
+   * Present on a single map's answer, absent from the list.
+   */
+  publication?: Record<string, unknown> | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -3124,7 +3273,6 @@ export interface CreatePosterProjectPayload {
   name: string;
   /** The space the map is drawn for - one the caller manages. */
   spaceId: string;
-  layout?: Record<string, unknown>;
 }
 
 export interface UpdatePosterProjectPayload {
@@ -3138,6 +3286,10 @@ export interface UpdatePosterProjectPayload {
 export const CARTE_REFUSAL = {
   UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
   NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
+  /** A directory line with no roster: an editor older than the structured roster - reload it. */
+  ROSTER_UNSTRUCTURED: 'CARTE_ROSTER_UNSTRUCTURED',
+  /** An association with members sent with an empty roster: the editor did not load it. */
+  ROSTER_MISSING: 'CARTE_ROSTER_MISSING',
 } as const;
 
 /**
@@ -3476,12 +3628,14 @@ export function eventIcsAbsoluteUrl(
   const start = new Date(startsAt);
   if (Number.isNaN(start.getTime()) || !icsSig?.trim()) return '';
   const DAY_MS = 24 * 60 * 60 * 1000;
-  return aggregatedCalendarFeedIcsAbsoluteUrl({
-    from: new Date(start.getTime() - DAY_MS).toISOString(),
-    to: new Date(start.getTime() + DAY_MS).toISOString(),
-    eventId,
-    sig: icsSig,
-  });
+  return absoluteSocialUrl(
+    aggregatedCalendarFeedIcsPath({
+      from: new Date(start.getTime() - DAY_MS).toISOString(),
+      to: new Date(start.getTime() + DAY_MS).toISOString(),
+      eventId,
+      sig: icsSig,
+    })
+  );
 }
 
 // ── Spaces (WP6d) ─────────────────────────────────────────────────────────

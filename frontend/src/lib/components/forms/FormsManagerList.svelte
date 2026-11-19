@@ -28,6 +28,7 @@
   import {
     getSubmissions,
     deleteForm,
+    setFormClosed,
     deleteSubmission,
     listPendingCashSubmissions,
     validateCashSubmission,
@@ -44,10 +45,14 @@
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
+  import { formCodeMessage } from '$lib/forms/answerBounds';
+  import { PREVIOUS_PAYMENT_OPEN } from '$lib/associations/paymentRefusal';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
+  import { isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
   import { markdownToPlainText } from '$lib/seo/text';
 
@@ -95,6 +100,8 @@
   let loading = $state(true);
   let loadError = $state(false);
   let deletingId = $state<string | null>(null);
+  /** The form whose close or reopening is in flight (or whose confirmation is open). */
+  let closingId = $state<string | null>(null);
   /** The form whose export is in flight: a second tap starts no second export. */
   let exportingId = $state<string | null>(null);
   let deletingSubmissionId = $state<string | null>(null);
@@ -167,6 +174,45 @@
       showToast(m.form_list_error_delete());
     } finally {
       deletingId = null;
+    }
+  }
+
+  /**
+   * "Clore le formulaire" (confirmed: nobody can answer afterwards) or "Rouvrir" (not: it only
+   * gives the form back). The row follows the server's stored `closedAt`. Guarded from the moment
+   * the confirmation OPENS, like the delete.
+   */
+  async function handleToggleClosed(form: Form) {
+    if (closingId === form.id) return;
+    const closing = !isClosedForm(form);
+    closingId = form.id;
+    try {
+      if (
+        closing &&
+        !(await showConfirm(m.form_list_close_confirm({ title: form.title }), {
+          danger: true,
+          confirmLabel: m.form_list_close_confirm_button(),
+        }))
+      ) {
+        return;
+      }
+      Log.d('FormsManagerList', `${closing ? 'closing' : 'reopening'} form ${form.id.slice(0, 8)}`);
+      const { closedAt, windowState } = await setFormClosed(form.id, closing);
+      // The answer carries the server's own verdict (`windowState`): the row never re-judges the
+      // stored end against this device's clock.
+      setForms(forms.map((f) => (f.id === form.id ? { ...f, closedAt, windowState } : f)));
+      showToast(closing ? m.form_list_closed_toast() : m.form_list_reopened_toast());
+    } catch (e) {
+      console.error(
+        `[FORMS] ${closing ? 'closing' : 'reopening'} form ${form.id.slice(0, 8)} failed:`,
+        e
+      );
+      showToast(
+        formCodeMessage(refusalCode(e)) ??
+          (closing ? m.form_list_error_close() : m.form_list_error_reopen())
+      );
+    } finally {
+      closingId = null;
     }
   }
 
@@ -245,8 +291,18 @@
         submissionsData = { ...submissionsData, [formId]: current.filter((s) => s.id !== sub.id) };
       }
     } catch (e) {
-      console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
-      showToast(m.form_list_error_delete());
+      // A paid answer is refused with a typed code (FORM_ANSWER_PAID), and a pending one whose Lydia
+      // request could not be settled first with PREVIOUS_PAYMENT_OPEN: expected answers, said to the
+      // manager, never an error.
+      const code = refusalCode(e);
+      const coded =
+        code === PREVIOUS_PAYMENT_OPEN ? m.form_list_delete_payment_open() : formCodeMessage(code);
+      if (coded) {
+        Log.w('FormsManagerList', `deleting answer ${sub.id.slice(0, 8)} refused: ${code}`);
+      } else {
+        console.error(`[FORMS] deleting answer ${sub.id.slice(0, 8)} failed:`, e);
+      }
+      showToast(coded ?? m.form_list_error_delete());
     } finally {
       deletingSubmissionId = null;
     }
@@ -403,6 +459,14 @@
                     </span>
                   {/if}
                 {/if}
+                {#if !draft && isClosedForm(form)}
+                  <span
+                    class="bg-cn-border/40 text-text-main inline-flex rounded-full px-2 py-0.5"
+                    data-testid="form-closed-badge"
+                  >
+                    {m.form_list_closed_badge()}
+                  </span>
+                {/if}
                 {#if draft}
                   <span
                     class="border-cn-border text-text-main inline-flex rounded-full border border-dashed px-2 py-0.5"
@@ -446,6 +510,9 @@
               </Button>
               <FormRowMenu
                 isDraft={draft}
+                isClosed={isClosedForm(form)}
+                opensLater={opensLater(form)}
+                closing={closingId === form.id}
                 hasProductGrid={productGridQuestions(form.items ?? []).length > 0}
                 deleting={deletingId === form.id}
                 exporting={exportingId === form.id}
@@ -453,6 +520,7 @@
                 onCopyLink={() => copyFormLink(form)}
                 onQr={() => (qrForm = form)}
                 onExport={(format) => void exportForm(form, format)}
+                onToggleClosed={() => void handleToggleClosed(form)}
                 onDelete={() => void handleDelete(form)}
               />
             </div>

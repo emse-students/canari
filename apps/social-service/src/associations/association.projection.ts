@@ -19,6 +19,10 @@ import type { LydiaReadinessCause } from './lydia-readiness';
  * onboarding and the disconnect already ask (`canManagePayoutAccount`). The vault key has its own
  * read too (`:id/vault-key`, MANAGE_DOCUMENTS), and the notes theirs (`:id/notes`).
  *
+ * A BDE's `neutralEventColor` is NOT here either (review of #3539): a masked neutral event carries
+ * its colour, so a colour every member could list against the associations would name the BDE the
+ * mask hides. It has its own read, `:id/neutral-event-colour`, for the EDIT_PROFILE holders who set it.
+ *
  * The seam is the CONTROLLER, not the service: `findById` is also used internally by writers
  * (`update`, `resolvePaymentTarget`), which need the whole row.
  */
@@ -93,6 +97,22 @@ export type AssociationPayoutAccount = Pick<
   enrolmentInFlightSince: string | null;
   /** The Responsable step's claim (`lydiaResponsableStartedAt`), for the global admin's clear. */
   responsableInFlightSince: string | null;
+  /**
+   * A GLOBAL ADMIN's read only, and only on a bridge (lydia-account-bridge.ts): which Business
+   * collects, the historical account's readiness, and the counts. The managers never read it - the
+   * historical account is invisible to them (owner, 2026-11-13).
+   */
+  bridge?: {
+    /** `historical`: the historical account collects; `switched`: the enrolled Business does. */
+    state: 'historical' | 'switched';
+    historicalReady: boolean;
+    /** Whether the enrolment linked its Business yet. */
+    enrolledLinked: boolean;
+    switchedAt: string | null;
+    switchCount: number;
+    switchBackCount: number;
+    reissueCount: number;
+  };
 };
 
 /** Projects an association row onto what a signed-in member may read of it. */

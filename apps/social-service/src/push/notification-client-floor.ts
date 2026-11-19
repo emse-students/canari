@@ -39,6 +39,22 @@ import type { PushContentKey } from './push-content';
  */
 export const HEADERLESS_CLIENT_VERSION = '1.6.9';
 
+/**
+ * The first build that honours `quiet` on a post's one live notification (owner, 2026-11-14;
+ * docs/wiki/engagement.md, "The owner's decision of 2026-11-14"). A QUIET update carries it as its
+ * floor: a build before it ignores `quiet` and `collapseId` and would ring every comment, uncapped,
+ * so it is sent the alerts only - its notification shows the first event, the bell holds them all.
+ * The version the change is planned for (`1.7.0`); a patch release in between carrying the code only
+ * loses the silent updates, never an alert.
+ */
+export const POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION = '1.7.0';
+
+/**
+ * The first build that draws and composes the two admin queue notices (owner, 2026-11-18): the bell
+ * types `admin_profile_correction` / `admin_report` and their push keys.
+ */
+export const ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION = '1.7.1';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 
@@ -73,6 +89,10 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   form_paid_over_capacity: '1.4.0',
   live_suspended: '1.4.0',
   live_withdrawn: '1.4.0',
+  // The lift of a withdrawal (1.7.0): the first build that draws it.
+  // The floor compares the core version only (`1.7.0-alpha.N` counts as 1.7.0): tester builds below
+  // alpha 9 pass it without drawing the type - accepted, testers only.
+  live_reinstated: '1.7.0',
   follow_request: '1.5.1',
   follow_accepted: '1.5.1',
   booking_cancelled: '1.5.1',
@@ -98,6 +118,9 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // `1.6.9` knew the type and drew it as a PERSON ("Quelqu'un", an "UI" avatar, a colon followed by
   // nothing): the first build that draws it as a suggestion is the floor.
   campus_trend: CAMPUS_TREND_MIN_CLIENT_VERSION,
+  // A new item in a global admin's queue (owner, 2026-11-18): the first build that draws it.
+  admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */
@@ -139,6 +162,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_live_cut: '1.4.0',
   social_live_suspended: '1.4.0',
   social_live_withdrawn: '1.4.0',
+  social_live_reinstated: '1.7.0',
   form_paid_over_capacity: '1.4.0',
   social_follow_request: '1.5.1',
   social_follow_accepted: '1.5.1',
@@ -166,6 +190,8 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_campus_trend: CAMPUS_TREND_MIN_CLIENT_VERSION,
   social_campus_trend_photo: CAMPUS_TREND_MIN_CLIENT_VERSION,
   social_campus_trend_video: CAMPUS_TREND_MIN_CLIENT_VERSION,
+  social_admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  social_admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
 };
 
 /**

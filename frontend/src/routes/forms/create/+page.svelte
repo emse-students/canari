@@ -3,6 +3,7 @@
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
@@ -25,7 +26,9 @@
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
-  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { answerEditPayload } from '$lib/forms/answerEditGate';
+  import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
@@ -38,7 +41,10 @@
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
-  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import {
+    formManagedAssociations,
+    withRequestedAssociation,
+  } from '$lib/associations/requestedAssociation';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
@@ -65,7 +71,7 @@
     firstItemsFaultQuestion,
     refusedProductGridFault,
   } from '$lib/forms/questionFault';
-  import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import { gridRequiredPayload, toFormItemsPayload } from '$lib/forms/itemsPayload';
   import {
     firstProductGridProblem,
     multipleSubmissionsAfterGridAdded,
@@ -86,7 +92,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { respondentSettingsPayload } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -94,11 +100,20 @@
   let description = $state('');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
+  let closedAt = $state('');
   let allowMultipleSubmissions = $state(false);
+  /** Whether a respondent may change their own answer while the form is open (migration 166). */
+  let allowAnswerEdit = $state(false);
+  /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
+  const answerEditAvailable = serverFormAnswerEdit() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /**
+   * "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). A new form
+   * joins the two names, as every named form did before it was a choice.
+   */
+  let identityChoices = $state<string[]>(['lastName', 'firstName']);
 
   // Payment
   let basePrice = $state(0);
@@ -128,10 +143,11 @@
    */
 
   /**
-   * The associations the user belongs to - not every association there is.
+   * The associations whose forms the user manages - not every association there is, nor every
+   * membership.
    *
-   * Creating a form for an association requires MEMBERSHIP of it, so listing all of them offered a
-   * choice the save would then refuse: pick, save, 403. The list is not filtered on Stripe
+   * Creating a form for an association requires MANAGE_FORMS in it (owner, 2026-11-14), so listing
+   * any other offered a choice the save would then refuse: pick, save, 403. The list is not filtered on payment
    * readiness either, because a FREE form may be linked to any association it belongs to; the
    * payment section says so when a chosen association cannot take money yet.
    */
@@ -179,7 +195,7 @@
     }
     try {
       associations = await withRequestedAssociation(
-        await listMyAssociations(),
+        formManagedAssociations(await listMyAssociations()),
         associationId,
         getAssociation
       );
@@ -234,6 +250,7 @@
       grantsCotisation: cotisation.grantsCotisation,
       submitCondition,
       items,
+      allowAnswerEdit,
     })
   );
 
@@ -278,6 +295,8 @@
    * always did, one "Enregistrer" that publishes (docs/wiki/legacy-compatibility.md).
    */
   const formDrafts = serverFormDrafts() === true;
+  /** Whether this estate stores each priced grid's own switch ([LEGACY] gate, `gridRequiredGate.ts`). */
+  const gridSwitch = $derived(gridRequiredSwitchOn());
 
   /**
    * The draft this page is building, created at the first autosave once the form has a title
@@ -383,6 +402,8 @@
   /** The new form's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
+      // Each priced grid's "Obligatoire" switch is the manager's, on an estate that stores it.
+      ...gridRequiredPayload(gridSwitch),
       title,
       description,
       basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -390,14 +411,16 @@
       submitCondition,
       ...cotisationPayload(cotisation, requiresPayment),
       currency: 'eur',
-      items: toFormItemsPayload(items),
+      items: toFormItemsPayload(items, gridSwitch),
       maxSubmissions,
       allowMultipleSubmissions,
+      ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      ...(closedAt ? { closedAt: new Date(closedAt).toISOString() } : {}),
       requiresPayment,
       // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
       // created for exactly as a paid one does (the comment on `associations` above already said
@@ -435,6 +458,10 @@
     }
     if (requiresPayment && !associationId) {
       error = m.form_error_association_required();
+      return;
+    }
+    if (formWindowInvalid(opensAt, closedAt)) {
+      error = m.form_closed_at_before_open();
       return;
     }
     const itemsProblem = formItemsProblem(items);
@@ -639,12 +666,15 @@
           multipleTurnedOnByGrid = false;
         }
       }
+      bind:allowAnswerEdit
+      {answerEditAvailable}
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
+      bind:closedAt
       bind:submitCondition
       bind:settings={cotisation}
       {tiers}

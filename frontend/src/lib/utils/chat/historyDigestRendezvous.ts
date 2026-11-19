@@ -43,6 +43,12 @@ export type SolicitedProbe =
       /** What the asker holds in `[since, now]`, folded to 64 bits. See `historyStateKey`. */
       key: string;
       since: number;
+      /**
+       * The asker holds frames of this group it cannot read and no repair has landed since. A
+       * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
+       * instead of staying silent. Absent on every ordinary probe and from older builds.
+       */
+      incomplete?: boolean;
     }
   | {
       kind: 'digest';
@@ -50,6 +56,19 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`) - the answer is sealed to it. */
+      answerKey: string;
+      /**
+       * The asker is owed the conversation's STATE (`registerOwed.ts`): the responder sends it one
+       * sealed register frame before the diff (`sendRegisterAnswer`). Absent from older builds.
+       */
+      register?: true;
+      /**
+       * The asker holds frames of this group it cannot read and no repair has landed since. A
+       * responder that then holds nothing the asker lacks ANSWERS so (`history_cannot_repair`)
+       * instead of staying silent. Absent on every ordinary probe and from older builds.
+       */
+      incomplete?: boolean;
     }
   | {
       kind: 'range';
@@ -60,6 +79,8 @@ export type SolicitedProbe =
       since: number;
       /** The asker's id for this ask, echoed on the answer (an ask without one is never stored). */
       requestId: string;
+      /** The key the ask carried (`parseHistoryAnswerKey`) - the answer is sealed to it. */
+      answerKey: string;
     };
 
 type StoredProbe = { probe: SolicitedProbe; at: number };

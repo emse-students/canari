@@ -27,6 +27,23 @@ export function isConfirmUnreadableHere(err: unknown): boolean {
 }
 
 /**
+ * Runs ONE read of a checkout and gives `whenThrottled` when the server refused it for its
+ * per-checkout limit on asking Lydia (429): an ANSWER, the callback still decides. Any other failure
+ * is thrown: the caller says it, and a failed read decides nothing.
+ */
+export async function readUnlessThrottled<T>(read: () => Promise<T>, whenThrottled: T): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (isConfirmThrottled(err)) {
+      Log.d('checkoutReturn', 'confirm read throttled, left pending');
+      return whenThrottled;
+    }
+    throw err;
+  }
+}
+
+/**
  * ONE read of an answer's payment, worded as the return pages word it (`returnOutcomeOf`): a state
  * that can still change, and a throttled read, are `pending`. Any other failure is thrown: the
  * caller says it, and a failed read decides nothing.
@@ -36,41 +53,37 @@ export async function readPaymentReturnOnce<T extends PaymentAnswer>(
   onRead: (answer: T) => void = () => {}
 ): Promise<PaymentReturnOutcome> {
   Log.d('checkoutReturn', 'reading the answer payment once');
-  try {
+  return readUnlessThrottled<PaymentReturnOutcome>(async () => {
     const answer = await read();
     onRead(answer);
     const outcome =
       returnOutcomeOf(paymentReturnVerdict(answer.paymentStatus, answer.requestState)) ?? 'pending';
     Log.d('checkoutReturn', `read ${answer.paymentStatus} -> ${outcome}`);
     return outcome;
-  } catch (err) {
-    if (isConfirmThrottled(err)) {
-      Log.d('checkoutReturn', 'confirm read throttled, left pending');
-      return 'pending';
-    }
-    throw err;
-  }
+  }, 'pending');
 }
 
 /**
  * The reads of ONE pending checkout. A page makes one per checkout it watches, and its IDENTITY is
  * the checkout's generation: an outcome read by a reader the page no longer holds is about a
  * checkout that ended (released, then paid again under the same answer id) and is dropped by the
- * page, whatever order the network answered in.
+ * page, whatever order the network answered in. `T` is what the page says about a read: the form's
+ * `PaymentReturnOutcome`, the shop's `CheckoutReturnView`.
  */
-export interface PaymentReader {
+export interface OnceReader<T> {
   /**
-   * One read through {@link readPaymentReturnOnce}, or `null` without asking when a read of this
-   * checkout is already in flight - the one in flight answers this question too, so the load, the
-   * return to the app and a tap never ask Lydia twice at once.
+   * One read, or `null` without asking when a read of this checkout is already in flight - the one
+   * in flight answers this question too, so the load, the return to the app and a tap never ask
+   * Lydia twice at once.
    */
-  readOnce(): Promise<PaymentReturnOutcome | null>;
+  readOnce(): Promise<T | null>;
 }
 
-/** A {@link PaymentReader} over `read`, the page's confirm call for one answer. */
-export function createPaymentReader<T extends PaymentAnswer>(
-  read: () => Promise<T>
-): PaymentReader {
+/** The form page's reader: its reads end on a {@link PaymentReturnOutcome}. */
+export type PaymentReader = OnceReader<PaymentReturnOutcome>;
+
+/** A {@link OnceReader} over `readOne`, whatever one read of this kind of checkout answers. */
+export function createOnceReader<T>(readOne: () => Promise<T>): OnceReader<T> {
   let inFlight = false;
   return {
     async readOnce() {
@@ -80,12 +93,19 @@ export function createPaymentReader<T extends PaymentAnswer>(
       }
       inFlight = true;
       try {
-        return await readPaymentReturnOnce(read);
+        return await readOne();
       } finally {
         inFlight = false;
       }
     },
   };
+}
+
+/** A {@link PaymentReader} over `read`, the page's confirm call for one answer. */
+export function createPaymentReader<T extends PaymentAnswer>(
+  read: () => Promise<T>
+): PaymentReader {
+  return createOnceReader(() => readPaymentReturnOnce(read));
 }
 
 /**

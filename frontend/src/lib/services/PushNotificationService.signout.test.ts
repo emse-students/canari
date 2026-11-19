@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { JWT_AUTH } from '../../test/pushAuth';
 
 /**
  * A sign-out ends the device's push registration on the device, whatever the server said.
@@ -62,22 +63,30 @@ beforeEach(() => {
 describe('a sign-out on the device', () => {
   it('deletes the token natively even with no registration marker in this tab', async () => {
     expect(sessionStorage.getItem('canari_fcm_token')).toBeNull();
-    await endPushRegistration();
+    await endPushRegistration('chosen');
     expect(commandsCalled()).toContain('end_push_registration');
     // No server is involved in the device half.
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('hands the native command who decided the sign-out, for the logcat line', async () => {
+    await endPushRegistration('pin-gate');
+    expect(tauriInvokeStub.mock.calls[0]?.slice(0, 2)).toEqual([
+      'end_push_registration',
+      { cause: 'pin-gate' },
+    ]);
+  });
+
   it('forgets the registration marker, so the next sign-in registers instead of skipping', async () => {
     sessionStorage.setItem('canari_fcm_token', 'fcm-token-1|fr');
-    await endPushRegistration();
+    await endPushRegistration('chosen');
     expect(sessionStorage.getItem('canari_fcm_token')).toBeNull();
   });
 
   it('logs an error when the deletion is owed rather than done, and does not reject', async () => {
     answers.end_push_registration = false;
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(endPushRegistration()).resolves.toBeUndefined();
+    await expect(endPushRegistration('chosen')).resolves.toBeUndefined();
     expect(error.mock.calls.some(([line]) => String(line).includes('OWED'))).toBe(true);
     error.mockRestore();
   });
@@ -85,27 +94,27 @@ describe('a sign-out on the device', () => {
   it('logs an error when the native step fails, and does not reject', async () => {
     tauriInvokeStub.mockImplementation(() => Promise.reject(new Error('native failure')));
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(endPushRegistration()).resolves.toBeUndefined();
+    await expect(endPushRegistration('chosen')).resolves.toBeUndefined();
     expect(error).toHaveBeenCalled();
     error.mockRestore();
   });
 
   it('runs on iOS too', async () => {
     osPlatformStub.mockReturnValue('ios');
-    await endPushRegistration();
+    await endPushRegistration('chosen');
     expect(commandsCalled()).toContain('end_push_registration');
   });
 
   it('asks nothing native where there is no push registration (web, desktop)', async () => {
     tauriRuntimeStub.mockReturnValue(false);
-    await endPushRegistration();
+    await endPushRegistration('chosen');
     expect(tauriInvokeStub).not.toHaveBeenCalled();
   });
 });
 
 describe('the next registration after a sign-out', () => {
   it('completes an owed deletion BEFORE reading or registering any token', async () => {
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     const calls = commandsCalled();
     const owed = calls.indexOf('complete_owed_push_token_deletion');
     expect(owed).toBeGreaterThanOrEqual(0);
@@ -119,7 +128,7 @@ describe('the next registration after a sign-out', () => {
   it('registers nothing while the deletion is still owed', async () => {
     answers.complete_owed_push_token_deletion = false;
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     expect(commandsCalled()).not.toContain('get_fcm_token');
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalled();
@@ -128,7 +137,7 @@ describe('the next registration after a sign-out', () => {
 
   it('does not count a registration whose push secret was not stored', async () => {
     // A first registration, so this one takes the foreground re-check path (no retry ladder).
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
     sessionStorage.clear();
     vi.mocked(globalThis.fetch).mockClear();
     tauriInvokeStub.mockImplementation((cmd?: string) =>
@@ -138,7 +147,7 @@ describe('the next registration after a sign-out', () => {
     );
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    await startPushService('https://api', 'jwt', 'dev-1');
+    await startPushService('https://api', JWT_AUTH, 'dev-1');
 
     // No skip key: the next attempt registers again and stores a fresh secret.
     expect(sessionStorage.getItem('canari_fcm_token')).toBeNull();

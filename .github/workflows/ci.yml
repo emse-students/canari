@@ -103,33 +103,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ── Full matrices (used as fallback) ──
-          ALL_RUST='[{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true},{"name":"Call Service (SFU)","path":"apps/call-service","cmd":"cargo test","check":true},{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true},{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true},{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo test --all-targets","tauri":true,"fmt":true}]'
-          ALL_TS='["apps/core-service","apps/social-service","apps/chat-delivery-service","apps/media-service"]'
-
-          # EVERY OUTPUT THIS JOB DECLARES, OR "run everything" IS A LIE. Two were missing until
-          # 2026-09-15 - `android` and `mls_compat` - so a pull request that CHANGED `ci.yml`, the
-          # one case this function exists for, skipped the Android suite and the MLS cross-version
-          # gate and went green for the reason that they had not run. That is the failure the
-          # comment below it describes and #521 already paid for once; it was reintroduced by
-          # adding outputs to the job and not to this function, which is why
-          # `changes-outputs.test.mjs` now DERIVES the list from the `outputs:` block instead of
-          # trusting anyone to remember.
-          run_all() {
-            echo "rust=$ALL_RUST"    >> "$GITHUB_OUTPUT"
-            echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
-            echo "frontend=true"     >> "$GITHUB_OUTPUT"
-            echo "frontend_build=true" >> "$GITHUB_OUTPUT"
-            echo "harness=true"      >> "$GITHUB_OUTPUT"
-            echo "android=true"      >> "$GITHUB_OUTPUT"
-            echo "android_app=true"  >> "$GITHUB_OUTPUT"
-            echo "ios_app=true"      >> "$GITHUB_OUTPUT"
-            echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
-            echo "miconnect=true"    >> "$GITHUB_OUTPUT"
-            echo "call_e2e=true"     >> "$GITHUB_OUTPUT"
-          }
-
-          # ── Determine base commit ──
+          # THE FILTERS ARE NOT HERE: they live in `.github/scripts/ci-scopes.sh`, which the local
+          # pre-push run calls too (owner, 2026-11-15: what a pull request checks is checked before
+          # the push). This step only says which commit the change is measured against, because
+          # that is the one input only the event knows, and which file is the CI definition.
           BASE=""
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             BASE="$PR_BASE_SHA"
@@ -140,300 +117,15 @@ jobs:
             BASE="$(git rev-parse HEAD~1)"
           fi
 
-          if [[ -z "$BASE" ]]; then
-            echo "No base commit available - running all tests."
-            run_all; exit 0
-          fi
-
-          CHANGED="$(git diff --name-only "$BASE" HEAD)"
-          echo "Changed files:" && echo "$CHANGED"
-
-          # Helper: returns 0 if any changed file matches the pattern
-          has() { grep -qE "$1" <<<"$CHANGED"; }
-
-          # THE CI DEFINITION ITSELF CHANGED -> test everything, and THE PATH IS DERIVED FROM THE
-          # RUN rather than written down here.
-          #
-          # This guard named `pull-request.yml` from #356 - the commit that renamed the file to
-          # `ci.yml` - until 2026-09-11, so it matched nothing and said nothing. What the silence
-          # cost: #521 REPAIRED a broken `boot-nest-apps` job and merged with that very job
-          # SKIPPED, because a workflow edit touches no service path, and `CI passed` went green
-          # for the reason that the jobs had not run. A name-based guard fails by ABSENCE, which is
-          # invisible. `GITHUB_WORKFLOW_REF` is written by the runner from the workflow actually
-          # executing, so it cannot go stale under a rename and there is no second copy for a test
-          # to compare. `code-analysis.yml` is named explicitly because it RUNS inside this
-          # workflow as a library - it is part of the CI definition, not a neighbour of it.
+          # `GITHUB_WORKFLOW_REF` is written by the runner from the workflow actually executing, so
+          # it cannot go stale under a rename (the guard it feeds is explained in ci-scopes.sh).
           if [[ -z "${GITHUB_WORKFLOW_REF:-}" ]]; then
-            echo "::error::GITHUB_WORKFLOW_REF is empty, so this step cannot name its own workflow file and the guard below would match nothing - which is the exact silent failure it was rewritten to end."
+            echo "::error::GITHUB_WORKFLOW_REF is empty, so this step cannot name its own workflow file and the run-everything guard would match nothing - which is the exact silent failure it was rewritten to end."
             exit 1
           fi
           SELF="${GITHUB_WORKFLOW_REF%@*}"   # owner/repo/.github/workflows/ci.yml
           SELF="${SELF#*/*/}"                # .github/workflows/ci.yml
-          # The path is matched as a FIXED WHOLE LINE, so no regex escaping stands between the
-          # name the runner gave us and the name in the diff.
-          if grep -qxF "$SELF" <<<"$CHANGED" \
-             || has '^\.github/workflows/code-analysis\.yml$'; then
-            echo "CI definition changed ($SELF) - running all tests."
-            run_all; exit 0
-          fi
-
-          # ── Rust matrix ──
-          rust=()
-          # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
-          # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
-          # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
-          # change runs them, and chat-delivery's device limit (`state.rs` asserts its copy of it):
-          # ask what the gate reads.
-          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/' || has '^apps/chat-delivery-service/src/retention\.constants\.ts$'; then
-            rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
-          fi
-          # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native
-          # crate below, found the same way. `apps/call-service` was in no matrix at all, so the
-          # ONLY thing that ever built it was the Docker stage in `deploy.yml`, which runs AFTER a
-          # merge. Two Dependabot majors went green through that gap and landed on `main` broken:
-          # #222 (webrtc 0.11 -> 0.17, which deleted `RTCIceServer::credential_type`) and #227
-          # (axum 0.7 -> 0.8, whose text frames became `Utf8Bytes`). The failure surfaced as a red
-          # CD and a skipped deploy, which is far too late and one step from a release.
-          # WITH `check`: `cargo fmt --check` and `clippy --all-targets --all-features -D warnings`
-          # were both run against this crate before this entry was added, and both are clean - it
-          # is not on an unverified guess, unlike the deliberate omission noted for Tauri below.
-          # It has no path dependency on anything in this repo, so only its own sources trigger it.
-          if has '^apps/call-service/'; then
-            rust+=('{"name":"Call Service (SFU)","path":"apps/call-service","cmd":"cargo test","check":true}')
-          fi
-
-          mls_core=false
-          if has '^frontend/mls-core/'; then mls_core=true; fi
-          if [[ "$mls_core" == "true" ]]; then
-            rust+=('{"name":"Frontend MLS Core","path":"frontend/mls-core","cmd":"cargo test","check":true}')
-          fi
-          # mls-wasm depends on mls-core
-          if [[ "$mls_core" == "true" ]] || has '^frontend/mls-wasm/'; then
-            rust+=('{"name":"Frontend MLS WASM","path":"frontend/mls-wasm","cmd":"cargo build --target wasm32-unknown-unknown --release","wasm":true,"check":true}')
-          fi
-          # AND SO DOES THE NATIVE CRATE, WHICH NOTHING HERE COMPILED UNTIL 2026-08-23. A variant
-          # added to `mls_core::DecryptErrorKind` broke `src-tauri`'s exhaustive match, and every
-          # gate stayed green: CI has no matrix entry for it, and the only workflows that build it
-          # are the three release ones - so the break would have surfaced at a release, which is the
-          # worst possible moment and exactly the shipping-order hazard `legacy-compatibility.md`
-          # is about. Triggered by its own sources AND by mls-core, because that is the direction
-          # the dependency runs.
-          #
-          # DELIBERATELY WITHOUT `check` - no `cargo fmt`/`clippy -D warnings` gate yet. Both were
-          # verified by hand on Windows the day this was added; neither has ever run against this
-          # crate on Linux with `--all-features`, and turning a gate on for everybody on an
-          # unverified guess is how a pipeline goes red for a reason nobody changed.
-          #
-          # IT RUNS THE TESTS NOW, AND UNTIL 2026-08-31 IT DID NOT. `cargo check --all-targets` was
-          # the exact scope of the defect that prompted the entry - does it compile - and it stayed
-          # that scope after the crate acquired 33 tests, so every one of them was COMPILED and none
-          # was ever RUN by anything but a developer's machine. That is the house rule about native
-          # code written into the pipeline itself: verifying by compiling proves nothing about
-          # running. `cargo test --all-targets` strictly dominates the old command - it still
-          # compiles every target - and it is what makes `cross_version_push.rs`, the gate that
-          # retired the `aes-gcm` ceiling clause, an actual gate rather than a file that compiles.
-          # The webkit2gtk install below is what lets the test binary LINK on Linux; it was already
-          # there for the check.
-          if [[ "$mls_core" == "true" ]] || has '^frontend/src-tauri/'; then
-            rust+=('{"name":"Frontend Native (Tauri)","path":"frontend/src-tauri","cmd":"cargo test --all-targets","tauri":true,"fmt":true}')
-          fi
-
-          if [[ ${#rust[@]} -eq 0 ]]; then
-            echo "rust=[]" >> "$GITHUB_OUTPUT"
-          else
-            echo "rust=[$(IFS=,; echo "${rust[*]}")]" >> "$GITHUB_OUTPUT"
-          fi
-
-          # ── TypeScript backend matrix ──
-          #
-          # `libs/contracts/` IS IN THREE OF THESE ENTRIES BECAUSE THEIR SUITES READ IT (core-service
-          # since 2026-10-21: `payment-amount-range.json`, the range social mirrors). A contract
-          # there is a rule several estates must agree on, shared as DATA because no TypeScript
-          # package crosses this repository (see `docs/wiki/libs.md`), and it is honoured by one
-          # test per implementation reading the JSON from disk. A case added to that file with no
-          # job running is the same silent hole the frontend filter below already paid for once:
-          # ASK WHAT THE GATE READS.
-          ts=()
-          if has '^apps/core-service/' || has '^libs/contracts/'; then
-            ts+=('"apps/core-service"')
-          fi
-          if has '^apps/social-service/' || has '^libs/contracts/'; then
-            ts+=('"apps/social-service"')
-          fi
-          if has '^apps/chat-delivery-service/' || has '^libs/contracts/'; then
-            ts+=('"apps/chat-delivery-service"')
-          fi
-          if has '^apps/media-service/'; then
-            ts+=('"apps/media-service"')
-          fi
-
-          if [[ ${#ts[@]} -eq 0 ]]; then
-            echo "ts=[]" >> "$GITHUB_OUTPUT"
-          else
-            echo "ts=[$(IFS=,; echo "${ts[*]}")]" >> "$GITHUB_OUTPUT"
-          fi
-
-          # ── Frontend ──
-          #
-          # `frontend/src-tauri/` IS IN THIS LIST BECAUSE THE FRONTEND SUITE READS IT, not because
-          # it is under `frontend/`. Twenty-odd vitest files in `frontend/src/lib/mobile/` and
-          # `frontend/src/lib/services/` open the Kotlin, the Swift, the `.mm` bridges, the Rust
-          # commands, `tauri.conf.json` and the Android resources, and assert things about them -
-          # that every declared notification channel is created, that the push payload's fields
-          # agree on both platforms, that the manifest still registers the FCM service. Until
-          # 2026-09-17 this filter named `^frontend/src/` only, so a commit touching ONLY the
-          # native tree ran the Android Gradle job and NONE of the tests written to guard that
-          # tree - the derived-test failure this repository has now met five times. The `android`
-          # filter below is correct and is not a substitute: it runs the JVM ladder suite, not
-          # these.
-          #
-          # Ask what the gate READS. These read `frontend/` whole, so the trigger is `frontend/`
-          # whole, minus nothing that is not separately covered.
-          #
-          # `bun.lock` and `patches/` decide which library code the suite runs (2026-10-13): a
-          # lockfile-only bump of a patched dependency drops its patch silently, and only
-          # `patchedDependencies.test.ts` and the behavioural test behind the patch would say so.
-          # `channel-retention.scheduler.ts` IS IN THIS LIST FOR THE SAME REASON: the frontend's
-          # `retentionFloorPin.test.ts` reads `CHANNEL_MESSAGE_RETENTION_DAYS` from it and fails
-          # when the graine retention floor no longer matches, so a PR changing ONLY that constant
-          # must run the frontend suite instead of breaking a later, unrelated frontend PR.
-          if has '^frontend/src/' || has '^frontend/src-tauri/' || has '^frontend/static/' || \
-             has '^apps/social-service/src/channels/channel-retention\.scheduler\.ts$' || \
-             has '^frontend/package\.json' || has '^frontend/bun\.lock' || has '^frontend/patches/' || \
-             has '^frontend/svelte\.config' || \
-             has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
-             has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
-             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
-            echo "frontend=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "frontend=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # The PRODUCTION BUILD runs on a pull request only when what it consumes changed: the
-          # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
-          # (`kit.config`, `vite.config`, so the adapters too) and the image that serves the
-          # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
-          # passed every gate here, because nothing ran the build before the merge.
-          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
-            echo "frontend_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "frontend_build=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- Android unit tests --
-          # Two paths, and they are not the same kind of thing. `gen/android` is the committed
-          # (though generated) Android client, and a change to its Kotlin is what the ladder suite
-          # is there to catch; `android-tests` is the standalone JVM project that suite now lives
-          # in, outside the app module - see its `settings.gradle.kts` for why. A path filter is
-          # right here and a `cargo`-style dependency walk is not: neither tree reads anything
-          # outside itself.
-          if has '^frontend/src-tauri/gen/android/' || has '^frontend/src-tauri/android-tests/'; then
-            echo "android=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "android=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- Android `:app` compile --
-          # What `compile-android-app` reads: the Android project itself, and whatever feeds the
-          # generation of its `tauri.settings.gradle` AND the Rust it checks for the Android target
-          # (the app crate's `build.rs` runs under cargo, so the manifest, the lock, the toolchain,
-          # the crate's sources, `mls-core` it depends on by path, and the native plugins it names),
-          # plus its own script. This is the ONLY pull-request compile for an Android Rust target,
-          # which is why `src/` is here. Narrower than `android` above on purpose: `android-tests`
-          # is a JVM project this job does not build, and it pays minutes of Rust.
-          if has '^frontend/src-tauri/gen/android/' || \
-             has '^frontend/src-tauri/src/' || \
-             has '^frontend/src-tauri/Cargo\.(toml|lock)$' || \
-             has '^frontend/src-tauri/build\.rs$' || \
-             has '^frontend/src-tauri/tauri\.conf\.json$' || \
-             has '^frontend/src-tauri/(plugins|patches)/' || \
-             has '^frontend/mls-core/' || \
-             has '^rust-toolchain\.toml$' || \
-             has '^\.github/scripts/android-app-compile\.sh$'; then
-            echo "android_app=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "android_app=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- iOS app compile --
-          # What `compile-ios-app` reads: the NATIVE APPLE CODE and what builds it. It runs on a
-          # macOS runner, the scarcest minutes in this file, so the trigger is the Apple tree and
-          # not (like `android_app`) the Rust crate: `gen/apple` (the app, the notification and share
-          # extensions, the pbxproj), a Swift package under `plugins/*/ios` or `patches/*/ios`, any
-          # Swift / Objective-C source or header under `src-tauri` (a bridge may live beside the
-          # Rust), the manifest, build script and Tauri config that decide what is linked and
-          # bundled (owner, 2026-11-04; NOT `Cargo.lock`, which Dependabot bumps would turn into a
-          # macOS run each), the scripts it runs, `ios.yml` (the release build it mirrors) and the
-          # toolchain pin. A change to the crate's Rust sources alone is compiled for the host by
-          # `test-rust` and for iOS by the release.
-          if has '^frontend/src-tauri/gen/apple/' || \
-             has '^frontend/src-tauri/(plugins|patches)/[^/]+/ios/' || \
-             has '^frontend/src-tauri/.*\.(swift|m|mm|h)$' || \
-             has '^frontend/src-tauri/(Cargo\.toml|build\.rs|tauri(\.ios)?\.conf\.json)$' || \
-             has '^rust-toolchain\.toml$' || \
-             has '^\.github/workflows/ios\.yml$' || \
-             has '^\.github/scripts/ios-(app-compile|libapp|extensions)\.sh$'; then
-            echo "ios_app=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ios_app=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- MLS cross-version compatibility --
-          # THE WIDEST TRIGGER IN THIS FILE, ON PURPOSE. It fires on `mls-core` (the library whose
-          # wire output is the subject), on `mls-cross-version` (the driver both sides are built
-          # from), on the two lockfiles that pin the protocol crates for the things that SHIP, and
-          # on the script and the params it reads. A Dependabot pull request bumping `openmls`
-          # touches only a lock - and that is exactly the pull request this gate was written to
-          # judge, since `lib/ceiling.sh` stopped refusing the family on 2026-09-15.
-          if has '^frontend/mls-core/' || has '^frontend/mls-cross-version/' || \
-             has '^frontend/mls-wasm/Cargo\.lock' || has '^frontend/src-tauri/Cargo\.lock' || \
-             has '^\.github/scripts/mls-forward-compat\.sh'; then
-            echo "mls_compat=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "mls_compat=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- The SFU's end-to-end call (owner decision D3, 2026-11-01) --
-          # ASK WHAT THE GATE READS: the crate (its harness lives in `apps/call-service/e2e/`), the
-          # shared Chrome driver, the app's E2E worker and every module that worker or the page
-          # imports - the worker IS the transform under test, built from source, so a change to it
-          # alone must run the call that proves it still works through the SFU.
-          if has '^apps/call-service/' || \
-             has '^tools/headless-chrome/' || \
-             has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
-             has '^frontend/src/lib/utils/(callAudio|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
-             has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
-            echo "call_e2e=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "call_e2e=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- MiConnect's blueprints --
-          # Everything the fresh-instance test reads is under this one directory: the compose file it
-          # boots, the blueprints it applies and the two scripts that do it.
-          if has '^infrastructure/authentik/'; then
-            echo "miconnect=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "miconnect=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # -- Cross-client harness self-tests --
-          # THEY DO NOT READ THE RIG'S OWN SOURCES AND NOTHING ELSE, whatever this comment claimed
-          # until 2026-09-24. Two of them read the APP: `caption-selftest` resolves every Paraglide
-          # key the rig spells against `frontend/messages/fr.json`, and `selector-selftest` also
-          # imports `frontend/src/lib/styles/markupSources.ts`. Those two exist precisely to catch a
-          # renamed key - and with `tools/cross-client-harness/` as the whole trigger, the pull
-          # request that renames one is the pull request they do not run on. #1006 replaced the poll
-          # composer, `channel_poll_add_option` and `channel_poll_option_placeholder` went with it,
-          # and the rig could no longer compose a poll at all. Nothing said so until an unrelated
-          # workflow edit made CI run everything.
-          if has '^tools/cross-client-harness/' ||
-             has '^frontend/messages/' ||
-             has '^frontend/src/lib/styles/markupSources[.]ts'; then
-            echo "harness=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "harness=false" >> "$GITHUB_OUTPUT"
-          fi
+          CI_WORKFLOW="$SELF" bash .github/scripts/ci-scopes.sh "$BASE" HEAD >> "$GITHUB_OUTPUT"
 
   # =================================================================================================
   # RUST MATRIX
@@ -454,7 +146,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -525,46 +217,35 @@ jobs:
       # resolves inside its consumer's lock, as `.gitignore` says next to the `*.lock` rule. It is
       # not skipped silently: the change filter above fans any `mls-core` change out to `mls-wasm`
       # AND `src-tauri`, so its graph is asserted twice, in the two locks that actually ship.
+      # WHAT EACH STEP RUNS IS `checks.sh rust <crate> <step>` (2026-11-15), the one copy the local
+      # pre-push run calls too; the per-crate table (which task, which crate is linted) moved there
+      # with the `cmd` / `check` / `fmt` fields of the matrix, which now carries only what a RUNNER
+      # needs to set up. The steps stay separate so a red run still names the step that failed.
       - name: Refuse a lockfile the manifests no longer describe
-        working-directory: ${{ matrix.component.path }}
-        run: |
-          if [[ ! -f Cargo.lock ]]; then
-            echo "no committed Cargo.lock here by design - asserted through this crate's consumers"
-            exit 0
-          fi
-          cargo metadata --locked --format-version 1 > /dev/null
+        env:
+          CRATE: ${{ matrix.component.path }}
+        run: bash .github/scripts/checks.sh rust "$CRATE" lockfile
 
-      # `fmt` is a SEPARATE flag from `check`, and src-tauri is why. The comment on that matrix entry
-      # refuses `check` because neither `cargo fmt` nor `clippy -D warnings` had ever run against the
-      # crate on Linux with `--all-features`, and an unverified gate turns a pipeline red for a
-      # reason nobody changed. That caution is right about CLIPPY and does not apply to RUSTFMT:
-      # rustfmt parses source files, it resolves no features and compiles nothing, so the platform
-      # and the feature set cannot change its answer. Measured on 2026-09-02 before flipping it:
-      # `cargo fmt -- --check` in `frontend/src-tauri` exits 0 as the tree stands.
-      #
-      # IT IS HERE BECAUSE `.husky/pre-push` WAS DELETED THE SAME DAY. That hook ran exactly this
-      # command on exactly this crate - "fmt --check alone: src-tauri's clippy compiles the whole app
-      # plus deps, too heavy for a hook" - and it was the only thing that did. Removing the hook
-      # without moving its one unique gate here would have opened the hole that the hook's own
-      # comments were written to close.
+      # rustfmt runs on every crate, src-tauri included: it parses source files, resolves no
+      # features and compiles nothing, so the platform and the feature set cannot change its answer
+      # (measured on 2026-09-02 before it was turned on there). It was `.husky/pre-push`'s one
+      # unique gate when that hook was deleted the same day - and the hook is back since
+      # 2026-11-15, calling this same command.
       - name: Check Formatting
-        if: matrix.component.check == true || matrix.component.fmt == true
-        working-directory: ${{ matrix.component.path }}
-        run: cargo fmt -- --check
+        env:
+          CRATE: ${{ matrix.component.path }}
+        run: bash .github/scripts/checks.sh rust "$CRATE" fmt
 
       - name: Lint with Clippy
-        if: matrix.component.check == true
-        working-directory: ${{ matrix.component.path }}
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        env:
+          CRATE: ${{ matrix.component.path }}
+        run: bash .github/scripts/checks.sh rust "$CRATE" clippy
 
       - name: Run Component Task
-        working-directory: ${{ matrix.component.path }}
         env:
           GATEWAY_IT_REDIS_URL: redis://127.0.0.1:6379
-          COMPONENT_CMD: ${{ matrix.component.cmd }}
-        # Unquoted on purpose: the matrix names a command and its arguments in one string
-        # (`cargo test --all-targets`), and word splitting is what makes it a command line.
-        run: $COMPONENT_CMD
+          CRATE: ${{ matrix.component.path }}
+        run: bash .github/scripts/checks.sh rust "$CRATE" task
 
   # =================================================================================================
   # THE REAL APPLICATION, BOOTED
@@ -609,7 +290,7 @@ jobs:
         # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
         # proving either on another major proves it on a server production does not run. Bump it WITH
         # the compose files, never alone.
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe
@@ -628,7 +309,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -739,21 +420,29 @@ jobs:
       # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
       # `platform_config` in a throwaway schema, so the boot's database is all it needs.
       # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
-      # 6) against the production Redis this job already runs: its point is that the check and the
-      # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
-      # read and a skipped or absent test fails the step.
-      - name: Addressed publish script against Redis
+      # 6) and THE CLOUDFLARE PROXY'S SEAT SCRIPTS (WP-GC3: the cap check and the seat write are one
+      # step) against the production Redis this job already runs. Gated on
+      # `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is read and a skipped or absent FILE fails
+      # the step.
+      - name: Redis scripts against Redis
         if: ${{ matrix.service == 'apps/chat-delivery-service' }}
         working-directory: ${{ matrix.service }}
         env:
           CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
         run: |
-          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node --run test -- '(addressing|cloudflare-sfu)\.redis' --json --outputFile "$RUNNER_TEMP/addressing-it.json"
           node -e '
             const r = require(process.argv[1]);
             if (r.numPendingTests > 0 || r.numPassedTests < 5) {
               console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
               process.exit(1);
+            }
+            for (const file of ["addressing.redis", "cloudflare-sfu.redis"]) {
+              const ran = r.testResults.find((t) => t.name.includes(file));
+              if (!ran || ran.assertionResults.length === 0 || ran.assertionResults.some((a) => a.status !== "passed")) {
+                console.error(`${file}: absent, empty or not all passed - the script ran nowhere`);
+                process.exit(1);
+              }
             }
           ' "$RUNNER_TEMP/addressing-it.json"
 
@@ -786,6 +475,16 @@ jobs:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- user-write-gone.integration
 
+      # EVERY CURSUS ENTRY IS READ (D32): the directory's promo and formation filters and the
+      # formations listing are `jsonb_array_elements` over `users.cursus`, which no mock can judge.
+      # Its own `users` table, in a throwaway schema (docs/wiki/profiles-and-access.md, D32).
+      - name: Cursus reads against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- cursus-reads.integration
+
       # A PLATFORM CONFIG WRITE UPDATES THE COLUMNS IT NAMES: two administrators editing different
       # settings keep both. Its own table, in a throwaway schema (docs/wiki/services/core-service.md).
       - name: Platform config writes against PostgreSQL
@@ -794,6 +493,17 @@ jobs:
         env:
           CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
         run: node --run test -- platform-config-write.integration
+
+      # THE SEEN-HELP STORE (core migration 019): the migration as it ships, the controller and the
+      # service over a real repository, and the account erasure's statement for `help_seen`. Its own
+      # table, in a throwaway schema, so the boot's database is all it needs (it ran in no step
+      # until 2026-11-14, so it was skipped on every pull request).
+      - name: Seen-help store against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- help-seen.integration
 
   # =================================================================================================
   # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
@@ -820,7 +530,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -837,7 +547,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
+        image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
         ports:
           - 6379:6379
         options: >-
@@ -930,7 +640,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+        image: postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: it-probe
@@ -1023,40 +733,30 @@ jobs:
         with:
           node-version: '24'
 
+      # WHAT EACH STEP RUNS IS `checks.sh ts <service> <step>` (2026-11-15), the one copy the local
+      # pre-push run calls too. The reasons below stay with the steps they explain.
       - name: Install Dependencies
-        working-directory: ${{ matrix.service }}
-        run: bun install --frozen-lockfile
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" install
 
-      - name: Check Lint Script
-        id: check_lint
-        working-directory: ${{ matrix.service }}
-        run: |
-          if node -e 'if(!require("./package.json").scripts || !require("./package.json").scripts.lint) process.exit(1)'; then
-            echo "has_lint=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_lint=false" >> $GITHUB_OUTPUT
-          fi
-          if node -e 'if(!require("./package.json").scripts || !require("./package.json").scripts["format:check"]) process.exit(1)'; then
-            echo "has_format=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_format=false" >> $GITHUB_OUTPUT
-          fi
-
+      # NO SCRIPT-PRESENCE PROBE ANY MORE (2026-11-15). `Check Lint Script` / `Check Test Script`
+      # skipped a step whose script was absent; all four services declare every script, and a gate
+      # that skips what is missing is a gate that passes on a deleted script - so a missing one now
+      # fails `bun run`, loudly, as `typecheck` already did.
       - name: Run Lint
-        if: steps.check_lint.outputs.has_lint == 'true'
-        working-directory: ${{ matrix.service }}
-        run: bun run lint
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" lint
 
       # ADDED 2026-09-02, WHEN `.husky/pre-push` WAS DELETED. Formatting was gated for the frontend
       # by the `test-frontend` job and, for `chat-delivery-service` alone, by that hook - so the four
       # services' formatting was checked NOWHERE ELSE, and three of them were never checked at all.
-      # All four declare `format:check` (oxfmt; nothing in this repo is prettier), so this is a gate
-      # that already had a script and no caller. Guarded like the lint step above, because the
-      # failure mode of a hardcoded step is a service added next month without the script.
+      # All four declare `format:check` (oxfmt; nothing in this repo is prettier).
       - name: Check Formatting
-        if: steps.check_lint.outputs.has_format == 'true'
-        working-directory: ${{ matrix.service }}
-        run: bun run format:check
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" format
 
       # ADDED 2026-09-24. `bun run build` is `nest build`, which reads `tsconfig.build.json` and
       # that file excludes `*.spec.ts` - so a service's OWN tests were typechecked by nothing. Not
@@ -1066,49 +766,28 @@ jobs:
       # That is a gate that fires AFTER the merge, on a release: a type error from #1006 reached
       # main, went green, and killed the `v0.18.22-alpha.1` build. The Dockerfile now matches its
       # siblings and the check moved here, where it can refuse a pull request.
-      #
-      # NOT guarded by a script-presence probe, unlike lint and format above. The failure this
-      # gate exists for IS a service whose types nothing reads; skipping it silently on a service
-      # that forgot the script would rebuild exactly that hole.
       - name: Typecheck (tests included)
-        working-directory: ${{ matrix.service }}
-        run: bun run typecheck
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" typecheck
 
       - name: Build
-        working-directory: ${{ matrix.service }}
-        run: bun run build
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" build
 
-      - name: Check Test Script
-        id: check_test
-        working-directory: ${{ matrix.service }}
-        run: |
-          if node -e 'if(!require("./package.json").scripts || !require("./package.json").scripts.test) process.exit(1)'; then
-            echo "has_test=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_test=false" >> $GITHUB_OUTPUT
-          fi
-
-      # `node --run test`, and neither `npm test` nor `bun run test`. Two separate constraints meet
-      # on this line and it is worth naming both, because collapsing either one breaks something
-      # measured:
-      #
+      # `node --run test`, and neither `npm test` nor `bun run test` (the command is in checks.sh).
       # NOT bun, because these suites are jest and jest under the bun runtime fails a spec that
-      # passes under node (`admin-storage.controller.mls.spec.ts`, 8/8 under node). That is the
-      # reason `Setup Node.js` above exists at all - see the note there.
-      #
-      # NOT npm, because this repository has no npm anywhere else and a package manager is not
-      # needed to run a script. `node --run` (node >= 22) reads `package.json` scripts natively, so
-      # the runtime jest needs stays and the package manager goes. It is also stricter than npm on
-      # purpose: it does not run pre/post scripts and does not walk up parent directories, so what
-      # runs here is exactly the `test` script of THIS service and nothing else.
-      #
-      # The jest -> `bun test` migration that would delete the node runtime from this file entirely
-      # is a dated item in `docs/wiki/backlog.md`, scheduled after the campaign. Do not attempt it
-      # by editing this line.
+      # passes under node (`admin-storage.controller.mls.spec.ts`, 8/8 under node) - the reason
+      # `Setup Node.js` above exists at all. NOT npm, because this repository has no npm anywhere
+      # else and `node --run` (node >= 22) reads `package.json` scripts natively; it also runs no
+      # pre/post scripts and does not walk up parent directories, so what runs is exactly the
+      # `test` script of THIS service. The jest -> `bun test` migration that would delete the node
+      # runtime from this file is a dated item in the backlog; do not attempt it by editing this.
       - name: Run Test
-        if: steps.check_test.outputs.has_test == 'true'
-        working-directory: ${{ matrix.service }}
-        run: node --run test
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: bash .github/scripts/checks.sh ts "$SERVICE" test
 
   # =================================================================================================
   # FRONTEND (SVELTE)
@@ -1157,29 +836,25 @@ jobs:
       - name: Install oxvelte
         run: sh ./scripts/install-oxvelte.sh
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: bun install --frozen-lockfile
-
-      - name: Sync SvelteKit
-        working-directory: frontend
-        run: bun run sync
-
+      # WHAT EACH STEP OF THE TWO FRONTEND JOBS RUNS IS A `checks.sh` SUBCOMMAND (2026-11-15), the
+      # one copy the local pre-push run calls too.
       # The check and the tests import the generated MLS bindings and the generated protobuf
-      # module. Neither is committed - they are build artefacts - so the job builds them.
+      # module. Neither is committed - they are build artefacts - so the job builds them:
+      # `frontend-prepare` installs, syncs SvelteKit and generates the protobuf module.
+      - name: Prepare the frontend (dependencies, SvelteKit sync, protobuf)
+        run: bash .github/scripts/checks.sh frontend-prepare
+
       - name: Build MLS WASM
         uses: ./.github/actions/build-mls-wasm
 
-      - name: Generate protobuf bindings
-        working-directory: frontend
-        run: bun run proto:gen
-
       - name: Lint Frontend
-        working-directory: frontend
-        run: |
-          bun run lint
-          bun run check
-          bun run format:check
+        run: bash .github/scripts/checks.sh frontend-lint
+
+      # THE DEAD-CODE RATCHET (2026-11-07): knip's unused files, exports and types, and the
+      # translation keys no source names, may only go DOWN against `frontend/dead-code-baseline.json`.
+      # A new unused export fails here; a gain must be locked with `--update`. docs/wiki/dead-code.md.
+      - name: Dead-code ratchet
+        run: bash .github/scripts/checks.sh dead-code
 
       # THE VITEST SUITE RUNS IN `test-frontend-shards`, below.
 
@@ -1193,18 +868,12 @@ jobs:
       # commit, the wasm and protobuf module are in). Any other pull request skips it to keep its cost.
       # The release does NOT reuse this build: each estate bakes its own VITE_* origins in at build
       # time (`build.yml`), which this one has none of.
-      - name: Build the production frontend
-        if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
-        working-directory: frontend
-        env:
-          BUILD_WEB: '1'
-        run: bun run build
-
-      - name: Assert what the build carries
+      # `frontend-build` is `BUILD_WEB=1 bun run build`, then `assert-frontend-build.mjs` on it.
+      - name: Build the production frontend and assert what it carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         env:
           BUILD_SHA: ${{ github.sha }}
-        run: bun .github/scripts/assert-frontend-build.mjs frontend "$BUILD_SHA"
+        run: bash .github/scripts/checks.sh frontend-build "$BUILD_SHA"
 
   # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
   # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
@@ -1231,26 +900,16 @@ jobs:
         with:
           bun-version-file: ".bun-version"
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: bun install --frozen-lockfile
-
-      - name: Sync SvelteKit
-        working-directory: frontend
-        run: bun run sync
+      - name: Prepare the frontend (dependencies, SvelteKit sync, protobuf)
+        run: bash .github/scripts/checks.sh frontend-prepare
 
       - name: Build MLS WASM
         uses: ./.github/actions/build-mls-wasm
 
-      - name: Generate protobuf bindings
-        working-directory: frontend
-        run: bun run proto:gen
-
       - name: Run Vitest shard with coverage
-        working-directory: frontend
         env:
           VITEST_SHARD: ${{ matrix.shard }}
-        run: bun run test:coverage --shard="$VITEST_SHARD"/4
+        run: bash .github/scripts/checks.sh frontend-test "$VITEST_SHARD"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7
@@ -1362,6 +1021,8 @@ jobs:
           target: aarch64-linux-android
           cache-workspaces: frontend/src-tauri
           rustflags: ''
+          # And its v2 `CARGO_BUILD_WARNINGS=deny`, exported the same way (see `build-mls-wasm`).
+          build-warnings: ''
 
       - name: Cache Gradle
         uses: actions/cache@v6
@@ -1392,7 +1053,7 @@ jobs:
     name: Compile iOS app
     needs: [changes]
     if: ${{ needs.changes.outputs.run-ios-app == 'true' }}
-    runs-on: macos-15 # carries Xcode 26.x, which `ios.yml` REQUIRES for the same reason
+    runs-on: xcode-27 # the runner `ios.yml` builds the release on; the pin below is REQUIRED there
     timeout-minutes: 60
     permissions:
       contents: read
@@ -1401,10 +1062,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Select Xcode 26
+      # THE SAME PIN AS `ios.yml`, for the same two reasons (the iOS 27 SDK App Store Connect requires
+      # from April 2027, ITMS-90725; the Liquid Glass branch): a pull request compiles what ships.
+      - name: Select Xcode 27
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: '^26.0'
+          xcode-version: '^27.0'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -1430,7 +1093,9 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: frontend/src-tauri
-          key: ios-app
+          # The Xcode in the key: a build tree from another toolchain carries its link search paths
+          # and its swift-rs archives, which Xcode 27 links differently (docs/wiki/cicd.md).
+          key: ios-app-xcode-27
 
       # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
       # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),
@@ -1489,7 +1154,7 @@ jobs:
   # process exiting); `timeout-minutes` is the only bound, for a run in which nothing happens at all.
   # =================================================================================================
   test-call-service-e2e:
-    name: Call Service E2E (two browsers through the SFU and coturn)
+    name: Call Service E2E (the SFU pair, the p2p mesh and the SFU group, through coturn)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-call-e2e == 'true' }}
     runs-on: ubuntu-24.04
@@ -1548,6 +1213,26 @@ jobs:
       - name: Two browsers call each other through the SFU, encrypted
         run: |
           bun apps/call-service/e2e/run.mjs \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      # The group call's mesh (WP-GC2), on the same coturn: three browsers, one peer connection per
+      # pair, one key per sender (WP-GC1); every directed leg proven, a fourth user refused past the
+      # signed cap, and a wrong key shown to fail its leg. `!cancelled()`: it runs even when the pair
+      # failed, so one red step never hides the other scenario's verdict.
+      - name: Three browsers in a p2p mesh, one key per sender
+        if: ${{ !cancelled() }}
+        run: |
+          bun apps/call-service/e2e/run.mjs --scenario mesh \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      # The relay's group call (WP-GC4), on the same coturn: five browsers through the SFU, past the
+      # mesh cap; every one of the 20 directed legs proven under its sender's key (read from the
+      # forwarded track's stream id), a sixth user refused by the SFU's seat cap, a wrong key shown
+      # to fail its leg, and the ledger's five sessions connected and ended.
+      - name: Five browsers through the SFU, one key per sender
+        if: ${{ !cancelled() }}
+        run: |
+          bun apps/call-service/e2e/run.mjs --scenario sfu-group \
             --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
 
       # `always()`, not `failure()`: a run CANCELLED by the job's timeout is the one whose relay's
@@ -1629,7 +1314,14 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      # THE DENYLIST'S ABSENCE IS DECLARED, NOT INFERRED (2026-11-15). `docs-private-guard` reads
+      # the names it refuses from an out-of-repo file, and CI holds no copy by the owner's decision
+      # of 2026-10-28, so it runs the pattern half alone. An unset variable now FAILS the test - a
+      # workstation that forgot to set it used to pass with one stderr line nobody read - and
+      # `none` is how a run says, on purpose, that the names half is not here.
       - name: Run CI script self-tests
+        env:
+          DOCS_PRIVATE_DENYLIST_FILE: none
         run: make test-ci-scripts
 
       # The raw-controls ratchet may only go down, and only a comparison with the base can see a
@@ -1838,6 +1530,15 @@ jobs:
   # job slow (three attempts with backoff) without making it red. The nightly `scheduled.yml` keeps
   # `registry_outage_is_failure: true`, so a tree npm never answered for is still reported there.
   # The container image scan (`image-scan`, 2026-10-23) is in the same half on the same terms.
+  #
+  # AND SINCE 2026-11-17 IT ASKS ABOUT WHAT WE SHIP, NOT ABOUT EVERY TOOL (owner: "Ce qu'on
+  # livre"). A picomatch ReDoS with no fixed release reached all five trees through vite, jest and
+  # @nestjs/cli and froze every pull request, though no shipped code compiles an attacker's glob.
+  # So this job audits the PRODUCTION closure (`closure: production`: the services `--prod`, the
+  # frontend in full because its devDependencies svelte, kit and protobufjs are bundled), and the
+  # nightly `scheduled.yml` keeps the full audit, where a tool's advisory is still a failure.
+  # #1229's hole stays closed for shipped code; a stable is refused on the same table
+  # (`release-preflight.sh`, gate 7). docs/wiki/cicd.md carries the measurement.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   dependency-audit:
     name: Dependency audit
@@ -1852,6 +1553,7 @@ jobs:
     uses: ./.github/workflows/code-analysis.yml
     with:
       scope: dependencies
+      closure: production
 
   # =================================================================================================
   # MLS CROSS-VERSION COMPATIBILITY - THE DIRECTION A FIXTURE CANNOT SEE

@@ -26,7 +26,7 @@ import { Log } from '$lib/utils/Log';
  *
  * WHAT IS NEVER A TAP OF THIS GESTURE, and acts at once as before:
  * - a link, a button, a form field, a poll option, a mention - anything `tapBelongsToInnerControl`
- *   names - and anything inside `[data-no-double-tap]` (the action bar, the comments), a media
+ *   names - the video player's controls (`[data-video-controls]`, its seek line) and anything inside `[data-no-double-tap]` (the action bar, the comments), a media
  *   opener there included (a comment's picture opens at once);
  * - a media opener nested in another control: a link preview's picture belongs to its link;
  * - a click with no pointer behind it (`detail === 0`): Enter or Space on a focused control, and a
@@ -47,7 +47,10 @@ import { Log } from '$lib/utils/Log';
  */
 
 /** Marks a media opener whose tap is held for the double-tap window (see above). */
-export const DOUBLE_TAP_DEFERS = 'data-double-tap-defers';
+const DOUBLE_TAP_DEFERS = 'data-double-tap-defers';
+
+/** The video player's controls (`VideoScrubber`, its bar): never part of a double tap. */
+const PLAYER_CONTROLS = '[data-video-controls]';
 
 /** Marks a region of a likeable surface where a tap is never part of a double tap. */
 export const NO_DOUBLE_TAP = 'data-no-double-tap';
@@ -142,6 +145,10 @@ export function doubleTapLike(node: HTMLElement, initial: DoubleTapLikeParams) {
     if (!target || typeof target.closest !== 'function') return { kind: 'owned' };
     const region = target.closest(`[${NO_DOUBLE_TAP}]`);
     if (region && node.contains(region)) return { kind: 'owned' };
+    // The player's own controls (its seek line is a slider, no `button`): a press there seeks, and two
+    // quick ones are two seeks, never a like (owner, 2026-11-18).
+    const control = target.closest(PLAYER_CONTROLS);
+    if (control && node.contains(control)) return { kind: 'owned' };
     const opener = target.closest<HTMLElement>(`[${DOUBLE_TAP_DEFERS}]`);
     if (opener && node.contains(opener)) {
       const outer = opener.parentElement;

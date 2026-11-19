@@ -99,6 +99,14 @@ change: a catch-up may re-pin only while the reader has not left the bottom, and
 re-arms `entering` - which was setting the whole message list to `opacity-0`, so a thread flickered
 blank once per arriving frame.
 
+**"My own message was added" is an APPEND, read from the newest id** (`ownMessageAppended`, same
+file, 2026-11-14). The reader's own message always follows the bottom, and the pane used to ask
+"is the newest message mine". A list also grows at the top - an older page from the device, a
+peer's scrollback answer - so under a reader whose last message was their own, every older page
+read as "I just sent" and threw them back to the bottom (measured on a seeded 5000-message thread:
+the mounted range fell from 1732 bubbles to 200 with no input). The question is now "the newest
+message changed AND is mine"; `ChatArea` keeps the newest id of its last run to ask it.
+
 THE OTHER END OF THE PANE HAD NO ANSWER AT ALL. Three mechanisms prepend into the scroller and only
 one compensated: `loadOlderGroups` restores `scrollTop` for the IndexedDB page, while the render
 window stepping up by 140 groups did not, and neither did a PEER scrollback answer - which does not
@@ -106,7 +114,9 @@ arrive as a return value but later, as an ordinary bundle, by which time nothing
 anchor. So a reader who asked for older history was slid down the page by exactly the height of what
 they had asked for. `scrollTop` cannot tell a prepend from an append, so a ROW is anchored instead:
 the growth observer keeps a row and asks how far it moved (`anchorShift`). That covers all three
-mechanisms without knowing which one ran. **Since 2026-10-02 the row is the one at the top of the
+mechanisms without knowing which one ran (and since 2026-11-14 it is the ONLY compensation of the
+IndexedDB page: `loadOlderGroups`' own restore, captured before its await, undid a keyboard rise -
+[chat](modules/chat.md#a-short-thread-sits-at-the-bottom-and-asks-for-its-past-at-entry-2026-11-14)). **Since 2026-10-02 the row is the one at the top of the
 viewport and the browser's own `overflow-anchor` is switched OFF on the pane** - Chromium and Safari
 27 anchor natively and the two compensations added up (measured, [media-frame](media-frame.md#4-the-pane-keeps-the-readers-row-whatever-grows)).
 

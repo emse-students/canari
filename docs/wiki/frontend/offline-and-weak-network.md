@@ -353,7 +353,7 @@ proxy) and compression on, to replace the pessimistic bytes; and on a real salon
 | WP | State | Reaches users through |
 | --- | --- | --- |
 | **WP-W1** origin compression | **built** (one nginx block + `static-compression.test.mjs`) | the next pre-release / stable: it is an nginx image change |
-| **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`) | the next pre-release / stable (web build only; Tauri is inert by construction) |
+| **WP-W2** WASM beside the JS | **built** (`wasmPreload.ts` + `hooks.server.ts`); **since 2026-11-09 on `/chat` and `/communities` only** ([section 23](#23-the-engine-is-preloaded-only-where-the-first-screen-waits-for-it-2026-11-09)) | the next pre-release / stable (web build only; Tauri is inert by construction) |
 | **WP-OFF-5** deadline, `slow`, lanes | **built** (section 11) | the next pre-release / stable (frontend only) |
 | **WP-OFF-6** prompt resume | **built** (section 12) | the next pre-release / stable (frontend only) |
 | **WP-W3** list before the WASM | **diagnosed, NOT built**: the dependency is real, section 10.3 | - |
@@ -485,7 +485,7 @@ the socket and the replay have all finished) and it should be its own package wi
   (a caller's own abort is not one). `isTransportFailure` recognises it by type. It is never a status,
   so it can never reach a 401/403 branch and **never logs anyone out**. Two expiries in a row with
   nothing answered between flip the store to unreachable (`STALLS_BEFORE_UNREACHABLE`); one answer
-  resets the count.
+  resets the count. The verdict line STATES ITS EVIDENCE (`notifyServerUnreachable(evidence)`): `server unreachable (2 request deadlines in a row)` for a black-holed link, `(transport failure: <class of the raw rejection>)` for a refused socket, so a phone log tells them apart.
 - **Retry cannot multiply load**: a stalled GET is retried once, after 250-1000 ms of jitter, and not
   at all once the store is offline; a write of unknown fate is never replayed by `apiFetch` (the
   outbox owns that, with the same inner `messageId` so receivers dedupe).
@@ -633,7 +633,7 @@ From the routes' `load` functions (all `ssr = false`, so a `load` that awaits ho
 | `routes/+layout.ts` (every route) | when the MLS session is NOT yet logged in (boot, a resume, the whole unlock window): `refresh()` if no user id, **then `fetchUserProfile(userId)`, a network call** (20 s deadline on a slow link) | **BLOCKS EVERY NAVIGATION during that window.** It only decides "redirect to login on a confirmed 404" and a transport failure is deliberately survived, so nothing it learns is needed to render. Fixed by WP-NAV-1 |
 | `routes/posts/[postId]/+page.ts` | the post itself (`await fetching`) | blocks the click on a post from the feed until the GET answers; the page then shows "not found" or the post. Fixed by WP-NAV-1 (the shell and header render at once, the post is a promise) |
 | `routes/posts/+page.ts` | the audience verdict only when none is remembered (first ever visit); the 20 posts are a promise handed to `{#await}` already | fine |
-| `associations/[slug]`, `lists/[slug]`, `dashboard/association`, `app-shell` | nothing (synchronous `load`) | fine |
+| `associations/[slug]`, `lists/[slug]`, `app-shell` | nothing (synchronous `load`) | fine |
 | `/chat` and its DMs | no `load`; the list waits on the WASM by ORDER, not by data (R7, section 10.3) | covered by WP-W3 (diagnosed, not built) |
 
 So the user's belief is half right: item loading is already independent of the skeleton almost
@@ -648,7 +648,7 @@ makes long - and one detail page awaits its own data.
 | 0 | **P1** Any upload body over 10 MiB is dropped by the host WAF (403 HTML) and was retried for ever | **BUILT: WP-OFF-8** (8 MiB budget, chunk route above it, a refusal ends the entry with an explicit bubble) | [host-waf-body-limit](../infrastructure/host-waf-body-limit.md) |
 | 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
 | 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
-| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md); a FEED POST resumes since 2026-11-06 (its photos and videos one by one, the composer closed at once: [posts](modules/posts.md#the-background-publish-queue)) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
+| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | **every queued chat file over 8 MiB resumes since 2026-11-16** ([13.9](#139-a-queued-file-over-one-request-body-resumes-and-its-figure-never-goes-back-2026-11-16)); before that, only one attachment did: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md); a FEED POST resumes since 2026-11-06 (its photos and videos one by one, the composer closed at once: [posts](modules/posts.md#the-background-publish-queue)) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
 | 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | **BUILT: WP-OFF-9** ([13.8](#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)) | this page |
 | 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | **BUILT 2026-11-02**: drawn at the tap, its row carries the upload (`salonAttachmentSend.ts`) | [chat](modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02) |
 | 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | the file is outside the row since 13.7; RC-5 (draft) adds the raw take in the same store and a second blob slot, so replacing the bytes never overwrites what the committed row names | [reels-in-chat](modules/reels-in-chat.md) |
@@ -677,7 +677,7 @@ creates an `AbortController` per entry and mirrors `{phase, loaded, total, attem
 store the bubble reads (never IndexedDB: the numbers change several times a second and mean nothing
 after a crash). Phases: `preparing` (reading and encrypting), `uploading` (real bytes), `stalled` (no
 byte for 10 s, display only; the transport's guard abandons it later), `queued` (in the queue, not started: no network claim), `waiting` (the last attempt
-ended with NO ANSWER, or the link is known down; it starts from zero), `repairing` (held until the group is
+ended with NO ANSWER, or the link is known down; a file over 8 MiB resumes at the parts the server holds since 13.9, a smaller one starts from zero), `repairing` (held until the group is
 sendable: roster repair, re-add) and `retrying` (any other failure, on the backoff ladder). **The label is
 the typed reason of the hold** (`holdForRetry` opts `transport` / `repair`), never inferred: a bubble with
 no view yet reads `connectivity.isOffline` (waiting) or else `queued`, and a reconnect turns a stale
@@ -741,7 +741,7 @@ request carries more. Every upload surface (chat, salon, posts, comments, reels,
 `encryptAndUpload`, so one place covers them; the other large-body POSTs are listed in the
 [host-waf-body-limit](../infrastructure/host-waf-body-limit.md#what-else-posts-a-big-body) page.
 
-**Not done, on purpose:** resume (a chat reel resumes since RC-5, draft; the other attachments do not), the lane decoupling (WP-OFF-9,
+**Not done, on purpose:** resume (a chat reel resumes since RC-5; every queued file over 8 MiB since 2026-11-16, [13.9](#139-a-queued-file-over-one-request-body-resumes-and-its-figure-never-goes-back-2026-11-16)), the lane decoupling (WP-OFF-9,
 built since: 13.8), the salon composer, and any hardware reading: **owed ONE look on the iPhone** with a real 13 MB file on
 a bad link, because every gate here is blind to what a WKWebView `XMLHttpRequest` upload reports on a
 cellular radio.
@@ -883,6 +883,27 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 **Known limit.** After a reload, an attachment backing off on its upload is not known as such until it is due (the light queue read carries no payload), so it holds its successors for the rest of that backoff (60 s at most), once.
 
 Pinned by `outbox.test.ts` ("outbox uploads run OUTSIDE the lane", WP-OFF-9): a text enqueued behind a 13 MB attachment whose upload is pending is sent before the upload ends (fails on the previous code), a reply quoting it waits, a cancel during the decoupled upload, a kill between the upload end and the send uploads nothing twice; and, after the review of #2061, a send failing after the upload keeps its ladder, a text held on a 5xx behind a running upload retries on its own ladder (fake timers), the 2-slot cap with a third attachment cancelled or retried while it waits, a dispose during an upload, a refusal brought back by the task, a withdrawal during the ref write. **Owed:** the same reading on a phone with a real file on a bad link (with the iPhone look of 13.4).
+
+### 13.9 A queued file over one request body resumes, and its figure never goes back (2026-11-16)
+
+**Seen** on the iPhone 12 (`1.7.0-alpha.1`, dev, [the reading](../device-verification.md#the-iphone-12-readings-of-2026-11-15-170-alpha1-third-sitting)): a 13 631 488-byte file sent after a kill read 2 %, 50 %, then 6 %, and took about 5 minutes (40 to 65 KB/s).
+
+**Cause of the drop, read from the code.** A chat attachment that was not a reel took `encryptAndUpload`'s legacy chunk route: `chunk/init` under a FRESH uploadId per attempt, chunks of 8 MiB, `complete`. 13 MiB is two chunks, and 50 % lies inside the first, so the server held nothing yet. Whatever ended that attempt, the next one sent the file again from byte 0, and the outbox wrote `loaded: 0` into the bubble at every hold and every attempt start: "6 %" is the second attempt's own figure. A real restart, not a counter counting differently. **What ended the first attempt is NOT known**: the store build has no console and the in-app log was not exported. The candidates the code allows are the 45 s idle guard (`UploadStalledError`), a broken connection (`UploadNetworkError`), and an abort (a `dispose` of the outbox, a retry pressed). The outbox logs each (`transient failure (attempt N)`, the `[UPLOAD-RESUME]` lines below), so the in-app log export names it next time.
+
+**Cause of the rate: the link, not our pacing.** Measured 2026-11-16 from the workstation's Chrome against dev, 13 631 488 random bytes, XHR, the same routes: unthrottled, the legacy route 4.0 s (3.4 MB/s), a session of 1 MiB parts one at a time 4.2 s (3.2 MB/s), two at a time 2.5 s (5.5 MB/s). Under CDP "Fast 3G" (3 MiB): 39.1 s, 40.9 s and 39.7 s, all at the link's 77 to 80 KB/s. The legacy route makes four requests for this file, so no pacing of ours can cost 50 times. If the first attempt stopped at half, the phone moved about 20 MB in 5 minutes, near 65 KB/s: the bench Wi-Fi's uplink as the iPhone saw it, or WKWebView's upload path. Neither can be separated without the phone's own figure, which the session log now carries.
+
+**The fix** (`media.ts` `uploadQueuedAttachment`, `resumableUpload.ts`, `outbox.ts` `advanceUpload`):
+- **A queued attachment whose blob is over one request body (8 MiB) goes through a resumable session** (`/api/media/upload/session`, [media-streaming-upload](../services/media-streaming-upload.md)), as a chat reel and a feed post's files already did. It is in the format the one-shot route wrote: one AES-GCM block, or `segmented-v1` for what `writesSegmented` names. No reader changes. The session is recorded in the encrypted outbox row before its first part leaves (the existing `persist`). A cut, a stall or a kill then sends only the parts the server does not hold (`GET` is the server's fact), and a withdrawal releases the session (`releaseSessionOf`, already generic). Below 8 MiB nothing changes: one POST. (A photo's push thumbnail depends on the single-block FORMAT, which both routes write, never on the route.) The metadata are the one-shot route's: the name `file` when none was kept, the `File`-normalised type (lower-cased).
+- **Two parts in flight** (`RESUMABLE_PARTS_IN_FLIGHT`), measured above, **but the second opens only once the round has committed a part** (review of #3661): two parts started together share the link from their first byte, so an uplink cut every N s with N x rate under two parts (40 KB/s cut every 30 s) would commit nothing in any window, and the outbox would give up after three attempts - a regression for reels and feed posts, which completed with one lane. One lane first means every window that moves a part's worth commits it. A failure of one lane does not abort the other's part, so a cut costs at most the parts in flight. The single block is sealed once, memoised as a promise, because two lanes ask for it in the same turn.
+- **The figure never goes back on the resumable route.** It reports the server's committed bytes (`UploadProgress.committed`) plus what the parts in flight have moved, and starts each attempt from what the server holds. For a report carrying `committed`, the outbox keeps the furthest point any attempt of this page life reached for the same body (`advanceUpload`), and no hold or attempt start writes `loaded: 0` any more: a restart is a pause of the bar, which may show above the server's bytes only the part(s) in flight when the attempt ended, until the next attempt passes them. After a reload there is no view, and the first figure is the server's. **A one-shot request (under 8 MiB) keeps nothing on a failure, so its figure is the current attempt's and a restart reads from zero**: the bar never claims bytes no server kept.
+- **A session the client stops using is released** (`supersede` in `uploadResumable`): a saved state opened under another encoding or for other bytes, and a session the server still has but whose parts do not match. Each held one of the owner's four open sessions and its staging budget until the 24 h sweep, and the row that named it was about to name another.
+- **An interrupted part is a `408`, not a `400`** (`upload-session.service.ts`, [media-service](../services/media-service.md)): the client reads our `400` as a refusal for good and drops the file, while a broken connection is the most temporary failure there is.
+- **Not changed: a salon (community) attachment** (`salonAttachmentSend.ts`) still takes the one-shot route through `encryptAndUpload`. It has no outbox row to record a session in, so a kill loses it either way, and a cut within a page life restarts it whole. The DM and group outbox, where the reading was taken, is the one changed here.
+- **The rate is in the session log**: `[UPLOAD-RESUME] session <id> round N: B bytes committed in T ms (R KB/s), k/n part(s) held`, committed bytes only.
+
+**Pinned by** `media.queuedAttachment.test.ts` (the 13 MB file takes a single-block session and hands its recorded state on, with the one-shot route's name and lower-cased type; under 8 MiB stays one POST; the boundary includes the 16-byte tag), `resumableUpload.test.ts` (a link cut after 1.2 parts per window still commits a part in each and completes; two parts on the wire and no more; one seal of the block; a resume's first figure is the server's held bytes; the rate line; a superseded session released on each of its three branches; the cut tests count the part beside the cut), `outbox.test.ts` (a restarted resumable attempt never goes back: 400 k, 1 M, fail, 900 k reads 1 M, 1.5 M; a one-shot restart reads from zero) and `upload-session.service.spec.ts` (an interrupted part is a 408). **Not every one fails on the previous code**: the one-seal test, the resume's first-figure test and the one-shot restart test pass on it too (the old writer had one lane, already reported held bytes first, and reset every attempt) - they pin what must stay true. The others fail on it.
+
+**Owed - the iPhone reading that closes the entry.** On the iPhone 12, on the first pre-release carrying this: queue a 13 MB file with the Wi-Fi off, kill the app, relaunch, then turn the Wi-Fi back on. Read three things. (1) The bubble's percentage never decreases. (2) The send ends. (3) The in-app log export carries `[UPLOAD-RESUME] session ... opened`, and its `round N: ... KB/s` lines give the phone's own rate. Then cut the Wi-Fi once mid-upload: the next round's `resumed: the server holds k/n part(s)` must show k > 0. A rate of 40 to 65 KB/s with the workstation reaching 3 MB/s on the same Wi-Fi names the phone's path, not our code.
 
 ## 14. A transport failure is one type on every platform (2026-10-14)
 
@@ -1048,7 +1069,7 @@ replays) and ended the reachability probe, all on the say-so of something that i
   `{ groupId, level }`, `{ disabled }`, `{ status: 'added' }`).
 
 **Still open:** under a portal nothing MARKS the server down, so the store stays "reachable" and the
-portal's end brings no reconnect edge ([backlog](../backlog.md#p3---connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for-the-ladder-review-of-2428-2026-10-25)).
+portal's end brings no reconnect edge ([backlog](../backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)).
 **Owed:** one dev reading behind a portal, because this changes reachability for every REST call.
 
 Tests: `trackedFetch.test.ts` (a portal `511`, an HTML `403`, an edge `502` page neither clear offline
@@ -1096,7 +1117,7 @@ underneath (it would fetch with no token) and `components/layout/BootGate.svelte
 | --- | --- | --- |
 | a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
 | a VERDICT that is not a token: the app's own 401/403 (`SessionExpiredError`), an app-origin 4xx in Nest's envelope such as a 404 or 410 (`RefreshFailedError` itself), an identity split, a sign-out | `settled` | login, carrying the page asked for |
-| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`), a `200` whose body was lost after the head (`AnswerBodyLostError`, same helper) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`), a `200` whose body was lost after the head (`AnswerBodyLostError`, same helper; the lives client reads every body through it too, so an app suspended mid-request retries, `liveJson`) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
 | NO VERDICT, `TransientAnswerError` (extends `RefreshFailedError`): a 5xx, a 408 or a 429 | `unreachable`, cause `server` | "Canari rencontre un probleme": the server OR an intermediary on the path (a proxy, a VPN) answered an error - the client cannot tell a corporate proxy's 502 from the edge's own, so the hint names both and suggests another network |
 | the same, core-service's 503 `MAINTENANCE` (its `code` read from the JSON body as a field, believed on a 503 only) | `unreachable`, cause `maintenance` | the platform gate's maintenance title, and the operator's text (`maintenanceMessage`, a field of the 503 body since 2026-11-06) or the localized default |
 | the same, any other status the EDGE wrote (a WAF's HTML 403, a JSON block page none of our envelopes) | `unreachable`, cause `network` | the network wording: the path refused, not the server |
@@ -1143,6 +1164,95 @@ what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen repl
 
 Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
 showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.
+
+## 23. The engine is preloaded only where the first screen waits for it (2026-11-09)
+
+**Re-measured a month after WP-W1/W2, on `main` at `1151bcab1`.** Rig: a local production web build
+(`BUILD_WEB=1 vite build`, the adapter-node SSR for the document), behind a front that serves
+`build/client` gzipped at level 6 for nginx's `gzip_types` with the same immutable cache headers, and
+answers every `/api` at once with JSON (401 on the refresh, so the boot reads a verdict and ends on
+login). A private headless Chrome over CDP, cache cleared, Slow 3G (400 ms, 50 kB/s each way), with
+`canari_saved_user` and an `mls_device_id_*` key in `localStorage` (a signed-in, enrolled browser).
+HTTP/1.1 like section 10, so the byte column is exact and the round trips pessimistic. **"App boot"
+is the first `/api` request**: the bundle has arrived and run, which is the earliest any screen past
+the splash can draw (FCP is the inline splash, 3-4 s, and says nothing). Two runs per after-row,
+within 0.2 s of each other.
+
+**What a cold `/chat` downloads now:**
+
+| class | requests | bytes (gzip) | window |
+| --- | ---: | ---: | --- |
+| JS | 305 | 1176 kB | 0.6 -> 51.3 s |
+| WASM (`mls_wasm_bg`, 2.43 MB raw) | 1 | 879 kB | 0.6 -> 53.4 s |
+| fonts (Nunito, Fredoka) | 2 | 68 kB | 4.4 -> 50.9 s |
+| images | 7 | 85 kB | |
+| CSS | 5 | 40 kB | 0.7 -> 4.4 s |
+| total | 325 | **2258 kB** | app boot **46.4 s** |
+
+**It grew.** Section 10.2's W1 + W2 row was 1654 kB with the JS done at 23.3 s; the JS is now
+1176 kB instead of ~730 kB (+60 % in a month) and the binary 879 kB instead of 764 kB. Nothing
+watches either (WP-W5's bundle budget was never built). Read off the build's manifest and source
+maps: the root layout alone is **707 kB gzip in 187 files, on every route including `/login`**,
+of which the chat engine chunk (`globalChatSingleton` and everything it imports, 1.08 MB raw:
+`BaseMlsService` 95 kB, `CallService` 61 kB, `outbox` 56 kB, `sessionAuth` 39 kB...) is the largest
+piece - the finding of [cold-start](cold-start.md#the-reading-this-entry-asked-for-done-2026-09-16-the-root-layout-puts-the-chat-engine-on-the-login-page),
+three times bigger. `/chat` adds 393 kB beyond the layout, of which code highlighting
+(`highlight.js`, 31 kB) and the reel camera and editor (38 kB) serve no first screen.
+
+**The largest avoidable cost was the binary's head start.** `fetchpriority="low"` did not keep it off
+the JavaScript's bandwidth: with the preload, the bundle finished 12-13 s later than without it.
+
+| Slow 3G, cold | app boot | JS done | WASM done |
+| --- | ---: | ---: | ---: |
+| `/chat`, preload (before = after) | 46.4 s | 51.3 s | 53.4 s |
+| `/chat`, no preload (control) | 34.4 s | 39.2 s | 58.3 s |
+| **`/posts`, before** (preload) | **46.1 s** | 55.6 s | 54.8 s |
+| **`/posts`, after** (no preload) | **33.0-33.2 s** | 42.5-42.7 s | 57.9-58.0 s |
+| `/posts`, good link, before / after | 0.5 / 0.3 s | 0.7 / 0.5 s | 0.2 / 0.3 s |
+
+On `/chat` the trade is worth it: the list waits for `mlsService.init` (section 10.3), and the
+overlap ends the binary 5 s sooner than starting it after the bundle. On every other route nothing on
+the first screen needs the engine, and `/` lands on `/posts`: there the overlap only delayed the feed
+by 13 s. **The change:** `hooks.server.ts` fills the preload marker only for
+`MLS_FIRST_SCREEN_ROUTES` (`lib/server/wasmPreload.ts`: `/chat`, `/communities`); elsewhere the marker
+stays as the native shell leaves it, and the head script returns at once. The in-bundle prefetch
+(`hooks.client.ts`, `prefetchMlsWasmAtBoot`) is unchanged, so the binary still starts the moment the
+bundle has run, on every route. Event-ordered, no timer. **The list is derived, not declared**:
+`wasmPreloadRoutes.test.ts` reads `src/routes` and fails when the set of routes mounting
+`MainChatPage` and the list differ (checked against a list missing `/communities`: it fails).
+
+**Re-checked against `main` on 2026-11-14** (nothing changed the answer): the routes that emit the
+preload are `/chat` and `/communities`, the only two importing `MainChatPage`. Every other page was
+read for an MLS dependency on its first screen: `/settings/[section]` (the security section's device
+badge polls `ensureMls()` and swallows "not ready", the page draws without it), `/g/join/[token]`
+(plain HTTP), `/c/join/[token]` (HTTP preview; the engine is needed on the client navigation to
+`/communities` afterwards, after the in-bundle prefetch has started it), `/lives/[liveId]`, `/camera`
+and the rest import no engine. `wasmPreloadRoutes.test.ts` pins that audited set as NOT in the list.
+The PIN gate of an enrolled browser on a non-chat route is the one case where the binary now starts
+at bundle end rather than with it; the gate itself draws without it. Not measured.
+
+**What this does not measure:** an h2 path that honours the low priority would make the `/chat`
+cost smaller than 12 s, and production is h2 behind the host proxy - whether that proxy schedules by
+priority is not known (the `/posts` change holds either way: a transfer the screen does not need is
+off its path). The signed-in chain after boot (the rig has no session), a real phone's CPU, and the
+binary now arriving 3 s later for the chat badge's background login on the feed. **Owed: a real-phone
+reading** of a cold `/` on a throttled link, web build, before and after - not on the bench phones
+while other readings hold them.
+
+**Next, in order** (each its own pull request):
+
+1. **WP-W3, the list before the engine** (section 10.3) - still the largest cost on `/chat`: the
+   list could draw at app boot (~34 s here) instead of after the binary and the socket, and the
+   `/chat` preload would then have no reason left either.
+2. **A bundle budget (WP-W5)**: a test reading the client manifest's static closure per route
+   (`/login`, `/posts`, `/chat`), bytes and file count, so +60 % in a month cannot happen unseen.
+3. **On-demand features off the first screen of `/chat` and `/posts`**: `highlight.js` behind a
+   dynamic import in `codeHighlight.ts` (31 kB, a code block draws plain, then highlighted),
+   `CameraOverlay` loaded on open from `ChatComposer` and `PostComposerBar` (38 kB),
+   `svelte-dnd-action` (10 kB), the lightbox, PDF viewer and video player.
+4. **The chat engine off `/login`** (the 2026-09-16 finding, now 705 kB on a two-field form).
+5. **WP-W6, a service worker** for the repeat cold start after a release, when every changed chunk is
+   fetched again.
 
 ## The connection ring (owner, 2026-11-11)
 
@@ -1214,3 +1324,20 @@ that clears is silent, so a flapping slow link does not talk (`announcementStep`
 
 **Focus.** Both header avatar buttons draw a `focus-visible` accent outline (`outline-accent-icon`): the
 button's `outline: none` and a ring that is now the connection colour left it no focus indicator.
+
+## 21. "Server already unreachable" is said once per spell (2026-11-16)
+
+The verdict "unreachable" is ONE transition, but every request deadline that expired after it printed
+`(server already unreachable)` again: a burst of stalled requests was a burst of identical lines
+(1.6.11 logs). The first deadline after the verdict keeps its line, which carries the evidence (the
+request, its class and its deadline); the next ones add nothing to it. `connectivity.svelte.ts` keeps
+the entry's SPELL NUMBER (`unreachableSpell`, bumped by `notifyServerUnreachable`) and a `changeLatch`
+keyed on it, so the line is said once per spell - durable state, never a timer. The deadlines the latch
+swallowed are counted (`deadlinesWhileUnreachable`) and reported on the line that closes the spell:
+`server reachable again (N more request deadline(s) expired while it was unreachable)`. Nothing is
+demoted and nothing is lost: the count is the same number the lines would have totalled. Tests:
+`connectivity.test.ts` ("once per spell", and the limit test now expects one line for five stalls).
+
+## A community joined while the socket was down is listed when it returns (2026-11-18)
+
+A `channel.member.joined` published while this device's socket was down is lost, and nothing replays it: the pending pull covers MLS messages only, the unread answer counts only salons with unread messages, and `retryFailedListing` lists only after a listing that gave up. Captured on `1.7.0-alpha.11` (log: `[WS] Connected`, `[UNREAD] live stream back`, `[PENDING] No pending MLS messages`, then no `[WORKSPACE-LOAD]`). The return from the gap is therefore the event that reconciles the membership: `ChatBackgroundService` calls `resyncAfterLiveStreamGap` on the RETURN from a gap (`utils/chat/liveStreamGapEdge.ts`: an up that follows a down after the session already had an up, so a cold start's or an account switch's first connect is not one), which lists once (owed if a listing is in flight, through `joinedCommunityReloadOwed`, the same owed flag a join uses). Bounded by the transition, not a clock: a flapping socket costs at most one listing per return, and a return during a listing owes at most one more (a flag, not a queue). No membership version exists to compare: neither the reconnect handshake nor the unread answer carries a count or etag of the memberships. Tests: `useChannelWorkspaces.svelte.test.ts` (hydrateJoinedCommunity block), `reconnectListingWiring.test.ts`. Reading: [entry, closed by the S5 readings](../device-verification.md#the-phone-readings-of-2026-11-18-s5-170-alpha12-the-alpha12-fixes-on-both-phones).

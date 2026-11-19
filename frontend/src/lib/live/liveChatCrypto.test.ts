@@ -3,7 +3,15 @@
  * sealed for, under the live key; anything else is a typed refusal the viewer drops. Real WebCrypto.
  */
 import { describe, it, expect } from 'vitest';
-import { LiveChatOpenError, openLiveChatMessage, sealLiveChatMessage } from './liveChatCrypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  LIVE_CHAT_V1_MAX_CHARS,
+  LiveChatOpenError,
+  openLiveChatMessage,
+  sealLiveChatMessage,
+} from './liveChatCrypto';
 import { sealLiveSegment } from './liveCrypto';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -123,5 +131,35 @@ describe('the other direction (h)', () => {
         LiveSegmentOpenError
       );
     }
+  });
+
+  it('opens only what the v1 composer can write: past 300 UTF-16 units is out-of-format (review G7)', async () => {
+    // The server stores up to 928 sealed bytes - 900 of text - so a modified client could post a
+    // line three times the composer's length; it must never be drawn.
+    const longest = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'x'.repeat(300));
+    expect(await openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, longest)).toHaveLength(300);
+    const over = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, 'x'.repeat(301));
+    expect(await reason(openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, over))).toBe('out-of-format');
+    const pairs = await sealLiveChatMessage(KEY, LIVE, CLIENT, ALICE, '🐤'.repeat(151));
+    expect(await reason(openLiveChatMessage(KEY, LIVE, CLIENT, ALICE, pairs))).toBe(
+      'out-of-format'
+    );
+  });
+});
+
+describe('the v1 bound and the server (review of #3783)', () => {
+  it("is social-service's LIVE_CHAT_MESSAGE_MAX_CHARS, the bound it publishes and sizes its byte cap on", () => {
+    // Read as text, as the other parity tests read a service file: the frontend does not compile
+    // the services. Two copies of one number, held together here, never by memory.
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../apps/social-service/src/lives/live.constants.ts'
+      ),
+      'utf8'
+    );
+    const server = /export const LIVE_CHAT_MESSAGE_MAX_CHARS = (\d+);/.exec(source);
+    expect(server).not.toBeNull();
+    expect(Number(server![1])).toBe(LIVE_CHAT_V1_MAX_CHARS);
   });
 });

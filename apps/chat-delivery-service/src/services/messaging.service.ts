@@ -1,3 +1,4 @@
+import { claimUninvitedEntry, type UninvitedEntryRow } from '../utils/uninvited-entries';
 import {
   Injectable,
   Logger,
@@ -22,6 +23,7 @@ import {
 } from 'typeorm';
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
+import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import Redis from 'ioredis';
 import {
   ADDRESSED_HISTORY_CAPABILITY,
@@ -29,6 +31,7 @@ import {
   devicePresenceKey,
   addressabilityOf,
   publishIfAddressable,
+  type Addressability,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
@@ -39,7 +42,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
-import { categoryOfDataPush } from './push-category';
+import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
@@ -89,6 +92,17 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import {
+  claimSentFrameReceipt,
+  markSentFrameSettled,
+  protoSha256,
+  takeSentFrameSettlement,
+  takeSentFrameLock,
+  readSentFrameReceipt,
+  findFirstCopyRows,
+  type FirstCopy,
+  type SentFrameKey,
+} from '../utils/sent-frame-receipt';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import {
@@ -145,6 +159,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
+  buildInternalApnsRequest,
   decideProtoCarriage,
   measureDataFields,
   measureApnsPayload,
@@ -216,6 +231,14 @@ export interface SendMessageBody {
    * receive. Absent (every client before 1.2.5, and every other send) means the whole group.
    */
   recipientDevices?: string[];
+  /**
+   * The id the sender named this application frame by - the plaintext's own `messageId`, which the
+   * server never reads inside the ciphertext. A send that repeats it from the same device into the
+   * same group is the SAME message (a resend whose first answer was lost), and is stored once
+   * ({@link FrameAlreadyReceived}, migration 048). Absent (every foreground client today, every
+   * handshake frame) means the frame is queued as it always was.
+   */
+  messageId?: string;
   // legacy fields (frontend fallback / group fan-out)
   content?: string;
   type?: string;
@@ -519,6 +542,20 @@ export interface SendWelcomeBody {
 }
 
 /**
+ * What `POST /api/mls/welcome` answers once the Welcome is stored and handed to its device.
+ *
+ * `addressability` is whether that device can be ADDRESSED a history answer at the time of the
+ * answer (`addressabilityOf`): `addressable`, `offline` (no presence key) or `undeclared` (a live
+ * session did not declare `addressed-history-1`). The inviter's join push reads it and sends nothing
+ * where the send would be refused (`MessagingService.welcomeAnswer`). Absent when it could not be
+ * read - the shape every older server answers.
+ */
+export interface WelcomeAnswer {
+  status: 'queued';
+  addressability?: Addressability;
+}
+
+/**
  * THE ONE BUILDER OF A `welcome_request` FRAME (review of #2832): the frame relayed to an online
  * member, the frame queued in each member's `pending_welcome_notify:{userId}` list, and the frame a
  * withdrawal `LREM`s from that list. A withdrawal only finds what the store pushed if both are the
@@ -595,6 +632,97 @@ const MAX_MEMBER_KEY_LENGTH = 256;
 const MAX_ADDRESSED_DEVICES = 16;
 
 /**
+ * What a sender's `messageId` may look like: the UUIDs every client mints (`crypto.randomUUID`, the
+ * native outbox mirror's ids), with room to spare. It is a primary-key column (migration 048), so
+ * anything else is refused rather than stored.
+ */
+const SENT_MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Reads `SendMessageBody.messageId`: the id, or `undefined` when the sender named none. A value that
+ * is present but not an id is REFUSED (400 `message_id_invalid`), never read as absent - absent
+ * means "queue it as a new frame", which is the very duplicate the field exists to prevent.
+ */
+/**
+ * Who sent which named message into which group - the receipt's key without its instant - or
+ * `undefined` for a send no receipt records: one naming no `messageId`, a handshake frame (its own
+ * idempotent protocol step, and no caller names one), or one missing its group, author or device.
+ * Keyed on the authenticated author when there is one. ONE reading, for the lock a named send holds
+ * and the receipt it writes, so the two can never name different messages.
+ */
+export function readSentFrameIdentity(
+  body: SendMessageBody,
+  authUserIdRaw: string | undefined
+): SentFrameIdentity | undefined {
+  const messageId = readSentMessageId(body);
+  const senderId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id') ?? body.senderId;
+  if (!messageId || body.isCommit || body.isWelcome || !body.groupId || !senderId) return undefined;
+  if (!body.senderDeviceId) return undefined;
+  return { groupId: body.groupId, senderId, senderDeviceId: body.senderDeviceId, messageId };
+}
+
+/** A named send's message: its group, its author's device, and the id the author gave it. */
+export interface SentFrameIdentity {
+  groupId: string;
+  senderId: string;
+  senderDeviceId: string;
+  messageId: string;
+}
+
+export function readSentMessageId(body: SendMessageBody): string | undefined {
+  const raw: unknown = body.messageId;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'string' || !SENT_MESSAGE_ID.test(raw)) {
+    throw new BadRequestException({
+      error: 'message_id_invalid',
+      message: 'messageId must be 1-128 letters, digits, - or _',
+    });
+  }
+  return raw;
+}
+
+/**
+ * Whether a send appends its frame to the group's shared history stream: a DURABLE application frame
+ * with a group and a sender, addressed to the whole group. Welcome and Commit are MLS epoch
+ * transitions that cannot be replayed out of order; an ADDRESSED frame is for some members, and the
+ * stream is read by every one. (This used to read `!body.silent`, which kept every reaction, edit,
+ * deletion and read receipt out of the only shared copy - docs/wiki/protocols/history-reconciliation.md.)
+ */
+function historyEligible(
+  body: SendMessageBody,
+  durable: boolean,
+  addressed: Set<string> | null
+): boolean {
+  return (
+    !!body.proto &&
+    !body.isWelcome &&
+    !body.isCommit &&
+    durable &&
+    !addressed &&
+    !!body.groupId &&
+    !!body.senderId
+  );
+}
+
+/** How many history-stream entries one `XRANGE` page reads when a repeat looks for its first copy. */
+const HISTORY_SCAN_PAGE = 200;
+
+/**
+ * Thrown INSIDE the enqueue transaction when the receipt for this `(group, sender, device,
+ * messageId)` already exists: the message was accepted before and this send is its repeat. Nothing
+ * is written (the transaction rolls back, and it had written nothing), and {@link
+ * MessagingService.sendMessage} answers with the first copy's receive time - queueing nothing new,
+ * and delivering only what the first send may not have delivered (an unsettled receipt). Classified
+ * here, as a type, so the one caller that turns it into an answer never reads a message.
+ */
+export class FrameAlreadyReceived extends Error {
+  constructor(readonly first: FirstCopy) {
+    super('this messageId was already received from this device into this group');
+    this.name = 'FrameAlreadyReceived';
+  }
+}
+
+/**
  * Reads `SendMessageBody.recipientDevices` into lower-cased `userId:deviceId` keys, or `null` when
  * the frame is addressed to the whole group (field absent).
  *
@@ -645,6 +773,8 @@ const CLIENT_SEND_FIELDS: ReadonlySet<string> = new Set([
   'silent',
   'durable',
   'recipientDevices',
+  // The id a resend repeats (`readSentMessageId`): a client may name it, and is never required to.
+  'messageId',
 ]);
 
 /**
@@ -1137,19 +1267,6 @@ export class MessagingService {
     }
   }
 
-  private isTerminalPushTokenError(error: unknown): boolean {
-    const rawCode =
-      typeof error === 'object' && error && 'code' in error
-        ? (error as { code?: unknown }).code
-        : undefined;
-    const code = typeof rawCode === 'string' ? rawCode : '';
-
-    return (
-      code === 'messaging/invalid-registration-token' ||
-      code === 'messaging/registration-token-not-registered'
-    );
-  }
-
   /**
    * Whether FCM refused a message for SIZE rather than for the token or the network.
    *
@@ -1162,9 +1279,9 @@ export class MessagingService {
    * @param error - Whatever `getMessaging().send()` threw.
    */
   private isPayloadTooLargeError(error: unknown): boolean {
-    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
-    const code = typeof asRecord.code === 'string' ? asRecord.code : '';
+    const code = fcmErrorCode(error);
     if (code === 'messaging/payload-size-limit-exceeded') return true;
+    const asRecord = typeof error === 'object' && error ? (error as Record<string, unknown>) : {};
     const message = typeof asRecord.message === 'string' ? asRecord.message : '';
     return code === 'messaging/invalid-argument' && /too large/i.test(message);
   }
@@ -1186,7 +1303,15 @@ export class MessagingService {
     key: WakeKey,
     silent: boolean,
     mentionsOnly: boolean,
-    android: { priority: 'high'; ttl?: number }
+    android: { priority: 'high'; ttl?: number },
+    /**
+     * The `apns-collapse-id` the FULL push of the same content would carry (`buildInternalApnsRequest`),
+     * for a REACTION only: the identifier the device files it under, which a wake must keep - one
+     * reaction's push and the page's own notification of it are ONE request only if both carry it
+     * (review of #3792). It is a hash over the message id, which nothing else sent to Apple names;
+     * an id that names content - or hashes only what Apple can learn elsewhere - never goes here.
+     */
+    collapseId?: string
   ): Message {
     if (pt.platform === 'ios') {
       const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
@@ -1197,6 +1322,7 @@ export class MessagingService {
           headers: {
             'apns-push-type': request.pushType,
             'apns-priority': String(request.priority),
+            ...(collapseId ? { 'apns-collapse-id': collapseId } : {}),
           },
         },
       };
@@ -1498,14 +1624,15 @@ export class MessagingService {
           );
         }
       } catch (e) {
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} ${failure.text}`
         );
         // A size refusal is the one failure whose cause is entirely in our hands, and the error
         // FCM returns names no quantity at all - ten of them in one run said only "too large".
@@ -1780,6 +1907,69 @@ export class MessagingService {
     authUserIdRaw?: string,
     parting: ReadonlyArray<{ userId: string; deviceId: string }> = []
   ): Promise<SendMessageResult> {
+    const named = readSentFrameIdentity(body, authUserIdRaw);
+    if (!named) return this.sendFrame(body, authUserIdRaw, parting);
+    // A NAMED SEND HOLDS ITS MESSAGE'S ADVISORY LOCK FROM BEFORE ITS CLAIM UNTIL AFTER ITS
+    // SETTLEMENT, so a repeat knows from the lock - never from a clock - whether the send that wrote
+    // an unsettled receipt is still running (it cannot take the lock) or gone (it can: a dead
+    // process's session, and its locks, ended with it). See `takeSentFrameLock`.
+    const lock = await takeSentFrameLock(
+      this.queuedMessageRepo.manager.connection,
+      named.groupId,
+      named,
+      (e) =>
+        this.logger.error(
+          `[SEND] SENT_FRAME_UNLOCK_FAILED group=${named.groupId} msg=${named.messageId.slice(0, 8)} ` +
+            `- the connection is destroyed instead, which ends its lock: ${e instanceof Error ? e.message : String(e)}`
+        )
+    );
+    if (!lock.held) return this.answerInFlight(body, authUserIdRaw, named);
+    try {
+      return await this.sendFrame(body, authUserIdRaw, parting);
+    } finally {
+      await lock.release();
+    }
+  }
+
+  /**
+   * The answer to a named send whose message another send of the same id is delivering RIGHT NOW
+   * (it holds the message's lock). That send finishes its own delivery, so this one finishes
+   * nothing: once its receipt is committed, it is answered as a plain repeat with the first copy's
+   * instant; before that, `503 send_in_flight`, and the sender keeps the message and sends it again,
+   * as after any refused send - the next attempt meets either the committed receipt or no send.
+   */
+  private async answerInFlight(
+    body: SendMessageBody,
+    authUserIdRaw: string | undefined,
+    named: SentFrameIdentity
+  ): Promise<SendMessageResult> {
+    const traceId = this.makeTraceId('send');
+    if (body.senderId) {
+      this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'SEND');
+    }
+    const first = await readSentFrameReceipt(this.queuedMessageRepo.manager, named.groupId, named);
+    if (!first) {
+      this.logger.warn(
+        `[SEND][${traceId}] SEND_IN_FLIGHT group=${named.groupId} ` +
+          `sender=${named.senderId}:${named.senderDeviceId} msg=${named.messageId.slice(0, 8)} ` +
+          `- another send of this id holds its lock and has not committed: refused, the sender retries`
+      );
+      throw new ServiceUnavailableException({ error: 'send_in_flight' });
+    }
+    return this.answerRepeatedFrame(
+      traceId,
+      named.groupId,
+      { ...named, receivedAt: new Date(), protoSha256: protoSha256(body.proto ?? '') },
+      first.receivedAt
+    );
+  }
+
+  /** The body of {@link sendMessage}: a named send reaches it holding its message's lock. */
+  private async sendFrame(
+    body: SendMessageBody,
+    authUserIdRaw: string | undefined,
+    parting: ReadonlyArray<{ userId: string; deviceId: string }>
+  ): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
 
     // `senderId` is what the shared log records as the author of the frame, and what a device
@@ -1802,10 +1992,25 @@ export class MessagingService {
     let partingConsumed: string[] = [];
     /** An application frame's clear epoch and its author, compared with the group's under the lock. */
     let sealed: SealedFrame | undefined;
+    // THE ID THE SENDER NAMED THIS MESSAGE BY, recorded with its copies so a repeat is stored once
+    // (`claimSentFrame`). Application frames only: a handshake frame is its own idempotent protocol
+    // step, and no caller names one. Keyed on the authenticated author when there is one.
+    const sentMessageId = readSentMessageId(body);
+    const named = readSentFrameIdentity(body, authUserIdRaw);
+    const receipt: SentFrameKey | undefined = named
+      ? {
+          senderId: named.senderId,
+          senderDeviceId: named.senderDeviceId,
+          messageId: named.messageId,
+          receivedAt,
+          protoSha256: protoSha256(body.proto ?? ''),
+        }
+      : undefined;
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
-        (addressed ? ` addressed=${[...addressed].join(',')}` : '')
+        (addressed ? ` addressed=${[...addressed].join(',')}` : '') +
+        (sentMessageId ? ` msg=${sentMessageId.slice(0, 8)}` : '')
     );
 
     if (body.proto) {
@@ -2192,15 +2397,29 @@ export class MessagingService {
     // 1. Persist ALL messages first (survives crashes / timing races). What is delivered below is
     // what was queued: a seat evicted after the recipients were read is neither (`enqueueForLiveGroup`).
     let queuedRows: QueuedMessage[] = [];
+    // A REPEAT OF A MESSAGE ALREADY ACCEPTED (`claimSentFrame`) wrote nothing, and is answered here
+    // with the first copy's receive time: no row, no history append, no push - one id is one message
+    // on every receiver, and the sender dates its copy as every receiver already did.
+    const repeat: { of?: FirstCopy } = {};
+    const enqueueOnce = async (
+      rows: QueuedMessage[],
+      seats?: { exempt: ReadonlySet<string> }
+    ): Promise<QueuedMessage[]> => {
+      try {
+        return await this.enqueueForLiveGroup(rows, body.groupId, 'SEND', traceId, sealed, {
+          seats,
+          receipt,
+        });
+      } catch (e) {
+        if (!(e instanceof FrameAlreadyReceived)) throw e;
+        repeat.of = e.first;
+        return [];
+      }
+    };
     if (toDeliver.length > 0) {
-      queuedRows = await this.enqueueForLiveGroup(
-        toDeliver,
-        body.groupId,
-        'SEND',
-        traceId,
-        sealed,
-        { seats: { exempt: new Set(partingConsumed) } }
-      );
+      queuedRows = await enqueueOnce(toDeliver, { exempt: new Set(partingConsumed) });
+      if (repeat.of)
+        return this.answerRepeat(traceId, body, receipt, repeat.of, durable, addressed);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${queuedRows.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
@@ -2220,7 +2439,9 @@ export class MessagingService {
       // and relies on this refusal, so it is owed on the empty roster too. Handshake frames are
       // left alone: their own paths decide what a dead group means for them.
       if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
-        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId, sealed);
+        await enqueueOnce([]);
+        if (repeat.of)
+          return this.answerRepeat(traceId, body, receipt, repeat.of, durable, addressed);
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
@@ -2253,83 +2474,15 @@ export class MessagingService {
     // shared copy that exists - the defect this rework removes
     // (`docs/wiki/protocols/history-reconciliation.md`).
     //  - an ADDRESSED frame: the stream is read by every member, and the frame is for some of them.
-    if (
-      body.proto &&
-      !body.isWelcome &&
-      !body.isCommit &&
-      durable &&
-      !addressed &&
-      body.groupId &&
-      body.senderId
-    ) {
-      try {
-        const historyKey = `history:${body.groupId}`;
-        // ONE ROUND TRIP FOR THE THREE COMMANDS. They are a single statement about the stream -
-        // append it, bound it, keep the key alive - and issuing them one await at a time paid a
-        // round trip each on the hot send path for no added guarantee.
-        const written = await this.redis
-          .pipeline()
-          .xadd(
-            historyKey,
-            'MAXLEN',
-            '~',
-            String(HISTORY_STREAM_MAXLEN),
-            '*',
-            'sender_id',
-            body.senderId,
-            // THE DEVICE, NOT ONLY THE USER - and it is written here because here is the only place
-            // it is still known. `history:{gid}` is ONE stream per group and must hold this device's
-            // own frames, because every other member reads it; MLS then refuses them by construction
-            // (`CannotDecryptOwnMessage`). `sender_id` cannot filter them: a user's OTHER device's
-            // frames are both decryptable and wanted. So without this field a replay learns which
-            // rows are its own only by handing each one to MLS to be refused - measured at 5 certain
-            // failures per capture, every capture, and thousands per full replay of a 4 282-message
-            // DM. Never learn by failing what a fact could have told you.
-            'sender_device_id',
-            body.senderDeviceId ?? '',
-            'content',
-            body.proto,
-            'timestamp',
-            receivedAt.toISOString()
-          )
-          // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
-          // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back
-          // it reaches: a group under the cap kept every frame it ever held, because the cap was
-          // never met and the TTL above is refreshed on every write. Measured on production
-          // 2026-08-17: four of five streams still carried rows from before 2026-08-15, at 1 to 11
-          // entries each. Four compatibility shims are retired on "no row older than the retention
-          // window can still exist" (`docs/wiki/legacy-compatibility.md`), and that sentence was
-          // simply not true of an active group.
-          //
-          // EXACT, NOT `~`: an approximate trim stops at node boundaries and keeps up to a node's
-          // worth of older entries, and a date that nothing may be older than cannot be
-          // approximate. The cost is bounded - each entry is deleted once, ever, and the stream is
-          // capped at `HISTORY_STREAM_MAXLEN`.
-          .xtrim(historyKey, 'MINID', String(Date.now() - RETENTION_WINDOW_MS))
-          // Refresh TTL on every write so abandoned groups are evicted after the offline-recovery
-          // window of inactivity. Same window as every other staleness threshold, by construction.
-          .expire(historyKey, Math.floor(RETENTION_WINDOW_MS / 1000))
-          .exec();
-
-        // A pipeline reports per-command failures in its RESULTS, not by throwing, so the `catch`
-        // below never sees them. Left unread, a stream that stopped being trimmed or expired would
-        // look exactly like one that was.
-        if (!written) {
-          this.logger.warn(`[HISTORY][${traceId}] pipeline aborted group=${body.groupId}`);
-        } else {
-          written.forEach(([err], i) => {
-            if (err) {
-              const name = ['XADD', 'XTRIM', 'EXPIRE'][i] ?? `command ${i}`;
-              this.logger.warn(
-                `[HISTORY][${traceId}] ${name} failed group=${body.groupId}: ${String(err)}`
-              );
-            }
-          });
-        }
-        this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
-      } catch (e) {
-        this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${String(e)}`);
-      }
+    if (historyEligible(body, durable, addressed)) {
+      await this.appendToHistory(
+        body.groupId as string,
+        body.senderId as string,
+        body.senderDeviceId ?? '',
+        body.proto as string,
+        receivedAt,
+        traceId
+      );
     }
 
     // 2. Best-effort real-time delivery for online recipients, through the one delivery.
@@ -2339,38 +2492,25 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
-    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
-    for (const queued of queuedRows) {
-      // Reuses the presence answer taken above rather than asking Redis a second time. A device
-      // that went offline in between is covered the same way it always was: the row survives and
-      // its next pull redelivers it.
-      const delivered = await this.deliverQueuedFrame(queued, {
-        tag: 'SEND',
-        traceId,
-        online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
-        silent,
-        pushable: durable,
-        batch: tally,
-      });
-      if (delivered) sentCount++;
-    }
-    if (tally.pushes.length > 0) {
-      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
-      // the last one settles. Failures and missing tokens already logged themselves per device.
-      const attempted = tally.pushes.length;
-      void Promise.all(tally.pushes).then(() =>
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
-        )
+    sentCount += await this.deliverQueuedRows(queuedRows, online, silent, durable, traceId);
+    // THE RECEIPT IS SETTLED once the steps above ran: a repeat from here on is answered alone. A
+    // crash before this line leaves it unsettled, and the repeat then finishes this delivery for the
+    // copies still queued (`finishFirstCopy`).
+    if (receipt && body.groupId) {
+      const groupId = body.groupId;
+      await markSentFrameSettled(this.queuedMessageRepo.manager, groupId, receipt).catch(
+        (e: unknown) =>
+          this.logger.warn(
+            `[SEND][${traceId}] RECEIPT_NOT_SETTLED group=${groupId} msg=${receipt.messageId.slice(0, 8)} ` +
+              `- a repeat of it will deliver its still-queued copies again: ${String(e)}`
+          )
       );
     }
 
     // The count REPORTED is the count actually written, not the count considered - a transport frame
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
-    this.logger.log(
-      `[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount} offline=${tally.pushes.length}`
-    );
+    this.logger.log(`[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount}`);
 
     return {
       status: 'processed',
@@ -4652,6 +4792,14 @@ export class MessagingService {
     return (await this.memberOfGroupKind(group, groupId, userId)).isMember;
   }
 
+  /**
+   * Counts one uninvited entry ({@link claimUninvitedEntry}): `true` when this call wrote its row,
+   * so the caller prints it; `false` when it was counted before - by any replica, before any deploy.
+   */
+  async claimUninvitedEntry(entry: UninvitedEntryRow): Promise<boolean> {
+    return claimUninvitedEntry(this.groupRepo.manager, entry);
+  }
+
   /** Whether `userId` is on the user roster of `groupId`, admitted or still awaiting a member. */
   private async isOnRoster(groupId: string, userId: string): Promise<boolean> {
     return (await this.rosterSeat(groupId, userId)) !== null;
@@ -5402,7 +5550,7 @@ export class MessagingService {
   async sendWelcome(
     authUserIdRaw: string | undefined,
     body: SendWelcomeBody
-  ): Promise<{ status: string }> {
+  ): Promise<WelcomeAnswer> {
     const traceId = this.makeTraceId('welcome-send');
     const targetDeviceId = sanitizeQueryValue(body.targetDeviceId, 'targetDeviceId');
     const targetUserId = sanitizeOptionalQueryValue(body.targetUserId, 'targetUserId');
@@ -5504,7 +5652,7 @@ export class MessagingService {
           `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
       );
       await this.deliverWelcome(stored, traceId);
-      return { status: 'queued' };
+      return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
     }
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
@@ -5531,7 +5679,56 @@ export class MessagingService {
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
     );
 
-    return { status: 'queued' };
+    return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);
+  }
+
+  /**
+   * The answer to a stored Welcome, carrying whether its device can be ADDRESSED a history answer
+   * now ({@link WelcomeAnswer.addressability}).
+   *
+   * WHY THE WELCOME SAYS IT. The inviter follows every delivered Welcome with a join push, an
+   * addressed transport frame, which {@link assertConversationAddressable} refuses for a device that
+   * is offline or holds a session that did not declare the capability. Only this service knows
+   * either fact, so the inviter used to learn it by failing: one `400 addressed_unsupported` per
+   * stale device of every Add (nine in one rig run, 2026-11-15). The verdict is read HERE by the
+   * same script that decides the send (check only, nothing published), so the inviter does not make
+   * a request this service would refuse. The send's own check is unchanged and stays the authority:
+   * a device that disconnects between the two reads is still refused there.
+   *
+   * A verdict that cannot be read is said at error and left OUT of the answer: the Welcome is
+   * stored and delivered whatever this read does, and an answer without the field is what every
+   * older server gives - the inviter then pushes and the send's check decides.
+   *
+   * NOT READ FOR A KEY GROUP: a community's key group gets no join push (it carries no history), so
+   * the verdict would answer a question nobody asks there.
+   */
+  private async welcomeAnswer(
+    group: Group | null,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    traceId: string
+  ): Promise<WelcomeAnswer> {
+    if (distributionScopeOf(group) !== null) {
+      this.logger.log(
+        `[WELCOME][${traceId}] group=${groupId} is a key group - no join push follows, addressability of ${cutUserId(userId)}:${deviceId} not read`
+      );
+      return { status: 'queued' };
+    }
+    let addressability: Addressability;
+    try {
+      addressability = await addressabilityOf(this.redis, userId, deviceId);
+    } catch (e) {
+      this.logger.error(
+        `[WELCOME][${traceId}] addressability of ${cutUserId(userId)}:${deviceId} in group=${groupId} could not be read - answered without it, the join push's own send decides: ${String(e).slice(0, 160)}`
+      );
+      return { status: 'queued' };
+    }
+    this.logger.log(
+      `[WELCOME][${traceId}] ADDRESSABILITY group=${groupId} target=${cutUserId(userId)}:${deviceId} ` +
+        `is ${addressability}${addressability === 'addressable' ? '' : ' - the inviter sends it no addressed answer'}`
+    );
+    return { status: 'queued', addressability };
   }
 
   /**
@@ -6819,6 +7016,10 @@ export class MessagingService {
    * Refused rather than silently skipped: the sender is told its message is never going out, which
    * the outbox turns into a permanent failure rather than a ladder that spins. A send with no
    * `groupId` addresses no group and has nothing to check.
+   *
+   * `opts.receipt` records the frame's `messageId` in the SAME transaction, after the liveness
+   * check and before any row ({@link claimSentFrame}): a repeat of an id already recorded throws
+   * {@link FrameAlreadyReceived} and writes nothing.
    */
   private async enqueueForLiveGroup(
     rows: QueuedMessage[],
@@ -6826,9 +7027,13 @@ export class MessagingService {
     tag: string,
     traceId: string,
     sealed?: SealedFrame,
-    opts: { seats?: { exempt: ReadonlySet<string> }; welcome?: WelcomeSeat } = {}
+    opts: {
+      seats?: { exempt: ReadonlySet<string> };
+      welcome?: WelcomeSeat;
+      receipt?: SentFrameKey;
+    } = {}
   ): Promise<QueuedMessage[]> {
-    const { seats, welcome } = opts;
+    const { seats, welcome, receipt } = opts;
     if (!groupId) return this.queuedMessageRepo.save(rows);
     const stored = await this.queuedMessageRepo.manager.transaction(async (manager) => {
       // THE SEAT LOCK, SHARED, BEFORE THE GROUP ROW - the order every seat writer takes them in. The
@@ -6896,6 +7101,10 @@ export class MessagingService {
         const queued = await this.findQueuedWelcome(manager, groupId, welcome, rows[0].proto);
         if (queued) return [queued];
       }
+      // ONE ID IS ONE MESSAGE, whatever its sender retries: recorded before any row, under the group
+      // lock that also orders it against a delete. Asked on an empty batch too - an emptied roster
+      // still appends to the history stream, which a repeat must not do twice.
+      if (receipt) await this.claimSentFrame(manager, groupId, receipt, tag, traceId);
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];
       const kept = seats ? await this.keepSeatedRows(manager, rows, groupId, seats.exempt) : rows;
@@ -6916,6 +7125,324 @@ export class MessagingService {
       return saved;
     });
     return stored;
+  }
+
+  /**
+   * The answer to a send whose `messageId` this device already sent into the group: the first
+   * copy's receive time, and nothing queued or sent. Logged at warn, because a repeat is the visible
+   * end of an answer the sender lost upstream (a native background send reads an answer past its
+   * read timeout as a failure) - and the gap since the first copy is the evidence of which.
+   */
+  private answerRepeatedFrame(
+    traceId: string,
+    groupId: string | undefined,
+    receipt: SentFrameKey | undefined,
+    first: Date
+  ): SendMessageResult {
+    this.logger.warn(
+      `[SEND][${traceId}] REPEATED_MESSAGE_ID group=${groupId ?? 'none'} ` +
+        `sender=${receipt?.senderId ?? 'unknown'}:${receipt?.senderDeviceId ?? 'unknown'} ` +
+        `msg=${receipt?.messageId.slice(0, 8) ?? 'none'} firstReceivedAt=${first.toISOString()} ` +
+        `gapMs=${receipt ? receipt.receivedAt.getTime() - first.getTime() : 'unknown'} ` +
+        `- already stored, answered with the first copy: nothing queued, nothing pushed`
+    );
+    return { status: 'processed', queued: 0, sent: 0, receivedAt: first.getTime() };
+  }
+
+  /**
+   * The answer to a repeat of a message this device already sent into the group. A SETTLED first
+   * copy (its send ran every delivery step) is answered alone. An UNSETTLED one - the server died
+   * between the commit that queued it and the steps after it - is finished here first
+   * ({@link finishFirstCopy}), so the repeat leaves the message exactly as a whole first send would
+   * have: delivered once, pushed once, one history entry.
+   */
+  private async answerRepeat(
+    traceId: string,
+    body: SendMessageBody,
+    receipt: SentFrameKey | undefined,
+    first: FirstCopy,
+    durable: boolean,
+    addressed: Set<string> | null
+  ): Promise<SendMessageResult> {
+    if (first.settled || !receipt || !body.groupId) {
+      return this.answerRepeatedFrame(traceId, body.groupId, receipt, first.receivedAt);
+    }
+    return this.finishFirstCopy(traceId, body, receipt, first, durable, addressed);
+  }
+
+  /**
+   * FINISHES THE DELIVERY AN INTERRUPTED FIRST SEND OWED, for a repeat of an unsettled receipt.
+   *
+   * IT RUNS ONLY WHEN THE FIRST SEND IS PROVEN GONE: this repeat holds the message's advisory lock
+   * ({@link sendMessage}), which the first send held until it settled, so an unsettled receipt seen
+   * under the lock was left by a send whose session ended. The settlement is then TAKEN, atomically
+   * ({@link takeSentFrameSettlement}). A crash after that take and before the steps loses what the
+   * steps would have done - the push and the history entry; the queued copies survive it and go out
+   * on each device's next pull, as any undelivered row does.
+   *
+   * What it finishes is read from durable state, never inferred:
+   * - the copies STILL QUEUED: the group's rows from this sender's device received at the first
+   *   copy's instant whose ciphertext is the first copy's (`protoSha256`) - a copy already pulled
+   *   and acknowledged is gone, and nothing is done for it;
+   * - the history entry, appended only when the stream holds none for the first copy
+   *   ({@link historyHoldsFirstCopy}), and then with the first copy's own ciphertext when a queued
+   *   row still carries it.
+   */
+  private async finishFirstCopy(
+    traceId: string,
+    body: SendMessageBody,
+    receipt: SentFrameKey,
+    first: FirstCopy,
+    durable: boolean,
+    addressed: Set<string> | null
+  ): Promise<SendMessageResult> {
+    const groupId = body.groupId as string;
+    const manager = this.queuedMessageRepo.manager;
+    if (!(await takeSentFrameSettlement(manager, groupId, receipt))) {
+      return this.answerRepeatedFrame(traceId, groupId, receipt, first.receivedAt);
+    }
+    const stillQueued = await findFirstCopyRows(
+      manager,
+      groupId,
+      body.senderId as string,
+      receipt.senderDeviceId,
+      first,
+      this.logger,
+      traceId
+    );
+    let historyAppended = false;
+    if (historyEligible(body, durable, addressed)) {
+      const held = await this.historyHoldsFirstCopy(groupId, receipt.senderDeviceId, first);
+      if (!held) {
+        // The first copy's own ciphertext when a queued row still carries it; when every copy was
+        // already pulled, this repeat's sealing of the same message (receivers deduplicate on the id
+        // inside, and the stream held no copy at all).
+        await this.appendToHistory(
+          groupId,
+          body.senderId as string,
+          receipt.senderDeviceId,
+          stillQueued[0]?.proto ?? (body.proto as string),
+          first.receivedAt,
+          traceId
+        );
+        historyAppended = true;
+      }
+    }
+    const online = new Map<string, boolean>();
+    for (const row of stillQueued) {
+      const k = `${row.recipientId}:${row.deviceId}`;
+      if (!online.has(k)) {
+        online.set(
+          k,
+          !!(await this.redis.exists(devicePresenceKey(row.recipientId, row.deviceId)))
+        );
+      }
+    }
+    const sent = await this.deliverQueuedRows(
+      stillQueued,
+      online,
+      body.silent ?? false,
+      durable,
+      traceId
+    );
+    this.logger.warn(
+      `[SEND][${traceId}] REPEAT_FINISHED_FIRST_COPY group=${groupId} ` +
+        `sender=${receipt.senderId}:${receipt.senderDeviceId} msg=${receipt.messageId.slice(0, 8)} ` +
+        `firstReceivedAt=${first.receivedAt.toISOString()} stillQueued=${stillQueued.length} ` +
+        `realtime=${sent} historyAppended=${historyAppended} - the first send stopped between its ` +
+        `commit and its delivery, and this repeat finished it`
+    );
+    return { status: 'processed', queued: 0, sent, receivedAt: first.receivedAt.getTime() };
+  }
+
+  /**
+   * Whether `history:{groupId}` already holds the first copy: an entry from `senderDeviceId` dated
+   * at the first copy's receive time whose content is the first copy's ciphertext (`protoSha256`).
+   * Read from the first copy's instant onwards - an append comes
+   * after its receive time, so its stream id is not older - in pages, to the end of the stream
+   * (bounded by `HISTORY_STREAM_MAXLEN`). Asked only by a repeat of an unsettled receipt.
+   */
+  private async historyHoldsFirstCopy(
+    groupId: string,
+    senderDeviceId: string,
+    first: FirstCopy
+  ): Promise<boolean> {
+    const key = `history:${groupId}`;
+    const at = first.receivedAt.toISOString();
+    let start = String(first.receivedAt.getTime());
+    for (;;) {
+      const page = (await this.redis.xrange(key, start, '+', 'COUNT', HISTORY_SCAN_PAGE)) as Array<
+        [string, string[]]
+      >;
+      for (const [, fields] of page) {
+        const entry = new Map<string, string>();
+        for (let i = 0; i + 1 < fields.length; i += 2) entry.set(fields[i], fields[i + 1]);
+        if (
+          entry.get('sender_device_id') === senderDeviceId &&
+          entry.get('timestamp') === at &&
+          protoSha256(entry.get('content') ?? '') === first.protoSha256
+        ) {
+          return true;
+        }
+      }
+      if (page.length < HISTORY_SCAN_PAGE) return false;
+      start = `(${page[page.length - 1][0]}`;
+    }
+  }
+
+  /**
+   * Appends one frame to the group's shared history stream, so a device that was absent can obtain
+   * it without a peer being online. Best-effort: a failure is logged, the queued copies stand.
+   */
+  private async appendToHistory(
+    groupId: string,
+    senderId: string,
+    senderDeviceId: string,
+    proto: string,
+    receivedAt: Date,
+    traceId: string
+  ): Promise<void> {
+    try {
+      const historyKey = `history:${groupId}`;
+      // ONE ROUND TRIP FOR THE THREE COMMANDS. They are a single statement about the stream -
+      // append it, bound it, keep the key alive - and issuing them one await at a time paid a round
+      // trip each on the hot send path for no added guarantee.
+      const written = await this.redis
+        .pipeline()
+        .xadd(
+          historyKey,
+          'MAXLEN',
+          '~',
+          String(HISTORY_STREAM_MAXLEN),
+          '*',
+          'sender_id',
+          senderId,
+          // THE DEVICE, NOT ONLY THE USER - and it is written here because here is the only place it
+          // is still known. `history:{gid}` is ONE stream per group and must hold this device's own
+          // frames, because every other member reads it; MLS then refuses them by construction
+          // (`CannotDecryptOwnMessage`). `sender_id` cannot filter them: a user's OTHER device's
+          // frames are both decryptable and wanted. So without this field a replay learns which rows
+          // are its own only by handing each one to MLS to be refused - measured at 5 certain
+          // failures per capture, every capture, and thousands per full replay of a 4 282-message
+          // DM. Never learn by failing what a fact could have told you.
+          'sender_device_id',
+          senderDeviceId,
+          'content',
+          proto,
+          'timestamp',
+          receivedAt.toISOString()
+        )
+        // THE AGE BOUND - the one the rest of the system already claims and this stream alone did
+        // not honour. `MAXLEN` bounds the stream by COUNT, which says nothing about how far back it
+        // reaches: a group under the cap kept every frame it ever held, because the cap was never
+        // met and the TTL above is refreshed on every write. Measured on production 2026-08-17:
+        // four of five streams still carried rows from before 2026-08-15, at 1 to 11 entries each.
+        // Four compatibility shims are retired on "no row older than the retention window can
+        // still exist" (`docs/wiki/legacy-compatibility.md`), and that sentence was simply not true
+        // of an active group.
+        //
+        // EXACT, NOT `~`: an approximate trim stops at node boundaries and keeps up to a node's
+        // worth of older entries, and a date that nothing may be older than cannot be approximate.
+        // The cost is bounded - each entry is deleted once, ever, and the stream is capped at
+        // `HISTORY_STREAM_MAXLEN`.
+        .xtrim(historyKey, 'MINID', String(Date.now() - RETENTION_WINDOW_MS))
+        // Refresh TTL on every write so abandoned groups are evicted after the offline-recovery
+        // window of inactivity. Same window as every other staleness threshold, by construction.
+        .expire(historyKey, Math.floor(RETENTION_WINDOW_MS / 1000))
+        .exec();
+
+      // A pipeline reports per-command failures in its RESULTS, not by throwing, so the `catch`
+      // below never sees them. Left unread, a stream that stopped being trimmed or expired would
+      // look exactly like one that was.
+      if (!written) {
+        this.logger.warn(`[HISTORY][${traceId}] pipeline aborted group=${groupId}`);
+      } else {
+        written.forEach(([err], i) => {
+          if (err) {
+            const name = ['XADD', 'XTRIM', 'EXPIRE'][i] ?? `command ${i}`;
+            this.logger.warn(
+              `[HISTORY][${traceId}] ${name} failed group=${groupId}: ${String(err)}`
+            );
+          }
+        });
+      }
+      this.logger.log(`[HISTORY][${traceId}] XADD group=${groupId}`);
+    } catch (e) {
+      this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${groupId}: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Hands every row to its device through {@link deliverQueuedFrame} - live when `online` says so,
+   * pushed otherwise - and returns how many went out in realtime.
+   *
+   * A handshake frame is always silent: the app processes it without telling anybody. `pushable`
+   * is `durable`, which is false only for a TRANSPORT frame - and the offline branch is then
+   * unreachable anyway, because the send kept only online recipients. Passing it rather than relying
+   * on that keeps the two facts independent.
+   */
+  private async deliverQueuedRows(
+    rows: QueuedMessage[],
+    online: Map<string, boolean>,
+    silent: boolean,
+    durable: boolean,
+    traceId: string
+  ): Promise<number> {
+    let sent = 0;
+    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
+    for (const queued of rows) {
+      // Reuses the presence answer taken by the caller rather than asking Redis a second time. A
+      // device that went offline in between is covered the same way it always was: the row survives
+      // and its next pull redelivers it.
+      const delivered = await this.deliverQueuedFrame(queued, {
+        tag: 'SEND',
+        traceId,
+        online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
+        silent,
+        pushable: durable,
+        batch: tally,
+      });
+      if (delivered) sent++;
+    }
+    if (tally.pushes.length > 0) {
+      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
+      // the last one settles. Failures and missing tokens already logged themselves per device.
+      const attempted = tally.pushes.length;
+      void Promise.all(tally.pushes).then(() =>
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
+        )
+      );
+    }
+    return sent;
+  }
+
+  /**
+   * Records `receipt` for `groupId` in the enqueue transaction `m` ({@link claimSentFrameReceipt},
+   * whose primary key serialises two concurrent sends of one id), or throws
+   * {@link FrameAlreadyReceived} with the first copy's receive time when this device already sent
+   * this id into this group.
+   */
+  private async claimSentFrame(
+    m: EntityManager,
+    groupId: string,
+    receipt: SentFrameKey,
+    tag: string,
+    traceId: string
+  ): Promise<void> {
+    const claim = await claimSentFrameReceipt(m, groupId, receipt);
+    if (claim.kind === 'claimed') return;
+    if (!claim.first) {
+      // The conflict named a row this statement cannot see: only a sweep deletes one (the retention
+      // window, the account's erasure) between the two statements. Refused as a server failure, so
+      // the sender keeps the frame and its retry inserts afresh - never queued unrecorded.
+      this.logger.error(
+        `[${tag}][${traceId}] RECEIPT_VANISHED group=${groupId} msg=${receipt.messageId.slice(0, 8)} ` +
+          `- the receipt conflicted and was gone when read back`
+      );
+      throw new ServiceUnavailableException({ error: 'receipt_vanished' });
+    }
+    throw new FrameAlreadyReceived(claim.first);
   }
 
   /**
@@ -7852,14 +8379,15 @@ export class MessagingService {
             `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`
           );
         } catch (e) {
-          if (this.isTerminalPushTokenError(e)) {
+          if (isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
             this.logger.warn(
               `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
             );
           }
-          this.logger.warn(
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} err=${String(e)}`
+          const failure = describeFcmFailure(e);
+          this.logger[failure.level](
+            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
           );
         }
       })
@@ -8081,14 +8609,25 @@ export class MessagingService {
           // The content-free wake: the device fetches the envelope and runs it through the path
           // this full push would have taken. Android keeps the full push's options.
           await getMessaging().send(
-            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
-              priority: 'high',
-            })
+            this.buildWakeMessage(
+              pt,
+              { envelopeId },
+              isInternalSilent(data),
+              false,
+              { priority: 'high' },
+              // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
+              // wake and no ring carries, so it cannot be checked against a guess
+              // (`reactionCollapseId`) - and what makes its push and the page's notification one.
+              // A post's names the post (`post_activity_<id>`), which a wake must never carry.
+              data.reaction === 'true'
+                ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
+                : undefined
+            )
           );
           sent++;
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+              `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
           );
           continue;
         }
@@ -8103,6 +8642,8 @@ export class MessagingService {
               headers: {
                 'apns-push-type': ios.payload.pushType,
                 'apns-priority': String(ios.payload.priority),
+                // One live notification per post: the new alert replaces the delivered one.
+                ...(ios.payload.collapseId ? { 'apns-collapse-id': ios.payload.collapseId } : {}),
               },
             },
           });
@@ -8118,7 +8659,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget
@@ -8132,14 +8673,15 @@ export class MessagingService {
         }
       } catch (e) {
         failed++;
-        if (this.isTerminalPushTokenError(e)) {
+        if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
           this.logger.warn(
             `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
           );
         }
-        this.logger.warn(
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} err=${String(e)}`
+        const failure = describeFcmFailure(e);
+        this.logger[failure.level](
+          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} ${failure.text}`
         );
       }
     }

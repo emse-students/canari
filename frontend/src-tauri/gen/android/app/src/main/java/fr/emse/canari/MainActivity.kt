@@ -19,11 +19,15 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.core.graphics.Insets
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewRenderProcess
+import androidx.webkit.WebViewRenderProcessClient
 import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.camera.CameraKeyAction
 import fr.emse.canari.camera.angleWorthSending
@@ -31,9 +35,26 @@ import fr.emse.canari.camera.cameraKeyAction
 import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
+import fr.emse.canari.keyboard.ImeAnimationSpec
+import fr.emse.canari.keyboard.ImeAnnouncements
+import fr.emse.canari.keyboard.ImeAnswer
+import fr.emse.canari.keyboard.imeAnswerOf
+import fr.emse.canari.keyboard.imeAnnouncementScript
+import fr.emse.canari.keyboard.imeCssPx
+import fr.emse.canari.keyboard.rideableImeAnimation
+import fr.emse.canari.keyboard.sampleImeCurve
 import fr.emse.canari.orientation.OrientationMode
+import fr.emse.canari.orientation.TURN_SIZE_STOP_SCRIPT
+import fr.emse.canari.orientation.TurnAbandon
+import fr.emse.canari.orientation.TurnFrameGate
+import fr.emse.canari.orientation.isTurn
+import fr.emse.canari.orientation.isUnrotatedFlip
+import fr.emse.canari.orientation.turnSizeScript
 import fr.emse.canari.orientation.requestedOrientationFor
 import java.io.File
+
+/** Whether the WebView's turn capabilities were logged: once per process, not per WebView or activity. */
+private var turnCapabilitiesLogged = false
 
 class MainActivity : TauriActivity() {
     companion object {
@@ -43,6 +64,9 @@ class MainActivity : TauriActivity() {
          * when the app is open (the WebSocket has already delivered them).
          */
         @Volatile var isInForeground: Boolean = false
+
+        /** What `canariTheme.setGround` accepts, compiled once. */
+        private val GROUND_COLOUR = Regex("^#[0-9a-fA-F]{6}$")
     }
 
     /**
@@ -157,7 +181,7 @@ class MainActivity : TauriActivity() {
                             .edit().putString(CanariFirebaseMessagingService.KEY_FCM_TOKEN, token).apply()
                         Log.i("MainActivity", "FCM token synced (${token.length} chars)")
                     } catch (e: Exception) {
-                        Log.w("MainActivity", "FCM token sync failed: ${e.message}")
+                        Log.w("MainActivity", "FCM token sync failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
                     }
                 }
             }
@@ -165,47 +189,133 @@ class MainActivity : TauriActivity() {
     }
 
     /**
-     * Shrinks the window contents by the height of the soft keyboard.
+     * Tells the page where the soft keyboard is; never resizes the content for it.
      *
-     * `android:windowSoftInputMode="adjustResize"` no longer does it. Since Android 15 an
-     * edge-to-edge window is never resized for the IME - the flag survives in the manifest and is
-     * inert, which `dumpsys window` states outright as `EDGE_TO_EDGE_ENFORCED` next to the
-     * `adjust=resize` we asked for. The composer therefore sat under the keyboard, and the page,
-     * auto-scrolled by the WebView to reveal the focused field, ran past the end of its own
-     * content onto the activity background. That background is visible because the WebView is
-     * deliberately transparent (see `onWebViewCreate`), which is how ONE cause wore two faces: a
-     * hidden composer, and a white band appearing on scroll.
+     * `android:windowSoftInputMode="adjustResize"` does nothing for this window. An edge-to-edge
+     * window is not resized for the IME - from Android 15, `dumpsys window` says so outright
+     * (`EDGE_TO_EDGE_ENFORCED` next to the `adjust=resize` we asked for), and below 15 it was measured
+     * just as inert (API 34 emulator, WebView 113, 2026-11-14: `innerHeight` 915 open and closed, an
+     * 883 px IME inset announced as 336.38 CSS px). The content used to be PADDED by the IME inset
+     * here instead, and that resize is what this replaces (2026-11-14, keyboard-and-send-motion.md):
+     * a resized WebView shows its last frame, cropped or stretched, until the page has drawn at the
+     * new size - 8 frames on a rise (Mi 9T), 13 on a fall (Pixel 6a). No order of announcing and
+     * padding hides it, so the WebView keeps its full height and the PAGE lays itself out over the
+     * keyboard: `window.canariImeTarget({ px, durationMs, curve })`, once per change of the inset,
+     * with the animation [ImeAnimationCapture] saw in `onPrepare` - before the keys move. The page
+     * rides its composer and thread on that timing (`keyboardRide.ts`).
      *
-     * THE NAVIGATION BAR IS ALSO WITHDRAWN while the keyboard is up, and that half matters as much
-     * as the padding. The web layer reserves a strip for it through `env(safe-area-inset-bottom)`,
-     * which is right when the bar is at the bottom of the app and wrong the moment the keyboard is:
-     * the bar is then BEHIND the keyboard, and the strip becomes an empty band the page can be
-     * scrolled by, revealing the reserved footer while hiding part of the header. So the inset is
-     * zeroed on the way down rather than left for CSS to guess at - "the keyboard is up" is known
-     * here and nowhere else, and the status bar is deliberately untouched because it is still there.
+     * A value counts as told only once the page TOOK it ([ImeAnnouncements], [ImeAnswer]). A page with
+     * no hook yet is told when it says it is ready (`ImeBridge.pageReady`); a page that REFUSED is a
+     * broken contract, accused at `Log.e`, and told again on its next ready signal - which it gives
+     * at once after refusing an animated announcement - never by an insets pass.
+     *
+     * THE INSETS ARE PASSED ON UNTOUCHED - the navigation bar's included (review of #3556, D2). This
+     * listener used to withdraw the bar's inset while the keyboard was up (the bar is then behind the
+     * keyboard, and the web layer's `env(safe-area-inset-bottom)` strip an empty band). But Chromium
+     * applies a changed inset to `env()` a frame or more after the announcement: the composer's
+     * floor fell 12 px one frame into the ride and the thread's bottom moved under it. The PAGE now
+     * zeroes its bottom safe area while the keyboard covers the window
+     * (`keyboardSafeAreaBottomOverride`), in the announcement's own task - one writer for the bottom.
+     *
+     * THE KEYBOARD MOVES LIKE MESSENGER'S BECAUSE AN ANIMATION CALLBACK IS REGISTERED (2026-11-13).
+     * With no `WindowInsetsAnimation` callback in the hierarchy, Android plays the UNSYNCED IME
+     * animation: 200 ms, the keyboard fading in from a short offset and fading out in place. With one,
+     * it plays the synced one: 285 ms, opaque, sliding the full height on a decelerating curve - the
+     * curve [ImeAnimationCapture] samples for the page.
      */
     private fun applyKeyboardInsets() {
         val content = findViewById<View>(android.R.id.content) ?: return
-        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+        ViewCompat.setWindowInsetsAnimationCallback(content, imeAnimationCapture)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            if (view.paddingBottom != ime) {
-                Log.d("MainActivity", "IME inset: $ime -> content padding")
-                view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight, ime)
+            if (imeAnnouncements.shouldAnnounce(ime)) {
+                announceIme(ime, imeAnimationCapture.take(), "the keyboard moved")
             }
-            if (ime == 0) return@setOnApplyWindowInsetsListener insets
-            val bars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            WindowInsetsCompat.Builder(insets)
-                .setInsets(
-                    WindowInsetsCompat.Type.navigationBars(),
-                    Insets.of(bars.left, bars.top, bars.right, 0)
-                )
-                .build()
+            insets
         }
+    }
+
+    /** What the page holds of the keyboard's inset, and what is on its way (`ImeAnnouncements`). */
+    private val imeAnnouncements = ImeAnnouncements()
+
+    /**
+     * Tells the page the keyboard's height and, when it moves animated, the animation's duration and
+     * curve (`imeAnnouncementScript`). One logcat line per announcement, and one per answer that is
+     * not [ImeAnswer.TAKEN]: a page not ready yet at debug (its `pageReady` announces), a refusal at
+     * ERROR (a broken contract between the shell and the page).
+     */
+    private fun announceIme(ime: Int, animation: ImeAnimationSpec?, why: String) {
+        val webView = liveWebView ?: return
+        val css = imeCssPx(ime, resources.displayMetrics.density)
+        val timing = if (animation != null) "${animation.durationMs} ms" else "no animation"
+        Log.d("MainActivity", "IME inset: $ime px -> page told $css ($timing; $why)")  // log-safe: a CSS pixel count and an animation duration, numbers the shell computed
+        val ticket = imeAnnouncements.sent(ime)
+        webView.evaluateJavascript(imeAnnouncementScript(css, animation)) { raw ->
+            val answer = imeAnswerOf(raw)
+            if (!imeAnnouncements.answered(ticket, answer)) {
+                Log.d("MainActivity", "IME inset $ime: answer $raw is stale - the page said it was ready since")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
+                return@evaluateJavascript
+            }
+            when (answer) {
+                ImeAnswer.TAKEN -> Unit
+                ImeAnswer.NOT_READY -> Log.d("MainActivity", "IME inset $ime: the page has no keyboard hook yet - announced when it says it is ready")
+                ImeAnswer.REFUSED -> Log.e("MainActivity", "IME inset $ime: the page REFUSED the keyboard (answered $raw) - a broken contract; announced again on the page's next ready signal")  // log-safe: raw is the JSON answer of a fixed script, one of three literals or null
+            }
+        }
+    }
+
+    /** The one insets-animation callback of this window: see [ImeAnimationCapture]. */
+    private val imeAnimationCapture = ImeAnimationCapture()
+
+    /**
+     * Keeps the IME animation `onPrepare` announces - its duration and its interpolator sampled
+     * (`sampleImeCurve`) - for the insets listener, which Android calls with the END state right
+     * after `onPrepare` and before `onStart`. Its presence also selects the synced animation (see
+     * [applyKeyboardInsets]). What `onPrepare` kept and no inset change took is dropped in `onEnd`,
+     * so a later change without an animation is never announced with a stale one.
+     *
+     * `DISPATCH_MODE_STOP` stops the animation's dispatch at the content view: no descendant receives
+     * `onPrepare` / `onStart` / `onProgress` / `onEnd`. That is safe because none listens - the WebView
+     * (Chromium) registers no insets-animation callback, and the page follows the keyboard from the
+     * announcement, never per frame - and no other view in this window sets one. What it would silence
+     * is a FUTURE descendant's callback: one added below the content view must switch this to
+     * `DISPATCH_MODE_CONTINUE_ON_SUBTREE`, or it will never be called. It does not touch the plain
+     * insets dispatch the listener above runs on.
+     */
+    private class ImeAnimationCapture : WindowInsetsAnimationCompat.Callback(WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP) {
+        private var prepared: ImeAnimationSpec? = null
+
+        override fun onPrepare(animation: WindowInsetsAnimationCompat) {
+            if (animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
+            val interpolator = animation.interpolator
+            val curve = sampleImeCurve(interpolator?.let { i -> { t: Float -> i.getInterpolation(t) } })
+            if (curve == null) {
+                Log.w("MainActivity", "IME animation: ${animation.durationMillis} ms, its interpolator gave a non-finite value - announced without a curve")
+            }
+            prepared = rideableImeAnimation(animation.durationMillis, curve)
+            if (animation.durationMillis < 0) {
+                Log.d("MainActivity", "IME animation: controlled (no duration, a gesture drives it) - announced without an animation")
+            } else {
+                Log.d("MainActivity", "IME animation: ${animation.durationMillis} ms, interpolator ${interpolator?.javaClass?.simpleName ?: "none (linear)"}")  // log-safe: a duration and a framework class name
+            }
+        }
+
+        override fun onProgress(
+            insets: WindowInsetsCompat,
+            runningAnimations: MutableList<WindowInsetsAnimationCompat>
+        ): WindowInsetsCompat = insets
+
+        override fun onEnd(animation: WindowInsetsAnimationCompat) {
+            if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) prepared = null
+        }
+
+        /** The animation of the change being applied now, once; null when it has none. */
+        fun take(): ImeAnimationSpec? = prepared.also { prepared = null }
     }
 
     // By default on Android >= API 21, third-party cookies are blocked in the WebView.
     // The app makes fetch() requests with credentials:'include' from tauri://localhost
-    // to canari-emse.fr - without this flag the canari_refresh cookie is never stored
+    // to canari.emse.fr - without this flag the canari_refresh cookie is never stored
     // nor sent back, which breaks session persistence after every restart.
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
@@ -218,6 +328,7 @@ class MainActivity : TauriActivity() {
         liveWebView = webView
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
+        webView.addJavascriptInterface(ImeBridge(), "canariIme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
         webView.addJavascriptInterface(BackBridge(), "canariBack")
         webView.addJavascriptInterface(AudioBridge(), "canariAudio")
@@ -231,6 +342,145 @@ class MainActivity : TauriActivity() {
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
+        holdDrawAcrossTurns(webView)
+    }
+
+    /** The draw hold across a turn ([TurnFrameGate]); UI thread only. */
+    private val turnFrameGate = TurnFrameGate()
+
+    /** The display's rotation at the WebView's last layout, so [isTurn] sees a rotation change. */
+    private var lastLayoutRotation = -1
+
+    /**
+     * A TURN SHOWS NO STALE FRAME (owner, Mi 9T, 2026-11-15: "Garder l'ancienne image jusqu'a la
+     * nouvelle"; screen-orientation.md). When the display rotated AND the WebView's box flipped shape
+     * ([isTurn]) the window's draw is held (a pre-draw listener answering false); the page reports its
+     * size ([turnSizeScript], through `window.canariTurn`), and once it IS the box ([pageMatchesBox])
+     * `postVisualStateCallback` is posted, so the frame it waits for is laid out at the new size. The
+     * window manager waits for the window's first draw in the new rotation, so the screen keeps the
+     * old picture until then and turns straight onto the laid-out page. Every event that proves no
+     * answer can come ([TurnAbandon]: a new document, the WebView detached, the activity paused or
+     * stopped, the renderer unresponsive) releases at ERROR. No clock anywhere.
+     */
+    private fun holdDrawAcrossTurns(webView: WebView) {
+        webView.addJavascriptInterface(TurnBridge(), "canariTurn")
+        val documentStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        if (documentStart) {
+            WebViewCompat.addDocumentStartJavaScript(webView, "window.canariTurn&&canariTurn.newDocument();", setOf("*"))
+        }
+        val unresponsive = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)
+        if (unresponsive) {
+            WebViewCompat.setWebViewRenderProcessClient(webView, object : WebViewRenderProcessClient() {
+                override fun onRenderProcessUnresponsive(view: WebView, renderer: WebViewRenderProcess?) =
+                    abandonTurn(TurnAbandon.UNRESPONSIVE)
+
+                override fun onRenderProcessResponsive(view: WebView, renderer: WebViewRenderProcess?) = Unit
+            })
+        }
+        if (!turnCapabilitiesLogged) {
+            turnCapabilitiesLogged = true
+            Log.i("MainActivity", "turn: this WebView reports new documents=$documentStart, an unresponsive renderer=$unresponsive (otherwise a held turn ends at the next pause)")  // log-safe: two capability booleans
+        }
+        webView.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) = Unit
+            override fun onViewDetachedFromWindow(v: View) = abandonTurn(TurnAbandon.DETACHED)
+        })
+        webView.viewTreeObserver.addOnPreDrawListener { !turnFrameGate.holding }
+        lastLayoutRotation = webView.display?.rotation ?: -1
+        webView.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            val rotation = webView.display?.rotation ?: -1
+            val turned = isTurn(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)
+            if (isUnrotatedFlip(lastLayoutRotation, rotation, oldRight - oldLeft, oldBottom - oldTop, width, height)) {
+                // A split screen, a freeform window or a fold - or a turn whose rotation was read stale
+                // (the display's cached rotation lagging the layout), shown unheld. This line tells them apart.
+                Log.w("MainActivity", "turn: the WebView flipped to ${width}x$height with the display rotation still $rotation - NOT held; a stale frame may show if this was a turn")  // log-safe: a box and a rotation
+            }
+            lastLayoutRotation = rotation
+            if (turned) {
+                val turn = turnFrameGate.hold(width, height, System.nanoTime())
+                Log.i("MainActivity", "turn ${turn.number} laid out at ${width}x$height (rotation $rotation): draw held until the page has a frame at that size")  // log-safe: a turn counter, a box and a rotation
+                webView.evaluateJavascript(turnSizeScript(turn.number), null)
+            } else if (turnFrameGate.rebox(width, height)) {
+                val turn = turnFrameGate.held ?: return@addOnLayoutChangeListener
+                Log.i("MainActivity", "turn ${turn.number}: the box moved to ${width}x$height while held - waiting for the page at that size")  // log-safe: a turn counter and a box
+                webView.evaluateJavascript(turnSizeScript(turn.number), null)
+            }
+        }
+    }
+
+    private fun msSince(turn: TurnFrameGate.Turn): Long = (System.nanoTime() - turn.startedAtNanos) / 1_000_000
+
+    /** Ends a held turn on an event proving no answer can come: at ERROR, since the old frame may show. */
+    private fun abandonTurn(why: TurnAbandon) {
+        val turn = turnFrameGate.abandon() ?: return
+        Log.e("MainActivity", "turn ${turn.number}: released WITHOUT its frame after ${msSince(turn)} ms - ${why.reason}")  // log-safe: a turn counter, a duration and a fixed reason
+        liveWebView?.let {
+            it.evaluateJavascript(TURN_SIZE_STOP_SCRIPT, null)
+            it.invalidate()
+        }
+    }
+
+    /**
+     * `window.canariTurn`: the page's size for a held turn ([turnSizeScript]) and its new documents.
+     * Typed parameters: the bridge coerces whatever the page passes to numbers before this code runs
+     * (a non-finite one never matches a box), so a page can neither put text into a log nor log per call.
+     */
+    private inner class TurnBridge {
+        @JavascriptInterface
+        fun size(turn: Long, cssWidth: Double, cssHeight: Double, devicePixelRatio: Double) {
+            runOnUiThread { pageReportedSize(turn, cssWidth, cssHeight, devicePixelRatio) }
+        }
+
+        @JavascriptInterface
+        fun newDocument() {
+            runOnUiThread { abandonTurn(TurnAbandon.NEW_DOCUMENT) }
+        }
+    }
+
+    private fun pageReportedSize(number: Long, cssWidth: Double, cssHeight: Double, devicePixelRatio: Double) {
+        val turn = turnFrameGate.held ?: return
+        val proof = turnFrameGate.pageSize(number, cssWidth, cssHeight, devicePixelRatio) ?: return
+        val webView = liveWebView ?: run {
+            abandonTurn(TurnAbandon.DETACHED)
+            return
+        }
+        Log.i("MainActivity", "turn ${turn.number}: the page is at the new size after ${msSince(turn)} ms - waiting for its frame")  // log-safe: a turn counter and a duration
+        webView.postVisualStateCallback(proof, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                val released = turnFrameGate.frameReady(requestId)
+                if (released != null) {
+                    Log.i("MainActivity", "turn ${released.number}: the page's frame at the new size is ready after ${msSince(released)} ms - draw released")  // log-safe: a turn counter and a duration
+                    webView.evaluateJavascript(TURN_SIZE_STOP_SCRIPT, null)
+                    webView.invalidate()
+                } else {
+                    Log.d("MainActivity", "turn ${turn.number}: its frame proof came after ${msSince(turn)} ms, superseded - nothing released")  // log-safe: a turn counter and a duration
+                }
+            }
+        })
+    }
+
+    /**
+     * `window.canariIme`: the page's keyboard viewport tells the shell it is READY to be told the
+     * keyboard from scratch - a NEW DOCUMENT is up (`initKeyboardViewport` registering
+     * `canariImeTarget`), or the page has just refused an animated announcement (`takeImeTarget`). An
+     * announcement made to the previous document, made before this one could take it, or refused, is
+     * lost, so the keyboard's current inset is announced again, without an animation - the form the
+     * page always takes, which is why a refusal asks at most once. Wry's generated client offers no page-start
+     * hook, and a gone renderer takes this process with it (wry's client does not override
+     * `onRenderProcessGone`), so this is where the page's lifecycle is seen.
+     */
+    private inner class ImeBridge {
+        @JavascriptInterface
+        fun pageReady() {
+            runOnUiThread {
+                val content = findViewById<View>(android.R.id.content) ?: return@runOnUiThread
+                val ime = ViewCompat.getRootWindowInsets(content)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+                imeAnnouncements.forgetPage()
+                announceIme(ime, null, "the page said it is ready")
+            }
+        }
     }
 
     /**
@@ -374,7 +624,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('$name',{detail:$detail}));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "$name not delivered to the page: ${e.message}")
+            Log.w("MainActivity", "$name not delivered to the page: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -423,7 +673,7 @@ class MainActivity : TauriActivity() {
         fun ringerMode(): Int = try {
             (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
         } catch (e: Exception) {
-            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e)
+            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             -1
         }
     }
@@ -452,6 +702,30 @@ class MainActivity : TauriActivity() {
                 controller.isAppearanceLightStatusBars = light
                 controller.isAppearanceLightNavigationBars = light
                 Log.d("MainActivity", "theme=$theme -> light bar icons=$light")
+            }
+        }
+
+        /**
+         * THE PAGE'S GROUND, PAINTED UNDER THE WEBVIEW (2026-11-13, keyboard-and-send-motion.md).
+         * The WebView is transparent, so the band the keyboard padding opens below it - visible
+         * while the keyboard is still sliding over it - showed the launch background, a dark navy
+         * strip under a light page (owner's recording). The page sends, when it takes a keyboard
+         * target, the opaque colour painted where the keyboard will sit (`keyboardViewport`,
+         * `postGroundToNative`) - a conversation's grey, a full-bleed screen's black. Anything but
+         * `#rrggbb` is logged and ignored. Since 2026-11-14 the content is no longer padded, so no
+         * band opens under the page; the ground is kept for whatever strip the page itself leaves
+         * transparent while the keys move, and the ride's readings say whether one is ever seen.
+         */
+        @JavascriptInterface
+        fun setGround(color: String) {
+            val parsed = if (GROUND_COLOUR.matches(color.trim())) Color.parseColor(color.trim()) else null
+            if (parsed == null) {
+                Log.w("MainActivity", "ground colour '$color' is not #rrggbb - ignored")
+                return
+            }
+            runOnUiThread {
+                findViewById<View>(android.R.id.content)?.setBackgroundColor(parsed)
+                Log.d("MainActivity", "ground=$color under the WebView")
             }
         }
     }
@@ -563,16 +837,17 @@ class MainActivity : TauriActivity() {
             // A page that cannot be told is a page that keeps its last value, which is the safe one:
             // it believes it is in the foreground and stays quiet. Logged because a silent failure
             // here reads exactly like the defect this exists to fix.
-            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}")
+            Log.w("MainActivity", "pushForeground($foreground) failed: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
     /**
-     * A BACK PRESS AT THE ROOT DURING A CALL SENDS THE APP BACK, IT NEVER FINISHES IT.
+     * A BACK PRESS AT THE ROOT SENDS THE APP TO THE BACKGROUND, IT NEVER FINISHES IT (owner, 2026-11-14;
+     * the call case below predates it and is kept, so a call is never torn down by a Back).
      *
-     * Wry's callback calls this once the WebView has no history left. Since Android 12 the platform
-     * already moves a root launcher activity's task back instead of finishing it; on API 28-30 it
-     * finishes the activity, which destroys the WebView and the call with it (see `onDestroy`). With
+     * Wry's callback calls this once the WebView has no history left. Left to the platform, it
+     * finishes the activity (measured on the Mi 9T: tao then exits the process), which destroys the
+     * WebView and any call with it (see `onDestroy`). With
      * a call in the foreground service, Back means "leave the screen", as on every phone app.
      */
     @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
@@ -594,8 +869,13 @@ class MainActivity : TauriActivity() {
             moveTaskToBack(true)
             return
         }
-        @Suppress("DEPRECATION")
-        super.onBackPressed()
+        // BACK AT A ROOT TAB WITH NO HISTORY GOES TO THE BACKGROUND, LIKE MESSENGER (owner, 2026-11-14).
+        // `super.onBackPressed()` finishes the activity, and tao's Android event loop then ends with
+        // `std::process::exit`, so the next launch was a cold start (read on the Mi 9T, 2026-11-14,
+        // docs/wiki/frontend/mobile.md, "Back at a root tab goes to the background"). Moving the task back keeps the
+        // process and the WebView warm on every API level; the system still ends them under memory pressure.
+        Log.i("MainActivity", "Back at the root with no history on API ${Build.VERSION.SDK_INT} - moving the task to the background")
+        moveTaskToBack(true)
     }
 
     /** The link the next `onResume` opens, set by `onNewIntent` and taken by that resume. */
@@ -632,7 +912,7 @@ class MainActivity : TauriActivity() {
                 Log.d("MainActivity", "call answer waits - the page was told")
             }
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushCallAccept failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -648,7 +928,7 @@ class MainActivity : TauriActivity() {
         try {
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('canari:incoming-share'));", null)
         } catch (e: Exception) {
-            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}")
+            Log.w("MainActivity", "pushIncomingShare failed, the page drains at its next resume: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
         }
     }
 
@@ -691,6 +971,7 @@ class MainActivity : TauriActivity() {
         pushForeground(false)
         CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")
+        abandonTurn(TurnAbandon.PAUSED)
         CookieManager.getInstance().flush()
     }
 
@@ -703,6 +984,7 @@ class MainActivity : TauriActivity() {
         // user turns it off.
         val screenOff = !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
         CallRingPlayer.leftScreen(screenOff)
+        abandonTurn(TurnAbandon.STOPPED)
         CookieManager.getInstance().flush()
     }
 

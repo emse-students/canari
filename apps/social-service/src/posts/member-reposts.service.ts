@@ -81,7 +81,6 @@ export function repostShownToAuthorSql(post: string, mr: string, reposter: strin
  * #2965, 2026-11-02). Grant-free and without the administrator's by-id reach, as D38b's request.
  */
 export const FIRST_HAND = {
-  adminSeesAll: false,
   readGrants: false,
   memberReposts: false,
   personalRepublications: false,

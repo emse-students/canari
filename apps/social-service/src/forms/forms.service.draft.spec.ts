@@ -1,3 +1,4 @@
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   BadRequestException,
   ConflictException,
@@ -76,6 +77,11 @@ describe('FormsService - drafts', () => {
       if (want && typeof want === 'object' && (want as { _type?: string })._type === 'isNull') {
         return have === null || have === undefined;
       }
+      // The association's archive clause (a raw SQL condition): no association here is archived,
+      // and the clause itself is proven on PostgreSQL (form-status.integration).
+      if (want && typeof want === 'object' && (want as { _type?: string })._type === 'raw') {
+        return true;
+      }
       return have === want;
     });
   }
@@ -135,7 +141,9 @@ describe('FormsService - drafts', () => {
     const reminderRepo: any = { upsert: jest.fn(() => Promise.resolve()) };
     const associations: any = {
       isMember: jest.fn(() => Promise.resolve(true)),
-      mayAct: jest.fn(() => Promise.resolve(opts.mayAct ?? false)),
+      // The owner manages the forms of the associations it builds for (MANAGE_FORMS, the rule of
+      // 2026-11-14); anyone else only when the test says so.
+      mayAct: jest.fn((user: string) => Promise.resolve(opts.mayAct ?? user === OWNER)),
       collectsNow: jest.fn(() => Promise.resolve(true)),
       collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
       // Every well-formed id but NOWHERE names an association.
@@ -157,7 +165,15 @@ describe('FormsService - drafts', () => {
       associations,
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       {} as any,
-      { build: jest.fn(() => Promise.resolve({ answers: {} })) } as any,
+      {
+        build: jest.fn(() =>
+          Promise.resolve({
+            cursus: [{ promo: null, formation: null }],
+            cotisationTiers: [],
+            answers: {},
+          })
+        ),
+      } as any,
       { count: jest.fn() } as any,
       {} as any,
       { enabled: () => false } as any,
@@ -178,6 +194,21 @@ describe('FormsService - drafts', () => {
     }) as any;
 
   describe('create', () => {
+    // Owner, 2026-11-14: only a member holding "gérer les formulaires" creates an association's form.
+    it('refuses, typed, a member of the association who does not manage its forms', async () => {
+      const { service, formRepo, associations } = makeService({ mayAct: false });
+      await expect(service.create(createInput({ draft: true }))).rejects.toMatchObject({
+        status: 403,
+        response: { code: FORM_ASSOCIATION_NOT_YOURS },
+      });
+      expect(associations.mayAct).toHaveBeenCalledWith(
+        OWNER,
+        'a1',
+        AssociationPermissionFlag.MANAGE_FORMS
+      );
+      expect(formRepo.create).not.toHaveBeenCalled();
+    });
+
     it('stores a draft when the client asks for one', async () => {
       const { service, formRepo } = makeService();
       await service.create(createInput({ draft: true }));
@@ -263,10 +294,10 @@ describe('FormsService - drafts', () => {
   // payment, reminder or attachment, so it may move - by someone who is a member of both sides.
   describe('the association of a draft', () => {
     const A2 = '00000000-0000-4000-8000-0000000000a2';
-    /** `isMember` true only for the associations listed. */
+    /** MANAGE_FORMS (`mayAct`) true only on the associations listed. */
     const memberOf = (associations: any, ...ids: string[]) =>
-      associations.isMember.mockImplementation((_u: string, id: string) =>
-        Promise.resolve(ids.includes(id))
+      associations.mayAct.mockImplementation((_u: string, id: string, flag: number) =>
+        Promise.resolve(flag === AssociationPermissionFlag.MANAGE_FORMS && ids.includes(id))
       );
     const moveTo = (associationId: string | null) => createInput({ title: 'Gala', associationId });
 
@@ -275,8 +306,16 @@ describe('FormsService - drafts', () => {
       memberOf(associations, 'a1', A2);
       await service.update('f1', moveTo(A2), OWNER, false);
       expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe(A2);
-      expect(associations.isMember).toHaveBeenCalledWith(OWNER, 'a1');
-      expect(associations.isMember).toHaveBeenCalledWith(OWNER, A2);
+      expect(associations.mayAct).toHaveBeenCalledWith(
+        OWNER,
+        'a1',
+        AssociationPermissionFlag.MANAGE_FORMS
+      );
+      expect(associations.mayAct).toHaveBeenCalledWith(
+        OWNER,
+        A2,
+        AssociationPermissionFlag.MANAGE_FORMS
+      );
     });
 
     it('makes a draft personal ("" or null) and a personal draft an association\'s', async () => {
@@ -304,15 +343,12 @@ describe('FormsService - drafts', () => {
       expect(formRepo.save).not.toHaveBeenCalled();
     });
 
-    it('refuses taking a draft out of an association the actor no longer belongs to', async () => {
-      // A co-manager through MANAGE_FORMS who is not a member: may edit, may not walk off with it.
-      const { service, formRepo, associations } = makeService({ mayAct: true });
+    it('refuses its own creator once they no longer manage its association, typed nowhere: 403', async () => {
+      // Owner, 2026-11-14: an association's form is managed by MANAGE_FORMS, never by authorship.
+      const { service, formRepo, associations } = makeService();
       memberOf(associations, A2);
-      await expect(service.update('f1', moveTo(A2), STRANGER, false)).rejects.toMatchObject({
-        response: { code: FORM_ASSOCIATION_NOT_YOURS },
-      });
-      await expect(service.update('f1', moveTo(''), STRANGER, false)).rejects.toMatchObject({
-        response: { code: FORM_ASSOCIATION_NOT_YOURS },
+      await expect(service.update('f1', moveTo(A2), OWNER, false)).rejects.toMatchObject({
+        status: 403,
       });
       expect(formRepo.save).not.toHaveBeenCalled();
     });
@@ -322,14 +358,15 @@ describe('FormsService - drafts', () => {
       memberOf(associations);
       await service.update('f1', moveTo(A2), STRANGER, true);
       expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe(A2);
-      expect(associations.isMember).not.toHaveBeenCalled();
+      expect(associations.mayAct).not.toHaveBeenCalled();
     });
 
     it('asks no membership when the association does not change, or is not sent', async () => {
       const { service, associations } = makeService();
       await service.update('f1', moveTo('a1'), OWNER, false);
       await service.update('f1', createInput({ associationId: undefined }), OWNER, false);
-      expect(associations.isMember).not.toHaveBeenCalled();
+      // Asked once per edit, of the form's own association (`managesForm`): never of a move.
+      expect(associations.mayAct.mock.calls.every((c: unknown[]) => c[1] === 'a1')).toBe(true);
     });
 
     it('refuses, typed, an id that is no UUID or names no association - a global admin too', async () => {
@@ -349,7 +386,7 @@ describe('FormsService - drafts', () => {
     it('refuses a move whose draft was published during the edit, read under the row lock', async () => {
       const { service, row, formRepo, associations } = makeService();
       // The publication commits between the edit's checks and its write.
-      associations.isMember.mockImplementation(async () => {
+      associations.mayAct.mockImplementation(async () => {
         row.status = FORM_PUBLISHED;
         return true;
       });
@@ -594,6 +631,30 @@ describe('FormsService - drafts', () => {
       await expect(
         makeService({ mayAct: true }).service.get('f1', { userId: STRANGER, isGlobalAdmin: false })
       ).resolves.toMatchObject({ id: 'f1' });
+    });
+
+    it('get: who created a published form is served to its managers alone', async () => {
+      const published = { form: { status: FORM_PUBLISHED } };
+      const toStranger = await makeService(published).service.get('f1', {
+        userId: STRANGER,
+        isGlobalAdmin: false,
+      });
+      expect(toStranger).toMatchObject({ id: 'f1' });
+      expect(toStranger).not.toHaveProperty('ownerId');
+      await expect(
+        makeService(published).service.get('f1', { userId: OWNER, isGlobalAdmin: false })
+      ).resolves.toMatchObject({ ownerId: OWNER });
+    });
+
+    it('get: management is asked once, whether or not the read verdict needed it', async () => {
+      // A draft: the verdict asks (nobody else reaches it) and `get` reuses its answer for `ownerId`.
+      const draft = makeService({ mayAct: true });
+      await draft.service.get('f1', { userId: STRANGER, isGlobalAdmin: false });
+      expect(draft.associations.mayAct).toHaveBeenCalledTimes(1);
+      // A published form: the verdict does not ask, `get` does, for `ownerId` alone.
+      const published = makeService({ form: { status: FORM_PUBLISHED }, mayAct: true });
+      await published.service.get('f1', { userId: STRANGER, isGlobalAdmin: false });
+      expect(published.associations.mayAct).toHaveBeenCalledTimes(1);
     });
 
     it('getPublic (the guest link): 404', async () => {

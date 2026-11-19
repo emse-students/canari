@@ -272,6 +272,13 @@ current 10px and 32px are not in the reference and go.
 **Radii**: `8px` card and control, `18px` message bubble with the `4px` grouping corner, `999px`
 pill, `50%` avatar. Four values with four distinct meanings, replacing fourteen with none.
 
+**Attachment cards** (owner, 2026-11-15): ONE card for a link, an album, a form, a file and an event,
+in a post and in a chat bubble - `AttachmentCard`, the `12px` larger-card corner (`rounded-2xl`),
+`p-3`, a `64px` tile on the `8px` corner, an `--text-2xs` chip, an `--text-sm` title (`--text-base`
+when the card is the post's lone attachment, drawn large), one `--text-xs` subtitle line, one
+arrow (exit out of the app, chevron inside it) on a tile tinted `bg-accent/10`. The anatomy, the order and the hero rule are in
+[posts](modules/posts.md#the-card-zone-one-family-a-fixed-order-owner-2026-11-15), the only copy.
+
 **Surfaces**: opaque. Translucency survives only as a hover/pressed overlay
 (`rgba(255,255,255,0.08-0.12)` over an opaque parent), which is the only role it has in the
 reference.
@@ -736,16 +743,23 @@ at the touch form - 44, 44, 44, 44, 28.
 `iconButtonScale.test.ts`, each with its reason.** Two shapes are out by construction rather than
 by list: a button whose padding is asymmetric (`px-3 py-1.5` is a pill sized to a label) and a
 button that declares no box at all (an inline affordance - the 12px pencil in a comment's meta
-row, the cross in a chip, the avatar in the navbar). A third is out by name: a box measured against
+row, the cross in a chip). A third is out by name: a box measured against
 a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
 
 **A control drawn under 44px on a touch screen takes `.tap-target`** (2026-09-30, from the
 viewport audit in [phone-comparison](../phone-comparison.md)). It changes nothing visible: under
 `(pointer: coarse)` a centred `::before` extends the hit box to `max(100%, 2.75rem)` on each axis,
 so a 28px pill, a 20px inline link or a 32px avatar is tapped as a 44px target without its row
-growing. Twelve controls carry it - the feed pills, the header's "Accueil", the navbar avatar, the
+growing. Eleven controls carry it - the feed pills, the header's "Accueil", the
 legal back link, the admin tabs and dashboard link, the notification filters and the profile photo
 badge. Both rules are held by `touchTargets.test.ts`.
+
+**ONE EXCEPTION TO THE 44px FLOOR, THE OWNER'S: the chat composer's row on a phone** (2026-11-13,
+[keyboard-and-send-motion](keyboard-and-send-motion.md)). Its controls are 40px with no gap and its
+field 42px - Messenger's measured row - below 768px only; a touch tablet keeps 44px and its gaps, a
+pointer its 38px. `iconButtonScale.test.ts` holds the rule rather than the value: any icon-button box
+under 44px is under `pointer: fine`, is the hover strip's `--sm`, or is this row inside
+`(max-width: 767px)`.
 
 **A STACKED LIST NEVER TAKES `.tap-target` - its rows take `pointer-coarse:min-h-11`.** Where two
 hit boxes overlap, the later element in the DOM wins, so in a column pitched under 44px each box
@@ -2420,7 +2434,7 @@ why the component takes classes rather than dimensions:
 | the caller | what it knows | what it passes |
 | --- | --- | --- |
 | a feed post | the aspect it reserved before the bytes arrive | `imgClass="h-full"` - the picture fills the reserved shape |
-| the event modal | nothing; it is a modal | `imgClass="max-h-[60svh]"` - a CEILING, and the contained picture sets its own height |
+| the event modal | nothing; it is a modal | `imgClass="max-h-(--media-max-height)"` - a CEILING (the same 60svh, held while a keyboard is up), and the contained picture sets its own height |
 | the shared-link card | a band, chosen by the card | `imgClass="h-full"` inside `h-56 sm:h-64` |
 
 The `<img>` stays in flow for the middle row alone: an absolutely positioned one collapses a box
@@ -3325,6 +3339,16 @@ Android activity (capped at 200 dp of height per edge by the OS), a wider own-si
 nothing (Messenger has the same 12 px). Never an in-page workaround: the page receives only a
 `pointercancel`.
 
+## The reply swipe on WebKit: `touch-action: pan-y` does not claim a stroke (iPhone 12, 2026-11-15)
+
+Read on the iPhone 12 (TestFlight `1.6.12-alpha.2`, WDA W3C touch strokes of 12 moves) on a RECEIVED bubble: 110 px across with 45 or 60 px of vertical drift, down or up, staged 0 replies in 5 and the thread scrolled about 35 px; a straight stroke and 20 px of drift each staged one, 30 px none. The Mi 9T (`adb input swipe`) replied 12 of 12 on the same strokes.
+
+**Cause.** The bubble already sets `touch-action: pan-y` (`MessageBubble.svelte`, the `touch-pan-y` class), and the handler bound a non-passive `touchmove` - but it never CANCELLED one: it only called `stopPropagation`, and it waited for a 10 px lock on either axis before deciding. `pan-y` leaves the vertical axis to the engine, and WebKit applies a diagonal's vertical component to the scroller unless the page cancels the move; Chromium decides on the stroke's FIRST direction, so a horizontal-first stroke never scrolls there, which is the whole difference between the phones. A 12-step stroke moves about 9 px first, under the 10 px lock: `pending`, nothing claimed, the engine took the stroke, and the page saw a `pointercancel`. The tab swipe met the same shape on 2026-10-21 and settled on a lock under the slop ([class A above](#the-swipe-to-the-camera-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-21)).
+
+**Fix, no timer.** `REPLY_SWIPE_LOCK_PX` 10 -> 8, and a touch stroke locked horizontal calls `claimTouchMove` on every move from the lock on (the same helper as the tab swipe), and stops after the first loss in a stroke (`replyStrokeLost`, reset at the next touch start). Vertical strokes are never claimed, so the thread still scrolls from a bubble. A move that is already uncancelable is logged once per stroke (`Log.w`) and the gesture continues as before. Android changes too, in two ways: the lock moves from 10 to 8 px and a horizontal touch stroke is now `preventDefault`-ed on Chromium as well (it was never cancelled before); its 12 of 12 is to be re-read on the Mi 9T. A claimed-before-the-lock stroke was refused on purpose: a vertical scroll starts with a move just as small. KNOWN LIMIT: a stroke whose first delivered move is under 8 px on both axes (2-4 px) stays `pending`, is not claimed, and under the test model WebKit takes it (a test pins it); whether the iPhone does is the reading owed. Tests (`MessageBubble.swipeReply.svelte.test.ts`): a model of WebKit (the first uncancelled move with vertical travel hands the stroke to the scroller, then `pointercancel`), 12-step strokes of 110 px with +-45 and +-60 px of drift, received and own, red before and green after; the first 9 px move is claimed; a vertical drag is not cancelled; an uncancelable stroke still replies.
+
+**Not measured, said plainly.** Reviewer hypothesis, UNPROVEN: a right thumb swiping right (received) drifts more than one swiping left (own). The reading that settles it: arcs with OPPOSITE drift signs (+45 and -45) on each side, on the iPhone 12. Why an OWN bubble's 45 and 60 px arcs replied on the same build while the received one's did not: both are the same element with the same classes and the same handlers (the only differences in code are the sign of `replySwipeDragOffset` and the side), so it cannot be read from the source; the model above is the stricter engine and covers both. Owed: the same five arcs on a received bubble on the iPhone 12 and the Mi 9T class-A cells, on the next pre-release.
+
 ## The swipe to the camera that "sometimes" did nothing: two classes, measured (Mi 9T, 2026-10-21)
 
 User report, phone app: *the swipe from the feed to the camera does not work every time*, and the
@@ -3370,14 +3394,12 @@ of the screen - [section 38](#a-tap-that-drifts-is-not-a-swipe-and-60px-could-no
 a start on the header (`data-swipe-nav-ignore`), and any swipe while a modal is open (the
 overlay-stack depth - a composer left open from an earlier session refused two cells here).
 
-**iPhone, by code only (not measured):** WebKit has no slop suppression, so its first `touchmove`
-arrives at 1-2 px and the 12 px lock is reached with every move still `cancelable` until UIKit's
-own pan recognises - whether that happens before 12 px is not known, so class A is unproven there.
+**iPhone 12, MEASURED 2026-11-15 (TestFlight `1.6.12-alpha.2`, WDA touch sequences on `/posts`):** class A does not occur. 15 of 15 slow starts (the first 6 px over 900 ms, the rest over 300 ms) from x = 20, 40, 60, 100 and 200 at y = 300, 520 and 700 reached the camera, and so did 9 of 9 plain sweeps of 230 px over 300, 1200 and 2500 ms from x = 20, 60 and 200; a vertical stroke on the same page, as the control, did not open it. The earlier "by code only" reading (WebKit has no slop suppression, the first `touchmove` arrives at 1-2 px) held. A WDA stroke is a synthetic touch, not a thumb: a human slow swipe by thumb stays on the owner's list.
 Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipeBack`, and only in
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.md#owed-a-verification-and-nothing-else)).
+touch must be the one the gesture claims ([backlog](../plan.md#readings-owed)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.
@@ -3470,7 +3492,7 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 |---|---|---|---|---|
 | `--accent` (`accent`) | `#f6c232` | `#ffd45d` | The FILL: primary button, active-tab indicator, selected chip, own-bubble. Always carries `on-accent`. | n/a |
 | `--on-accent` (`on-accent`) | `#151b2c` | `#151b2c` | Ink on the fill | 10.35 light, 12.10 dark |
-| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C) | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
+| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C). **Inside your own bubble a mention takes `currentColor` instead**: the bubble is filled with the accent | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
 | `--accent-icon` (`accent-icon`) | `#af8601` | `#ffd45d` | A glyph, a border, a focus ring, the native tab glyph | 3.37 on white, 3.00 on `#f0f2f5`; 13.2 on `#121212` dark |
 | `--accent-hover` (`accent-hover`) | `#e4af1b` | `#ffe082` | Hover of the fill | n/a |
 
@@ -3514,3 +3536,32 @@ and the lead line (`data-pin-mark`, `data-pin-lead`; the title stays), so the ba
 by what the person no longer needs, and the keypad keeps its place. Under 700 px of height the keys
 are 52 px (above the 44 px floor). Structure is pinned by `PinModal.exits.svelte.test.ts`; the drawn
 position is owed an iPhone 12 reading with a refused PIN.
+
+## The desktop top bar's right-hand controls share one box (2026-11-16)
+
+Owner report: in the desktop `Navbar` the apps grid, the sign-out and the avatar sat at three heights and two sizes. Measured on the real classes at 1280px: the launcher and the sign-out were 38x38 `.ui-icon-button` boxes (glyphs 22 and 20px), but the avatar was a bare `tap-target` button around a 24px photo - an inline button wrapping an inline-flex span grows a line-box gap, so it measured 24x31 with its centre 3.5px above the row's (32 against 35.5).
+
+All three are now `.ui-icon-button` (38px under a pointer, 44px on touch), the avatar is the 32px `md` step centred in its box (the same as `MobileHeader`'s), and the grid and the sign-out are both a 22px glyph at stroke 2.5. The connection ring stays a `box-shadow` on the photo's own span, so it cannot move the row. Measured after: three 38x38 boxes at 1280px and three 44x44 on touch, centres all 35.5, glyphs 22/22/32. `MobileHeader` already used this shape and has no sign-out. `headerControlRow.test.ts` holds the cause (shared box, one glyph size, no bare tap target on the avatar); a layout engine is not available to unit tests.
+
+**A settings row pairing a long description with a control wider than a switch stacks on a phone (2026-11-16).** The Emojis row kept its text beside a fixed `w-44 shrink-0` two-segment control and the description wrapped to one to three words per line at 390 pt. Such a row is `flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4` with the control `w-full shrink-0 sm:w-<n>`, the Theme and video-autoplay rows' shape; a 48 px switch beside its text needs no stacking. Guard: `SettingsPreferencesSection.emojiStyle.svelte.test.ts`.
+
+## A mention chip in the sender's own bubble took the bubble's fill as its text colour (2026-11-17)
+
+Owner, Android dark mode: a mention in a message the user SENT read as a blank gap.
+`MessageMentionChip` drew `text-accent-text`, the accent family for text on a NEUTRAL surface
+(`#ffd45d` in dark), on the accent-filled own bubble: section 31 measured this family at 1.13:1 in
+dark and 1.68:1 in light there. It is the hashtag defect of section 31 again, in the one inline
+element that kept its own colour.
+
+**THE FIX IS A VARIANT, NOT A GLOBAL CHANGE.** `isOwn` is threaded from `MessageBubble` through
+`MessageTextBody` and `MessageMediaRenderer` (its `onAmber`: an own message whose bubble is
+actually drawn) and `MessageInlineText` into the chip as `onOwnBubble`. Inside your own bubble the
+chip names no colour and inherits `currentColor` (10.35:1 and 12.10:1), told apart by the `@` and
+`font-semibold`, like a hashtag. On every other bubble it keeps `text-accent-text`.
+
+**NO TINT, EITHER WAY.** `bg-accent/10` was written first and refused twice: it is invisible on the
+accent-filled own bubble, and Tailwind emits a solid fallback (`bg-accent`) before the `color-mix()`
+form under `@supports`, so on a WebView without `color-mix` an INCOMING dark bubble would show the
+accent text on a solid accent pill, yellow on yellow again (about 1.13:1). Pinned by
+`MessageMentionChip.svelte.test.ts` (own has no accent text class, incoming keeps it, neither has a
+`bg-accent` class) and `MessageInlineText.svelte.test.ts` (the flag is forwarded).

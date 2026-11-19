@@ -8,6 +8,7 @@
   import { ensureMyAssociations, getReviewerAccess, type Association } from '$lib/associations/api';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { adminQueueCounts, loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
   import { dashboardHubGroups } from '$lib/navigation/dashboardSections';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -26,7 +27,7 @@
 
   async function signOut() {
     if (signingOut) {
-      Log.d('[dashboard] sign-out ignored: one is already running');
+      Log.d('dashboard', 'sign-out ignored: one is already running');
       return;
     }
     signingOut = true;
@@ -38,7 +39,7 @@
   }
 
   onMount(() => {
-    Log.d('[dashboard] mount: probing memberships, admin tier and reviewer access');
+    Log.d('dashboard', 'mount: probing memberships, admin tier and reviewer access');
     // The unread count is the store's. Its only other loader is the bell, mounted on the Feed
     // alone on a phone, so a cold open here would show no count and a later visit a stale one.
     // `load()` drops a call while one is in flight; no timer of our own.
@@ -50,7 +51,11 @@
       // reader who is not a platform admin.
       ensureMyAssociations().then((list) => (memberships = list)),
       // The SAME predicate `/admin` admits on, so no console is offered that would refuse its reader.
-      ensureMayOpenAdmin().then((v) => (mayOpenAdmin = v)),
+      ensureMayOpenAdmin().then((v) => {
+        mayOpenAdmin = v;
+        // The Administration row's badge is asked afresh here, as the unread count above is.
+        if (v) void loadAdminQueueCounts();
+      }),
     ]).then((results) => {
       // A failed probe hides only what it gates (its state keeps its `false` / `[]` default).
       for (const [i, r] of results.entries()) {
@@ -62,7 +67,7 @@
           );
         }
       }
-      Log.d('[dashboard] probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
+      Log.d('dashboard', 'probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
       probesSettled = true;
     });
   });
@@ -74,6 +79,7 @@
         displayName: getSavedDisplayName(),
         unreadNotifications: postNotifStore.unread,
         mayOpenAdmin,
+        adminPending: adminQueueCounts.total,
         adminScope: adminScopeLabels(isGlobalAdmin()),
         isReviewer,
         memberships,

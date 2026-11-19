@@ -3,11 +3,18 @@ import type { ChannelWritePolicy, WriteVerdicts } from '$lib/services/ChannelSer
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
-import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
+import {
+  reportUnreadableChannelMessage,
+  type DecodedChannelReaction,
+} from '$lib/utils/chat/channelCrypto';
+import { oweLiveDecision, owedLiveGeneration } from '$lib/utils/chat/owedLiveFrames';
+import { channelReactionOf } from '$lib/utils/chat/messageReactions';
 import { decodeAppMessage } from '$lib/proto/codec';
-import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { channelSystemEnvelope } from '$lib/utils/chat/channelNotice';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
+import { ADMIN_QUEUES_CHANGED_FRAME, adminQueuesChanged } from '$lib/admin/adminQueueCounts.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
@@ -39,9 +46,13 @@ export interface ChannelEventContext extends Pick<
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
   | 'onSalonUnreadCleared'
+  | 'onSalonArrivalUncounted'
   | 'onWorkspaceRoleChanged'
   | 'onWorkspaceDeleted'
   | 'onChannelMessageDeleted'
+  | 'onInboundReaction'
+  | 'storage'
+  | 'deviceKey'
   | 'log'
 > {
   /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
@@ -86,6 +97,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelDeleted,
     onWorkspaceUpdated,
     onSalonUnreadCleared,
+    onSalonArrivalUncounted,
     onWorkspaceRoleChanged,
     onWorkspaceDeleted,
     onChannelMessageDeleted,
@@ -93,6 +105,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onOutOfSync,
     onJoinAsk,
     onJoinAskSettled,
+    onInboundReaction,
   } = ctx;
 
   // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
@@ -126,7 +139,15 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     return;
   }
 
+  // An admin queue this reader may act on changed (owner, 2026-11-18): the frame carries nothing,
+  // the badges ask the server for their counts.
+  if (event.type === ADMIN_QUEUES_CHANGED_FRAME) {
+    adminQueuesChanged('frame');
+    return;
+  }
+
   // A new person asks to join a group conversation, announced to every online admitted member.
+
   if (event.type === 'group.join_ask') {
     const data = event.data || {};
     const groupId = String(data.groupId || '');
@@ -455,6 +476,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // then, and the push trigger decides from the same fact - see `openChannelMessageProving`.
       let authorProven = false;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
+      // Set when the frame could not be OPENED - as opposed to opened and found to be no bubble.
+      let unopened = false;
+      // Captured before the open's await: a session ending meanwhile must not receive this frame's
+      // parked decision (`owedLiveFrames.ts`).
+      const parkGeneration = owedLiveGeneration();
       try {
         if (data.ciphertext) {
           // Opened here rather than left to the history reload: a live bubble that only appeared
@@ -482,13 +508,18 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             log(
               `Channel reaction applied to ${String(msg.reaction.messageId ?? '')} (removed=${msg.reaction.removed === true})`
             );
-            applyChannelReactionFrame(
-              String(msg.reaction.messageId ?? ''),
-              String(sender || '').toLowerCase(),
-              String(msg.reaction.emoji ?? ''),
-              Number(msg.reaction.at ?? 0),
-              msg.reaction.removed === true
+            const reaction = channelReactionOf(msg.reaction, String(sender || ''));
+            const changed = applyChannelReactionFrame(
+              reaction.targetMessageId,
+              reaction.senderId,
+              reaction.emoji,
+              reaction.at,
+              reaction.removed
             );
+            // The frame trigger of a reaction notification. A salon frame on this path is LIVE by
+            // construction - the server fans it out the moment it is posted; a page of history is
+            // read by `useConversations`, which raises nothing.
+            await raiseLiveChannelReaction(channelId, reaction, changed, ctx);
             return;
           }
           // An edit is a silent row as well, and changes a bubble instead of adding one. The
@@ -517,7 +548,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             innerMessageId = msg.messageId ? String(msg.messageId) : undefined;
             const envelope =
               appMsgToEnvelope(msg, channelServerMs) ??
-              appMsgToChannelSystemEnvelope(msg, channelServerMs);
+              (await channelSystemEnvelope(
+                msg,
+                channelServerMs,
+                String(sender || '').toLowerCase()
+              ));
             if (envelope) {
               content = envelope.content;
               isSystemNotice = !!msg.system;
@@ -533,22 +568,63 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           return;
         }
       } catch (e) {
+        unopened = true;
         // The SAME decision the history path takes, and for the same reason a live bubble is opened
         // here at all: a message whose seed has not landed yet must ASK for it, not wait for a
         // history reload to notice. `content` stays undefined, so the row is not rendered until the
         // repair announces it - which is the behaviour the comment below already described.
-        reportUnreadableChannelMessage(
+        const repairable = reportUnreadableChannelMessage(
           data.channelId,
           messageId,
           String(sender || ''),
           channelServerMs,
           e
         );
+        // THIS ROW ARRIVED LIVE, AND THE READER THAT WILL OPEN IT IS NOT. The repair re-reads the
+        // salon as history, which raises no reaction by design - so a reaction that was the first
+        // frame of its sender's new seed session was drawn by nobody while the push was dropped in
+        // front (Mi 9T, 1.7.0-alpha.10). Its live decision is parked under its id and taken by the
+        // reader that opens it (`owedLiveFrames.ts`). Only a SILENT row can be a reaction (the
+        // server knows nothing else about a body it cannot read), so a line never parks.
+        if (repairable && data.silent === true && onInboundReaction) {
+          oweLiveDecision(
+            String(data.channelId),
+            messageId,
+            parkGeneration,
+            (reaction, changed) => {
+              void raiseLiveChannelReaction(channelId, reaction, changed, ctx).catch((err) =>
+                console.error(
+                  `[NOTIF] the owed live decision of ${messageId.slice(0, 8)} failed: ${String(err)}`
+                )
+              );
+            }
+          );
+        }
       }
 
       // Only persist if decryption succeeded - a missing key means loadChannelHistory
       // will replay it cleanly after a fresh key hydration.
-      if (content === undefined) return;
+      if (content === undefined) {
+        // AN UNOPENED FRAME IS STILL AN ARRIVAL, AND ITS BADGE IS OWED NOW. The live tally counts
+        // a ROW, so a message whose seed had not landed raised nothing, and the repair that later
+        // draws it is a history load, which counts nothing either: a salon granted (or a community
+        // joined) a moment ago showed no badge for every message sent before its seed arrived,
+        // until it was opened once (Mi 9T and iPhone, 1.7.0-alpha.5 / 1.6.12-alpha.2). The frame
+        // says in the clear what the server's count asks - its author and `silent` - so the
+        // decision is taken here, and the count is the server's, which already holds this row.
+        const fromOther = String(sender || '').toLowerCase() !== ctx.userId.toLowerCase();
+        if (unopened && fromOther && data.silent !== true) {
+          log(
+            `[UNREAD] ${messageId.slice(0, 8)} of ${String(data.channelId).slice(0, 8)} could not be opened here - its badge is asked of the server's count`
+          );
+          onSalonArrivalUncounted?.({ channelId: String(data.channelId), messageId });
+        } else if (unopened) {
+          log(
+            `[UNREAD] ${messageId.slice(0, 8)} of ${String(data.channelId).slice(0, 8)} could not be opened here - ${fromOther ? 'silent' : 'own'}, no badge owed`
+          );
+        }
+        return;
+      }
 
       // Keyed by the SERVER row id, exactly like the history load (`decodeChannelMessageRow`).
       // Every server-side operation on a channel message - delete, pin, poll vote, reaction -
@@ -612,6 +688,80 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // informs, and it can never fire on a matched pair.
   log(`[ERROR] Unhandled channel event type: ${event?.type}`);
   console.error('[Channel Event] no handler for type', event?.type);
+}
+
+/**
+ * Hands one applied salon reaction to the frame trigger as LIVE, with the author of the message it
+ * landed on (`salonMessageAuthor`). Two callers: the live frame opened at once, and a live frame
+ * whose seed arrived after it, opened later by the reader that took its owed decision
+ * (`owedLiveFrames.ts`). A context without `onInboundReaction` raises nothing.
+ */
+async function raiseLiveChannelReaction(
+  channelId: string,
+  reaction: DecodedChannelReaction,
+  changed: boolean,
+  ctx: Pick<ChannelEventContext, 'conversations' | 'storage' | 'deviceKey' | 'onInboundReaction'>
+): Promise<void> {
+  if (!ctx.onInboundReaction) return;
+  const author = await salonMessageAuthor(
+    channelId,
+    reaction.targetMessageId,
+    reaction.targetAuthorId,
+    // Only NEWS pays for a store read: a replay or a removal is discarded by the trigger whoever
+    // wrote the message.
+    changed && !reaction.removed,
+    ctx
+  );
+  ctx.onInboundReaction({
+    conversationKey: channelId,
+    messageId: reaction.targetMessageId,
+    reactorId: reaction.senderId,
+    emoji: reaction.emoji,
+    at: reaction.at,
+    removed: reaction.removed,
+    changed,
+    messageAuthorId: author.id,
+    authorLookupFailed: author.lookupFailed,
+    live: true,
+  });
+}
+
+/**
+ * The author of a salon row a reaction landed on, in the order `InboundReaction.messageAuthorId`
+ * states and the MLS path follows (`setupMessageHandler`: the held row, else the stated author):
+ * SCREEN, STORE, CLAIM. The row in memory (its sender proven by Graine), else - for a frame that is
+ * news, and only then - the salon's stored page (`storeSalonPage` in `useConversations`, the last
+ * page an earlier session drew), else the author the frame STATES (`ReactionMsg.target_author_id`, the
+ * reactor's own claim - the one its push to the author already rests on). A row this device holds
+ * outranks a claim (review of #3792, round 3). `lookupFailed` says the store was asked and could not
+ * answer; it is warned here, and it decides only when no claim stands in (`unresolved`).
+ */
+async function salonMessageAuthor(
+  channelId: string,
+  messageId: string,
+  statedAuthorId: string | null,
+  isNews: boolean,
+  ctx: Pick<ChannelEventContext, 'conversations' | 'storage' | 'deviceKey'>
+): Promise<{ id: string | null; lookupFailed: boolean }> {
+  const shown = ctx.conversations.get(channelId)?.messages.find((m) => m.id === messageId);
+  if (shown) return { id: shown.senderId, lookupFailed: false };
+  // A frame that is no news, or a session with no store: nothing to ask, and nothing failed.
+  if (!isNews || !ctx.storage) return { id: statedAuthorId, lookupFailed: false };
+  try {
+    const found = await ctx.storage.getMessagesByIds(channelId, [messageId], ctx.deviceKey());
+    if (found.unreadable.has(messageId)) {
+      console.warn(
+        `[REACTION] ${messageId.slice(0, 8)} is stored under a key this device cannot open - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}`
+      );
+      return { id: statedAuthorId, lookupFailed: true };
+    }
+    return { id: found.rows.get(messageId)?.senderId ?? statedAuthorId, lookupFailed: false };
+  } catch (e) {
+    console.warn(
+      `[REACTION] the stored row of ${messageId.slice(0, 8)} could not be read - its author is ${statedAuthorId ? 'the one the frame states' : 'unknown'}: ${String(e)}`
+    );
+    return { id: statedAuthorId, lookupFailed: true };
+  }
 }
 
 /** Whether `value` is one of the three salon write policies. */

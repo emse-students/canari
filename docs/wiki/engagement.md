@@ -16,15 +16,16 @@ conflict: principle 1 (your messages are yours) outranks any engagement signal.
 a ranking, a suggestion or a notification that makes a reader's information harder to find is wrong
 whatever it does for engagement. That is why Campus and Associations are strictly chronological
 with nothing inserted, why Pour toi leads with the fresh posts of the people a reader follows before
-any suggestion, and why a global search is the next design question
-([backlog.d](backlog.d/global-search-to-design-after-1-6-9.md)). Also in
+any suggestion, and why the post search gains filters by person and by association
+([backlog.d](backlog.d/post-search-filters-by-person-and-by-association.md); the global search was
+dropped by the owner on 2026-11-19 in its favour). Also in
 [design-reference](frontend/design-reference.md#0-the-product-principle-above-every-choice-owner-2026-11-10).
 
 The owner's engagement chantier (2026-11-07): more people notified, following made easy, and
 Instagram-style follow suggestions, with a ceiling on the noise. This page holds the decisions, the
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 Every work package shipped by `1.6.10`; what each still owes is a row of the
-[verification table](backlog.md#owed-a-verification-and-nothing-else).
+[readings owed](plan.md#readings-owed).
 
 **The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (what the people one follows write
 or repost - an entity's post a followed person reposted included -, ranked by freshness and
@@ -108,6 +109,11 @@ of its adversarial review.
      written, and the erasure also removes the id
      (`post_notifications_liked_by`, `meta - 'likedBy'`). The push is sent at once and carries the
      name of that moment (`actorName` plus `contentCount`); a delivered push cannot be recalled.
+     **A dropped naming is not logged (2026-11-17)**: the bell is polled every 60 s by each open client, and
+     a row whose naming went (the like taken back, the switch off) is dropped again at EVERY read, so a
+     line per drop (`[TREND] bell: N of N naming(s) no longer hold`, about 37 in 15 minutes on dev) said the
+     same stable, designed state again and again. The read is a pure function of durable state; nothing
+     was decided, so there is nothing to say. `campus-trend.integration.spec.ts` pins the silence.
    - The three trend keys stay; every native table chooses one of three sentences by the count
      ("Aimée par Léa", "... et 1 autre personne", "... et 9 autres", English "Liked by ..." at
      parity), and the bell row draws the same through Paraglide from the served `{name, others}`.
@@ -134,8 +140,9 @@ of its adversarial review.
    is never announced later.
 3. **ONE global daily push cap of THREE per person** for the non-essential pushes: the cap of
    migration 157 (`ENGAGEMENT_DAILY_PUSH_CAP`, 5 for trends alone) becomes 3 and widens.
-   - **Counted** - the lead's list, shown to the owner on 2026-11-10: campus trends, reactions and
-     comments on your posts, member reposts, followed accounts' posts (`followed_post`), booking and
+   - **Counted** - the lead's list, shown to the owner on 2026-11-10: campus trends, ~~reactions and
+     comments on your posts~~ (taken out of the cap by the owner on 2026-11-14: one live notification
+     per post, [below](#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)), member reposts, followed accounts' posts (`followed_post`), booking and
      event openings - and friends' activity, which is no longer written.
    - **Not counted** (the owner's list): messages and calls (chat-delivery's, never through here),
      bookings (reminders and changes), follow requests and acceptances, direct mentions and replies,
@@ -153,11 +160,12 @@ of its adversarial review.
      older build AFTER the claim, so the claim asks the same tables first (`push_token`,
      `key_package."deviceAppVersion"`, a device of unknown build kept as chat-delivery keeps it) - a
      reader with no device able to show the push spends nothing.
-   - Above the cap the bell row is still written; ONE line per call says how many were withheld
-     ("type=X withheld k of n").
-   - Every send of a counted type asks `PostNotificationsService.withinPushBudget`: the batch fan-out,
-     the singular `createNotification` (the openings), and the reaction and comment pushes
-     `PostInteractionsService` composes itself.
+   - Above the cap the bell row is still written; since 2026-11-14 ONE line PER CAUSE says how many
+     were withheld - the cap (with `cap` and `pushedToday`), the category switch, or no device at the
+     floor ([below](#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)).
+   - Every send of a counted type asks `PostNotificationsService.withinPushBudget`: the batch fan-out
+     and the singular `createNotification` (the openings). The reaction and comment pushes go through
+     `notifyPostActivity` since 2026-11-14 and are never counted.
 4. **Proof**: `campus-trend.integration.spec.ts` on PostgreSQL - the database's `now()` pinned
    through a schema of its own: Monday and Tuesday told, Wednesday and Sunday evening not, the next
    Monday (half past midnight Paris, still Sunday in UTC) told again, the cap per reader, and two
@@ -173,6 +181,164 @@ of its adversarial review.
 5. **Owed**: a dev pass and a phone reading on both bench phones - a trend liked by an account the
    bench reader follows reads "Aimée par ..." on the lock screen and in the bell, and a fourth counted
    push in a day reaches the bell only.
+
+## The owner's decision of 2026-11-14 - what concerns you directly is never dropped, one live notification per post
+
+*"Tout ce qui me concerne directement doit m'être notifié"*, and *"Je ne veux pas non plus des
+milliard de notifications, notamment si j'ai fait un post en tant qu'asso"* (owner, 2026-11-14).
+Measured that day on dev: a post's author got 7 comments; comments 1-3 were pushed, 4-7 withheld by
+the cap with one line that could not say why (`[NOTIFY] type=comment withheld 1 of 1 (cap, category
+comments off, or no device at any build)`).
+
+**The principles it answers to.** Principle 2 (*l'essentiel ne se perd pas*): a comment or a reaction
+on YOUR post is about your own words, so it is never withheld by a budget - which restores the lead's
+L5 that the quieter batch of 2026-11-10 had overridden. Principle 3 (*votre attention n'est pas à
+vendre*): a busy post must not ring a phone forty times, so it is ONE notification, updated in place,
+that rings only when there is something new the reader has not seen; and the reader's category
+switches still silence it in one gesture. Principle 1 is untouched: the push carries what it carried
+(a name, 60 characters of the comment or an emoji), plus a count.
+
+**The design, decided before the code:**
+
+1. **Three classes in `PUSH_BUDGET`, one table** (`posts/engagement-push-cap.ts`):
+   - **COUNTED, the discoveries** - the daily cap of 3 (`ENGAGEMENT_DAILY_PUSH_CAP`) keeps only these:
+     `campus_trend`, `member_repost`, `followed_post`, `booking_open`, `event_open`, and
+     `friend_reaction` / `friend_comment` (no longer written).
+   - **ONE PER POST, direct engagement on the reader's own post** - `comment`, `reaction`: never
+     counted, never dropped by a budget, collapsed per post (below).
+   - **FREE** - addressed to the reader, asked for by them, or the owner's exceptions, unchanged:
+     `reply`, `mention`, `live_mention`, `association_post`, `association_repost`, `birthday`,
+     `live_started`, `form_reminder`, `follow_request`, `follow_accepted`, the six booking notices
+     (`booking_cancelled`, `_withdrawn`, `_added`, `_reminder`, `_changed`, `_removed`), and the
+     moderation, organiser and payment workflow (`repost_proposed`, `coorganise_proposed`,
+     `event_proposed`, `event_validated`, `event_rejected`, `event_updated`, `event_deleted`,
+     `event_pending`, `event_pending_coorganiser`, `profile_correction_applied`,
+     `profile_correction_refused`, `repost_personal_requested`, `repost_personal_accepted`,
+     `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`, `live_reinstated`,
+     `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused`,
+     `lydia_refund_issued`, `lydia_cashier_added`, `delegation_revoked`,
+     `delegation_receiver_not_ready`, `delegation_resumed`).
+   The `Record` still refuses a type that is not placed, and `engagement-push-cap.spec.ts` pins the
+   three lists.
+2. **Who receives, unchanged**: a comment or a reaction notifies `post.authorId` - for an association
+   post, the member who published it in its name, as today. A busy association post is therefore ONE
+   live notification per recipient, never one per comment.
+3. **"Unread for this post" is the bell's own durable state**, read at push time on the server: the
+   `post_notifications` rows of types `comment` / `reaction` for (recipient, post) with `read = false`.
+   No timer, no client ledger. Both ways a row becomes read - opening the bell (`markAllRead`) and
+   opening the post (`markPostRead`) - mark every row of a post together, so "the post has an unread
+   notification" has one meaning. The decision and the row are ONE transaction
+   (`writePostActivityRow`, `posts/post-activity-notice.ts`): `pg_advisory_xact_lock` on the
+   RECIPIENT, then ONE statement that reads the post's prior unread rows and inserts the new one,
+   answering `alert` (no prior unread row) and `others` (distinct other actors of the same kind among
+   them; an anonymous or association comment counts per row, since its actor id names nobody). The
+   lock is per recipient, not per post, because the two read writes take it too: a read that lands
+   first makes the next comment ALERT, a comment that lands first is marked read by the read that
+   follows - so a comment can never be inserted silent just after the reader cleared the bell, the
+   read-then-write race a per-post lock would leave. Two comments arriving together are serialised by
+   the lock: exactly one alerts. **Only a row whose push the reader receives counts** (review of
+   #3579): a prior row whose category is switched off (`pushCategoryOffSql`, the switch chat-delivery
+   applies) was never pushed, so with "Commentaires" off the comments' rows do not make a reaction
+   quiet. **And only a row the BELL shows**: the statement applies `bellRowVisibleSql` (the
+   bell page's own predicate - `bellRowShownSql` plus the review-cohort boundary - one implementation, read at call time because the service imports the
+   module) to the prior rows, so a comment hidden by moderation, or on a post the reader no longer sees,
+   never silences the next one. The bell page's third filter, the renderable types for the reader's build, is not in it on purpose: `comment` and `reaction` have a `null` floor in `NOTIFICATION_TYPE_MIN_CLIENT`, so every admitted build draws them. The client's unread badge counts the rows the bell returned
+   (`postNotifStore`), so it already agrees; the IT builds the bell's tables for this. The other writes that remove an unread row (a comment or a post deleted, a block, the GC)
+   do not take the lock: racing one, a comment is quiet against a row about to vanish, which only
+   means it replaces a notification that already rang.
+4. **The notification is updated in place by ONE identity per post on every platform**, carried as
+   one data field, `collapseId = post_activity_<postId>` (50 bytes, under APNs' 64), plus
+   `quiet = 'true'` for a silent update:
+   - **iOS (APNs)**: chat-delivery sends the field as the `apns-collapse-id` header - the mechanism the
+     call ring already uses (`calls.service.ts`) - so the new alert REPLACES the delivered one; the
+     `thread-id` is the same id (the per-post `post_reaction_<id>` thread is folded into it). A quiet
+     update has NO `sound` and `interruption-level: passive`, which APNs accepts on an alert push: the
+     notification is replaced in Notification Center without lighting the screen or playing a sound.
+     The NSE keeps that, and forces `sound = nil` and `.passive` itself when `quiet` is set, so no
+     later rewrite can make a quiet update ring. In the foreground `canari_push.mm` posts the local
+     twin under the SAME request identifier (the collapse id), silent and passive when quiet.
+   - **Android**: `getStableNotifId(collapseId)` - the stable-id mechanism messages and the old
+     per-post reaction group already use - so `notify` replaces in place, and `quiet` is
+     `setSilent(true)`. The client ledger that grouped reactions per post (`PostReactionGroup`, "the
+     shade decides") is deleted: the server's unread state is now the one decider, and two deciders
+     would disagree.
+   - **Web**: no system notification is raised for a social push on the web (no service worker, no
+     web push; the bell is the surface), so there is nothing to collapse. If one is ever added it
+     takes `tag = collapseId` and `renotify: false`.
+   - **The content-free wake (Android, declared)**: the envelope carries the same data map, so
+     `collapseId` and `quiet` reach `dispatchPush` unchanged. The iOS wake (WP-W5) is not built; an
+     extension cannot set a request identifier, so a wake must keep the collapse id in its own APNs
+     headers - owed by WP-W5.
+5. **The wording**, composed on the device in the app's language, mirroring the bell's Paraglide
+   grouping (`notif_grouped_one_other` / `notif_grouped_many_others`): the push keeps its key
+   (`social_comment`, `social_reaction`) and gains `contentCount` = the OTHER people of that kind
+   among the post's unread rows:
+   - comment: "Alice a commenté" / the text; "Alice et 1 autre ont commenté"; "Alice et 4 autres ont
+     commenté" (English "Alice and 1 other commented", "Alice and 4 others commented"), the latest
+     comment as the body;
+   - reaction: "Nouvelle réaction" / "Alice a réagi ❤️ à votre publication"; then "12 réactions" /
+     "Alice et 11 autres ont réagi à votre publication" ("12 reactions", "Alice and 11 others reacted
+     to your post").
+   The notification shows the LATEST event's kind; the bell keeps every row. A build that predates
+   this ignores `contentCount`, `collapseId` and `quiet`, so a QUIET update carries its own floor,
+   `minAppVersion = POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION` (`1.7.0`, `push/notification-client-floor.ts`):
+   chat-delivery skips a device registered below it, as for any key floor (a caller may raise the
+   key's floor, never lower it - `PushService.notifyContent`). An older build therefore rings for the
+   ALERT only and shows the first event, never one ring per comment uncapped; the bell holds them all.
+   A device of unknown build is kept, as for every floor.
+6. **The category switches still apply**: a comment or reaction push with "Commentaires" or
+   "Réactions" off is dropped by chat-delivery exactly as before (`push-category.ts`); the bell row is
+   written either way (neither type is in `BELL_ROW_GATE`).
+7. **The cap's line now accuses each cause on its own** (the separate defect of the dev reading): the
+   claim statement answers, per recipient, whether the category is off, whether no device can show the
+   type (its floor), or - when it is the cap - how many the reader was already pushed today:
+   `[NOTIFY] type=X cap reached for k of n (cap=3, pushedToday=3)`, `[NOTIFY] type=X category Y off
+   for k of n`, `[NOTIFY] type=X no device at build >= F for k of n`, one line per cause present.
+   `pushedToday` is the counter as the claim's statement read it.
+8. **No migration**: the state is the bell's existing rows, the lock is advisory.
+
+**A reply to MY comment or a mention of ME on my own post rings of its own** (owner, 2026-11-15). Principle 2
+(the essential is never lost): what is addressed to the reader is never folded into a notification that may
+update quietly. `addComment` decides the author's notice kind from ids it already holds
+(`authorNoticeKind`, `posts/post-activity-notice.ts`: a reply when the parent comment is the author's or was written for an association they hold, else
+a mention when the text names them, else `comment`; the most specific wins, never a parsed message). A `reply`
+or `mention` to the post's author goes the FREE way of `PUSH_BUDGET` (never counted, so the daily cap is untouched), as its own
+row and push with sound, never `quiet`, so `POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION` does not apply to it and
+it adds no row to the post's unread activity. The reply/mention category switches still apply at the send.
+Every other comment keeps the fold above. Each decision is logged (`author notice kind=...`). This is the
+fix of the backlog entry on a reply or mention aimed at the post's author.
+
+**Every consumer of the cap**, enumerated before it changed: `PostNotificationsService.withinPushBudget`
+(the only caller of `claimEngagementPushes`), asked by `createNotification`, `fanOutPush`
+(`createNotifications`, `pushNotice` - the trend, followed posts, member reposts, openings) and, until
+this change, by `PostInteractionsService` for reactions and comments, which now go through
+`notifyPostActivity` instead; `notification-category.spec.ts` (the categories of `CAPPED_PUSH_TYPES`)
+and chat-delivery's `push-category.ts` comment; the register's C7 entry.
+
+**Proof**: `post-activity-notice.integration.spec.ts` on PostgreSQL - the first comment alerts, the
+next ones are quiet with the right counts, a read (of the post or of everything) makes the next one
+alert, a dozen concurrent comments write a dozen rows and exactly ONE alert, a reaction and a comment
+share one post's state, and the push carries `collapseId`, `quiet` and `contentCount`;
+`engagement-push-cap.integration.spec.ts` - comments and reactions beyond the cap all pushed with no
+counter row, and the three causes logged apart; `push-payload.spec.ts` - the APNs request carries the
+collapse id and its thread, and no sound with `passive` when quiet; `nativeStrings.test.ts` - the new
+sentences in all six tables.
+
+**To read on the first pre-release that carries it** (no reading is filed for unshipped code; this
+one is filed in `backlog.d/` when that pre-release is cut). The server half is proven on PostgreSQL
+and Android compiled; the iOS NSE and `canari_push.mm` were NOT compiled (Windows), and that a remote
+push under `apns-collapse-id` and a local request with the same identifier replace each other is
+inferred, not read. On the Mi 9T and the iPhone 12, app killed and app open, against dev:
+
+- three accounts comment the bench account's post: ONE notification, one ring, titled
+  "X et 2 autres ont commenté";
+- open the bell (the post read), comment again: it rings again;
+- three reactions: one notification, "3 réactions", rung once;
+- the quiet updates neither sound nor show a banner; the iPhone build compiles;
+- with "Commentaires" off, a reaction after two comments still rings (a row whose push is off never
+  makes the post's notification quiet);
+- a phone on a build before `1.7.0` (`POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION`) rings for the first
+  comment only and receives no quiet update.
 
 ## The decisions, verbatim
 
@@ -406,7 +572,7 @@ and written back here.
 ## WP-4 - openings for followers (BUILT)
 
 Built 2026-11-09 to [(d)](#d-openings-for-followers---one-notice-never-two) (decision 5d, L9) plus
-L24-L29 above. Never capped (decision 11).
+L24-L29 above. A FORM opening is never capped; a booking or event opening IS counted by the daily cap (the owner's "quieter" decision of 2026-11-10, #3316: `PUSH_BUDGET`, three a day), read on the Mi 9T 2026-11-15.
 
 - **Migrations.** 151 (`opening_reminders`, its due and user indexes; plain) and 152 (**HELD**,
   marked `-- canari:hold-for-owner`; its approval line is NOT in this pull request - the lead adds it
@@ -635,7 +801,7 @@ Built 2026-11-09 to the shape above, in `follows/suggestions.service.ts` and
   archived, joined, dismissed or outside the reader's audience); `exclude`; a permanent, idempotent
   dismissal that a follow then an unfollow does not clear, and its typed 400s; the erasure both ways;
   155 re-run.
-- **Owed**: the EXPLAIN on dev with the real tables (the cost table above is a fixture's); the phone
+- **EXPLAIN read 2026-11-15 on PRODUCTION, read-only** (564 users, the most-connected viewer): 13.7 ms execution, 18 ms planning, no plan to fix. **Owed**: the phone
   readings come with WP-6, which draws it.
 
 ## Where suggestions appear (decision 3)
@@ -1082,8 +1248,8 @@ person.
   "Nouvel événement sur le campus", with no association - the masking rule of
   [calendar](frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08).
 - Categories: `form_open` stays `forms`, a booking opening files under `bookings`, an event opening
-  under `events`. **Never capped**, whatever the row's origin (decision 11: shotgun openings are
-  outside the cap).
+  under `events`. A FORM opening is never capped; a booking or event opening is COUNTED by the daily cap since the quieter decision of 2026-11-10 (`PUSH_BUDGET`: three pushes a day, whatever the row's origin - decision 11 had
+  left shotgun openings outside it).
 
 ## The noise budget - a daily cap from a counter row
 
@@ -1162,7 +1328,8 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
 ### WP-8 - the daily cap (BUILT)
 
 **3 since 2026-11-10, over every type `PUSH_BUDGET` counts, asked by every send through
-`withinPushBudget`** ([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)); the text below
+`withinPushBudget`** ([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)); comments and
+reactions on your own post left it on 2026-11-14 ([one per post](#the-owners-decision-of-2026-11-14---what-concerns-you-directly-is-never-dropped-one-live-notification-per-post)); the text below
 is the state of 2026-11-09 and the first amendment.
 
 Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
@@ -1211,6 +1378,16 @@ ROLLBACK;
 ```
 
 ### R1 - the trend threshold
+
+**The threshold is a setting since 2026-11-16 (owner).** `CAMPUS_TREND_THRESHOLD`, read by
+`posts/trend-threshold.ts`; the default is production's `10` (`TREND_THRESHOLD_DEFAULT`), so production sets
+nothing and is unchanged. It exists so dev can LOWER it: the bench logs in as four accounts, and the
+crossing reading could not be staged against a constant. A value that is set and is not a positive integer
+stops social-service at boot (no silent fallback), and the effective value is logged at boot as
+`[TREND_THRESHOLD] <n>`. It is an optional GitHub secret with a `DEV_` twin
+([MIGRATION](../../infrastructure/MIGRATION.md)); a change announces nothing already past it (the
+crossing rule above). Charter: principle 3, the bench changes the threshold, a member's attention is not
+spent to stage a test.
 
 Per campus (the author's `users.campus`; an association post counts on its publishing member's
 campus, an approximation stated here), for each candidate threshold `t`, how many posts of the last
@@ -1320,8 +1497,9 @@ AVERAGE rule above (superseded 2026-11-10):
 | saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
 | gardanne | 0 | 0 | 0 | 0 |
 
-Gardanne has no post crossing at any threshold from 3, so it constrains nothing. `TREND_THRESHOLD =
-4` was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. The threshold (then a
+constant `TREND_THRESHOLD`) =
+4 was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
 
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of
@@ -1421,7 +1599,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
 | **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
-| **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
+| **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; a form opening never capped, the other two counted by the daily cap since 2026-11-10 | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |

@@ -41,7 +41,12 @@
     type PublishedReelUpload,
     type PublishReelDeps,
   } from '$lib/reels/publishReel';
-  import { reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
+  import {
+    longestReelMs,
+    reelLifetimeLabel,
+    reelRuleNotice,
+    reelRuleOf,
+  } from '$lib/reels/reelRule';
   import { showToast } from '$lib/stores/toast.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
@@ -83,9 +88,17 @@
       adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
       endWait: (takeId: string) => void;
     } | null;
+    /**
+     * The step was opened over a CONVERSATION (its camera's "Ajouter des destinataires" with
+     * "Publier" ticked, reels-in-chat section 22): once published the camera closes back onto the
+     * conversation instead of navigating to the feed.
+     */
+    onpublishedHere?: () => void;
   }
 
-  let { clip, limits, onclose, deps, composer, chatTake = null }: Props = $props();
+  let { clip, limits, onclose, deps, composer, chatTake = null, onpublishedHere }: Props = $props();
+  /** The rule the server applies (`reelRuleOf`, the version-skew gate), null from an older estate. */
+  const rule = $derived(reelRuleOf(limits));
 
   // Read once: the step starts from the composer and is the member's to change from there.
   let caption = $state(untrack(() => composer?.start.caption ?? ''));
@@ -234,8 +247,8 @@
             identity,
             studentsOnly: sendStudentsOnly,
             reach: sendReach,
-            maxDurationMs: limits.maxDurationMs,
-            rule: reelRuleOf(limits),
+            maxDurationMs: rule ? longestReelMs(rule) : limits.maxDurationMs,
+            rule,
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
             ...(chatTake
@@ -252,6 +265,11 @@
       if (composer) {
         // Over the composer on the feed already: the composer closes, no navigation.
         composer.onpublished(identity);
+        return;
+      }
+      if (onpublishedHere) {
+        console.debug('[reel-publish] published from a conversation camera: back to it');
+        onpublishedHere();
         return;
       }
       await goto(resolve('/posts'), { replace: true });
@@ -279,7 +297,7 @@
 </script>
 
 <div
-  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col"
+  class="bg-cn-bg text-text-main absolute inset-0 z-20 flex flex-col pb-(--keyboard-occlusion-bottom,0px)"
   in:fade={{ duration: 150 }}
   data-reel-publish
 >
@@ -316,20 +334,19 @@
       >
         <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
         <span
-          >{m.reels_publish_from_composer_notice({
-            seconds: Math.round(limits.maxDurationMs / 1000),
-            lifetime: reelLifetimeLabel(limits.retentionDays),
-          })}</span
+          >{rule
+            ? reelRuleNotice(rule, limits.retentionDays)
+            : m.reels_publish_from_composer_notice({
+                seconds: Math.round(limits.maxDurationMs / 1000),
+                lifetime: reelLifetimeLabel(limits.retentionDays),
+              })}</span
         >
       </p>
     {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
     {#if studentsOnlyAssociation}
       <div class="mt-3">
-        <StudentsOnlySwitch
-          bind:checked={studentsOnly}
-          associationName={studentsOnlyAssociation.name}
-        />
+        <StudentsOnlySwitch bind:checked={studentsOnly} />
       </div>
     {/if}
     {#if reachAssociation}

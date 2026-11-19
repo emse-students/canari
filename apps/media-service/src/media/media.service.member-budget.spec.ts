@@ -1,6 +1,6 @@
 /**
  * The member's daily upload bound: what one member may upload in a rolling 24 hours, every class and
- * every upload route together (docs/wiki/backlog.d/p2-a-daily-upload-bound-per-member.md).
+ * every upload route together (docs/wiki/services/media-service.md).
  *
  * Pinned, each because the opposite is a plausible mistake:
  *  - every upload records its size, whatever its class - the sum is read from the index;

@@ -85,6 +85,14 @@ A paid answer can be refunded from Canari, in full or in part, by a payout manag
 (the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
 answer `refunded`, which frees its seat and its single-answer slot.
 
+**A paid answer is never deleted** (owner, 2026-11-14): `deleteSubmission` refuses `paid` and
+`paid_over_capacity` with the typed 409 `FORM_ANSWER_PAID`, and the manager is told to refund or
+cancel it instead - the payment's record keeps its Lydia Business either way
+([lydia-contract-flux](../../lydia-contract-flux.md#enrolled-or-historical-the-discriminator)). A
+`pending` answer is cancelled first by `cancelSubmission`'s rules, its Lydia request settled, so a
+request left payable never lands on a deleted answer; one that cannot be settled is a 409
+`PREVIOUS_PAYMENT_OPEN`, worded for the manager.
+
 ## Key component: forms/[id]/+page.svelte
 
 The single form submission page handles the three payment flows. Key state:
@@ -204,7 +212,7 @@ handed out cannot be taken back. A client that sends no `draft` gets a published
 `create without draft` ([legacy-compatibility](../../legacy-compatibility.md)).
 
 **A draft is invisible to every respondent read.** One `where`, `respondentFormWhere` (`form-status.ts`:
-id, not archived, `status = 'published'`), answers each of them, and a draft answers exactly what an
+id, not archived, `status = 'published'`, its association not archived - [2026-11-14](#an-archived-associations-form-is-closed-by-its-link-2026-11-14)), answers each of them, and a draft answers exactly what an
 absent form answers, so its id cannot be probed:
 
 | Read path | What a draft answers |
@@ -568,8 +576,38 @@ Two properties make that work:
 
 `pricing/price-matrix.ts` resolves a subject to a cell, `pricing/validate.ts` refuses an
 incomplete or self-contradicting matrix at save time, and `pricing/audience.ts` holds
-`matchesCondition` plus `PricingFacts` - the promo, formation and cotisation facts assembled by
-`pricing/pricing-facts.service.ts`.
+`matchesCondition` plus `PricingFacts` - EVERY cursus of the person (promo and formation of each
+entry), and the cotisation tiers and answers, assembled by `pricing/pricing-facts.service.ts`.
+
+**Two cursus pay the most favourable price (D32, built 2026-11-14).** `PricingFacts.cursus` is a
+LIST (`NO_CURSUS`, one empty view, for staff, a guest or a 404 - exactly the old behaviour). A
+CONDITION (a question's `showIf`, `submitCondition`, a booking space's audience) holds when it holds
+for at least one cursus, promo and formation read from the SAME entry; a refusal's criterion is the
+first cursus's, `notCotisation` first. A PRICE is computed WHOLE once per cursus and the cheapest
+total wins (`cheapestCursus`; an unavailable cell loses to any price; a tie goes to the first
+cursus). The single-cursus facts a bucket, a cell or a grid tier is read from (`CursusFacts`) are
+branded: only `cursusViews` makes them, so no caller can price on one cursus by passing the
+person's facts. `forms/form-quote.ts` is where a form picks its winner, once per operation:
+`quoteSubmission` at submit (base cell for the visible answers + every product grid's lines;
+option supplements do not depend on the cursus and are left out of the comparison), and
+`displaySlices` for `/check` and the public read: EVERY distinct cursus's slice (`cursusSlices`:
+`pricing` + `productGridPrices`, nothing beyond the viewer's own cursus). The fill page
+(`fillPricing.ts`) totals each slice for the current answers and shows the cheapest with the same
+rule; an option is closed, and "combinaison indisponible" said, only when EVERY slice closes it;
+the label and the grid prices shown are the winning slice's; the form is "not open to you" only when
+every slice's row is entirely unavailable. One table of cases, `libs/contracts/cursus-pricing.cases.json` ([libs](../../libs.md#cursus-pricingcasesjson)),
+is asserted by `form-quote.spec.ts` on the server and `fillPricing.test.ts` on the page, so the two
+cannot drift. `pricing` and `productGridPrices` alone are still served - the FIRST slice - for a page
+older than D32 ([legacy-compatibility](../../legacy-compatibility.md)).
+The cursus come from core-service as `cursusViews`, reconciled THERE (`cursusViewsOf`): every
+well-formed entry, plus the legacy `promo`/`formation` pair when no entry carries it (a person the
+WP3 backfill has not reached, logged `[PROFILE_CURSUS_BEHIND]`), so D32 only ever ADDS a view -
+nobody pays more or sees less than before it. A core-service that serves no `cursusViews` (only a
+rollback produces one) gets every profile-priced operation a typed `503 PRICING_CORE_BEHIND`
+([cicd](../../cicd.md)).
+A boutique product is `cheapestCell`. The winner is logged
+(`describeCursus`: `cursus=2/2 formation=ICM promo=2024`). Stored snapshots are unchanged in
+meaning: `submissions.lines` carries the winning cursus's tier, as charged.
 
 **The module sits at `src/pricing/`, not under `src/forms/`** (moved 2026-08-31). A boutique product
 prices on the same grid, and a shared mechanism kept inside one consumer is a mechanism the second
@@ -697,10 +735,14 @@ Measured on prod 2026-08-23, `auth_db.users`, 221 rows:
 
 Three facts shape the feature:
 
-1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; `promo` and
-   `formation` are written only by `findOrCreateFromOidc`. That is what makes them safe to price on -
-   the payer cannot move themselves into a cheaper cell. **If that DTO ever gains `promo`, this
-   becomes a self-service discount**, which is why the warning is written at the DTO itself.
+1. **Neither attribute is self-declared.** `UpdateUserDto` carries `bio` and nothing else; the cursus
+   and the `promo`/`formation` columns derived from it are written by `findOrCreateFromOidc` (from
+   the identity provider, at every sign-in) and by the platform admin's profile edit
+   (`ProfileEditService.applyEdit`, audited in `profile_changes`). That is what makes them safe to
+   price on - the payer cannot move themselves into a cheaper cell. Under D32 an admin who ADDS a
+   second cursus to somebody can move that person's price (the cheapest cursus wins), which is the
+   edit's audit trail's business, not the payer's. **If that DTO ever gains `promo` or `cursus`,
+   this becomes a self-service discount**, which is why the warning is written at the DTO itself.
 2. **`formation` is a small OPEN vocabulary, not an enum.** The next value arrives from Authentik with
    no deploy, so the picker offers what EXISTS and the `others` bucket catches what it has not seen.
 3. **Both can be null**, and five rows on prod are. A null is not an error and must price.
@@ -727,6 +769,16 @@ promo there can be) to the current calendar year. The bound is enforced on BOTH 
 in `criteriaOptions.ts`, `FIRST_PROMO_YEAR` in `pricing/validate.ts` - because `2O24` typed for
 `2024` matches nobody for ever, and a criterion that silently matches nobody is what this module
 refuses everywhere else.
+
+**A formation criterion names a formation a profile can carry** (2026-11-15). A cursus may only name
+the five of `SPACE_FORMATIONS` (D4: `Autre` is the one bucket for masters, doctorates and the rest),
+so any other string in a criterion - a question's `showIf`, the submit condition, a grid dimension -
+matches nobody for ever. `asFormationValues` (`pricing/validate.ts`) refuses it where it is written,
+`400 { code: 'AUDIENCE_FORMATION_UNKNOWN' }`, worded through Paraglide (`paymentRefusal.ts`). The
+picker offers the values in use (`GET forms/criteria/formations`), a subset of the five, so the
+refusal reaches an older client or a hand-made request only. Measured on production the same day:
+the only formation any stored criterion names is `ICM`, and no profile names one outside the five -
+no stored form is refused by this, and no data needed rewriting.
 
 ## One predicate, three uses
 
@@ -879,7 +931,10 @@ raw-tag UI that was their only caller.
 
 ### Granting a cotisation needs MANAGE_MEMBERS, pricing on one does not
 
-Creating a form needs nothing but an account. Linking it to an association needs membership. But
+Creating a form needs nothing but an account. Linking it to an association needs MANAGE_FORMS in it
+(owner, 2026-11-14: *"seuls les membres d'association qui avaient la permission 'gerer les
+formulaires' pouvaient gerer les formulaires"* - membership alone used to be enough, never decided,
+an early implementation's `isMember`; see [who manages an association's forms](#who-manages-an-associations-forms-owner-2026-11-14)). But
 `grantsCotisation` hands out association membership, and `UserTagService.grantCotisant` has always
 required `MANAGE_MEMBERS` - so a plain member with `MANAGE_FORMS` could save a form whose grant would
 be refused at payment time, or, worse, use the form as a side door around the flag that guards the
@@ -888,6 +943,20 @@ roster. `assertCotisationConfigValid` now takes the caller and refuses the setti
 
 Dividing a price grid on a cotisation tier is deliberately NOT gated: charging existing cotisants a
 different amount grants nothing and changes no one's membership.
+
+### Who manages an association's forms (owner, 2026-11-14)
+
+ONE predicate, `FormsService.managesForm`: a global admin; for an ASSOCIATION's form, MANAGE_FORMS in
+that association (`mayAct`: a BDE super-admin of it included), whoever created it; for a PERSONAL
+form, its owner. Its creator is no manager by authorship: one who never held MANAGE_FORMS (possible
+until this date, when membership was the creation rule) or no longer does loses the form, and
+"Mes formulaires" (`list`) no longer lists it. A create naming an association, and a draft moved
+from or to one, need MANAGE_FORMS there - else `403 FORM_ASSOCIATION_NOT_YOURS`, typed at the throw
+(`assertManagesAssociationForms`); the builders offer only those associations
+(`formManagedAssociations`). Measured read-only on production that day: 1 of 15 live association
+forms had an owner without MANAGE_FORMS in its association. The fee schedule of the payout
+estimate follows (`mayEditAPrice`, [lydia-contract-flux](../../lydia-contract-flux.md)): a form's
+creator is not a price editor by being its creator.
 
 ## An anonymous form keeps no author (2026-09-30)
 
@@ -969,6 +1038,7 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
 | anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
 | anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| anonymous + "Autoriser la modification de la réponse" | refused | `FORM_ANONYMOUS_ANSWER_EDIT` | an anonymous answer names nobody who could reopen it ([changing an answer](#a-respondent-changes-their-own-answer-owner-2026-11-13)) |
 | public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
 | public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
 | public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
@@ -977,8 +1047,8 @@ the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionR
 | public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
 | every other pair | allowed | - | |
 
-**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
-promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers
+`NO_CURSUS` and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
 every profile criterion, and `submit` prices the cell from those facts
 (`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
 group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
@@ -1020,6 +1090,9 @@ the association's Achats tab names it "Invité". Both fill pages total with ONE 
 `lib/forms/fillPricing.ts`.
 
 ### A guest's name and e-mail, when the form asks (2026-11-06)
+
+**Widened on 2026-11-16** into the form's respondent fields - the same block, also joining a member's
+account fields and asking promo, status and campus: [the respondent's account fields](#the-respondents-account-fields-owner-2026-11-16).
 
 Owner's decisions of 2026-11-06, built for `1.6.6`. **Off by default**: a guest is asked nothing
 about who they are. The creator ticks any of **Nom / Prénom / E-mail** ("Demander aux invités",
@@ -1187,6 +1260,258 @@ the price is only as good as the answer it is computed from:
   required, unconditional question whose every option is grouped never reaches it, so a 0 there is
   accepted.
 
+## The respondent's account fields (owner, 2026-11-16)
+
+**The decision.** An organiser chooses, PER FORM, which of the respondent's fields are joined to each
+answer: "Nom", "Prénom", "Promo et formation", "Statut élève / personnel", "Campus" (and, on a public
+form, a guest's "E-mail", as before). Each is optional. The respondent sees, before sending, which
+fields will reach the organiser; the organiser reads them as columns of the responses list and of the
+XLSX export, with a filter by promo, formation and status. Whoever the form cannot read from an
+account - a guest on a public form, any respondent of an anonymous form - is ASKED the fields instead,
+as a guest's name was asked since 2026-11-06.
+
+**Principle 1 of the charter ("Vos messages sont à vous", [docs/principes.md](../../../principes.md):
+"chaque donnée que nous gardons est déclarée").** Nothing about a respondent leaves their account
+unless the organiser ticked it AND the respondent was told before sending; the default is what every
+named form already showed (the two names), so no form starts transmitting more than it did; an
+anonymous form joins nothing from the account and never asks a name or an e-mail. Register C8 and the
+privacy policy name the fields.
+
+**Built on the guest block, not beside it** (owner, 2026-11-16: *"Il y a déjà ça, c'est à
+améliorer"*). The editor's "Demander aux invités" became **"Qui a répondu"**
+(`GuestIdentitySettings.svelte`, drawn on every form now, not only a public one): ONE set of boxes,
+saved as the two lists the server keeps (`respondentSettingsPayload`,
+`frontend/src/lib/forms/respondentFields.ts`):
+
+| Column | Holds | Read for |
+|---|---|---|
+| `forms.respondentFields` (migration 174, jsonb, default `["lastName","firstName"]`) | what is JOINED from the account: `lastName`, `firstName`, `cursus`, `status`, `campus` | a member of a NAMED form; stored `[]` and read empty on an anonymous form (`joinedAccountFields`) |
+| `forms.guestFields` (migration 138, same column, wider list) | what is ASKED: a guest's `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` | a guest on a public form; EVERY respondent of an anonymous form (declared fields only) |
+
+| Form | Offered boxes | A member | A guest |
+|---|---|---|---|
+| named, not public | names, promo / formation, status, campus | joined from the account, listed in the notice | - |
+| named, public | the same and the e-mail | joined (the e-mail is a guest's: Canari keeps none for a member) | asked, each required |
+| anonymous | promo / formation, status, campus | ASKED, declared, never joined | asked, declared |
+
+**The snapshot** (`submissions.respondentIdentity`, migration 174,
+`apps/social-service/src/forms/respondent-identity.ts`): `{ source: 'account' | 'declared', lastName?,
+firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus? }`, holding only the
+fields the form joined or asked. For a member of a named form the values are read from the ACCOUNT AT
+SUBMIT TIME, never from the request: a member's body carrying a declared field is refused
+`FORM_GUEST_IDENTITY_NOT_ASKED`. **Where they are read decides what the submit depends on** (lead,
+2026-11-16: the default path makes no cross-service call):
+
+- **The names and the campus** come from the `users` table social-service shares with core-service
+  (`FormsService.sharedAccountFields`, read as the responses list always read names). The default form
+  (the two names) therefore submits with core-service down or older than this release; an account the
+  table does not hold is joined empty, accused.
+- **"Promo et formation" and the status** come from core-service (`joinsNeedCore`,
+  `PricingFactsService.accountIdentity` -> `GET internal/users/:id/respondent-identity`, an
+  `INTERNAL_SECRET` route beside the pricing one), and only when the form ticks one of them. Their
+  columns (`cursus`, `promo`, `formation`, `posts`) ARE in the shared table; what is not is the RULE:
+  every cursus is `cursusViewsOf` (D32, the well-formed entries plus the legacy promo / formation pair),
+  the one reconciliation pricing reads too, and the status is derived from it. A second spelling here
+  could list a promo the same person is not priced by. That read fails CLOSED (503, retry - the client
+  words it "réessayez dans un instant", the form kept): an answer stored without the fields its form
+  joins would say less than the form says it does; a typed 404 (`RESPONDENT_UNKNOWN`) is an answer
+  (joined empty, accused), a 404 without it is a core-service older than the route
+  (`RESPONDENT_CORE_BEHIND`), which only a form ticking a cursus or a status can meet. A form joining nothing reads nothing and stores
+`{ source: 'account' }`, so a NULL snapshot means one thing only: an answer given before 174, whose
+names are read live, as every answer's always were (`respondentNames`, `legacyNameIds` - no backfill,
+no fallback: the NULL is the row's era). A payment retry that reuses its row re-reads the snapshot with
+the new submit; a respondent's own edit of their answer (`editAnswer`) keeps it.
+
+- **Promo et formation** is EVERY cursus (D32's `cursusViewsOf`, the one reconciliation pricing
+  reads), so a person in two cursus shows both ("2024; 2022" / "ICM; Autre" in the export).
+- **Statut** is derived, not a claim: a cursus makes a student, a post (EMSE, ME, Alumni) makes staff,
+  both at once possible (D1). **Canari reads no `school_status` claim, and needs none**: the
+  "Personnel de l'école" choice became an EMSE post in the MiConnect profile (D27), which the sign-in
+  stores in `users.posts` and replaces wholesale at every sign-in, so a post that disappears at the
+  provider clears here too ([profiles-and-access](../../profiles-and-access.md)).
+- **Campus** is `users.campus`, the person's own choice at enrolment (D6).
+- **Declared** values are judged by `declaredIdentityFor`: every asked field required
+  (`FORM_GUEST_IDENTITY_MISSING`), an unasked one refused (`FORM_GUEST_IDENTITY_NOT_ASKED`); a
+  formation of the spaces' list with an entry year (1900..2100), or `none` (no cursus - staff) with
+  none; a status `student` / `staff`; a campus of the two.
+
+**The respondent notice** (`RespondentNotice.svelte`, member fill page): "Transmis à l'organisateur
+avec votre réponse : Nom, Prénom, Promo et formation", from the form's `respondentFields` as
+`GET /forms/:id` serves them (read as the submit reads them). The declared fields are drawn by
+`DeclaredIdentityFields.svelte` ("À propos de vous") on `/f/:id` and on an anonymous form's fill page,
+whose hint says the answer stays anonymous.
+
+**The organiser.** `getSubmissions` serves `respondentIdentity` (the manager allowlist,
+`submission.projection.ts`) and names a member by the snapshot; the responses list draws a column per
+kept field after the name (`identityColumnsOf`, the server's rule mirrored: a field joined or asked
+now, or carried by an answer from when it was) and, when promo / formation or status is kept, three
+pickers filtering by them - promo and formation judged on ONE cursus entry together, as a price is.
+The export writes "Promo", "Formation", "Statut", "Campus" in the client's words
+(`ExportLabels.identity`); a store build older than the account fields sends none and gets the
+columns in the default French words, logged `[LEGACY]`, never a refusal
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---an-export-asked-without-identity-words-2026-11-16)).
+An answer from a build older than `1.7.0` to a form that asks declared fields (it cannot draw them, and
+names its build on a submit through `X-Canari-Client-Version`) is taken without them and marked
+`notDeclared`, read "Non déclaré" by the organiser
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-170---an-answer-from-a-build-that-cannot-draw-the-declared-questions-2026-11-16)). Account
+erasure clears a member's snapshot with the rest of the answer (`account-erasure.ts`).
+
+**Reversible choices taken without the owner (2026-11-16), each a one-line change:**
+
+1. **An anonymous form never asks a name or an e-mail**, even ticked: the decision says its fields
+   are asked instead, but asking a name would break the promise the form makes
+   (`FORM_ANONYMOUS_GUEST_IDENTITY`, unchanged). Promo, status and campus are asked.
+2. **One set of ticks for members and guests.** A public form saved before this joined the member's
+   names and asked guests only what was ticked; the editor opens on the union, so its next save also
+   asks GUESTS the names if they were not asked. Unticking them stops both.
+3. **The e-mail stays a guest's field**: Canari keeps no e-mail for a member, so a member is never
+   asked it and it is not offered on a named form that is not public.
+4. **Declared fields are required once asked**, like a guest's name; "Aucune (pas de cursus)" answers
+   the promo for someone who has none.
+5. **The notice lists the fields, not their values.** The values would cost a core-service read on
+   every page open; the decision asks which fields.
+
+**Rollout.** Migration 174 is additive (two columns, a constant default, no UPDATE - not held). An
+unpublished revision open when it runs is told once that the form changed since it ("Publier quand
+même"), as with 166: the fingerprint covers every column. An older editor's save is humoured
+([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-the-release-carrying-the-account-fields---a-form-editor-that-sends-guestfields-alone-2026-11-16)).
+
+Tests: `forms.service.respondent-identity.spec.ts` (the rule; the member snapshot read from the
+account, a declared field from a member refused, nothing read when nothing is joined, a default form submitting with core-service down (names and campus from the shared table, core reached only for a cursus or a status); an anonymous
+member and a guest asked, refused until they answer; the create default; the export's columns in the
+client's words, a pre-174 answer named live, an older client's export in the default words and its
+answer taken "not declared"),
+`internal-users.controller.spec.ts` (the core route), `api.clientVersion.test.ts` (both submits name the build), `respondentFields.test.ts` (the editor's two
+lists, the declared values, the columns, cells and filter), `GuestIdentitySettings.svelte.test.ts`,
+`RespondentNotice.svelte.test.ts`, `DeclaredIdentityFields.svelte.test.ts`,
+`FormResponsesPanel.svelte.test.ts` (the columns and filters).
+
+## A respondent changes their own answer (owner, 2026-11-13)
+
+A per-form switch, **"Autoriser la modification de la réponse"** (`forms.allowAnswerEdit`, OFF by
+default, migration 166), lets a respondent WITH AN ACCOUNT reopen their own answer and change it.
+The owner's decisions are final; the reasons below are why the code holds them.
+
+**Who and when.**
+
+- Only the account that wrote the row. A guest's row (`userId` NULL) is nobody's, so a guest is
+  never offered it; on an ANONYMOUS form the switch is shut (`FORM_ANONYMOUS_ANSWER_EDIT`, one row of
+  [the option rule](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), on both
+  sides) and a stored `true` beside `anonymous` is refused at the edit anyway (`FORM_ANSWER_EDIT_OFF`).
+- Only while the form is OPEN: after `opensAt`, before `closesAt`, not closed by hand
+  (`assertFormOpen`, the submit's own check: `FORM_NOT_OPEN_YET` / `FORM_CLOSED`).
+- Only a row that IS an answer (`answerHoldingWhere`: paid, free, a live pending one, pending cash,
+  paid over capacity). A cancelled, expired or refunded row is `FORM_ANSWER_NOT_EDITABLE`.
+- Another person's row answers exactly what an absent one does: 404 `FORM_ANSWER_NOT_FOUND`.
+
+**The price is never moved by an edit - the LOCK RULE** (`apps/social-service/src/forms/answer-edit.ts`,
+`editLockedItemIds`). No top-up and no partial refund exist, ever. So every question that can change
+what is charged is LOCKED:
+
+- a priced grid (`product_grid`): its quantities are the order;
+- a question the price grid divides on (an `answer` criterion of `priceMatrix`);
+- a choice question with an option supplement (`decidesPrice`; the TYPE decides, as at submit);
+- CLOSED UNDER VISIBILITY: every question whose answer shows or hides a locked one (`showIf.answer`
+  or the legacy `dependsOn`), transitively - hiding a priced question drops its supplement or moves
+  the person to the "everyone else" cell, a price change made one question away;
+- **the lead's REVERSIBLE decision (2026-11-13)**: once the answer's cotisation was GRANTED
+  (`cotisationGrantedAt`), the question that decides admission on a granting form (the ANSWER
+  criterion of `submitCondition`) is locked too, like a price. No question chooses the tier itself
+  today (the tier is the form's `cotisationVariantKey`), and every granting form charges, so its
+  priced questions are locked already; this line only closes "change the answer that let me buy".
+  To reverse it, drop the `grantMade` branch in `editLockedItemIds`.
+- **the lead's REVERSIBLE decisions (2026-11-13), what the ROW says**: the lock set of an answer is
+  today's rule UNITED with every question the row recorded of its price (`rowLockedItemIds`, closed
+  under visibility like the rest): the `itemId`s of its stored `lines` (migration 137), and its
+  SNAPSHOT `submissions."priceLockedItemIds"` (migration 166), written by `submit` - and by a retry
+  that re-prices the row - with the questions today's rule says the price depends on at that moment
+  (`priceSnapshot`). So a grid unpriced, or a supplement REMOVED, after answers were priced with it
+  still locks its question on those rows (`answer-edit.integration.spec.ts`, "keeps a question
+  locked on a row priced with its supplement, after the supplement is removed"). **The residual, for
+  rows written before migration 166 only** (snapshot NULL): today's rule and `lines`, so a supplement
+  removed after such a row was priced unlocks that question there - the answer may then disagree
+  with `totalPaid`, never the money with what was charged. To reverse: drop the third argument of
+  `editLockedItemIds` (and stop writing the snapshot).
+
+**When does the lock start - the unpaid-but-requested decision.** The owner preferred "locked as
+soon as a payment request exists". The rule is STRICTER: the price-affecting questions are locked
+on EVERY answer from the moment it is sent - paid, pending online, pending cash, AND free. Why:
+re-pricing a free answer would read TODAY's profile and grid (a promo or a cotisation acquired since,
+a cell the manager changed), and an edit from a 0 EUR cell to a paid one would be a top-up - the one
+thing that may not exist. One rule for every status is also one rule a reader can predict. A free
+answer to a form whose priced questions are all 0 EUR still has them locked; the hint in the editor
+says so.
+
+What an edit therefore NEVER writes: `totalPaid`, `lines`, `priceLockedItemIds`, `paymentStatus`, the payment ids, the
+seat, the cotisation grant. It never reaches the payment provider.
+
+**The server enforces it; the client only draws it.** `FormsService.editAnswer`
+(`PUT /api/forms/:id/submissions/:submissionId/answers`, body `{ answers }`):
+
+1. the switch, anonymity, openness, the answer sizes (`assertAnswerSizes`, the submit's own);
+2. `judgeEdit`, outside the locks (the profile read may call core-service): grid answers normalised;
+   a locked question SENT with a different value is 409 `FORM_ANSWER_LOCKED` naming it (a locked one
+   repeated or omitted is fine - the stored value is carried); then the submit's own checks over the
+   merged answer: the ANSWER half of `submitCondition` only (who the person is - promo, formation,
+   cotisation - was judged when they answered, and a form selling a cotisation with `notCotisation`
+   would otherwise refuse every buyer's edit once they hold it), declared options on the editable
+   questions, `required` on the editable ones (`FORM_ANSWER_MISSING`), and an answer the person
+   cannot see DROPPED as at submit - except a locked one, which is what was priced and stays whatever
+   their profile says today;
+3. the write, in ONE READ COMMITTED transaction: `lockFormSeats` (the form row, `FOR UPDATE`), then
+   the submission row `FOR UPDATE` - the order `submit` and `markPaid` take them. The row is re-read
+   there; ownership and `answerHoldingWhere` are checked again; every locked answer is compared with
+   the row AS IT IS NOW (`sameAnswer`: empty spellings equal, a multiple choice a set, a grid by its
+   non-empty cells), so a retry, a payment or a grant committed meanwhile refuses rather than
+   overwrites; then `answers` and `editedAt = now()` - nothing else.
+
+**Version skew.** The client offers the switch and "Modifier ma réponse", and asks the routes below,
+only on an estate whose `/api/version` says `formAnswerEdit: true`; an editor older than the switch
+saving a form keeps the stored value ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-answer-editor-newer-than-its-server---formansweredit-2026-11-13)).
+
+`GET /api/forms/:id/my-answers` lists the caller's rows that may be changed, newest first, each with
+its `lockedItemIds`; empty when the switch is off, the form anonymous or not open. The fill page
+reads it, offers "Modifier ma réponse" under the sent answer (or a "Vos réponses" list on a form
+taking several answers - each is changed separately), draws the locked questions disabled with one
+line ("Fixe le prix payé : ne peut plus être modifiée."), hides the order bar, the payment choice and
+the total, and sends the visible answers LESS the locked ones (`editedAnswers`, `fillAnswers.ts`) -
+re-sending them through a read-back that might spell them differently would only risk a false 409.
+
+**Capacity.** The model has ONE cap, `maxSubmissions`, counted in answers; there is no per-option
+capacity. An edit keeps the same row, so it keeps its seat and never takes a second one: a full form
+still lets its respondents change their answers, and the form lock is taken anyway so an edit is
+serialised with every submit and payment. Never a second row: the single-answer guard and
+`hasSubmission` read the same row as before.
+
+**Files.** A new file id in a FILE answer is claimed as at submit (`FormFilesService.attach`, which
+checks its uploader); a kept one is not claimed again, so its retention keeps counting from its first
+claim. A REPLACED file stays attached to this answer and goes with the existing purge
+(`fileRetentionDays`): no orphan, no early deletion.
+
+**What managers see.** `submissions.editedAt` (null until a first change; no history kept) is in the
+responses list as "modifiée le <date>" under the answer's date, and in the XLSX export as a "Modifiée
+le" column - present when the form allows changes or any row was changed. No notification.
+
+**The codes** (`libs/contracts/form-answers.json`, exported by `answer-bounds.ts`, worded by
+`formCodeMessage` on the client): `FORM_ANSWER_EDIT_OFF` (403), `FORM_ANSWER_LOCKED` (409, with
+`itemId`), `FORM_ANSWER_NOT_EDITABLE` (409), `FORM_ANSWER_NOT_FOUND` (404); and
+`FORM_ANONYMOUS_ANSWER_EDIT` (400) at the form's save.
+
+**Logs**: `[FORM_EDIT]` at entry, at each refusal (with its reason) and at the write (status, files
+claimed); the fill page logs under `FormView`.
+
+**Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
+`forms."allowAnswerEdit" boolean NOT NULL DEFAULT false`, `submissions."editedAt" timestamptz
+NULL` and `submissions."priceLockedItemIds" jsonb NULL` (the price snapshot above). Reverse: drop the
+three columns (written in the file).
+
+**Tests**: `answer-edit.spec.ts` (the lock rule, the row's own `lines` united with it, and `sameAnswer`), `answerEditGate.test.ts` and `appVersion.test.ts` (the capability gate), `forms.service.public.spec.ts` (an older editor's save keeps the switch), `answer-edit.integration.spec.ts`
+against PostgreSQL (CI's `test-social-integration`): an edit done in place, a locked question refused
+on a paid answer, pending cash locked too, a full form keeping its seat, a hidden answer dropped, a
+closed form, an anonymous form and a switch-off form refused, another person's answer 404, a
+cancelled answer, several answers edited separately, file claims, an edit queued behind a cash
+validation's row lock, and concurrent cash validations and edits with no lost write.
+
 ## The file question (2026-10-15)
 
 A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
@@ -1326,7 +1651,7 @@ draft) and no post or event naming it (`FORM_IS_DRAFT`): nothing is tied to its 
 |---|---|---|
 | nothing (`associationId` absent) | left as it is | left as it is |
 | the stored value (`''` and `null` both mean personal) | no change, no check | no change |
-| another association, or none | moved, when the actor is a MEMBER of the association it leaves AND of the one it joins (the creation rule, `isMember`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
+| another association, or none | moved, when the actor holds MANAGE_FORMS in the association it leaves AND in the one it joins (the creation rule, `mayAct`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
 
 The id must name an association, for a global admin too: one that is no UUID, or names none
 (`forms."associationId"` has no foreign key), is `400 FORM_ASSOCIATION_UNKNOWN` before any
@@ -1687,7 +2012,7 @@ falls back to a system face without saying so. The file lands as `canari-qr-<slu
 
 ### It encodes the ordinary URL, so the deep link is the app's, not the code's
 
-There is no scheme of our own in the payload: it is the same `https://canari-emse.fr/forms/<id>` the
+There is no scheme of our own in the payload: it is the same `https://canari.emse.fr/forms/<id>` the
 copy button hands out, which the Android manifest claims with an `autoVerify` intent-filter
 (`pathPrefix="/forms/"`) backed by `/.well-known/assetlinks.json`. A scan that lands in a browser
 rather than in the app therefore says something about App Link verification on that device, never
@@ -1765,7 +2090,7 @@ test and the geometry is exported instead of inlined: a retuned radius moves the
 
 ## The paid half: what it needs, scoped 2026-09-30
 
-Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end); the paid half itself is its own work packages):
+Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](payments.md); the paid half itself is its own work packages):
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
@@ -1799,6 +2124,108 @@ Found while scoping it, so it is not re-derived (Lydia is live in production sin
   A leftover `stripe` or `disabled` provider shows an explicit "unavailable" line, an unknown one a
   neutral line without description - never a default. Saved cards stay Stripe-only via
   `supportsSavedCards` until the backend batch (see [payments](payments.md)).
+
+## Closing a form by hand, and the closing date (owner, 2026-11-16)
+
+*"Il faudrait un bouton pour clore le formulaire."* The form already had `closedAt` (`isFormOpen`,
+`assertFormOpen`, the refusal `FORM_CLOSED`, the fill page's "Ce formulaire est ferme", the link
+preview's "Ferme"); only the manager's way to write it was missing.
+
+- **Close / reopen**: `POST /forms/:id/close` and `POST /forms/:id/reopen`
+  (`FormsService.setClosed`), gated by `assertFormManager` - the owner of a personal form, a member
+  holding MANAGE_FORMS on the association, a global admin; the creator of an association's form who
+  does not hold the flag is refused (2026-11-14 rule). Both are idempotent: closing a form already
+  closed keeps its first end date, closing one whose end is still to come ends it now, reopening
+  clears the column whether the end is past or to come. Not a draft's action (the menu hides it).
+- **Not in the revision**: `closedAt` is excluded from the draft fingerprint
+  (`FORM_FINGERPRINT_SQL`), and the two routes write the column alone, so closing never shows
+  "Modifications non publiees".
+- **An edit no longer reopens a form** (found while building it): `update` used to store `null`
+  whenever the payload carried no `closedAt`, so publishing any edit reopened a closed form. Absent now
+  KEEPS the stored end and `null` clears it. The editor sends `closedAt` only when its field differs
+  from the published form's (`closedAtPayload`), so a revision never repeats a stored value and undoes
+  a close made since; a manager who types a date in the field AND closes from the list before
+  publishing still publishes the typed one (rare, visible in the field).
+- **The date field**: "Date de cloture" after "Date d'ouverture" in the advanced settings, the same
+  `DateTimeField` with `min` set to the opening. An end that is not after the opening
+  (`formWindowInvalid`) is said under the field and refused at "Publier"; the server refuses it too,
+  typed (`FORM_CLOSE_BEFORE_OPEN`, `form-window.ts`), on create and on edit, judged on the values the
+  save will store.
+- **The list**: a closed form (its end has passed; a future end is a scheduled close and shows
+  nothing) carries a "Ferme" badge and its menu offers "Rouvrir" instead of "Clore le formulaire".
+  Closing asks a confirmation, reopening does not.
+- **THE SERVER DECIDES WHETHER A FORM IS OPEN, NEVER THE DEVICE CLOCK** (read on the Mi 9T,
+  2026-11-17; owner directive "deterministe, pas de pansements"). `formWindowState`
+  (`form-window.ts`) is the ONE rule - `not-yet` before the opening, `closed` from the end instant on,
+  else `open` - and `isFormOpen` / `assertFormOpen` (the refusals `FORM_NOT_OPEN_YET` /
+  `FORM_CLOSED`) are built on it. `GET /forms`, `GET /forms/:id`, `GET /public/forms/:id` and the
+  close/reopen answer all carry its verdict as `windowState`. The client's `formWindowState` /
+  `isClosedForm` / `opensLater` (`formWindow.ts`) read that field, so the list badge, the public
+  page and the member page share one implementation and a phone whose clock is behind the server no
+  longer reads a just-closed form open (after the close answer, and after a refetch). The old
+  `<=` (client) against `<` (server) mismatch is gone: the end INSTANT is closed on both sides (`<=`),
+  so a close, which writes `closedAt = now`, answers `closed` from the very instant it stored - the
+  answer is computed from that same `now`, never from a second clock read.
+  - **Additive**: an older server sends no `windowState`; the client then falls back to comparing the
+    dates with its own clock and logs ONCE at warn that the server sent none (reaching it means the
+    server is older than the client: a signal, not a path). An older client ignores the field.
+  - **Every screen reads it**: the list, both fill pages and the link-preview card
+    (`formStateLabel`, "Ouvre le ...") call `formWindowState`; none compares `opensAt` / `closedAt`
+    with `Date.now()` any more (a phone behind the server drew an already-open form as "opens on
+    ..." and locked it). The two fill pages share `useFormWindow` (`useFormWindow.svelte.ts`).
+  - **The link-preview cache is acceptable as is**: the label it keeps is the server's verdict AT THE
+    READ (`windowState` of the fetched form), held for the session, like the rest of the card. It is a
+    snapshot of a past server answer, not a clock judgement that drifts - a form closed afterwards
+    shows its old card until the next session, and the page behind the card says the truth.
+    `FormCard` (a post's own form card) still takes its "opens on" from the post's `opensAt`; it
+    does not decide whether the form takes answers.
+  - **The member page** shows "Ce formulaire est ferme.", locks the questions and disables send; and
+    `handleSubmit` and `saveEdit` each refuse a closed form without a request.
+  - **While the page stays open**: a typed `FORM_CLOSED` / `FORM_NOT_OPEN_YET` refusal of a send or a
+    changed answer is the server's NEWER verdict (`windowRefusalState`): the page takes it
+    (`useFormWindow.adopt`) and redraws closed (or not-yet) at once, on the public page as on the member
+    page. A not-yet refusal on a form loaded with no `opensAt` draws "Ce formulaire n'est pas encore
+    ouvert." (no date) and disables send; a successful read of the form clears the adopted state. That covers a manager closing the
+    form, or a scheduled end coming, while a respondent has it open. **No timer switches the page at
+    the scheduled end**: the refusal path alone is judged sufficient - nothing is lost (the refused
+    answer is not stored) and a timer or a `closesInMs` countdown would be a second clock to keep
+    right for what the typed refusal already says.
+- **A form not open yet cannot be closed** (lead, 2026-11-16, during the owner's absence; reversible,
+  option (a) of the PR review). Closing writes `closedAt = now`, which would fall BEFORE a future
+  `opensAt`: every later edit was then refused `FORM_CLOSE_BEFORE_OPEN` over a date the manager
+  never typed. `setClosed` now refuses it, typed (`FORM_CLOSE_NOT_OPEN_YET`, `form-window.ts`,
+  "Ce formulaire n'est pas encore ouvert..."), and the list hides "Clore le formulaire" while the
+  opening is to come (`opensLater`); such a form takes no answer yet, so its opening is what to move
+  or clear. "Rouvrir" is unchanged. The other option, judging the window only on bounds an edit
+  writes, was not taken: it keeps a state the invariant calls impossible.
+- **A close is never written back by an edit that did not carry it**: absent, `closedAt` is left out
+  of `update`'s whole-entity save, so a close committing between an edit's read and its save stands.
+
+### A payment in progress when the form closes
+
+`assertFormOpen` has TWO call sites: `submit` (a new answer) and `editAnswer` (a respondent changing
+one). `myEditableAnswers` reads `isFormOpen` to offer nothing. Nothing else reads `closedAt`: the
+payer's return (`confirmPayment`), the provider's callbacks, `markPaid`, a cancellation and the expiry
+job settle a row through the row's own state. So when a form closes with a payment started:
+
+- the pending row keeps its seat for its 30 minutes and is paid normally (`markPaid` -> `paid`);
+- if it is never paid, the expiry job moves it to `expired` and the seat is released;
+- a late payment on an expired row is decided by capacity as before, closed or not;
+- no NEW answer is accepted (`FORM_CLOSED`), and an answer already stored cannot be edited.
+
+Tests: `forms.service.close.spec.ts` (who may, what is written, the edit keeping the end, the window)
+and `forms.service.seat-hold.spec.ts` ("a form closed while a payment is in progress").
+
+## An archived association's form is closed by its link (2026-11-14)
+
+`respondentFormWhere` carries one more clause: the form's association, when it has one, is not
+ARCHIVED (`associationArchivedSql`). So every respondent path above answers a form of an archived
+association exactly as it answers a draft - 404, or the absent-form shape on `check` - and
+`GET /forms/:id` serves it to its managers alone, judged by that same `where`. A submit and an answer
+edit read the association again `FOR SHARE` before the form's seat lock. A submitter's own answer,
+its cancellation, `confirm-payment` and the payment callbacks never read the archive, so money issued
+before it settles. The rule, the defaults taken and the proof are in
+[associations](associations.md#what-an-archive-closes).
 
 ## A form with submissions is archived, never removed (2026-10-11)
 
@@ -1841,7 +2268,7 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **`declined` and `cancelled-or-expired` are `SETTLED_REFUSED_REQUEST_STATES`**: a retry's settle frees the row on them, and `confirmPayment` releases a `pending` row to `cancelled` on them. `confirmPayment` answers `requestState` (the typed state read on that call), from which `paymentReturnVerdict` (`paymentReturn.ts`) derives `declined` / `ended`: the success page says so (`form_success_declined_*`, `form_success_ended_*`) with a retry link.
 - **The form page asks once on load.** `GET forms/:id/check` now answers the caller's own `submissionId`; when it is `pending` the page calls `confirm-payment` once, and on a dead request it re-enables the pay button (the retry) with `form_view_payment_declined_note` / `form_view_payment_ended_note`. The same mechanism covers an expired or cancelled request whose callback was lost (state 6 while the row still reads `pending`).
 - **A stale state is never answered** (review of #2210): a retry may replace the request between `confirmPayment`'s read and its answer (two tabs, the success page polling while the payer retries). `requestState` is answered only while the row still names the uuid that was read, and the client never derives `declined` / `ended` from a row still `pending`: either would offer a retry that cancels the request being paid.
-- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.md#p2---an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for-up-to-28-minutes-2026-10-21)).
+- **Not covered**: an answer whose request is still `open` (the payer closed the tab) keeps "pending" with no button until the hold ends - the server would cancel and reissue on a retry, but the page offers none ([backlog](../../backlog.d/p2-an-answer-whose-lydia-request-is-still-open-shows-pending-with-no-button-for.md)).
 
 ### The native payer's return: read on resume, and an https return on Android (2026-11-13)
 
@@ -1860,7 +2287,9 @@ Measured on dev (sandbox): a payer who DECLINES on Lydia's page leaves the reque
 - **Android returns on an https App Link** (`formCheckoutCallbacks`): `https://<public origin>/forms/success?...` instead of the custom scheme. `/forms/success` is under the `/forms/` prefix both platforms claim (`MOBILE_UNIVERSAL_LINK_PATHS`), and the server's allowlist (`isAllowedCheckoutCallbackUrl`) already accepted it - no server change. **iOS keeps the scheme** until a reading says otherwise (Safari prompts for a custom scheme rather than dropping it). The router keeps the `payment` host for builds already installed.
 - **A browser landing never accuses.** When the https return stays in the phone's browser - a redirect the browser does not hand to the app, and ALWAYS on a pre-release build, since `dev.canari-emse.fr` is not an App Link host - `/forms/success` is read with whatever session that browser has. With none, the boot sends it to `/login` with the return behind it, and the login page now says "Paiement transmis à Lydia - retournez dans l'application Canari pour voir sa confirmation" with an "Ouvrir Canari" link (`paymentReturnSubmissionId`, `formPaymentReturnDeepLink`: the app's own `payment/success` link, which a TAP may open where a redirect could not). With a session that may not read the answer (401 / 403, `isConfirmUnreadableHere`), `/forms/success` says the same instead of "Paiement introuvable".
 
-**Not covered.** The shop (`ProductPurchaseButton.svelte`) and the public form (`/f/:id`) hand the payer to Lydia the same way and still rely on their return URLs (the shop's `/shop` IS an App Link path, `android:path="/shop"`; its return keeps the custom scheme on phones). `dev.canari-emse.fr` is not an App Link host, so a pre-release's https return always stays in the browser - adding it is a separate change. A WebView killed while the payer is in the browser reloads the form, whose load-time read covers it but without the reopen button. Lydia's page inside the app is [a separate question](../../backlog.d/lydia-payer-page-inside-the-app.md).
+**The shop follows the same mechanism (2026-11-13).** `ProductPurchaseButton.svelte`, on a native phone, keeps the attempt after `navigateExternal` (`checkoutId` from `createProductCheckout`), says "Paiement en cours sur Lydia" with "Rouvrir la page de paiement", and reads it ONCE per return of the app to the screen through `createShopCheckoutReader` (`lib/shop/checkoutReturn.ts`, over the same `createOnceReader` / `readUnlessThrottled` the form page's reader is built on): the read is `confirmProductCheckout`, the call `/shop` already polls, worded by `checkoutReturnText`, which the shop page's banner now uses too. 429 stays "waiting", 404 says "introuvable", another failure keeps the note. The reader is the attempt's identity (a read landing after a newer purchase is dropped). Android now returns on the https `/shop` link (`shopCheckoutCallbacks`; `/shop` is an App Link path), iOS keeps the scheme. The watch starts BEFORE `navigateExternal` (here and on the form page): the browser may open and the call still reject, or resolve after the app already returned. A paid read says so in the button's own line and disables the button for a product that cannot be repeated; it does not reload the product listing. A buyer left in the phone's browser with no session sees, on `/shop` or behind `/login`, the same "Paiement transmis à Lydia" + "Ouvrir Canari" notice as a form payer (`PaymentHandedNotice`, `paymentReturnAppLink`).
+
+**Not covered.** The public form (`/f/:id`) hands the guest to Lydia the same way but has NO read to use: its only key is the receipt, minted by the server and handed once in the Lydia return URL (`/f/:id/receipt?receipt=...`); the submit reply carries only `checkoutUrl`. Reading on return would need the receipt in that reply, a change to the security surface above that is a server decision, not taken here. `dev.canari-emse.fr` is not an App Link host, so a pre-release's https return always stays in the browser - adding it is a separate change. A WebView killed while the payer is in the browser reloads the form, whose load-time read covers it but without the reopen button (the shop button, being component state, loses its note the same way). Also not covered: no load-time read for a shop purchase (a page opened fresh after the browser was left reads nothing until the next return), the button's read does not share its in-flight guard with `/shop`'s own poll (two reads of one attempt may overlap; both are replays), and a remount on the same route loses the note. The https return's effect on Android is INFERRED from the sandbox measurement for forms, not measured for `/shop`; the landing notice is written for the case where it does not reach the app. Lydia's page inside the app is [a separate question](../../backlog.d/lydia-payer-page-inside-the-app.md).
 
 ### D1-D3 (user, 2026-10-15) and where each stands
 
@@ -1945,28 +2374,58 @@ order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the pri
 category. No stock (a pre-order); no total cap per order (the cap per cell is enough); a second
 order is a second answer (`allowMultipleSubmissions`), never an edit.
 
-**The ORDER is required, never one grid (decided 2026-11-06, for `1.6.6`).** A merch form holds one
-grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell) and a buyer orders
-whichever they want, so any single grid may be left untouched; what is refused is an answer whose
-VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per submit, `itemId`
-null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
-buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
-neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
-A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
-selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+**Each grid has its own "Obligatoire" switch, OFF by default (owner, 2026-11-13, for `1.6.12`).**
+A merch form holds one grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell)
+and a buyer orders whichever they want, so a grid is optional unless its manager switches it on;
+switched on, a VISIBLE grid demands at least ONE unit of its own (no configurable number). A grid
+hidden by an audience or an answer condition is never demanded. **No rule spans the grids**: a form
+whose grids are all optional accepts an answer with no article at all, which the owner intends
+(*"Avoir des règles globales interdit des formulaires moins conventionnels, il faut éviter les
+règles globales"*). History in one line: a per-grid rule of WP-G1 (every article demanded) became on
+2026-11-06 a rule over the whole order (`PRODUCT_GRID_EMPTY`, one unit across the visible grids,
+`required` stored `true` and meaningless), which this switch replaced.
 
-**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
-view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
-end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
+**One predicate, both sides.** A grid is answered when it holds >= 1 unit: `productGridOrdered` in
+the shared contract, read by the fill page (`isItemAnswered`, `firstMissingAnswer`) and by the submit
+(`FormsService.submit`). A required grid left empty is refused like every other required question:
+`FORM_ANSWER_MISSING` with the grid's `itemId` on the server, `MissingAnswer { itemId, kind: 'grid' }`
+on the page, said on the grid's own card ("Commandez au moins un article de 'Sweat'"), which is
+scrolled into view. An order in another grid does not rescue it.
 
-**`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
-refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
-(`toFormItemsPayload`) and no longer draws the switch or the asterisk; the fill page draws no
-asterisk on a grid and `firstMissingAnswer` skips grids, then asks the order. Chosen over dropping
-the flag because (1) every form already saved stays valid with no migration, and (2) a build older
-than WP-G2, which cannot draw the type and knows only "a required question of a type I do not
-know", keeps holding the send with "mettez à jour l'application" instead of sending the form
-without its order.
+**The stored flags were turned off by migration 164** (held, a backfill): every grid saved before the
+switch held `required: true`, and honouring that as it stood would have demanded one of EVERY article -
+the defect of 2026-11-06. 164 sets `required: false` on every stored grid, keeps every other question
+and key, and moves the base of an open revision built on the form (so its publication is not refused
+`FORM_CHANGED_SINCE_REVISION`); `product-grid-required.integration.spec.ts` proves it, the idempotence
+and the ROLLBACK statement of its header.
+
+**An editor older than the switch** (native `1.6.6`..`1.6.11`) sends `required: true` on every grid,
+meaning nothing. This editor marks its payload `gridRequiredSwitch: true` (`GRID_REQUIRED_SWITCH`,
+never stored); a save WITHOUT it keeps each grid's STORED flag and stores a new grid optional
+(`productGridRequiredOnSave`, the contract) - an old editor neither makes a grid required by surprise
+nor drops a choice a newer one made. A revision such an editor saved opens here with the same rule
+(`revisionItems`). [LEGACY] in [legacy-compatibility](../../legacy-compatibility.md). An older FILL
+page still holds a send on "Commandez au moins un article" across the grids (stricter than the server)
+and does not mark a required grid's card - the server's `FORM_ANSWER_MISSING` then words it.
+
+**A newer app reaching a SERVER older than the switch** (a store build lives on phones days before
+production deploys) is the reverse hazard: that server refuses a grid sent optional
+(`PRODUCT_GRID_NOT_REQUIRED`), drops `gridRequiredSwitch`, and refuses an empty order
+(`PRODUCT_GRID_EMPTY`). So core-service's `GET /api/version` says `gridRequiredSwitch: true`, and the
+client reads it through ONE gate, `gridRequiredSwitchOn()` (`lib/forms/gridRequiredGate.ts`). Off -
+an older server, or no answer yet - the editor draws no switch and no asterisk on a grid and sends
+every grid `required: true` without the marker; the fill pages ignore a grid's flag and hold an
+empty ORDER across the visible grids beside the send button (`firstMissingAnswer(..., gridSwitch)`,
+kind `order`). The two old codes keep their words. [LEGACY] in
+[legacy-compatibility](../../legacy-compatibility.md), "a form editor or fill page newer than its
+server's priced grids".
+
+**An empty send on a once-only form is that person's answer.** A send with every grid optional and
+empty is stored `free` at 0, and `answerHoldingWhere` counts `free`: on a form with
+`allowMultipleSubmissions` off, that person's later real order is refused `409 ALREADY_ANSWERED`,
+exactly as a once-only form sent without an article always was. Adding a grid turns "plusieurs
+reponses" on in the editor, so a manager reaches this only by turning it back off.
+`product-grid.integration.spec.ts` pins it.
 
 ### One contract, copied byte for byte
 
@@ -1981,7 +2440,7 @@ The definition is nested under `item.productGrid` (not flat on the item as the a
 DTO's `rows?: string[]` already belongs to the survey grids and cannot also hold objects.
 
 ```ts
-item = { id, type: 'product_grid', label, required: true, showIf?, productGrid: {
+item = { id, type: 'product_grid', label, required, showIf?, productGrid: {   // required: the switch
   rows: [{ id, label }], columns: [{ id, label }],     // ids /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/
   maxPerCell: 1..99,                                    // 1 = a checkbox, more = a stepper
   closedCells: ['rowId:colId'],                         // "no Creme in XS": cannot be ordered
@@ -1997,7 +2456,7 @@ answer = { 'rowId:colId': quantity }                    // zero cells omitted wh
 ### The save (`FormsService.create`/`update` -> `normaliseProductGridItems`, `forms/product-grid.ts`)
 
 Each refusal is a 400 `{ code, message, itemId }`: `PRODUCT_GRID_DEFINITION_MISSING`,
-`_NOT_REQUIRED`, `_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
+`_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
 anonymous grid form impossible), `_AXIS_INVALID` (1..40 rows, 1..15 columns), `_ID_INVALID`,
 `_DUPLICATE_ID`, `_LABEL_INVALID` (empty or over 100), `_DUPLICATE_LABEL` (per axis, trimmed and
 case-folded - the survey grids' row rule should match it), `_MAX_PER_CELL_INVALID`,
@@ -2007,7 +2466,8 @@ sell, a promo that is no year - or two categories that can hold one person, or a
 personal form), `_GUEST_PRICE_MISSING` (a public form without the price a guest pays, named before
 the rest of completeness), `_PRICES_INCOMPLETE` (exactly one price per category x axis key),
 `_PRICE_INVALID` (integer cents, 0..1 000 000). The grid is STORED normalised: known fields only,
-labels trimmed, the tier criterion as the parser returned it. An edit that only opens the link or
+labels trimmed, the tier criterion as the parser returned it, `required` as
+`productGridRequiredOnSave` decides (above). An edit that only opens the link or
 switches payment off is judged against the stored grids. A `productGrid` sent on another type is
 dropped. The prices enter `priceFingerprint`, so a list moving a grid price meets
 `assertKindMayPrice` like any other price.
@@ -2027,9 +2487,9 @@ judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (a non-object - a string, 
 cannot draw the type, which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`,
 `_QUANTITY_INVALID` (not an integer in 0..maxPerCell), `_CELL_CLOSED` - then prices it at the
 viewer's category. An ABSENT answer, `{}` or all zeros is an untouched grid: 0 units, no line, and
-nothing stored under its id (a `{}` sent is dropped from the stored answers). After the loop, visible
-grids holding 0 units between them refuse the whole submit `PRODUCT_GRID_EMPTY` with `itemId: null`
-(`productGridOrderEmpty`), before any row is written - member and guest alike. The stored answer is
+nothing stored under its id (a `{}` sent is dropped from the stored answers). A grid switched
+"Obligatoire" holding 0 units refuses the submit `FORM_ANSWER_MISSING` with ITS `itemId`
+(`productGridOrdered`), before any row is written - member and guest alike. The stored answer is
 the judged one; the lines' sum joins `totalCents` with the base price
 (or the price grid's cell) and the choice supplements. A grid order whose total exceeds
 `PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
@@ -2072,8 +2532,8 @@ drawn with the app's tokens.
 - **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
   (`productGridFill.ts` `withCellQuantity`: clamped to 0..`maxPerCell`, a cell at 0 dropped, a new
   object per write so `bind:value` sees it), sent through the unchanged submit path.
-  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit
-  (`kind: 'order'`). The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
+  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit of a
+  REQUIRED grid (`kind: 'grid'`). The card draws the asterisk of a required grid. The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
   `product_grid` (`questionTypes.test.ts` asserts the fill page draws every canonical type).
 - **The total.** `fillPriceState` takes `productGridPrices` and returns `gridLines` (every visible
   grid's lines, `productGridOrderLines` -> the contract's `parseProductGridAnswer` +
@@ -2091,15 +2551,14 @@ drawn with the app's tokens.
   (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
   `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
   absent when no visible grid prices by category.
-- **Refusals.** A send with no article in ANY visible grid is held by ONE sentence for the form,
-  beside the send button ("Commandez au moins un article", `MissingAnswer` `{ itemId: null, kind:
-  'order' }`, checked after every required question); no grid card is marked, and an untouched
-  grid next to an ordered one is no fault. A required question of another type is still held on
-  its own card (`MissingAnswer` carries its `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
-  (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
-  offered"; `_EMPTY`), reached through the ONE entry point both pages call,
-  `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
-  any code that is not a form's own. An empty order is also left out of the answer sent
+- **Refusals.** A REQUIRED grid with no unit holds the send on its own card ("Commandez au moins un
+  article de ...", `MissingAnswer` `{ itemId, kind: 'grid' }`), scrolled into view like any required
+  question; an optional grid is never a fault, and nothing is said for the form as a whole. The
+  server's four answer codes are worded by `productGridRefusalMessage` (`PRODUCT_GRID_ANSWER_MISSING`
+  -> reload or update; the three cell codes -> "an item is no longer offered"), reached through the
+  ONE entry point both pages call, `formSubmitRefusalMessage` (`answerBounds.ts`), whose
+  `formCodeMessage` falls through to it for any code that is not a form's own; a required grid the
+  server finds empty is its `FORM_ANSWER_MISSING`. An untouched grid is left out of the answer sent
   (`visibleAnswers`).
 
 Tests: `productGridFill.test.ts` (clamping, lines and total across two grids, a hidden grid, missing
@@ -2202,10 +2661,11 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
   (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
   a blank price absent) - so the preview cannot draw a grid the fill page would not.
-- **No required switch**: adding a grid (or turning a question into one) sets the stored
-  `required` (see "The ORDER is required, never one grid" above), and the card draws neither the
-  switch nor the asterisk; `productGridItemProblem` judges the grid as sent, `required: true`, so
-  the editor never flags a grid for it. Adding a grid also calls the page's `onPricedGridAdded`, which switches
+- **The "Obligatoire" switch**, the card's asterisk button like every question's (owner,
+  2026-11-13): a new grid (or a question turned into one) starts OFF; the folded row of a required
+  grid wears the asterisk. `toFormItemsPayload` sends the flag as the card holds it, and every
+  payload carries `gridRequiredSwitch: true` (see "Each grid has its own Obligatoire switch" above).
+  `productGridItemProblem` never flags a grid for its flag. Adding a grid also calls the page's `onPricedGridAdded`, which switches
   `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
   turn it off. **It goes back off only if the editor turned it on**: the page keeps
   `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /

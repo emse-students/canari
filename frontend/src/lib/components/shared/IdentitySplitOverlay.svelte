@@ -19,7 +19,9 @@
     signingOut = true;
     try {
       console.warn('[AUTH] Sign-out from the identity-split notice - ending the session.');
-      await clearAuth().catch((e) => console.error('[AUTH] Sign-out: clearAuth failed - ' + e));
+      await clearAuth('identity-split').catch((e) =>
+        console.error('[AUTH] Sign-out: clearAuth failed - ' + e)
+      );
       await leaveSignedOut();
     } finally {
       signingOut = false;

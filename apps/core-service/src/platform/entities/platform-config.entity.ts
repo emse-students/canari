@@ -86,6 +86,65 @@ export class PlatformConfig {
     default: 'off',
   })
   liveReplaysMode!: LiveReplaysMode;
+
+  /**
+   * Whether a group conversation may hold a call (migration 022). Read by chat-delivery-service at
+   * `initiate`; published by `GET /api/version` as `calls.groupMode`. `calls_mode = off` still wins.
+   */
+  @Column({
+    name: 'group_calls_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  groupCallsMode!: GroupCallsMode;
+
+  /**
+   * Which relay carries a group call (migration 023, `cloudflare` allowed by 026). Read by chat-delivery-service at a
+   * group call's `initiate`; published by `GET /api/version` as `calls.relay`.
+   */
+  @Column({
+    name: 'call_relay',
+    type: 'varchar',
+    length: 16,
+    default: 'none',
+  })
+  callRelay!: CallRelay;
+
+  /**
+   * The date every Lydia contract year starts on (migration 024), `YYYY-MM-DD`; NULL = not
+   * configured. Read by `LydiaContractService` only, never published (docs/wiki/lydia-contract-flux.md).
+   */
+  @Column({ name: 'lydia_contract_anniversary', type: 'date', nullable: true })
+  lydiaContractAnniversary!: string | null;
+
+  /**
+   * The rest of the Lydia contract terms (migration 024): `LydiaContractTerms`, validated by
+   * `parseLydiaContractTerms` on every write and read; NULL = nothing entered. Confidential: read by
+   * `LydiaContractService` only, never published.
+   */
+  @Column({ name: 'lydia_contract', type: 'jsonb', nullable: true })
+  lydiaContract!: unknown;
+
+  /**
+   * The retention durations, in days (migration 025, `../retention.ts`): read at the CREATION of each
+   * item by the service that stamps its expiry, so a change applies to new content only. Published by
+   * `GET /api/version` as `retention`, which the privacy policy renders.
+   */
+  @Column({ name: 'retention_reel_days', type: 'int', default: 365 })
+  retentionReelDays!: number;
+
+  /** See {@link retentionReelDays}: a live replay, from the live's end. */
+  @Column({ name: 'retention_live_replay_days', type: 'int', default: 3 })
+  retentionLiveReplayDays!: number;
+
+  /** See {@link retentionReelDays}: a CanaReel sent in a conversation, from its upload or hold. */
+  @Column({ name: 'retention_chat_reel_days', type: 'int', default: 30 })
+  retentionChatReelDays!: number;
+
+  /** See {@link retentionReelDays}: a file sent in a conversation, from its last download. */
+  @Column({ name: 'retention_idle_file_days', type: 'int', default: 90 })
+  retentionIdleFileDays!: number;
 }
 
 /**
@@ -149,3 +208,26 @@ export type LiveReplaysMode = 'off' | 'on';
 
 /** Every {@link LiveReplaysMode}, for the DTO's validation. */
 export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
+
+/**
+ * Whether a group conversation may hold a call (owner decision D-A). `off` refuses every group
+ * `initiate` (403 `GROUP_CALLS_DISABLED`); `mesh` allows peer-to-peer group calls up to 4 participants
+ * in audio and 3 in video. Read by chat-delivery-service at `initiate`, held together with the column's
+ * CHECK and the frontend by `groupCallsModesAgree.test.ts`. `callsMode = off` still closes everything.
+ */
+export type GroupCallsMode = 'off' | 'mesh';
+
+/** Every {@link GroupCallsMode}, for the DTO's validation. */
+export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
+
+/**
+ * Which relay carries a group call (owner decision D2). `none`: the mesh, and the participant past
+ * its cap is refused; `call-service`: our Rust SFU carries the group call from the start (interim,
+ * until WP-GC5's mid-call switch); `cloudflare`: Cloudflare Realtime carries it the same way,
+ * through chat-delivery's proxy (WP-GC3). Held together with the column's CHECK, chat-delivery's
+ * reader and the frontend by `callRelaysAgree.test.ts`.
+ */
+export type CallRelay = 'none' | 'call-service' | 'cloudflare';
+
+/** Every {@link CallRelay}, for the DTO's validation. */
+export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service', 'cloudflare'];

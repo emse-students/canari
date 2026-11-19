@@ -359,11 +359,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/chat/ForwardMessageModal.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 1
-  },
   "src/lib/components/chat/GifGrid.svelte": {
     "button": 4,
     "select": 0,
@@ -480,7 +475,7 @@
     "input": 0
   },
   "src/lib/components/live/LiveBroadcaster.svelte": {
-    "button": 9,
+    "button": 8,
     "select": 0,
     "input": 0
   },
@@ -744,13 +739,8 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/posts/PostForms.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/posts/PostMedia.svelte": {
-    "button": 4,
+    "button": 2,
     "select": 0,
     "input": 0
   },
@@ -895,9 +885,9 @@
     "input": 0
   },
   "src/lib/components/reels/ReelSendSheet.svelte": {
-    "button": 4,
+    "button": 2,
     "select": 0,
-    "input": 1
+    "input": 0
   },
   "src/lib/components/reels/ReelShutter.svelte": {
     "button": 1,
@@ -1094,11 +1084,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/sidebar/SidebarNewChatModal.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 1
-  },
   "src/lib/components/sidebar/SidebarNewCommunityModal.svelte": {
     "button": 1,
     "select": 0,
@@ -1212,7 +1197,7 @@
   "src/routes/directory/+page.svelte": {
     "button": 1,
     "select": 0,
-    "input": 3
+    "input": 0
   },
   "src/routes/documents/+page.svelte": {
     "button": 2,

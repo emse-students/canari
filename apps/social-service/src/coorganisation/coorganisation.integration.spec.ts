@@ -38,6 +38,7 @@ import { Proposal } from '../proposals/proposal.entity';
 import { ProposalsService } from '../proposals/proposals.service';
 import { type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
 import { CoorganisationService } from './coorganisation.service';
+import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -85,31 +86,25 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
   /**
    * Resolves once ANY statement of THIS suite's pool (matched by its `application_name`, never by
    * its text, and never the polling connection) is WAITING on a lock. No sleep: the loop ends on
-   * that observable condition, and it
-   * FAILS, explicitly, when `settled` (the concurrent request) completes first - that would mean
-   * it never waited, which is the very thing under test.
+   * that observable condition, and it FAILS, with a message ({@link untilWaiting}), when `settled`
+   * (the concurrent request) completes first - it never waited, the very thing under test - or when
+   * a bound of reads goes by.
    */
   async function lockWaiter(settled: Promise<unknown>): Promise<void> {
-    const done = settled.then(
-      () => 'settled' as const,
-      () => 'settled' as const
-    );
-    for (;;) {
-      const waiting = (await q(
-        `SELECT 1 FROM pg_stat_activity
-          WHERE datname = current_database() AND application_name = $1
-            AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
-        [schema]
-      )) as unknown[];
-      if (waiting.length > 0) return;
-      const next = await Promise.race([
-        done,
-        new Promise<'tick'>((resolve) => setImmediate(() => resolve('tick'))),
-      ]);
-      if (next === 'settled') {
-        throw new Error('the concurrent request completed without waiting on the lock');
-      }
-    }
+    await untilWaiting({
+      what: 'the concurrent request',
+      settled: settledFlag(settled),
+      waiting: async () =>
+        (
+          (await q(
+            `SELECT 1 FROM pg_stat_activity
+              WHERE datname = current_database() AND application_name = $1
+                AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+            [schema]
+          )) as unknown[]
+        ).length,
+      dump: () => q(ACTIVITY_DUMP_SQL),
+    });
   }
 
   /** The agenda a signed-in reader is served, as event ids. */
@@ -189,9 +184,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       CREATE TABLE association_role_history (association_id uuid, user_id varchar);
       CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
       CREATE TABLE form_respondents ("formId" uuid, "userId" varchar);
-      CREATE TABLE lydia_cashiers ("associationId" uuid, "vendorToken" varchar, "userId" varchar,
-        "addedByUserId" varchar, "removedAt" timestamptz);
     `);
+    // The Lydia cashier rows as production has them: the association delete and the erasure read
+    // their role, numbers and the cashier claim (review of the 1.7.1 flip), so a stand-in table
+    // would test a schema nothing runs.
+    await q(migration('118_lydia_cashiers_and_readiness.sql'));
+    await q(migration('119_lydia_cashiers_lot3.sql'));
+    await q('RESET lock_timeout');
     // The readers' bells, which the association delete and the erasure both write (engagement WP-3).
     await q(migration('142_account_bells.sql'));
     // A validated event tells its association's followers of it (engagement WP-4): the follows, and
@@ -502,16 +501,21 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
      * the lock graph shows it, never timed: no verdict rests on a duration.
      */
     async function nextWaiterOn(holders: number[], known: number[] = []): Promise<number> {
-      for (let i = 0; i < 5000; i++) {
-        const rows: { pid: number }[] = await q(
-          `SELECT pid FROM pg_stat_activity
-            WHERE pg_blocking_pids(pid) && $1::int[] AND NOT (pid = ANY($2::int[]))`,
-          [holders, known]
-        );
-        if (rows.length > 0) return rows[0].pid;
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      throw new Error(`nothing came to wait on ${holders.join(',')}`);
+      let pid = 0;
+      await untilWaiting({
+        what: `a waiter on ${holders.join(',')}`,
+        waiting: async () => {
+          const rows: { pid: number }[] = await q(
+            `SELECT pid FROM pg_stat_activity
+              WHERE pg_blocking_pids(pid) && $1::int[] AND NOT (pid = ANY($2::int[]))`,
+            [holders, known]
+          );
+          if (rows.length > 0) pid = rows[0].pid;
+          return rows.length;
+        },
+        dump: () => q(ACTIVITY_DUMP_SQL),
+      });
+      return pid;
     }
 
     it('a co-organisation decision and the organiser`s delete both complete (no 40P01)', async () => {
@@ -1349,6 +1353,12 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await Promise.all(spy.mock.results.map((r) => r.value));
       expect(reopenNotices()).toEqual([['event_pending', ['coEd', 'coPub'], 'Reopen 33']]);
       expect(told.filter((t) => t.type === 'event_proposed')).toHaveLength(1);
+      // It names its event, so the bell can re-ask a validator-and-party's row (`BELL_ROW_GATE`).
+      expect(told.find((t) => t.type === 'event_proposed')?.meta).toEqual({
+        reason: 'date_moved',
+        audience: 'validators',
+        eventId: MOVED,
+      });
       expect((await stamp(MOVED)).status).toBe('pending');
     });
 
@@ -1373,6 +1383,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         told.length = 0;
         await proposals.accept(proposalId, 'coPub', false);
         expect(validatorNotices().map((t) => t.recipientIds)).toEqual([['org']]);
+        // Their row records that it replaced their party notice: the bell keeps it by either right.
+        expect(validatorNotices()[0].meta).toEqual({
+          reason: 'coorganiser_joined',
+          audience: 'validators',
+          eventId: DUP,
+          toldAsParty: true,
+        });
         // The parties' notice no longer lists 'org': only the partner's other editor remains.
         expect(reopenNotices()).toEqual([['event_pending_coorganiser', ['coEd'], 'Reopen dup']]);
       } finally {
@@ -1721,7 +1738,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
           []
         );
         expect(warn).toHaveBeenCalledWith(
-          expect.stringContaining('were not told'),
+          expect.stringContaining('were not all told'),
           expect.stringContaining('connection terminated')
         );
       } finally {

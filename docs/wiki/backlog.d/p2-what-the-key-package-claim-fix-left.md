@@ -1,5 +1,7 @@
 ## P2 - what the key-package claim fix left: the sweep claims before reading the tree, and the empty-pool WARN fires once per serve
 
+target: 1.10.0
+
 The storm of 2026-11-06 and the fixes for it are in
 [key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06):
 #3060 (the sweep and the `welcome_request` answer claim one device, the own-publication read peeks),
@@ -10,11 +12,13 @@ shared in flight. What is left, in order:
   carries the list peek** (read-only, `docker logs` of chat-delivery-service). Installed clients
   below it keep claiming on their roster reads until they update, so the rate falls as they do; a
   rate that stays high with the population upgraded names an adder, and the line names the device.
-- **The pending sweep claims before it asks whether the device is already a leaf.** A fulfilled
-  invitation is vouched and the claimed package is discarded. The tree read needs no package, but
-  moving it first changes the order against the refusal cleanup (a revoked device already in the
-  tree would be vouched rather than its row deleted), so it needs a decision and a test of that case.
-- **Still refilled only at connection** - [backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable).
+- **Done (#3799): the pending sweep claims last** - after the leaf
+  check and after the add lock, so a fulfilled invitation and a refused lock spend no package. The
+  case the order was held for, a revoked device already in the tree, is vouched rather than its row
+  deleted, and that changes nothing: `getPendingInvitations` never serves a revoked device's row and
+  the server refuses to activate one
+  ([chat](../frontend/modules/chat.md#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
+- **Still refilled only at connection** - [backlog](p2-a-device-s-one-time-keypackage-pool-is-topped-up-only-when-it-connects.md).
   A new device admitted to more than 50 groups in one sitting empties its pool by design, and the
   rest of its Welcomes share the static row's init key.
 - **The `[KP] one-time pool EMPTY` WARN fires once per serve**: 176 lines for one device on one

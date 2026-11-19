@@ -5,12 +5,14 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { bindGroupTreeReader } from '$lib/utils/chat/groupTreeMembers';
 import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { forgetConversationPins } from '$lib/stores/pinStore.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
+import { gotoLoginAfterExpiry } from '$lib/navigation/gotoLoginAfterExpiry';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
 import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
@@ -85,6 +87,7 @@ import {
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
+  isAccountErasedOnServer,
   revokedDeviceOfEndedSession,
   signOutGeneration,
 } from '$lib/stores/auth';
@@ -137,7 +140,7 @@ import { resetWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { canSendInGroup } from '$lib/utils/chat/groupUsability';
+import { canSendInGroup, holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
@@ -194,6 +197,7 @@ import {
   wipeDeviceToFactory,
 } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
+import { sessionPushAuth } from '$lib/services/sessionPushAuth';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
@@ -269,6 +273,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { takeBackgroundJoins } from '$lib/utils/chat/backgroundJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
@@ -392,6 +397,8 @@ function announceGroupReady(
  * `promoteOfflineSession` takes in one (`initializeConnection`) because by then the conversations
  * are already loaded. ONE bag for all three - a second, hand-copied version would drift the moment
  * any of them gained a callback.
+ *
+ * @public Exported for the source-scanning test `offlineUnlock.test.ts`, which reads the text.
  */
 export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return {
@@ -465,31 +472,15 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       resume?: { persist: (state: import('$lib/db/types').OutboxResumableUpload) => Promise<void> }
     ) => {
       const { MediaService } = await import('$lib/media');
-      const bytes = media.fileBytes ?? new Uint8Array(0);
-      const retentionClass = uploadClassFor(media);
-      // A CHAT REEL GOES THROUGH A RESUMABLE SESSION (RC-5): a cut or a kill resends only the parts
-      // the server lacks. It is sealed from the outbox's own bytes, part by part - no `File` copy.
-      // Everything else keeps the one-shot route it always took.
-      if (retentionClass === 'chat-reel' && resume) {
-        return new MediaService().uploadResumably(
-          bytes,
-          { mimeType: media.mimeType, fileName: media.fileName },
-          getToken,
-          { width: media.width, height: media.height },
-          retentionClass,
-          { state: media.upload, persist: resume.persist },
-          transport
-        );
-      }
-      const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
-        type: media.mimeType,
-      });
-      const token = await getToken();
-      return new MediaService().encryptAndUpload(
-        file,
-        token,
+      // A CHAT REEL, AND ANY FILE OVER ONE REQUEST BODY, GOES THROUGH A RESUMABLE SESSION: a cut or
+      // a kill resends only the parts the server lacks. The route is `MediaService`'s to decide.
+      return new MediaService().uploadQueuedAttachment(
+        media.fileBytes ?? new Uint8Array(0),
+        { mimeType: media.mimeType, fileName: media.fileName },
+        getToken,
         { width: media.width, height: media.height },
-        retentionClass,
+        uploadClassFor(media),
+        resume && { state: media.upload, persist: resume.persist },
         transport
       );
     },
@@ -545,7 +536,7 @@ function releaserFor(ownerId: string): SessionReleaser {
  * came from and in nothing else, so they are one call with one deferral policy; what that policy is,
  * and why a drain must be able to re-defer, is on {@link serveWelcomeRequest}.
  */
-export function makeWelcomeRequestContext(
+function makeWelcomeRequestContext(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): WelcomeRequestContext {
@@ -999,7 +990,7 @@ async function runRevokedDeviceWipe(ctx: SessionContext, cb: ChatSessionCallback
     // marker to name the account's keystore entry, so the session end leaves them to it.
     const scope = await revokedWipeScope(userId);
     await endAccountSessionLocally(ctx, userId, cb, { eraseAccountRecords: scope === 'install' });
-    await clearAuth();
+    await clearAuth('device-revoked');
     if (scope === 'install') {
       await wipeDeviceToFactory();
     } else {
@@ -1598,7 +1589,7 @@ export async function loginImpl(
         // The redirect first, the preview after it (synchronous), the flag last: nothing here may
         // wait on the store, and a second login must not start while this one's preview is up.
         if (cb.onSessionExpired) cb.onSessionExpired();
-        else void goto(resolve('/login'), { replace: true });
+        else void gotoLoginAfterExpiry();
         withdrawLandingPreview('session expired');
         releaseLoginFlag();
         return;
@@ -1625,7 +1616,7 @@ export async function loginImpl(
         // all local, and `promoteOfflineSession` settles the session when the network returns.
         offlineSession = true;
         accessToken = '';
-        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerUnreachable('login without a token');
         cb.log('[LOGIN] Offline unlock (no token) - local session, will promote on reconnect.');
       } else {
         // The PIN path genuinely cannot continue: the salt it needs lives on the server. Keep the
@@ -2002,6 +1993,10 @@ export async function loginImpl(
     // 26): their trees are in the state just loaded, their registry rows are not - until this.
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
+    // And the CONVERSATIONS it joined: each owes its register (`registerOwed.ts`) as one the page
+    // joined does, and its redelivered Welcome is taken as the admission it was (`backgroundJoins.ts`).
+    // After the registry restore above, which is what tells a key group apart; before the drain.
+    await takeBackgroundJoins(mlsService, ctx.getUserId(), (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
     // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
     // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
@@ -2159,7 +2154,7 @@ export async function loginImpl(
     if (offlineSession) {
       cb.log('[PUSH] Registration deferred - offline session.');
     } else {
-      void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
+      void startPushService(ctx.getHistoryBaseUrl(), sessionPushAuth, ctx.getMyDeviceId())
         .then(async () => {
           cb.log('[PUSH] Push token registration complete.');
           if (!isTauriRuntime()) return;
@@ -2295,6 +2290,13 @@ export async function loginImpl(
         patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
+    // An unnamed group is labelled by who its tree holds, read from THIS session's MLS state.
+    bindGroupTreeReader({
+      // An UNKNOWN held set (a listing that failed) says nothing about absence: fall through to the
+      // read, whose refusal is then reported rather than silently skipped.
+      holds: (groupId) => !mlsService.heldGroupsKnown() || holdsGroupState(mlsService, groupId),
+      read: (groupId) => mlsService.getGroupMemberIdentities(groupId),
+    });
     setupMessageHandler({
       mlsService,
       storage: ctx.getStorage(),
@@ -2322,6 +2324,7 @@ export async function loginImpl(
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
       onSalonUnreadCleared: cb.onSalonUnreadCleared,
+      onSalonArrivalUncounted: cb.onSalonArrivalUncounted,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,
@@ -2341,14 +2344,16 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
+      onInboundReaction: cb.onInboundReaction,
+      onCallSignal: (senderId: string, groupId: string, callMsg, at, group) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
           ctx.getUserId(),
-          at
+          at,
+          group
         );
         void ctx
           .getCallService()
@@ -2357,7 +2362,8 @@ export async function loginImpl(
             groupId,
             callMsg,
             ctx.getUserId(),
-            ctx.ensureMls().getDeviceId()
+            ctx.ensureMls().getDeviceId(),
+            group
           );
       },
       // The group just became sendable (a Welcome processed): the one seam an external join shares.
@@ -2386,14 +2392,8 @@ export async function loginImpl(
       log: cb.log,
     });
 
-    if (cb.beginBulkMessageIngest && cb.endBulkMessageIngest) {
-      const beginUi = cb.beginBulkMessageIngest;
-      const endUi = cb.endBulkMessageIngest;
-      mlsService.addBulkIngestObserver({
-        onBulkIngestStart: (phase) => beginUi(phase),
-        onBulkIngestEnd: (phase) => endUi(phase),
-      });
-    }
+    // The UI buffer holds rows of frames already applied: a checkpoint stores them first.
+    if (cb.messageIngestObserver) mlsService.addBulkIngestObserver(cb.messageIngestObserver);
     // The new-device notices consume the device events from here on, and drain what is pending.
     registerDeviceNotices(mlsService, {
       getUserId: () => ctx.getUserId(),
@@ -2601,7 +2601,7 @@ export async function loginImpl(
     // calling it here before the WebSocket is opened is redundant.
 
     if ('onWelcomeProcessed' in mlsService) {
-      (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {
+      (mlsService as any).onWelcomeProcessed(async (groupId?: string, installed?: boolean) => {
         if (groupId) {
           cb.log(`[SYNC] Welcome processed for ${groupId}, refreshing...`);
           if (!cb.conversations.has(groupId)) {
@@ -2623,12 +2623,16 @@ export async function loginImpl(
             await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
               cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
             );
-            // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
-            // inviter pushes a bundle on the foreground add path, but its background twin
-            // (send-welcome-and-commit) does not, so we compare here as well - which costs one
-            // frame when the bundle already arrived, and repairs the group when it did not.
-            await reconcileGroup(mlsService, groupId, cb.log);
           }
+          // FRESH JOIN: the Welcome lands us at the current epoch with no pre-join history, and our
+          // own reconciliation is what brings it - the inviter's push carries the conversation's
+          // state and no message since 2026-11-17, and a device it never reached is owed even that
+          // (`registerOwed.ts`: this probe asks for it). Run for every Welcome that INSTALLED the
+          // group - a fact the handler records (`noteWelcomeInstalled`), not the row: inside the
+          // branch above it ran only when the envelope's id differed from the joined one, because the
+          // Welcome handler has already written the joined group's row by the time this callback
+          // runs. A redelivered Welcome of a group already held joins nothing and asks nothing.
+          if (installed) await reconcileGroup(mlsService, groupId, cb.log);
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
           );
@@ -2693,14 +2697,19 @@ export async function loginImpl(
     // The only place holding the store, the device key and the MLS client at once, so it is where
     // the reconciliation's probe sender is installed. Every solicitation says what this device HOLDS
     // before asking anything, which is what lets the usual answer be silence.
-    setHistoryProbeSender(async (groupId: string) => {
+    setHistoryProbeSender(async (groupId: string, { incomplete }) => {
       const mls = ctx.ensureMls();
-      return sendHistoryProbe(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
-        storage: ctx.getStorage(),
-        deviceKeyB64: ctx.getDeviceKey(),
-        mlsService: mls,
-        log: cb.log,
-      });
+      return sendHistoryProbe(
+        groupId,
+        digestIdentity(ctx.getUserId(), mls.getDeviceId()),
+        {
+          storage: ctx.getStorage(),
+          deviceKeyB64: ctx.getDeviceKey(),
+          mlsService: mls,
+          log: cb.log,
+        },
+        incomplete
+      );
     });
 
     // INSTALLING THE SENDER IS ITSELF AN EDGE, and this is where it is discharged. Frames drain
@@ -2983,7 +2992,7 @@ export async function loginImpl(
       markRestoreAttempted();
       void clearRestoreKey('session expired');
       if (cb.onSessionExpired) cb.onSessionExpired();
-      else void goto(resolve('/login'), { replace: true });
+      else void gotoLoginAfterExpiry();
     } else if (cb.onLoginFailed) {
       cb.onLoginFailed(shown, code);
     } else {
@@ -3625,6 +3634,8 @@ async function recoverPinSteps(
  * It deliberately does NOT clear the auth token or the storage handle: `clearAuth` needs the token
  * to revoke the refresh credential, and the wipe needs the handle to close the connection that
  * would otherwise defer every delete. Each caller owns its own erasure, in its own order.
+ *
+ * @public Exported for `signOutEndsLiveSession.test.ts`, which reads this function's text.
  */
 export function tearDownLiveSession(
   ctx: SessionContext,
@@ -3719,6 +3730,8 @@ export function tearDownLiveSession(
   uiKeptLatch.reset();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
+  // The trees an unnamed group's label was read from belong to the account that just left.
+  bindGroupTreeReader(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
   // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy
@@ -3747,6 +3760,15 @@ function deregisterPushOfLiveSession(ctx: SessionContext, cb: ChatSessionCallbac
     // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
     cb.log(
       '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+    );
+    return Promise.resolve();
+  }
+  if (isAccountErasedOnServer()) {
+    // THE ACCOUNT IS ALREADY ERASED: the push-token row goes with the erasure job queued by the 204, and the bearer
+    // names an account that no longer exists - the call could only earn a 401, which `stopPushService`
+    // reports as a failure to deregister. Known from the deletion's own answer, so not asked.
+    cb.log(
+      '[LOGOUT] Server push deregistration skipped - the account is erased, and its device rows with it.'
     );
     return Promise.resolve();
   }

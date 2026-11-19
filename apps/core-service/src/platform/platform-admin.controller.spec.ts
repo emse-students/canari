@@ -4,6 +4,7 @@ import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { PlatformAdminController } from './platform-admin.controller';
 import type { PlatformService } from './platform.service';
 import type { AnnouncementService } from './announcement.service';
+import type { LydiaContractService } from './lydia-contract.service';
 
 /**
  * The release action puts products on sale platform-wide, so the guard is asserted from the
@@ -22,13 +23,32 @@ describe('PlatformAdminController - release withheld products', () => {
     expect(guardsOn('updateConfig')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
   });
 
+  it('the retention-applied read and its "Renvoyer" are for a global admin, behind NginxAuthGuard', () => {
+    expect(guardsOn('getRetentionApplied')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+    expect(guardsOn('resendRetentionNotice')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('"Renvoyer" hands the normalised actor to the service', async () => {
+    const platform = { resendRetentionNotice: jest.fn().mockResolvedValue({ state: 'applied' }) };
+    const controller = new PlatformAdminController(
+      platform as unknown as PlatformService,
+      {} as AnnouncementService,
+      {} as LydiaContractService
+    );
+    await expect(controller.resendRetentionNotice('  ADMIN-1  ')).resolves.toEqual({
+      state: 'applied',
+    });
+    expect(platform.resendRetentionNotice).toHaveBeenCalledWith('admin-1');
+  });
+
   it('hands the normalised actor to the service and answers its counts', async () => {
     const platform = {
       releaseWithheldProducts: jest.fn().mockResolvedValue({ released: 2, failed: 0 }),
     };
     const controller = new PlatformAdminController(
       platform as unknown as PlatformService,
-      {} as AnnouncementService
+      {} as AnnouncementService,
+      {} as LydiaContractService
     );
     await expect(controller.releaseWithheldProducts('  ADMIN-1  ')).resolves.toEqual({
       released: 2,
