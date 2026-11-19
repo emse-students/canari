@@ -168,6 +168,7 @@ describe('LiveBroadcaster', () => {
     expect(identity.parentElement).toBe(bar);
     expect(actions.parentElement).toBe(bar);
     expect(bar.classList.contains('flex-wrap')).toBe(false);
+    expect(actions.classList.contains('ml-auto')).toBe(false);
     expect(identity.classList.contains('min-w-0')).toBe(true);
     expect(actions.classList.contains('flex-col')).toBe(true);
     expect(actions.classList.contains('shrink-0')).toBe(true);
@@ -182,6 +183,17 @@ describe('LiveBroadcaster', () => {
     expect(new Set(order)).toEqual(
       new Set(['switch', 'mic-toggle', 'camera-toggle', 'share', 'chat-toggle', 'end'])
     );
+  });
+
+  it('before going live, the controls stay a ROW pushed to the right (ml-auto), not the on-air column', async () => {
+    // Structure only: happy-dom has no layout.
+    screen();
+    await settle();
+    const actions = q('[data-live-top-actions]')!;
+    expect(q('[data-live-end]')).toBeNull();
+    expect(actions.classList.contains('ml-auto')).toBe(true);
+    expect(actions.classList.contains('flex-col')).toBe(false);
+    expect(q('[data-live-top-bar]')!.classList.contains('flex-wrap')).toBe(true);
   });
 
   it('as an association: its name and the association audience rule', async () => {

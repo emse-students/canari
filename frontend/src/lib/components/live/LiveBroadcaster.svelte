@@ -72,9 +72,12 @@
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import {
-    LIVE_BROADCASTER_ACTIONS_CLASS,
-    LIVE_BROADCASTER_BAR_CLASS,
-    LIVE_BROADCASTER_IDENTITY_CLASS,
+    LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS,
+    LIVE_BROADCASTER_ONAIR_BAR_CLASS,
+    LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS,
+    LIVE_TOP_ACTIONS_CLASS,
+    LIVE_TOP_BAR_CLASS,
+    LIVE_TOP_IDENTITY_CLASS,
   } from './liveTopBar';
 
   interface Props {
@@ -444,10 +447,16 @@
   {/if}
 
   <!-- The top row: close (never while on air: End is the way out) and the lens. -->
-  <div class={LIVE_BROADCASTER_BAR_CLASS} style={sideSafePadding('0.75rem')} data-live-top-bar>
+  <div
+    class={onAir ? LIVE_BROADCASTER_ONAIR_BAR_CLASS : LIVE_TOP_BAR_CLASS}
+    style={sideSafePadding('0.75rem')}
+    data-live-top-bar
+  >
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
       <div
-        class="{LIVE_BROADCASTER_IDENTITY_CLASS} flex flex-col items-start gap-2"
+        class="{onAir
+          ? LIVE_BROADCASTER_ONAIR_IDENTITY_CLASS
+          : LIVE_TOP_IDENTITY_CLASS} flex flex-col items-start gap-2"
         role="status"
         data-live-top-identity
       >
@@ -484,7 +493,7 @@
               </Button>
             {:else}
               <form
-                class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
+                class="flex max-w-full flex-col gap-1.5 rounded-lg bg-black/60 p-2 sm:max-w-72"
                 onsubmit={(e) => {
                   e.preventDefault();
                   void saveTitleDraft();
@@ -522,7 +531,7 @@
               </form>
             {/if}
             {#if broadcast.titleProblem}
-              <span class="max-w-72 text-xs text-white/80" data-live-title-problem
+              <span class="max-w-full text-xs text-white/80 sm:max-w-72" data-live-title-problem
                 >{TITLE_TEXT[broadcast.titleProblem]()}</span
               >
             {/if}
@@ -547,7 +556,10 @@
       </CameraControlButton>
     {/if}
 
-    <div class={LIVE_BROADCASTER_ACTIONS_CLASS} data-live-top-actions>
+    <div
+      class={onAir ? LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS : LIVE_TOP_ACTIONS_CLASS}
+      data-live-top-actions
+    >
       {#if onAir}
         <!-- First of the column (owner, 2026-11-19), a compact X like the other controls, tinted red because it is destructive; its name is
            "Terminer" and the confirmation stays. -->

@@ -1682,10 +1682,12 @@ are a vertical column on the right edge, End on top, like Instagram and TikTok l
 LIVE pill, timer, viewer count and title stay top-left.** Charter: principle 2 (the essential is never
 lost: End is always reachable) and 7 (simplicity: one layout rule, no wrap to reason about).
 
-**By construction, not by width.** The broadcaster no longer uses the viewer's wrapping bar:
-`LIVE_BROADCASTER_BAR_CLASS` is ONE non-wrapping row, the identity is `min-w-0 flex-1` (its text
+**On air only; before going live the shared wrapping row is kept** (`ml-auto`, at most four buttons, clear of the pre-live sheet whose height cap leaves 4 rem plus the inset at the top).
+
+**By construction, not by width.** On air the broadcaster no longer uses the viewer's wrapping bar:
+`LIVE_BROADCASTER_ONAIR_BAR_CLASS` is ONE non-wrapping row, the identity is `min-w-0 flex-1` (its text
 truncates) and the actions are one non-shrinking `flex-col` track
-(`LIVE_BROADCASTER_ACTIONS_CLASS`), so nothing can wrap at any width. The bar keeps `sideSafePadding`
+(`LIVE_BROADCASTER_ONAIR_ACTIONS_CLASS`, `p-1` so the scroll box does not clip the focus rings), so nothing can wrap at any width. The bar keeps `sideSafePadding`
 and the top inset, so the column clears the notch and the home-bar side insets. The viewer keeps the
 wrapping bar unchanged. Order in the column: End, flip, mic, camera, share, chat toggle (what each
 does is untouched).
