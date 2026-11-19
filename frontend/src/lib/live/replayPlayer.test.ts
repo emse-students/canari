@@ -844,6 +844,71 @@ describe('ReplayPlayer', () => {
       expect(calls()).toBe(before);
     });
 
+    it('paging terminates by proof: a page that adds nothing but keeps a nextFrom ends the listing', async () => {
+      let calls = 0;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => {
+        // A step bound so that the suite itself cannot hang on a runaway loop.
+        if (++calls > 50) throw new Error('runaway paging');
+        if (from === undefined) return { ...makePages(10)(0), nextFrom: 10 };
+        return { ...makePages(10)(0), segments: [], nextFrom: 10 };
+      });
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100; // beyond the 10 listed segments: the seek lists the next page
+      p.noteSeeking();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(calls).toBeLessThanOrEqual(3);
+      expect(states.some((s) => s.kind === 'unavailable')).toBe(false);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('paging terminates by proof: a nextFrom that does not move forward ends the listing', async () => {
+      let calls = 0;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => {
+        if (++calls > 50) throw new Error('runaway paging');
+        const all = makePages(20)(0).segments;
+        if (from === undefined)
+          return { ...makePages(20)(0), segments: all.slice(0, 10), nextFrom: 10 };
+        // The same segments again and a cursor that stays where it was.
+        return { ...makePages(20)(0), segments: all.slice(0, 10), nextFrom: 10 };
+      });
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100;
+      p.noteSeeking();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(calls).toBeLessThanOrEqual(3);
+      expect(states.some((s) => s.kind === 'unavailable')).toBe(false);
+    });
+
+    it('a long tail of 404s is walked a bounded number of requests, then the seek lands backward', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 190 }, (_, i) => `seg-${10 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const before = fetchSegment.mock.calls.length;
+      // The seek is answered when the playhead is written: count the requests it waited on.
+      let current = 200.2;
+      let requestsAtLanding = -1;
+      Object.defineProperty(video, 'currentTime', {
+        get: () => current,
+        set: (t: number) => {
+          current = t;
+          requestsAtLanding = fetchSegment.mock.calls.length - before;
+        },
+      });
+      p.noteSeeking(); // segment 100, inside the purged run
+      for (let i = 0; i < 20; i++) await flush();
+      expect(requestsAtLanding).toBeGreaterThan(0);
+      expect(requestsAtLanding).toBeLessThanOrEqual(70); // 1 + 30 forward + 30 backward, never ~190
+      // Still answered: the nearest media held, inside a range.
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
     it("Q2/Q3: a stall before a skipped segment's gap is carried over it", async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
       skip404(['seg-3']); // media [6, 8] never arrives

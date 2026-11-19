@@ -650,3 +650,18 @@ value, the server's:
 - **The confirm, asked before the end, states the rule** for a live the server keeps, never a
   promise: "s'il a duré au moins 30 secondes, sa rediffusion reste visible {days}".
 
+
+### The listing and the walks terminate by proof (2026-11-19)
+
+- **Paging.** Every loop that lists the next page (a seek's `listUntil`, the fill, the landing walk) goes
+  through ONE step, `loadPage`. A page that adds no segment, or whose `nextFrom` does not move past the
+  page's own start, ends the listing: it is logged at warn level with what the server answered, and
+  `nextFrom` becomes null. Before, such an answer was requested forever, since the loops trust a non-null
+  cursor. Pinned with a mock that answers it immediately, behind a step bound so the suite cannot hang.
+- **The landing walk.** A seek whose target is in a run of missing segments (404) used to walk it one
+  request per segment while the playhead waited (901 requests for a long tail). The walk forward and the
+  walk backward each stop after `REPLAY_MAX_MISSING_WALK` (30, about a minute of replay at 2 s a segment)
+  consecutive missing segments. Why 30: a pause or a camera flip is a hole in TIME, which the segment list
+  keeps and `knownHoles` crosses without a request; a run of DELETED segments is a purge, and a minute of
+  it is already more than a seek should wait for. After the forward bound the walk goes backward; after the
+  backward bound the answer is the nearest media the buffer holds, so the seek is still answered.

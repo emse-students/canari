@@ -228,6 +228,14 @@ export const REPLAY_AHEAD_S = 12;
 export const REPLAY_BEHIND_S = LIVE_PLAYER_KEEP_BEHIND_MS / 1000;
 /** Media kept far ahead after a seek that left an older region buffered, in seconds. */
 export const REPLAY_FAR_AHEAD_S = 60;
+/**
+ * How many segments in a row a seek's landing walk may find missing (404, skipped, no media) before it
+ * gives up on that direction: about a minute of replay at 2 s a segment. A run of deleted segments
+ * longer than that is a purge, not a pause (a pause is a hole in TIME, kept by the segment list), so
+ * the rest of the listing is the end of the walk for this seek. Bounds the requests a seek makes
+ * waiting on the server (901 for a long tail of 404s without it).
+ */
+const REPLAY_MAX_MISSING_WALK = 30;
 /** How many segments in a row may fail to open or append before the replay is called unplayable. */
 const MAX_CONSECUTIVE_FAILURES = 3;
 /**
@@ -652,12 +660,22 @@ export class ReplayPlayer {
       // The bar reads the replay's own length from the first frame, before any media is in.
       if (this.source && page.durationMs > 0) this.source.duration = page.durationMs / 1000;
     }
+    const before = this.segments.length;
     this.segments.push(
       ...page.segments.filter((s) => s.index >= (this.segments.at(-1)?.index ?? -1) + 1)
     );
     this.nextFrom = page.nextFrom;
+    // PAGING TERMINATES BY PROOF, never by trusting the server: every paging loop calls this one step,
+    // and a page that added nothing, or whose cursor did not move forward, ends the listing - otherwise
+    // such an answer would be requested forever.
+    if (page.nextFrom !== null && (this.segments.length === before || page.nextFrom <= from)) {
+      console.warn(
+        `[LIVE_REPLAY] ${this.liveId}: the server answered a page from ${from} that added ${this.segments.length - before} segments with nextFrom ${page.nextFrom} - the listing is declared complete at ${this.segments.length} segments`
+      );
+      this.nextFrom = null;
+    }
     console.debug(
-      `[LIVE_REPLAY] ${this.liveId}: ${this.segments.length} segments listed${page.nextFrom === null ? ' (all)' : ''}`
+      `[LIVE_REPLAY] ${this.liveId}: ${this.segments.length} segments listed${this.nextFrom === null ? ' (all)' : ''}`
     );
   }
 
@@ -897,7 +915,14 @@ export class ReplayPlayer {
     from: number,
     ticket: SeekTicket
   ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    let missing = 0;
     for (let j = from; ; j++) {
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing after position ${from} - the walk forward ends`
+        );
+        return undefined;
+      }
       // The list is paged: the next segment may be on a page not listed yet.
       while (j >= this.segments.length && this.nextFrom !== null) {
         await this.loadPage(gen);
@@ -907,6 +932,7 @@ export class ReplayPlayer {
       const start = await this.landOn(gen, this.segments[j], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: j };
+      missing++;
     }
   }
 
@@ -916,10 +942,24 @@ export class ReplayPlayer {
     from: number,
     ticket: SeekTicket
   ): Promise<{ start: number; pos: number } | undefined | 'stale'> {
+    let missing = 0;
     for (let k = from; k >= 0; k--) {
+      if (missing >= REPLAY_MAX_MISSING_WALK) {
+        // Bounded like the forward walk; the answer then is the nearest media the buffer holds, so
+        // the seek is still answered.
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: ${missing} segments in a row missing before position ${from} - the walk back ends`
+        );
+        for (let h = k; h >= 0; h--) {
+          const held = this.bufferedStart(this.segments[h].index);
+          if (held !== undefined) return { start: held, pos: h };
+        }
+        return undefined;
+      }
       const start = await this.landOn(gen, this.segments[k], ticket);
       if (start === 'stale') return 'stale';
       if (start !== undefined) return { start, pos: k };
+      missing++;
     }
     return undefined;
   }
