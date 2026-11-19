@@ -952,16 +952,16 @@
             <td>
               L'image d'aperçu est remplacée environ toutes les 16 secondes, et la précédente est
               conservée jusqu'au remplacement suivant : une image d'aperçu vit donc environ 32
-              secondes. Le chat et les réactions sont supprimés à la fin du direct, à la publication
-              de sa rediffusion ; la vidéo et la dernière image d'aperçu sont gardées avec la
-              rediffusion (ligne précédente). Un direct sans rediffusion est entièrement supprimé à
-              sa fin (par vous, après 60 secondes sans vidéo, par une coupure de la modération ou à
-              la suppression de votre compte). Après une coupure, la vidéo est supprimée aussitôt ;
-              après la suppression du compte, dans les 30 secondes ; à une autre fin, elle l'est une
-              fois que les derniers spectateurs ont fini de la recevoir, en principe dans la minute.
-              Une suppression qui échoue est reprise toutes les 30 secondes. Un segment mis en cache
-              par notre serveur web ou par l'appareil d'un spectateur : deux minutes au plus après
-              sa dernière lecture
+              secondes. Avec une rediffusion, le chat et les réactions sont supprimés quand elle est
+              publiée, peu après la fin du direct, et la vidéo et la dernière image d'aperçu sont
+              gardées avec elle (ligne précédente). Un direct sans rediffusion est entièrement
+              supprimé à sa fin (par vous, après 60 secondes sans vidéo, par une coupure de la
+              modération ou à la suppression de votre compte). Après une coupure, la vidéo est
+              supprimée aussitôt ; après la suppression du compte, dans les 30 secondes ; à une
+              autre fin, elle l'est une fois que les derniers spectateurs ont fini de la recevoir,
+              en principe dans la minute. Une suppression qui échoue est reprise toutes les 30
+              secondes. Un segment mis en cache par notre serveur web ou par l'appareil d'un
+              spectateur : deux minutes au plus après sa dernière lecture
             </td>
           </tr>
           <tr>
