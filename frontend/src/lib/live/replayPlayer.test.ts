@@ -1012,6 +1012,31 @@ describe('ReplayPlayer', () => {
     });
   });
 
+  describe('a measurement never narrows', () => {
+    it('R16a: re-taking a segment the trim cut in the middle keeps its whole measured extent (no false hole)', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (const t of [12, 24, 36, 48, 60, 72, 84, 96, 110.8]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 10; i++) await flush();
+      }
+      // The trim cut at 100.8, in the middle of segment 50 (100-102).
+      expect(buffer().ranges[0][0]).toBeCloseTo(100.8, 1);
+      video.currentTime = 100.2; // inside segment 50, outside the buffer: it is taken again
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends.filter((a) => a === 'm50').length).toBe(2);
+      // The re-take added only [100, 100.8]; the segment still ends at 102, so 101 is media, not a hole.
+      video.currentTime = 101;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(video.currentTime).toBeCloseTo(101, 1);
+    });
+  });
+
   describe('the latest seek is the single source of truth', () => {
     /** Holds every segment fetch named in `held` until the test resolves (or the signal aborts) it. */
     function holdFetches(held: Set<string>) {

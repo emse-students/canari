@@ -236,6 +236,8 @@ const MAX_CONSECUTIVE_FAILURES = 3;
  * ONE constant for both. The 0.5 s stop was read on the Mi 9T only; it was never read on iOS.
  */
 const REPLAY_SEGMENT_LENGTH_S = 1.5;
+/** The most two measurements of one segment may differ by before it is said at warn, in seconds: one frame. */
+const MEASURE_FRAME_S = 0.05;
 /** How many times a seek looks its segment up again after the one taken proved not to hold the target. */
 const REPLAY_SEEK_RELOOKUPS = 3;
 /** A first append placed past this many seconds is redone under a `timestampOffset` to zero. */
@@ -1094,11 +1096,32 @@ export class ReplayPlayer {
     this.retryAttempt = 0;
     // A step that answers again after a reconnect is the end of the reconnecting screen.
     if (this.state.kind === 'reconnecting') this.setState({ kind: 'playing' });
-    if (extent !== null) {
-      this.placed.set(s.index, extent[0]);
-      this.placedEnd.set(s.index, extent[1]);
-    }
+    if (extent !== null) this.measure(s.index, extent);
     return start;
+  }
+
+  /**
+   * Records where segment `index` lies in media time. A MEASUREMENT NEVER NARROWS: a segment's place is
+   * fixed, and the extent of a re-take is only what the buffer did not already hold (a segment the trim
+   * cut in the middle re-adds just its cut part), so the start keeps the smaller and the end the larger
+   * of the old and new values. A new extent reaching OUTSIDE the old one by more than a frame says the
+   * segment moved, which nothing should cause: said at warn.
+   */
+  private measure(index: number, extent: MediaSpan): void {
+    const from = this.placed.get(index);
+    const to = this.placedEnd.get(index);
+    if (from !== undefined && to !== undefined) {
+      if (extent[0] < from - MEASURE_FRAME_S || extent[1] > to + MEASURE_FRAME_S) {
+        console.warn(
+          `[LIVE_REPLAY] ${this.liveId}: segment ${index} measured ${extent[0].toFixed(2)}-${extent[1].toFixed(2)} s, was ${from.toFixed(2)}-${to.toFixed(2)} s`
+        );
+      }
+      this.placed.set(index, Math.min(from, extent[0]));
+      this.placedEnd.set(index, Math.max(to, extent[1]));
+      return;
+    }
+    this.placed.set(index, extent[0]);
+    this.placedEnd.set(index, extent[1]);
   }
 
   /** Appends the init (when it differs) and the fragment of one opened segment. */
