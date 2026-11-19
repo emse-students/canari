@@ -237,15 +237,16 @@
           restent visibles, par le même public que le direct, pendant la durée indiquée dans la
           <a href="/legal/privacy#retention">{m.legal_privacy_link()} §6</a> (3 jours par défaut), puis
           elle est supprimée, avec ses commentaires. Le temps qu'il lui reste est affiché. Le chat n'est
-          pas rediffusé : il est supprimé à la fin du direct. Une rediffusion ne peut être ni republiée
-          ni repartagée dans un fil ; ceux qui peuvent la voir peuvent l'enregistrer sur leur appareil,
-          comme un CanaReel. Vous pouvez la supprimer à tout moment (au nom d'une association, toute personne
-          qui peut publier en son nom). Si l'ensemble des rediffusions dépasse l'espace qui leur est réservé,
-          les plus anciennes sont supprimées avant leur terme. Un direct coupé par la modération, ou arrêté
-          par la suppression de votre compte, n'en laisse pas, et la suppression de votre compte met fin
-          à vos rediffusions, y compris celles diffusées au nom d'une association. L'Éditeur peut désactiver
-          les rediffusions : un direct lancé ensuite n'est plus enregistré et tout est supprimé à sa fin.
-          Rien n'empêche toutefois un spectateur de filmer son écran.
+          pas rediffusé : il est supprimé quand la rediffusion est publiée, peu après la fin du direct.
+          Une rediffusion ne peut être ni republiée ni repartagée dans un fil ; ceux qui peuvent la voir
+          peuvent l'enregistrer sur leur appareil, comme un CanaReel. Vous pouvez la supprimer à tout
+          moment (au nom d'une association, toute personne qui peut publier en son nom). Si l'ensemble
+          des rediffusions dépasse l'espace qui leur est réservé, les plus anciennes sont supprimées avant
+          leur terme. Un direct coupé par la modération, ou arrêté par la suppression de votre compte,
+          n'en laisse pas, et la suppression de votre compte met fin à vos rediffusions, y compris celles
+          diffusées au nom d'une association. L'Éditeur peut désactiver les rediffusions : un direct lancé
+          ensuite n'est plus enregistré et tout est supprimé à sa fin. Rien n'empêche toutefois un spectateur
+          de filmer son écran.
         </dd>
       </div>
       <div>

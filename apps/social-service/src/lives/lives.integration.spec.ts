@@ -836,7 +836,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
 
     it('PUBLISHES ONE REPLAY at the end, the end plus three days, unannounced, never repostable; sweeps and retries add none', async () => {
       const live = await finishedLive();
-      await lives.end(ALICE, live.id);
+      // The end answers the verdict the publication then honours, and a repeat answers it again.
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
       const [replay, ...more] = await replays(live.id);
       expect(more).toEqual([]);
       expect(replay).toMatchObject({
@@ -888,10 +890,34 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     it('a live under 30 s keeps no replay and is purged as before (D4)', async () => {
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));
-      await lives.end(ALICE, live.id);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
       expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
       expect(store.countFor(live.id)).toBe(0);
+    });
+
+    it('THE END FREEZES THE VERDICT: a short live that drains keeps no replay, whatever lands after', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id); // a seat: the end drains instead of purging at once
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { keepsReplay: false },
+      ]);
+      // Even a span past 30 s written after the end (a late segment) publishes nothing.
+      await q(`UPDATE lives SET "startedAt" = "startedAt" - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      await lives.purgeEnded(live.id);
+      expect(await replays(live.id)).toEqual([]);
+    });
+
+    it('a live started with replays off answers no replay at its end', async () => {
+      await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
+      const live = await finishedLive();
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await replays(live.id)).toEqual([]);
     });
 
     it('a live that drained through the sweep publishes there, counted as a replay', async () => {

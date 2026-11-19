@@ -472,7 +472,7 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 - **The cover and the feed's clock.** A replay row is served (`GET /api/posts`, `GET /api/posts/:id`) with its live's last preview image as `poster` and the key that opens it alone as `posterKey` (`posterKeyOf`, the open-lives card's own derivation, its outage reported once), and the database's `now()` as `serverNow` beside `expiresAt` (`readReplayRowFacts`, one query per page, only when the page holds a replay). These are added AT SERVE TIME, on a cached page as on a computed one, never stored in the 30 s page cache - a cached clock would be up to 30 s old. A failed read is logged at ERROR and the rows go out without cover or clock, never a 500; a preview name without its time (`posterAgeMs` NULL) is no cover, never an age of 0 (`servedPoster`, shared with the open-lives list). The client's poster memo is bounded (24 images, least recently used out), since nothing lists the replays' covers to prune them. No new object: the live row and its prefix are kept while the replay post exists, so the image is where the card fetched it. The card draws the cover with `LivePosterImage` under the live's id (the same memo) and the time left with the pane's `replayTimeLeft`; the pane stands the cover over the page until the picture plays (on a neighbour page too) and drops it for a blocked autoplay or a failure. The list rows now select `posts."liveId"`, which the pane needs to start.
 - **No repost:** the card's menu offers no repost, republication or consent for a replay; the reel rail never had one. The rail's "Envoyer a..." stays (a link, not a repost). A replay is edited by its caption alone, as the server decided.
 - **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
-- **Broadcaster texts (part of WP-R6):** the audience rule, the end confirm and the broadcaster's own end screen name the replay only while the switch is on (and, for the last two, only for a live of at least 30 s: `replayFollows`). The legal pages (privacy `#directs`, CGU `#directs`, register C19) are NOT changed here: they say "pas de rediffusion" and change at the flip.
+- **Broadcaster texts (part of WP-R6):** the audience rule names the replay while the switch is on; the end confirm and the end screen read the server's facts, [below](#the-end-texts-say-the-servers-verdict) (superseding a first version that read the switch and a client clock).
 
 **`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](backlog.d/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
 
@@ -519,3 +519,24 @@ CGU section 14 and privacy section 12 both promise a notice 15 days before a sub
 takes effect; no code sends such a notice, and none was sent for the replays (the switch went on
 first, by the owner's order). **Owner's decision, 2026-11-19: handled by the owner, outside the app**
 (*"Je m'en occupe"*) - he writes the text and picks the channel; nothing is built for it.
+
+### The end texts say the server's verdict
+
+Review of #3856: a 30 s check on the client's clock (counted from the start's answer) and the
+server's (`lastSegmentAt - startedAt` on the database clock, the last flush included) disagree near
+30 s, so the screen could say "Rien n'en est gardé" over a published replay, or the reverse. Now ONE
+value, the server's:
+
+- **The end decides and freezes it.** The broadcaster's `POST /api/lives/:id/end` sets
+  `keepsReplay = keepsReplay AND <30 s rule>` in its own `UPDATE` and answers it as `keepsReplay`;
+  the rule is one SQL fragment (`replayLongEnoughSql`) that `publishReplay` reads too. A segment that
+  lands after the end cannot change the verdict; a repeated end answers it again. A cut or an erasure
+  can still remove the replay later (the texts do not promise past them).
+- **The client freezes the first answer** (`LiveBroadcast.replayVerdict`) and the end screen reads
+  `replayEndText(keepsReplay, verdict)`: `none` for a live the server does not keep or judged short,
+  `kept` (how long it is visible) once the answer says so, and while no answer has come - the
+  screen settles behind no request - the rule itself ("S'il a duré au moins 30 secondes, sa
+  rediffusion sera publiée").
+- **The confirm, asked before the end, states the rule** for a live the server keeps, never a
+  promise: "s'il a duré au moins 30 secondes, sa rediffusion reste visible {days}".
+

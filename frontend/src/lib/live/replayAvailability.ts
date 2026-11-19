@@ -1,5 +1,4 @@
 import { LIVE_ENABLED } from '$lib/features';
-import { LIVE_REPLAY_MIN_MS } from './constants';
 import type { LiveReplaysMode } from '$lib/utils/appVersion';
 
 /**
@@ -16,13 +15,18 @@ export function replaysAvailable(mode: LiveReplaysMode): boolean {
   return LIVE_ENABLED && mode === 'on';
 }
 
+/** What the broadcaster's end screen says of the replay: one value, the server's. */
+export type ReplayEndText = 'kept' | 'none' | 'pending';
+
 /**
- * WHETHER A LIVE OF `elapsedMs` LEAVES A REPLAY when it ends: the live's OWN `keepsReplay`, which the
- * server fixed at its start from `live_replays_mode` and answered with the live (`POST /api/lives`),
- * AND the live ran at least {@link LIVE_REPLAY_MIN_MS} (owner, 2026-11-09: a false start shows
- * nothing; the server's publication applies the same 30 s). Never the switch as read NOW: a switch
- * flipped during the live changes nothing for it, so the broadcaster's end texts must not follow it.
+ * THE BROADCASTER'S END TEXT, from SERVER facts only - never a client clock, which runs from another
+ * origin than the database's and would disagree near 30 s (owner, 2026-11-09: a live under
+ * `LIVE_REPLAY_MIN_MS` keeps none). `keepsReplay` is the live's own, fixed by the server at its
+ * start (a switch flipped during the live changes nothing for it); `verdict` is the end's answer,
+ * decided once on the database clock from what the server received. A live that keeps none is
+ * `none` at once; otherwise the screen waits for the verdict (`pending`) and then says it.
  */
-export function replayFollows(keepsReplay: boolean, elapsedMs: number): boolean {
-  return keepsReplay && elapsedMs >= LIVE_REPLAY_MIN_MS;
+export function replayEndText(keepsReplay: boolean, verdict: boolean | null): ReplayEndText {
+  if (!keepsReplay || verdict === false) return 'none';
+  return verdict === true ? 'kept' : 'pending';
 }

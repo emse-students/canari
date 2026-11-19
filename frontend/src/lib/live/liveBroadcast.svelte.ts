@@ -280,6 +280,12 @@ export class LiveBroadcast {
    * read it, never the switch as read now: a flip during the live does not change the live.
    */
   keepsReplay = $state(false);
+  /**
+   * THE SERVER'S VERDICT on the replay, from the answer to `POST /lives/:id/end` (`keepsReplay`),
+   * frozen at the first answer; null until then (the screen settles behind no request) and for a
+   * server that does not say. The broadcaster's end screen reads it, never a client clock.
+   */
+  replayVerdict = $state<boolean | null>(null);
   /** True while an on-air title edit is with the server. */
   titleSaving = $state(false);
   /** Why the last on-air title edit was not taken, or null. */
@@ -1175,7 +1181,16 @@ export class LiveBroadcast {
       console.debug(`[LIVE-BROADCAST] delivering the end of ${liveId}`);
       this.#deps.endLive(liveId).then(
         (r) => {
-          console.debug(`[LIVE-BROADCAST] ${liveId} end answered (${r.endReason})`);
+          console.debug(
+            `[LIVE-BROADCAST] ${liveId} end answered (${r.endReason}, replay ${r.keepsReplay ?? 'unsaid'})`
+          );
+          if (
+            liveId === this.liveId &&
+            this.replayVerdict === null &&
+            r.keepsReplay !== undefined
+          ) {
+            this.replayVerdict = r.keepsReplay;
+          }
           done();
         },
         (e: unknown) => {

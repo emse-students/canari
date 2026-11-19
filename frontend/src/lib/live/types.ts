@@ -200,6 +200,12 @@ export interface LiveEndResult {
   id: string;
   endedAt: string;
   endReason: LiveEndReason;
+  /**
+   * The server's verdict on the replay, decided once at the end on its clock from what it had
+   * received (docs/wiki/live-replays.md): the broadcaster's end screen says what this says. Absent
+   * (an older server) reads as unknown.
+   */
+  keepsReplay?: boolean;
 }
 
 /** The reason a moderator gives for a cut: the report reasons' own four. */

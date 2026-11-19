@@ -5,7 +5,7 @@
  * End behind a confirmation, the end screen's cause, and Back on air asking instead of ending - and
  * the chat on air (WP-L6): its own loop, the broadcaster's hide, and its 410 ending the screen.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import LiveBroadcaster from './LiveBroadcaster.svelte';
 import LiveOverlay from './LiveOverlay.svelte';
@@ -22,7 +22,6 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import { retentionInForce } from '$lib/legal/retention';
 import { durationLabel } from '$lib/legal/retentionLabel';
-import { LIVE_REPLAY_MIN_MS } from '$lib/live/constants';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -32,6 +31,7 @@ import { LiveRefusalError } from '$lib/live/api';
 import * as liveApi from '$lib/live/api';
 import { sealLiveChatMessage } from '$lib/live/liveChatCrypto';
 import { KEY, LIMITS, LIVE_ID } from '$lib/live/liveBroadcast.test-helper';
+import type { LiveEndResult } from '$lib/live/types';
 import type { LiveChatBlock, LiveManifest } from '$lib/live/types';
 import { flushMacrotask } from '../../../test/flush';
 import { resetScreenOrientationForTest } from '$lib/mobile/screenOrientation.svelte';
@@ -407,42 +407,66 @@ describe('LiveBroadcaster', () => {
     expect(document.body.textContent).toContain(m.live_ended_broadcaster());
   });
 
-  it("the end texts follow the LIVE's keepsReplay, not the switch as read now", async () => {
-    // The server kept this live (switch on at its start); the switch reads off now (flipped mid-live).
-    const { deps, clock } = screen();
-    deps.startLive.mockImplementationOnce(async () => ({
+  /** A screen whose start answers `keepsReplay` and whose end answers `verdict` (or hangs). */
+  async function endedLive(keepsReplay: boolean, verdict: boolean | 'hang') {
+    const f = screen();
+    f.deps.startLive.mockImplementationOnce(async () => ({
       ...(await fakeDeps().deps.startLive('k')),
-      keepsReplay: true,
+      keepsReplay,
     }));
+    let answer: (v: boolean) => void = () => {};
+    // The helper's fake narrows `endReason`; the real answer is a LiveEndResult with the verdict.
+    (f.deps.endLive as unknown as Mock<() => Promise<LiveEndResult>>).mockImplementationOnce(
+      () =>
+        new Promise<LiveEndResult>((resolve) => {
+          answer = (v) =>
+            resolve({
+              id: LIVE_ID,
+              endedAt: '2026-10-19T10:30:00.000Z',
+              endReason: 'broadcaster',
+              keepsReplay: v,
+            });
+          if (verdict !== 'hang') answer(verdict);
+        })
+    );
     await settle();
-    // The screen's on-air counter ticks on a 1 s interval: fake that interval alone, so the end
-    // text reads the length the screen counted.
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
-    clock.t += LIVE_REPLAY_MIN_MS + 1_000;
-    vi.advanceTimersByTime(1_000);
-    vi.useRealTimers();
     q<HTMLButtonElement>('[data-live-end]')!.click();
     await settle();
-    const days = durationLabel(retentionInForce(null).days.liveReplayDays);
-    expect(vi.mocked(showConfirm).mock.calls.at(-1)![0]).toBe(m.live_end_confirm_replay({ days }));
-    expect(document.body.textContent).toContain(m.live_ended_broadcaster_replay({ days }));
+    return { ...f, answer, confirmed: vi.mocked(showConfirm).mock.calls.at(-1)![0] };
+  }
+  const days = () => durationLabel(retentionInForce(null).days.liveReplayDays);
+
+  it("the end screen says the SERVER's verdict, and the confirm only the rule, for a live it keeps", async () => {
+    // Kept at its start; the switch reads off now (flipped mid-live): the live's own fact decides.
+    const { confirmed } = await endedLive(true, true);
+    expect(confirmed).toBe(m.live_end_confirm_replay({ days: days() }));
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster_replay({ days: days() }));
   });
 
-  it('a live the server does not keep, or one under 30 s, promises no replay', async () => {
-    const { deps } = screen();
-    deps.startLive.mockImplementationOnce(async () => ({
-      ...(await fakeDeps().deps.startLive('k')),
-      keepsReplay: true,
-    }));
-    await settle();
-    q<HTMLButtonElement>('[data-live-start]')!.click();
-    await settle();
-    q<HTMLButtonElement>('[data-live-end]')!.click();
-    await settle();
-    expect(vi.mocked(showConfirm).mock.calls.at(-1)![0]).toBe(m.live_end_confirm());
+  it('a live the server judged too short at its end says nothing is kept', async () => {
+    const { confirmed } = await endedLive(true, false);
+    expect(confirmed).toBe(m.live_end_confirm_replay({ days: days() }));
     expect(document.body.textContent).toContain(m.live_ended_broadcaster());
+    expect(document.body.textContent).not.toContain(
+      m.live_ended_broadcaster_replay({ days: days() })
+    );
+  });
+
+  it('a live the server does not keep (keepsReplay: false) promises no replay, whatever its length', async () => {
+    const { confirmed } = await endedLive(false, false);
+    expect(confirmed).toBe(m.live_end_confirm());
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster());
+  });
+
+  it('until the end is answered the screen states the rule, then the verdict, frozen once', async () => {
+    const { answer, broadcast } = await endedLive(true, 'hang');
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster_replay_pending());
+    answer(true);
+    await settle();
+    expect(broadcast.replayVerdict).toBe(true);
+    expect(document.body.textContent).toContain(m.live_ended_broadcaster_replay({ days: days() }));
   });
 
   it("a 410 on air ends the screen with the server's sentence", async () => {
