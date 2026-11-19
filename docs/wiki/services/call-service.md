@@ -77,7 +77,7 @@ All frames are JSON-encoded `SignalMessage`:
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
 | `Answer { sdp }` | Client → Server or Server → Client | SDP answer completing a negotiation. |
 | `IceCandidate { candidate }` | Bidirectional | Trickle ICE candidates (JSON-encoded `RTCIceCandidateInit`). |
-| `to` / `from` on `Offer`, `Answer`, `IceCandidate`, `IceRestartRequest`, `MicSuspended` | P2P | Addressing for a mesh: the client names the addressee in `to`, the server clears it and stamps `from` with the sender's peer id - never the client's own claim. In a two-seat room an unaddressed frame still goes to the other party, so a 1:1 client is unchanged ([the mesh](#the-mesh-wp-gc2-2026-11-13)). |
+| `to` / `from` on `Offer`, `Answer`, `IceCandidate`, `IceRestartRequest`, `MicSuspended` | P2P | Addressing for a mesh: the client names the addressee in `to`, the server clears it and stamps `from` with the sender's USER id - never the client's own claim. In a two-seat room an unaddressed frame still goes to the other party, so a 1:1 client is unchanged ([the mesh](#the-mesh-wp-gc2-2026-11-13)). |
 | `MicSuspended { suspended }` | Client → Server → partner | P2P only, relayed verbatim: the sender's operating system took (`true`) or gave back (`false`) its microphone - the capture track's `mute`, never the user's mute button. One relay line each, no ledger counter. Dropped with a line before `Join`, in an SFU room (`p2p-only frame ... in an SFU room`) and while the partner is away; a drop is never counted as `ice_in_failed`, which counts ICE alone. The partner has no other way to tell it from silence ([calls](../frontend/modules/calls.md#the-call-in-the-background-2026-10-19)). |
 
 ### Room join flow
@@ -220,7 +220,8 @@ negotiated through this service exactly as a 1:1 call is, and no media ever reac
   EARLIER seat initiates, the newcomer is polite, and both ends get one `PeerReady { peer }` per pair.
   `Seats.paired` remembers each pair by user, so a resume or a sibling's replacement re-announces
   exactly the pairs it broke and no other.
-- **Routing** (`Seats::route`). A frame naming `to` goes to that peer only, stamped `from`;
+- **Routing** (`P2pRoom::relay`, which hands the frame on under the room's lock). A frame naming
+  `to` goes to that peer only, stamped `from`;
   an unknown or away addressee drops it with a line. An unaddressed frame in a two-seat room goes
   to the other party (the 1:1 wire, unchanged); in a mesh it is dropped as `unaddressed`, except
   `MicSuspended`, which is broadcast to every present party.
@@ -230,6 +231,12 @@ negotiated through this service exactly as a 1:1 call is, and no media ever reac
   wins and nothing is announced. A poisoned room lock is a panic, never read as an empty room.
 - **Departures.** A leave, an expired grace or an away seat tells every remaining present party,
   each with its own `PeerLeft { peer }` / `PeerAway { peer }`; the room ends with its last seat.
+- **One device per user (WP-GC8, 2026-11-16).** A user's second device replaces the first: the
+  replaced one gets `PeerLeft` naming nobody, every other present participant ONE
+  `PeerReady { peer: <the same user id> }` without `resumed`, and nothing else; a relayed frame is
+  delivered under the room's lock, so the replaced device's frames precede that `PeerReady` or go
+  nowhere. The full contract the client rebuilds on is
+  [one device per user](../frontend/modules/calls.md#one-device-per-user-the-relays-wire-wp-gc8-2026-11-16).
 - **Pinned by** the `p2p.rs` unit tests (pairs, routing, the cap) and
   `a_mesh_pairs_everyone_routes_by_addressee_and_survives_a_departure`,
   `a_mesh_refuses_the_user_past_its_cap` and `a_seat_count_out_of_range_or_disagreeing_is_refused`
@@ -304,7 +311,7 @@ and, in `tests/p2p_signalling.rs`, `an_sfu_room_seats_up_to_its_cap_and_refuses_
 three seated), `an_sfu_seat_is_freed_by_its_holder_and_counts_are_checked` and
 `a_token_signing_a_mode_refuses_a_join_in_the_other`; end to end by the `sfu-group` scenario below.
 
-**What chooses it** is `platform_config.call_relay` (`none` | `call-service`, core migration 023,
+**What chooses it** is `platform_config.call_relay` (`none` | `call-service` | `cloudflare`, core migrations 023 and 026 - `cloudflare` never reaches this service: Cloudflare Realtime carries the call through chat-delivery's [proxy](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16), and its `mode: cloudflare` token cannot seat here;
 `/admin/platform`, published as `calls.relay`), read by chat-delivery at a group call's `initiate`
 ([calls](../frontend/modules/calls.md#the-relay-leg-wp-gc4-2026-11-13)). Production stays `none`;
 the dev seed writes `call-service`.

@@ -33,6 +33,15 @@ written): a typo in a confidential rate is caught at the write or nowhere. A sto
 longer parses (a hand edit) is read as not configured and logged at ERROR. The write is logged at
 WARN with the actor and WHICH values are set, never a value.
 
+**The editor owns the band order** (owner, 2026-11-18, after "from 100" was entered above "from 0" and
+refused). A band applies once the contract year's CUMULATED flux (payments minus refunds, TTC - the
+counter's own figure) reaches its `fromCents`, so the order an admin types them in carries no
+meaning: `fromLydiaContractForm` sends them ascending and the panel re-sorts the rows when focus
+leaves a band row. Two bands at one threshold stay an error, refused client-side and, as a backstop,
+by core, whose 400 carries a typed `reason: 'BAND_ORDER'` beside the `field`. **The page never prints
+a field path**: `lydiaRefusalMessage` maps core's typed field (and reason) to a localized sentence,
+and a field it does not know is logged at ERROR with a generic sentence - a fallback is a signal.
+
 **A copy of production carries no terms.** `copy-strips.sh` clears `lydia_contract` and the anniversary,
 and empties `lydia_enrolled_businesses` with the other live Lydia identifiers, so dev's counter
 and estimate say "not configured" until someone enters made-up values there.

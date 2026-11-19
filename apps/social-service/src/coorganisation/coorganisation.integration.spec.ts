@@ -184,9 +184,13 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       CREATE TABLE association_role_history (association_id uuid, user_id varchar);
       CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
       CREATE TABLE form_respondents ("formId" uuid, "userId" varchar);
-      CREATE TABLE lydia_cashiers ("associationId" uuid, "vendorToken" varchar, "userId" varchar,
-        "addedByUserId" varchar, "removedAt" timestamptz);
     `);
+    // The Lydia cashier rows as production has them: the association delete and the erasure read
+    // their role, numbers and the cashier claim (review of the 1.7.1 flip), so a stand-in table
+    // would test a schema nothing runs.
+    await q(migration('118_lydia_cashiers_and_readiness.sql'));
+    await q(migration('119_lydia_cashiers_lot3.sql'));
+    await q('RESET lock_timeout');
     // The readers' bells, which the association delete and the erasure both write (engagement WP-3).
     await q(migration('142_account_bells.sql'));
     // A validated event tells its association's followers of it (engagement WP-4): the follows, and

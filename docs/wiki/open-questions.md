@@ -784,3 +784,11 @@ published, so nothing under it is the BDE's to read on a comment's report alone 
 admin is the recourse. The other answer is that an open report on a comment opens that one comment
 (not its post) to the moderator in scope. In practice a comment under an unpublished post is rare:
 only the author's side can write one.
+
+## A Lydia Responsable who leaves the association: who takes over? (parked 2026-11-18)
+
+Since 1.7.1 a departed member's Tresorier and Vendeur numbers are removed at Lydia, but a departed
+Responsable keeps their current number (the Business needs one) and the card asks for a platform
+administrator, who has no step to name another person. Two answers, both owner-visible: an admin
+"replace the Responsable" step, or refusing the Responsable's own departure while their number is
+live. Entry: [backlog](backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md), item 7.

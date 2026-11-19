@@ -151,6 +151,7 @@
   const CALL_RELAY_LABELS: Record<CallRelay, () => string> = {
     none: m.admin_platform_call_relay_none,
     'call-service': m.admin_platform_call_relay_call_service,
+    cloudflare: m.admin_platform_call_relay_cloudflare,
   };
   const CALL_RELAY_OPTIONS: PickerOption[] = $derived(
     CALL_RELAYS.map((relay) => ({ value: relay, label: CALL_RELAY_LABELS[relay]() }))

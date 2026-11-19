@@ -845,14 +845,19 @@ after error 5) updates the cause and its date, with no transition and no second 
   of its APPROVED delegates, on every call, replays included (owner review of #2967): a commit never
   leaves one withheld, so nothing has to heal afterwards (`activationWithheld` is the allowlist, so a
   second release finds nothing). The holder row is locked FOR UPDATE by both the readiness and the
-  revert, so the two serialise (an integration spec races them).
+  revert, so the two serialise (an integration spec races them). The transition is the designed
+  path, logged at INFO (1.7.1; it was a WARN that production read as an alarm):
+  `[LYDIA-READINESS] holder <id> marked READY by <cause> (<where>); before: <the earlier marking, or
+  "no earlier marking on record">; managers told next` (`at the first request Lydia issues on it` after a bridge switch), or `managers not notified (notices off by
+  switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)` while that switch waits on its floor. The anomalies
+  of this path keep their level: the held refusal and the bridge switch at WARN, the revert at ERROR.
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
   `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
   from a form (member or guest): the unissued attempt is released, then the HOLDER of the vendor token
   the request went to (an approved parent's, when delegating) is set not ready, its on-sale products
   and its approved delegates' withheld in the same transaction - through `approvedDelegateIds`, the
   SAME predicate the release reads, a spec spying on both. Logged at ERROR, `[LYDIA-READINESS] holder
-  <id> reverted: request/do answered error 5 (...); it had been marked ready by <cause> at <date>`.
+  <id> reverted: request/do answered error 5 (...); before: was marked by <cause> at <date>; ...`.
   **Error 5 pauses the WHOLE holder** (the owner's decision). Its meaning - "the Business is not
   validated" - comes from ONE homologation measurement and is believed to be a property of the
   Business, not of the payer's input; nothing yet rules out a payer-side cause, which is why the
@@ -992,12 +997,79 @@ removal flag (`revokeUnconfirmedAt`): the number holds the new role's rights aga
 Responsable's role (`LYDIA_CASHIER_ROLE_FIXED`), and never a row whose number is one of the
 Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`).
 
-**The owner's gate: adding and changing a role ship OFF** (`LYDIA_CASHIER_ADD_ENABLED = false` in core,
+**The owner's gate: adding, changing a role and changing the Responsable's number are ON since 1.7.1**
+(owner, 2026-11-18). One switch in three places, changed together: `LYDIA_CASHIER_ADD_ENABLED` in core,
 the frontend constant of the same name, and `switches.cashierAddEnabled` in
-`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec; refused with the
-typed 409 `LYDIA_CASHIER_ADD_DISABLED`, nothing sent to Lydia). **They flip, together, only after ONE
-removal has been observed in production.** Removing is live: it only takes rights away. Changing the
-Responsable's number is behind the same gate (below).
+`libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec. Off, the add
+and the role change are the typed 409 `LYDIA_CASHIER_ADD_DISABLED` (nothing sent to Lydia) and the
+number change the 409 `LYDIA_RESPONSABLE_PHONE_LOCKED` (below); the specs pin both refusals with the
+gate closed by a spy, and run the ON paths against the shipped value. Removing is never gated: it only
+takes rights away. **Why it flipped before a production removal:** lot 3 shipped OFF until ONE removal
+was observed in production, a condition nothing could meet - every production association held only
+its Responsable, whose current number is never removed, so nothing was removable while adding was off.
+The removal path was measured on Lydia homologation (2026-10-30), and the owner takes the first
+production removal himself on 1.7.1
+([reading](../../backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)).
+
+**Reading a removal in the logs** (core, then social; phones only by their last two digits):
+
+1. core `[LYDIA-CASHIER] association <id>: removal of phone ending NN asked` (INFO), after the
+   preconditions read back as expected (DEBUG `removal preconditions met`);
+2. the `business/getpermission` RE-READ of that number, and its verdict: `... removal of phone ending NN:
+   confirmed, 0 rights` (INFO) - the ONLY line that is a removal. `the re-read still shows N right(s)`,
+   `the re-read failed` or an unreadable answer are each an ERROR, the row stays live, flagged;
+3. core `Lydia cashiers of <id>: removal of a current number confirmed` (INFO);
+4. social `[AUDIT] Lydia cashier removal on association <id>: row <8 chars> (current number), by <8
+   chars> - confirmed by Lydia (0 rights)` (INFO), the row closed.
+
+A WARN `Lydia did not accept the call (...) - the re-read decides` between 1 and 2 is not a failure by
+itself: the re-read decides. An add reads the same way: `adding a vendeur (phone ending NN, 1 right(s))`,
+then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia cashier added ...`; with
+the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
+
+**A membership that ends owes its Lydia rights** (review of the flip, built with it in 1.7.1). The debt
+is DURABLE STATE, not a job: a live `lydia_cashiers` row of the managed Business whose person holds no
+`association_members` row of that association (`CASHIER_DEPARTED_SQL`, `lydia-cashiers-list.ts`) owes
+the removal of its numbers - every number of a Tresorier or Vendeur, a Responsable's OTHER number,
+never the Responsable's current one (`owesDepartureRemoval`). Re-joining ends the debt by the same
+predicate. `LydiaCashiersService.settleDepartures` pays it through the SAME verified path as "Retirer"
+(the claim and `revokeTarget`'s checks, core's internal `revoke` route with `reason: departure`, the
+`getpermission` re-read, `recordRevoke`): 0 rights closes the row; anything else - rights still read,
+core's typed refusal, no answer - is recorded NOT confirmed (flagged, ERROR), so the card shows it;
+a flagged number is asked again only by a new departure or by "Retirer", never by a card read or a
+release (`CURRENT_UNTRIED_SQL`, `PREVIOUS_UNTRIED_SQL`), so opening the card never calls Lydia for it. Each number takes its own claim WITHOUT waiting and re-reads, under the
+association's lock, that the row is live and its person still not a member (a member back, or a row
+closed meanwhile, is no longer owed). The run re-reads the debt until nothing it has not attempted is
+left, so it terminates. Three triggers read the debt, none awaited and none able to fail the write it
+follows (`LydiaCashierDeparturePort`, registered at boot - `LydiaCashiersService` depends on
+`AssociationsService`, so the port breaks the cycle): `removeMember` once its delete committed
+(leaving goes through it); every payments-card read that finds a row owing one; and every release of
+the cashier claim (`claim-released`: a step's record or release, the Responsable's - except a
+Responsable record answering `removeOther`, whose removal of the replaced number claims next and asks
+on its own release), so a departure
+that met the claim busy (INFO) is paid when the holder lets go. **A Responsable who leaves** keeps
+their current number (the Business needs a manager; changing the Responsable to another person is not
+offered): the departure says so at ERROR, once, for the person who left, and the card reads "a new
+Responsable is needed, contact a platform administrator". core bounds each of the removal's three
+Lydia calls (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`) so their sum answers within social-service's wait
+(`timeouts.cashierRemovalWaitMs` in `libs/contracts/lydia-refusal-codes.json`, asserted on both
+sides): a core still talking to Lydia after social released the claim would act outside it. The other
+paths that end a membership or close the rows: **an account erasure** removes the numbers first
+(`revokeBeforeErasure`, unchanged - see the entry below for what it does not surface); **deleting the
+association** and **unlinking its Business** (a global admin's) are refused, typed, while a Tresorier, a
+Vendeur or a Responsable's other number is live (`LYDIA_CASHIERS_LIVE`: the rows would go and the
+rights stay) or a cashier step holds the claim (`LYDIA_CASHIER_IN_FLIGHT`: its record would land on a
+row the act took) - `assertNoCashierOwed`, under the association's lock; core passes both through to
+the admin's screen. A role change re-checks membership (`LYDIA_CASHIER_NOT_A_MEMBER`).
+
+**What the gate does not cover yet** (owed in 1.7.1:
+[entry](../../backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)): the member check
+binds the person, not the number typed, while the cashier notice is off; an add does not read the
+number first, so a number Lydia lists outside Canari has its rights replaced - blocked on telling a
+never-added number from an unreadable answer (measured on dev 2026-11-18: `getpermission` answers
+`status: error`, `code: 1`, "Parametre manquant" for a never-added number, and no known number was
+available as a control). A French number typed with its trunk 0 (`+330...`) is refused by every
+server check and rewritten by the client, so one line has one spelling for the number-in-use check.
 
 **Removing** (`.../:cashierId/revoke`, body `{ number: 'current' | 'previous' }`): social-service checks
 and claims (`lydia-cashier-revoke-claim`) and hands core what the call needs, opened server-side only.
@@ -1014,8 +1086,8 @@ still holds the number removed, compared sealed-to-opened inside the locking tra
 (`LYDIA_CASHIER_RESPONSABLE_NUMBER`, also when the number to remove IS that number): it is managed by
 its own step, below.
 
-**Changing the Responsable's number** (the lot 2 route, the same person with another number). OFF while
-`LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
+**Changing the Responsable's number** (the lot 2 route, the same person with another number). ON with
+the gate since 1.7.1; OFF whenever `LYDIA_CASHIER_ADD_ENABLED` is off (typed 409 `LYDIA_RESPONSABLE_PHONE_LOCKED`, the code clients older
 than lot 3 already word as "cannot be changed yet"; the claim released, Lydia never asked; the screen
 then offers only "Renvoyer le SMS"). Once on, only the
 Responsable themselves (the caller IS the row's `userId`) or a global admin may change it - a

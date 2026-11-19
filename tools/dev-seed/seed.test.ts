@@ -236,6 +236,12 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "type IN ('association', 'list', 'institution')",
     holds: oneOf('type', ['association', 'list', 'institution']),
   },
+  // A BDE's colour for its neutral events (social 171): left out, it is NULL (no default).
+  associations_neutral_event_colour_check: {
+    sql: `"neutralEventColor" IS NULL OR "neutralEventColor" ~ '^#[0-9A-Fa-f]{6}$'`,
+    holds: (r) =>
+      !given(r.neutralEventColor) || /^#[0-9A-Fa-f]{6}$/.test(String(r.neutralEventColor)),
+  },
   CHK_platform_config_calls_mode: {
     sql: "calls_mode IN ('off', 'audio', 'audio_video')",
     holds: oneOf('calls_mode', ['off', 'audio', 'audio_video']),
@@ -261,8 +267,8 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     holds: oneOf('group_calls_mode', ['off', 'mesh']),
   },
   CHK_platform_config_call_relay: {
-    sql: "call_relay IN ('none', 'call-service')",
-    holds: oneOf('call_relay', ['none', 'call-service']),
+    sql: "call_relay IN ('none', 'call-service', 'cloudflare')",
+    holds: oneOf('call_relay', ['none', 'call-service', 'cloudflare']),
   },
   CHK_platform_config_retention_reel_days: {
     sql: 'retention_reel_days BETWEEN 1 AND 3650',

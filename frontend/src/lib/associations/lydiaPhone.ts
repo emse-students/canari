@@ -6,6 +6,10 @@
 export function toE164Phone(raw: string): string | null {
   const compact = raw.replace(/[\s.\-()]/g, '');
   if (/^0\d{9}$/.test(compact)) return `+33${compact.slice(1)}`;
+  // `+33 0 6...`: the French trunk 0 kept after the country code. E.164 has none, and the servers
+  // refuse it, so the one spelling of that line is sent.
+  if (/^\+330\d{9}$/.test(compact)) return `+33${compact.slice(4)}`;
+  if (compact.startsWith('+330')) return null;
   if (/^\+\d{8,15}$/.test(compact)) return compact;
   return null;
 }

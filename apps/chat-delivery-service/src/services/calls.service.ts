@@ -33,7 +33,8 @@ import {
   parseGroupCallVersion,
   readGroupCallsMode,
 } from '../utils/group-calls-mode';
-import { readCallRelay, RELAY_SEATS } from '../utils/call-relay';
+import { readCallRelay, RELAY_SEATS, relayModeOf, type RelayMode } from '../utils/call-relay';
+import { missingCloudflareSfuHalves, readCloudflareSfuApp } from '../utils/cloudflare-sfu-app';
 import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
@@ -122,25 +123,26 @@ export interface InitiateCallResponse {
    */
   ringTimeoutMs: number;
   /**
-   * `sfu` when this GROUP call goes through call-service's relay (`platform_config.call_relay`,
-   * WP-GC4): the client joins with `Join { mode: "sfu" }`, and call-service refuses any other mode
-   * (the room token signs it). Absent: a group call is the mesh, a 1:1 call peer to peer, as before.
+   * The relay of a GROUP call that goes through one (`platform_config.call_relay`): `sfu` -
+   * call-service's (WP-GC4), joined with `Join { mode: "sfu" }`, call-service refusing any other
+   * mode (the room token signs it); `cloudflare` - Cloudflare Realtime through this service's proxy
+   * (WP-GC3, `calls/sfu/*`). Absent: a group call is the mesh, a 1:1 call peer to peer, as before.
    */
-  mode?: 'sfu';
+  mode?: RelayMode;
 }
 
 /** What `room-token` answers: the token, and the mode the room carries its call in (see `initiate`). */
 export interface RoomTokenResponse {
   roomToken: string;
-  /** `sfu` for a group call through the relay; absent otherwise (see {@link InitiateCallResponse.mode}). */
-  mode?: 'sfu';
+  /** The relay of a group call through one; absent otherwise (see {@link InitiateCallResponse.mode}). */
+  mode?: RelayMode;
 }
 
 /** What the group-call gate decided at `initiate`: the seat cap, and the relay when one carries it. */
 interface GroupCallPath {
   maxSeats: number;
-  /** `sfu`: call-service's relay carries the call from the start (interim, until WP-GC5). */
-  mode?: 'sfu';
+  /** The relay that carries the call from the start (interim, until WP-GC5); absent on the mesh. */
+  mode?: RelayMode;
 }
 
 /**
@@ -148,7 +150,7 @@ interface GroupCallPath {
  * room id and the conversation it was opened in: without it, any member of ANY group could obtain
  * a valid token for a room id they had learnt, signed for their own group.
  */
-interface CallRoomBinding {
+export interface CallRoomBinding {
   groupId: string;
   /** The user who opened the room: the only one who may open its ring window. */
   callerId: string;
@@ -159,10 +161,11 @@ interface CallRoomBinding {
    */
   maxSeats?: number;
   /**
-   * `sfu` for a GROUP call through call-service's relay (WP-GC4), signed into every room token as
-   * `mode` so call-service refuses a Join in another mode. Absent on the mesh and on a 1:1 call.
+   * The relay of a GROUP call through one (WP-GC4 `sfu`, WP-GC3 `cloudflare`), signed into every
+   * room token as `mode`: call-service refuses a Join in another mode, and the Cloudflare proxy
+   * seats only a token that says `cloudflare`. Absent on the mesh and on a 1:1 call.
    */
-  mode?: 'sfu';
+  mode?: RelayMode;
   /**
    * A GROUP call's kind, fixed at `initiate` with its seat cap (3 in video, 4 in audio): the ring
    * must announce the same kind, or a 4-seat audio room would ring as a video call and become a
@@ -232,7 +235,8 @@ function userCallPresenceKey(userId: string): string {
   return `call:user_active:${userId}`;
 }
 
-function callRoomKey(roomId: string): string {
+/** The room's binding key; every key of a room (the Cloudflare relay's included) dies with it. */
+export function callRoomKey(roomId: string): string {
   return `call:room:${roomId}`;
 }
 
@@ -249,6 +253,14 @@ function callAnswerByKey(roomId: string): string {
 function callRingEndedKey(roomId: string): string {
   return `call:room:${roomId}:ring_ended`;
 }
+
+/**
+ * Why a ring ended, as `ring-end` carries it. `room-empty` (WP-GC7): the sender's hangup left the
+ * room of an answered call with nobody in it, AS THE SENDER SEES IT. From the caller it ends every
+ * member's ring, as any caller's ring-end does; from a participant it stops only their own devices
+ * (see `endRing`).
+ */
+export type RingEndReason = 'cancelled' | 'answered' | 'ended' | 'room-empty';
 
 /** What `prepareRing` hands the background fan-out. */
 interface RingPlan {
@@ -512,7 +524,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
         userId,
         groupCallVersion,
         `join-token room=${roomId}`,
-        binding.mode === 'sfu' ? GROUP_CALL_SFU_VERSION : GROUP_CALL_MESH_VERSION
+        binding.mode !== undefined ? GROUP_CALL_SFU_VERSION : GROUP_CALL_MESH_VERSION
       );
       // The review cohort's boundary, as at `initiate` and `ring`: every participant the joiner
       // would be paired with, the caller included.
@@ -631,7 +643,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     const value = parsed as Partial<CallRoomBinding> | null;
     if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
-      if (value.mode !== undefined && value.mode !== 'sfu') {
+      if (value.mode !== undefined && value.mode !== 'sfu' && value.mode !== 'cloudflare') {
         this.logger.error(`[call] room binding for ${roomId} names an unknown mode - refused`);
         return null;
       }
@@ -983,7 +995,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     const needsVersion = !group
       ? 0
-      : bound?.mode === 'sfu'
+      : bound?.mode !== undefined
         ? GROUP_CALL_SFU_VERSION
         : GROUP_CALL_MESH_VERSION;
     return { callerId, groupId, callId, hasVideo, calleeIds, group, needsVersion };
@@ -1047,12 +1059,18 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Stops the ring on every member device (caller cancelled, someone answered, or the
    * call ended). Sent to ALL members including the sender's own user so sibling devices
    * stop ringing too; the device that is already in the call ignores its own callId.
+   *
+   * On a GROUP call only the caller's ring-end reaches everyone, `room-empty` (WP-GC7) included.
+   * A participant's `room-empty` stops only their own devices and marks nothing: it is the
+   * sender's view of a mesh, not a fact about the room (a member whose links all failed sees nobody
+   * in a live call), and the app has no control to join an ongoing call, so a member whose ring it
+   * stopped would miss that call. The others' rings end with the answer window (`answer_by`).
    */
   async endRing(
     userId: string,
     groupId: string,
     callId: string,
-    reason: 'cancelled' | 'answered' | 'ended'
+    reason: RingEndReason
   ): Promise<{ notified: number }> {
     this.logger.debug(
       `[ring] endRing user=${userId} group=${groupId} call=${callId} reason=${reason}`
@@ -1070,6 +1088,8 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     }
     // A GROUP call rings everyone at once: one member answering or declining stops THEIR devices
     // only, and the others go on ringing. Only the caller's ring-end is the ring's end for all.
+    // `room-empty` (WP-GC7) included: this service holds no fact about who is in the room (the
+    // seats live in call-service's memory), so a participant's word cannot end anyone else's ring.
     const ownOnly = unbound || (binding.maxSeats !== undefined && binding.callerId !== userId);
     if (!ownOnly) {
       // The mark spares a late VoIP push; the ring-end pushes below stop rings ALREADY showing, so
@@ -1147,11 +1167,16 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * deduped): a seat awaiting a member's admission is rung by nobody ({@link ADMITTED_SEAT}).
    */
   private async otherMemberIds(groupId: string, userId: string): Promise<string[]> {
+    return (await this.admittedMemberIds(groupId)).filter((id) => id !== userId);
+  }
+
+  /** Every user holding an ADMITTED membership row in `groupId`, once each (rows are per device). */
+  private async admittedMemberIds(groupId: string): Promise<string[]> {
     const members = await this.groupMemberRepo.find({
       where: { groupId, ...ADMITTED_SEAT },
       select: { userId: true },
     });
-    return [...new Set(members.map((m) => m.userId))].filter((id) => id !== userId);
+    return [...new Set(members.map((m) => m.userId))];
   }
 
   /**
@@ -1209,19 +1234,121 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     const relay = await readCallRelay(this.groupMemberRepo.manager, this.logger);
-    if (relay === 'call-service' && callerVersion < GROUP_CALL_SFU_VERSION) {
+    const relayMode = relayModeOf(relay);
+    if (relayMode !== null && callerVersion < GROUP_CALL_SFU_VERSION) {
       // The relay is on, but this caller's build has no SFU leg: it would `Join` p2p and be
       // refused `mode-mismatch`. The call stays on the mesh, where it works, and says so.
       this.logger.log(
-        `[call] initiate group=${groupId} user=${userId}: stays on the mesh although call_relay=call-service - the caller's build has no SFU leg (groupCallVersion=${callerVersion})`
+        `[call] initiate group=${groupId} user=${userId}: stays on the mesh although call_relay=${relay} - the caller's build has no SFU leg (groupCallVersion=${callerVersion})`
       );
-    } else if (relay === 'call-service') {
+    } else if (relayMode !== null) {
+      if (relayMode === 'cloudflare') this.assertCloudflareConfigured(userId, groupId);
       this.logger.log(
-        `[call] initiate group=${groupId} user=${userId}: through call-service's relay (call_relay=call-service, seats=${RELAY_SEATS})`
+        `[call] initiate group=${groupId} user=${userId}: through the ${relay} relay (call_relay=${relay}, seats=${RELAY_SEATS})`
       );
-      return { maxSeats: RELAY_SEATS, mode: 'sfu' };
+      return { maxSeats: RELAY_SEATS, mode: relayMode };
     }
     return { maxSeats: video ? MESH_SEATS_VIDEO : MESH_SEATS_AUDIO };
+  }
+
+  /**
+   * A `cloudflare` relay on a server without the Realtime app's pair is a DEFECT of the estate, and
+   * it is answered as one: a typed 503 the client words (`GROUP_CALL_RELAY_UNAVAILABLE`), an ERROR
+   * naming the missing half - never the call carried on the mesh in silence, which would hide the
+   * setting's failure behind a call that still connects for three people and breaks for five.
+   */
+  private assertCloudflareConfigured(userId: string, groupId: string): void {
+    if (readCloudflareSfuApp() !== null) return;
+    this.logger.error(
+      `[call] initiate group=${groupId} REFUSED user=${userId}: call_relay=cloudflare but ${missingCloudflareSfuHalves()} is not set - the relay cannot carry this call`
+    );
+    throw new ServiceUnavailableException({
+      code: RefusalCode.GROUP_CALL_RELAY_UNAVAILABLE,
+      reason: 'unconfigured',
+      message: 'The group call relay is not available on this server.',
+    });
+  }
+
+  /**
+   * THE GATE OF THE CLOUDFLARE PROXY'S FIRST STEP (`POST calls/sfu/session`): the room token
+   * `initiate` or `room-token` issued is the proof that every call gate passed for this user and
+   * this room - membership, the review cohort, a block dropping the member, the ring window - so a
+   * seat is claimed with one, and only one that signs `mode: cloudflare` for THIS user and room.
+   * Membership and the kill switch are read again, now: a token outlives neither.
+   *
+   * @returns The room's binding, whose `maxSeats` the proxy's seat claim enforces.
+   */
+  async admitToCloudflareRoom(
+    userId: string,
+    roomId: string,
+    roomToken: string
+  ): Promise<CallRoomBinding> {
+    const scope = `sfu-session room=${roomId}`;
+    const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
+    if (!roomSecret) {
+      this.logger.error('[calls] CALL_ROOM_SECRET is not set - cannot verify room tokens');
+      throw new ServiceUnavailableException('Call room tokens are not configured on this server');
+    }
+    let claims: { room_id?: unknown; sub?: unknown; mode?: unknown };
+    try {
+      claims = jwt.verify(roomToken, roomSecret, { algorithms: ['HS256'] }) as typeof claims;
+    } catch (e) {
+      this.logger.warn(
+        `[call] ${scope} REFUSED user=${userId}: the room token does not verify (${e instanceof Error ? e.name : 'unknown'})`
+      );
+      throw new ForbiddenException('This room token is not valid');
+    }
+    if (claims.room_id !== roomId || claims.sub !== userId || claims.mode !== 'cloudflare') {
+      this.logger.warn(
+        `[call] ${scope} REFUSED user=${userId}: the token names another room, user or mode (mode=${String(claims.mode)})`
+      );
+      throw new ForbiddenException('This room token is not valid for this room');
+    }
+    return this.assertCloudflareParticipant(userId, roomId, scope);
+  }
+
+  /**
+   * THE GATE OF EVERY LATER PROXY STEP: the room is still bound and carried by Cloudflare, calls are
+   * still open, and the caller is still an admitted member of the room's conversation. The SEAT
+   * (which session is this user's) is the proxy's own record; this answers whether the person may
+   * still be in the call at all.
+   */
+  async assertCloudflareParticipant(
+    userId: string,
+    roomId: string,
+    scope: string
+  ): Promise<CallRoomBinding> {
+    await this.assertCallsOpen(scope, userId);
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[call] ${scope} REFUSED user=${userId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.mode !== 'cloudflare' || binding.maxSeats === undefined) {
+      this.logger.warn(
+        `[call] ${scope} REFUSED user=${userId}: the room is not carried by Cloudflare (mode=${binding.mode ?? 'none'})`
+      );
+      throw new ForbiddenException('This call does not go through this relay');
+    }
+    await this.assertMembership(userId, binding.groupId, 'calls');
+    return binding;
+  }
+
+  /**
+   * WHO MAY STILL HOLD A SEAT in a Cloudflare-relayed room: the users holding an ADMITTED membership
+   * row in the room's conversation now. The proxy reads it to evict a member removed mid-call
+   * (`CloudflareSfuService`'s seat pruning), from the same rows {@link assertMembership} reads.
+   *
+   * @returns `null` when the room is no longer bound or not carried by Cloudflare - the caller
+   *   cannot tell members from non-members then, and prunes nobody on that ground.
+   */
+  async cloudflareRoomMembers(roomId: string): Promise<Set<string> | null> {
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding || binding.mode !== 'cloudflare') {
+      this.logger.debug(`[call] room=${roomId}: no Cloudflare binding - its members are not read`);
+      return null;
+    }
+    return new Set(await this.admittedMemberIds(binding.groupId));
   }
 
   /**

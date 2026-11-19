@@ -27,6 +27,7 @@ import { DataSource } from 'typeorm';
 import { ProductCheckout } from './entities/product-checkout.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { Association } from './entities/association.entity';
+import { AssociationMember } from './entities/association-member.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
@@ -137,6 +138,8 @@ maybe(
         AssociationProduct,
         UserTag,
         Association,
+        // The departure debt (`CASHIER_DEPARTED_SQL`) reads the memberships.
+        AssociationMember,
         AssociationAudience,
         Space,
         PostNotification,
