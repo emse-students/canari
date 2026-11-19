@@ -1417,14 +1417,21 @@ fix-forward (below) would have stranded them. Such a person is now raised as the
   - which every advance takes first - the server removes the seat as a removal does (`removeSeat`:
   seat generation moved, roster row gone and its stretch closed, queued Welcomes and device rows
   gone, eviction recorded) ONLY while `activeEpoch` is still `treeEpoch` (`removed`); once a commit
-  landed since, nothing is touched (`epoch-moved`, the ask stays and the member answers again on a
-  fresh reading) - never a removal of someone who may have just come back in (`declineSeat`,
-  `utils/group-membership.ts`). A malformed epoch is a `400 tree_epoch_invalid`. A tree that cannot be
-  confirmed sends nothing, and one that holds the person declines nothing (a Decline is no Remove).
-  Other members' cards leave on the `declined` settlement frame, sent under the seat's id, which
-  clears an entry that holds no identity. A Decline with no epoch (a client older than this) is
-  answered as before, `not-awaiting` or `already-admitted`, nothing touched. This gives no member a
-  new power: any admitted member may already remove any seat (`DELETE .../members/:userId`).
+  landed since, nothing is touched (`epoch-moved`) - never a removal of someone who may have just
+  come back in (`declineSeat`, `utils/group-membership.ts`). The client then reads the tree again and
+  sends the Decline ONCE more; a second `epoch-moved` is `raced` (the conversation moved under the
+  tap, the card stays). A malformed epoch is a `400 tree_epoch_invalid`. A tree that cannot be
+  confirmed sends nothing, and a tree confirmed AHEAD of the server is not proof either
+  (`readConfirmedTree` answers `unconfirmed`). A tree that holds the person declines nothing (a
+  Decline is no Remove): the card leaves WITHOUT a "Vous avez refusé" line (`settled: 'already-in'`),
+  as it does when a link ask answers `already-admitted`. Other members' cards leave on the `declined`
+  settlement frame, sent under the seat's id, which clears an entry that holds no identity. A Decline
+  with no epoch (a client older than this) is answered as before, `not-awaiting` or
+  `already-admitted`, nothing touched; a Decline WITH an epoch answered that way came from a server
+  older than this, which cannot remove the seat - the client accuses it at ERROR and keeps the card
+  (`unsupported`, toast `join_request_unsupported`), never recording a decline that did not happen.
+  This gives no member a new power: any admitted member may already remove any seat
+  (`DELETE .../members/:userId`).
 
 Accept is the member's own Add, as for a link ask; the commit gate leaves an admitted seat as it is,
 so the Add only gives the person a leaf. Until the emission side ships, such a person may still enter

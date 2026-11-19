@@ -38,6 +38,19 @@ describe('pendingAddFactsOf', () => {
     expect(readConfirmedTree).toHaveBeenCalledTimes(1);
   });
 
+  it('`.tree()` is the pass tree alone: shared with the rows, and no pending list is read for it', async () => {
+    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'], epoch: 4 });
+    const getPendingInvitations = vi.fn(async () => []);
+    const facts = factsOf({
+      getEpoch: () => 4,
+      getPendingInvitations,
+    } as unknown as IMlsService);
+    await facts(false);
+    expect(await facts.tree()).toEqual({ status: 'read', identities: ['u1:d1'], epoch: 4 });
+    expect(readConfirmedTree).toHaveBeenCalledTimes(1);
+    expect(getPendingInvitations).toHaveBeenCalledTimes(1);
+  });
+
   it('never keeps an unconfirmed tree: the next row reads afresh and may confirm it', async () => {
     readConfirmedTree
       .mockResolvedValueOnce({ status: 'unconfirmed' })

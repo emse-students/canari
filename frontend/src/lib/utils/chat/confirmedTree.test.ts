@@ -107,6 +107,20 @@ describe('readConfirmedTree - the bookkeeping of the replay it runs', () => {
     expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
   });
 
+  it('a local tree AHEAD of the server is not proof: unconfirmed', async () => {
+    const { mls } = behindByOne();
+    vi.mocked(mls.fetchCommitsSince).mockResolvedValue({
+      commits: [],
+      activeEpoch: 3,
+      belowFloor: false,
+    });
+
+    const reading = await readConfirmedTree(mls, G, 'me', '[TEST]', () => false);
+
+    expect(reading).toEqual({ status: 'unconfirmed' });
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('AHEAD of the server'));
+  });
+
   it('THE REAL LOCK IS NOT RE-ENTRANT: a call from inside it waits for its own holder', async () => {
     const { mls } = behindByOne();
     const scheduler = new MlsPerGroupScheduler('web');

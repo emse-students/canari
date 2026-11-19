@@ -979,6 +979,25 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       await expect(refusalOf(joinerExternalCommit(3))).resolves.toMatchObject({ status: 403 });
     });
 
+    it('removes a seat that holds no trace of an Add at all (a link seat older than migration 038)', async () => {
+      // `not-awaiting` to a Decline with no epoch; with the member's tree epoch it is removed.
+      await q(
+        `INSERT INTO dm_group_members ("groupId", "userId", role) VALUES ($1, $2, 'member')`,
+        [GROUP, JOINER.userId]
+      );
+      await q(
+        `INSERT INTO dm_device_group_memberships ("userId", "deviceId", "groupId", status)
+         VALUES ($1, $2, $3, 'pending')`,
+        [JOINER.userId, JOINER.deviceId, GROUP]
+      );
+      await expect(decline(MEMBER, JOINER)).resolves.toEqual({ outcome: 'not-awaiting' });
+
+      await expect(decline(MEMBER, JOINER, 3)).resolves.toEqual({ outcome: 'removed' });
+
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
+      expect(await rowsOf('dm_device_group_memberships', JOINER)).toBe(0);
+    });
+
     it('touches nothing when a commit landed since the reading (epoch-moved)', async () => {
       await seatNotAnAsk();
 

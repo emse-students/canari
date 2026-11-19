@@ -220,6 +220,10 @@ export interface PendingAddFacts {
  * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
  * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
  * B, staged after row A, that a device being removed is "still pending", and re-admit it.
+ *
+ * `.tree()` is the pass's tree ALONE, read under the same cache, with no pending list: what a row
+ * that asks a member about a seat with no leaf needs ({@link askAMemberToAdmit}), so such a row
+ * costs no extra read of the list.
  */
 export function pendingAddFactsOf(deps: {
   mlsService: IMlsService;
@@ -228,10 +232,10 @@ export function pendingAddFactsOf(deps: {
   myDeviceId: string;
   /** The sweep's own log, so the re-read line sits at the sweep's level beside its other lines. */
   log: (msg: string) => void;
-}): (fresh: boolean) => Promise<PendingAddFacts> {
+}): ((fresh: boolean) => Promise<PendingAddFacts>) & { tree: () => Promise<TreeReading> } {
   const { mlsService, groupId, userId, myDeviceId, log } = deps;
   let pass: { epoch: number; tree: Promise<TreeReading>; unconfirmed?: true } | null = null;
-  return async (fresh) => {
+  const treeOf = async (fresh: boolean): Promise<TreeReading> => {
     const epoch = mlsService.getEpoch(groupId);
     if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
       if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
@@ -248,11 +252,16 @@ export function pendingAddFactsOf(deps: {
     const current = pass;
     const tree = await current.tree;
     if (tree.status === 'unconfirmed') current.unconfirmed = true;
+    return tree;
+  };
+  const facts = async (fresh: boolean): Promise<PendingAddFacts> => {
+    const tree = await treeOf(fresh);
     const rows = await mlsService
       .getPendingInvitations(userId, myDeviceId)
       .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
     return { tree, rows };
   };
+  return Object.assign(facts, { tree: () => treeOf(false) });
 }
 
 /**
@@ -818,7 +827,7 @@ export async function processPendingInvitations(params: {
             },
             inv.awaitingAdmission === true
               ? LINK_ASK
-              : { kind: 'seat', confirmedTree: async () => (await pendingAddFacts(false)).tree },
+              : { kind: 'seat', confirmedTree: pendingAddFacts.tree },
             '[PENDING]',
             log,
             onJoinApprovalRequested

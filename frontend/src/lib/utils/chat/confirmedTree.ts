@@ -53,7 +53,15 @@ export async function readConfirmedTree(
       const epoch = mlsService.getEpoch(groupId);
       if (decidedLocally(local)) return { status: 'read', identities: local, epoch };
       const { activeEpoch } = await mlsService.fetchCommitsSince(groupId, epoch);
-      if (activeEpoch <= epoch) return { status: 'read', identities: local, epoch };
+      if (activeEpoch === epoch) return { status: 'read', identities: local, epoch };
+      // A LOCAL TREE AHEAD OF THE SERVER IS NOT PROOF: an epoch the server never accepted (a fork,
+      // a merge the server refused) answers for a group nobody else holds.
+      if (activeEpoch < epoch) {
+        console.warn(
+          `${logTag} ${short}… the tree is AHEAD of the server (epoch ${epoch} > ${activeEpoch}) - its answer is not trusted`
+        );
+        return { status: 'unconfirmed' };
+      }
       console.log(
         `${logTag} ${short}… the tree is behind the server (epoch ${epoch} < ${activeEpoch}) - catching up before it is read`
       );
