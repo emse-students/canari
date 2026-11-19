@@ -7,16 +7,20 @@
   import { fetchMinesweeperReplay, formatDurationMs } from '$lib/minesweeper/api';
   import type { MinesweeperReplayData } from '$lib/minesweeper/api';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
-  import { createReplay, type Replay } from '$lib/minesweeper/replay';
+  import { createReplay, fitCellSize, type Replay } from '$lib/minesweeper/replay';
+  import { animationFactor, loadMinesweeperSettings } from '$lib/minesweeper/settings';
   import { m } from '$lib/paraglide/messages';
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
 
   /**
-   * A MODERATOR'S REPLAY of one won ranked game (owner, 2026-11-17): the board is regenerated from the
-   * stored seed and the timed moves are played back at their own pace - or faster - so a global admin
-   * can judge whether the game was played by a hand. Opened from the Games page, global admins only;
-   * the 403 behind the route is the real gate. docs/wiki/frontend/modules/minesweeper.md, "The replay".
+   * THE REPLAY of one won ranked game (owner, 2026-11-17; open to every member, 2026-11-18): the board
+   * is regenerated from the stored seed and the timed moves are played back at their own pace - or
+   * faster - so anyone can see how a record was played, and a moderator can judge whether a hand did
+   * it. Opened from a row of the Games ranking. docs/wiki/frontend/modules/minesweeper.md, "The replay".
+   *
+   * The screen is the board: full-screen on a phone, the whole grid fitted to the space it is given
+   * (`fitCellSize`, re-fitted on every resize or rotation), the controls in one bar under it.
    */
   interface Props {
     /** The score to replay. */
@@ -42,6 +46,18 @@
   let positionMs = $state(0);
   let playing = $state(false);
   let speed = $state<Speed>(1);
+  /** The board's room, measured, and the cell size at which the whole grid fits it. */
+  let stage = $state<HTMLDivElement | null>(null);
+  let cellPx = $state(20);
+  /**
+   * Breathing room around the grid inside the stage, and the space between two cells, in px. The
+   * stage's padding and the grid's gap are DRAWN from these (inline styles), so the fit cannot drift
+   * from what is on screen.
+   */
+  const STAGE_PADDING_PX = 16;
+  const GRID_GAP_PX = 1;
+  /** The device's animation setting: the cells' colour crossfade follows it, as in the game itself. */
+  const animFactor = animationFactor(loadMinesweeperSettings().animations);
 
   const lastMove = $derived(data && shown > 0 ? data.moves[shown - 1] : null);
   /** Where the game ends: its last move. */
@@ -50,6 +66,26 @@
     lastMove && data ? lastMove.y * data.config.width + lastMove.x : null
   );
   const atEnd = $derived(positionMs >= lengthMs);
+
+  /** Keeps the grid fitted to its room: the cell size follows the stage (rotation, window resize). */
+  $effect(() => {
+    if (!stage || !data || typeof ResizeObserver === 'undefined') return;
+    const { width: cols, height: rows } = data.config;
+    const el = stage;
+    const fit = () => {
+      cellPx = fitCellSize(
+        el.clientWidth - STAGE_PADDING_PX,
+        el.clientHeight - STAGE_PADDING_PX,
+        cols,
+        rows,
+        GRID_GAP_PX
+      );
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   onMount(() => {
     let cancelled = false;
@@ -134,19 +170,27 @@
   open={true}
   title={data
     ? m.minesweeper_replay_title({ name: data.displayName })
-    : m.minesweeper_admin_replay()}
+    : m.minesweeper_replay_open()}
   {onClose}
-  maxWidth="max-w-xl"
+  phoneFullScreen={true}
+  maxWidth="max-w-none sm:max-w-3xl"
+  panelClass="sm:h-[min(92dvh,60rem)]!"
 >
   {#if phase === 'loading'}
-    <p class="text-text-muted text-sm" role="status">{m.minesweeper_replay_loading()}</p>
+    <p class="text-text-muted p-4 text-sm" role="status">{m.minesweeper_replay_loading()}</p>
   {:else if phase === 'missing'}
-    <p class="text-text-muted text-sm" role="status">{m.minesweeper_replay_missing()}</p>
+    <p class="text-text-muted p-4 text-sm" role="status">{m.minesweeper_replay_missing()}</p>
   {:else if phase === 'failed' || !data}
-    <p class="text-red-err text-sm font-semibold" role="alert">{m.minesweeper_replay_failed()}</p>
+    <p class="text-red-err p-4 text-sm font-semibold" role="alert">
+      {m.minesweeper_replay_failed()}
+    </p>
   {:else}
-    <div class="space-y-3">
-      <p class="text-text-muted text-xs" data-testid="replay-summary">
+    <div
+      class="flex min-h-0 flex-1 flex-col"
+      style="--ms-anim: {animFactor};"
+      data-testid="replay-root"
+    >
+      <p class="text-text-muted shrink-0 px-4 py-2 text-xs" data-testid="replay-summary">
         {m.minesweeper_replay_summary({
           time: formatDurationMs(data.durationMs),
           generator: String(data.generatorVersion),
@@ -154,12 +198,21 @@
         })}
       </p>
 
-      <div class="bg-cn-bg flex max-h-[58dvh] justify-center overflow-auto rounded-lg p-2">
+      <!-- The stage takes every pixel the controls leave and the grid is fitted to it. `m-auto` on the
+         grid, not `justify-center` on the stage: a grid larger than the stage (below the minimum cell)
+         then overflows to the right and bottom, where it can be scrolled to, instead of both ways,
+         where the top and left edges would be unreachable. -->
+      <div
+        bind:this={stage}
+        class="bg-cn-bg flex min-h-0 flex-1 overflow-auto"
+        style="padding: {STAGE_PADDING_PX / 2}px;"
+        data-testid="replay-stage"
+      >
         <div
           role="presentation"
-          class="grid w-max gap-px"
-          style="--ms-cell: min(1.25rem, calc((100vw - 3.5rem) / {data.config.width +
-            0.5})); grid-template-columns: repeat({data.config.width}, var(--ms-cell));"
+          class="m-auto grid w-max"
+          style="--ms-cell: {cellPx}px; gap: {GRID_GAP_PX}px; grid-template-columns: repeat({data
+            .config.width}, var(--ms-cell));"
           data-testid="replay-board"
         >
           {#each views.views as cell, i (i)}
@@ -168,44 +221,41 @@
         </div>
       </div>
 
-      <p class="text-text-muted min-h-4 text-xs" data-testid="replay-last" aria-live="off">
-        {#if lastMove}
-          {m.minesweeper_replay_last({
-            action: actionLabel(lastMove.type),
-            cell: `${lastMove.x + 1},${lastMove.y + 1}`,
-            time: formatDurationMs(lastMove.t),
-          })}
-        {/if}
-      </p>
+      <div class="border-cn-border shrink-0 space-y-3 border-t px-4 pt-3 pb-3">
+        <div class="flex items-center gap-3">
+          <Button
+            icon
+            variant="primary"
+            aria-label={playing ? m.minesweeper_replay_pause() : m.minesweeper_replay_play()}
+            title={playing ? m.minesweeper_replay_pause() : m.minesweeper_replay_play()}
+            onclick={togglePlay}
+          >
+            {#if playing}
+              <Pause size={18} strokeWidth={2.25} />
+            {:else}
+              <Play size={18} strokeWidth={2.25} />
+            {/if}
+          </Button>
+          <Button
+            icon
+            variant="ghost"
+            aria-label={m.minesweeper_replay_restart()}
+            title={m.minesweeper_replay_restart()}
+            onclick={restart}
+          >
+            <RotateCcw size={18} strokeWidth={2.25} />
+          </Button>
+          <span
+            class="text-text-main ml-auto shrink-0 font-mono text-sm"
+            data-testid="replay-clock"
+          >
+            {formatDurationMs(positionMs)}
+          </span>
+        </div>
 
-      <div class="flex items-center gap-2">
-        <Button
-          icon
-          size="compact"
-          variant="secondary"
-          aria-label={playing ? m.minesweeper_replay_pause() : m.minesweeper_replay_play()}
-          title={playing ? m.minesweeper_replay_pause() : m.minesweeper_replay_play()}
-          onclick={togglePlay}
-        >
-          {#if playing}
-            <Pause size={14} strokeWidth={2.25} />
-          {:else}
-            <Play size={14} strokeWidth={2.25} />
-          {/if}
-        </Button>
-        <Button
-          icon
-          size="compact"
-          variant="ghost"
-          aria-label={m.minesweeper_replay_restart()}
-          title={m.minesweeper_replay_restart()}
-          onclick={restart}
-        >
-          <RotateCcw size={14} strokeWidth={2.25} />
-        </Button>
         <input
           type="range"
-          class="accent-accent min-w-0 flex-1"
+          class="accent-accent h-6 w-full"
           min="0"
           max={lengthMs}
           step="1"
@@ -213,31 +263,39 @@
           aria-label={m.minesweeper_replay_position()}
           oninput={(e) => seek(Number(e.currentTarget.value))}
         />
-        <span class="text-text-main shrink-0 font-mono text-xs" data-testid="replay-clock">
-          {formatDurationMs(positionMs)}
-        </span>
-      </div>
 
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-text-muted text-xs" data-testid="replay-count">
-          {m.minesweeper_replay_move({ n: String(shown), total: String(data.moves.length) })}
-        </span>
-        <span
-          class="flex items-center gap-1"
-          role="group"
-          aria-label={m.minesweeper_replay_speed()}
-        >
-          {#each SPEEDS as s (s)}
-            <Button
-              size="compact"
-              variant={speed === s ? 'secondary' : 'ghost'}
-              aria-pressed={speed === s}
-              onclick={() => (speed = s)}
-            >
-              {s}x
-            </Button>
-          {/each}
-        </span>
+        <div class="flex items-center justify-between gap-3">
+          <span class="min-w-0 text-xs">
+            <span class="text-text-main block font-semibold" data-testid="replay-count">
+              {m.minesweeper_replay_move({ n: String(shown), total: String(data.moves.length) })}
+            </span>
+            <span class="text-text-muted block truncate" data-testid="replay-last" aria-live="off">
+              {#if lastMove}
+                {m.minesweeper_replay_last({
+                  action: actionLabel(lastMove.type),
+                  cell: `${lastMove.x + 1},${lastMove.y + 1}`,
+                  time: formatDurationMs(lastMove.t),
+                })}
+              {/if}
+            </span>
+          </span>
+          <span
+            class="flex shrink-0 items-center gap-1"
+            role="group"
+            aria-label={m.minesweeper_replay_speed()}
+          >
+            {#each SPEEDS as s (s)}
+              <Button
+                size="compact"
+                variant={speed === s ? 'secondary' : 'ghost'}
+                aria-pressed={speed === s}
+                onclick={() => (speed = s)}
+              >
+                {s}x
+              </Button>
+            {/each}
+          </span>
+        </div>
       </div>
     </div>
   {/if}

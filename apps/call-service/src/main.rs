@@ -775,6 +775,13 @@ enum SignalMessage {
         /// A fresh one comes with every `Joined`, a resume's included.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resume_token: Option<String>,
+        /// How many seats OTHER users hold in the room at this join: on every SFU join (WP-GC4
+        /// client), and on every p2p join once WP-GC6 states it there too. A FACT, so a client that ANSWERED a group call can tell an empty
+        /// room - every other participant already left - from one still to fill, without a timer.
+        /// `0` on the caller's first join is the room empty by design. Ignored by a client older
+        /// than the field.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        others: Option<usize>,
     },
     /// P2P only, server -> client: the room now holds both parties. `initiator` makes the offer
     /// and is the impolite side; the other answers and yields on a collision. Sent again to the
@@ -1603,14 +1610,19 @@ async fn handle_signal(
                     (room, Ok(reservation))
                 }
             };
+            let mut others = 0;
             let refusal = match reservation {
-                Ok(Reservation::Seated { replaced }) => {
+                Ok(Reservation::Seated {
+                    replaced,
+                    others: held_by_others,
+                }) => {
                     if let Some(sibling) = replaced {
                         info!(
                             "[multi-device] SFU room {}: {} takes the seat of {}",
                             room_id, peer_id, sibling
                         );
                     }
+                    others = held_by_others;
                     None
                 }
                 Ok(Reservation::Full { max_seats }) => {
@@ -1951,10 +1963,17 @@ async fn handle_signal(
                 },
             ));
 
+            // The seats other users held at the reservation: an answer into a relay room everyone
+            // already left is told so (`others: 0`); the p2p `Joined` states it once WP-GC6 lands.
+            info!(
+                "[call] sfu joined room={} peer={} others={}",
+                room_id, peer_id, others
+            );
             if let Err(e) = notify_tx
                 .send(SignalMessage::Joined {
                     room_id: room_id.clone(),
                     resume_token: None,
+                    others: Some(others),
                 })
                 .await
             {
@@ -2445,6 +2464,7 @@ fn p2p_send_joined(
         SignalMessage::Joined {
             room_id: room_id.to_string(),
             resume_token: mint_resume_token(state, room_id, user_id, group_id, peer_id),
+            others: None,
         },
         room_id,
         peer_id,

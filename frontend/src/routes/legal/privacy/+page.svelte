@@ -586,13 +586,16 @@
         <dt>Démineur</dt>
         <dd>
           Une partie « Libre » n'envoie rien. Pour une partie classée : la partie (sa grille, sa
-          taille, ses dates et son état) et, si vous gagnez, votre temps et votre nombre de coups.
-          Les classements, général et par promo, montrent à chaque membre connecté le nom, le
-          meilleur temps et le rang de chaque joueur classé ; le classement par promo montre aussi
-          la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure pas). Votre
-          profil affiche votre rang (badge « Démineur »). La modération peut retirer un score ou
-          exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur qui l'a
-          prononcée et sa date. Tout est supprimé avec votre compte.
+          taille, ses dates et son état) et, si vous gagnez, votre temps, votre nombre de coups et
+          le détail de chaque coup (ouverture ou drapeau, case et instant), conservé avec le score
+          pour pouvoir rejouer la partie : tout membre connecté peut rejouer la partie qui figure au
+          classement (votre meilleur temps), et seul vous, ou un administrateur, peut rejouer vos
+          autres victoires. Les classements, général et par promo, montrent à chaque membre connecté
+          le nom, le meilleur temps et le rang de chaque joueur classé ; le classement par promo
+          montre aussi la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure
+          pas). Votre profil affiche votre rang (badge « Démineur »). La modération peut retirer un
+          score ou exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur
+          qui l'a prononcée et sa date. Tout est supprimé avec votre compte.
         </dd>
       </div>
       <div>

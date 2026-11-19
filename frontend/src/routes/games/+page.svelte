@@ -65,7 +65,7 @@
   let bans = $state<MinesweeperBan[]>([]);
   /** An admin action failed - said on the tab, never swallowed. */
   let moderationFailed = $state(false);
-  /** The score whose replay is open (a global admin's "see this game"); null when none is. */
+  /** The score whose replay is open (anyone's "watch this game"); null when none is. */
   let replayScoreId = $state<string | null>(null);
   const promoOptions = $derived<PickerOption[]>(
     promos.map((p) => ({
@@ -298,17 +298,17 @@
                 <span class="text-text-main font-mono text-sm font-semibold">
                   {formatDurationMs(entry.durationMs)}
                 </span>
+                <Button
+                  icon
+                  size="compact"
+                  variant="ghost"
+                  aria-label={m.minesweeper_replay_open()}
+                  title={m.minesweeper_replay_open()}
+                  onclick={() => (replayScoreId = entry.scoreId)}
+                >
+                  <Play size={14} strokeWidth={2.25} />
+                </Button>
                 {#if isAdmin}
-                  <Button
-                    icon
-                    size="compact"
-                    variant="ghost"
-                    aria-label={m.minesweeper_admin_replay()}
-                    title={m.minesweeper_admin_replay()}
-                    onclick={() => (replayScoreId = entry.scoreId)}
-                  >
-                    <Play size={14} strokeWidth={2.25} />
-                  </Button>
                   <Button
                     icon
                     size="compact"

@@ -3468,8 +3468,13 @@ web device. Now:
   follower (no reset, no forget, no burn). An in-session PIN change is refused in a leader promoted in
   place, as in a follower.
 
-Not covered, filed: the leader lock is one per BROWSER, so a tab of another account is a follower its
-leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)).
+Not covered, and ACCEPTED by the owner on 2026-11-19: the leader lock (`canari-tab-leader`) is one per
+BROWSER, so a tab of another account is a follower its leader will not serve (`not-delegable`). Since the
+hand-over (#3321, 2026-11-14) a VISIBLE tab with a queued message takes the lead, so two accounts in one
+browser profile work in ordinary use; what remains is two accounts VISIBLE side by side, where only the
+leading one sends. *"Pour le moment, rien à faire, tout marche bien"* - a worker independent of the tabs
+may come later; a lock per account (`canari-tab-leader.<userId>`, one socket per signed-in account) is
+not planned ([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
 **And the second review of #3371, same day - order, the leader's own gate, the promotion window:**
 
 - **A follower's requests run in the order it made them.** A record was keyed by a random UUID and
