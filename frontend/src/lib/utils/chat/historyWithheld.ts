@@ -310,6 +310,17 @@ export function historyWithheldFrom(groupId: string, to: string): boolean {
   return sealed.has(groupId) || recordWithholds(groupId, to);
 }
 
+/**
+ * Why a history answer to `to` in `groupId` is withheld: `'sealed'` when the whole conversation is
+ * sealed (fail-closed and permanent - nothing about `to`), `'record'` when a record withholds `to`
+ * itself (lifted by a member's Add), `false` when nothing withholds. The register decline names only
+ * the second, so an asker is never told a member's Add would reopen a seal.
+ */
+export function historyWithheldCause(groupId: string, to: string): 'sealed' | 'record' | false {
+  if (sealed.has(groupId)) return 'sealed';
+  return recordWithholds(groupId, to) ? 'record' : false;
+}
+
 /** Whether a record withholds `to` in `groupId` - the record alone, never the seal. */
 function recordWithholds(groupId: string, to: string): boolean {
   return withheld.some((e) => matches(e, groupId, to));

@@ -5,7 +5,7 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage } from '$lib/db';
 import { historySealAad, mintHistoryAnswerKey, openHistoryContent } from '$lib/crypto/historySeal';
 import { digestIdentity } from './historyDigestRendezvous';
-import { bindHistoryWithheld, withholdHistoryFrom } from './historyWithheld';
+import { bindHistoryWithheld, sealHistoryIn, withholdHistoryFrom } from './historyWithheld';
 import {
   applyNickname,
   resetConversationNicknamesForTests,
@@ -157,6 +157,18 @@ describe('sendRegisterAnswer', () => {
     // The verdict and nothing else: not the nicknames this device holds.
     expect(await opened(mlsService, key.secret)).toEqual({ messages: [], register: 'withheld' });
     expect(log).toHaveBeenCalledWith(expect.stringContaining('unvouched'));
+  });
+
+  it("a SEALED conversation answers 'none', never 'withheld' - a seal is not about the asker and no Add reopens it", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = createMlsServiceStub();
+    sealHistoryIn(GROUP, 'test: the records could not be kept');
+    const { key, sent, log } = await answer(mlsService);
+
+    expect(sent).toBe(true);
+    // The verdict and nothing else: no nicknames, and not the promise a 'withheld' carries.
+    expect(await opened(mlsService, key.secret)).toEqual({ messages: [], register: 'none' });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('history is sealed'));
   });
 
   it('sends nothing while device events are undecided - that says nothing about the asker', async () => {

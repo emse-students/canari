@@ -449,8 +449,11 @@ ASKS, on facts it holds durably:
    DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
    A device that withholds history from the asker (an unvouched device, `historyWithheld.ts`)
    declines it too, typed `register: 'withheld'`: the verdict and nothing else, so the asker ends on
-   a cause it can name rather than on a silence it would read as a defect (review of #3837). Undecided
-   device events send nothing - they say nothing about the asker.
+   a cause it can name rather than on a silence it would read as a defect (review of #3837). Only a
+   RECORD on the asker says `'withheld'`: a conversation whose history is SEALED (fail-closed and
+   permanent, nothing about the asker) answers `'none'`, since `'withheld'` tells the asker a member's
+   Add reopens it, and no Add reopens a seal (re-review of #3837). Undecided device events send
+   nothing - they say nothing about the asker.
    Never broadcast (a server that does not address gets no register), nothing sent when the engine
    cannot seal. A register ask with no key is malformed like any
    keyless ask since the `1.7.0` floor: it is dropped whole, said at error - neither state nor diff.

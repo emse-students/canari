@@ -49,7 +49,7 @@ import {
   FollowerTabCommitError,
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
-import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
+import { anyHistoryWithheldIn, historyWithheldCause } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 import { isFrameFateUnknown } from '$lib/mls-client/frameFromAnyTab';
@@ -1387,8 +1387,9 @@ export type JoinPushOutcome = 'sent' | 'unaddressable' | 'not-sent';
  * must not read the record before that entry wrote it. Events that could not be decided withhold:
  * fail closed, the next answer settles again.
  *
- * @returns `false` when nothing withholds; otherwise WHY - `'withheld'`, a verdict on `to`, or
- *   `'unsettled'`, a passing state of this device that says nothing about `to` (the register
+ * @returns `false` when nothing withholds; otherwise WHY - `'withheld'`, a record's verdict on
+ *   `to`; `'sealed'`, the whole conversation sealed, which says nothing about `to`; or
+ *   `'unsettled'`, a passing state of this device that says nothing about `to` either (the register
  *   decline names only the first, {@link sendRegisterAnswer}).
  */
 async function historyWithheldAfterSettling(
@@ -1396,14 +1397,15 @@ async function historyWithheldAfterSettling(
   to: string,
   mlsService: IMlsService,
   log: (msg: string) => void
-): Promise<false | 'withheld' | 'unsettled'> {
+): Promise<false | 'withheld' | 'sealed' | 'unsettled'> {
   if (!(await mlsService.settleDeviceEvents('history answer'))) {
     log(
       `[HISTORY_BUNDLE] device events not decided before answering in ${groupId.slice(0, 8)}... - nothing answered, withheld until they are`
     );
     return 'unsettled';
   }
-  return historyWithheldFrom(groupId, to) ? 'withheld' : false;
+  const cause = historyWithheldCause(groupId, to);
+  return cause === 'sealed' ? 'sealed' : cause === 'record' ? 'withheld' : false;
 }
 
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
@@ -2221,6 +2223,14 @@ export async function sendRegisterAnswer(
   // Undecided device events say nothing about the asker: nothing is sent, the next ask settles again.
   if (verdict === 'unsettled') return false;
   const withheld = verdict === 'withheld';
+  // A sealed conversation answers no history to anyone, and its seal is permanent: the asker is
+  // told 'none' (nothing to restate), never 'withheld', which promises a member's Add reopens it.
+  const sealedHere = verdict === 'sealed';
+  if (sealedHere) {
+    log(
+      `[REGISTER] ${to}'s register in ${short}… answered 'none' - history is sealed in this conversation`
+    );
+  }
   const routing = await readerHistorySelection(groupId, [], { mlsService, log }, userIdOfLeaf(to));
   if (routing?.mode !== 'addressed') {
     log(
@@ -2228,7 +2238,8 @@ export async function sendRegisterAnswer(
     );
     return false;
   }
-  const holds = !withheld && !registerNeverTaken(userIdOfLeaf(seal.answerer), groupId);
+  const holds =
+    !withheld && !sealedHere && !registerNeverTaken(userIdOfLeaf(seal.answerer), groupId);
   const nicknames = holds ? nicknameEntries(groupId) : [];
   const register: RegisterAnswer = withheld ? 'withheld' : holds ? true : 'none';
   let bytes: Uint8Array;
