@@ -74,6 +74,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   removed: [number, number][] = [];
   /** The source this buffer belongs to: a write on an ended one reopens it, as the specification says. */
   source: { readyState: string } | null = null;
+  // (Setting `timestampOffset` or `mode` reopens an ended source too; the player never does either after the end.)
   private reopen() {
     if (this.source?.readyState === 'ended') this.source.readyState = 'open';
   }
@@ -136,6 +137,10 @@ class FakeSource extends EventTarget implements ReplayMediaSourceLike {
     return b;
   }
   endOfStream() {
+    // As the engine: refused unless the source is open and no buffer is updating (declareEnd's guards).
+    if (this.readyState !== 'open' || this.buffers.some((x) => x.updating)) {
+      throw new DOMException('endOfStream refused', 'InvalidStateError');
+    }
     this.ended++;
     this.readyState = 'ended';
     // A real engine truncates the duration to the end of what is buffered.
