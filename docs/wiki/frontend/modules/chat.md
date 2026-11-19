@@ -3551,7 +3551,11 @@ the STORE, never from memory (`KeptBatch.storeDecides`, `batchAddMessages(..., {
 row on screen and not on disk is written as it is shown, and shown as written once what waited for it
 (a deletion, an edit, reactions) is settled in. **That rerun is SILENT BY DESIGN**: the message is not
 new to the reader - its first add rendered it and ran (or tried) its effects - so it raises no second
-notification, tone or announcement.
+notification, tone or announcement. What a batch shows anew - an upgrade, a store-decided refresh -
+is decided again against the row shown WHEN THE BATCH APPLIES, never only the snapshot it read before
+its awaits (`Reshown`, `reshowOnto`; fifth review of #3851): a live edit or reaction that landed
+meanwhile is kept, where it was overwritten by the older body until the settle after the write
+repaired it.
 
 **Every row a decrypted frame writes carries that frame's id** (second review of #3851: a row kept
 WITHOUT one released its frame's ack, where the page-wide count had withheld it). The handler wraps
@@ -3583,7 +3587,8 @@ now notes every target this session parked for (`pendingMutationStore`, `parkedT
 hold retries them next to the kept rows (`retryParkedMutations`): a target whose message has not
 arrived, that does not open here, or whose entries settled leaves the ledger; one whose row STANDS and
 still refuses its entries - or whose store could not be read to say - stays for the next hold, and is
-said at ERROR ONCE per id per session under its own cause, with the classified failure (`[PENDING] A
+said at ERROR ONCE per stall under its own cause (forgotten when the target settles, so a later stall
+is said again), with the classified failure (`[PENDING] A
 PARKED MUTATION CANNOT BE MERGED ONTO ITS STORED ROW ... (transient|poison)`; `settlePendingFor`
 resolves those targets as `stuck`, each with its failure). The ledger is the session's; across a
 reload, the rows a page LOADS settle what waits for them (`useConversations.settleLoadedRows`, one

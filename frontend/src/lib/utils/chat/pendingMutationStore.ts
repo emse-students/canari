@@ -55,7 +55,10 @@ const short = (id: string) => id.slice(0, 8);
  */
 const parkedThisSession = new Map<string, Set<string>>();
 
-/** The parked targets already said stuck this session (`conversationId` NUL `messageId`): said once. */
+/**
+ * The parked targets said stuck and still stuck (`conversationId` NUL `messageId`): said once per
+ * stall, forgotten when the target settles so a later stall is said again.
+ */
 const saidStuck = new Set<string>();
 
 /** A target whose entries could not be written onto it, and why - see {@link settlePendingFor}. */
@@ -95,6 +98,11 @@ export async function retryParkedMutations(deps: PendingMutationDeps): Promise<n
       left = (await settlePendingFor(deps, conversationId, [...ids])).stuck;
     } catch (e) {
       left = [...ids].map((id) => ({ id, cause: e }));
+    }
+    // A target that left the ledger is said again if it stalls later: a NEW stall, not a repeat.
+    const stillStuck = new Set(left.map(({ id }) => id));
+    for (const id of ids) {
+      if (!stillStuck.has(id)) saidStuck.delete(`${conversationId}\u0000${id}`);
     }
     for (const { id, cause } of left) {
       noteParked(conversationId, id);

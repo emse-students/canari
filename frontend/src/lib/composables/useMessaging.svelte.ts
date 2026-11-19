@@ -210,6 +210,22 @@ interface KeptBatch {
   storeDecides?: true;
 }
 
+/**
+ * A row a batch shows anew: decided against `from`, the snapshot the batch read before its loop, and
+ * decided AGAIN by `reshow` when the row shown at apply time is no longer that snapshot - a live edit,
+ * deletion or reaction landed on it during the loop's awaits.
+ */
+interface Reshown {
+  from: ChatMessage;
+  shown: ChatMessage;
+  reshow: (now: ChatMessage) => ChatMessage;
+}
+
+/** The row `reshown` shows over `now`, the row shown when its batch applies. */
+function reshowOnto(reshown: Reshown, now: ChatMessage): ChatMessage {
+  return now === reshown.from ? reshown.shown : reshown.reshow(now);
+}
+
 /** One batch's rows to write, kept whole so a failed write can be retried as it was. */
 interface BatchRowWrite {
   conversationId: string;
@@ -2248,6 +2264,13 @@ export function useMessaging() {
   }
 
   /** {@link settleWithPending} on entries already read. */
+  /** `msg` with `entries` settled in again - pure, and a no-op when they change nothing. */
+  function resettled(msg: ChatMessage, entries: readonly PendingMutation[]): ChatMessage {
+    if (entries.length === 0) return msg;
+    const settlement = settleAgainstPending(msg, entries);
+    return settlement.fields ? settledChatMessage(msg, settlement.fields) : msg;
+  }
+
   function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
     if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
     const settlement = settleAgainstPending(msg, waiting);
@@ -2475,9 +2498,11 @@ export function useMessaging() {
     const consumedById = new SvelteMap<string, PendingMutation[]>();
     const upgradeRows: StoredMessage[] = [];
     const newRows: StoredMessage[] = [];
-    const upgradedById = new SvelteMap<string, ChatMessage>();
+    // A row this batch shows anew, decided against the snapshot read before the loop, and how to
+    // decide it again against the row shown when the batch applies (see `reshowOnto`).
+    const upgradedById = new SvelteMap<string, Reshown>();
     // Rows a store-decided rerun wrote with what waited for them settled in: shown as written.
-    const refreshedById = new SvelteMap<string, ChatMessage>();
+    const refreshedById = new SvelteMap<string, Reshown>();
     const brandNew: ChatMessage[] = [];
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
@@ -2516,7 +2541,22 @@ export function useMessaging() {
           waiting.get(id) ?? []
         );
         const upgraded = settled.message;
-        upgradedById.set(id, upgraded);
+        const upgrade = {
+          content: pm.content,
+          senderId: pm.senderId,
+          replyTo: pm.replyTo,
+          isSystem,
+          serverTimestamp: pm.serverTimestamp,
+        };
+        upgradedById.set(id, {
+          from: existingMsg,
+          shown: upgraded,
+          reshow: (now) =>
+            resettled(
+              shouldUpgradeMessage(now, pm.content) ? mergeMessageUpgrade(now, upgrade) : now,
+              settled.consumed
+            ),
+        });
         consumedById.set(id, settled.consumed);
         if (ctx.storage) {
           upgradeRows.push({
@@ -2548,7 +2588,13 @@ export function useMessaging() {
           const settled = settledWith(existingMsg, waiting.get(id) ?? []);
           consumedById.set(id, settled.consumed);
           settledIds.add(id);
-          if (settled.fields) refreshedById.set(id, settled.message);
+          if (settled.fields) {
+            refreshedById.set(id, {
+              from: existingMsg,
+              shown: settled.message,
+              reshow: (now) => resettled(now, settled.consumed),
+            });
+          }
           newRows.push({
             id,
             conversationId: normalized,
@@ -2654,9 +2700,12 @@ export function useMessaging() {
       : toAdd.filter((msg) => isUnreadForUser(msg, mine.stamped, mine.server)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
-    const withUpgrades = base.messages.map(
-      (m) => upgradedById.get(m.id) ?? refreshedById.get(m.id) ?? m
-    );
+    // AGAINST THE ROW SHOWN NOW, like `toAdd`: a live edit or reaction that landed on one of these
+    // during the loop's awaits is kept, never shown older for an instant (fifth review of #3851).
+    const withUpgrades = base.messages.map((m) => {
+      const reshown = upgradedById.get(m.id) ?? refreshedById.get(m.id);
+      return reshown ? reshowOnto(reshown, m) : m;
+    });
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
     if (current) {

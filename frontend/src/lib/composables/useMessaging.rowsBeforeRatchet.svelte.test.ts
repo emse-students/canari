@@ -576,6 +576,71 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     expect(ctx.sendSystemNotification).not.toHaveBeenCalled();
   });
 
+  /**
+   * AGAINST THE ROW SHOWN NOW (fifth review of #3851): the batch decided what to show from the
+   * snapshot it read before its awaits, so a live edit landing meanwhile was overwritten by the older
+   * body until the settle after the write repaired it - a race that healed, which is still a defect.
+   */
+  it('a live EDIT landing during the batch is never overwritten by the pre-edit body it read', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const before = {
+      id: 'in-memory-only',
+      senderId: PEER,
+      content: serializeEnvelope(mkTextEnvelope('said')),
+      timestamp: new Date(1_700_000_000_000),
+      isOwn: false,
+    };
+    conversations.set(CONVO, { ...conversations.get(CONVO)!, messages: [before] as never });
+    const edited = 'said, then edited';
+    const storage = ctx.storage as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    // A reaction waited for the row; the batch reads it - and while it awaits that read, the
+    // author's live edit lands on the screen.
+    storage.getPendingMutations.mockImplementationOnce(async () => {
+      const convo = conversations.get(CONVO)!;
+      conversations.set(CONVO, {
+        ...convo,
+        messages: [
+          { ...before, content: serializeEnvelope(mkTextEnvelope(edited)), isEdited: true },
+        ] as never,
+      });
+      return {
+        entries: [
+          {
+            conversationId: CONVO,
+            messageId: 'in-memory-only',
+            sender: 'someone',
+            kind: 'reaction',
+            slot: '👍',
+            rank: 1_700_000_002_000,
+            at: 1_700_000_002_000,
+          },
+        ],
+        removedUnreadable: 0,
+      };
+    });
+    const shownAfterEdit: string[] = [];
+    const set = conversations.set.bind(conversations);
+    vi.spyOn(conversations, 'set').mockImplementation((key, value) => {
+      const row = value.messages.find((m) => m.id === 'in-memory-only');
+      if (row) shownAfterEdit.push(envelopeBodyText(row.content));
+      return set(key, value);
+    });
+
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: before.content, messageId: 'in-memory-only' }],
+      CONVO,
+      ctx,
+      'arrival',
+      { storeDecides: true }
+    );
+
+    expect(shownAfterEdit.length).toBeGreaterThan(0);
+    expect(shownAfterEdit.every((body) => body === edited)).toBe(true);
+    const shown = conversations.get(CONVO)!.messages.find((m) => m.id === 'in-memory-only')!;
+    expect(shown.reactions).toEqual([expect.objectContaining({ emoji: '👍' })]);
+  });
+
   it('an inbound add that THREW keeps the message with its frame: rethrown, withheld, and the next hold writes it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const messaging = useMessaging();
@@ -1163,6 +1228,35 @@ describe('a mutation parked against a stored row (rows before ratchet)', () => {
     state.refuse = false;
     (await messaging.holdRowsForCheckpoint(ctx))();
     expect(entries).toHaveLength(0);
+  });
+
+  it('a target that settled and stalls AGAIN is said again: once per stall, not once per session', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, state, deps } = parkedWorld();
+    const stuckLines = () =>
+      error.mock.calls.filter(([line]) => String(line).includes('PARKED MUTATION CANNOT BE MERGED'))
+        .length;
+
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(stuckLines()).toBe(1);
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
+    // A later edit of the same row, whose write fails again.
+    state.refuse = true;
+    await keepPendingMutation(
+      deps as never,
+      { ...edit, rank: 1_700_000_003_000, text: 'edited again' },
+      1_700_000_003_000,
+      'could not be written'
+    );
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(stuckLines()).toBe(2);
+
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
   });
 
   it('an entry whose message has NOT arrived does not refuse the hold: it waits for its body', async () => {
