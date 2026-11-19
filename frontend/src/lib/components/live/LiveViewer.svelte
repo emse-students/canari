@@ -16,8 +16,17 @@
    * the live again.
    */
   import { onMount, tick } from 'svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
+  import {
+    LoaderCircle,
+    MessageCircle,
+    MessageCircleOff,
+    Radio,
+    Share2,
+    VolumeX,
+    X,
+  } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
@@ -39,6 +48,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
+  import { playRejectionName } from '$lib/utils/videoAutoplay';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
@@ -87,6 +97,17 @@
    */
   const orientation = useScreenOrientation('live-viewer');
 
+  // THE LIVE STARTS WITH SOUND (owner, 2026-11-19): decided here, before the `<video>` mounts, so
+  // `followVideoSound` opens the element at the answer. A hand-muted session stays muted.
+  const liveSound = videoSound.startForLive();
+  // A live's sound is the live's only: the app's previous answer returns when it closes. The release
+  // is the TEARDOWN OF AN EFFECT created here, at init - so it exists even if the rest of the init or
+  // the template throws (an `onDestroy` is a deferred effect that would never exist then, and "a live
+  // is open" would stay true for good), and it is created BEFORE the template's `followVideoSound`
+  // action, so it is destroyed first: the feed that action's teardown resumes never reads the live's
+  // answer. Idempotent, shared with the close callback below.
+  $effect.pre(() => liveSound.release);
+
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
   let actionButton = $state<HTMLButtonElement | null>(null);
@@ -127,6 +148,8 @@
     () => true,
     () => {
       console.debug('[LIVE] viewer closed');
+      // Before the feed behind resumes (`onClose` unmounts us): its video must not read the live's answer.
+      liveSound.release();
       onClose();
     }
   );
@@ -166,8 +189,11 @@
         try {
           await el.play();
         } catch (e) {
-          if (el.muted) throw e;
-          console.warn(`[LIVE] viewer: play() with sound refused (${String(e)}) - muted`);
+          // Classified by the exception's TYPE (`name`), never its message.
+          if (el.muted || playRejectionName(e) !== 'NotAllowedError') throw e;
+          console.warn(
+            `[LIVE] viewer: play() with sound refused (${playRejectionName(e)}, #${videoSound.refusedStarts + 1} this session) - muted, "enable sound" offered`
+          );
           videoSound.muteForRefusedStart();
           el.muted = true;
           await el.play();
@@ -451,6 +477,17 @@
     </div>
 
     <LiveReactionsLayer bind:this={reactions} />
+
+    <!-- The engine refused the sound (no gesture): one clear button, never a silent live with no way out. -->
+    {#if videoSound.startBlocked && !terminal}
+      <Button
+        class="absolute top-1/4 left-1/2 -translate-x-1/2"
+        onclick={toggleSound}
+        data-live-enable-sound
+      >
+        <VolumeX size={18} aria-hidden="true" />{m.live_viewer_enable_sound()}
+      </Button>
+    {/if}
 
     <LiveChatReportDialog
       liveId={live.id}
