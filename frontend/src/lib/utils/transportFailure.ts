@@ -58,6 +58,17 @@ export function isTransportFailure(error: unknown): boolean {
 }
 
 /**
+ * The evidence line for a transport failure: `transport failure: <type>`, where the type is the RAW
+ * rejection's class (`TypeError` from a browser `fetch`, `string` from Tauri's plugin, `AbortError`...)
+ * kept in `cause` - the only part that tells a refused socket from a plugin refusal, since the wrapper's
+ * own name is always the same. A class name only: never the message, which can carry a URL.
+ */
+export function transportFailureEvidence(error: Error): string {
+  const raw = error instanceof TransportFailureError ? error.cause : error;
+  return `transport failure: ${raw instanceof Error ? raw.name : typeof raw}`;
+}
+
+/**
  * The refresh endpoint ANSWERED, and the answer was not a token.
  *
  * THE MIRROR OF `SessionExpiredError` (`stores/auth.ts`), and the pair is the whole point: only the

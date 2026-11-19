@@ -485,7 +485,7 @@ the socket and the replay have all finished) and it should be its own package wi
   (a caller's own abort is not one). `isTransportFailure` recognises it by type. It is never a status,
   so it can never reach a 401/403 branch and **never logs anyone out**. Two expiries in a row with
   nothing answered between flip the store to unreachable (`STALLS_BEFORE_UNREACHABLE`); one answer
-  resets the count.
+  resets the count. The verdict line STATES ITS EVIDENCE (`notifyServerUnreachable(evidence)`): `server unreachable (2 request deadlines in a row)` for a black-holed link, `(transport failure: <class of the raw rejection>)` for a refused socket, so a phone log tells them apart.
 - **Retry cannot multiply load**: a stalled GET is retried once, after 250-1000 ms of jitter, and not
   at all once the store is offline; a write of unknown fate is never replayed by `apiFetch` (the
   outbox owns that, with the same inner `messageId` so receivers dedupe).
@@ -1117,7 +1117,7 @@ underneath (it would fetch with no token) and `components/layout/BootGate.svelte
 | --- | --- | --- |
 | a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
 | a VERDICT that is not a token: the app's own 401/403 (`SessionExpiredError`), an app-origin 4xx in Nest's envelope such as a 404 or 410 (`RefreshFailedError` itself), an identity split, a sign-out | `settled` | login, carrying the page asked for |
-| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`), a `200` whose body was lost after the head (`AnswerBodyLostError`, same helper) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`), a `200` whose body was lost after the head (`AnswerBodyLostError`, same helper; the lives client reads every body through it too, so an app suspended mid-request retries, `liveJson`) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
 | NO VERDICT, `TransientAnswerError` (extends `RefreshFailedError`): a 5xx, a 408 or a 429 | `unreachable`, cause `server` | "Canari rencontre un probleme": the server OR an intermediary on the path (a proxy, a VPN) answered an error - the client cannot tell a corporate proxy's 502 from the edge's own, so the hint names both and suggests another network |
 | the same, core-service's 503 `MAINTENANCE` (its `code` read from the JSON body as a field, believed on a 503 only) | `unreachable`, cause `maintenance` | the platform gate's maintenance title, and the operator's text (`maintenanceMessage`, a field of the 503 body since 2026-11-06) or the localized default |
 | the same, any other status the EDGE wrote (a WAF's HTML 403, a JSON block page none of our envelopes) | `unreachable`, cause `network` | the network wording: the path refused, not the server |
@@ -1337,3 +1337,7 @@ swallowed are counted (`deadlinesWhileUnreachable`) and reported on the line tha
 `server reachable again (N more request deadline(s) expired while it was unreachable)`. Nothing is
 demoted and nothing is lost: the count is the same number the lines would have totalled. Tests:
 `connectivity.test.ts` ("once per spell", and the limit test now expects one line for five stalls).
+
+## A community joined while the socket was down is listed when it returns (2026-11-18)
+
+A `channel.member.joined` published while this device's socket was down is lost, and nothing replays it: the pending pull covers MLS messages only, the unread answer counts only salons with unread messages, and `retryFailedListing` lists only after a listing that gave up. Captured on `1.7.0-alpha.11` (log: `[WS] Connected`, `[UNREAD] live stream back`, `[PENDING] No pending MLS messages`, then no `[WORKSPACE-LOAD]`). The return from the gap is therefore the event that reconciles the membership: `ChatBackgroundService` calls `resyncAfterLiveStreamGap` on the RETURN from a gap (`utils/chat/liveStreamGapEdge.ts`: an up that follows a down after the session already had an up, so a cold start's or an account switch's first connect is not one), which lists once (owed if a listing is in flight, through `joinedCommunityReloadOwed`, the same owed flag a join uses). Bounded by the transition, not a clock: a flapping socket costs at most one listing per return, and a return during a listing owes at most one more (a flag, not a queue). No membership version exists to compare: neither the reconnect handshake nor the unread answer carries a count or etag of the memberships. Tests: `useChannelWorkspaces.svelte.test.ts` (hydrateJoinedCommunity block), `reconnectListingWiring.test.ts`. Reading: [entry, closed by the S5 readings](../device-verification.md#the-phone-readings-of-2026-11-18-s5-170-alpha12-the-alpha12-fixes-on-both-phones).

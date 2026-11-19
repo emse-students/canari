@@ -44,6 +44,8 @@ const {
   setSessionExpiredHandler,
   setToken,
   isRefreshCredentialProvenDead,
+  noteAccountErasedOnServer,
+  isAccountErasedOnServer,
   clearAuth,
 } = await import('$lib/stores/auth');
 const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/tokenIdentity.svelte');
@@ -304,6 +306,20 @@ describe('the dead-credential latch, as a fact a caller can read', () => {
     // other. A reader that stayed true after a live token would decline a prompt that is now valid.
     setToken(liveToken());
     expect(isRefreshCredentialProvenDead()).toBe(false);
+  });
+});
+
+describe('the erased-account latch, which spares a sign-out its push deregistration', () => {
+  it('reads true once the deletion was answered, and false again with a new credential', () => {
+    setToken(liveToken());
+    expect(isAccountErasedOnServer()).toBe(false);
+
+    noteAccountErasedOnServer();
+    expect(isAccountErasedOnServer()).toBe(true);
+
+    // A new credential is a new account (or a restored one): the verdict is about the old one.
+    setToken(liveToken());
+    expect(isAccountErasedOnServer()).toBe(false);
   });
 });
 

@@ -35,7 +35,8 @@ describe('PostsService post management rights', () => {
     flagHolders: Record<string, string[]> = {},
     moderators: string[] = [],
     elsewhere: string[] = [],
-    ordinaryReaders: string[] = []
+    ordinaryReaders: string[] = [],
+    muters: string[] = []
   ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
@@ -91,6 +92,12 @@ describe('PostsService post management rights', () => {
       ),
       moderatedPostIds: jest.fn((userId: string | undefined, ids: string[]) =>
         Promise.resolve(new Set(userId && moderators.includes(userId) ? ids : []))
+      ),
+      moderatedUserIds: jest.fn(
+        (userId: string | undefined, ids: string[], opts?: { isGlobalAdmin?: boolean }) =>
+          Promise.resolve(
+            new Set(opts?.isGlobalAdmin === true || (userId && muters.includes(userId)) ? ids : [])
+          )
       ),
       mayModeratePost: jest.fn((userId: string | undefined) =>
         Promise.resolve(!!userId && moderators.includes(userId))
@@ -180,9 +187,9 @@ describe('PostsService post management rights', () => {
       await expect(service.getById('p1')).resolves.toMatchObject({ canManage: false });
     });
 
-    it('never leaks the author of an association post while answering it', async () => {
-      const { service } = makeService(assoPost, { officer: [ASSO] });
-      await expect(service.getById('p1', { viewerId: 'officer' })).resolves.not.toHaveProperty(
+    it("never serves an association post's writer to another holder of its flag", async () => {
+      const { service } = makeService(assoPost, { officer: [ASSO], colleague: [ASSO] });
+      await expect(service.getById('p1', { viewerId: 'colleague' })).resolves.not.toHaveProperty(
         'authorId'
       );
     });
@@ -519,6 +526,90 @@ describe('PostsService post management rights', () => {
       await expect(service.getById('p2', { viewerId: 'bde' })).resolves.toMatchObject({
         canUnmaskAnonymous: false,
       });
+    });
+  });
+
+  /**
+   * THE WRITER OF AN ASSOCIATION'S POST IS SEEN BY ITS MODERATORS (decision 11 of
+   * docs/wiki/moderation-authority.md, owner 2026-11-15) - and by the writer, as an anonymous post's
+   * is. Before, the card deleted it for every reader while `/posts/hidden` served it as a raw
+   * column: the two screens disagreed about one post.
+   */
+  describe("an association post's writer (decision 11)", () => {
+    const READERS: [string, boolean, { viewerId?: string; isGlobalAdmin?: boolean }][] = [
+      ['a BDE moderator whose spaces hold it', true, { viewerId: 'bde' }],
+      ['the platform admin', true, { viewerId: 'admin', isGlobalAdmin: true }],
+      ['its own writer', true, { viewerId: 'officer' }],
+      ['a BDE moderator out of scope', false, { viewerId: 'otherBde' }],
+      ['another holder of POST_AS_ASSO', false, { viewerId: 'colleague' }],
+      ['a reader', false, { viewerId: 'reader' }],
+      ['a signed-out reader', false, {}],
+    ];
+
+    it.each(READERS)('by id, %s: writer served = %s', async (_who, served, reader) => {
+      const { service } = makeService(
+        assoPost,
+        { officer: [ASSO], colleague: [ASSO] },
+        ['bde'],
+        ['otherBde']
+      );
+      const row = await service.getById('p1', reader);
+      expect(row.authorId).toBe(served ? 'officer' : undefined);
+      expect('authorId' in row).toBe(served);
+    });
+
+    it.each(READERS)('in /posts/hidden, %s: writer served = %s', async (_who, served, reader) => {
+      const { service, postRepo } = makeService(
+        assoPost,
+        { officer: [ASSO], colleague: [ASSO] },
+        ['bde'],
+        ['otherBde']
+      );
+      // The list's own statement is not asked here (its scope is the PostgreSQL spec's,
+      // `post-openable.integration.spec.ts`): what it returns is a row, and the row is served.
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('"hiddenByModeration" = true')
+            ? [{ ...assoPost, anonymous: false, pendingReportCount: 2 }]
+            : []
+        )
+      );
+      const [row] = await service.getHiddenPosts({
+        userId: reader.viewerId ?? '',
+        isGlobalAdmin: reader.isGlobalAdmin === true,
+      });
+      expect(row).toMatchObject({ id: 'p1', pendingReportCount: 2 });
+      expect(row.authorId).toBe(served ? 'officer' : undefined);
+      expect('authorId' in row).toBe(served);
+    });
+
+    it.each([
+      ['a platform admin', { userId: 'admin', isGlobalAdmin: true }, true],
+      ['a moderator whose scope holds the writer', { userId: 'bde', isGlobalAdmin: false }, true],
+      ['a moderator who may mute nobody', { userId: 'inst', isGlobalAdmin: false }, false],
+    ])('/posts/hidden tells %s whether the writer may be muted: %s', async (_who, scope, can) => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde', 'inst'], [], [], ['bde']);
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(
+          sql.includes('"hiddenByModeration" = true') ? [{ ...assoPost, anonymous: false }] : []
+        )
+      );
+      const [row] = await service.getHiddenPosts(scope);
+      expect(row.canMuteAuthor).toBe(can);
+    });
+
+    it('/posts/hidden builds every row through the shaping that serves the card - a raw column cannot pass', async () => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde']);
+      const rows = [
+        { ...assoPost, anonymous: false },
+        { ...personalPost, anonymous: true },
+      ];
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) =>
+        Promise.resolve(sql.includes('"hiddenByModeration" = true') ? rows : [])
+      );
+      const shaping = jest.spyOn(service as never, 'withholdWriterUnlessSeen' as never);
+      await service.getHiddenPosts({ userId: 'bde', isGlobalAdmin: false });
+      expect(shaping).toHaveBeenCalledTimes(rows.length);
     });
   });
 });

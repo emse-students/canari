@@ -2,12 +2,17 @@
 
 jest.mock('../internal/device-sessions', () => {
   const actual = jest.requireActual('../internal/device-sessions');
-  return { ...actual, endDeviceSessions: jest.fn() };
+  return { ...actual, endDeviceSessions: jest.fn(), sessionBoundDevice: jest.fn() };
 });
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { DevicesController } from './devices.controller';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -21,9 +26,15 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
 import { revocationReasonOf } from '../utils/revocation';
-import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
+import {
+  DeviceSessionsNotEndedError,
+  SessionBindingUnknownError,
+  endDeviceSessions,
+  sessionBoundDevice,
+} from '../internal/device-sessions';
 
 const endSessions = endDeviceSessions as jest.MockedFunction<typeof endDeviceSessions>;
+const boundDevice = sessionBoundDevice as jest.MockedFunction<typeof sessionBoundDevice>;
 const CALLER_SID = '0a0a0a0a-0000-4000-8000-0000000000a1';
 
 /**
@@ -67,6 +78,8 @@ describe('DevicesController - the cause of a ban', () => {
     query.mockImplementation(async () => [{ reason: recorded }]);
     endSessions.mockReset();
     endSessions.mockResolvedValue(1);
+    boundDevice.mockReset();
+    boundDevice.mockResolvedValue('d-mine');
     const revokedDeviceRepo = { findOne: jest.fn(async () => revoked) };
     const oneTimeKeyPackageRepo = {
       create: jest.fn((v: unknown) => v),
@@ -166,9 +179,22 @@ describe('DevicesController - the cause of a ban', () => {
       expect(notify).toHaveBeenCalledWith('u1', 'd2');
     });
 
-    it('ends them with no exception when the caller names no session', async () => {
-      await controller.deleteDevice('u1', 'd2', undefined, 'u1', undefined);
-      expect(endSessions).toHaveBeenCalledWith('u1', 'd2', null);
+    /*
+     * Every access token has named its session since 2026-10-25 and lives one hour, so an owner's
+     * delete arriving with none is no legitimate caller: refused, typed, never a 401/403, before
+     * anything is destroyed - the own-device check it would skip is not a step to proceed without.
+     */
+    it("refuses an owner's delete that names no calling session, typed SESSION_UNNAMED, destroying nothing", async () => {
+      const failure = await controller
+        .deleteDevice('u1', 'd2', undefined, 'u1', undefined)
+        .catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(BadRequestException);
+      expect((failure as BadRequestException).getResponse()).toMatchObject({
+        code: 'SESSION_UNNAMED',
+      });
+      expect(boundDevice).not.toHaveBeenCalled();
+      expect(purge).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
     });
 
     it('ends no session for a retirement - the id was the caller install’s own', async () => {
@@ -193,6 +219,36 @@ describe('DevicesController - the cause of a ban', () => {
       expect(notify.mock.invocationCallOrder[0]).toBeLessThan(
         endSessions.mock.invocationCallOrder[0]
       );
+    });
+
+    /*
+     * The panel never asks to ban its own device, but its check reads the client's own idea of its
+     * id - stale after an identity rotation, or when the binding moved. The server holds the binding
+     * of the calling session and refuses from it, before anything is purged or banned.
+     */
+    it("refuses, typed OWN_DEVICE, to ban the device the caller's own session is bound to", async () => {
+      boundDevice.mockResolvedValue('d2');
+      const failure = await del(undefined).catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(ConflictException);
+      expect((failure as ConflictException).getResponse()).toMatchObject({ code: 'OWN_DEVICE' });
+      expect(boundDevice).toHaveBeenCalledWith('u1', CALLER_SID);
+      expect(purge).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('answers 503 and destroys nothing when the binding cannot be read', async () => {
+      boundDevice.mockRejectedValue(new SessionBindingUnknownError('status=500'));
+      await expect(del(undefined)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(purge).not.toHaveBeenCalled();
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it('lets a retirement through even when the session is still bound to the abandoned id', async () => {
+      recorded = 'retired';
+      boundDevice.mockResolvedValue('d2');
+      await expect(del('retired')).resolves.toMatchObject({ status: 'device_deleted' });
+      expect(boundDevice).not.toHaveBeenCalled();
     });
 
     it('refuses an unknown reason rather than guessing it, and writes nothing', async () => {

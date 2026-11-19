@@ -103,8 +103,16 @@ describe('notificationTypesRenderableBy', () => {
 
   it('serves the trend to 1.6.10, a pre-release of it included', () => {
     expect(notificationTypesRenderableBy('1.6.10-alpha.1')).toContain('campus_trend');
-    expect(notificationTypesRenderableBy('1.7.0')).toHaveLength(
+    expect(notificationTypesRenderableBy('1.7.1')).toHaveLength(
       Object.keys(NOTIFICATION_TYPE_MIN_CLIENT).length
+    );
+  });
+
+  it('serves the admin queue notices from 1.7.1 only (owner, 2026-11-18)', () => {
+    expect(notificationTypesRenderableBy('1.7.0')).not.toContain('admin_profile_correction');
+    expect(notificationTypesRenderableBy('1.7.0')).not.toContain('admin_report');
+    expect(notificationTypesRenderableBy('1.7.1-alpha.1')).toEqual(
+      expect.arrayContaining(['admin_profile_correction', 'admin_report'])
     );
   });
 

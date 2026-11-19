@@ -31,6 +31,22 @@ export const FORM_RESPONSES_TARGET = 'form-responses';
 export const BOOKINGS_TARGET = 'bookings';
 
 /**
+ * The `target`s naming the two global-admin queues a notice announces an item in (owner, 2026-11-18),
+ * and the deep-link hosts for them: the profile corrections (`/admin/profile-corrections`) and the
+ * moderation reports (`/admin/moderation`). Floored at the build that owns the hosts
+ * (`ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION`), so no device is sent a host it cannot open.
+ */
+export const ADMIN_PROFILE_CORRECTIONS_TARGET = 'admin-profile-corrections';
+/** See {@link ADMIN_PROFILE_CORRECTIONS_TARGET}. */
+export const ADMIN_MODERATION_TARGET = 'admin-moderation';
+
+/** The admin queue targets, a closed set: a host is written only for one of these. */
+const ADMIN_QUEUE_TARGETS: readonly string[] = [
+  ADMIN_PROFILE_CORRECTIONS_TARGET,
+  ADMIN_MODERATION_TARGET,
+];
+
+/**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
  * A tap is handled natively and the two platforms used to disagree about what it needed. Android
@@ -86,6 +102,10 @@ export function socialDeepLink(data: Record<string, string>): string {
   // the member's - a `post/<id>` link would open a post that does not exist.
   if (data.target === NOTIFICATIONS_TARGET) {
     return `fr.emse.canari://${NOTIFICATIONS_TARGET}`;
+  }
+  // A new item in a global admin's queue: the queue itself, where it is handled.
+  if (data.target && ADMIN_QUEUE_TARGETS.includes(data.target)) {
+    return `fr.emse.canari://${data.target}`;
   }
   // A bookings notice (WP-N): Reservations. Before `postId`, which such a notice never carries as
   // a post - its row's id is the BOOKING's.

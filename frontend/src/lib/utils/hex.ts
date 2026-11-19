@@ -270,7 +270,7 @@ export class MlsStateWriteRefusedError extends Error {
  */
 export class MlsCheckpointNotWrittenError extends Error {
   constructor(
-    readonly step: 'export' | 'store',
+    readonly step: 'rows' | 'export' | 'store',
     readonly cause: unknown
   ) {
     super(`the MLS checkpoint failed at its ${step} - nothing was stored: ${String(cause)}`);

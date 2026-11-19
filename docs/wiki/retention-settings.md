@@ -129,7 +129,9 @@ order, and social-service depends on media-service, so media-service boots first
   old social-service, which has no relay route. Its boot read fails (ERROR), and conversation uploads
   answer `503` until the new social-service boots and HANDS it the values. That window is the time
   between the two replacements, seconds to a minute or two. The client retries those uploads; none
-  is stamped with a guessed value.
+  is stamped with a guessed value. **Read on production at the `1.7.0` deploy (2026-11-18): the
+  window lasted 33 s, ended `readable again (handed)` with 0 uploads refused**
+  ([reading](device-verification.md#the-production-reading-of-2026-11-18-the-170-stable-deploy)).
 - **Why the notice carries the values (P1 found on dev at the `1.7.0-alpha.1` deploy, 2026-11-15).**
   The first build's notice said only "read again", and the read goes through the mesh
   ([cicd](cicd.md#service-to-service-calls-go-through-the-mesh)). While a replica of social-service is

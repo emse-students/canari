@@ -172,6 +172,20 @@ import {
   type Republisher,
 } from './republication-sql';
 
+/** What the writer rule (`viewerSeesWriter`) reads of a reader: the moderation half of the context. */
+type WriterViewer = Pick<PostViewerContext, 'viewerId' | 'isGlobalAdmin' | 'moderatedIds'>;
+
+/** What the writer rule reads of a post: under which name it was published, and by whom. */
+interface ServedWriterPost {
+  id?: string;
+  anonymous?: boolean;
+  associationId?: string | null;
+  authorId?: string | null;
+}
+
+/** A row of `/posts/hidden`: the post's id, and its columns as served to this moderator. */
+type HiddenPostRow = Record<string, unknown> & { id: string };
+
 /**
  * Who is reading, and what they already hold - resolved once per request and carried into every
  * shaping helper, so each row can be stamped with what that reader may do to it.
@@ -884,7 +898,7 @@ export class PostsService {
   }
 
   /** The reader moderates this post: a platform admin, or a BDE whose governed spaces hold it. */
-  private viewerModerates(post: { id?: string }, viewer: PostViewerContext): boolean {
+  private viewerModerates(post: { id?: string }, viewer: WriterViewer): boolean {
     return viewer.isGlobalAdmin || (!!post.id && viewer.moderatedIds.has(post.id));
   }
 
@@ -1020,49 +1034,55 @@ export class PostsService {
   }
 
   /**
-   * Whether THIS viewer must have `authorId` withheld on a post marked `anonymous`.
+   * THE ONE RULE FOR "THE WRITER BEHIND A NAME": does THIS reader see the account that wrote a post
+   * published under a name that is not that account's - "Anonyme", or an association's (decision
+   * 11 of [moderation-authority](docs/wiki/moderation-authority.md), owner 2026-11-15).
    *
-   * A moderator, a platform admin, and the post's OWN author all see past the flag (a user
-   * request, 2026-09-17: *"il faut aussi qu'un moderateur sache qu'un poste a ete publie en
-   * anonyme, meme s'il peut voir le nom du posteur - pareil pour le posteur lui-meme quand il voit
-   * son post"*) - same shape as `listMembers`'s `permissions` vs `isAdmin` (the row's own owner
-   * gets the raw field too, not just an admin). `anonymous` itself is never stripped for anyone,
-   * so the client can still show it was published anonymously to whichever of these three receives
-   * the real `authorId`.
+   * A personal post signed by its author has nothing to withhold. Otherwise the writer is seen by
+   * whoever moderates the post (a platform admin, a BDE whose spaces hold it - `viewerModerates`)
+   * and by the writer themself; nobody else, the association's other holders included (nothing was
+   * decided for them). The anonymous half is a user request of 2026-09-17: *"il faut aussi qu'un
+   * moderateur sache qu'un poste a ete publie en anonyme, meme s'il peut voir le nom du posteur -
+   * pareil pour le posteur lui-meme quand il voit son post"*; the association half is the owner's,
+   * as an association COMMENT's writer already is (`seesAccount`, `comment-identity.ts`).
+   *
+   * Every read that serves a post asks THIS, through `withholdWriterUnlessSeen` - the card, by id,
+   * the feeds, the search and `/posts/hidden` - so no two screens can disagree about one post.
    */
-  private mustHideAnonymousAuthor(
-    post: { id?: string; anonymous?: boolean; authorId?: string | null },
-    viewer: PostViewerContext
-  ) {
-    if (!post.anonymous) return false;
-    if (this.viewerModerates(post, viewer)) return false;
-    return !viewer.viewerId || viewer.viewerId !== post.authorId;
+  private viewerSeesWriter(post: ServedWriterPost, viewer: WriterViewer): boolean {
+    if (!post.associationId && !post.anonymous) return true;
+    if (this.viewerModerates(post, viewer)) return true;
+    return !!viewer.viewerId && viewer.viewerId === post.authorId;
+  }
+
+  /**
+   * Removes the writer from served row `out` when `viewerSeesWriter` says this reader does not see
+   * it - the id and the name columns, and an anonymous post's forms (they would name their
+   * manager). The ONLY place a served post loses its `authorId`: a read that builds its rows any
+   * other way serves a writer the card hides, which is how `/posts/hidden` once did.
+   */
+  private withholdWriterUnlessSeen(
+    out: Record<string, unknown>,
+    post: ServedWriterPost,
+    viewer: WriterViewer
+  ): void {
+    if (this.viewerSeesWriter(post, viewer)) return;
+    if (!post.associationId) withholdFormsOfHiddenAuthor(out);
+    delete out.authorId;
+    delete out.authorDisplayName;
+    delete out.authorFirstName;
+    delete out.authorLastName;
   }
 
   /** Strip publisher identity and attach association display for API responses. */
   private shapeListRow(p: any, viewer: PostViewerContext): any {
     const capabilities = this.viewerCapabilities(p, viewer);
     const polls = servePolls(p.polls, viewer.viewerId);
-    if (!p.associationId) {
-      const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
-      foldServedReach(out);
-      if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
-      if (this.mustHideAnonymousAuthor(p, viewer)) {
-        withholdFormsOfHiddenAuthor(out);
-        delete out.authorId;
-        delete out.authorDisplayName;
-        delete out.authorFirstName;
-        delete out.authorLastName;
-      }
-      return out;
-    }
     const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
     foldServedReach(out);
     if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
-    delete out.authorId;
-    delete out.authorDisplayName;
-    delete out.authorFirstName;
-    delete out.authorLastName;
+    this.withholdWriterUnlessSeen(out, p, viewer);
+    if (!p.associationId) return out;
     if (out.assocJoinId) {
       out.association = {
         id: out.assocJoinId,
@@ -1105,14 +1125,8 @@ export class PostsService {
     Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
     if (raw.canSeeComments === false) withholdCommentsAndPeople(raw, viewer.viewerId);
-    if (!raw.associationId) {
-      if (this.mustHideAnonymousAuthor(post, viewer)) {
-        withholdFormsOfHiddenAuthor(raw);
-        delete raw.authorId;
-      }
-      return raw;
-    }
-    delete raw.authorId;
+    this.withholdWriterUnlessSeen(raw, post, viewer);
+    if (!raw.associationId) return raw;
     const rows: { id: string; name: string; slug: string; logoUrl: string | null; type: string }[] =
       await this.postRepo.manager.query(
         `SELECT id, name, slug, "logoUrl", type FROM associations WHERE id = $1`,
@@ -2537,9 +2551,12 @@ export class PostsService {
    * scheduled later only while an open report targets it, owner 2026-11-15, "Exclure les posts
    * programmes"). The caller is a moderator already.
    */
-  async getHiddenPosts(scope: { userId: string; isGlobalAdmin: boolean }): Promise<any[]> {
-    return this.postRepo.manager.query(
-      `SELECT p.id, p."authorId", p.markdown, p."createdAt", p."associationId",
+  async getHiddenPosts(scope: {
+    userId: string;
+    isGlobalAdmin: boolean;
+  }): Promise<HiddenPostRow[]> {
+    const rows: (ServedWriterPost & { id: string })[] = await this.postRepo.manager.query(
+      `SELECT p.id, p."authorId", p.anonymous, p.markdown, p."createdAt", p."associationId",
               (SELECT COUNT(*)::int FROM content_reports cr
                WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
        FROM posts p
@@ -2549,6 +2566,37 @@ export class PostsService {
        LIMIT 200`,
       [scope.userId ?? '', scope.isGlobalAdmin]
     );
+    // The writer is served by the card's own rule (decision 11), never as a raw column: every row
+    // here is in the caller's scope, so a moderator sees each writer - because the rule says so.
+    const viewer: WriterViewer = {
+      viewerId: scope.userId || undefined,
+      isGlobalAdmin: scope.isGlobalAdmin,
+      moderatedIds: scope.isGlobalAdmin
+        ? new Set<string>()
+        : await this.associationsService.moderatedPostIds(
+            scope.userId,
+            rows.map((r) => r.id)
+          ),
+    };
+    // Which writer this caller may MUTE - asked of the unredacted column, answered as a bare fact:
+    // the "delete and mute" control is drawn from it alone, never offered to be refused (a BDE mutes
+    // the people of its own spaces only, an institution's `MODERATE` holder none).
+    const mutable = await this.associationsService.moderatedUserIds(
+      scope.userId,
+      rows.map((r) => (typeof r.authorId === 'string' ? r.authorId : '')),
+      { isGlobalAdmin: scope.isGlobalAdmin }
+    );
+    const served = rows.map((row) => {
+      const out: HiddenPostRow = { ...row };
+      this.withholdWriterUnlessSeen(out, row, viewer);
+      out.canMuteAuthor = typeof row.authorId === 'string' && mutable.has(row.authorId);
+      return out;
+    });
+    this.logger.debug(
+      `[MODERATION] hidden posts (${scope.isGlobalAdmin ? 'admin' : 'bde'}): ${served.length} row(s), ` +
+        `${served.filter((r) => r.authorId === undefined).length} writer(s) withheld`
+    );
+    return served;
   }
 
   /** Hides a post from public feeds pending review. Moderators of it only (`mayModeratePost`). */
@@ -2644,8 +2692,8 @@ export class PostsService {
    * the fact rather than inventing a second, invertible copy of it that could drift from the
    * first. `linkedCalendarEventId` is only ever set together with an `associationId`
    * (`resolvePostCalendarEventLink` requires one), so the row this finds is always an association
-   * post - `mustHideAnonymousAuthor` never applies to it, but `shapeListRow` still runs, for the
-   * same moderation-hidden and capability fields every other read path carries.
+   * post - its writer is served by `viewerSeesWriter` like any association post's, and `shapeListRow`
+   * runs, for the same moderation-hidden and capability fields every other read path carries.
    *
    * ONLY AN EVENT PRESENTED IN ITS ASSOCIATION'S NAME (`event-presentation.ts`): a post card names
    * its association, so the post of a neutral event would name the owner the presentation hides.
@@ -3194,6 +3242,9 @@ export class PostsService {
     const capacity = await this.assertMayManage(post, userId, isAdmin);
     // Read before the row goes: its media ids are only in the row.
     const orphanedMedia = [...postMediaIds(post), ...commentMediaIds(post.comments)];
+    // The repository's remove clears `post.id` on the entity it was given, so the id is kept here
+    // for the reel log lines below (they read `delete of undefined`).
+    const removedPostId = post.id;
     await this.postRepo.remove(post);
     // After the delete has committed, and never gating it. The post is gone either way; the worst
     // a failure here costs is objects kept past the moment they stopped being referenced, which
@@ -3201,6 +3252,7 @@ export class PostsService {
     if (post.kind === 'reel') {
       await this.discardReelBlobs(
         post,
+        removedPostId,
         orphanedMedia,
         capacity === 'moderator' ? 'moderation' : 'author'
       );
@@ -3225,6 +3277,7 @@ export class PostsService {
    */
   private async discardReelBlobs(
     post: Post,
+    postId: string,
     allMediaIds: string[],
     reason: Extract<ReelPurgeReason, 'author' | 'moderation'>
   ): Promise<void> {
@@ -3233,7 +3286,7 @@ export class PostsService {
       ...commentMediaOwners(post.comments),
     ];
     this.logger.log(
-      `[REEL] delete of ${post.id} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
+      `[REEL] delete of ${postId} by its ${reason === 'author' ? 'publisher' : 'moderator'}: ${items.length} blob(s), reason ${reason}`
     );
     try {
       const results = await this.mediaRetention.purgeReelBlobs(items, reason);
@@ -3242,13 +3295,13 @@ export class PostsService {
         .map(({ mediaId }) => mediaId);
       if (notGone.length > 0) {
         this.logger.warn(
-          `[REEL] delete of ${post.id}: ${notGone.length} blob(s) not deleted, released to the idle clock`
+          `[REEL] delete of ${postId}: ${notGone.length} blob(s) not deleted, released to the idle clock`
         );
         await this.mediaRetention.release(notGone);
       }
     } catch (e) {
       this.logger.warn(
-        `[REEL] delete of ${post.id}: the media service was unreachable (${
+        `[REEL] delete of ${postId}: the media service was unreachable (${
           e instanceof Error ? e.message : String(e)
         }), blobs released to the idle clock`
       );

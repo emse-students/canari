@@ -150,6 +150,27 @@ The exemption is removed from all four services. This is the general shape of th
 workaround for a missing capability turns into a defect the moment the capability arrives, and
 nothing announces it.
 
+### Why jest runs on node and not on bun - measured, 2026-11-17
+
+The owner's rule is *"jamais node, toujours bun"*, and these four `test` scripts are the one place
+the repository still names `node` (plus `make test-history`, which runs `node --run test` to match
+`ci.yml`). It is not habit: each way of running the suites on bun was tried on every service, and
+none passes.
+
+| Service | `bun --bun node_modules/jest/bin/jest.js` | cause |
+| --- | --- | --- |
+| chat-delivery | 3 suites fail | `@nestjs/platform-express` "missing" inside jest's registry (`createNestApplication`), and the undici dispatcher of `ssrfSafeFetch` refused |
+| core | 5 suites fail | `depd`: `callSite.getFileName is not a function` (bun's call sites lack the V8 API), the same platform-express load |
+| social | 31 suites fail | the same `depd` call-site gap |
+| media | all 34 suites fail | ts-jest is handed `typescript` 7.0.2 under bun (the service pins `^6.0.3`, which node resolves), and TS 7 has no compiler API |
+
+Bun's own runner (`bun test`) does no better on chat-delivery: 33 failures in 2033 tests, spread
+across the HTTP route-parameter, controller, url-guard and push-mode suites. Under node the same suites pass (chat-delivery
+2083 passed, 0 failed). So node stays the runtime of jest, and of jest only. Bun installs every
+dependency and runs every other script. **What would lift it:** bun exposing V8's `CallSite`
+methods and loading `@nestjs/platform-express` inside jest's vm registry. Re-run the table above
+whenever bun or jest is bumped.
+
 ## What is still owed
 
 - `@nestjs/throttler` accepting `^12.0.0`, which lifts the hold on two services with no work here.

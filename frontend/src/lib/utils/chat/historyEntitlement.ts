@@ -98,17 +98,14 @@ type EntitlementDeps = {
   log: (msg: string) => void;
 };
 
-/** What a read of one person's own windows needs - the receiver, and the push to an invitee. */
+/** What a read of one person's own windows needs - the receiver. */
 type WithheldDeps = {
   mlsService: Pick<IMlsService, 'getGroupWithheld' | 'getGroupExclusions'>;
   log: (msg: string) => void;
 };
 
-/** What the push's withheld read answers when the server predates the field (see below). */
+/** What a withheld read answers when the server predates the field (see below). */
 const SERVER_PREDATES_WITHHELD = Symbol('server-predates-withheld');
-
-/** Whether this session has already accused a server that predates `withheld`. */
-let warnedServerPredatesWithheld = false;
 
 /** Logs, once, that the windows of `groupId` could not be established and what that costs. */
 function cannotRead(groupId: string, log: (msg: string) => void, consequence: string, why: string) {
@@ -144,60 +141,24 @@ function personalWindows(
  * be established - the server's windows could not be read, and the caller then carries NO message.
  *
  * Reached only through {@link readerHistorySelection}, for a server that predates addressed answers:
- * every member then reads the answer, so the filter is the union of every member's windows.
- *
- * @param invitee the user the answer is PUSHED to when it is the inviter's push to a member being
- *   added: their own withheld windows - the span before their arrival included - join the union.
- *   Absent for an answer to a request, which reaches every member and has no one person to filter for.
+ * every member then reads the answer, so the filter is the union of every member's windows. (It also
+ * took the invitee's own windows for the inviter's push until 2026-11-17; the push carries no message
+ * since, so nothing reaches this with one.)
  */
 export async function entitledHistorySelection<M extends PlaceableMessage>(
   groupId: string,
   messages: readonly M[],
-  deps: EntitlementDeps & { mlsService: Pick<IMlsService, 'getGroupWithheld'> },
-  invitee?: string
+  deps: EntitlementDeps
 ): Promise<M[] | null> {
   if (messages.length === 0) return [];
-  // Both read at once, for the same person: one request behind them (`readGroupWindows`), one answer,
-  // and one line when it fails.
   let exclusions: GroupExclusions;
-  let inviteeWindows: readonly ExclusionWindow[] = [];
-  let unionOnly = false;
   try {
-    const [union, withheld] = await Promise.all([
-      deps.mlsService.getGroupExclusions(groupId, invitee),
-      invitee === undefined
-        ? null
-        : deps.mlsService
-            .getGroupWithheld(groupId, invitee)
-            .catch((e: unknown): typeof SERVER_PREDATES_WITHHELD => {
-              if (e instanceof WithheldUnsupportedError) return SERVER_PREDATES_WITHHELD;
-              throw e;
-            }),
-    ]);
-    exclusions = union;
-    if (withheld === SERVER_PREDATES_WITHHELD) {
-      // A SERVER THAT PREDATES `withheld` - and ONLY that: every other failure above sends nothing.
-      // The push then does exactly what it did before the field existed, the union of gaps, so a
-      // continuous member's new device and a 1:1 keep their restore while a store build runs ahead
-      // of production. A fallback is a signal, never a path: it accuses, once per session, and is
-      // recorded in docs/wiki/legacy-compatibility.md until every chat-delivery serves the field.
-      unionOnly = true;
-      if (!warnedServerPredatesWithheld) {
-        warnedServerPredatesWithheld = true;
-        console.error(
-          `[HISTORY_ENTITLEMENT] the delivery service predates the withheld windows - history pushes filter on the union of gaps only, and a newcomer is handed what preceded their arrival`
-        );
-      }
-    } else if (invitee !== undefined && withheld !== null) {
-      const own = personalWindows(groupId, withheld, invitee, deps.log, 'sending no message');
-      if (own === null) return null;
-      inviteeWindows = own;
-    }
+    exclusions = await deps.mlsService.getGroupExclusions(groupId);
   } catch (e) {
     cannotRead(groupId, deps.log, 'sending no message', String(e));
     return null;
   }
-  const windows = [...allWindows(exclusions), ...inviteeWindows];
+  const windows = allWindows(exclusions);
   if (windows.length === 0) return [...messages];
 
   const held: Record<WithholdReason, number> = {
@@ -211,7 +172,7 @@ export async function entitledHistorySelection<M extends PlaceableMessage>(
     return reason === null;
   });
   deps.log(
-    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window${invitee === undefined ? '' : unionOnly ? `, invitee ${invitee.slice(0, 8)} unfiltered (server predates withheld)` : `, invitee ${invitee.slice(0, 8)} with ${inviteeWindows.length}`}: withheld ${held.window} sent while a member was out or before the invitee arrived, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
+    `[HISTORY_ENTITLEMENT] ${groupId.slice(0, 8)}… - ${exclusions.size} member(s) with an exclusion window: withheld ${held.window} sent while a member was out, ${held['undated-near-window']} undated within ${UNDATED_SKEW_MARGIN_MS / 60_000} min of one, ${held.undatable} undatable; kept ${kept.length}`
   );
   return kept;
 }
@@ -253,19 +214,17 @@ let warnedServerPredatesAddressing = false;
  * - sends nothing.
  *
  * **A SERVER THAT PREDATES ADDRESSED ANSWERS** answers without `addressedAnswers`: the answer is then
- * the broadcast this step replaces, filtered by {@link entitledHistorySelection} (the union, plus the
- * reader's span on an inviter's push), and the residual of step C stands. A fallback is a signal: it
+ * the broadcast this step replaces, filtered by {@link entitledHistorySelection} (the union), and the
+ * residual of step C stands. A fallback is a signal: it
  * accuses once per session at error, and is recorded in docs/wiki/legacy-compatibility.md.
  *
  * @param reader the user id of the device the answer is for.
- * @param push whether this is the inviter's push (its broadcast form adds the reader's span).
  */
 export async function readerHistorySelection<M extends PlaceableMessage>(
   groupId: string,
   messages: readonly M[],
   deps: ReaderDeps,
-  reader: string,
-  push: boolean
+  reader: string
 ): Promise<ReaderSelection<M> | null> {
   let supported: boolean;
   let exclusions: GroupExclusions;
@@ -294,7 +253,7 @@ export async function readerHistorySelection<M extends PlaceableMessage>(
         `[HISTORY_ENTITLEMENT] the delivery service predates addressed history answers - answers are broadcast to the whole group and filtered on the union of gaps`
       );
     }
-    const kept = await entitledHistorySelection(groupId, messages, deps, push ? reader : undefined);
+    const kept = await entitledHistorySelection(groupId, messages, deps);
     return kept === null ? null : { mode: 'broadcast', kept };
   }
   if (withheld === SERVER_PREDATES_WITHHELD) {

@@ -62,6 +62,35 @@ function keyOf(targets: readonly ShareTarget[]): string {
   return JSON.stringify(targets.map((t) => [t.id, t.label]));
 }
 
+/**
+ * HOW a published set differs from the one before it, in words a log carries: the conversations that
+ * entered and left the set (id prefixes - never a name), how many only changed their label, and
+ * whether the survivors changed order. Written so a reading of a first sync can tell a set that
+ * FLAPS (the same id leaving and returning) from one that only walks forward - the two have
+ * different fixes (the order of the list, or publishing from a settled one).
+ */
+export function describeShareTargetsChange(
+  previous: readonly ShareTarget[] | null,
+  next: readonly ShareTarget[]
+): string {
+  if (previous === null) return `first publish after an unknown state, ${next.length} target(s)`;
+  const short = (t: ShareTarget): string => t.id.slice(SHARE_TARGET_PREFIX.length).slice(0, 8);
+  const before = new Map(previous.map((t) => [t.id, t]));
+  const after = new Map(next.map((t) => [t.id, t]));
+  const added = next.filter((t) => !before.has(t.id)).map(short);
+  const removed = previous.filter((t) => !after.has(t.id)).map(short);
+  const relabelled = next.filter(
+    (t) => before.get(t.id)?.label !== undefined && before.get(t.id)?.label !== t.label
+  ).length;
+  const kept = (list: readonly ShareTarget[], other: Map<string, ShareTarget>): string =>
+    list
+      .filter((t) => other.has(t.id))
+      .map((t) => t.id)
+      .join(',');
+  const reordered = kept(previous, after) !== kept(next, before);
+  return `added [${added.join(',')}], removed [${removed.join(',')}], ${relabelled} relabelled, ${reordered ? 'reordered' : 'same order'}`;
+}
+
 /** The key of "nothing published" - a clear and a publish of no target leave the same state. */
 const NOTHING = keyOf([]);
 
@@ -71,6 +100,9 @@ const NOTHING = keyOf([]);
  * sent again, and an unknown state is always sent.
  */
 let lastPublished: string | null = null;
+
+/** The set behind {@link lastPublished}, for the log that says how the next publish differs; null when unknown. */
+let lastTargets: ShareTarget[] | null = null;
 
 /**
  * The calls are applied in the order they were made: a clear at sign-out issued while a publish is
@@ -92,6 +124,7 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
   const key = keyOf(targets);
   return enqueue(async () => {
     if (key === lastPublished) return;
+    const change = describeShareTargetsChange(lastTargets, targets);
     try {
       const answer = await invoke<{ present: number; leftover: number }>(
         galleryCommand('publishShareTargets'),
@@ -102,14 +135,23 @@ export function publishShareTargets(targets: ShareTarget[], reason: string): Pro
         // Stale suggestions the platform would not remove: what it holds is NOT this list, so
         // the next call is sent whatever it asks for.
         lastPublished = null;
+        // What THIS call asked for is still the comparison point of the next line.
+        lastTargets = targets;
         console.warn(
           `[share-targets] published, but ${answer.leftover} stale suggestion(s) could not be removed (${reason})`
         );
       } else {
         lastPublished = key;
+        lastTargets = targets;
       }
-      Log.d('ShareTargets', `${answer.present} of ${targets.length} present (${reason})`);
+      // ONE line per publish, said after the answer: how it differs from the one before, and what the
+      // platform lists afterwards.
+      Log.i(
+        'ShareTargets',
+        `published (${reason}): ${change}; ${answer.present} of ${targets.length} present, ${answer.leftover} stale left`
+      );
     } catch (err) {
+      // `lastTargets` stays: the diff of the next attempt is still against the last set told.
       lastPublished = null;
       console.error(`[share-targets] the suggestions were not published (${reason})`, err);
     }
@@ -133,9 +175,11 @@ export function clearShareTargets(
     try {
       const removed = await invoke<number>(galleryCommand('clearShareTargets'));
       lastPublished = NOTHING;
+      lastTargets = [];
       Log.d('ShareTargets', `cleared ${removed} (${reason})`);
     } catch (err) {
       lastPublished = null;
+      lastTargets = null;
       console.error(`[share-targets] the suggestions were not cleared (${reason})`, err);
     }
   });
@@ -166,5 +210,6 @@ export function eraseAccountShortcuts(reason: string): Promise<void> {
 /** Test seam: forgets what the native side was told, as a fresh process would. */
 export function resetShareTargetsStateForTests(): void {
   lastPublished = null;
+  lastTargets = null;
   queue = Promise.resolve();
 }

@@ -392,3 +392,55 @@ describe('a partial refund', () => {
     expect(target.textContent).toContain(m.form_responses_card_collected_gross_hint());
   });
 });
+
+/**
+ * WHO ANSWERED, AS THE FORM KEPT IT (owner, 2026-11-16): the promo and formation, status and campus
+ * the form joins or asks are columns after the name, read from each answer's snapshot, with a
+ * filter by promo, formation and status; a form that keeps none of them draws neither.
+ */
+describe('the respondent account fields in the responses list', () => {
+  function renderWith(over: Partial<Form>, submissions: Submission[]) {
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(FormResponsesPanel, {
+      target,
+      props: {
+        form: { ...form, requiresPayment: false, ...over } as Form,
+        submissions,
+        deletingId: null,
+        onDelete: () => {},
+        onReload: async () => {},
+      },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    return target;
+  }
+
+  it('draws the joined fields as columns, from the snapshot, with the filters', () => {
+    const target = renderWith({ respondentFields: ['lastName', 'firstName', 'cursus', 'campus'] }, [
+      sub({
+        id: 'a',
+        respondentIdentity: {
+          source: 'account',
+          cursus: [{ promo: 2024, formation: 'ISMIN' }],
+          campus: 'gardanne',
+        },
+      }),
+    ]);
+    expect(target.querySelector('[data-testid="identity-col-cursus"]')).not.toBeNull();
+    expect(target.querySelector('[data-testid="identity-col-campus"]')).not.toBeNull();
+    expect(target.querySelector('[data-testid="identity-col-status"]')).toBeNull();
+    const cells = [...target.querySelectorAll('table tbody tr td')].map((td) =>
+      td.textContent?.trim()
+    );
+    expect(cells).toContain('2024 ISMIN');
+    expect(cells).toContain(m.profile_campus_gardanne());
+    expect(target.querySelector('[data-testid="identity-filters"]')).not.toBeNull();
+  });
+
+  it('draws neither on a form that keeps none of them', () => {
+    const target = renderWith({ respondentFields: ['lastName', 'firstName'] }, [sub({ id: 'a' })]);
+    expect(target.querySelector('[data-testid^="identity-col-"]')).toBeNull();
+    expect(target.querySelector('[data-testid="identity-filters"]')).toBeNull();
+  });
+});

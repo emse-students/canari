@@ -173,7 +173,7 @@ export function buildAssociationJsonLd(input: AssociationJsonLdInput): JsonLdNod
  * `BreadcrumbList` for a nested page.
  *
  * Google replaces the URL line of a result with the breadcrumb trail, which is the difference
- * between a result reading `canari-emse.fr > Associations > BDE` and one reading a bare uuid path.
+ * between a result reading `canari.emse.fr > Associations > BDE` and one reading a bare uuid path.
  */
 export function buildBreadcrumbJsonLd(trail: { name: string; path: string }[]): JsonLdNode {
   const origin = siteOrigin();

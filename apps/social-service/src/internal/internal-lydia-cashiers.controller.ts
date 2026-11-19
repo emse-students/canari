@@ -104,18 +104,30 @@ export class InternalLydiaCashiersController {
   ): Promise<{ cashier: LydiaCashierView }> {
     assertInternalSecret(headerSecret);
     if (body?.cashierId !== undefined) cashierIdOf(body);
-    return {
-      cashier: await this.cashiers.record(id, {
-        vendorToken: body?.vendorToken,
-        userId: body?.userId,
-        phone: body?.phone,
-        role: body?.role,
-        addedByUserId: body?.addedByUserId,
-        confirmed: body?.confirmed,
-        cashierId: body?.cashierId,
-        claimToken: body?.claimToken,
-      }),
-    };
+    try {
+      return {
+        cashier: await this.cashiers.record(id, {
+          vendorToken: body?.vendorToken,
+          userId: body?.userId,
+          phone: body?.phone,
+          role: body?.role,
+          addedByUserId: body?.addedByUserId,
+          confirmed: body?.confirmed,
+          cashierId: body?.cashierId,
+          claimToken: body?.claimToken,
+        }),
+      };
+    } finally {
+      this.afterRelease(id);
+    }
+  }
+
+  /**
+   * A cashier step released the claim (or tried to): a departure that met it busy is owed now
+   * (`LydiaCashiersService.settleDepartures`, `claim-released`). Never waited on, never throws.
+   */
+  private afterRelease(id: string): void {
+    void this.cashiers.settleDepartures(id, 'claim-released');
   }
 
   /** Releases a cashier operation's claim after a typed outcome core-service knows (its token). */
@@ -128,7 +140,11 @@ export class InternalLydiaCashiersController {
     @Body() body: { claimToken?: unknown }
   ): Promise<{ ok: true; released: boolean }> {
     assertInternalSecret(headerSecret);
-    return { ok: true, released: await this.cashiers.release(id, claimTokenOrThrow(body)) };
+    try {
+      return { ok: true, released: await this.cashiers.release(id, claimTokenOrThrow(body)) };
+    } finally {
+      this.afterRelease(id);
+    }
   }
 
   /**
@@ -171,14 +187,18 @@ export class InternalLydiaCashiersController {
     if (typeof body?.verified !== 'boolean') throw new BadRequestException('verified is required');
     const cashierPhone = text(body?.cashierPhone);
     if (!cashierPhone) throw new BadRequestException('cashierPhone is required');
-    await this.cashiers.recordRevoke(id, {
-      cashierId: cashierIdOf(body),
-      number: numberOf(body),
-      verified: body.verified,
-      actorId: text(body?.actorId),
-      cashierPhone,
-      claimToken: claimTokenOrThrow(body),
-    });
+    try {
+      await this.cashiers.recordRevoke(id, {
+        cashierId: cashierIdOf(body),
+        number: numberOf(body),
+        verified: body.verified,
+        actorId: text(body?.actorId),
+        cashierPhone,
+        claimToken: claimTokenOrThrow(body),
+      });
+    } finally {
+      this.afterRelease(id);
+    }
     return { ok: true };
   }
 }

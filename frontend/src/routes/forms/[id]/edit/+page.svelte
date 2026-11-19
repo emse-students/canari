@@ -3,6 +3,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -102,7 +103,7 @@
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
-  import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import { editorChoicesOf, respondentSettingsPayload } from '$lib/forms/respondentFields';
   import {
     draftRefusalMessage,
     formViewHref,
@@ -144,6 +145,8 @@
   let description = $state('');
   let maxSubmissions = $state<number | undefined>(undefined);
   let opensAt = $state('');
+  /** The closing date; the manager's "Clore" writes it too, so see `closedAtPayload`. */
+  let closedAt = $state('');
   let allowMultipleSubmissions = $state(false);
   /** Whether a respondent may change their own answer while the form is open (migration 166). */
   let allowAnswerEdit = $state(false);
@@ -152,7 +155,8 @@
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
-  let guestFields = $state<string[]>([]);
+  /** "Qui a repondu": one set of ticks, saved as the two lists (`respondentFields.ts`). */
+  let identityChoices = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -416,13 +420,14 @@
     submitCondition = f.submitCondition ?? null;
     maxSubmissions = f.maxSubmissions;
     opensAt = isoToDatetimeLocal(f.opensAt);
+    closedAt = isoToDatetimeLocal(f.closedAt);
     allowCashPayment = f.allowCashPayment ?? false;
     allowOnlinePayment = f.allowOnlinePayment ?? true;
     allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
     allowAnswerEdit = f.allowAnswerEdit ?? false;
     anonymous = f.anonymous ?? false;
     isPublic = f.isPublic ?? false;
-    guestFields = askedGuestFields(f.guestFields);
+    identityChoices = editorChoicesOf(f);
     cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
     fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
     imageUrl = f.imageUrl ?? null;
@@ -528,6 +533,10 @@
       error = m.form_error_association_required();
       return;
     }
+    if (formWindowInvalid(opensAt, closedAt)) {
+      error = m.form_closed_at_before_open();
+      return;
+    }
     const itemsProblem = formItemsProblem(items);
     if (itemsProblem) {
       error = itemsProblem;
@@ -631,6 +640,16 @@
     goto(resolve('/forms'));
   }
 
+  /**
+   * The end is sent ONLY when the field differs from the published form's: the manager's "Clore"
+   * (list) writes `closedAt` apart from the revision, so a payload repeating the stored value would
+   * undo a close made since. Absent keeps it; a cleared field sends `null`.
+   */
+  function closedAtPayload(): { closedAt?: string | null } {
+    if (closedAt === isoToDatetimeLocal(form?.closedAt)) return {};
+    return { closedAt: closedAt ? new Date(closedAt).toISOString() : null };
+  }
+
   /** The editor's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
     return {
@@ -649,8 +668,9 @@
       ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      ...closedAtPayload(),
       requiresPayment,
       ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
       ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
@@ -991,9 +1011,10 @@
       bind:anonymous
       anonymousFixed={!isDraft}
       bind:isPublic
-      bind:guestFields
+      bind:identityChoices
       {optionState}
       bind:opensAt
+      bind:closedAt
       bind:submitCondition
       bind:settings={cotisation}
       {tiers}

@@ -1,3 +1,0 @@
-### Changed - the iPhone 12 readings of batch 6 taken on TestFlight 1.6.12-alpha.2
-
-The status bar and home indicator, the PIN gate at the largest text size, the edge swipe over a sheet and a gate, the rear lens, an account switch, one MLS state per account, the extension and plugin lines in clear, `push_context.json` after a switch, the accessibility-tree abort and the silent-frame banner clear read PASS and their entries are gone; the tall-card DM, the reaction toast, the waiting share, sharing in, the trills, the emoji rows and the nse boot proof carry what was measured and what is still owed ([device-verification](docs/wiki/device-verification.md#the-iphone-12-batch-6-readings-of-2026-11-14)).

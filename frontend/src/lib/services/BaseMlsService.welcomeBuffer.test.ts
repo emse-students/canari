@@ -282,3 +282,75 @@ describe('the Welcome announcement to the conversation layer', () => {
     note.mockRestore();
   });
 });
+
+describe('the Welcome announcement says whether the group was INSTALLED', () => {
+  /**
+   * A redelivered Welcome of a group already held joins nothing, and the listener reconciles only a
+   * fresh join. The handler records the install (`noteWelcomeInstalled`); the drain reads it ONCE.
+   */
+  it('true for the Welcome that installed the group, false for its redelivery', async () => {
+    const svc = makeService();
+    const note = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const announced: Array<[string | undefined, boolean | undefined]> = [];
+    svc.onWelcomeProcessed((g, installed) => announced.push([g, installed]));
+    let first = true;
+    poke(svc, {
+      userId: 'user-a',
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi.fn().mockResolvedValue(undefined),
+      },
+      // What `handleWelcome` does: only the Welcome that installs the group says so.
+      messageCallback: vi.fn(async (_s: string, _c: Uint8Array, groupId?: string) => {
+        if (first && groupId) svc.noteWelcomeInstalled(groupId);
+        first = false;
+        return true;
+      }),
+    });
+    const scheduler = inner(svc).messageScheduler;
+
+    scheduler.enqueue(frame('chat-group', 'bob', { isWelcome: true }));
+    await inner(svc).processQueue();
+    scheduler.enqueue(frame('chat-group', 'bob', { isWelcome: true }));
+    await inner(svc).processQueue();
+
+    expect(announced).toEqual([
+      ['chat-group', true],
+      ['chat-group', false],
+    ]);
+    note.mockRestore();
+  });
+
+  it('a handler that throws after installing leaves no mark for the redelivery to read', async () => {
+    const svc = makeService();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const announced: Array<[string | undefined, boolean | undefined]> = [];
+    svc.onWelcomeProcessed((g, installed) => announced.push([g, installed]));
+    let first = true;
+    poke(svc, {
+      userId: 'user-a',
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi.fn().mockResolvedValue(undefined),
+      },
+      messageCallback: vi.fn(async (_s: string, _c: Uint8Array, groupId?: string) => {
+        if (first && groupId) {
+          first = false;
+          svc.noteWelcomeInstalled(groupId);
+          throw new Error('after the install');
+        }
+        return true;
+      }),
+    });
+    const scheduler = inner(svc).messageScheduler;
+
+    scheduler.enqueue(frame('chat-group', 'bob', { isWelcome: true }));
+    await inner(svc).processQueue();
+    scheduler.enqueue(frame('chat-group', 'bob', { isWelcome: true }));
+    await inner(svc).processQueue();
+
+    expect(announced).toEqual([['chat-group', false]]);
+    vi.restoreAllMocks();
+  });
+});

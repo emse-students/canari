@@ -41,6 +41,20 @@ vi.mock('$lib/stores/keyboardViewport.svelte', async (importOriginal) => {
     getKeyboardViewport: () => ({ ...actual.getKeyboardViewport(), isOpen: kb.isOpen }),
   };
 });
+// The chat camera reads the reel limits only when it may FILM (`destinationRules`: not photo-only).
+const reelApi = vi.hoisted(() => ({
+  getReelLimits: vi.fn(async () => ({
+    maxDurationMs: 90_000,
+    chatMaxDurationMs: 60_000,
+    chatReelMaxTargets: 10,
+    retentionDays: 30,
+    warningWindowDays: 7,
+  })),
+}));
+vi.mock('$lib/posts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/api')>()),
+  getReelLimits: reelApi.getReelLimits,
+}));
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The menu fades; happy-dom rejects a cancelled animation, see the helper.
@@ -61,6 +75,7 @@ afterEach(() => {
   env.runtime = 'android-app';
   native.pick.mockClear();
   nav.goto.mockClear();
+  reelApi.getReelLimits.mockClear();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   window.matchMedia = originalMatchMedia;
@@ -262,6 +277,28 @@ describe('the one attachment menu - iOS app', () => {
     const overlay = document.querySelector('[data-camera-overlay]');
     expect(overlay?.getAttribute('data-camera-overlay')).toBe('chat');
   });
+
+  // THE PRODUCTION FLIP (1.7.0, reels-in-chat 21.1): the writer switch is on in every build, so the
+  // camera of a DM or a group FILMS - it reads the chat cap - while a salon's keeps its photos.
+  it.each([
+    [true, 'a DM or a group', 1],
+    [false, 'a salon', 0],
+  ])(
+    'reelMessages=%s (%s): the camera reads the reel limits %i time(s)',
+    (reelMessages, _, reads) => {
+      stubMatchMedia(true);
+      mountComposer({ reelMessages });
+
+      openMenu();
+      menuItem('Ouvrir la caméra').click();
+      flushSync();
+
+      expect(
+        document.querySelector('[data-camera-overlay]')?.getAttribute('data-camera-overlay')
+      ).toBe('chat');
+      expect(reelApi.getReelLimits).toHaveBeenCalledTimes(reads);
+    }
+  );
 
   it('mounts no file input that captures: the system camera is not reachable', () => {
     stubMatchMedia(true);

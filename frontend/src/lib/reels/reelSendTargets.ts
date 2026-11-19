@@ -14,6 +14,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   shareCandidates,
   shareDestinationPresentation,
+  type PickerSection,
   type ShareCandidate,
 } from '$lib/sharing/shareDestinations';
 
@@ -33,7 +34,7 @@ export function isReelSendListed(c: Conversation, blockedPeerIds: ReadonlySet<st
 }
 
 /**
- * The rows under "Publier sur CanaReels": the conversation list's own order (last activity first),
+ * The rows under "Publier": the conversation list's own order (last activity first),
  * filtered locally on the conversation name or the DM peer's display name - no server search.
  */
 export function reelSendCandidates(input: {
@@ -55,6 +56,43 @@ export function reelSendCandidates(input: {
     query: input.query,
     order: 'recent',
   });
+}
+
+/** How many conversations the sheet's "Recents" section holds before "the rest" begins. */
+export const REEL_SEND_RECENT_COUNT = 6;
+
+/**
+ * The sheet's sections (owner, 2026-11-16, Snapchat's list): "Recents" - the first
+ * {@link REEL_SEND_RECENT_COUNT} conversations by last activity - then every other group and DM
+ * ALPHABETICALLY, a list to scan. A typed search is one untitled list of the matches, alphabetical
+ * (`forwardPickerOrder`): sections would only split what the member is already narrowing. Pure;
+ * `candidates` is {@link reelSendCandidates}'s answer for the same `query`.
+ */
+export function reelSendSections(
+  candidates: readonly ShareCandidate[],
+  query: string
+): PickerSection[] {
+  const byName = (a: ShareCandidate, b: ShareCandidate) => a.label.localeCompare(b.label);
+  if (query.trim()) return [{ id: 'results', title: null, rows: [...candidates].sort(byName) }];
+  const recents = candidates.slice(0, REEL_SEND_RECENT_COUNT);
+  const rest = candidates.slice(REEL_SEND_RECENT_COUNT).sort(byName);
+  return [
+    { id: 'recent', title: m.reel_sendto_section_recent(), rows: recents },
+    { id: 'all', title: m.reel_sendto_section_all(), rows: rest },
+  ].filter((section) => section.rows.length > 0);
+}
+
+/**
+ * The map key of the conversation `conversationId` among `conversations` - what the sheet ticks when
+ * it is opened from a conversation's own camera ("Ajouter des destinataires", path 2): `null` when
+ * this device no longer lists it, and nothing is ticked on a guess.
+ */
+export function reelSendKeyOf(
+  conversations: Iterable<[string, Conversation]>,
+  conversationId: string
+): string | null {
+  for (const [key, c] of conversations) if (c.id === conversationId) return key;
+  return null;
 }
 
 /** The result of a tick: the new selection, and whether the cap REFUSED it (said, never silent). */

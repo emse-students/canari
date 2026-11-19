@@ -19,6 +19,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 
@@ -204,6 +205,33 @@ export class FormsController {
     return this.service.update(id, dto, xUserId, ga === 'true');
   }
 
+  /**
+   * "Clore le formulaire": ends the form now. Requires the same rights as an edit (owner of a
+   * personal form, MANAGE_FORMS on the association, global admin). Idempotent.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/close')
+  @HttpCode(200)
+  closeForm(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setClosed(id, true, xUserId, ga === 'true');
+  }
+
+  /** "Rouvrir": clears the form's end, whether it is past or still to come. Idempotent. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/reopen')
+  @HttpCode(200)
+  reopenForm(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setClosed(id, false, xUserId, ga === 'true');
+  }
+
   /** Deletes a form entirely. Requires owner, co-owner, global admin, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Delete(':id')
@@ -353,9 +381,16 @@ export class FormsController {
   submit(
     @Headers('x-user-id') xUserId: string,
     @Param('id') id: string,
-    @Body() dto: SubmitFormDto
+    @Body() dto: SubmitFormDto,
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string | string[]
   ) {
-    return this.service.submit(id, { ...dto, userId: xUserId });
+    // The build the client names: an older one cannot draw the declared questions
+    // (`respondent-identity.ts`, `predatesDeclaredFields`).
+    return this.service.submit(id, {
+      ...dto,
+      userId: xUserId,
+      clientVersion: clientVersionOf(clientVersion),
+    });
   }
 
   /**

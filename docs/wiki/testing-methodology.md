@@ -3927,3 +3927,15 @@ another worktree lacked an export `main` now calls, and every key-group frame fa
 because a copied one is a different client. With the right WASM, `main` read the evicting
 commit as `healed=true`, and the fix re-joined within the same load. That gap between control and
 fix is the whole verdict.
+
+## FOUR TESTS THAT PASSED ALONE AND FAILED UNDER LOAD (2026-11-16)
+
+The pre-push `frontend-test` run (1814 files, several runs in parallel on one box) refused pushes on four files that pass alone. None of them waited on a clock; two causes were found.
+
+- **A cold dynamic import inside the test body** (`navigationNeverWaits`, `mp4Duration`): `await import('./+layout')` or `await import('./mediaBlobCache')` evaluates a large module graph on first use, and that evaluation is charged to the 5 s test timeout. Under oversubscription it took longer than that (reproduced 6/6 with 32 busy loops running; each run is a fresh process, because `--repeats` reuses the warm module cache and hides the defect). The fix is a static import, so evaluation happens at collection, which has no test timeout.
+- **A lazily imported mocked stub** (`SharedPostCard`, the reel viewer): the app imports the viewer lazily and the mock factory compiles a `.svelte` stub on FIRST import, which exceeded the 1 s `vi.waitFor`. The fix is a `beforeAll` that imports both lazy modules once, outside any waiter.
+- **Real render work against a 5 s budget** (`ChatArea.scrollAnchor`): NOT fixed here. Every test mounts a 61-row `ChatArea` for real; fake timers already remove the clock, there is no cold import to warm (the component has no `import()`), and the CPU cost scales with load. A raised timeout was refused (it synchronises nothing), so the file stays open in its backlog entry; the light pre-push no longer runs the suite, so it is now measured in CI only.
+
+Reproduce a cold-import defect with a loop of separate `vitest run` processes under CPU load, never with `--repeats`.
+
+Later in the same sweep: `ReelViewer.rail` (the share sheet is a lazy import of a mocked stub, same cause as `SharedPostCard`, same warm-up) and `appVersionCheck.presencePost` (each test calls `vi.resetModules()` on purpose, so the module is evaluated again per test; the first transform is warmed in a `beforeAll`). `useMessaging.unreadWatermark` showed in one log without its error surviving and did not reproduce under four CPU workers, so it has no fix yet: read its error before touching it.

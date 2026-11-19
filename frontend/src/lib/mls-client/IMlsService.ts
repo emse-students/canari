@@ -1,5 +1,6 @@
 import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
+import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
@@ -635,6 +636,14 @@ export type BulkIngestHandle = number;
 export interface BulkIngestObserver {
   onBulkIngestStart(phase: BulkIngestPhase): void;
   onBulkIngestEnd(phase: BulkIngestPhase): void | Promise<void>;
+  /**
+   * ROWS BEFORE RATCHET: stores every row this observer holds in memory for a frame already
+   * applied, and keeps the frames applied from now on out of that memory until the returned release
+   * is called. Called by `persistCheckpoint` BEFORE it exports the state, which holds those frames'
+   * ratchet advance and seen marks: exported first, a kill before the rows were stored lost them for
+   * good. Optional - only an observer that holds rows implements it.
+   */
+  holdRowsForCheckpoint?(): Promise<() => void>;
 }
 
 /** Row from `GET /api/mls/users/:id/groups`. */
@@ -713,6 +722,15 @@ export type GroupMeta = {
   name?: string;
   isGroup?: boolean;
   deletedAt?: string | null;
+  /**
+   * The server's clock when it answered (ms), read from the HTTP `Date` header of the delivery
+   * service's own answer - a fact the server states, to the second, never this device's clock.
+   * Undefined when the answer was not the API's or carried no readable `Date` (a phone app reads it
+   * only once the service exposes the header, `main.ts`). What the rename sweep bounds a re-send by
+   * (`settleNameSync`): the receivers measure their bound on the server's clock, so only it proves a
+   * re-send would still be taken.
+   */
+  serverNow?: number;
   /**
    * The community whose Graine key-distribution group this is, null on a conversation.
    *
@@ -879,8 +897,8 @@ export interface IMlsService {
    * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
    */
   createGroup(groupId: string): Promise<void>;
-  /** Creates a new named group on the delivery server and returns its assigned group ID. */
-  createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
+  /** Creates a new group on the delivery server and returns its assigned group ID; `null` = unnamed. */
+  createRemoteGroup(name: string | null, isGroup?: boolean): Promise<string>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
    * only call a checkpoint needs.
@@ -1273,8 +1291,18 @@ export interface IMlsService {
    * {@link acquireAddLock} naming WHY a refusal happened: `held` - the server answered that another
    * device holds the lock; `unanswered` - a transport error or a non-2xx answer, which says nothing
    * about anyone else.
+   *
+   * `oweIfHeld`: a member's first invitation, asked for only when the server answered `held`. The
+   * invitation it returns is RECORDED as owed (`owedInvitations.ts`, at this group's current epoch)
+   * before the refusal arms its wake, and the answer is `owed`: it is re-planned by the events that
+   * end another device's lock - the server-stated end of the lock, a commit applied in the group, the
+   * next connection - exactly as a lost invitation waiting on `add-lock` is. `null` (its roster
+   * baseline unreadable) records nothing, and the answer stays `held`.
    */
-  acquireAddLockAnswer(groupId: string): Promise<'taken' | 'held' | 'unanswered'>;
+  acquireAddLockAnswer(
+    groupId: string,
+    oweIfHeld?: () => Promise<CommitInvitation | null>
+  ): Promise<'taken' | 'held' | 'owed' | 'unanswered'>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**
@@ -1437,9 +1465,9 @@ export interface IMlsService {
    * through the other: {@link forgetDistributionGroup} resolves the group through the scope
    * registration, so it can only forget what that registration already names - and the state worth
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
-   * takes that name.
+   * takes that name. `reason` is printed by the drop's log line and is the CALLER's to state.
    */
-  forgetDistributionGroupById(groupId: string): Promise<boolean>;
+  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */
@@ -1743,6 +1771,11 @@ export interface IMlsService {
   /** Graine v2's Ed25519 operations, from this platform's engine (`mls-core`, never WebCrypto). */
   graineSignatureEngine(): GraineSignatureEngine;
   /**
+   * The sealed history answer's HPKE operations (`mls-core/src/history_seal.rs`), from this
+   * platform's engine - docs/wiki/protocols/history-answer-addressing.md, "Sealing the answer".
+   */
+  historySealEngine(): HistorySealEngine;
+  /**
    * Signs `message` with THIS device's MLS credential key - the key its leaf in every group
    * carries. What a Graine v2 endorsement is (channel-encryption section 21): a member checks it
    * against that leaf, so no new key has to be distributed or trusted.
@@ -1899,8 +1932,18 @@ export interface IMlsService {
   ): void;
   /** Registers a callback invoked when the WebSocket connection is lost. */
   onDisconnect(callback: () => void): void;
-  /** Registers a callback invoked after a Welcome message has been successfully processed. */
-  onWelcomeProcessed(callback: (groupId?: string) => void): void;
+  /**
+   * Registers a callback invoked after a Welcome message has been processed. `installed` says
+   * whether the handler INSTALLED the group from it ({@link noteWelcomeInstalled}) - false for a
+   * redelivered Welcome of a group already held, which joins nothing.
+   */
+  onWelcomeProcessed(callback: (groupId?: string, installed?: boolean) => void): void;
+  /**
+   * Records, from the Welcome handler, that the Welcome it is processing for `groupId` (the
+   * envelope's id, the one the drain announces) INSTALLED the group - read once by the announcement
+   * ({@link onWelcomeProcessed}), so a fresh join is told from a redelivery by a fact, not by a row.
+   */
+  noteWelcomeInstalled(groupId: string): void;
 
   /**
    * Installs THE listener of every Welcome this device delivers: called once per send the server

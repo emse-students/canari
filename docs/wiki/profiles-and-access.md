@@ -601,6 +601,13 @@ filters.
   (types `profile_correction_applied` / `profile_correction_refused`; the note rides in `text`; actor =
   the platform, never the admin). In-app only (`skipPush`): the native push tables have no sentence for
   the two types yet - the push is the follow-up.
+- **The admins are told (owner, 2026-11-18: "quelqu'un a demande une correction de profil, mais je
+  n'ai vu aucun indicateur")**: `create` posts `internal/notifications/profile-correction-filed` to
+  social-service, which writes an `admin_profile_correction` bell row and a push to every GLOBAL admin
+  but the requester. The row is served only while the request is `pending`, so one admin's answer
+  clears it for all; the push is content-free (a fixed sentence, no name). The queue's badge counts
+  the same rows. A failed announcement is logged at `error` and never undoes the filing.
+  [admin](frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)
 - **Not observed**: any of it against the real authentik (the token `MICONNECT_EDITOR_TOKEN` is not
   set yet); tests use mocks.
 
@@ -1880,10 +1887,9 @@ post the comment sits under, for a plain, an anonymous and an association's comm
 answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree (2026-11-02).
 
 **Who may do what to whom, every role and content kind, is [moderation-authority](moderation-authority.md)**
-(the one copy since 2026-11-15). **A gap this section did not name**: a space's governor may be an
-INSTITUTION (WP-D1), and `bdeStandingInSpaceSql` reads no type, so that institution's `MODERATE`
-members pass the door and moderate the people of the space like a BDE. The owner refused it on
-2026-11-15 ([work package](backlog.d/p1-institution-moderators-moderate-their-own-content-not-students.md)).
+(the one copy since 2026-11-15). A space's governor may be an INSTITUTION (WP-D1): its `MODERATE`
+members moderate none of that space's people (`bdeModeratesUserSql` asks `governorIsAnAssociationSql`),
+and moderate their institution's OWN content instead (owner, 2026-11-15, decisions 3 and 4).
 
 **THE BDE'S `MODERATE` IS SCOPED** like MANAGE_ASSO, in `spaces/bde-moderation.ts`, on the one per-space
 standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
@@ -1902,7 +1908,8 @@ Kept within the scope: hide, unhide, delete, unmask, reading an anonymous author
 comment, cutting a live and hiding its chat lines, muting, reviewing a report. An association with no
 parent (since WP-D2; before it, one with no audience rule), a person with no space (staff) and **an
 institution** are governed by no BDE: their
-content is the platform admin's to moderate. The institution follows from the owner's rule that no BDE
+content is the platform admin's to moderate - and, for an institution, its own `MODERATE` members'
+(owner, 2026-11-15, decision 4; [moderation-authority](moderation-authority.md#the-roles)). The institution follows from the owner's rule that no BDE
 governs one (2026-11-02, 2026-11-03), even when its audience reaches a BDE's space - the management
 predicate carries that exclusion once, and moderation reads it (proved in
 `bde-moderation.integration.spec.ts`). **The platform admin stays global for every one of these.**

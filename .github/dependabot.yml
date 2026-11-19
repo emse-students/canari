@@ -10,7 +10,7 @@
 # What is DELIBERATELY not declared here
 #
 #   frontend/src-tauri/patches/*    Vendored FORKS (tauri-plugin-keystore, tauri-plugin-system-components,
-#                                   tauri-plugin-websocket - the Happy Eyeballs connect). Their versions are
+#                                   tauri-plugin-websocket - the Happy Eyeballs connect, tauri-plugin-dialog - the iOS picker copies). Their versions are
 #                                   pinned to the patch, not to upstream; a bump here would revert
 #                                   the patch. They move when somebody rebases them by hand.
 #   frontend/src-tauri/gen/apple    The iOS project has NO manifest Dependabot reads. The Podfile

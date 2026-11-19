@@ -62,6 +62,7 @@ import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import { setAvatarToken } from '$lib/utils/avatarUrl';
+import type { TokenVerdict } from '$lib/utils/tokenVerdict';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -266,9 +267,15 @@ function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessag
  * a definitively dead session.
  */
 export class SessionExpiredError extends Error {
-  constructor() {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict;
+
+  constructor(
+    verdict: Extract<TokenVerdict, 'session-expired' | 'device-revoked'> = 'session-expired'
+  ) {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+    this.tokenVerdict = verdict;
   }
 }
 
@@ -288,7 +295,7 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
    *   which is not necessarily the device asking (its id may have rotated since the session opened).
    */
   constructor(readonly revoked: RevokedDeviceIdentity) {
-    super();
+    super('device-revoked');
     this.message = 'A device was revoked by its owner - this session has ended';
     this.name = 'SessionEndedByDeviceRevocationError';
   }
@@ -309,6 +316,9 @@ export class SessionEndedByDeviceRevocationError extends SessionExpiredError {
  * nothing else - no logout, no redirect, no retry, no error shown.
  */
 export class SignOutInProgressError extends Error {
+  /** What this says instead of a token, for a reader that cannot import this type (`tokenVerdict.ts`). */
+  readonly tokenVerdict: TokenVerdict = 'signing-out';
+
   constructor(stage: string) {
     super(`refresh ${stage} dropped - a sign-out is in progress`);
     this.name = 'SignOutInProgressError';
@@ -405,6 +415,26 @@ export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
   return _sessionEndedByDeviceRevocation;
 }
 
+/**
+ * Latched when the server ANSWERED 204 to this account's deletion: the account is gone, so the
+ * sign-out that follows can only have its bearer refused, whatever state the device's push-token row
+ * is in (chat-delivery's erasure job, queued with the 204, deletes it). Read by {@link isAccountErasedOnServer} to SKIP the push deregistration - the fact is
+ * carried from where it is known (the deletion's answer) to where the decision is made, instead of
+ * sending a call certain to earn a 401 and reading the refusal. In memory only, cleared with the
+ * credential verdicts when a new credential arrives.
+ */
+let _accountErasedOnServer = false;
+
+/** Records that the server erased the signed-in account; see {@link isAccountErasedOnServer}. */
+export function noteAccountErasedOnServer(): void {
+  _accountErasedOnServer = true;
+}
+
+/** True once the server answered this account's deletion and no new credential has arrived. */
+export function isAccountErasedOnServer(): boolean {
+  return _accountErasedOnServer;
+}
+
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
 let _signOutHandler: (() => void | Promise<void>) | null = null;
 
@@ -436,6 +466,7 @@ export function setSignOutHandler(fn: (() => void | Promise<void>) | null): void
 function noteRefreshCredentialAlive(): void {
   _refreshCredentialProvenDead = false;
   _sessionEndedByDeviceRevocation = null;
+  _accountErasedOnServer = false;
   _sessionExpiredNotified = false;
   _sessionExpiredTarget = null;
 }

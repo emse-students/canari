@@ -8,7 +8,7 @@ import {
 } from '$lib/utils/mentions';
 
 /**
- * Converts bare domains (`canari-emse.fr`, no `https://` typed) into real markdown links,
+ * Converts bare domains (`canari.emse.fr`, no `https://` typed) into real markdown links,
  * sharing `BARE_DOMAIN_RE` with the chat renderer (messageDisplay.ts) so both surfaces agree on
  * what counts as a linkable domain - marked's own GFM autolinker only catches `www.`-prefixed
  * hosts and full URLs, never a bare one. Skips a match immediately followed by `](` - that means

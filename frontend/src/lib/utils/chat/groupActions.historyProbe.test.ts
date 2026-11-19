@@ -1,5 +1,13 @@
 // @vitest-environment happy-dom
 import { sendHistoryProbe } from './groupActions';
+import {
+  REGISTER_ASKS_MAX,
+  clearRegisterOwed,
+  isRegisterOwed,
+  noteRegisterDeclined,
+  noteRegisterOwed,
+} from './registerOwed';
+import { forgetHistoryAsks, takeAddressedAsk } from './historyAddressing';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -25,6 +33,17 @@ function storageHolding(count: number | Error, messages: StoredMessage[] = []): 
     getMessagesSince: vi.fn().mockResolvedValue(messages),
     getConversation: vi.fn().mockResolvedValue(undefined),
   } as unknown as IStorage;
+}
+
+/** The JSON body of every system frame sent, in order. */
+function sentBodies(
+  mlsService: ReturnType<typeof createMlsServiceStub>
+): Record<string, unknown>[] {
+  return vi
+    .mocked(mlsService.sendMessage)
+    .mock.calls.map((call) =>
+      JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data ?? '{}')
+    );
 }
 
 function sentEvents(mlsService: ReturnType<typeof createMlsServiceStub>): string[] {
@@ -77,5 +96,167 @@ describe('sendHistoryProbe', () => {
 
     expect(sentEvents(mlsService)).toEqual(['history_state']);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Could not count'));
+  });
+
+  // HEAL-repair: a device holding frames it cannot read says so on the probe, so a member holding
+  // nothing it lacks answers instead of staying silent. Only then - the ordinary probe keeps its
+  // exact shape on the wire.
+  it.each([
+    ['state key', 1],
+    ['digest', 0],
+  ])(
+    'carries the proof of incompleteness on the %s only when there is one',
+    async (_leg, count) => {
+      const held =
+        count > 0
+          ? [{ id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage]
+          : [];
+      const deps = (mlsService: ReturnType<typeof createMlsServiceStub>) => ({
+        storage: storageHolding(count, held),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+      const proving = createMlsServiceStub();
+      const ordinary = createMlsServiceStub();
+
+      await sendHistoryProbe(GROUP, SELF, deps(proving), true);
+      await sendHistoryProbe(GROUP, SELF, deps(ordinary));
+
+      expect(sentBodies(proving)[0].incomplete).toBe(true);
+      expect('incomplete' in sentBodies(ordinary)[0]).toBe(false);
+    }
+  );
+});
+
+/**
+ * A REGISTER OWED ASKS WITH THE DIGEST (`registerOwed.ts`): a state key that matches is answered by
+ * silence, which would never deliver the state the push did not bring, so while the marker is set
+ * the probe is the digest - whatever the store holds - and it says `register`, on the wire and on
+ * the ask this device keeps.
+ */
+describe('sendHistoryProbe - a register owed', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    forgetHistoryAsks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it('sends the DIGEST with `register` even when the store holds something', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    const held = [
+      { id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage,
+    ];
+    await sendHistoryProbe(GROUP, SELF, {
+      storage: storageHolding(1, held),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+    });
+
+    expect(sentEvents(mlsService)).toEqual(['history_digest']);
+    const [body] = sentBodies(mlsService);
+    expect(body.register).toBe(true);
+    expect(typeof body.answerKey).toBe('string');
+    expect(takeAddressedAsk(GROUP, body.requestId as string, 'peer:p1', true)?.ask).toMatchObject({
+      kind: 'digest',
+      register: true,
+    });
+  });
+
+  it('says nothing of a register once none is owed', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    clearRegisterOwed('user-a', GROUP, 'register answer');
+    const mlsService = createMlsServiceStub();
+    await sendHistoryProbe(GROUP, SELF, {
+      storage: storageHolding(0),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+    });
+
+    expect('register' in sentBodies(mlsService)[0]).toBe(false);
+  });
+
+  it('counts every register ask that left, and goes back to the state key once the bound is spent', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteRegisterOwed('user-a', GROUP);
+    const held = [
+      { id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage,
+    ];
+    const mlsService = createMlsServiceStub();
+    const probe = () =>
+      sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(1, held),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) await probe();
+    // Spent, but ended only at the NEXT ask: a decline arriving meanwhile would give one back.
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
+    await probe();
+    expect(isRegisterOwed('user-a', GROUP)).toBe(false);
+
+    expect(sentEvents(mlsService)).toEqual([
+      ...Array(REGISTER_ASKS_MAX).fill('history_digest'),
+      'history_state',
+    ]);
+  });
+
+  it('an ask a decline gave back is not spent - the next probe still asks for the register', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    const probe = () =>
+      sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(0),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+    for (let i = 0; i < REGISTER_ASKS_MAX; i++) await probe();
+    noteRegisterDeclined('user-a', GROUP, 'user-b:phone', ['user-b:phone', 'user-c:laptop']);
+    await probe();
+
+    expect(sentEvents(mlsService)).toEqual(Array(REGISTER_ASKS_MAX + 1).fill('history_digest'));
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
+  });
+
+  it('an ask that did not leave is not counted', async () => {
+    noteRegisterOwed('user-a', GROUP);
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockRejectedValue(new Error('offline'));
+    for (let i = 0; i < REGISTER_ASKS_MAX + 1; i++) {
+      await sendHistoryProbe(GROUP, SELF, {
+        storage: storageHolding(0),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      });
+    }
+
+    expect(isRegisterOwed('user-a', GROUP)).toBe(true);
+  });
+
+  it("is the asking ACCOUNT's marker - another account's owed register asks nothing here", async () => {
+    noteRegisterOwed('user-z', GROUP);
+    const mlsService = createMlsServiceStub();
+    const held = [
+      { id: 'm1', senderId: 'u', content: 'x', timestamp: Date.now() } as StoredMessage,
+    ];
+    await sendHistoryProbe(GROUP, SELF, {
+      storage: storageHolding(1, held),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+    });
+
+    expect(sentEvents(mlsService)).toEqual(['history_state']);
   });
 });

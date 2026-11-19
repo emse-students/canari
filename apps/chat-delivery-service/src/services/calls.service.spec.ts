@@ -900,9 +900,73 @@ describe('CallsService', () => {
       expect(result.notified).toBe(2);
       const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
       expect(lookup).toContain('caller');
-      expect(fcmSend.mock.calls[0][0].data).toEqual(
-        expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
+      // Content-free push WP-W6 (owner, 2026-11-04, N2): Google and Apple read EXACTLY these three
+      // keys - no `groupId`, so a ring's end no longer names the conversation. Both receivers find
+      // the ring by `callId` alone (callsCompiled.test.ts, androidCallRing.test.ts).
+      const sent = fcmSend.mock.calls[0][0];
+      expect(sent.data).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
+      const { aps, ...apnsCustom } = sent.apns.payload;
+      expect(aps).toEqual({ 'content-available': 1 });
+      expect(apnsCustom).toEqual({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' });
+    });
+
+    /**
+     * A dead token is told by the CODE Firebase Admin sets at the throw: its message ("Requested
+     * entity was not found.") never names it, so a decision read from `String(e)` never deleted one.
+     * And a generic `invalid-argument` (a payload fault too) never deletes a working device's row.
+     */
+    it.each([
+      ['messaging/registration-token-not-registered', true],
+      ['messaging/invalid-registration-token', true],
+      ['messaging/invalid-argument', false],
+      ['messaging/server-unavailable', false],
+    ])('ring-end on FCM code %s deletes the token row: %s', async (code, deleted) => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '7',
+          userId: 'callee-android',
+          deviceId: 'd7',
+          token: 'fcm-7',
+          platform: 'android',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('Requested entity was not found.'), { code })
       );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      const result = await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(result.notified).toBe(0);
+      expect(pushTokenRepo.delete.mock.calls).toEqual(deleted ? [[{ id: '7' }]] : []);
+      expect(captured(warn)).toContain(`code=${code}`);
+      warn.mockRestore();
+    });
+
+    it('ring-end reports a refused credential at ERROR as ours, and keeps the token', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '8',
+          userId: 'callee',
+          deviceId: 'd8',
+          token: 'fcm-8',
+          platform: 'ios',
+          voipToken: null,
+        },
+      ]);
+      fcmSend.mockRejectedValueOnce(
+        Object.assign(new Error('SenderId mismatch'), { code: 'messaging/mismatched-credential' })
+      );
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await service.endRing('caller', 'group-1', 'call-1', 'answered');
+
+      expect(pushTokenRepo.delete).not.toHaveBeenCalled();
+      expect(captured(error)).toContain(
+        '[ring-end] FCM failed user=callee device=d8 code=messaging/mismatched-credential - OUR credentials'
+      );
+      error.mockRestore();
     });
   });
 

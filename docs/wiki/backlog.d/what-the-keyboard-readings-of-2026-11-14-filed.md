@@ -1,5 +1,7 @@
 ## P2 - what the keyboard readings of 2026-11-14 filed: a photo DM still jumps to older messages, a short thread loads history on close, a 12 px step
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, the current stable - which is
 `1.6.12-alpha.2`'s commit and does NOT carry the keyboard work of #3490/#3492 that `main` has since -

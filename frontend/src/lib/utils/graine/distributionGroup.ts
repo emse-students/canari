@@ -280,7 +280,12 @@ async function joinDistributionGroup(
         ? `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but its own leaf was removed from it - the local group is dead, rejoining`
         : `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
     );
-    staleForgotten = await mlsService.forgetDistributionGroupById(ref.groupId);
+    staleForgotten = await mlsService.forgetDistributionGroupById(
+      ref.groupId,
+      evictedLocally
+        ? 'own leaf removed from the key group'
+        : 'no roster row for this device in the key group'
+    );
   }
 
   // A SEAT FOR A DEVICE THAT HOLDS NOTHING MAY BE A WELCOME ON ITS WAY, AND THEN THE WELCOME IS THE
@@ -465,7 +470,7 @@ export async function rejoinBehindDistributionGroup(
   log(
     `[GRAINE] ${scopeLabel(scope)}: key group ${groupId.slice(0, 8)}... is behind its server and ${why} - re-joining at the current epoch`
   );
-  await mlsService.forgetDistributionGroupById(groupId);
+  await mlsService.forgetDistributionGroupById(groupId, `key group behind its server: ${why}`);
   const joined = await ensureDistributionGroupFor(mlsService, channelService, scope, log);
   if (joined) {
     releaseRequestsHeldForKeyGroup(

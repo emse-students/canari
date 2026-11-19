@@ -8,6 +8,7 @@ import {
   type PublicForm,
 } from '$lib/forms/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
+import { formWindowState, isClosedForm } from '$lib/forms/formWindow';
 import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 import { avatarUrl } from '$lib/utils/avatarUrl';
@@ -68,15 +69,16 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
 }
 
 /**
- * The one line saying whether a form takes answers now: closed by a manager, not open yet, full, or
- * open. `now` is a parameter so a test never asserts a wall clock.
+ * The one line saying whether a form takes answers now: closed (by a manager, or its end date
+ * passed), not open yet, full, or open. An end still to come is a scheduled close, not a closed
+ * form (`isClosedForm`). `now` is a parameter so a test never asserts a wall clock.
  */
 export function formStateLabel(
-  form: Pick<Form, 'closedAt' | 'opensAt'> & { formFull?: boolean },
+  form: Pick<Form, 'closedAt' | 'opensAt' | 'windowState'> & { formFull?: boolean },
   now: number = Date.now()
 ): string {
-  if (form.closedAt) return m.link_preview_form_closed();
-  if (form.opensAt && new Date(form.opensAt).getTime() > now) {
+  if (isClosedForm(form, now)) return m.link_preview_form_closed();
+  if (form.opensAt && formWindowState(form, now) === 'not-yet') {
     return m.link_preview_form_opens_on({ date: formatFormOpensAt(form.opensAt) });
   }
   if (form.formFull) return m.link_preview_form_full();

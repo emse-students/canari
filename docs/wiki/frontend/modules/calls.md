@@ -386,7 +386,7 @@ neither form is in this repository - and decide together with B5's wording, so t
 | Call metadata in clear on the server (room binding, presence, ring fan-out; logs per C13) | Usage Data > Product Interaction, linked to the user, App Functionality - only if the current label does not already cover messaging metadata | App activity > Other actions, collected, App functionality - same proviso |
 | The peer and Cloudflare see each device's public IP, on every ANSWERED call (an unanswered call sends it to neither) | Apple counts an IP as an identifier only for tracking or as derived location; neither applies, so probably no new row | no new data type if no location is derived from it; Cloudflare is a service provider (the form's sharing exemption) |
 | The `[CALL_REPORT]` lines in the in-app log | not collected: the log leaves the device only when the member exports it | same |
-| The ring push carries caller and conversation names (C7, C21) | already covered by the messaging rows, if they name push content | same |
+| The ring push carries ids only - conversation, call and caller ids, `hasVideo`, and on VoIP `ringUntil` - never a name (decision 6; C7, C21) | already covered by the messaging rows, if they name push content | same |
 
 **What remains after these drafts**: the owner's answers to the table, the demo pair, the video
 (recorded during the Tier B runs, never staged), and the listing texts
@@ -2116,6 +2116,54 @@ Proven by a 5-party encrypted call through the SFU in CI
 app's own SFU leg (the client, against this protocol) is the client pull request's, as is reading
 `mode` from `initiate`/`room-token`. Pinned by `calls.service.spec.ts` (the relay rows),
 `callRelaysAgree.test.ts`, `appVersion.test.ts` and the core-service platform and version specs.
+
+### One device per user: the relay's wire (WP-GC8, 2026-11-16)
+
+**The contract the client rebuilds on**, decided from
+[the one-device-per-user decision](../../open-questions.md#a-group-call-holds-one-device-per-user-decided-2026-11-13-reversible)
+and pinned in call-service (`apps/call-service/src/p2p.rs`). A user holds ONE seat; a second device's
+`Join` (or a device that replaces another) takes it, in a 1:1 room as in a mesh. When bob's second
+device joins a call with alice and carol:
+
+| Who | Receives | Means |
+| --- | --- | --- |
+| bob's replaced device | `PeerLeft` with NO `peer`, then nothing | this device is out of the call; its later frames reach nobody |
+| bob's new device | `Joined`, then one `PeerReady { peer, initiator: false }` per PRESENT participant (no `resumed`), and `PeerAway { peer }` per away one | build every leg from nothing; the new device arrived LAST, so it is the polite side of every pair |
+| alice, carol (present) | exactly ONE `PeerReady { peer: "bob", resumed absent }` each - no `PeerLeft`, no `PeerAway` for bob | drop the leg held for `bob` and build one anew; the call goes on |
+| a participant AWAY then | nothing; on its resume, `PeerReady { peer: "bob" }` WITHOUT `resumed` (and `resumed: true` for the others) | the same rule: its leg to the old device is rebuilt |
+
+- **`peer` is always a USER id, never a device or seat id** - the same `peer` before and after
+  the replacement (and `from` on every relayed frame is the sender's user id too). A test that
+  re-announces a replaced device under another `peer` (`bob:seat-b2`) drives a wire the relay never
+  sends.
+- **`resumed` absent (false) is the whole signal: whatever leg the client holds for that `peer` is
+  dropped and a new one built.** There is no "replaced" flag: a replacement forgets every pair of
+  that user, so each of its pairings is a first one, and `resumed: true` is only ever sent for a
+  pair the same two devices formed before. No other case re-announces a user the client still holds
+  a leg for without `resumed` - a departure is a `PeerLeft { peer }` first, an expired grace too.
+- **Roles may flip.** The new seat is last in arrival order, so a pair the REPLACED device initiated
+  (carol, who joined after bob, now offers to bob's new device) changes sides; the leg is built anew,
+  so the role is read from this `PeerReady`, never kept from the old leg.
+- **No stale frame after the announcement.** call-service hands every relayed frame on UNDER the
+  room's lock (`P2pRoom::relay`), the lock the replacement and its `PeerReady` take, so a frame the
+  replaced device sent reaches a participant BEFORE the new `PeerReady` (it belongs to the old leg,
+  which the client is about to drop) or never. Every frame `from: "bob"` after that `PeerReady` is
+  the new device's.
+- **That guarantee runs ONE way: toward the participants, never toward the new device.** The new
+  seat routes `to: "bob"` from the moment it is taken, which is BEFORE its `Joined` and its
+  `PeerReady` frames are handed on, and alice or carol may still be sending what they meant for the
+  OLD leg (an answer, candidates) until they read their own `PeerReady`. No server lock can order
+  those: they were sent before the sender knew. So the new device MUST drop a frame from a `peer` it
+  holds no leg for yet, and must survive one the new leg cannot use (an answer while it is `stable`
+  and polite, a candidate of the old ICE session) as a logged, ignored error - never as a failed leg.
+
+Pinned by `tests/p2p_signalling.rs`
+(`a_second_device_in_a_mesh_replaces_the_first_with_one_peer_ready_per_participant`,
+`a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_the_new_device`, and the 1:1
+`a_second_device_replaces_the_first_and_both_ends_are_told`) and the `p2p.rs` unit tests (the
+pairings, the away resume, `a_relayed_frame_is_delivered_under_the_rooms_lock`). The client half -
+`onPeerReady` / `legForPeerReady` rebuilding on a re-announced `peer` without `resumed`, and its test
+driven by THIS wire - follows WP-GC6 ([backlog](../../backlog.d/group-calls-one-device-per-user.md)).
 
 ## Group calls - the mesh, client half (WP-GC2, 2026-11-13)
 

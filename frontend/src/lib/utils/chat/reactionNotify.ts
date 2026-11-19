@@ -33,6 +33,11 @@ export async function notifyReaction(params: {
   /** The reacted-to message, so the author's devices can find their own copy of it. */
   messageId: string;
   actorName: string;
+  /**
+   * The reaction's own instant - the `at` its frame carries - so the author's device recognises the
+   * push and the frame of ONE reaction as one line (Android's `alreadyPosted`, keyed on the stamp).
+   */
+  at: number;
 }): Promise<void> {
   // Only the failure branches speak. A line on entry and a line on success fired on EVERY reaction,
   // said nothing a reader could act on, and were the two most frequent lines in the chat console -

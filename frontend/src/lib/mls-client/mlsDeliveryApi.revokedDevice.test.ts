@@ -99,4 +99,17 @@ describe('deleteDevice', () => {
       'https://example.test/api/mls/devices/u1/d2?reason=retired'
     );
   });
+
+  it("types the server's OWN_DEVICE refusal as its own status, never as a retryable error", async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const refused = api(json(409, { code: 'OWN_DEVICE' }));
+    await expect(refused.client.deleteDevice('u1', 'd1')).resolves.toMatchObject({
+      status: 'own_device',
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const other = api(json(409, { message: 'something else' }));
+    await expect(other.client.deleteDevice('u1', 'd1')).resolves.toMatchObject({
+      status: 'error',
+    });
+  });
 });

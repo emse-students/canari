@@ -1,6 +1,8 @@
 ## P3 - a lives integration spec failed once: the association's live pushed to nobody
 
-target: 1.7.0
+target: 1.7.1
+
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
 
 `apps/social-service/src/lives/lives.integration.spec.ts`, "the push to the followers when a live goes
 on air (WP-L7) > an association announces at most one live per 6 hours (WP-1b) > a member's live is

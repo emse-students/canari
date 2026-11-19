@@ -122,7 +122,7 @@ describe('LiveCompositor', () => {
       f.tick();
       expect(f.compositor.size).toEqual({ width: 1280, height: 720 });
     }
-    f.compositor.setScene('side-by-side');
+    f.compositor.setScene('screen-camera');
     f.sources.camera = stream();
     f.cameraEl.videoWidth = 640;
     f.cameraEl.videoHeight = 480;

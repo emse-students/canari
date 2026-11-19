@@ -79,8 +79,8 @@ same list heads `libs/contracts/ecosystem-sites.json`):
 - **The token carries `sub` only today (the F1 shape).** F3 adds the access check at mint (the
   condition above) and, later, `claims`, which is additive for a site that ignores an unknown member.
 - **No migration on Canari.** The mint is stateless; single use is the site's ledger.
-- **Only a token of a LIVE session mints**: a sid-less (legacy) access token, which names no
-  session whose end could stop it, is refused (`auth.controller.handoff.spec.ts`).
+- **Only a token of a LIVE session mints**: a sid-less access token, which names no
+  session whose end could stop it, is refused (as every route now refuses it) (`auth.controller.handoff.spec.ts`).
 - **`/mes-photos/confirmer` is OFF the dest allowlist.** Its only purpose is the "C'est moi"
   actions, which a handoff session must not perform without a fresh MiConnect sign-in (section
   3.7), so landing there signed in by a handoff buys nothing. A gallery push with faces to confirm

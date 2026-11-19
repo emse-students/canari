@@ -12,6 +12,7 @@ const {
   sendHistoryDigestRequest,
   sendHistoryRangeBundle,
   sendHistoryCoverage,
+  sendHistoryCannotRepair,
 } = vi.hoisted(() => ({
   sendFullHistoryBundle: vi.fn().mockResolvedValue(undefined),
   sendHistoryBundleForIds: vi.fn().mockResolvedValue(undefined),
@@ -19,6 +20,7 @@ const {
   sendHistoryDigestRequest: vi.fn().mockResolvedValue(undefined),
   sendHistoryRangeBundle: vi.fn().mockResolvedValue(undefined),
   sendHistoryCoverage: vi.fn().mockResolvedValue(undefined),
+  sendHistoryCannotRepair: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/groupActions')>();
@@ -30,6 +32,7 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
     sendHistoryDigestRequest,
     sendHistoryRangeBundle,
     sendHistoryCoverage,
+    sendHistoryCannotRepair,
   };
 });
 
@@ -167,6 +170,7 @@ beforeEach(() => {
   sendHistoryDigestRequest.mockClear();
   sendHistoryRangeBundle.mockClear();
   sendHistoryCoverage.mockClear();
+  sendHistoryCannotRepair.mockClear();
 });
 
 describe('handleHistoryRequest - guards', () => {
@@ -715,5 +719,104 @@ describe('handleHistoryRequest - stating our coverage', () => {
   it('says nothing when no probe ever arrived - there was no ask to answer', async () => {
     await handleHistoryRequest(baseParams({ storage: storageWith([], FLOOR) }));
     expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleHistoryRequest - an asker that holds frames it cannot read (HEAL-repair)', () => {
+  /**
+   * Silence carries two meanings - "we agree" and "nobody answered" - and for an asker that can
+   * PROVE its store incomplete, "we agree" is not a termination: the member it reached holds nothing
+   * it lacks, and the walk must move on. So that member ANSWERS, and only when the probe carried the
+   * proof - the common agreement keeps costing one frame.
+   */
+  const rows = [
+    { id: 'm1', timestamp: at('2026-01-01T00:00:00Z') },
+    { id: 'm2', timestamp: at('2026-01-02T00:00:00Z') },
+  ];
+
+  it('says it holds nothing the asker lacks when the keys AGREE and the asker is incomplete', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), 0),
+      since: 0,
+      incomplete: true,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expectSilence();
+    expect(sendHistoryCannotRepair).toHaveBeenCalledWith(
+      GROUP,
+      { from: SELF, to: REQUESTER, since: 0 },
+      expect.anything()
+    );
+    // ONE answer: the walk it triggers excludes this member whatever its coverage, so a second
+    // frame would only start a second walk.
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('stays SILENT on the same agreement when the asker claimed nothing', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), 0),
+      since: 0,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expect(sendHistoryCannotRepair).not.toHaveBeenCalled();
+  });
+
+  it('does not say it when the keys differ - the digest exchange may still repair', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey([rows[0]].map(rowOf), 0),
+      since: 0,
+      incomplete: true,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expect(sendHistoryDigestRequest).toHaveBeenCalled();
+    expect(sendHistoryCannotRepair).not.toHaveBeenCalled();
+  });
+
+  it('says it after a digest that left it nothing to send', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      requestId: 'ask-00000001',
+      digest: await buildHistoryDigest(rows),
+      since: 0,
+      incomplete: true,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expect(sendHistoryCannotRepair).toHaveBeenCalledWith(
+      GROUP,
+      { from: SELF, to: REQUESTER, since: 0 },
+      expect.anything()
+    );
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('does not say it when the digest left it something to send - that bundle IS the repair', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      requestId: 'ask-00000001',
+      digest: await buildHistoryDigest([rows[0]]),
+      since: 0,
+      incomplete: true,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(
+      GROUP,
+      ['m2'],
+      expect.anything(),
+      expect.anything()
+    );
+    expect(sendHistoryCannotRepair).not.toHaveBeenCalled();
   });
 });

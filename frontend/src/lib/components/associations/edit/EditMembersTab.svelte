@@ -23,7 +23,8 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { m } from '$lib/paraglide/messages';
-  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { Log } from '$lib/utils/Log';
+  import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
 
   interface Props {
     asso: Association;
@@ -141,12 +142,8 @@
    * were simply never brought along.
    */
   async function handleRemoveMember(targetId: string) {
-    if (
-      !(await showConfirm(m.asso_member_remove_confirm(), {
-        danger: true,
-        confirmLabel: m.common_remove_label(),
-      }))
-    ) {
+    if (!(await confirmMemberRemoval(targetId, m.asso_member_remove_confirm))) {
+      Log.d('editMembersTab.handleRemoveMember declined at its confirmation', { targetId });
       return;
     }
     try {

@@ -140,6 +140,7 @@ export const PUSH_BUDGET: Readonly<
   live_cut: FREE,
   live_suspended: FREE,
   live_withdrawn: FREE,
+  live_reinstated: FREE,
   form_paid_over_capacity: FREE,
   lydia_payments_active: FREE,
   lydia_payments_paused: FREE,
@@ -148,6 +149,9 @@ export const PUSH_BUDGET: Readonly<
   delegation_revoked: FREE,
   delegation_receiver_not_ready: FREE,
   delegation_resumed: FREE,
+  // An item waiting in a global admin's queue (owner, 2026-11-18): workflow, never counted.
+  admin_profile_correction: FREE,
+  admin_report: FREE,
 };
 
 /**

@@ -146,7 +146,10 @@ export class PostAnnounceScheduler {
    *
    * The actor NAME is the association's, while the actor ID stays the member who pressed publish -
    * `createNotifications` excludes the actor from its own recipients, and an officer being told
-   * about their own association's post is exactly what that exclusion is for.
+   * about their own association's post is exactly what that exclusion is for. That id is STORED and
+   * never SERVED: the bell blanks it on the way out (`withholdPublishingMember`, decision 11 of
+   * moderation-authority), and the push shows the logo or no picture, never the member's face
+   * (`pushIconOf`).
    */
   private async announceAssociationPost(post: Post, recipientIds: string[]): Promise<number> {
     const rows: unknown = await this.postRepo.manager.query(

@@ -41,19 +41,28 @@ function account(overrides: Partial<AssociationPayoutAccount> = {}): Association
 }
 
 describe('responsableResendText', () => {
-  it('while the gate is off, offers only to resend the SMS and never mentions another number', () => {
+  it('the gate as shipped (ON) offers another number; off, only to resend the SMS', () => {
     const off = responsableResendText(false);
     const on = responsableResendText(true);
-    expect(responsableResendText()).toEqual(off);
+    expect(responsableResendText()).toEqual(on);
     expect(off.button).not.toBe(on.button);
     expect(off.hint).not.toBe(on.hint);
   });
 });
 
 describe('lydiaCashiersView', () => {
-  it('ships with adding hidden: the gate stays off until a production removal is observed', () => {
-    expect(LYDIA_CASHIER_ADD_ENABLED).toBe(false);
+  it('ships with adding offered (1.7.1, owner 2026-11-18): Ajouter and a role change for a cashier', () => {
+    expect(LYDIA_CASHIER_ADD_ENABLED).toBe(true);
     const view = lydiaCashiersView(account({ cashiers: [responsable, cashier({})] }));
+    expect(view.canAdd).toBe(true);
+    expect(view.rows.map((row) => [row.cashier.role, row.canChangeRole])).toEqual([
+      ['responsable', false],
+      ['vendeur', true],
+    ]);
+  });
+
+  it('with the gate off, nothing to add and no role change', () => {
+    const view = lydiaCashiersView(account({ cashiers: [responsable, cashier({})] }), false);
     expect(view.canAdd).toBe(false);
     expect(view.rows.every((row) => !row.canChangeRole)).toBe(true);
   });
@@ -107,6 +116,31 @@ describe('lydiaCashiersView', () => {
       expect(row.canRevokePrevious).toBe(true);
       expect(row.canRevokeCurrent).toBe(false);
     }
+  });
+
+  it('a cashier who left: told on the row, never offered a role; a Responsable who left: a new one is needed', () => {
+    const view = lydiaCashiersView(
+      account({
+        cashiers: [
+          { ...responsable, departed: true },
+          cashier({ departed: true }),
+          cashier({ id: 'c2', userId: 'u2', departed: false }),
+        ],
+      }),
+      true
+    );
+    expect(view.rows.map((row) => [row.cashier.id, row.departed, row.canChangeRole])).toEqual([
+      ['r1', 'responsable', false],
+      ['c1', 'cashier', false],
+      ['c2', null, true],
+    ]);
+    // The departed cashier may still be removed by hand; the Responsable's current number never.
+    expect(view.rows.map((row) => row.canRevokeCurrent)).toEqual([false, true, true]);
+  });
+
+  it('a server older than 1.7.1 (no departed field) reads as a member', () => {
+    const [row] = lydiaCashiersView(account({ cashiers: [cashier({})] }), true).rows;
+    expect(row.departed).toBeNull();
   });
 
   it('lists the Responsable first, then the others by the date they were added', () => {

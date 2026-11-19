@@ -1,26 +1,43 @@
-## P1 - rows before ratchet: a live drain stores its rows only when its window closes, after a checkpoint may already hold their ratchet advance (raised by the second review of #3321, 2026-11-15)
+## P1 - rows before ratchet: what is left once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
 
-target: 1.7.0
+target: 1.7.1
 
-A live drain decrypts each frame and buffers its row in the UI's bulk-ingest buffer; the rows are
-stored only when the drain's window closes (`endBulkMessageIngest`, `useMessaging.svelte.ts`). A
-checkpoint is not ordered behind that close: one started by an earlier window, by a send, or by the
-persister's coalescing can land while the window is still open, and it then holds the frame's ratchet
-advance and its seen mark while the frame's row exists only in memory. A process kill in that window
-(a browser closed, a crash, an app swiped away) loses the message for good: the device cannot decrypt
-it again (`SecretReuseError` - the generation is spent on disk) and will not replay it (it is marked
-seen). Principle 2 of the [charter](../../principes.md): the essential is never lost.
+**2026-11-17 evening: the first step shipped in `1.7.0` (#3786, on dev from `1.7.0-alpha.10`); the windows left below are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below). Its device reading was [read PASS on the web and the Mi 9T on 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).**
 
-What already narrows it, and why that is not the fix:
+**Built (2026-11-17, #3786):** a checkpoint stores the rows the live drain's UI buffer holds BEFORE
+it exports their ratchet advance, and nothing re-enters the buffer until its write settled
+(`BaseMlsService.holdRowsForExport` -> `useMessaging.holdRowsForCheckpoint`); a row whose write
+failed refuses the checkpoint until a later hold stores it
+([chat](../frontend/modules/chat.md#rows-before-ratchet-a-checkpoint-stores-the-buffered-rows-first-2026-11-17)).
+That closes the window this entry was raised for - the whole length of a drain's window, seconds on
+a catch-up. The device reading is [in the readings of 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11).
 
-- the drain's ack waits for a checkpoint covering a commit or a Welcome (`DrainAckHold`), so the
-  server keeps those rows - but an application message beside them is acknowledged as soon as a
-  checkpoint covers it, which can be before its row is stored;
-- a demoted tab reloads only once the windows open at its demotion have closed
-  (`whenBulkIngestsClosed`, [chat](../frontend/modules/chat.md)); that covers the hand-over, not a kill.
+**Accepted, stated:** a hung IndexedDB row write holds every checkpoint (the hold never resolves, the
+persister's in-flight checkpoint never clears), and a store that keeps refusing the rows refuses
+every checkpoint - commits and joins included (`externalJoin` awaits one) - until a write lands or
+the page reloads, said once per page. No timeout: exporting past an unstored row is the loss itself.
 
-The fix is an ORDER, not a wait: a frame's row is durable before any checkpoint may claim its ratchet
-advance - either the drain stores rows as it applies them (and the UI buffer is a render buffer only),
-or a checkpoint exports the state only up to the last frame whose row is stored. The test that lifts
-it: a drain whose checkpoint lands before its window closes, a kill simulated between the two, and
-the reloaded service still holding the message (as a row, or as a frame it can decrypt again).
+**Left, in order (same class, narrower windows):**
+
+1. **A row not yet STORED when the export is taken**: a frame decrypted whose handler has not reached
+   `addMessageToChat` (web: an `await` between the decrypt and the add; native: a decrypt command
+   already issued), AND a live-path write still in flight - the drain's live path and the ordinary
+   one outside any drain alike. Milliseconds long, but the charter does not count in milliseconds.
+   The likely shape: the pipeline marks "row owed" at the decrypt of an APPLICATION frame and settles
+   it at the WRITE of its row (or where no row is decided), and the hold waits only for marks whose
+   frames carry no commit - never on a handler that may itself await a checkpoint (a commit's
+   structural one), the deadlock the built step avoids by design. **Size: 2-3 days**, MLS pipeline,
+   Opus review.
+2. **An application frame acknowledged before its row is stored.** A leader tab acknowledges an
+   application frame at the drain's end (`needsDisk` is `structural || refusesCommitsHere()`), and
+   `announceAck` runs in `onDrainEnd` BEFORE `endBulkIngest` stores the window's rows: a kill between
+   the two leaves the row nowhere on the device and the frame gone from the server. The backstop is
+   the history archive - the replay reads the frame again, since no landed checkpoint marked it seen
+   - so it is recovered, but by the archive rather than by order. Closing it: acknowledge an
+   application frame only once its row is stored (the ack chain waits on the close's store as it
+   waits on a checkpoint). **Size: 1 day.**
+3. **The orphan buffer** (`bufferOrphan`): a message whose conversation is not yet in the map is
+   kept in memory until `drainOrphanMessages`, so a checkpoint can hold its advance first. Not
+   closed by #3786: storing the row at buffering writes a message for a conversation the store does
+   not hold yet, which the restore and the sidebar would have to learn to ignore. Store it at
+   buffering behind that rule, or include it in the hold. **Size: 1 day.**

@@ -1,3 +1,4 @@
+import { loadAdminQueueCounts } from '$lib/admin/adminQueueCounts.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
@@ -186,6 +187,39 @@ export function holdsBdeFlag(
   return !!findBdeAssociationWithFlag(myAssociations, flag);
 }
 
+/**
+ * Does the user moderate SOMEWHERE - the client mirror of the server's door
+ * (`MODERATES_SOMEWHERE_SQL`, `apps/social-service/src/spaces/bde-moderation.ts`): `MODERATE` in a
+ * BDE of type `association`, or in an INSTITUTION, whose own moderators moderate its content (owner,
+ * 2026-11-15, decision 4) whether or not it governs a space. An institution governing a space is no
+ * BDE here (decision 3). What each act may reach is the server's answer on that act.
+ */
+export function holdsModerationDoor(myAssociations: Association[]): boolean {
+  return myAssociations.some(
+    (a) =>
+      hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MODERATE) &&
+      (a.type === 'institution' || (a.type === 'association' && a.isBDE))
+  );
+}
+
+/**
+ * Does the members editor offer BDE-only flag `flag` on an entity of kind `kind` (`isBDE`: it
+ * governs a space)? Each flag where the server honours it: `VALIDATE_EVENTS` wherever a space is
+ * governed (an institution keeps its agenda right, owner 2026-11-03); `MANAGE_ASSO` in a BDE of type
+ * `association` only (reform 2.3); `MODERATE` there AND in any institution, whose own moderators
+ * moderate its content (owner, 2026-11-15, decision 4).
+ */
+export function offersBdeOnlyFlag(
+  kind: Association['type'],
+  isBDE: boolean,
+  flag: AssociationPermissionFlag
+): boolean {
+  const bde = isBDE && kind === 'association';
+  if (flag === AssociationPermissionFlag.VALIDATE_EVENTS) return isBDE;
+  if (flag === AssociationPermissionFlag.MODERATE) return bde || kind === 'institution';
+  return bde;
+}
+
 export interface AssociationMember {
   id: string;
   associationId: string;
@@ -243,6 +277,12 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
+  /**
+   * A BDE's chosen colour for its neutral ("Campus") agenda events, or null (derived accent). NEVER in
+   * a member read (it would name the BDE a masked event hides): only `PATCH :id`'s answer to its
+   * writer carries it, and {@link getNeutralEventColour} reads it.
+   */
+  neutralEventColor?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
@@ -317,6 +357,8 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
+  /** A BDE only: the colour of its neutral ("Campus") agenda events; `""` or `null` clears it. */
+  neutralEventColor?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -415,6 +457,11 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationSlug: string;
   /** Hex color set on the association, or null (frontend falls back to generateAvatarColor). */
   associationColor: string | null;
+  /**
+   * The colour the owning BDE chose for its NEUTRAL ("Campus") events (owner, 2026-11-14): present
+   * on a neutral row only, kept even when the owner is masked; null/absent -> the derived accent.
+   */
+  neutralEventColor?: string | null;
   /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
   associationLogoUrl: string | null;
   /**
@@ -981,10 +1028,13 @@ export async function validateAssociationCalendarEvent(
   associationId: string,
   eventId: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/validate`,
     { method: 'POST' }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /** Rejects a pending calendar event with an optional reason (BDE or global admin only). */
@@ -993,10 +1043,13 @@ export async function rejectAssociationCalendarEvent(
   eventId: string,
   reason?: string
 ): Promise<AssociationCalendarEvent> {
-  return request<AssociationCalendarEvent>(
+  const event = await request<AssociationCalendarEvent>(
     `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/reject`,
     { method: 'POST', body: JSON.stringify({ reason: reason?.trim() || undefined }) }
   );
+  // An item left its queue: this reader's badges are asked now, before the server's frame lands.
+  void loadAdminQueueCounts();
+  return event;
 }
 
 /**
@@ -1244,7 +1297,7 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
     myAssociationsProbe = listMyAssociations()
       .then((assos) => {
         setAssociationSuperAdmin(holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO));
-        setContentModerator(holdsBdeFlag(assos, AssociationPermissionFlag.MODERATE));
+        setContentModerator(holdsModerationDoor(assos));
         setEventValidator(holdsBdeFlag(assos, AssociationPermissionFlag.VALIDATE_EVENTS));
         return assos;
       })
@@ -1276,14 +1329,14 @@ export async function ensureAssociationSuperAdmin(force = false): Promise<boolea
 }
 
 /**
- * Determines whether the current user may moderate content platform-wide (member of a BDE
- * association holding `MODERATE`) and publishes it so `isContentModerator()` reflects it.
+ * Determines whether the current user moderates somewhere (`holdsModerationDoor`: `MODERATE` in a
+ * BDE or in an institution) and publishes it so `isContentModerator()` reflects it.
  *
  * The client mirror of the server's `isContentModerator`: the moderation screen and the server's
  * guards must open to the same people, or the tier is reachable only by whoever knows the URL.
  */
 export async function ensureContentModerator(force = false): Promise<boolean> {
-  return holdsBdeFlag(await ensureMyAssociations(force), AssociationPermissionFlag.MODERATE);
+  return holdsModerationDoor(await ensureMyAssociations(force));
 }
 
 /** Determines whether the current user may validate pending calendar events. */
@@ -2903,6 +2956,12 @@ export interface LydiaCashier {
   /** ISO instant the cashier was added. */
   addedAt: string;
   addedByName: string;
+  /**
+   * The person is no longer a member of the association: their numbers are being removed at Lydia
+   * (a Responsable keeps their current one, and a new Responsable is needed). Absent from a server
+   * older than 1.7.1, read as false.
+   */
+  departed?: boolean;
 }
 
 /** The cause of the last readiness change of a Lydia Business. */
@@ -2922,6 +2981,18 @@ export interface LydiaResponsable {
    * same-number resend confirms it. Absent reads as confirmed.
    */
   confirmed?: boolean;
+}
+
+/**
+ * Reads a BDE's colour for its neutral ("Campus") events (EDIT_PROFILE, 403 otherwise; `null` is the
+ * derived default). Its own read because the member reads never carry it: a masked neutral event
+ * carries the colour, so a colour every member could list would name the BDE (review of #3539).
+ */
+export async function getNeutralEventColour(associationId: string): Promise<string | null> {
+  const body = await request<{ neutralEventColor: string | null }>(
+    `/api/associations/${encodeURIComponent(associationId)}/neutral-event-colour`
+  );
+  return body.neutralEventColor ?? null;
 }
 
 /**

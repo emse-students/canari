@@ -22,6 +22,7 @@ import {
   presentationOf,
   isInternalSilent,
   type EnvelopeContent,
+  reactionCollapseId,
 } from './push-payload';
 
 /** The step-1 wake key every wake builder test names. */
@@ -825,5 +826,45 @@ describe('the MLS frame answer carries its presentation', () => {
     expect(
       presentationOf(buildInternalApnsRequest('t', 'b', { type: 'channel_read' }, 'fr'))
     ).toBeNull();
+  });
+});
+
+/**
+ * ONE REACTION, ONE iOS NOTIFICATION (review of #3792): the push's `apns-collapse-id` must be the
+ * very identifier the author's page gives its own notification of that reaction. The frontend's
+ * `reactionCollapseId` (`reactionNotification.test.ts`) asserts THIS vector too - two copies in two
+ * packages, held together by one number.
+ */
+describe('reactionCollapseId - the shared vector with the page', () => {
+  it("is the page's identifier for the same reaction", () => {
+    expect(reactionCollapseId('msg-1', 'Peer-User')).toBe('97988016');
+    expect(reactionCollapseId('srv-row-9', 'peer')).toBe('71866787');
+  });
+
+  it("is ONE per reactor and message: a reactor's second reaction replaces the first on the iPhone", () => {
+    expect(reactionCollapseId('msg-1', 'peer')).toBe(reactionCollapseId('msg-1', 'Peer'));
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(reactionCollapseId('msg-1', 'other'));
+  });
+
+  it('hashes the reacted-to MESSAGE, never the conversation: a guess over what a ring names cannot confirm it', () => {
+    // A call ring carries the group and the caller in clear; the old key hashed exactly those plus
+    // an instant, so Apple could test candidates. The message id is in no wake and no ring.
+    const ofGroup = reactionCollapseId('grp-1', 'peer');
+    expect(reactionCollapseId('msg-1', 'peer')).not.toBe(ofGroup);
+  });
+
+  it('is a decimal the notification plugin can own, and fits an apns-collapse-id', () => {
+    const id = reactionCollapseId('a'.repeat(200), 'b');
+    expect(id).toMatch(/^[0-9]{1,10}$/);
+  });
+
+  it('is what the full push carries', () => {
+    const data = {
+      type: 'social',
+      reaction: 'true',
+      groupId: 'grp-1',
+      collapseId: reactionCollapseId('msg-1', 'peer-user'),
+    };
+    expect(buildInternalApnsRequest('t', 'b', data).collapseId).toBe('97988016');
   });
 });

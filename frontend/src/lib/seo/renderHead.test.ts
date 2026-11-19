@@ -42,7 +42,7 @@ describe('renderSeoTags', () => {
     // An entity logo has dimensions this process does not know. Declaring a pair anyway makes the
     // unfurler reserve a box the image never fills, which is worse than declaring none.
     const withLogo = renderSeoTags(
-      { ...base, image: 'https://canari-emse.fr/api/media/public/abc' },
+      { ...base, image: 'https://canari.emse.fr/api/media/public/abc' },
       '/posts/abc'
     );
     expect(withLogo).not.toContain('og:image:width');
@@ -53,7 +53,7 @@ describe('renderSeoTags', () => {
     const withPhoto = renderSeoTags(
       {
         ...base,
-        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        image: 'https://canari.emse.fr/api/public/posts/abc/preview-image',
         imageWidth: 2048,
         imageHeight: 1365,
       },
@@ -70,7 +70,7 @@ describe('renderSeoTags', () => {
     const card = renderSeoTags(
       {
         ...base,
-        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        image: 'https://canari.emse.fr/api/public/posts/abc/preview-image',
         imageWidth: 1200,
         imageHeight: 630,
         imageType: 'image/jpeg',
@@ -79,7 +79,7 @@ describe('renderSeoTags', () => {
     );
     expect(card).toContain('<meta property="og:image:type" content="image/jpeg"');
     const logo = renderSeoTags(
-      { ...base, image: 'https://canari-emse.fr/api/media/public/abc' },
+      { ...base, image: 'https://canari.emse.fr/api/media/public/abc' },
       '/posts/abc'
     );
     expect(logo).not.toContain('og:image:type');
@@ -90,7 +90,7 @@ describe('renderSeoTags', () => {
     const half = renderSeoTags(
       {
         ...base,
-        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        image: 'https://canari.emse.fr/api/public/posts/abc/preview-image',
         imageWidth: 2048,
       },
       '/posts/abc'
@@ -205,7 +205,7 @@ describe('renderSeoTags structured data and the client payload', () => {
   });
 
   it('describes an entity image only when told what it shows', () => {
-    const entity = { ...base, image: 'https://canari-emse.fr/api/media/public/abc' };
+    const entity = { ...base, image: 'https://canari.emse.fr/api/media/public/abc' };
     expect(renderSeoTags(entity, '/posts/abc')).not.toContain('og:image:alt');
     expect(renderSeoTags({ ...entity, imageAlt: 'Logo BDE' }, '/posts/abc')).toContain('Logo BDE');
     // The default image is the one whose alt text is known.

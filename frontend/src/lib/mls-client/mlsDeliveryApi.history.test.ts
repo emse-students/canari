@@ -180,7 +180,7 @@ describe('MlsDeliveryApi.fetchHistoryBatch', () => {
       });
     connectivity.reset();
     connectivity.isOnline = true;
-    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerUnreachable('test');
     expect(connectivity.isOffline).toBe(true);
 
     await api(

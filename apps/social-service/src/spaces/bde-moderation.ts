@@ -1,5 +1,10 @@
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { bdeStandingInSpaceSql, holdsBdeFlagOverSql } from './bde';
+import {
+  bdeStandingInSpaceSql,
+  governorIsAnAssociationSql,
+  holdsBdeFlagOverSql,
+  isBdeAssociationSql,
+} from './bde';
 import { isReaderSpaceSql } from './reader-spaces';
 
 /**
@@ -13,17 +18,19 @@ import { isReaderSpaceSql } from './reader-spaces';
  * "In the governed spaces" means, for each kind of target:
  * - an ASSOCIATION's content (a post or a live in its name): the BDE is the association's PARENT
  *   (WP-R4 on WP-D2's governance, reform 2.4) - exactly `holdsBdeFlagOverSql`, so an association
- *   with no parent is moderated by nobody but the platform admin, whatever its audience reaches, and
- *   so is an INSTITUTION: no BDE governs one (owner, 2026-11-02 and 2026-11-03, G9), so no BDE
- *   moderates its content either. Another BDE whose spaces the association reaches moderates
- *   nothing of it. The same predicate leaves a BDE's own content to its own members, as its
- *   management is;
+ *   with no parent is moderated by nobody but the platform admin, whatever its audience reaches. No
+ *   BDE governs an INSTITUTION (owner, 2026-11-02 and 2026-11-03, G9), so no BDE moderates its
+ *   content either: the institution's OWN `MODERATE` members do, the platform admin keeping recourse
+ *   (owner, 2026-11-15, decision 4; `institutionModeratesOwnSql`). Another BDE whose spaces the
+ *   association reaches moderates nothing of it. The same predicate leaves a BDE's own content to
+ *   its own members, as its management is;
  * - a PERSON's content (a personal post or live): its author belongs to one of the spaces the BDE
  *   governs - the same per-space standing (`bdeStandingInSpaceSql`) every BDE power reads
  *   (`isReaderSpaceSql`, the readers' own definition). Someone with no space - staff, a review
  *   account - is left to the platform admin, as an association with no audience rule is;
  * - a PERSON themselves (a mute, a broadcast withdrawal, a report on an account): the same "belongs to
- *   one of the BDE's spaces".
+ *   one of the BDE's spaces". A space an INSTITUTION governs (WP-D1) has no BDE: its people are the
+ *   platform admin's (owner, 2026-11-15, decision 3).
  *
  * A comment is judged by the post it sits under, a live chat line by its live: the place the content
  * is shown is the place whose BDE answers for it - AND, for a comment, by its publisher too: a comment
@@ -42,14 +49,23 @@ import { isReaderSpaceSql } from './reader-spaces';
 
 const MODERATE = String(AssociationPermissionFlag.MODERATE);
 
-/** 403 `code`: the caller moderates somewhere, but not where this target lives. */
+/** 403 `code`: the caller moderates as a BDE, but not where this target lives. */
 export const MODERATION_OUT_OF_SCOPE = 'MODERATION_OUT_OF_SCOPE';
+/**
+ * 403 `code`: the caller moderates ONLY as an institution's `MODERATE` member, which reaches that
+ * institution's own content and nothing else - never a person, even of a space the institution
+ * governs (owner, 2026-11-15, decisions 3 and 4). Its own code so the client never words it "outside
+ * your BDE's spaces".
+ */
+export const MODERATION_OUTSIDE_OWN_INSTITUTION = 'MODERATION_OUTSIDE_OWN_INSTITUTION';
 /**
  * 403 `code`: the target is published in an INSTITUTION's or a BDE's name, or in the name of an
  * entity with no governing parent (or is a comment under a post in such a name), which no other BDE
- * moderates - the platform admin's (owner, 2026-11-03; WP-D2).
+ * moderates - the platform admin's (owner, 2026-11-03; WP-D2), and the publisher's own moderators'
+ * for a BDE or an institution (decision 4 of 2026-11-15): they pass the act, so never meet this.
  * Classified at the throw (`AssociationsService.refuseModeration`, `MODERATION_RESERVED_SQL`), so the
- * client words "only the platform administration moderates this" rather than "outside your spaces".
+ * client words "only its own moderators and the platform administration moderate this" rather than
+ * "outside your spaces".
  */
 export const MODERATION_RESERVED_TO_PLATFORM_ADMIN = 'MODERATION_RESERVED_TO_PLATFORM_ADMIN';
 /**
@@ -62,7 +78,10 @@ export interface ModerationTarget {
   postId?: string | null;
 }
 
-/** 403 `code`: the caller moderates nowhere (neither a platform admin nor a BDE `MODERATE` holder). */
+/**
+ * 403 `code`: the caller moderates nowhere (neither a platform admin nor a `MODERATE` holder in a BDE
+ * or an institution).
+ */
 export const MODERATOR_REQUIRED = 'MODERATOR_REQUIRED';
 /** 403 `code`: editing another person's post, which no moderator may do (owner, 2026-11-02). */
 export const POST_EDIT_PUBLISHER_ONLY = 'POST_EDIT_PUBLISHER_ONLY';
@@ -77,13 +96,50 @@ export const COMMENT_DELETE_FORBIDDEN = 'COMMENT_DELETE_FORBIDDEN';
 /**
  * User `moderator` holds `MODERATE` in the BDE of a space that user `target` belongs to. Both are SQL
  * expressions (a placeholder, or a column).
+ *
+ * The space's governor must be of type `association` (owner, 2026-11-15, decision 3): an
+ * INSTITUTION governing a space with no BDE (WP-D1) answers for that space's agenda, never for its
+ * students - they stay with the platform admin, the place having no local regulator of people.
  */
 export function bdeModeratesUserSql(moderator: string, target: string): string {
   return `EXISTS (SELECT 1 FROM association_members mod_member
     JOIN spaces mod_space ON ${bdeStandingInSpaceSql('mod_member', 'mod_space', moderator, MODERATE)}
     JOIN users mod_target ON mod_target.id = ${target}
-    WHERE ${isReaderSpaceSql('mod_space', 'mod_target')})`;
+    WHERE ${isReaderSpaceSql('mod_space', 'mod_target')}
+      AND ${governorIsAnAssociationSql('mod_space."bdeAssociationId"')})`;
 }
+
+/**
+ * THE INSTITUTION HALF OF THE PUBLISHER PREDICATE (owner, 2026-11-15, decision 4): user `moderator`
+ * holds `MODERATE` IN institution `association` (a SQL expression) - so moderates what that
+ * institution publishes: its posts, its lives, the comments under them and the comments in its name.
+ * FALSE for anything that is not an institution, whatever flag is held there. No BDE ever reaches
+ * an institution's content (`governingBdeJoinSql`), and no institution reaches a person.
+ */
+export function institutionModeratesOwnSql(moderator: string, association: string): string {
+  return `EXISTS (SELECT 1 FROM associations im_inst
+    JOIN association_members im_m ON im_m."associationId" = im_inst.id
+    WHERE im_inst.id = ${association} AND im_inst.type = 'institution'
+      AND im_m."userId" = ${moderator} AND (im_m.permissions & ${MODERATE}) <> 0)`;
+}
+
+/**
+ * THE DOOR (`AssociationsService.isContentModerator`): where user `$1` moderates - `asBde`,
+ * `MODERATE` in a BDE (an association of type `association` governing a space); `asInstitution`, in
+ * an INSTITUTION, governing a space or not (owner, 2026-11-15, decisions 3 and 4). Either opens the
+ * moderation surfaces; the pair classifies a refusal (`MODERATION_OUT_OF_SCOPE` vs
+ * `MODERATION_OUTSIDE_OWN_INSTITUTION`); every act then asks its scoped predicate. MODERATE held in a
+ * club or a list grants nothing.
+ */
+export const MODERATES_SOMEWHERE_SQL = `SELECT
+    EXISTS (SELECT 1 FROM association_members door_m
+      JOIN associations door_a ON door_a.id = door_m."associationId"
+      WHERE door_m."userId" = $1 AND (door_m.permissions & ${MODERATE}) <> 0
+        AND door_a.type = 'association' AND ${isBdeAssociationSql('door_a')}) AS "asBde",
+    EXISTS (SELECT 1 FROM association_members door_im
+      JOIN associations door_i ON door_i.id = door_im."associationId"
+      WHERE door_im."userId" = $1 AND (door_im.permissions & ${MODERATE}) <> 0
+        AND door_i.type = 'institution') AS "asInstitution"`;
 
 /**
  * THE PUBLISHER HALF OF THE ONE PREDICATE: user `moderator` holds `MODERATE` over what is published in
@@ -98,6 +154,16 @@ export function bdeModeratesPublisherSql(moderator: string, association: string)
 }
 
 /**
+ * THE PUBLISHER PREDICATE, both halves: user `moderator` moderates what is published in the name of
+ * `association` - as the BDE governing it (`bdeModeratesPublisherSql`), or as a `MODERATE` member of
+ * the institution it is (`institutionModeratesOwnSql`, decision 4).
+ */
+export function moderatesPublisherSql(moderator: string, association: string): string {
+  return `(${bdeModeratesPublisherSql(moderator, association)}
+    OR ${institutionModeratesOwnSql(moderator, association)})`;
+}
+
+/**
  * User `moderator` holds `MODERATE` over a piece of content published in the name of `association`
  * (NULL for a personal one) by `author` - a post or a live. All three are SQL expressions.
  */
@@ -106,7 +172,7 @@ export function bdeModeratesContentSql(
   association: string,
   author: string
 ): string {
-  return `((${association} IS NOT NULL AND ${bdeModeratesPublisherSql(moderator, association)})
+  return `((${association} IS NOT NULL AND ${moderatesPublisherSql(moderator, association)})
     OR (${association} IS NULL AND ${author} IS NOT NULL AND ${bdeModeratesUserSql(moderator, author)}))`;
 }
 
@@ -129,12 +195,18 @@ function commentPublisherSql(comment: string): string {
  * per query - and never the predicate re-run per comment: the report queue meets every comment of
  * every post in scope, and the per-row form cost 2.6 s on 20,000 comments where the set costs a hash
  * probe each (measured 2026-11-04, [moderation-and-blocking](docs/wiki/moderation-and-blocking.md)).
+ *
+ * A comment in an INSTITUTION's name is that institution's content WHEREVER it sits (decision 4):
+ * its `MODERATE` members moderate it under any post - the second, equally uncorrelated, set. A club's
+ * comment under an institution's post stays the club's content, as it is under a BDE's post.
  */
 export function bdeModeratesCommentSql(moderator: string, post: string, comment: string): string {
-  return `(${bdeModeratesContentSql(moderator, `${post}."associationId"`, `${post}."authorId"`)}
+  return `((${bdeModeratesContentSql(moderator, `${post}."associationId"`, `${post}."authorId"`)}
     AND (${commentPublisherSql(comment)} IS NULL
       OR ${commentPublisherSql(comment)} IN (SELECT mcp.id FROM associations mcp
-        WHERE ${bdeModeratesPublisherSql(moderator, 'mcp.id')})))`;
+        WHERE ${moderatesPublisherSql(moderator, 'mcp.id')})))
+    OR ${commentPublisherSql(comment)} IN (SELECT mci.id FROM associations mci
+      WHERE ${institutionModeratesOwnSql(moderator, 'mci.id')}))`;
 }
 
 /**
@@ -147,11 +219,20 @@ export const BDE_MODERATES_COMMENT_SQL = `SELECT EXISTS (SELECT 1 FROM posts mc_
     AND ${bdeModeratesCommentSql('$1', 'mc_post', 'mc_comment')}) AS "moderates"`;
 
 /**
- * The ids, among associations `$2`, whose published content user `$1` moderates as a BDE
- * (`bdeModeratesPublisherSql`). Answers `id`. What `commentRights` reads per comment.
+ * The ids, among associations `$2`, whose published content user `$1` moderates
+ * (`moderatesPublisherSql`: as their BDE, or as an institution's own moderator). Answers `id`. What
+ * `commentRights` reads per comment under a post the reader moderates.
  */
 export const BDE_MODERATED_ASSOCIATION_IDS_SQL = `SELECT ma.id::text AS id FROM associations ma
-  WHERE ma.id = ANY($2::uuid[]) AND ${bdeModeratesPublisherSql('$1', 'ma.id')}`;
+  WHERE ma.id = ANY($2::uuid[]) AND ${moderatesPublisherSql('$1', 'ma.id')}`;
+
+/**
+ * The ids, among associations `$2`, that are institutions in which user `$1` holds `MODERATE`
+ * (`institutionModeratesOwnSql`). Answers `id`. What `commentRights` reads for a comment in an
+ * institution's name, moderated wherever it sits (decision 4).
+ */
+export const MODERATED_INSTITUTION_IDS_SQL = `SELECT mi.id::text AS id FROM associations mi
+  WHERE mi.id = ANY($2::uuid[]) AND ${institutionModeratesOwnSql('$1', 'mi.id')}`;
 
 /**
  * Association `association` (a SQL expression, may be NULL) is an INSTITUTION, the BDE of a space, or
@@ -282,16 +363,27 @@ export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', asUuid
  * `posts`, `lives` and `live_cuts` are probed by primary key. A comment carries no post id, so its
  * branch is UNCORRELATED: the comment ids under the posts this moderator governs, computed ONCE per
  * query (a hashed subplan) and probed per report - never a scan of every post per report.
+ *
+ * That holds only while `moderator` is CONSTANT in the query. A caller asking it of many moderators
+ * at once (a correlated column) would re-run the set per moderator, so it passes `commentInScope`:
+ * its own test of the comment branch over posts it already resolved (`AdminQueueSignal`).
  */
-export function reportInBdeScopeSql(report: string, moderator: string): string {
+export function reportInBdeScopeSql(
+  report: string,
+  moderator: string,
+  commentInScope?: string
+): string {
   const postInScope = bdeModeratesContentSql(moderator, 'rp."associationId"', 'rp."authorId"');
   const contentUuid = asUuidOrNullSql(`${report}."contentId"`);
+  const comment =
+    commentInScope ??
+    `${report}."contentId" IN (SELECT rc->>'id'
+      FROM posts rp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
+      WHERE ${bdeModeratesCommentSql(moderator, 'rp', 'rc')})`;
   return `(
     (${report}."contentType" = 'post' AND EXISTS (SELECT 1 FROM posts rp
       WHERE rp.id = ${contentUuid} AND ${postInScope}))
-    OR (${report}."contentType" = 'comment' AND ${report}."contentId" IN (SELECT rc->>'id'
-      FROM posts rp CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rp.comments, '[]'::jsonb)) rc
-      WHERE ${bdeModeratesCommentSql(moderator, 'rp', 'rc')}))
+    OR (${report}."contentType" = 'comment' AND ${comment})
     OR (${report}."contentType" = 'user' AND ${bdeModeratesUserSql(moderator, `${report}."contentId"`)})
     OR (${report}."contentType" = 'live' AND ${bdeModeratesLiveSql(moderator, contentUuid)})
     OR (${report}."contentType" = 'live_chat' AND EXISTS (SELECT 1 FROM live_chat_reported_lines rk

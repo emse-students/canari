@@ -77,6 +77,8 @@
   import { saveReplayFlow } from '$lib/live/replaySaveFlow';
   import DoubleTapHeart from '$lib/components/posts/DoubleTapHeart.svelte';
   import { doubleTapLike } from '$lib/actions/doubleTapLike';
+  import { reelOverlayTap } from '$lib/actions/reelOverlayTap';
+  import { declaredLengthMs } from '$lib/reels/declaredLength';
   import type { Point } from '$lib/utils/viewerGestures';
   import ReelActionRail from './ReelActionRail.svelte';
   import {
@@ -131,6 +133,15 @@
     mediaDragging?: boolean;
     /** The carousel's arrow buttons (a pointer has no swipe): the previous or next media. */
     onMediaStep?: (step: 'media-prev' | 'media-next') => void;
+    /**
+     * THE OVERLAY IS HIDDEN (owner, 2026-11-18): the caption, the author row and the rail are
+     * invisible, so neither focusable nor announced (`invisible` + `inert`); only the player's line
+     * stays. The viewer owns the flag (it also hides the top tabs and the close button) and resets it
+     * on every page.
+     */
+    overlayHidden?: boolean;
+    /** A single tap on the picture: the viewer hides or shows its overlay. Absent, a tap does nothing. */
+    onToggleOverlay?: () => void;
   }
 
   let {
@@ -147,6 +158,8 @@
     mediaDragX = 0,
     mediaDragging = false,
     onMediaStep,
+    overlayHidden = false,
+    onToggleOverlay,
   }: Props = $props();
 
   /**
@@ -159,6 +172,7 @@
   const readerReaction = $derived((rail && post.reactions?.[rail.readerId]) || null);
 
   let hearts = $state<DoubleTapHeart | undefined>();
+  let slideEl = $state<HTMLDivElement | undefined>();
 
   function likeOnDoubleTap(at: Point) {
     if (onLike?.()) hearts?.burst(at);
@@ -183,6 +197,15 @@
   });
   /** The visible media, clamped: a row whose media shrank (an edit) never points past its end. */
   const visibleIndex = $derived(Math.min(Math.max(mediaIndex, 0), Math.max(panes.length - 1, 0)));
+  /**
+   * What hides the overlay's parts (the caption block, the rail): invisible - out of the tab order and
+   * the accessibility tree, taps falling through to the picture - and inert, with a short fade the
+   * global reduced-motion rule makes instant. The way back is the next tap, or the viewer's
+   * sr-only "show the controls" button.
+   */
+  const overlayHideClass = $derived(
+    `transition-[opacity,visibility] duration-150 motion-reduce:transition-none ${overlayHidden ? 'invisible opacity-0' : ''}`
+  );
   /** The visible media is a video: the rail carries its save and its sound. */
   const visibleIsVideo = $derived(panes[visibleIndex]?.kind === 'video');
   /**
@@ -329,7 +352,8 @@
        letterboxed frame sits well above the home indicator, and the inset there would leave the
        caption about one line. -->
   <div
-    class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {turnedOverVideo
+    inert={overlayHidden}
+    class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent text-white {overlayHideClass} {turnedOverVideo
       ? 'pl-[calc(var(--safe-area-inset-left,env(safe-area-inset-left,0px))+1rem)] ' +
         (showRail
           ? 'pr-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+4rem)]'
@@ -419,6 +443,7 @@
       <RevealedAuthorLine
         userId={revealed.userId}
         fallback={revealed.name}
+        under={revealed.under}
         class="pointer-events-auto ml-8 shrink-0 text-white/80"
         tall
       />
@@ -474,7 +499,8 @@
          (`z-30`), which leaves it the room (`pr-16`). Out of the double tap (`data-no-double-tap`)
          and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
     <div
-      class="pointer-events-none absolute bottom-0 z-30 {turnedOverVideo
+      inert={overlayHidden}
+      class="pointer-events-none absolute bottom-0 z-30 {overlayHideClass} {turnedOverVideo
         ? 'right-[calc(var(--safe-area-inset-right,env(safe-area-inset-right,0px))+0.25rem)]'
         : 'right-1'}"
       style={bottomPad}
@@ -495,15 +521,23 @@
   {/if}
 {/snippet}
 
-<!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
-     held: the first tap toggles the player's controls at once and the second toggles them back, so
-     the pair leaves them as they were. Not on a control - the player's bar, its play button, the
-     caption's toggle and backdrop, the author link - which acts at once as before. Only the reel on
-     screen listens. -->
+<!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included, and a SINGLE TAP
+     HIDES OR SHOWS THE OVERLAY (`reelOverlayTap`, owner, 2026-11-18; it no longer pauses - a hold
+     does). The single tap waits the double-tap window where likes exist, so a like never flashes the
+     overlay. Neither is a control's: the player's bar, the caption's toggle and backdrop, the author
+     link and the rail act at once as before. Only the reel on screen listens. -->
 <div
   class="relative h-full w-full overflow-hidden bg-black"
   data-reel-slide={post.id}
   use:doubleTapLike={{ onDoubleTap: likeOnDoubleTap, enabled: active && !!onLike }}
+  use:reelOverlayTap={{
+    onToggle: () => onToggleOverlay?.(),
+    // A paused reel is restarted by the same tap (`videoTapAction`, `reel`): it does not also hide.
+    tapConsumed: () => !!slideEl?.querySelector('video')?.paused,
+    enabled: active && !!onToggleOverlay,
+  }}
+  bind:this={slideEl}
+  data-reel-overlay={overlayHidden ? 'hidden' : 'shown'}
 >
   <DoubleTapHeart bind:this={hearts} />
   <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed,
@@ -554,7 +588,7 @@
                 preload={role.preload}
                 show={role.show}
                 playerSafeBottom={frameReachesBottom}
-                durationMs={page === 'reel' ? post.durationMs : null}
+                durationMs={declaredLengthMs(post, pane.ref, page)}
                 onReady={() => onPaneReady(i)}
                 {onMediaGone}
               />

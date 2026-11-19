@@ -315,7 +315,7 @@ class MainActivity : TauriActivity() {
 
     // By default on Android >= API 21, third-party cookies are blocked in the WebView.
     // The app makes fetch() requests with credentials:'include' from tauri://localhost
-    // to canari-emse.fr - without this flag the canari_refresh cookie is never stored
+    // to canari.emse.fr - without this flag the canari_refresh cookie is never stored
     // nor sent back, which breaks session persistence after every restart.
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
