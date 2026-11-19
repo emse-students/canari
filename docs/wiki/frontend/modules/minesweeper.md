@@ -338,22 +338,53 @@ regenerated from the challenge's seed, generator and size, as the server's repla
 is best-effort AFTER the score is saved: a failure is logged at `error` (a score with no replay cannot be
 checked) and the player's win stands.
 
-**The viewer.** `GET /minesweeper/scores/:scoreId/replay` (global admins; `RouteParams` declares
-`scoreId` a uuid) returns the player's name, the recipe and the log, and logs who read it. On the Games
-page an admin gets a "Revoir cette partie" button per row; it opens `MinesweeperReplay.svelte`: the
-board (read-only, the last action ringed), play / pause, restart, a scrubber over the game's length, and
-1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up front, the
-board right after the first move is copied, and going backwards restarts from that copy and replays the
-few moves between. A score won before this shipped has no replay: 404, said as "no recording was kept".
+**The viewer.** `GET /minesweeper/scores/:scoreId/replay` returns the player's name, the recipe and the
+log. **OPEN TO EVERY SIGNED-IN MEMBER** (owner, 2026-11-18: *"laisse tous les joueurs rejouer les scores
+des autres"*), on the terms of the ranking it hangs off: a member may watch another player's BEST win (the one score the
+ranking shows - an earlier win is not on offer, so a uuid from a stale client opens nothing) and any of their
+own; a score the ranking hides - a banned player's, the other side of the review cohort's boundary - answers
+404 to a member, as a score that does not exist; and a global admin (`X-Global-Admin`, read inline as every
+controller of this service does) sees every score, because judging a cheat means opening a banned player's
+game or an earlier win. A member's read is logged at `debug` (routine traffic); **an admin's at `log`**, since
+it can reach what the ranking hides and the trace must survive in production. On the Games page every ranking row has a
+"Revoir cette partie" button (admins also keep remove and ban); it opens `MinesweeperReplay.svelte`.
 
-**Charter.** Principle 1 (your messages are yours) is not touched - a game is not a message - and the
-log is read by global admins only, each read logged; the register (C28) names it, and it lives exactly as
-long as its score.
+THE SCREEN IS THE BOARD (owner, 2026-11-18: the first window was too small for the grid on a phone): the
+viewer is a full-screen sheet on a phone (`phoneFullScreen`), a tall dialog on a larger screen. The stage
+takes every pixel the controls leave and **the whole grid is fitted to it** - `fitCellSize` picks the cell
+size from the stage's measured room, re-fitted by a `ResizeObserver` on every resize or rotation, clamped
+to 14-44 px (below 14 the cell's 12 px digit no longer fits) - so the grid is on screen whole. Its
+padding and gap are DRAWN from the numbers the fit uses, and the grid is centred with `m-auto`, so a
+stage too small for 14 px cells scrolls to the right and bottom instead of clipping its top and left. The
+viewer honours the device's animation setting (`--ms-anim` on its root), as the game does. One bar under it: play / pause (the surface's primary action),
+restart, the clock, a full-width scrubber, the move count with the last action (the cell it landed on is
+ringed) and 1x / 2x / 4x / 8x. `replay.ts` rebuilds the board after any move: generation runs ONCE, up
+front, the board right after the first move is copied, and going backwards restarts from that copy and
+replays the few moves between. A 404 - a score removed, hidden from this member, never recorded, or
+won before replays were kept - is said as "this game is not available": the client types the answer, not
+the reason, and a wrong reason would be worse than none.
+
+**The dig no longer fades when animations are off** (owner, 2026-11-18). `app.css` gives every `button`
+a 180 ms colour crossfade in `@layer base`, and a cell is a button, so a dug cell faded from hidden to
+revealed whatever the setting said (the setting scaled Tailwind's `--default-transition-duration`, which
+that rule does not read). `MinesweeperCell` now takes the DURATION of its button from `--ms-anim`:
+`calc(180ms * var(--ms-anim, 1))` - unchanged at normal speed, half at fast, zero at none.
+
+**Charter.** Principle 1 (your messages are yours) is not touched - a game is not a message. The log is
+shown to the members who already see the score on the ranking, and to nobody for a score the ranking hides;
+the register (C28) names it, and it lives exactly as long as its score.
 
 **Verified:** server specs for the timings (start, order, length), the stored log keeping its
 timestamps, a failed store not failing the win, the replay read (and its 404s, and the trace of who
 read it); client specs for the board after n moves forwards and backwards without regenerating, the
 clock to move count, the viewer's states, the modal stamping a won game (moves from 0, non-decreasing,
 claimed = last `t`) and the Games page button. **Read on dev 2026-11-18 (`1.7.0-alpha.12`):** migration 175
-applied (the replay row stored with the score), and the viewer as a real global admin at phone width
+applied (the replay row stored with the score), and the first viewer as a real global admin at phone width
 ([readings](../../device-verification.md#the-phone-and-web-readings-of-2026-11-18-s6-170-alpha12-live-moderations-last-halves-the-reel-card-overlays-the-birthday-morning)).
+
+**Added 2026-11-18, after that reading (owner's three follow-ups):** specs for the button shown to a non-admin
+too, who may read a replay (a member: any visible player's, their own; not a banned player's; an admin: all),
+`fitCellSize`, and the cell's transition declaration. **NOT verified:** the cell's computed transition in a
+real browser (the test runner injects no component CSS, so the test reads the source); and the full-screen
+viewer, the fitted grid and the instant dig on a phone
+([reading owed](../../backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)).

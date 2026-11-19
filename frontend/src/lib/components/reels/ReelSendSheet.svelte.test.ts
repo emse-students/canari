@@ -119,6 +119,7 @@ async function open(
     clip: object;
     cap: number;
     chatCapMs: number;
+    rule: object | null;
     sending: boolean;
     preticked: string | null;
     host: object;
@@ -128,10 +129,11 @@ async function open(
     mount(ReelSendSheet, {
       target: document.body,
       props: {
-        clip: { blob: video(), source: 'camera' },
+        clip: { blob: video(), source: 'camera', width: 1080, height: 1920 },
         host,
         cap: 2,
         chatCapMs: 60_000,
+        rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 180_000 },
         onclose,
         onsend,
         ...props,
@@ -280,6 +282,51 @@ describe('ReelSendSheet', () => {
     await open({ clip: { blob: video(), source: 'camera', durationMs: 75_000 } });
     expect(row('g-old').disabled).toBe(true);
     expect(document.querySelector('[data-reel-send-too-long]')?.textContent).toContain('60');
+  });
+
+  it('a 45 s landscape pick is a feed reel but no chat: the chat rows are disabled, with the reason', async () => {
+    await open({
+      clip: { blob: video(), source: 'gallery', durationMs: 45_000, width: 1920, height: 1080 },
+    });
+    expect(row('g-old').disabled).toBe(true);
+    expect(document.querySelector('[data-reel-send-not-vertical]')?.textContent).toBe(
+      m.reel_sendto_not_vertical_for_chats()
+    );
+    expect(document.querySelector('[data-reel-send-too-long]')).toBeNull();
+    feed().click();
+    await settle();
+    expect(feed().getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('a gallery pick whose frame could not be read is refused for chats, in its own words', async () => {
+    await open({ clip: { blob: video(), source: 'gallery', durationMs: 20_000 } });
+    expect(row('g-old').disabled).toBe(true);
+    expect(document.querySelector('[data-reel-send-not-vertical]')).toBeNull();
+    expect(document.querySelector('[data-reel-send-frame-unread]')?.textContent).toBe(
+      m.reels_capture_frame_unread_for_chats()
+    );
+  });
+
+  it('a PHOTO reaches the chats, with no frame and no length (review of #3528)', async () => {
+    await open({ clip: { blob: new Blob(['x'], { type: 'image/jpeg' }), source: 'camera' } });
+    expect(row('g-old').disabled).toBe(false);
+    expect(document.querySelector('[data-reel-send-frame-unread]')).toBeNull();
+  });
+
+  it('a landscape CAMERA take reaches the chats, as the one-tap send does: the frame is a pick rule', async () => {
+    await open({
+      clip: { blob: video(), source: 'camera', durationMs: 20_000, width: 1920, height: 1080 },
+    });
+    expect(row('g-old').disabled).toBe(false);
+    expect(document.querySelector('[data-reel-send-not-vertical]')).toBeNull();
+  });
+
+  it('a vertical take within the chat cap keeps the chats open', async () => {
+    await open({
+      clip: { blob: video(), source: 'gallery', durationMs: 45_000, width: 1080, height: 1920 },
+    });
+    expect(row('g-old').disabled).toBe(false);
+    expect(document.querySelector('[data-reel-send-not-vertical]')).toBeNull();
   });
 
   it('a take whose length is unknown keeps the chats open: the outbox still refuses a long one', async () => {

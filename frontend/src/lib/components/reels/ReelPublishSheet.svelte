@@ -41,7 +41,12 @@
     type PublishedReelUpload,
     type PublishReelDeps,
   } from '$lib/reels/publishReel';
-  import { reelLifetimeLabel, reelRuleOf } from '$lib/reels/reelRule';
+  import {
+    longestReelMs,
+    reelLifetimeLabel,
+    reelRuleNotice,
+    reelRuleOf,
+  } from '$lib/reels/reelRule';
   import { showToast } from '$lib/stores/toast.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
@@ -92,6 +97,8 @@
   }
 
   let { clip, limits, onclose, deps, composer, chatTake = null, onpublishedHere }: Props = $props();
+  /** The rule the server applies (`reelRuleOf`, the version-skew gate), null from an older estate. */
+  const rule = $derived(reelRuleOf(limits));
 
   // Read once: the step starts from the composer and is the member's to change from there.
   let caption = $state(untrack(() => composer?.start.caption ?? ''));
@@ -240,8 +247,8 @@
             identity,
             studentsOnly: sendStudentsOnly,
             reach: sendReach,
-            maxDurationMs: limits.maxDurationMs,
-            rule: reelRuleOf(limits),
+            maxDurationMs: rule ? longestReelMs(rule) : limits.maxDurationMs,
+            rule,
             video: { onProgress: options.onProgress, signal: options.signal },
             onStage,
             ...(chatTake
@@ -327,10 +334,12 @@
       >
         <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
         <span
-          >{m.reels_publish_from_composer_notice({
-            seconds: Math.round(limits.maxDurationMs / 1000),
-            lifetime: reelLifetimeLabel(limits.retentionDays),
-          })}</span
+          >{rule
+            ? reelRuleNotice(rule, limits.retentionDays)
+            : m.reels_publish_from_composer_notice({
+                seconds: Math.round(limits.maxDurationMs / 1000),
+                lifetime: reelLifetimeLabel(limits.retentionDays),
+              })}</span
         >
       </p>
     {/if}

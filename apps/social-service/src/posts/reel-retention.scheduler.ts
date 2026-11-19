@@ -29,7 +29,8 @@ export interface ReelPurgeReport {
 
 /**
  * Deletes a CanaReel - the post, its comments and reactions, its notifications AND its media
- * blobs - once its `expiresAt` has passed (decision C6, 30 days after publication).
+ * blobs - once its `expiresAt` has passed (stamped at publication from the admin setting
+ * `retention_reel_days`, a year by default - docs/wiki/retention-settings.md).
  *
  * THE STATE IS THE ROW. A reel - or a live replay past its three days (docs/wiki/live-replays.md) - is due when `kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, and a deleted
  * row is a finished one: there is no "last run", no marker and no window that a missed tick could
@@ -155,7 +156,7 @@ export class ReelRetentionScheduler {
       })),
       ...commentMediaOwners(row.comments),
     ];
-    // `retention`: the post's 30 days end ITS hold; a file a conversation still holds is `released`
+    // `retention`: the post's lifetime ends ITS hold; a file a conversation still holds is `released`
     // and stays for the chats (reels-in-chat 15.3) - the row goes either way.
     const results = await this.retention.purgeReelBlobs(items, 'retention');
 

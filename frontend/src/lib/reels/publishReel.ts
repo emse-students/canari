@@ -34,7 +34,7 @@ import {
 import type { ReelClip } from './reelCapture';
 import { firstFramePlaceholder } from './reelFirstFrame';
 import { EncoderLeaseAbortedError, withEncoderLease } from '$lib/video/encoderLease';
-import { isReelFrame, type ReelRule } from './reelRule';
+import { isReelFrame, reelCapForFrame, reelDeclaredDurationMs, type ReelRule } from './reelRule';
 
 /** What the publish step needs from the outside world. */
 export interface PublishReelDeps {
@@ -109,7 +109,7 @@ export interface PublishReelInput {
   studentsOnly?: boolean;
   /** The reach of an institution's post (owner, 2026-11-10): set by the step only where offered. */
   reach?: InstitutionReach;
-  /** The server's cap (`GET /api/posts/reel-limits`). */
+  /** The cap the take is PREPARED under: `longestReelMs` of the rule, or the served cap without one. */
   maxDurationMs: number;
   /**
    * The served vertical rule (`reelRuleOf`), or `null` from an estate older than it - whose door
@@ -159,22 +159,6 @@ export class ReelPublishError extends Error {
   }
 }
 
-/**
- * The duration the reel DECLARES, in whole milliseconds and within `[1, maxDurationMs]`.
- *
- * The upper clamp is not a correction of a long video: `prepareVideoForUpload` already refused
- * anything past the cap's half-second grace (`VIDEO_DURATION_GRACE_SECONDS`), which exists because a
- * recorder told to stop at 90 s writes a container ending a few hundredths later. That clip IS a
- * 90-second reel, and the server refuses a declaration over the cap, so it declares the cap.
- */
-export function declaredReelDurationMs(durationSeconds: number, maxDurationMs: number): number {
-  const ms = Math.round(durationSeconds * 1000);
-  if (ms > maxDurationMs) {
-    console.debug(`[reel-publish] ${ms} ms is within the grace; declared as ${maxDurationMs}`);
-  }
-  return Math.min(maxDurationMs, Math.max(1, ms));
-}
-
 /** Publishes one reel; resolves with the created post. @throws {ReelPublishError} */
 export async function publishReel(
   input: PublishReelInput,
@@ -220,14 +204,19 @@ export async function publishReel(
       throw e;
     });
 
-    // THE RULE ON THE PREPARED FRAME (owner, 2026-11-09): a CanaReel is vertical, and this frame -
-    // rotation baked in - is the one the server is told. The pick was checked on what the engine
-    // DISPLAYED; reaching here with a wide frame means that check could not read it, or read it
-    // otherwise, so the take becomes what the rule says it is - an ordinary post video - and the
-    // line accuses the miss.
-    if (input.rule && !isReelFrame(prepared.width, prepared.height, input.rule)) {
+    // THE RULE ON THE PREPARED FILE (owner, 2026-11-14: vertical OR short): this frame - rotation
+    // baked in - and this length are the ones the server is told. The pick was checked on what the
+    // engine DISPLAYED; reaching here outside the rule means that check could not read it, or read
+    // it otherwise, so the take becomes what the rule says it is - an ordinary post video - and the
+    // line accuses the miss. The length is decided, grace included, by the one function the
+    // composer's queue uses too (`reelDeclaredDurationMs`).
+    const frameCapMs = input.rule
+      ? reelCapForFrame(input.rule, isReelFrame(prepared.width, prepared.height, input.rule))
+      : maxDurationMs;
+    const durationMs = reelDeclaredDurationMs(prepared.durationSeconds * 1000, frameCapMs);
+    if (durationMs === null) {
       console.warn(
-        `[reel-publish] the prepared take is ${prepared.width}x${prepared.height}, not vertical: published as a post, not a reel` +
+        `[reel-publish] the prepared take is ${prepared.width}x${prepared.height}, ${prepared.durationSeconds} s: outside the rule (cap ${String(frameCapMs)} ms), published as a post, not a reel` +
           (input.onUploaded ? ' (its chat sends upload their own file)' : '')
       );
       enter('mediaUpload');
@@ -266,7 +255,6 @@ export async function publishReel(
       ...(placeholder ? { placeholder } : {}),
       ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
-    const durationMs = declaredReelDurationMs(prepared.durationSeconds, maxDurationMs);
     // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the
     // post's fate, the conversations of the same take have their file.
     if (input.onUploaded) {

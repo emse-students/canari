@@ -6,8 +6,27 @@
  * argument as `GET /api/media/limits`). See docs/wiki/services/reels.md.
  */
 
-/** The longest reel, in milliseconds - decision C4. Declared by the client, refused above this. */
+/**
+ * A SHORT video, in milliseconds - decision C4's 90 s. Since the owner's rule of 2026-11-14 ("toute
+ * vidéo verticale et/ou inférieure à 90 s est un CanaReel") a video of this length or less is a reel
+ * whatever its frame, and a VERTICAL one is a reel up to {@link REEL_VERTICAL_MAX_DURATION_MS}. Still
+ * the cap of a take filmed in the CanaReels camera, and the whole rule a client older than the change
+ * reads (`maxDurationMs`, with `maxAspectRatio`: vertical AND short, which the door still accepts).
+ */
 export const REEL_MAX_DURATION_MS = 90_000;
+
+/**
+ * The longest VERTICAL reel, in milliseconds: 3 minutes (owner, 2026-11-14: "3 minutes"). Served as
+ * `maxVerticalDurationMs`; a vertical video longer than this stays an ordinary post video.
+ */
+export const REEL_VERTICAL_MAX_DURATION_MS = 180_000;
+
+/**
+ * The rule a server applies, served as `rule` so a client knows which one the door enforces (the
+ * version-skew gate): `'vertical-or-short'` since 2026-11-14. A server older than that serves no
+ * `rule` and refuses a landscape reel, so a client applies the OR only when it reads this value.
+ */
+export const REEL_RULE = 'vertical-or-short' as const;
 
 /**
  * The longest reel SENT IN A CONVERSATION, in milliseconds - the user's D-size decision of
@@ -34,12 +53,12 @@ export const CHAT_REEL_MAX_TARGETS = 15;
 export const REEL_RETENTION_DAYS = 365;
 
 /**
- * The widest frame a reel may have, as `width / height` after rotation: 4:5 (owner, 2026-11-09,
- * "every VERTICAL video of 90 s or less is a CanaReel"). Vertical means taller than wide by at least
- * Instagram's tallest feed format: 9:16 (0.5625, a phone held upright), 3:4 (0.75, the iOS system
- * camera's medium quality) and 4:5 (0.8) are reels; a square, a near-square crop and anything
- * landscape stay ordinary post videos. Served as `maxAspectRatio`, so no client carries it
- * (docs/wiki/services/reels.md#the-rule-what-is-a-canareel-owner-2026-11-09).
+ * The widest frame that counts as VERTICAL, as `width / height` after rotation: 4:5 (owner,
+ * 2026-11-09). Vertical means taller than wide by at least Instagram's tallest feed format: 9:16
+ * (0.5625, a phone held upright), 3:4 (0.75, the iOS system camera's medium quality) and 4:5 (0.8).
+ * Since 2026-11-14 a vertical video is a reel up to {@link REEL_VERTICAL_MAX_DURATION_MS}, and a
+ * square or landscape one only when SHORT ({@link REEL_MAX_DURATION_MS}), drawn with bars. Served as
+ * `maxAspectRatio`, so no client carries it (docs/wiki/services/reels.md#the-rule-what-is-a-canareel).
  */
 export const REEL_MAX_ASPECT_RATIO = 4 / 5;
 
@@ -72,6 +91,21 @@ export function isReelFrame(width: unknown, height: unknown): boolean {
 }
 
 /**
+ * Whether ONE video is a CanaReel under the rule of 2026-11-14 - VERTICAL (up to
+ * {@link REEL_VERTICAL_MAX_DURATION_MS}) OR SHORT (up to {@link REEL_MAX_DURATION_MS}, any frame) -
+ * read on what the request DECLARES: the whole-ms `durationMs` and the prepared frame. A length that
+ * is not a positive integer is never one: the rule cannot be read on it.
+ */
+export function isReelVideo(durationMs: unknown, width: unknown, height: unknown): boolean {
+  if (typeof durationMs !== 'number' || !Number.isInteger(durationMs) || durationMs < 1) {
+    return false;
+  }
+  return isReelFrame(width, height)
+    ? durationMs <= REEL_VERTICAL_MAX_DURATION_MS
+    : durationMs <= REEL_MAX_DURATION_MS;
+}
+
+/**
  * Whether a loaded post is past its expiry - a reel past its lifetime or a replay past its three days
  * (`posts."expiresAt"`, NULL on a post that never expires) - one the worker has not reached yet.
  *
@@ -93,7 +127,9 @@ export function isExpiredPost(
  * which the caller reads from `platform_config` - never a constant a later setting would contradict.
  */
 export function reelLimits(retentionDays: number): {
+  rule: typeof REEL_RULE;
   maxDurationMs: number;
+  maxVerticalDurationMs: number;
   chatMaxDurationMs: number;
   chatReelMaxTargets: number;
   maxAspectRatio: number;
@@ -101,7 +137,9 @@ export function reelLimits(retentionDays: number): {
   warningWindowDays: number;
 } {
   return {
+    rule: REEL_RULE,
     maxDurationMs: REEL_MAX_DURATION_MS,
+    maxVerticalDurationMs: REEL_VERTICAL_MAX_DURATION_MS,
     maxAspectRatio: REEL_MAX_ASPECT_RATIO,
     chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
     chatReelMaxTargets: CHAT_REEL_MAX_TARGETS,
