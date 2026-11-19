@@ -144,6 +144,8 @@ beforeEach(() => {
       const segment = new Uint8Array(56);
       segment.set(box('ftyp', 4));
       segment.set(box('moov', 12), 12);
+      // The moov's content is one framable box: the player reads its tracks (none here).
+      segment.set(box('free', 4), 20);
       segment.set(box('moof', 0), 32);
       segment.set(box('mdat', 8), 40);
       return segment;
