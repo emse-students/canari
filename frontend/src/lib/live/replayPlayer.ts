@@ -959,7 +959,7 @@ export class ReplayPlayer {
   /** After a seek moved the cursor: bytes kept for segments at or behind it will not be asked for again. */
   private dropProbedBehind(): void {
     const ahead = this.segments[this.cursor]?.index;
-    for (const index of [...this.probed.keys()]) {
+    for (const index of this.probed.keys()) {
       if (ahead === undefined || index < ahead) this.probed.delete(index);
     }
   }
