@@ -68,6 +68,8 @@ export interface FragmentSpec {
    * as Chromium's recorder writes them; overrides `flagsIn`.
    */
   videoDurations?: number[];
+  /** Per-sample audio durations (48 kHz ticks), written in the audio `trun`. */
+  audioDurations?: number[];
   /** Which tracks the fragment carries (both by default). */
   tracks?: 'both' | 'video' | 'audio';
 }
@@ -81,6 +83,7 @@ export function fragment(spec: FragmentSpec = {}): Uint8Array<ArrayBuffer> {
     keyframe = true,
     mediaBytes = 32,
     videoDurations,
+    audioDurations,
     tracks = 'both',
   } = spec;
   const flags = keyframe ? SYNC : NON_SYNC;
@@ -118,7 +121,16 @@ export function fragment(spec: FragmentSpec = {}): Uint8Array<ArrayBuffer> {
     'traf',
     fullBox('tfhd', 0, 0x20000, u32(2)),
     fullBox('tfdt', 0, 0, u32(audioTime)),
-    fullBox('trun', 0, 0x1, u32(1), u32(0))
+    audioDurations
+      ? fullBox(
+          'trun',
+          0,
+          0x1 | 0x100,
+          u32(audioDurations.length),
+          u32(0),
+          ...audioDurations.map(u32)
+        )
+      : fullBox('trun', 0, 0x1, u32(1), u32(0))
   );
   const trafs =
     tracks === 'video' ? [videoTraf] : tracks === 'audio' ? [audioTraf] : [videoTraf, audioTraf];

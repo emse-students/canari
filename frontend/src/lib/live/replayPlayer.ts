@@ -716,6 +716,8 @@ export class ReplayPlayer {
     buffer.timestampOffset = -placedAt;
     // The init is appended again with it: the engine's last init is the one under the new offset.
     this.lastInit = null;
+    // The first append is undone, and its count with it: the segment is held and counted again.
+    this.holds.reset();
     const before = spansOf(buffer);
     await this.appendMedia(gen, media, end);
     return newMediaStart(before, spansOf(buffer));

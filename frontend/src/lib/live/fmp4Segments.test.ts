@@ -5,10 +5,11 @@
  * paths, the time shift a re-acquired camera's fragments get, and the viewer's read of where a
  * segment's init ends.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   Fmp4ParseError,
   Fmp4Splitter,
+  LastFrameHolds,
   composeSegment,
   holdLastFrameInterval,
   initSegmentEnd,
@@ -263,6 +264,52 @@ describe('holdLastFrameInterval', () => {
       fragment({ tracks: 'video', videoDurations: run(10, GUESS) })
     );
     expect(readVideoDurations(out.bytes)).toEqual(run(10, FRAME));
+  });
+
+  it('the interval borrowed is capped at the end of the fragment, where its audio ends', () => {
+    // A stall before the last frame (a 30000-tick interval): the audio ends 2.0 s in (180_000
+    // ticks at 90 kHz), 6000 ticks after the last frame starts - not 30000.
+    const f = fragment({
+      videoDurations: [...Array<number>(20).fill(FRAME), 30_000, GUESS],
+      audioDurations: [48_000, 48_000],
+    });
+    expect(holdLastFrameInterval(initSegment(), f).held).toEqual({
+      from: GUESS,
+      to: 6000,
+      timescale: 90_000,
+    });
+    // Audio ending before the frame as written leaves it alone: nothing is ever shortened.
+    const early = fragment({
+      videoDurations: [...Array<number>(20).fill(FRAME), 30_000, GUESS],
+      audioDurations: [48_000, 40_000],
+    });
+    expect(holdLastFrameInterval(initSegment(), early).held).toBeNull();
+  });
+
+  it('a trun claiming more samples than its box holds cannot be framed', () => {
+    const f = fragment({ videoDurations: run(5, GUESS) });
+    const trun = f.findIndex(
+      (_, i) => f[i] === 0x74 && f[i + 1] === 0x72 && f[i + 2] === 0x75 && f[i + 3] === 0x6e
+    );
+    new DataView(f.buffer).setUint32(trun + 8, 500);
+    expect(() => holdLastFrameInterval(initSegment(), f)).toThrow(Fmp4ParseError);
+  });
+
+  it('counts only the holds that remove a discontinuity, not the nudges at 30 fps', () => {
+    const holds = new LastFrameHolds();
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    // 30 fps: 3300 then 3000 is lengthened (applied) but not counted.
+    holds.apply('[T]', initSegment(), fragment({ videoDurations: [3000, 3300, 3000] }));
+    expect(holds.count).toBe(0);
+    holds.apply('[T]', initSegment(), fragment({ videoDurations: run(25, GUESS) }));
+    holds.apply('[T]', initSegment(), fragment({ videoDurations: run(25, GUESS) }));
+    expect(holds.count).toBe(2);
+    // The first counted hold of a run is logged with its values, once.
+    expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('3000/90000'));
+    debug.mockRestore();
+    holds.reset();
+    expect(holds.count).toBe(0);
   });
 
   it('an init with no moov cannot be read against', () => {

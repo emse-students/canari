@@ -22,6 +22,7 @@ import {
   type ReplayState,
 } from './replayPlayer';
 import { LiveRefusalError } from './api';
+import { fragment, initSegment, join, readVideoDurations } from './fmp4.test-helper';
 import { LiveSegmentOpenError } from './liveCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { LiveReplayPage, LiveReplaySegment } from './types';
@@ -64,6 +65,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   timestampOffset = 0;
   base = 0;
   appends: string[] = [];
+  /** Every append's bytes, as given. */
+  data: Uint8Array[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
   get buffered() {
@@ -72,6 +75,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   }
   appendBuffer(data: Uint8Array<ArrayBuffer>): void {
     const type = String.fromCharCode(...data.subarray(4, 8));
+    this.data.push(data.slice());
     if (type === 'ftyp') this.appends.push(`init${generationOfInit(data)}`);
     else {
       const i = indexOfMedia(data);
@@ -419,6 +423,43 @@ describe('ReplayPlayer', () => {
     await flush();
     expect(buffer().appends).not.toContain('m1');
     expect(states.at(-1)).toEqual({ kind: 'playing' });
+  });
+
+  it('appends a fragment with its last video frame given the interval the camera ran at, counted once', async () => {
+    // Chromium's recorder at 12.5 fps (7200 ticks at 90 kHz) writes the last frame as 1/30 s.
+    const written = [...Array<number>(24).fill(7200), 3000];
+    deps.openSegment = vi.fn(async (_k: string, _id: string, index: number) =>
+      index === 0
+        ? join(initSegment(), fragment({ videoDurations: written }))
+        : concat(init(0), media(index))
+    ) as never;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const p = makePlayer();
+    p.start();
+    await flush();
+    const held = buffer().data.filter((d) => readVideoDurations(d).length === written.length);
+    // Placed far past zero (its moof's size is its index here), it is appended twice: once, then
+    // again after the rebase to zero - corrected both times, counted ONCE.
+    expect(held.length).toBe(2);
+    for (const f of held) expect(readVideoDurations(f).at(-1)).toBe(7200);
+    p.stop();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(', 1 last frames held'));
+    log.mockRestore();
+  });
+
+  it('a fragment whose trun overruns its box stops the replay on playback', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = fragment({ videoDurations: [7200, 7200, 3000] });
+    const trun = f.findIndex(
+      (_, i) => f[i] === 0x74 && f[i + 1] === 0x72 && f[i + 2] === 0x75 && f[i + 3] === 0x6e
+    );
+    new DataView(f.buffer).setUint32(trun + 8, 500);
+    deps.openSegment = vi.fn(async () => join(initSegment(), f)) as never;
+    makePlayer().start();
+    await flush();
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('not framable'));
+    errors.mockRestore();
   });
 
   it('a video error stops the player on playback', async () => {
