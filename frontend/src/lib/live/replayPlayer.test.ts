@@ -368,7 +368,7 @@ describe('ReplayPlayer', () => {
       const p = makePlayer();
       p.start();
       await flush();
-      video.currentTime = 10; // brings m6..m9 in: both sides of the hole are placed
+      video.currentTime = 10; // the lead (12 s across the hole) brings the media on both sides in
       p.noteTime();
       await flush();
       return p;
@@ -382,8 +382,9 @@ describe('ReplayPlayer', () => {
           const inner = p as unknown as {
             segments: LiveReplaySegment[];
             placed: Map<number, number>;
+            placedEnd: Map<number, number>;
           };
-          expect(knownHoles(inner.segments, inner.placed, buffer().ranges)).toEqual([
+          expect(knownHoles(inner.segments, inner.placed, inner.placedEnd)).toEqual([
             [16, 16 + gap],
           ]);
         });
@@ -451,40 +452,130 @@ describe('ReplayPlayer', () => {
       bytes: 1,
       atMs: i * 2000,
     }));
-    it('a region not loaded yet (neighbour not placed) is no hole', () => {
+    it('a region not loaded yet (neighbour not measured) is no hole', () => {
       const placed = new Map([
         [0, 0],
         [4, 8],
       ]);
-      expect(
-        knownHoles(segs, placed, [
-          [0, 2],
-          [8, 10],
-        ])
-      ).toEqual([]);
+      expect(knownHoles(segs, placed, new Map([[0, 2]]))).toEqual([]);
     });
-    it('a skipped neighbour (no placement) is no hole', () => {
+    it('a skipped neighbour (no measure) is no hole', () => {
       const placed = new Map([
         [0, 0],
         [2, 6],
       ]);
-      expect(
-        knownHoles(segs, placed, [
-          [0, 2],
-          [6, 8],
-        ])
-      ).toEqual([]);
+      expect(knownHoles(segs, placed, new Map([[0, 2]]))).toEqual([]);
     });
-    it('a neighbour whose range the engine evicted is no hole to jump to', () => {
+    it('a gap is a hole from the measures alone, whatever the buffer holds now', () => {
       const placed = new Map([
         [0, 0],
         [1, 5],
       ]);
-      expect(knownHoles(segs, placed, [[0, 2]])).toEqual([]);
+      const ends = new Map([
+        [0, 2],
+        [1, 7],
+      ]);
+      expect(knownHoles(segs, placed, ends)).toEqual([[2, 5]]);
     });
     it('the leading gap before the first segment is a hole', () => {
-      expect(knownHoles(segs, new Map([[0, 0.4]]), [[0.4, 2.4]])).toEqual([[0, 0.4]]);
-      expect(knownHoles(segs, new Map([[0, 0.02]]), [[0.02, 2]])).toEqual([]);
+      expect(knownHoles(segs, new Map([[0, 0.4]]), new Map([[0, 2.4]]))).toEqual([[0, 0.4]]);
+      expect(knownHoles(segs, new Map([[0, 0.02]]), new Map([[0, 2]]))).toEqual([]);
+    });
+    it('a single-segment range between two holes is crossed on both sides', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 0.8; // hole 1 after m7 (ends at 16)
+        if (index === 9) buffer().base = 1.6; // hole 2 after m8 alone ([16.8, 18.8])
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10;
+      p.noteTime();
+      await flush();
+      video.currentTime = 18.3;
+      p.noteStall();
+      expect(video.currentTime).toBeCloseTo(19.6, 5);
+    });
+  });
+
+  describe('the lead is counted across holes, and where a segment sits is never forgotten', () => {
+    const mediaCount = () => buffer().appends.filter((a) => a.startsWith('m')).length;
+
+    it('P1: a hole in the middle of the lead does not make the fill download the whole replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 0.8;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 10;
+      p.noteTime();
+      for (let i = 0; i < 5; i++) await flush();
+      // 12 s of media ahead of 10 s across the hole: a handful of segments, never the 200.
+      expect(mediaCount()).toBeLessThanOrEqual(14);
+    });
+
+    it('P2: a first segment at 0.4 s does not make the start download the whole replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      const base = deps.openSegment;
+      let first = true;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (first) {
+          buffer().base = 0.4;
+          first = false;
+        }
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      makePlayer().start();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(mediaCount()).toBeLessThanOrEqual(8);
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('P3: an 80 s pause is still crossed after the media beyond it was trimmed', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 80;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (const t of [4, 8, 12, 15.5]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 5; i++) await flush();
+      }
+      // Whatever the buffer dropped, the hole is known from the measures: 16 -> 96.
+      video.currentTime = 15.5;
+      p.noteStall();
+      expect(video.currentTime).toBeCloseTo(96, 5);
+      // And the media there is fetched again when the engine's seek reports it.
+      p.noteSeeking();
+      await flush();
+      expect(buffer().ranges.some(([s, e]) => 96 >= s - 0.01 && 96 < e)).toBe(true);
+    });
+
+    it('the fill re-fetches media the buffer dropped ahead of the playhead', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const before = mediaCount();
+      buffer().remove(4, 100); // the engine evicted everything past 4 s, the cursor is at 6
+      await flush();
+      video.currentTime = 2;
+      p.noteTime();
+      await flush();
+      expect(mediaCount()).toBeGreaterThan(before);
+      expect(buffer().ranges[0][1]).toBeGreaterThan(8);
     });
   });
 
@@ -539,6 +630,22 @@ describe('ReplayPlayer', () => {
       await flush();
       expect(inRange(video.currentTime)).toBe(true);
       expect(video.currentTime).toBeCloseTo(100, 1);
+    });
+
+    it('P4: a target segment already buffered is landed on from its measured place', async () => {
+      const p = await started();
+      video.currentTime = 101.2; // segment 50 is [100, 101]: past its end, 51 is taken and landed on
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
+      // The engine's start tolerance puts the position outside every range, with 50 buffered and no
+      // known hole after it (its end is forgotten here): take(50) reports null.
+      const inner = p as unknown as { placedEnd: Map<number, number> };
+      inner.placedEnd.delete(50);
+      video.currentTime = 101.4;
+      p.noteSeeking();
+      await flush();
+      expect(inRange(video.currentTime)).toBe(true);
     });
 
     it('lands on the next segment when it is already buffered (take reports null)', async () => {

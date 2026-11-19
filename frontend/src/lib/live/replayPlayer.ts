@@ -110,6 +110,18 @@ export function newMediaStart(
   before: readonly MediaSpan[],
   after: readonly MediaSpan[]
 ): number | null {
+  return newMediaExtent(before, after)?.[0] ?? null;
+}
+
+/**
+ * The span the buffer just took: where it begins ({@link newMediaStart}) and where that new stretch
+ * ends - at the next range the buffer already held, or at the end of the range it grew. Measured, so
+ * the hole after a segment is known from the list whatever the buffer later forgets.
+ */
+export function newMediaExtent(
+  before: readonly MediaSpan[],
+  after: readonly MediaSpan[]
+): MediaSpan | null {
   const held = [...before].sort((a, b) => a[0] - b[0]);
   for (const [start, end] of after) {
     // Sweep the old ranges across this one: `from` is the first instant none of them holds.
@@ -119,7 +131,10 @@ export function newMediaStart(
       if (b0 > from + 0.05) break;
       from = Math.max(from, b1);
     }
-    if (end - from > 0.05) return from;
+    if (end - from > 0.05) {
+      const bridged = held.find(([b0]) => b0 > from + 0.05 && b0 < end);
+      return [from, bridged ? bridged[0] : end];
+    }
   }
   return null;
 }
@@ -143,32 +158,27 @@ function onRange(at: number, range: MediaSpan): boolean {
 }
 
 /**
- * THE HOLES OF THE REPLAY TIMELINE, known from the segment list rather than detected by a stall: for
- * two neighbours of the list that are both placed, the range holding the first one ends where the
- * first one ends, and the second begins later - the gap between them is a hole the live itself had (a
- * camera flip, a background pause). Returned as `[from, to]` in media seconds. A region merely not
- * loaded yet is NOT a hole: its neighbours are not both placed.
+ * THE HOLES OF THE REPLAY TIMELINE, known from the segment list rather than detected by a stall: where
+ * a segment was MEASURED to end and its list neighbour to begin later, the gap is a hole the live itself
+ * had (a camera flip, a background pause). Returned as `[from, to]` in media seconds. These are
+ * "where a segment sits in media time" facts; what the SourceBuffer holds now is a separate matter.
  */
 export function knownHoles(
   segments: readonly LiveReplaySegment[],
   placed: ReadonlyMap<number, number>,
-  spans: readonly MediaSpan[]
+  ends: ReadonlyMap<number, number>
 ): MediaSpan[] {
   const holes: MediaSpan[] = [];
   // The leading gap: the first segment of the list begins after zero (the playhead starts at 0).
   const first = segments.length > 0 ? placed.get(segments[0].index) : undefined;
-  if (first !== undefined && first > HOLE_MIN_S && spans.some((r) => onRange(first, r))) {
-    holes.push([0, first]);
-  }
+  if (first !== undefined && first > HOLE_MIN_S) holes.push([0, first]);
   for (let k = 0; k + 1 < segments.length; k++) {
-    const a = placed.get(segments[k].index);
-    const b = placed.get(segments[k + 1].index);
-    if (a === undefined || b === undefined) continue;
-    const range = spans.find((r) => onRange(a, r));
-    // `b` must still be buffered: a range the engine evicted under its quota (which `placed` does not
-    // hear of) is no hole to jump to, and a skipped neighbour (no placement) is no hole at all.
-    if (range && b >= range[1] + HOLE_MIN_S && spans.some((r) => onRange(b, r))) {
-      holes.push([range[1], b]);
+    const end = ends.get(segments[k].index);
+    const next = placed.get(segments[k + 1].index);
+    // Both MEASURED (kept for the session, never forgotten by a trim or an eviction); a region not
+    // loaded yet or a skipped neighbour has no measure and is no hole.
+    if (end !== undefined && next !== undefined && next >= end + HOLE_MIN_S) {
+      holes.push([end, next]);
     }
   }
   return holes;
@@ -266,6 +276,10 @@ export class ReplayPlayer {
   private cursor = 0;
   /** The media time each appended segment was MEASURED to begin at, by segment index. */
   private placed = new Map<number, number>();
+  /** The media time each appended segment was MEASURED to end at: kept with {@link placed} for the session. */
+  private placedEnd = new Map<number, number>();
+  /** Segments skipped for good (404, did not open): never a gap of the buffer to refill. */
+  private skippedIdx = new Set<number>();
   private lastInit: Uint8Array | null = null;
   private retryAttempt = 0;
   private openFailures = 0;
@@ -435,12 +449,12 @@ export class ReplayPlayer {
   private holeAt(at: number, stalled: boolean): MediaSpan | null {
     if (!this.buffer) return null;
     const spans = spansOf(this.buffer);
-    const holes = knownHoles(this.segments, this.placed, spans);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd);
     const inside = holes.find(([from, to]) => at >= from && at < to - EDGE_TOL_S);
     if (inside || !stalled) return inside ?? null;
     const range = spans.find((r) => onRange(at, r));
     if (!range || range[1] - at > REPLAY_SEGMENT_LENGTH_S) return null;
-    return holes.find(([from]) => from === range[1]) ?? null;
+    return holes.find(([from]) => Math.abs(from - range[1]) < HOLE_MIN_S) ?? null;
   }
 
   /** The `<video>` reported an `error`: nothing more will play from this source. */
@@ -462,6 +476,8 @@ export class ReplayPlayer {
     this.nextFrom = 0;
     this.cursor = 0;
     this.placed = new Map();
+    this.placedEnd = new Map();
+    this.skippedIdx = new Set();
     this.lastInit = null;
     this.retryAttempt = 0;
     this.openFailures = 0;
@@ -643,6 +659,7 @@ export class ReplayPlayer {
    * the end of the list it declares the end of the stream. Yields to a waiting seek.
    */
   private async fill(gen: number): Promise<void> {
+    this.cursor = Math.min(this.cursor, this.firstGapAhead());
     while (this.alive(gen) && !this.seekPending) {
       if (this.cursor >= this.segments.length) {
         if (this.nextFrom !== null) {
@@ -658,6 +675,36 @@ export class ReplayPlayer {
       if (this.isBuffered(s.index)) continue;
       await this.take(gen, s);
     }
+  }
+
+  /**
+   * The position in the list of the first segment at or after the playhead's own that the buffer does
+   * not hold (and that was not skipped for good): the fill's cursor never stays past it, so media the
+   * buffer dropped ahead of the playhead is fetched again, keyed on the MEASURED places. The list's
+   * length when everything from the playhead on is held; the cursor's own value when nothing is
+   * measured yet.
+   */
+  private firstGapAhead(): number {
+    if (!this.buffer) return this.cursor;
+    const at = this.video.currentTime;
+    const hole = this.holeAt(at, false);
+    const from = hole ? hole[1] : at;
+    let k0 = -1;
+    for (let k = 0; k < this.segments.length; k++) {
+      const p = this.placed.get(this.segments[k].index);
+      if (p !== undefined && p <= from + EDGE_TOL_S) k0 = k;
+    }
+    if (k0 < 0) return this.cursor;
+    const spans = spansOf(this.buffer);
+    for (let k = k0; k < this.segments.length; k++) {
+      const { index } = this.segments[k];
+      if (this.skippedIdx.has(index)) continue;
+      const start = this.placed.get(index);
+      const held =
+        start !== undefined && spans.some(([a, b]) => start >= a - EDGE_TOL_S && start + 0.5 < b);
+      if (!held) return k;
+    }
+    return this.segments.length;
   }
 
   /** The last segment is in: the stream ends, and the engine's `ended` closes the picture. Once. */
@@ -676,13 +723,43 @@ export class ReplayPlayer {
     }
   }
 
-  /** Media buffered ahead of the playhead, in seconds; 0 when the playhead is not on a range. */
+  /**
+   * Media buffered ahead of the playhead, in seconds, counted ACROSS the known holes (the leading gap
+   * included): a hole opens a new range, and a lead that stopped at it would never be met, so the fill
+   * would download the whole replay. 0 when nothing is buffered where the playhead stands.
+   */
   private mediaAhead(): number {
-    const at = this.video.currentTime;
-    const span = this.buffer
-      ? spansOf(this.buffer).find(([s, e]) => at >= s - 0.01 && at < e)
-      : undefined;
-    return span ? span[1] - at : 0;
+    if (!this.buffer) return 0;
+    return this.walkAhead(this.video.currentTime, Number.POSITIVE_INFINITY).media;
+  }
+
+  /** The media time reached after `media` buffered seconds ahead of `at`, crossing known holes. */
+  private positionAhead(at: number, media: number): number {
+    const walk = this.walkAhead(at, media);
+    return walk.media >= media ? walk.position : at;
+  }
+
+  /**
+   * Walks the buffer from `at`: through a range to its end, over a known hole to the media after it,
+   * until `limit` seconds of media are counted or nothing is buffered. Returns the media counted and
+   * where the walk stopped.
+   */
+  private walkAhead(at: number, limit: number): { media: number; position: number } {
+    if (!this.buffer) return { media: 0, position: at };
+    const spans = spansOf(this.buffer);
+    const holes = knownHoles(this.segments, this.placed, this.placedEnd);
+    let pos = at;
+    let media = 0;
+    for (let guard = 0; guard <= holes.length + 1 && media < limit; guard++) {
+      const hole = holes.find(([from, to]) => pos >= from - HOLE_MIN_S && pos < to - EDGE_TOL_S);
+      if (hole) pos = hole[1];
+      const range = spans.find((r) => onRange(pos, r));
+      if (!range) break;
+      const take = Math.min(range[1] - pos, limit - media);
+      media += take;
+      pos += take;
+    }
+    return { media, position: pos };
   }
 
   /** Whether segment `index` is already buffered where it was placed. */
@@ -716,7 +793,7 @@ export class ReplayPlayer {
     if (pos < 0) return;
     const s = this.segments[pos];
     this.seeks++;
-    const start = await this.take(gen, s, ticket);
+    const taken = await this.take(gen, s, ticket);
     if (!this.alive(gen)) return;
     if (this.isStale(ticket)) {
       console.debug(
@@ -725,36 +802,68 @@ export class ReplayPlayer {
       return;
     }
     this.cursor = pos + 1;
-    if (start !== null) {
+    // `take` says null for a segment skipped (404, open failure) AND for one already buffered: the
+    // measured place of a buffered one is as good as a fresh one.
+    let start = taken ?? this.bufferedStart(s.index);
+    let landing: number | undefined;
+    const next = this.segments[pos + 1];
+    if (start !== undefined) {
       // Inside the segment by the share of it the target is past, never beyond its own length.
-      let landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
-      const range = spansOf(this.buffer as ReplaySourceBufferLike).find((r) => onRange(start, r));
-      const next = this.segments[pos + 1];
+      landing = start + Math.min(Math.max(0, (ms - s.atMs) / 1000), REPLAY_SEGMENT_LENGTH_S);
+      const range = this.rangeOf(start);
       if (range && landing >= range[1] - HOLE_MIN_S && next) {
         // The target is past the segment's own end - in a hole of the live: land on the media after it.
-        const taken = await this.take(gen, next, ticket);
-        if (!this.alive(gen) || this.isStale(ticket)) return;
-        // `take` says null for a segment skipped (404, open failure) AND for one already buffered.
-        const nextStart =
-          taken ?? (this.isBuffered(next.index) ? this.placed.get(next.index) : undefined);
-        if (nextStart !== undefined && nextStart !== null) {
-          landing = nextStart;
+        const after = await this.landOn(gen, next, ticket);
+        if (after === 'stale') return;
+        if (after !== undefined) {
+          landing = after;
           this.cursor = pos + 2;
         } else {
-          landing = start; // no media after the hole to land on: the target's own start is on a range
+          landing = start; // no media after the hole to land on
         }
       }
-      // A playhead position that lies in no range would hang the engine's seek: never write one.
-      if (!spansOf(this.buffer as ReplaySourceBufferLike).some((r) => onRange(landing, r))) {
-        landing = start;
-      }
-      this.video.currentTime = landing;
+    } else if (next) {
+      // The target's own segment is skipped for good: the media after it is the nearest to land on.
+      const after = await this.landOn(gen, next, ticket);
+      if (after === 'stale') return;
+      start = after;
+      landing = after;
+      if (after !== undefined) this.cursor = pos + 2;
     }
+    // THE RULE: only a position INSIDE a range is ever written (anything else hangs the engine's seek
+    // and blocks the hole crossing, which waits on `video.seeking`).
+    if (landing !== undefined && !this.rangeOf(landing)) {
+      landing = start !== undefined && this.rangeOf(start) ? start : undefined;
+    }
+    if (landing !== undefined) this.video.currentTime = landing;
+    else
+      console.warn(`[LIVE_REPLAY] ${this.liveId}: seek ${Math.round(ms)} ms - no media to land on`);
     this.ended = false;
     console.debug(
       `[LIVE_REPLAY] ${this.liveId}: seek to ${Math.round(ms)} ms -> segment ${s.index}`
     );
     this.resume();
+  }
+
+  /** The measured start of segment `index` when the buffer still holds it, else undefined. */
+  private bufferedStart(index: number): number | undefined {
+    return this.isBuffered(index) ? this.placed.get(index) : undefined;
+  }
+
+  /** The buffered range holding `at`, if any. */
+  private rangeOf(at: number): MediaSpan | undefined {
+    return this.buffer ? spansOf(this.buffer).find((r) => onRange(at, r)) : undefined;
+  }
+
+  /** Takes `segment` and answers where it begins (fresh or already held), undefined when it gave none. */
+  private async landOn(
+    gen: number,
+    segment: LiveReplaySegment,
+    ticket: SeekTicket
+  ): Promise<number | undefined | 'stale'> {
+    const taken = await this.take(gen, segment, ticket);
+    if (!this.alive(gen) || this.isStale(ticket)) return 'stale';
+    return taken ?? this.bufferedStart(segment.index);
   }
 
   /**
@@ -778,6 +887,7 @@ export class ReplayPlayer {
       if (!isLiveRefusal(e, 'not-found')) throw e;
       console.warn(`[LIVE_REPLAY] ${this.liveId}: segment ${s.index} is gone - skipped`);
       this.skipped++;
+      this.skippedIdx.add(s.index);
       return null;
     }
     if (!this.alive(gen) || this.keyHex === null) return null;
@@ -798,6 +908,7 @@ export class ReplayPlayer {
         throw new StopOn({ kind: 'unavailable', reason: 'undecryptable' });
       }
       this.skipped++;
+      this.skippedIdx.add(s.index);
       return null;
     }
   }
@@ -831,15 +942,19 @@ export class ReplayPlayer {
     const before = spansOf(this.buffer);
     await this.appendMedia(gen, media, end);
     if (!this.alive(gen) || !this.buffer) return null;
-    let start = newMediaStart(before, spansOf(this.buffer));
-    if (start !== null && this.appended === 0 && start > REBASE_THRESHOLD_S) {
-      start = await this.rebaseToZero(gen, media, end, start);
+    let extent = newMediaExtent(before, spansOf(this.buffer));
+    if (extent !== null && this.appended === 0 && extent[0] > REBASE_THRESHOLD_S) {
+      extent = await this.rebaseToZero(gen, media, end, extent[0]);
     }
+    const start = extent === null ? null : extent[0];
     this.appended++;
     this.retryAttempt = 0;
     // A step that answers again after a reconnect is the end of the reconnecting screen.
     if (this.state.kind === 'reconnecting') this.setState({ kind: 'playing' });
-    if (start !== null) this.placed.set(s.index, start);
+    if (extent !== null) {
+      this.placed.set(s.index, extent[0]);
+      this.placedEnd.set(s.index, extent[1]);
+    }
     return start;
   }
 
@@ -871,7 +986,7 @@ export class ReplayPlayer {
     media: Uint8Array<ArrayBuffer>,
     end: number,
     placedAt: number
-  ): Promise<number | null> {
+  ): Promise<MediaSpan | null> {
     const buffer = this.buffer;
     if (!buffer) return null;
     console.debug(
@@ -883,7 +998,7 @@ export class ReplayPlayer {
     this.lastInit = null;
     const before = spansOf(buffer);
     await this.appendMedia(gen, media, end);
-    return newMediaStart(before, spansOf(buffer));
+    return newMediaExtent(before, spansOf(buffer));
   }
 
   /**
@@ -911,25 +1026,25 @@ export class ReplayPlayer {
 
   /**
    * Drops what lies more than {@link REPLAY_BEHIND_S} behind the playhead and what lies more than
-   * {@link REPLAY_FAR_AHEAD_S} ahead of it (a region an older seek left), and forgets where those
-   * segments were placed.
+   * {@link REPLAY_FAR_AHEAD_S} ahead of it (a region an older seek left). Where the segments sat in
+   * media time is a MEASURED fact and stays: only what the buffer holds is forgotten.
    */
   private async trim(gen: number): Promise<void> {
     const buffer = this.buffer;
     if (!buffer || buffer.buffered.length === 0) return;
     const at = this.video.currentTime;
     const cut = at - REPLAY_BEHIND_S;
-    const far = at + REPLAY_FAR_AHEAD_S;
+    // Far ahead is measured in MEDIA seconds across the known holes, never less than the same distance
+    // in media time: a 80 s pause must not make the media right after it "far".
+    const far = Math.max(at + REPLAY_FAR_AHEAD_S, this.positionAhead(at, REPLAY_FAR_AHEAD_S));
     const first = buffer.buffered.start(0);
     const last = buffer.buffered.end(buffer.buffered.length - 1);
     try {
       if (cut - first >= REPLAY_BEHIND_S) {
         await settleBuffer(buffer, () => buffer.remove(0, cut));
-        for (const [i, p] of this.placed) if (p < cut) this.placed.delete(i);
       }
       if (this.alive(gen) && last > far) {
         await settleBuffer(buffer, () => buffer.remove(far, Number.MAX_SAFE_INTEGER));
-        for (const [i, p] of this.placed) if (p >= far) this.placed.delete(i);
       }
     } catch (e) {
       // Nothing lost but memory; said and left to the next trim.

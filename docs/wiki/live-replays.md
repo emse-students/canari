@@ -447,7 +447,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/p2-a-replay-stalls-for-good-at-a-camera-flip-or-a-background-pause.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -506,7 +506,8 @@ back into buffered media (which writes nothing itself) was simply overwritten.
   of the replay player is a seek, and the newest seek wins.** The writers are three: the seek step's
   landing (`seekTo`, ticket-guarded), the seek step's landing on the edge of a hole (`noteSeeking`),
   and the hole crossing of `crossHole` (itself a seek, which the engine reports as `seeking` and a newer
-  seek supersedes like any other). A position that lies in no buffered range is never written.
+  seek supersedes like any other). A position inside no buffered range is never written: every
+  landing is checked against the ranges.
 - Loading serves the target first: the seek step takes the segment holding the target, then `fill`
   continues from its cursor ahead of it.
 - `LivePlayer` (the live edge) has no user seek: its only playhead write is `seekToEdge`, forward
@@ -526,11 +527,23 @@ live with both: buffered `[0,16.6] [17.4,27.6] [45.2,76.1]`; the playhead stoppe
 hole and never moved, because `noteStall` took a stop inside a buffered range for the engine's own wait.
 Every earlier fixture was contiguous, which is why no test saw it.
 
-The rule: **a hole is a fact of the segment list, never something detected by a stall.**
-`knownHoles(segments, placed, spans)` returns the gap after the range holding a placed segment when its
-list neighbour is also placed, later than that range's end; a region merely not loaded yet is not a
-hole. The player then:
+The design separates two things. **Where a segment sits in media time** is MEASURED when it is appended
+(`placed` start, `placedEnd` end), kept for the whole session and never forgotten by a trim or an engine
+eviction. **What the SourceBuffer holds now** is read from `buffered`. Holes come from the first, the lead
+and eviction from the second.
 
+The rule: **a hole is a fact of the segment list, never something detected by a stall.**
+`knownHoles(segments, placed, placedEnd)` returns the gap between where a segment was measured to end and
+where its list neighbour begins (and the leading gap before the first segment, above 0.05 s); a region
+not loaded yet or a skipped neighbour has no measure and is no hole. A range holding a single segment
+between two holes is crossed on both sides. The player then:
+
+- **counts its lead across the holes** (`mediaAhead`, leading gap included). A lead that stopped at the
+  hole opened a new range and was never met: the fill downloaded the WHOLE replay (200 of 200 segments in
+  the probe), which on iOS hits the quota. The far-ahead trim is measured the same way, in media seconds
+  across holes, so the media right after an 80 s pause is not "far". Pinned by P1 (hole mid-lead) and P2
+  (first segment at 0.4 s): about 12 s ahead, no more. The fill also never keeps its cursor past a
+  segment the buffer no longer holds ahead of the playhead (`firstGapAhead`): it is fetched again;
 - on `timeupdate`, a playhead at a hole's start jumps to the start of the media after it;
 - on `waiting`, a playhead whose CURRENT range ends at a hole with at most `REPLAY_SEGMENT_LENGTH_S`
   (1.5 s) of media left does the same - the engine ran out of playable media there. With more left it is
@@ -538,15 +551,16 @@ hole. The player then:
   read on the Mi 9T ONLY and never on iOS. That one constant is also the most a seek lands inside its
   segment;
 - a seek whose target is INSIDE a hole lands on the next range's start; a seek past its segment's own
-  end with the next segment not yet loaded takes that segment and lands on its start.
+  end with the next segment not yet loaded takes that segment and lands on its start. `take` answers
+  null both for a skipped segment and for one already buffered, so a TARGET or next segment already
+  buffered is landed on from its measured place (the engine would otherwise hang in `seeking`).
 
 A hole is `[from, to - tolerance)` and a range `[start - tolerance, end)` with ONE shared tolerance
-(0.01 s), so a position is never both and the jump cannot repeat. A seek landing is passed through the
-ranges and falls back to the target segment's own start when the segment after the hole was skipped
-(404, did not open) - never a position in no range, which would hang the engine's seek and block the
-crossing (`video.seeking`). The leading gap before the first segment (above 0.05 s) is a hole too. The
-engine may evict ranges under its quota without `placed` hearing of it: a hole is only reported when
-the segment after it is still inside a buffered range, so an evicted one is re-fetched by a seek.
+(0.01 s), so a position is never both and the jump cannot repeat. THE RULE of a landing is: always write
+a position inside a range - the segment after the hole, else the target segment's own start, else
+nothing (logged) - never a position in no range, which hangs the engine's seek and blocks the crossing
+(`video.seeking`). A hole whose far side the engine evicted is still a hole: the crossing lands there and
+the engine's `seeking` fetches the media again.
 
 No timer is involved. Pinned with synthetic buffers holding a 0.8 s and a 17.6 s hole in
 `replayPlayer.test.ts`. Owed: the same reading on both phones with a live that flipped and paused.
