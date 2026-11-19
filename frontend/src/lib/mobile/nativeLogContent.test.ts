@@ -418,8 +418,6 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       'app_group_share.rs|manifest .get("files") .and_then(Value::as_array) .map_or(0, Vec::len)',
       '2x push.rs|done.gone()',
       'push.rs|f.bytes',
-      'push.rs|fold.added',
-      'push.rs|fold.merged',
       '2x push_registration.rs|completed(done)',
       // A `'static` literal of the closed `SignOutCause` list, `unknown` for anything else.
       'push_registration.rs|sign_out_cause_label(&cause)',

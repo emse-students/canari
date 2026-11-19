@@ -117,17 +117,18 @@ export const GROUP_CALLS_MODES: readonly GroupCallsMode[] = ['off', 'mesh'];
 /**
  * Which relay carries a group call (`platform_config.call_relay`, published by `/api/version` as
  * `calls.relay`, WP-GC4): `none` - the mesh, refused past its cap; `call-service` - our SFU carries
- * the group call from the start (the server signs `mode: sfu` into its room tokens). An absent or
- * unknown value reads `none`.
+ * the group call from the start (the server signs `mode: sfu` into its room tokens); `cloudflare` -
+ * Cloudflare Realtime carries it, through chat-delivery's proxy (`mode: cloudflare`, WP-GC3). A call
+ * reads its path from its room token, never from here. An absent or unknown value reads `none`.
  */
-export type CallRelay = 'none' | 'call-service';
+export type CallRelay = 'none' | 'call-service' | 'cloudflare';
 
 /**
  * Every value of {@link CallRelay}. Five copies of these strings exist (the SQL CHECK, core's
  * entity, chat-delivery's reader, this, the admin page through this) and `callRelaysAgree.test.ts`
  * fails the day one of them drifts.
  */
-export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service'];
+export const CALL_RELAYS: readonly CallRelay[] = ['none', 'call-service', 'cloudflare'];
 
 export type ServerVersionInfo = {
   version: string;

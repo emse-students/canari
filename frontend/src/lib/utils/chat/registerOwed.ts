@@ -19,9 +19,16 @@
  *   handing over an empty register that would end the asker's entry on nothing;
  * - **"do I still ask?"** - `asking` ({@link isRegisterOwed}). It ends on a PROOF that asking is
  *   useless, never on a clock: {@link REGISTER_ASKS_MAX} asks that brought neither a register nor a
- *   decline (a member that ignores `register` - an older build - or a server that cannot address),
- *   or a decline from EVERY other device of the group (nobody holds a register to give). Stopping
- *   to ask never makes a device answer as if it held one.
+ *   decline (every build at the floor, `1.7.0`, answers or declines `register`, so only a defect or
+ *   a server that cannot address reaches it), or a decline from EVERY other device of the group
+ *   (nobody holds a register to give). Stopping to ask never makes a device answer as if it held one.
+ *
+ * **A DECLINE SAYS WHY.** `'none'`: the decliner never took a register. `'withheld'`: it withholds
+ * history from THIS device, which entered unvouched (`historyWithheld.ts`) - a normal state, not a
+ * defect. Both count alike; an asking that ends after any `'withheld'` decline is said at info,
+ * naming it, since the silence of the rest is then most likely the same verdict. A member's Add of
+ * this device is the vouch, and it arrives as a Welcome, which re-opens the entry from zero
+ * ({@link noteRegisterOwed}).
  *
  * **A DEVICE'S FIRST DECLINE IS NOT COUNTED.** Two newcomers - or one person's phone and laptop -
  * elected for each other's asks both decline; counting those would spend the bound on answers that
@@ -31,8 +38,8 @@
  * purpose - keep the count at zero for ever, and let the two answerers of one ask erase an earlier
  * silent ask. The asks are therefore bounded by {@link REGISTER_ASKS_MAX} plus the number of other
  * devices, whatever is online. Counted at the ask rather than at an answer because silence is an
- * answer: an older responder whose store matches ours sends nothing at all, so no answer-side count
- * would ever move.
+ * answer: a responder that never answers (a defect - every build at the `1.7.0` floor answers or
+ * declines `register` - or one the server cannot address) moves no answer-side count.
  *
  * Durable (`localStorage`, per account) because the question outlives the page: a reload between
  * the Welcome and the answer must still ask. Bounded ({@link REGISTER_OWED_LIMIT}) as a FIFO - state,
@@ -48,15 +55,26 @@ export const REGISTER_OWED_LIMIT = 256;
  * How many register asks that brought neither a register nor a decline a group may send. Each ask
  * leaves on a state edge (a connection, a fresh join, a member coming back), and a responder on this
  * build answers - or declines - the first one it is elected for; five unanswered is several
- * connections' worth of elections that found only members that ignore `register`.
+ * connections' worth of elections that brought no answer - a defect, since every build at the
+ * floor (`1.7.0`) answers or declines `register`, or a server that cannot address.
  */
 export const REGISTER_ASKS_MAX = 5;
 
 /**
  * One group whose register this account never took: whether it still asks, how many of its asks are
- * still unanswered, and which devices (`user:device`) declined, holding none.
+ * still unanswered, which devices (`user:device`) declined, holding none or withholding, and which
+ * of those withhold from this device (absent until one does).
  */
-type Owed = { group: string; asked: number; asking: boolean; declined: string[] };
+type Owed = {
+  group: string;
+  asked: number;
+  asking: boolean;
+  declined: string[];
+  withheldBy?: string[];
+};
+
+/** Why a device declined a register ask - see the module's "A DECLINE SAYS WHY". */
+export type RegisterDecline = 'none' | 'withheld';
 
 function read(account: string): Owed[] {
   try {
@@ -129,9 +147,11 @@ export function noteRegisterAsked(account: string, groupId: string): void {
 
 /**
  * Ends the asking when {@link REGISTER_ASKS_MAX} asks went unanswered - called before an ask, so a
- * decline that came back meanwhile has already given its ask back. Said at warn: the members
- * elected that many times ignore `register`, or the server cannot address. The entry stays: the
- * register is still not taken.
+ * decline that came back meanwhile has already given its ask back. Said at ERROR: every build at the
+ * floor (`1.7.0`) answers or declines `register`, so only a defect - or a server that cannot address -
+ * reaches it (docs/wiki/legacy-compatibility.md history) - unless a device declined as WITHHOLDING
+ * from this one: this device is then unvouched, a normal state, said at info and named. The entry
+ * stays: the register is still not taken.
  *
  * @returns whether the asking is over (nothing is to be asked).
  */
@@ -141,23 +161,33 @@ export function endSpentRegisterAsks(account: string, groupId: string): boolean 
   if (!entry || entry.asked < REGISTER_ASKS_MAX) return false;
   entry.asking = false;
   if (!write(account, owed)) return true;
-  console.warn(
-    `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (its members do not answer \`register\`, or cannot be addressed)`
-  );
+  const withheldBy = entry.withheldBy?.length ?? 0;
+  if (withheldBy > 0) {
+    console.log(
+      `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) - no longer asked: ${withheldBy} device(s) withhold history from this unvouched device, a member's Add re-opens it`
+    );
+  } else {
+    console.error(
+      `[REGISTER] ${groupId.slice(0, 8)}... asked for its register ${entry.asked} time(s) with no answer - no longer asked (every member at the floor answers or declines \`register\`: a defect, or this device cannot be addressed)`
+    );
+  }
   return true;
 }
 
 /**
- * An elected device DECLINED a register ask for `groupId`: it holds none. The ask is given back
- * (a decline proves who cannot help, not that nobody can), and the decliner remembered; once every
- * device in `others` - the group's devices but this one - has declined, nobody holds a register to
- * give and the asking ends, said at warn. The entry stays: the register is still not taken.
+ * An elected device DECLINED a register ask for `groupId`: it holds none, or (`why` `'withheld'`)
+ * withholds history from this device. The ask is given back (a decline proves who cannot help, not
+ * that nobody can), and the decliner remembered; once every device in `others` - the group's devices
+ * but this one - has declined, nobody will give a register and the asking ends, said at warn - or at
+ * info when a device withholds, a normal state named as such. The entry stays: the register is
+ * still not taken.
  */
 export function noteRegisterDeclined(
   account: string,
   groupId: string,
   decliner: string,
-  others: readonly string[]
+  others: readonly string[],
+  why: RegisterDecline = 'none'
 ): void {
   const owed = read(account);
   const entry = owed.find((o) => o.group === groupId && o.asking);
@@ -169,16 +199,24 @@ export function noteRegisterDeclined(
     entry.declined.push(decliner);
     entry.asked = Math.max(0, entry.asked - 1);
   }
+  if (why === 'withheld' && !entry.withheldBy?.includes(decliner)) {
+    entry.withheldBy = [...(entry.withheldBy ?? []), decliner];
+  }
   const nobodyHolds = others.length > 0 && others.every((d) => entry.declined.includes(d));
   if (nobodyHolds) entry.asking = false;
   if (!write(account, owed)) return;
-  if (nobodyHolds) {
+  const withheldBy = entry.withheldBy?.length ?? 0;
+  if (nobodyHolds && withheldBy > 0) {
+    console.log(
+      `[REGISTER] ${groupId.slice(0, 8)}... every other device (${others.length}) declined, ${withheldBy} withholding history from this unvouched device - no longer asked, a member's Add re-opens it`
+    );
+  } else if (nobodyHolds) {
     console.warn(
       `[REGISTER] ${groupId.slice(0, 8)}... every other device (${others.length}) declined - none holds a register, no longer asked`
     );
   } else {
     console.log(
-      `[REGISTER] ${groupId.slice(0, 8)}... ${decliner.slice(0, 8)} holds no register - ${first ? 'its first decline: the ask is not counted' : 'declined before: the ask is counted'}`
+      `[REGISTER] ${groupId.slice(0, 8)}... ${decliner.slice(0, 8)} ${why === 'withheld' ? 'withholds history from this unvouched device' : 'holds no register'} - ${first ? 'its first decline: the ask is not counted' : 'declined before: the ask is counted'}`
     );
   }
 }
