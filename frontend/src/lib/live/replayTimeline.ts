@@ -13,18 +13,75 @@ export function isReplay(post: Pick<PostEntity, 'kind'>): boolean {
 }
 
 /**
- * The position in `segments` (ascending by `atMs`) of the LAST segment whose `atMs` is at or before
- * `ms` - the join logic of a seek: that segment is self-contained (its init, then one fragment), so
- * it can start the picture. Clamped: a target before the first is the first, past the last is the
- * last. `-1` for an empty list, so a caller can never index into nothing.
+ * Where each segment begins in MEDIA time, in ms: the measured start (`placed`, seconds) where there is
+ * one, and a stated estimate elsewhere. A segment's `atMs` is its ARRIVAL time on the server, and a replay
+ * whose media is longer than its live (61 s of media for 54 s of live: a camera under its nominal rate)
+ * runs AHEAD of it, while the player's bar reads media time.
+ *
+ * BETWEEN two measured segments the estimate is piecewise-linear on arrival time: exact at both ends, so a
+ * stall or a pause between them is inside the interpolation. BEFORE the first and PAST the last measured
+ * segment it extrapolates from the nearest one at the measured media-per-arrival rate of the whole measured
+ * stretch (1 with fewer than two, clamped to [0.25, 4]) - an estimate the caller checks against the measured
+ * extent once it has taken the segment (`ReplayPlayer.seekTo`). With nothing measured it IS the arrival
+ * time, the only statement there is. The result is made MONOTONIC (a running maximum) so a binary search
+ * over it can never misread it, whatever order the measurements came in.
  */
-export function segmentPositionAt(segments: readonly LiveReplaySegment[], ms: number): number {
+export function mediaStartsMs(
+  segments: readonly LiveReplaySegment[],
+  placed: ReadonlyMap<number, number>
+): number[] {
+  const measured = segments.flatMap((s, k) => {
+    const at = placed.get(s.index);
+    return at === undefined ? [] : [{ k, at: at * 1000 }];
+  });
+  if (measured.length === 0) return segments.map((s) => s.atMs);
+  const first = measured[0];
+  const last = measured[measured.length - 1];
+  const live = segments[last.k].atMs - segments[first.k].atMs;
+  const raw = measured.length >= 2 && live > 0 ? (last.at - first.at) / live : 1;
+  const rate = Math.min(4, Math.max(0.25, raw));
+  const out: number[] = [];
+  let m = 0; // the measured segment at or before k
+  for (let k = 0; k < segments.length; k++) {
+    while (m + 1 < measured.length && measured[m + 1].k <= k) m++;
+    const a = measured[m];
+    const atK = segments[k].atMs;
+    let v: number;
+    if (a.k > k) {
+      v = first.at - (segments[first.k].atMs - atK) * rate; // before the first measured
+    } else if (a.k === k) {
+      v = a.at;
+    } else if (m + 1 < measured.length) {
+      const b = measured[m + 1];
+      const span = segments[b.k].atMs - segments[a.k].atMs;
+      v = span > 0 ? a.at + ((atK - segments[a.k].atMs) / span) * (b.at - a.at) : a.at;
+    } else {
+      v = a.at + (atK - segments[a.k].atMs) * rate; // past the last measured
+    }
+    out.push(k > 0 ? Math.max(v, out[k - 1]) : v);
+  }
+  return out;
+}
+
+/**
+ * The position in `segments` (ascending by `atMs`) of the LAST segment whose start is at or before `ms` -
+ * the join logic of a seek: that segment is self-contained (its init, then one fragment), so it can start
+ * the picture. `ms` is MEDIA time and the starts are {@link mediaStartsMs}; without `placed` they are the
+ * arrival times. Clamped: a target before the first is the first, past the last is the last. `-1` for an
+ * empty list, so a caller can never index into nothing.
+ */
+export function segmentPositionAt(
+  segments: readonly LiveReplaySegment[],
+  ms: number,
+  placed: ReadonlyMap<number, number> = new Map()
+): number {
   if (segments.length === 0) return -1;
+  const starts = mediaStartsMs(segments, placed);
   let lo = 0;
   let hi = segments.length - 1;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
-    if (segments[mid].atMs <= ms) lo = mid;
+    if (starts[mid] <= ms) lo = mid;
     else hi = mid - 1;
   }
   return lo;

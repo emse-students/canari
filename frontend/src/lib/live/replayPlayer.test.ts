@@ -65,6 +65,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   mode = 'sequence';
   timestampOffset = 0;
   base = 0;
+  /** Media time added after segment `jump[0]` (a pause the live's media carries as a hole), in seconds. */
+  jump: [number, number] | null = null;
   /** The length of the media one segment holds, in seconds. */
   len = 2;
   appends: string[] = [];
@@ -89,7 +91,11 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
     else {
       const i = indexOfMedia(data);
       this.appends.push(`m${i}`);
-      const start = i * 2 + this.base + this.timestampOffset;
+      const start =
+        i * 2 +
+        this.base +
+        this.timestampOffset +
+        (this.jump && i > this.jump[0] ? this.jump[1] : 0);
       this.add(start, start + this.len);
     }
     this.settle();
@@ -142,12 +148,18 @@ class FakeSource extends EventTarget implements ReplayMediaSourceLike {
 }
 
 /** The replay on the server: `count` segments 2 s apart, pages of `pageSize`. */
-function makePages(count: number, pageSize = 200, first = 0) {
+function makePages(
+  count: number,
+  pageSize = 200,
+  first = 0,
+  atStepMs = 2000,
+  atMsOf: (i: number) => number = (i) => i * atStepMs
+) {
   const all: LiveReplaySegment[] = Array.from({ length: count }, (_, i) => ({
     index: first + i,
     name: `seg-${first + i}`,
     bytes: 100,
-    atMs: i * 2000,
+    atMs: atMsOf(i),
   }));
   return (from?: number): LiveReplayPage => {
     const start = from ?? first;
@@ -382,6 +394,57 @@ describe('ReplayPlayer', () => {
     // The cursor follows the placed segment: the next segments are 51.., not 6..
     const mediaAppends = buffer().appends.filter((a) => a.startsWith('m'));
     expect(mediaAppends.slice(-1)[0]).toBe('m56');
+  });
+
+  it('S12: a replay whose media runs ahead of its live time still lands a seek inside the target segment', async () => {
+    // 1770 ms of live time per 2 s of media (61 s of media for 54 s of live): the bar's time is MEDIA time.
+    fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+      makePages(100, 200, 0, 1770)(from)
+    );
+    const p = makePlayer();
+    p.start();
+    await flush();
+    video.currentTime = 100.4; // media time: inside segment 50, which starts at 100 s of media
+    p.noteSeeking();
+    await flush();
+    expect(buffer().appends).toContain('m50');
+    expect(video.currentTime).toBeGreaterThanOrEqual(100);
+    expect(video.currentTime).toBeLessThan(102);
+  });
+
+  describe('S12 review: the lookup past the last measurement is checked against what the segment measures', () => {
+    // 2 s of media per segment, 1770 ms of arrival: the replay's media runs ahead of its live.
+    const atPause = (i: number) => i * 1770 + (i > 50 ? 120_000 : 0);
+    it('P1: a 120 s pause (a hole in media time too) after the last measurement, a seek into segment 150', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(200, 200, 0, 0, atPause)(from)
+      );
+      const p = makePlayer();
+      p.start();
+      await flush();
+      buffer().jump = [50, 120];
+      video.currentTime = 150 * 2 + 120 + 0.4;
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends).toContain('m150');
+      expect(video.currentTime).toBeGreaterThanOrEqual(420);
+      expect(video.currentTime).toBeLessThan(422);
+    });
+
+    it('P1b: the same pause, but the media does not jump (frames run on)', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(200, 200, 0, 0, atPause)(from)
+      );
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 150 * 2 + 0.4;
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends).toContain('m150');
+      expect(video.currentTime).toBeGreaterThanOrEqual(300);
+      expect(video.currentTime).toBeLessThan(302);
+    });
   });
 
   it('a seek into buffered media moves the cursor and fetches nothing it already holds', async () => {
