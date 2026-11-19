@@ -64,6 +64,26 @@ export function mediaStartsMs(
 }
 
 /**
+ * The position of the segment whose MEASURED extent `[placed, placedEnd)` (seconds) holds `at`, or -1 when
+ * none does. A measurement beats any estimate, so a seek looks here first: it is exact whatever order the
+ * measurements came in (a later segment measured EARLIER in media time included), where the estimate's
+ * running maximum can only flatten such a run.
+ */
+export function measuredPositionAt(
+  segments: readonly LiveReplaySegment[],
+  placed: ReadonlyMap<number, number>,
+  placedEnd: ReadonlyMap<number, number>,
+  at: number
+): number {
+  for (let k = 0; k < segments.length; k++) {
+    const from = placed.get(segments[k].index);
+    const to = placedEnd.get(segments[k].index);
+    if (from !== undefined && to !== undefined && at >= from && at < to) return k;
+  }
+  return -1;
+}
+
+/**
  * The position in `segments` (ascending by `atMs`) of the LAST segment whose start is at or before `ms` -
  * the join logic of a seek: that segment is self-contained (its init, then one fragment), so it can start
  * the picture. `ms` is MEDIA time and the starts are {@link mediaStartsMs}; without `placed` they are the

@@ -41,7 +41,7 @@ import {
   type LiveVideoLike,
 } from './livePlayer';
 import { liveRetryDelayMs } from './liveViewerState';
-import { mediaStartsMs, segmentPositionAt } from './replayTimeline';
+import { mediaStartsMs, measuredPositionAt, segmentPositionAt } from './replayTimeline';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveReplayPage, LiveReplaySegment } from './types';
 
@@ -939,13 +939,22 @@ export class ReplayPlayer {
   }
 
   /**
+   * The position of the segment a media-time target `ms` falls in: the one whose MEASURED extent holds it
+   * when there is one, else the estimate of {@link segmentPositionAt}.
+   */
+  private lookup(ms: number): number {
+    const measured = measuredPositionAt(this.segments, this.placed, this.placedEnd, ms / 1000);
+    return measured >= 0 ? measured : segmentPositionAt(this.segments, ms, this.placed);
+  }
+
+  /**
    * A seek to `ms` of the replay: the target's segment is taken and the playhead put where it landed.
    * Only the LATEST seek (`ticket`) may write the playhead: whatever an older one fetched is dropped.
    */
   private async seekTo(gen: number, ms: number, ticket: SeekTicket): Promise<void> {
     await this.listUntil(gen, ms);
     if (!this.alive(gen) || this.isStale(ticket)) return;
-    let pos = segmentPositionAt(this.segments, ms, this.placed);
+    let pos = this.lookup(ms);
     if (pos < 0) return;
     let s = this.segments[pos];
     this.seeks++;
@@ -964,10 +973,7 @@ export class ReplayPlayer {
       const to = this.placedEnd.get(s.index);
       const at = ms / 1000;
       if (from === undefined || to === undefined || (at >= from - EDGE_TOL_S && at < to)) break;
-      let next = segmentPositionAt(this.segments, ms, this.placed);
-      // A run the monotonic estimate flattened (measurements out of order) picks its LAST member: when the
-      // target lies before that one's start, step back to the run's previous member.
-      if (next === pos && at < from - EDGE_TOL_S && pos > 0) next = pos - 1;
+      const next = this.lookup(ms);
       // A segment already visited is never looked at again (no A -> B -> A).
       if (next < 0 || visited.has(next)) break;
       visited.add(next);

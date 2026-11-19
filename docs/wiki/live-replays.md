@@ -758,9 +758,10 @@ is the arrival time, the only statement there is. The extrapolation is only an e
 after the last measurement is carried at the wrong rate): once the seek has taken the estimated segment,
 its MEASURED extent says whether the target is inside; if not it looks up again with the new measurement, at
 most `REPLAY_SEEK_RELOOKUPS` (3) times and never on a segment already visited (no A -> B -> A) - a count, never a clock.
-The running maximum only flattens a run when measurements arrive out of order; the lookup then picks the run's LAST
-member, and when the target lies before that member's measured start the seek steps back to the run's previous
-member instead of landing forward on the last one.
+The running maximum only flattens a run when measurements arrive out of order (a later segment measured EARLIER
+in media time): the estimate then picks the run's last member. So the lookup asks the MEASUREMENTS first -
+`measuredPositionAt` returns the segment whose measured extent holds the target, exact in any order - and only
+falls back to the estimate when no segment measured so far holds it.
 `segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
 is the target's media time held inside the segment (never before its start, never past
 `REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
