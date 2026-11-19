@@ -337,6 +337,11 @@ release's blueprints are then NOT applied** onto the newer authentik: the step's
 `outcome=kept-newer`, and "Apply MiConnect's blueprints" is skipped on it (the health check after
 still runs). A pre-release passes `--newer refuse`, so the test stack never skips rehearsing the
 upgrade the stable will make ([authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+**The guard exists only in releases that carry it**: a rollback to a release OLDER than the one that
+introduced MiConnect's deploy (#3486) runs that release's own `serve-prod.yml`, which has no MiConnect
+step and no `kept-newer` output, so its "Apply MiConnect's blueprints" writes its OLD blueprints onto
+the newer authentik, unguarded. Before rolling back across that release, read what its blueprints
+would change (`apply-blueprints.sh dry-run` with its tree, on the host), or skip that step by hand.
 **A rollback to a build older than 2026-11-15 reopens the live seats' two-build window**, and so does the
 re-deployment after it: a live served only by old instances is refused (`503`) to the viewers a new instance
 serves; bound: the rolling replace, plus one segment ([lives](services/lives.md#no-seat-is-taken-on-a-closed-live-2026-11-15)).
@@ -2540,6 +2545,16 @@ stack's own `.env` on the host, the image scan read this repository's `compose.y
 | pre-release | puts the TEST stack (`miconnect-test`) on the pinned version FIRST, before the dev estate, then dry-runs the blueprints against production | `serve-dev.yml` |
 | stable | puts PRODUCTION (`miconnect`) on the pinned version FIRST, before the estate (a failed upgrade stops the release whole, never half-shipped), then after the estate applies the blueprints and checks both | `serve-prod.yml`, before `prod-released` moves |
 
+**Both refuse early, by name**: each job's first step after its checkout is `deploy-stack.sh preflight`
+(and, on a pre-release, `rehearsal`: the test stack must start from production's version), read-only,
+so what would stop the MiConnect step stops the job before anything is rendered, with the exact hand
+command. **A MiConnect that is degraded BLOCKS CANARI'S STABLES**: the step runs first and the job
+fails on any failed check, rolled back or not, so no Canari stable ships while production MiConnect
+cannot take the pin and pass its checks - and a pre-release whose test stack fails keeps `dev-deployed`
+where it was, which gate 4 then reads as "no stable". The first pre-release after the merge needs the
+test stack recreated by hand on the version it runs first
+([the order](infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)).
+
 ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container
 RUNS differs from the pin (durable state, never a clock), dumps the database first, checks Docker's
 health verdict, `/-/health/ready/` and the OIDC discovery after, and on a failure puts the old tag
@@ -2550,15 +2565,15 @@ runner already lives on the host, as for `Apply MiConnect's blueprints`; what it
 write access to each stack's `.env` (granted 2026-11-13), and it refuses by name without it. The mechanism,
 each decision and its test: [authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
 
-**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, three read-only reports.
+**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, four read-only reports.
 The third-party images every RELEASED compose file pins (production and MiConnect from
 `prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`) against what each
 container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
 any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
 did to a provider on 2026-11-13 with nothing to say so beforehand; and whether the runner can still
-write each MiConnect `.env`. And one write, of the runner's own files: the release's MiConnect
+write each MiConnect `.env`; and what the next release would refuse on each stack (`deploy-stack.sh preflight` against `main`'s pin, the exact hand command named). And one write, of the runner's own files: the release's MiConnect
 rollback copies are expired to the owner's bound, 3 copies and 30 days at most (2026-11-19). The job
-runs in the `production` environment, as the deploy it mirrors. A drift with a known cause is a WARNING until the date written beside it
+runs in the `production` environment, as the deploy it mirrors, with `deployment: false` (it deploys nothing and reads no secret). A drift with a known cause is a WARNING until the date written beside it
 in `infrastructure/deploy/image-drift-known.txt`, and red after. No fifth visible workflow: it is
 one more job on the 07:30 slot, and it cannot overlap a deploy because the one runner runs one job at
 a time (it does NOT join `cd-deploy`, where a queued report could cancel a waiting deploy)

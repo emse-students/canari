@@ -244,7 +244,7 @@ jobs:
   # 2026-11-13, twice in one day. Production MiConnect ran authentik 2026.8.0 for weeks while this
   # repository pinned 2026.8.5 - its tag lived in the stack's own `.env`, and the image scan read the
   # repository's. And the `1.6.11` stable overwrote a provider whose callbacks had been edited by
-  # hand in the admin UI, because nothing had said the edit existed. Three read-only reports:
+  # hand in the admin UI, because nothing had said the edit existed. Four read-only reports:
   #
   #   - IMAGES: every third-party image the RELEASED compose files pin (production and MiConnect from
   #     `prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`, whose
@@ -255,6 +255,8 @@ jobs:
   #     stable would overwrite. infrastructure/authentik/blueprint-drift.sh. The log is PUBLIC, so
   #     it names the object and field that changed, never the values.
   #   - ACCESS: the runner can still write each MiConnect `.env`, the release's one precondition.
+  #   - PREFLIGHT: what the next release would refuse on each stack (`deploy-stack.sh preflight`,
+  #     against `main`'s pin), named with the exact hand command the morning before.
   #
   # AND ONE WRITE, of the runner's own files only: the release's MiConnect rollback copies (dumps of
   # every account, `.env` backups, logs) are expired every morning to the owner's bound (2026-11-19:
@@ -273,7 +275,11 @@ jobs:
     timeout-minutes: 15
     # THE ENVIRONMENT OF THE DEPLOY IT MIRRORS (`serve-prod.yml`, `deploy-to-server`): the same runner,
     # the same stacks, and the same rules and secrets scope apply to what it reads and expires there.
-    environment: production
+    # It reads no secret of it today. `deployment: false`: this job deploys nothing, so it draws no row
+    # in the deployments list (the convention of android.yml; docs/wiki/cicd.md#where-a-secret-lives-and-why).
+    environment:
+      name: production
+      deployment: false
     # Its own group, at the job level, for the reason `hosts` gives. NOT `cd-deploy`, deliberately:
     # GitHub keeps one PENDING run per group and cancels the others, so a daily report queued in that
     # group could cancel a waiting deploy. What keeps it from overlapping a deploy - a recreate seen
@@ -323,6 +329,19 @@ jobs:
           for project in miconnect miconnect-test; do
             bash infrastructure/authentik/deploy-stack.sh access --project "$project" || status=1
           done
+          exit "$status"
+
+      # WHAT THE NEXT RELEASE WOULD REFUSE, SAID THE MORNING BEFORE (review of #3486, 2026-11-19): the
+      # deploy's read-only half against `main`'s pin, with each release's own `--newer` policy - for an
+      # upgrade, compose's proof that the up would change the tag and nothing else. A stack whose files
+      # differ from what runs is named here with the exact hand command, days before a release meets it.
+      - name: Check what the next release would refuse on each MiConnect stack
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          status=0
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect --newer keep || status=1
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect-test --newer refuse || status=1
           exit "$status"
 
       # THE OWNER'S BOUND ON THE ROLLBACK COPIES (2026-11-19), held daily: per stack, the three newest

@@ -10,7 +10,9 @@
 # play a stack: a no-op, a recorded tag, a refused `.env`, an upgrade that passes, one that fails
 # before migrating (retag only), one that fails after Django's migrations or after authentik's own
 # system migrations alone (the dump restored), a `.env` put back by its backup during a rollback,
-# compose messages that name host paths, and the retention of the copies. No host, no network, no
+# compose messages that name host paths, the retention of the copies, the read-only preflight and
+# rehearsal, an anonymous pull past a stale login, the root disk's ceiling and probes asked a bounded
+# number of times before a rollback. No host, no network, no
 # clock: "now" is injected (AK_NOW).
 #
 # Run by `make test-ci-scripts` and by CI.
@@ -211,8 +213,10 @@ case "$*" in
   "ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=server") [ -s "$S/server" ] && [ ! -f "$S/stopped" ] && echo server-id ;;
   "ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=worker") [ -s "$S/worker" ] && [ ! -f "$S/stopped" ] && echo worker-id ;;
   "ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=postgresql") echo pg-id ;;
+  # a second stack, production's, for the rehearsal: `prod` holds the image its server runs
+  "ps -q --filter label=com.docker.compose.project=miconnect-prod --filter label=com.docker.compose.service=server") [ -s "$S/prod" ] && echo prod-id ;;
   *"{{.Config.Image}}"*) id="${*: -1}"; cat "$S/${id%-id}" ;;
-  *working_dir*) echo "$S/dir" ;;
+  *working_dir*) if [ -f "$S/labelfail" ]; then echo "Error: template: $S/dir" >&2; exit 1; fi; echo "$S/dir" ;;
   *config_files*) echo "$S/dir/compose.yml" ;;
   *State.Status*) echo running ;;
   *State.Health*)
@@ -236,7 +240,16 @@ case "$*" in
     else echo 0; fi
     ;;
   "port server-id 9000/tcp") echo 127.0.0.1:9000 ;;
-  pull*) ;;
+  # THE PULL MEETS A STALE ghcr.io LOGIN with `stale-login`, as the runner's own docker config would
+  # after an estate deploy: only a private DOCKER_CONFIG with no credential in it gets through.
+  pull*)
+    if [ -f "$S/stale-login" ] && { [ -z "${DOCKER_CONFIG:-}" ] || [ -s "$DOCKER_CONFIG/config.json" ]; }; then
+      echo 'Error response from daemon: Head "https://ghcr.io/v2/goauthentik/server/manifests/x": denied: denied' >&2; exit 1
+    fi
+    echo "${DOCKER_CONFIG:-}" >"$S/pull-config"
+    ;;
+  "image inspect -f {{.Size}} "*) cat "$S/imagesize" 2>/dev/null || echo 1000 ;;
+  "image inspect "*) [ -f "$S/pin-present" ] ;;
   *"compose"*"config --images"*)
     if [ -f "$S/configfail" ]; then echo "open $S/dir/compose.yml: no such file or directory" >&2; exit 1; fi
     echo "ghcr.io/goauthentik/server:$tag"; echo postgres:18
@@ -290,6 +303,8 @@ sed -i "s|__STATE__|'$S'|" "$tmp/bin/docker"
 cat >"$tmp/bin/curl" <<EOF
 #!/usr/bin/env bash
 if [ "\$(cat '$S/signal-on' 2>/dev/null)" = curl ]; then rm -f '$S/signal-on'; kill -TERM "\$PPID"; fi
+# \`probe-fails\` = how many of the next probes fail (a server still warming its workers)
+if [ -s '$S/probe-fails' ] && [ "\$(cat '$S/probe-fails')" -gt 0 ]; then echo \$((\$(cat '$S/probe-fails') - 1)) >'$S/probe-fails'; echo "curl: (7) Failed to connect" >&2; exit 7; fi
 case "\$*" in *openid-configuration*) echo '{"issuer":"i","authorization_endpoint":"a"}' ;; esac
 EOF
 # mktemp fails for the .env's temporary copy once the fake stack says so, and says where (as the
@@ -307,6 +322,15 @@ for tool in cp df; do
 exec '$(command -v "$tool")' "\$@"
 EOF
 done
+# df plays the ROOT filesystem from `rootdf` (the shared host's disk, never this machine's), and
+# `df-dir-fails` fails it for the dump directory alone.
+cat >"$tmp/bin/df" <<EOF
+#!/usr/bin/env bash
+[ -f '$S/df-fails' ] && { echo "df: cannot access '\${*: -1}': Permission denied" >&2; exit 1; }
+if [ "\${*: -1}" = / ]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'; cat '$S/rootdf'; exit 0; fi
+[ -f '$S/df-dir-fails' ] && { echo "df: cannot access '\${*: -1}': Permission denied" >&2; exit 1; }
+exec '$(command -v df)' "\$@"
+EOF
 chmod +x "$tmp/bin/docker" "$tmp/bin/curl" "$tmp/bin/mktemp" "$tmp/bin/cp" "$tmp/bin/df"
 
 fake_reset() {
@@ -320,6 +344,7 @@ fake_reset() {
   : >"$S/calls"
   : >"$S/broken"
   : >"$S/leak"
+  echo '/dev/root 1000000 500000 500000 50% /' >"$S/rootdf"
   rm -rf "$tmp/dumps"
   rm -f "$tmp/gh-output"
 }
@@ -331,6 +356,7 @@ fake_reset() {
 run_deploy() {
   local extra=()
   if [ -n "${newer:-}" ]; then extra=(--newer "$newer"); fi
+  if [ -n "${production:-}" ]; then extra+=(--production "$production"); fi
   PATH="$tmp/bin:$PATH" PG_PASS=ambient POSTGRES_PASSWORD=ambient GITHUB_OUTPUT="$tmp/gh-output" \
     AK_POLL_SECONDS=0 AK_HEALTH_DEADLINE_SECONDS="${deadline:-0}" AK_DUMP_DIR="$tmp/dumps" AK_NOW="${now:-}" \
     timeout 120 bash infrastructure/authentik/deploy-stack.sh "${1:-deploy}" --project miconnect \
@@ -406,8 +432,76 @@ eq "  not rolled back" "$(grep -c 'rolling back' "$tmp/out")" 0
 fake_reset "$O" 2026.8.0; touch "$S/confdrift"
 run_deploy; st=$?
 eq "the host's files differ from what runs beyond the tag: refused, exit 1" "$st" 1
-eq "  nothing dumped or recreated" "$(changed | tr -d ' ')" 1 # the pull alone
+eq "  nothing pulled, dumped or recreated (the dry run comes before the pull)" "$(changed | tr -d ' ')" 0
 eq "  saying why" "$(grep -c 'would still recreate it' "$tmp/out")" 1
+eq "  and naming the exact hand command, on the tag it runs" "$(grep -cF "'AUTHENTIK_TAG=2026.8.0 docker compose up -d --no-deps server worker'" "$tmp/out")" 1
+eq "  which carries no secret" "$(grep -c 's3cret' "$tmp/out")" 0
+
+echo "preflight: the deploy's read-only half, run first by both release jobs and every morning:"
+fake_reset "$O" 2026.8.0; touch "$S/confdrift"
+run_deploy preflight; st=$?
+eq "a stack whose files differ from what runs: refused early, exit 1" "$st" 1
+eq "  with the same hand command" "$(grep -cF "'AUTHENTIK_TAG=2026.8.0 docker compose up -d --no-deps server worker'" "$tmp/out")" 1
+eq "  nothing pulled, dumped, written or recreated" "$(changed)/$(ak_env_tag <"$S/dir/.env")" 0/2026.8.0
+fake_reset "$O" 2026.8.0
+run_deploy preflight; st=$?
+eq "a clean stack due an upgrade: passes, exit 0" "$st" 0
+eq "  and changes nothing - not even a pull" "$(changed)/$(ak_env_tag <"$S/dir/.env")" 0/2026.8.0
+eq "  no step output" "$(outcome)" ""
+fake_reset "$pin" 2026.1.0
+run_deploy preflight; st=$?
+eq "a stack on the pin with a stale line: passes (nothing restarts), the line untouched" "$st/$(ak_env_tag <"$S/dir/.env")" 0/2026.1.0
+fake_reset "$pin" "$pin_tag"
+echo ghcr.io/goauthentik/server:2099.1.0 >"$S/server"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/worker"
+newer=refuse run_deploy preflight; st=$?
+eq "a newer test stack under --newer refuse: refused early, exit 1" "$st" 1
+newer=keep run_deploy preflight; st=$?
+eq "  under --newer keep (production): passes, exit 0" "$st" 0
+
+echo "rehearsal: the test stack starts from the version production runs:"
+fake_reset "$O" 2026.8.0; echo "$O" >"$S/prod"
+production=miconnect-prod run_deploy rehearsal; st=$?
+eq "both on production's version: exit 0" "$st" 0
+fake_reset ghcr.io/goauthentik/server:2026.7.0 2026.7.0; echo "$O" >"$S/prod"
+production=miconnect-prod run_deploy rehearsal; st=$?
+eq "the test stack on another version than production: exit 1" "$st" 1
+eq "  naming both tags" "$(grep -c 'test stack runs 2026.7.0 and production runs 2026.8.0' "$tmp/out")" 1
+fake_reset "$pin" "$pin_tag"; echo "$O" >"$S/prod"
+production=miconnect-prod run_deploy rehearsal; st=$?
+eq "the test stack already on the pin, production not: a warning, exit 0" "$st/$(grep -c '^::warning.*earlier pre-release' "$tmp/out")" 0/1
+fake_reset "$O" 2026.8.0
+production=miconnect-prod run_deploy rehearsal; st=$?
+eq "production not running: exit 1, never a pass on a guess" "$st" 1
+
+echo "the pull is anonymous, so a stale ghcr.io login on the runner does not stop it:"
+fake_reset "$O" 2026.8.0; touch "$S/stale-login"
+run_deploy; st=$?
+eq "an upgrade with a stale login in the runner's docker config: exit 0" "$st/$(outcome)" 0/upgraded
+eq "  pulled through a private DOCKER_CONFIG" "$([ -n "$(cat "$S/pull-config" 2>/dev/null)" ] && echo private || echo ambient)" private
+eq "  which is removed after the pull" "$([ -e "$(cat "$S/pull-config")" ] && echo kept || echo removed)" removed
+
+echo "the shared host's root disk stays under its 85 % ceiling:"
+fake_reset "$O" 2026.8.0; echo '/dev/root 1000000 849000 151000 85% /' >"$S/rootdf"; echo 2000000 >"$S/imagesize"
+run_deploy; st=$?
+eq "an image that would take the root disk past 85 %: refused, exit 1" "$st" 1
+eq "  saying so" "$(grep -c 'past its 85 % ceiling' "$tmp/out")" 1
+eq "  nothing pulled or dumped" "$(changed)" 0
+fake_reset "$O" 2026.8.0; echo '/dev/root 1000000 849000 151000 85% /' >"$S/rootdf"; echo 2000000 >"$S/imagesize"; touch "$S/pin-present"
+run_deploy; st=$?
+eq "  the same disk with the pin already present (nothing to download): exit 0" "$st" 0
+eq "the ceiling: at 85 % passes, one byte more does not" \
+  "$(ak_disk_ceiling_ok 850000 1000000 0 85 && echo y)/$(ak_disk_ceiling_ok 850000 1000000 1 85 || echo n)" y/n
+eq "  an unreadable size is refused, never taken as 0" "$(ak_disk_ceiling_ok 1 1000000 '' 85 || echo n)" n
+
+echo "a probe failure after a healthy verdict is a count, not one answer:"
+fake_reset "$O" 2026.8.0; touch "$S/migrate"; echo 2 >"$S/probe-fails"
+run_deploy; st=$?
+eq "two probes missed, then answered: exit 0, not rolled back" "$st/$(grep -c 'rolling back' "$tmp/out")" 0/0
+eq "  the database never restored" "$([ -f "$S/restored" ] && echo restored || echo kept)" kept
+fake_reset "$O" 2026.8.0; touch "$S/migrate"; echo 5 >"$S/probe-fails"
+run_deploy; st=$?
+eq "five probes missed in a row: rolled back, exit 1" "$st" 1
+eq "  saying how many" "$(grep -c 'failed 5 times in a row' "$tmp/out")" 1
 
 fake_reset "$O" 2026.8.0; touch "$S/hugedb"
 run_deploy; st=$?
@@ -460,7 +554,7 @@ eq "a migration count unreadable during the rollback: exit 2" "$st" 2
 eq "  NOTHING restored on a guess" "$(grep -c dropdb "$S/calls")" 0
 eq "  and it says so" "$(grep -c 'nothing is restored on a guess' "$tmp/out")" 1
 
-fake_reset "$O" 2026.8.0; echo "pull" >"$S/signal-on"
+fake_reset "$O" 2026.8.0; echo "pull --quiet" >"$S/signal-on"
 run_deploy; st=$?
 eq "interrupted before any change: exit 1" "$st" 1
 eq "  saying nothing was changed" "$(grep -c 'interrupted (TERM) before any change' "$tmp/out")" 1
@@ -605,6 +699,18 @@ fake_reset "$O" 2026.8.0; touch "$S/df-fails"
 run_deploy; st=$?
 eq "df fails: refused, exit 1" "$st" 1
 eq "  its host path is not in the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
+eq "  an ::error:: says the root filesystem could not be read" "$(grep -c "^::error.*the root filesystem's use could not be read" "$tmp/out")" 1
+fake_reset "$O" 2026.8.0; touch "$S/df-dir-fails"
+run_deploy; st=$?
+eq "df fails on the dump directory alone: refused, exit 1" "$st" 1
+eq "  an ::error:: says its free space could not be read" "$(grep -c "^::error.*the dump directory's free space could not be read" "$tmp/out")" 1
+eq "  nothing dumped" "$(grep -c pg_dump "$S/calls")" 0
+eq "  its host path is not in the log" "$(grep -cF "$tmp/dumps" "$tmp/out")" 0
+fake_reset "$O" 2026.8.0; touch "$S/labelfail"
+run_deploy; st=$?
+eq "a compose label that cannot be read: refused, exit 1" "$st" 1
+eq "  an ::error:: names the label, not a silent exit" "$(grep -c '^::error.*compose label working_dir could not be read' "$tmp/out")" 1
+eq "  docker's message, which names the host path, is not relayed" "$(grep -cF "$S/dir" "$tmp/out")" 0
 fake_reset "$pin" 2026.1.0; touch "$S/cp-fails"
 run_deploy; st=$?
 eq "the .env backup's cp fails: refused, exit 1" "$st" 1
@@ -667,6 +773,31 @@ eq "a stable keeps a newer MiConnect (--newer keep), a pre-release refuses it (-
 eq "  and the stable applies no blueprint onto a kept newer version (the deploy step's outcome)" \
   "$(grep -A1 -F -- "- name: Apply MiConnect's blueprints" .github/workflows/serve-prod.yml | grep -cF "if: \${{ steps.miconnect-version.outputs.outcome != 'kept-newer' }}")/$(grep -A1 -F -- '- name: Put MiConnect on the pinned authentik version' .github/workflows/serve-prod.yml | grep -c 'id: miconnect-version$')" 1/1
 
+if before .github/workflows/serve-dev.yml "Refuse early what would stop the test MiConnect's upgrade" "Render the dev environment"; then
+  pass "a pre-release refuses what would stop the test MiConnect FIRST, before dev's environment is rendered"
+else fail "the pre-release's MiConnect preflight is missing or comes after the render"; fi
+eq "  with the rehearsal and the preflight of the test stack" \
+  "$(grep -c 'deploy-stack.sh rehearsal --project miconnect-test --production miconnect$' .github/workflows/serve-dev.yml)/$(grep -c 'deploy-stack.sh preflight --project miconnect-test --newer refuse$' .github/workflows/serve-dev.yml)" 1/1
+if before .github/workflows/serve-prod.yml "Refuse early what would stop MiConnect's upgrade" "Render production's environment"; then
+  pass "a stable refuses what would stop MiConnect FIRST, before production's environment is rendered"
+else fail "the stable's MiConnect preflight is missing or comes after the render"; fi
+eq "the daily job runs the preflight on both stacks, each with its release's --newer" \
+  "$(grep -c 'deploy-stack.sh preflight --project miconnect --newer keep' .github/workflows/scheduled.yml)/$(grep -c 'deploy-stack.sh preflight --project miconnect-test --newer refuse' .github/workflows/scheduled.yml)" 1/1
+eq "  and draws no deployment row (deployment: false)" \
+  "$(awk '$0 == "  drift:" { j = 1; next } j && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit } j && /^      deployment: false$/ { n++ } END { print n + 0 }' .github/workflows/scheduled.yml)" 1
+eq "the blueprints' dry run and apply reach the public log redacted" \
+  "$(grep -c 'apply-blueprints.sh dry-run 2>&1 | ak_redact_blueprint_output$' .github/workflows/serve-dev.yml)/$(grep -c 'apply-blueprints.sh apply 2>&1 | ak_redact_blueprint_output$' .github/workflows/serve-prod.yml)" 1/1
+
+echo "the rehearsal verdict:"
+eq "production already on the pin: ok" "$(ak_rehearsal_verdict 2026.8.5 2026.7.0 2026.8.5)" ok
+eq "the test stack on production's version: ok" "$(ak_rehearsal_verdict 2026.8.0 2026.8.0 2026.8.5)" ok
+case "$(ak_rehearsal_verdict 2026.8.0 2026.7.0 2026.8.5)" in fail:*2026.7.0*2026.8.0*) pass "another version than production's: fail, naming both" ;; *) fail "a rehearsal from another version passes" ;; esac
+case "$(ak_rehearsal_verdict 2026.8.0 2026.8.5 2026.8.5)" in warn:*) pass "already on the pin while production is not: a warning (an earlier pre-release upgraded it)" ;; *) fail "an already-upgraded test stack is not a warning" ;; esac
+case "$(ak_rehearsal_verdict '' 2026.8.0 2026.8.5)" in fail:*) pass "an unreadable tag: fail" ;; *) fail "an unreadable tag passes" ;; esac
+
+echo "a HELD blueprint's notice survives the redaction (it names a file, never a value):"
+eq "  kept whole" "$(printf '::warning title=MiConnect blueprint HELD::held/90-x.yaml is NOT applied - held by the user\x27s decision, see docs/wiki/backlog.md\n' | ak_redact_blueprint_output | grep -c '^::warning title=MiConnect blueprint HELD::held/90-x.yaml is NOT applied')" 1
+
 echo "the blueprint drift report fails on a hand edit and passes on none:"
 cat >"$tmp/applier-drift" <<'EOF'
 #!/usr/bin/env bash
@@ -674,13 +805,20 @@ echo '[miconnect-blueprints] CHANGED  50-providers.yaml#04 authentik_providers_o
 echo '[miconnect-blueprints] CHANGED  odd-shape: "private-value"'
 echo '[miconnect-blueprints] 2 change(s)'
 EOF
-printf '#!/usr/bin/env bash\necho "[miconnect-blueprints] 0 change(s)"\n' >"$tmp/applier-clean"
-bash infrastructure/authentik/blueprint-drift.sh "$tmp/applier-clean" >/dev/null 2>&1
+# shellcheck disable=SC2016 # the applier's own `$2`, written literally into it.
+printf '#!/usr/bin/env bash\necho "$2" >"%s"\necho "[miconnect-blueprints] 0 change(s)"\n' "$tmp/applier-container" >"$tmp/applier-clean"
+# The worker is found by its compose labels, through the fake docker of the stack above.
+fake_reset "$pin" "$pin_tag"
+PATH="$tmp/bin:$PATH" bash infrastructure/authentik/blueprint-drift.sh "$tmp/applier-clean" >/dev/null 2>&1
 eq "no change: exit 0" "$?" 0
-out="$(bash infrastructure/authentik/blueprint-drift.sh "$tmp/applier-drift" 2>&1)"
+eq "  the dry run ran in the worker found by its compose labels" "$(cat "$tmp/applier-container" 2>/dev/null)" worker-id
+out="$(PATH="$tmp/bin:$PATH" bash infrastructure/authentik/blueprint-drift.sh "$tmp/applier-drift" 2>&1)"
 eq "a change: exit 1" "$?" 1
 eq "  the object and field that changed are printed" "$(grep -c 'CHANGED  50-providers.yaml#04 authentik_providers_oauth2.oauth2provider .redirect_uris$' <<<"$out")" 1
 eq "  their values are not, nor a line of an unexpected shape" "$(grep -c 'private' <<<"$out")" 0
+fake_reset "$pin" "$pin_tag"; : >"$S/worker"
+out="$(PATH="$tmp/bin:$PATH" bash infrastructure/authentik/blueprint-drift.sh "$tmp/applier-clean" 2>&1)"
+eq "no running worker in project miconnect: exit 1, no verdict" "$?/$(grep -c '^::error.*expected exactly one running worker' <<<"$out")" 1/1
 
 echo
 if [ "$failures" -ne 0 ]; then

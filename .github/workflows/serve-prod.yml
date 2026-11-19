@@ -113,6 +113,16 @@ jobs:
           git reset --hard "$INPUT_SHA"
           echo "production tree at $(git rev-parse --short HEAD)"
 
+      # WHAT WOULD STOP MICONNECT'S UPGRADE, REFUSED FIRST AND BY NAME (review of #3486, 2026-11-19),
+      # before production's environment is rendered: read-only, nothing changes. The deploy's own
+      # read-only half: its decision and, for an upgrade, compose's proof that the up changes the tag
+      # and nothing else, refused here with the exact hand command when the host's files differ.
+      - name: Refuse early what would stop MiConnect's upgrade
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect --newer keep
+
       # Renders infrastructure/.env for production and NOTHING ELSE, from the unprefixed secrets.
       # The list is the manifest's own `secret:` rows that production does not skip; a row added
       # there and not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives
@@ -346,12 +356,17 @@ jobs:
       # NOT ON A KEPT NEWER VERSION: CI proved this tree's blueprints on this tree's pin, and an OLDER
       # release's blueprints applied onto a newer authentik would write an old configuration over a
       # newer one. The health check below still runs.
+      #
+      # THE JOB LOG IS PUBLIC: the applier's output is redacted (release-lib.sh,
+      # ak_redact_blueprint_output) - which object and field changed, never the values. `pipefail`
+      # keeps the applier's own status.
       - name: Apply MiConnect's blueprints
         if: ${{ steps.miconnect-version.outputs.outcome != 'kept-newer' }}
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          bash infrastructure/authentik/apply-blueprints.sh apply
+          . infrastructure/authentik/release-lib.sh
+          bash infrastructure/authentik/apply-blueprints.sh apply 2>&1 | ak_redact_blueprint_output
 
       # HEALTH CHECKED AFTER BOTH: the version and the configuration. The same checks the deploy
       # above ends on, changing nothing - a blueprint that broke sign-in fails here, before

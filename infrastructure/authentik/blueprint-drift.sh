@@ -20,7 +20,16 @@ here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/release-lib.sh"
 
 applier="${1:?usage: blueprint-drift.sh <released apply-blueprints.sh> [worker container]}"
-container="${2:-miconnect-worker-1}"
+# THE WORKER IS FOUND BY ITS COMPOSE LABELS (project `miconnect`, service `worker`), as deploy-stack.sh
+# finds it, never by a container name a recreate under another project name would change.
+container="${2:-}"
+if [ -z "$container" ]; then
+  container="$(docker ps -q --filter label=com.docker.compose.project=miconnect --filter label=com.docker.compose.service=worker 2>/dev/null || true)"
+  if [ "$(printf '%s\n' "$container" | grep -c .)" -ne 1 ]; then
+    echo "::error title=MiConnect blueprint drift::expected exactly one running worker in compose project miconnect, found $(printf '%s\n' "$container" | grep -c .) - no dry run, so no verdict"
+    exit 1
+  fi
+fi
 
 # THE JOB LOG IS PUBLIC: what is printed is the redacted output (ak_redact_blueprint_output) - which
 # object and which field changed, never the values, which can be callbacks, names or addresses.

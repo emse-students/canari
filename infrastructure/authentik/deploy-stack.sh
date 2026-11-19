@@ -10,16 +10,20 @@
 #   deploy-stack.sh health --project <compose project> [--compose <pinning compose.yml>] [--oidc-slug canari]
 #   deploy-stack.sh access --project <compose project>
 #   deploy-stack.sh prune  --project <compose project>
+#   deploy-stack.sh preflight --project <compose project> [--compose <pinning compose.yml>] [--newer keep|refuse]
+#   deploy-stack.sh rehearsal --project <test project> --production <production project> [--compose <pinning compose.yml>]
 #
 # deploy: decides from the RUNNING images and the `.env` tag line (release-lib.sh, ak_decide) and
-#   restarts only when they differ from the pin. Before a change: the image is pulled; compose, in a
-#   scrubbed environment, proves it would run the pin AND (dry run, with the tag each container runs)
-#   that nothing else differs between the host's files and what runs; the free space is checked, the
+#   restarts only when they differ from the pin. Before a change: compose, in a scrubbed environment,
+#   proves it would run the pin AND (dry run, with the tag each container runs) that nothing else
+#   differs between the host's files and what runs; the root disk's 85 % ceiling is checked against
+#   the image and the dump, the image pulled ANONYMOUSLY; the dump directory's free space is checked, the
 #   database dumped and the dump read IN FULL; the database's state is read (db_state: Django's
 #   migration count AND authentik's own version row, which its system migrations add). Then `.env` is backed up and
 #   its line rewritten, and `server` and `worker` alone are recreated (`--no-deps`: postgres keeps
 #   running). After: Docker's own health verdict for both, both running the pin, `/-/health/live/`,
-#   `/-/health/ready/` and the OIDC discovery document. A failure rolls back - server and worker
+#   `/-/health/ready/` and the OIDC discovery document (each probe asked up to AK_PROBE_ATTEMPTS
+#   times in a row before it fails). A failure rolls back - server and worker
 #   stopped, the state read again, the old tag, the dump restored only when the state MOVED - and
 #   exits non-zero. The same after-checks also close the no-restart outcomes.
 #   --newer: what a stack already NEWER than the pin gets. `refuse` (the default, the pre-release):
@@ -35,6 +39,12 @@
 #   newest copies and none taken more than 30 days ago (release-lib.sh, ak_prune_select). The deploy
 #   prunes on every outcome that keeps the stack (no-op, record, upgrade); the daily `drift` job
 #   prunes too, so a copy expires on time when no release comes.
+# preflight: the deploy's read-only half - the decision and, when it is an upgrade, compose's proof
+#   that the up would change the tag and nothing else - then exit, changing nothing. Run FIRST by both
+#   release jobs and every morning by the `drift` job, so a stack the release would refuse is named,
+#   with the exact hand command, before a release reaches its MiConnect step.
+# rehearsal: the pre-release's test stack must start from the version PRODUCTION runs, or it would
+#   rehearse an upgrade the stable never makes (release-lib.sh, ak_rehearsal_verdict); read-only.
 #
 # WHAT IT DOES NOT DEPLOY: the stack's compose.yml and `.env` beyond that one line. The stack's
 # directory, compose files and project are read from the running containers' compose labels, so no
@@ -63,22 +73,25 @@ project=""
 compose="$here/compose.yml"
 oidc_slug="canari"
 newer_policy="refuse"
+production_project=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --project) project="$2"; shift 2 ;;
     --compose) compose="$2"; shift 2 ;;
     --oidc-slug) oidc_slug="$2"; shift 2 ;;
     --newer) newer_policy="$2"; shift 2 ;;
+    --production) production_project="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
-case "$mode" in deploy | health | access | prune) ;; *)
-  echo "usage: deploy-stack.sh deploy|health|access|prune --project <name> [--compose <file>] [--oidc-slug <slug>]" >&2
+case "$mode" in deploy | health | access | prune | preflight | rehearsal) ;; *)
+  echo "usage: deploy-stack.sh deploy|health|access|prune|preflight|rehearsal --project <name> [--compose <file>] [--oidc-slug <slug>] [--newer keep|refuse] [--production <name>]" >&2
   exit 64
   ;;
 esac
 [ -n "$project" ] || { echo "::error::--project is required" >&2; exit 64; }
 case "$newer_policy" in keep | refuse) ;; *) echo "::error::--newer is keep or refuse, not '$newer_policy'" >&2; exit 64 ;; esac
+if [ "$mode" = rehearsal ] && [ -z "$production_project" ]; then echo "::error::rehearsal needs --production <project>" >&2; exit 64; fi
 
 # THE COMPOSE FILE AS THE PUBLIC LOG MAY NAME IT: relative to the repository, or not at all - an
 # absolute path names the runner's work directory.
@@ -134,12 +147,13 @@ if [ "$mode" = prune ]; then
   exit 0
 fi
 
-# container_of <service> - the ONE running container of a service of this project, or empty.
+# container_of <service> [<project>] - the ONE running container of a service of this project (or of
+# <project>), or empty.
 container_of() {
-  local ids
-  ids="$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$1")"
+  local ids in="${2:-$project}"
+  ids="$(docker ps -q --filter "label=com.docker.compose.project=$in" --filter "label=com.docker.compose.service=$1")"
   if [ "$(printf '%s\n' "$ids" | grep -c .)" -gt 1 ]; then
-    err "more than one running $1 container in project $project"
+    err "more than one running $1 container in project $in"
     exit 1
   fi
   printf '%s\n' "$ids"
@@ -167,8 +181,14 @@ done
 # the log is public.
 env_file=""
 if [ -n "$server_id" ]; then
-  stack_dir="$(label_of "$server_id" com.docker.compose.project.working_dir)"
-  config_files="$(label_of "$server_id" com.docker.compose.project.config_files)"
+  # A LABEL THAT CANNOT BE READ IS SAID, never a silent `set -e` exit that ends the job red with no
+  # line naming why. Docker's own message can name a host path, so it is not relayed.
+  stack_dir="$(label_of "$server_id" com.docker.compose.project.working_dir 2>/dev/null || true)"
+  [ -n "$stack_dir" ] ||
+    { err "the server container's compose label working_dir could not be read, so the stack's directory is unknown - nothing was changed"; exit 1; }
+  config_files="$(label_of "$server_id" com.docker.compose.project.config_files 2>/dev/null || true)"
+  [ -n "$config_files" ] ||
+    { err "the server container's compose label config_files could not be read, so the stack's compose files are unknown - nothing was changed"; exit 1; }
   env_file="$stack_dir/.env"
 fi
 env_access_ok() { [ -n "$env_file" ] && [ -r "$env_file" ] && [ -w "$env_file" ]; }
@@ -183,6 +203,20 @@ fi
 
 pin="$(ak_pin_image "$compose" 2>&1)" || { err "cannot read the pinned image from $compose_shown: $pin"; exit 1; }
 pin_tag="$(ak_tag_of "$pin")"
+
+# THE PRE-RELEASE REHEARSES PRODUCTION'S UPGRADE, or says it cannot (review of #3486, 2026-11-19):
+# both tags are read from the `server` each stack RUNS.
+if [ "$mode" = rehearsal ]; then
+  test_tag="$(ak_tag_of "$(image_of "$server_id")")"
+  production_tag="$(ak_tag_of "$(image_of "$(container_of server "$production_project")")")"
+  verdict="$(ak_rehearsal_verdict "$production_tag" "$test_tag" "$pin_tag")"
+  case "$verdict" in
+    ok) log "rehearsal: the test stack runs ${test_tag:-?}, production ${production_tag:-?}, the pin is $pin_tag - the stable's upgrade is the one rehearsed" ;;
+    warn:*) echo "::warning title=MiConnect ($project)::${verdict#warn:}" ;;
+    *) err "${verdict#fail:}. Nothing was changed."; exit 1 ;;
+  esac
+  exit 0
+fi
 
 # migrations - django_migrations' row count, or empty when it cannot be read. What the health wait
 # watches rise while a migration runs.
@@ -243,6 +277,38 @@ wait_healthy() {
   done
 }
 
+# probe <what> <command...> - the command, asked up to `probe_attempts` times in a row before its
+# failure is a verdict (review of #3486, 2026-11-19). Docker already called the container healthy when
+# a probe runs, and a probe's failure can lead to a rollback that DROPS the database and restores the
+# dump: one answer missed by a server still warming its workers is not the proof such a repair needs,
+# N consecutive misses are. A COUNT decides, never a clock: the pause between two asks only spaces
+# them, and no outcome depends on how long anything took.
+probe_attempts="${AK_PROBE_ATTEMPTS:-5}"
+probe() {
+  local what="$1" n=1
+  shift
+  while :; do
+    if "$@"; then return 0; fi
+    if [ "$n" -ge "$probe_attempts" ]; then
+      err "$what failed $n times in a row"
+      return 1
+    fi
+    log "$what did not answer (attempt $n of $probe_attempts); asking again"
+    sleep "$poll_seconds"
+    n=$((n + 1))
+  done
+}
+
+# oidc_discovery_ok <port> - the discovery document answers and names an issuer.
+oidc_discovery_ok() {
+  local body
+  body="$(curl -fsS --max-time 10 "http://127.0.0.1:$1/application/o/$oidc_slug/.well-known/openid-configuration" || true)"
+  case "$body" in
+    *'"issuer"'*'"authorization_endpoint"'* | *'"authorization_endpoint"'*'"issuer"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # after_checks <expected-tag> - both containers healthy, both on the tag, the endpoints answering.
 after_checks() {
   local expected="$1" service id running address port body
@@ -262,16 +328,9 @@ after_checks() {
   [ -n "$address" ] || { err "the server publishes no port 9000"; return 1; }
   port="${address##*:}"
   for path in /-/health/live/ /-/health/ready/; do
-    if ! curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$port$path"; then
-      err "GET $path did not answer 2xx"
-      return 1
-    fi
+    probe "GET $path" curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$port$path" || return 1
   done
-  body="$(curl -fsS --max-time 10 "http://127.0.0.1:$port/application/o/$oidc_slug/.well-known/openid-configuration" || true)"
-  case "$body" in
-    *'"issuer"'*'"authorization_endpoint"'* | *'"authorization_endpoint"'*'"issuer"'*) ;;
-    *) err "the OIDC discovery document of '$oidc_slug' is missing or has no issuer"; return 1 ;;
-  esac
+  probe "the OIDC discovery document of '$oidc_slug' (with an issuer)" oidc_discovery_ok "$port" || return 1
   log "checks passed: server and worker healthy on $expected, health endpoints and OIDC discovery answer"
 }
 
@@ -291,6 +350,16 @@ env_before="$(cat -- "$env_file" 2>/dev/null)" || { err "the stack's .env could 
 env_tag="$(printf '%s\n' "$env_before" | ak_env_tag)"
 decision="$(ak_decide "$pin" "$old_server" "$old_worker" "$env_tag" "$newer_policy")"
 log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env tag=${env_tag:-unset} -> $decision"
+
+# PREFLIGHT ASKS ONLY WHAT THE DEPLOY WOULD REFUSE: a refusal, or an upgrade whose compose proof (below)
+# fails. A no-op, a record or a kept newer version restarts nothing, so compose has nothing to prove.
+if [ "$mode" = preflight ]; then
+  case "$decision" in
+    refuse:*) err "${decision#refuse:}. Nothing was changed."; exit 1 ;;
+    upgrade) ;;
+    *) log "preflight: $decision - nothing restarts, so nothing more to prove"; exit 0 ;;
+  esac
+fi
 
 # EVERY FILE THIS RUN WRITES (dump, `.env` backup, logs) is the runner's, mode 0600, in a 0700 tree.
 umask 077
@@ -446,9 +515,8 @@ compose_cmd() {
 }
 [ -n "$pg_id" ] || { err "no running postgresql container - nothing to dump, so nothing is changed"; exit 1; }
 
-# 1. Everything that can fail without touching the stack, first.
-log "pulling $pin"
-docker pull --quiet "$pin" >/dev/null || { err "cannot pull $pin - nothing was changed"; exit 1; }
+# 1. Everything that can fail without touching the stack, first - and READ-ONLY up to the end of the
+# dry run, which is the whole of `preflight`.
 images="$(compose_cmd --errlog "AUTHENTIK_TAG=$pin_tag" config --images)" ||
   { err "docker compose cannot read the stack's configuration (its messages: $(shown "$compose_log")) - nothing was changed"; exit 1; }
 if ! grep -qxF "$pin" <<<"$images"; then
@@ -466,17 +534,64 @@ for service in server worker; do
   printf '%s\n' "$plan" >>"$compose_log"
   [ "$st" -eq 0 ] || { err "docker compose's dry run of $service failed (its messages: $(shown "$compose_log")) - nothing was changed"; exit 1; }
   if ak_dry_run_recreates <<<"$plan"; then
-    err "with the tag $service already runs ($running_tag), compose would still recreate it: the host's compose file or .env differ from what runs, and the upgrade would apply that difference too. Recreate the stack on its current version by hand first (docker compose up -d in its directory), or bring its files back to what runs. Nothing was changed."
+    # THE EXACT HAND STEP, said where it is needed: no secret in it, and no host path (the directory is
+    # named by the label that holds it).
+    err "with the tag $service already runs ($running_tag), compose would still recreate it: the host's compose file or .env differ from what runs, and the upgrade would apply that difference too. By hand, on the host, in the stack's directory (its containers' com.docker.compose.project.working_dir label): read what differs with 'AUTHENTIK_TAG=$running_tag docker compose --dry-run up -d --no-deps server worker', then recreate the stack on the version it runs with 'AUTHENTIK_TAG=$running_tag docker compose up -d --no-deps server worker' (sign-in on $project down about a minute) - or bring its files back to what runs. Then re-run this job. Nothing was changed."
     exit 1
   fi
 done
+if [ "$mode" = preflight ]; then
+  log "preflight passed: the upgrade from $old_tag to $pin_tag would change the tag and nothing else"
+  exit 0
+fi
+
+# THE SHARED HOST'S ROOT DISK STAYS UNDER ITS CEILING (85 %, the `hosts` report's DISK_FAIL_PERCENT;
+# docs/wiki/infrastructure/host-updates.md, "The root disk"). What this run adds there: the new image,
+# estimated by the size of the image it replaces (an authentik release of the same line; the layers
+# they share make the real download smaller, so the estimate errs towards refusing), 0 when the pin is
+# already present; and the dump, bounded by the database's size.
+disk_ceiling="${AK_DISK_CEILING_PERCENT:-85}"
+db_bytes="$(docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT pg_database_size(current_database())"' 2>/dev/null | tr -d '[:space:]' || true)"
+if docker image inspect "$pin" >/dev/null 2>&1; then
+  image_bytes=0
+else
+  image_bytes="$(docker image inspect -f '{{.Size}}' "$old_server" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+root_line="$(df -Pk / 2>>"$compose_log" | awk 'NR == 2 { print $3, $2 }' || true)"
+read -r root_used_kb root_size_kb <<<"$root_line"
+if [ -z "${root_size_kb:-}" ]; then
+  err "the root filesystem's use could not be read (df's messages: $(shown "$compose_log")), so the host's 85 % ceiling cannot be checked - nothing was changed"
+  exit 1
+fi
+# An unreadable size leaves `added` empty, which ak_disk_ceiling_ok refuses: never taken as 0.
+added=""
+if [[ "${image_bytes:-}" =~ ^[0-9]+$ ]] && [[ "${db_bytes:-}" =~ ^[0-9]+$ ]]; then added=$((image_bytes + db_bytes)); fi
+if ! ak_disk_ceiling_ok "$root_used_kb" "$root_size_kb" "$added" "$disk_ceiling"; then
+  err "the new image (about ${image_bytes:-?} bytes, measured on the image it replaces) and the dump (up to ${db_bytes:-?} bytes) would take the root filesystem past its $disk_ceiling % ceiling ($root_used_kb of $root_size_kb KiB used) - the shared host's rule (docs/wiki/infrastructure/host-updates.md). Nothing was changed."
+  exit 1
+fi
+
+# THE PULL IS ANONYMOUS: the image is public, and the runner's own docker config can hold a STALE login
+# to ghcr.io - the estate's deploy logs in with the job's github.token (deploy-environment.sh), which
+# expires with that job, and a daemon handed an expired credential refuses the pull rather than
+# falling back to none. A private, empty DOCKER_CONFIG for this one call carries no credential at all;
+# DOCKER_HOST is still honoured, and the runner uses the default context.
+pull_config="$(mktemp -d 2>/dev/null)" || { err "no temporary directory for the anonymous pull - nothing was changed"; exit 1; }
+log "pulling $pin (anonymously)"
+pulled=0
+DOCKER_CONFIG="$pull_config" docker pull --quiet "$pin" >/dev/null || pulled=$?
+rm -rf -- "$pull_config"
+[ "$pulled" -eq 0 ] || { err "cannot pull $pin - nothing was changed"; exit 1; }
 state_before="$(db_state)"
 [[ "$state_before" =~ ^[0-9]+:[0-9]+$ ]] ||
   { err "cannot read django_migrations and authentik_version_history - the database is not answering, or is not an authentik database of a version this release knows; nothing is changed"; exit 1; }
 
 # 2. The dump: room for it first, then read back IN FULL before it is trusted.
-db_bytes="$(docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT pg_database_size(current_database())"' 2>/dev/null | tr -d '[:space:]' || true)"
-avail_kb="$(df -Pk "$dump_dir" 2>>"$compose_log" | awk 'NR == 2 { print $4 }')"
+avail_kb="$(df -Pk "$dump_dir" 2>>"$compose_log" | awk 'NR == 2 { print $4 }' || true)"
+if [ -z "$avail_kb" ]; then
+  err "the dump directory's free space could not be read (df's messages: $(shown "$compose_log")) - nothing is changed"
+  exit 1
+fi
 if ! ak_space_ok "$db_bytes" "$avail_kb"; then
   err "no room for the dump: the database is ${db_bytes:-?} bytes and the dump directory has ${avail_kb:-?} KiB free (twice the database is asked) - nothing is changed"
   exit 1

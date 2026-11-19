@@ -11,7 +11,13 @@ LITTERAL dans `compose.yml` pour que Dependabot la suive. Un pre-release met la 
 `deploy-stack.sh` : rien ne redemarre si ce qui TOURNE est deja la version epinglee ; sinon dump de
 la base, ligne `AUTHENTIK_TAG` du `.env` reecrite, `server` et `worker` recrees seuls, puis
 verification (sante Docker, `/-/health/ready/`, decouverte OIDC) et retour arriere automatique en
-cas d echec. Ce pas passe AVANT le deploiement de l estate : un echec arrete la release entiere. Les
+cas d echec. Ce pas passe AVANT le deploiement de l estate : un echec arrete la release entiere.
+Avant lui, en lecture seule, `deploy-stack.sh preflight` (et `rehearsal` sur un pre-release : la
+stack de test doit partir de la version de production) refuse des le debut du job ce qui
+l arreterait, en nommant la commande a lancer a la main ; le job quotidien `drift` le lance chaque
+matin. **Premier pre-release apres la fusion : recreer d abord a la main `server` et `worker` de la
+stack de test sur la version qu ils font tourner**
+([l ordre](../../docs/wiki/infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)). Les
 copies de retour arriere (dump, `.env`, journaux) restent 3 par type et 30 jours au plus (le
 proprietaire, 2026-11-19), purgees par chaque release et par le job quotidien `drift`. Le compte du runner doit pouvoir lire et ecrire le `.env` de chaque stack
 ([MIGRATION](../MIGRATION.md)). Le detail et ses raisons : le

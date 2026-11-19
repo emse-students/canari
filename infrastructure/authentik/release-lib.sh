@@ -217,6 +217,38 @@ ak_space_ok() {
   [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [ "$(($2 * 1024))" -ge "$(($1 * 2))" ]
 }
 
+# ak_disk_ceiling_ok <used-kilobytes> <size-kilobytes> <added-bytes> <ceiling-percent>  - true when the
+# root filesystem, with <added-bytes> more written to it, stays at or under <ceiling-percent> of its
+# size: the shared host's 85 % (docs/wiki/infrastructure/host-updates.md, "The root disk", the same
+# DISK_FAIL_PERCENT the daily `hosts` report turns red at). False when any number is unreadable.
+ak_disk_ceiling_ok() {
+  [[ "$1" =~ ^[0-9]+$ ]] && [[ "$2" =~ ^[0-9]+$ ]] && [[ "$3" =~ ^[0-9]+$ ]] && [[ "$4" =~ ^[0-9]+$ ]] &&
+    [ "$2" -gt 0 ] && [ "$(((($1 * 1024) + $3) * 100))" -le "$(($4 * $2 * 1024))" ]
+}
+
+# ak_rehearsal_verdict <production-tag> <test-tag> <pin-tag>  - does this pre-release's test stack
+# rehearse the upgrade the stable will make to PRODUCTION (review of #3486, 2026-11-19)?
+#   ok            production already runs the pin (the stable changes nothing there), or the test
+#                 stack starts from production's version
+#   fail:<why>    the test stack must still upgrade, from ANOTHER version than production's: the
+#                 rehearsal would prove a path the stable never takes
+#   warn:<why>    the test stack already runs the pin and production does not: an EARLIER pre-release
+#                 made the upgrade, and from which version is not in the running state any more. Not
+#                 a failure: refusing it would refuse every later pre-release of the same version.
+#                 Its evidence is that earlier run's log, and its dump's name (`<from>-to-<pin>`).
+ak_rehearsal_verdict() {
+  local prod="$1" test="$2" pin="$3"
+  if [ -z "$prod" ] || [ -z "$test" ] || [ -z "$pin" ]; then
+    echo "fail:a running tag could not be read (production '${prod:-?}', test '${test:-?}', pin '${pin:-?}')"
+  elif [ "$prod" = "$pin" ] || [ "$test" = "$prod" ]; then
+    echo ok
+  elif [ "$test" = "$pin" ]; then
+    echo "warn:the test stack already runs $pin and production runs $prod: the upgrade was rehearsed by an earlier pre-release, from a version the running state no longer shows"
+  else
+    echo "fail:the test stack runs $test and production runs $prod: upgrading the test stack to $pin would rehearse $test -> $pin, not the $prod -> $pin the stable will make. Put the test stack on $prod first"
+  fi
+}
+
 # ak_prune_select <now-stamp> <keep> <max-days>  - reads the basenames of one stack's dump directory on
 # stdin and prints those that must go (owner, 2026-11-19: "3 copies et 30 jours au plus"): per kind,
 # everything beyond the <keep> newest AND everything taken more than <max-days> before <now-stamp>.
@@ -279,6 +311,8 @@ ak_redact_blueprint_output() {
       else print "[miconnect-blueprints] CHANGED (a line of an unexpected shape, withheld whole)"
       next
     }
+    # A HELD blueprint is named by apply-blueprints.sh with its file name alone: kept, it is a notice.
+    /^::warning title=MiConnect blueprint HELD::held\/[A-Za-z0-9._-]+ is NOT applied/ { print; next }
     /^\[miconnect-blueprints\]   / { withheld++; next }
     /^\[miconnect-blueprints\] / { print; next }
     NF { withheld++ }
