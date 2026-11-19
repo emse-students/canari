@@ -16,8 +16,17 @@
    * the live again.
    */
   import { onMount, tick } from 'svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
+  import {
+    LoaderCircle,
+    MessageCircle,
+    MessageCircleOff,
+    Radio,
+    Share2,
+    VolumeX,
+    X,
+  } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
@@ -39,6 +48,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
+  import { playRejectionName } from '$lib/utils/videoAutoplay';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
@@ -86,6 +96,10 @@
    * in the other orientation sees the whole picture with bars. Released at unmount.
    */
   const orientation = useScreenOrientation('live-viewer');
+
+  // THE LIVE STARTS WITH SOUND (owner, 2026-11-19): decided here, before the `<video>` mounts, so
+  // `followVideoSound` opens the element at the answer. A hand-muted session stays muted.
+  videoSound.startForLive();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -166,8 +180,11 @@
         try {
           await el.play();
         } catch (e) {
-          if (el.muted) throw e;
-          console.warn(`[LIVE] viewer: play() with sound refused (${String(e)}) - muted`);
+          // Classified by the exception's TYPE (`name`), never its message.
+          if (el.muted || playRejectionName(e) !== 'NotAllowedError') throw e;
+          console.warn(
+            `[LIVE] viewer: play() with sound refused (${playRejectionName(e)}, #${videoSound.refusedStarts + 1} this session) - muted, "enable sound" offered`
+          );
           videoSound.muteForRefusedStart();
           el.muted = true;
           await el.play();
@@ -451,6 +468,17 @@
     </div>
 
     <LiveReactionsLayer bind:this={reactions} />
+
+    <!-- The engine refused the sound (no gesture): one clear button, never a silent live with no way out. -->
+    {#if videoSound.startBlocked && !terminal}
+      <Button
+        class="absolute top-1/4 left-1/2 -translate-x-1/2"
+        onclick={toggleSound}
+        data-live-enable-sound
+      >
+        <VolumeX size={18} aria-hidden="true" />{m.live_viewer_enable_sound()}
+      </Button>
+    {/if}
 
     <LiveChatReportDialog
       liveId={live.id}

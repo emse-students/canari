@@ -170,3 +170,14 @@ describe('the volume level (owner, 2026-11-11)', () => {
     expect(videoSound.level).toBe(0.3);
   });
 });
+
+describe('what a live does at open (owner, 2026-11-19)', () => {
+  it('is audible unless muted by hand or the engine has seen no gesture', async () => {
+    const { decideLiveStart } = await import('./videoSound.svelte');
+    expect(decideLiveStart({ mutedByHand: false, audibleStartAllowed: true })).toBe('audible');
+    expect(decideLiveStart({ mutedByHand: true, audibleStartAllowed: true })).toBe('muted-by-hand');
+    expect(decideLiveStart({ mutedByHand: false, audibleStartAllowed: false })).toBe(
+      'muted-engine'
+    );
+  });
+});

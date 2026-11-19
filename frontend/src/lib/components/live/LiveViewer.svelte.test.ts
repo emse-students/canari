@@ -386,6 +386,75 @@ describe('LiveViewer', () => {
     expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
   });
 
+  /** THE LIVE STARTS WITH SOUND (owner, 2026-11-19), a hand mute holds, a cold engine gets the button. */
+  describe('the sound at open', () => {
+    const activation = (hasBeenActive: boolean) =>
+      Object.defineProperty(navigator, 'userActivation', {
+        value: { hasBeenActive },
+        configurable: true,
+      });
+    afterEach(() => Reflect.deleteProperty(navigator, 'userActivation'));
+
+    it('opens audible, even when a past session stored mute, with no button', async () => {
+      activation(true);
+      videoSound.setMuted(true);
+      localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+      // A fresh page session has not muted by hand: setMuted(false) then restoring the stored "off".
+      videoSound.setMuted(false);
+      localStorage.setItem(VIDEO_SOUND_KEY, 'off');
+      await render();
+      expect(videoSound.muted).toBe(false);
+      expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+      expect(localStorage.getItem(VIDEO_SOUND_KEY), 'opening writes no choice').toBe('off');
+    });
+
+    it('stays muted for a viewer who muted by hand this session', async () => {
+      activation(true);
+      videoSound.setMuted(true);
+      await render();
+      expect(videoSound.muted).toBe(true);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+    });
+
+    it('offers "Activer le son" when no gesture has happened, and the button turns it on', async () => {
+      activation(false);
+      videoSound.setMuted(false);
+      await render();
+      const button = document.querySelector<HTMLButtonElement>('[data-live-enable-sound]')!;
+      expect(button.textContent).toContain(m.live_viewer_enable_sound());
+      button.click();
+      flushSync();
+      expect(videoSound.muted).toBe(false);
+      expect(document.querySelector('[data-live-enable-sound]')).toBeNull();
+    });
+
+    it('a refused play() warns with the count, mutes, and offers the button', async () => {
+      activation(true);
+      videoSound.setMuted(false);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(function (
+        this: HTMLMediaElement
+      ) {
+        return this.muted
+          ? Promise.resolve()
+          : Promise.reject(new DOMException('no gesture yet', 'NotAllowedError'));
+      });
+      await render();
+      expect(videoSound.muted).toBe(true);
+      expect(videoSound.refusedStarts).toBeGreaterThan(0);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('NotAllowedError'))).toBe(true);
+      expect(document.querySelector('[data-live-enable-sound]')).not.toBeNull();
+    });
+
+    it('lays the reactions in a row in landscape, a column in portrait', async () => {
+      await render();
+      const bar = document.querySelector<HTMLElement>('[data-live-reactions]')!;
+      expect(bar.classList.contains('flex-col')).toBe(true);
+      expect(bar.classList.contains('landscape:flex-row')).toBe(true);
+    });
+  });
+
   /** A TAP NEVER MUTES (owner, 2026-11-10): it turns a muted sound on, with its glyph. */
   it('a tap on the picture turns the sound on, shows it, and never turns it off', async () => {
     await render();

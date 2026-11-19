@@ -25,6 +25,9 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
  *   there, before any gesture, this session starts muted and the stored "on" is left as it is, for the
  *   next tap to restore. That is a fact read once at start, never a refusal provoked to learn it.
  *
+ * A LIVE is the exception (owner, 2026-11-19): it opens audible whatever is stored, unless the reader
+ * muted by hand in this page session ({@link decideLiveStart}, `videoSound.startForLive`).
+ *
  * NOT YET: following the device volume (a muted glyph at volume 0). A WebView does not expose the
  * system volume; it needs a native bridge on each phone - the owed work is in
  * `docs/wiki/backlog.d/video-sound-follows-the-device-volume.md`.
@@ -103,6 +106,23 @@ export function initialVideoMuted(
   return !audibleStartAllowed;
 }
 
+/**
+ * WHAT A LIVE DOES AT OPEN, decided from facts (owner, 2026-11-19: *"activer le son directement"*).
+ * Opening a live is the reader's gesture, so it starts AUDIBLE - whatever a past session stored - unless
+ * the reader muted by hand in THIS page session, or the engine says no gesture has happened yet (a
+ * deep link opened cold): that is read from `userActivation`, never learned by a refused `play()`.
+ */
+export type LiveStartDecision = 'audible' | 'muted-by-hand' | 'muted-engine';
+
+/** Pure decision behind {@link videoSound.startForLive}. */
+export function decideLiveStart(facts: {
+  mutedByHand: boolean;
+  audibleStartAllowed: boolean;
+}): LiveStartDecision {
+  if (facts.mutedByHand) return 'muted-by-hand';
+  return facts.audibleStartAllowed ? 'audible' : 'muted-engine';
+}
+
 let muted = $state(
   typeof localStorage === 'undefined'
     ? true
@@ -115,6 +135,12 @@ const startingLevel = typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL 
 let level = $state(startingLevel);
 /** What the device has stored (or the default): `commitLevel` writes only a difference. */
 let persistedLevel = startingLevel;
+/** The reader pressed mute in THIS page session: a live then opens as they left it. */
+let mutedByHand = false;
+/** The sound is off because the ENGINE would not start it (not the reader): the viewer offers a button. */
+let startBlocked = $state(false);
+/** How many audible starts the engine refused this session, for the rate (warned at each). */
+let refusedStarts = 0;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
@@ -168,6 +194,8 @@ export const videoSound = {
     if (next === muted) return;
     Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video (remembered on this device)`);
     muted = next;
+    mutedByHand = next;
+    startBlocked = false;
     writeStored(next ? 'off' : 'on');
     // INSIDE THE READER'S GESTURE: a measured video's AudioContext is resumed here, where WebKit
     // honours it - never later, from the element's `volumechange` (loudnessPlayback.ts).
@@ -187,9 +215,39 @@ export const videoSound = {
    */
   muteForRefusedStart(): void {
     if (muted) return;
-    console.info(
-      '[VIDEO] an audible start was refused - silent for this session, the stored choice kept'
+    refusedStarts += 1;
+    console.warn(
+      `[VIDEO] an audible start was refused (#${refusedStarts} this session) - silent for this session, the stored choice kept`
     );
     muted = true;
+    startBlocked = true;
+  },
+  /** True while the sound is off because the engine refused it, not the reader: "Activer le son" shows. */
+  get startBlocked(): boolean {
+    return startBlocked;
+  },
+  /** The audible starts the engine refused this session. */
+  get refusedStarts(): number {
+    return refusedStarts;
+  },
+  /**
+   * A LIVE OPENS (see {@link decideLiveStart}): audible in memory, NOT remembered - the stored choice
+   * is the feed's, and a reader who muted before has not asked for a silent live. Returns the verdict.
+   */
+  startForLive(): LiveStartDecision {
+    const verdict = decideLiveStart({
+      mutedByHand,
+      audibleStartAllowed: engineAllowsAudibleStart(),
+    });
+    Log.d('VIDEO', `a live opens: ${verdict}`);
+    if (verdict === 'audible') {
+      muted = false;
+      startBlocked = false;
+      primeLoudnessAudio();
+    } else if (verdict === 'muted-engine') {
+      muted = true;
+      startBlocked = true;
+    }
+    return verdict;
   },
 };
