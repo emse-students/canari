@@ -50,7 +50,6 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
-- [P2 - the iPhone reading of the top inset's one owner](backlog.d/p2-ios-top-inset-counted-twice-reading.md)
 - [P2 - the slow-link chantier: no screen waits for the network to draw (owner, 2026-11-10; starts right after 1.6.10)](backlog.d/slow-link-local-first-chantier.md)
 - [P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed](backlog.d/weak-network-audit-2-what-is-left.md)
 - [P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open](backlog.d/audience-audit-2026-11-14.md)
@@ -81,7 +80,6 @@ earliest version, as a checklist.
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the iPhone's photo picker kept every item of a multiple pick](backlog.d/p2-the-iphone-photo-picker-loses-most-of-a-multiple-pick-silently.md)
 
 **P3 - hygiene**
 
@@ -92,7 +90,6 @@ earliest version, as a checklist.
 - [P3 - `frontend/` holds three Cargo lockfiles that one `mls-core` bump must all move: one workspace](backlog.d/p2-a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will.md)
 - [P3 - an unsigned restored message is only marked, and a history bundle has no byte cap per chunk](backlog.d/p2-signed-authorship-of-restored-history-built-2276-owed-rig-rows-and-a-version.md)
 - [P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s](backlog.d/p3-a-13-mb-upload-on-the-iphone-restarted-at-half-and-ran-at-40-to-65-kb-s.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the chips row of "Nouvelle discussion" holds its place](backlog.d/p3-a-chosen-person-s-chip-pushes-the-recent-list-under-the-finger.md)
 - [P3 - the dev estate logs one CSP `inline script` refusal on every page load](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
@@ -103,10 +100,8 @@ earliest version, as a checklist.
 - [P3 - EXIT-FORTIFY: closing the app on the Mi 9T logs `FORTIFY: pthread_mutex_lock called on a destroyed mutex` from the render thread](backlog.d/reading-owed-exit-fortify-closing-the-app-on-the-mi-9t-logged-fortify-pthread.md)
 - [P3 - a second reaction to the same message stacks on the iPhone, where Android replaces it](backlog.d/p3-a-second-reaction-to-the-same-message-stacks-on-the-iphone.md)
 - [P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns](backlog.d/p3-a-sent-file-s-bubble-that-failed-to-load-stays-failed-after-the-link-returns.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the error toast over a dialog is opaque](backlog.d/p3-an-error-toast-over-a-dialog-lets-the-text-under-it-show-through.md)
 - [P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)](backlog.d/p3-hidden-post-row-names-the-author-not-the-association.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - READ ON THE NEXT 1.7.1 PRE-RELEASE: the Thème control fits a doubled font](backlog.d/p3-the-theme-control-runs-off-the-screen-at-a-doubled-font.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)
 - [P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones](backlog.d/reading-owed-reel-overlay-tap-and-playback-bar.md)
 
@@ -116,9 +111,7 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
-- [ ] [a live viewer sent to the background mid-request retries instead of stopping (iPhone)](backlog.d/reading-owed-a-live-viewer-suspended-mid-request-retries.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
-- [ ] [the share targets are sent once, when the member leaves the app, after an account's first sync](backlog.d/reading-owed-the-share-targets-publish-during-a-first-sync.md)
 
 ## 1.7.2
 
@@ -179,6 +172,7 @@ _No entry planned beyond its readings._
 - [P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)
 - [P2 - iOS: a quick reply from a suspended app is not sent in the background time, it waits for the next open](backlog.d/p2-ios-quick-reply-from-a-suspended-app-waits-for-the-next-open.md)
 - [P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client](backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md)
+- [P2 - a tap on a shared CanaReel's card opens the post page, not the reels viewer](backlog.d/p2-a-shared-reel-card-opens-the-post-page-not-the-reels-viewer.md)
 
 **P3 - hygiene**
 
@@ -212,6 +206,8 @@ _No entry planned beyond its readings._
 - [P3 - the comment route accepts a comment with no text and no media, and pushes "Nouveau commentaire"](backlog.d/p3-the-comment-route-accepts-an-empty-comment-and-pushes-it.md)
 - [P3 - the iOS volume buttons do not reach the in-app camera: withdraw the iOS half of the volume shutter](backlog.d/p3-the-ios-volume-buttons-do-not-reach-the-in-app-camera-withdraw-the-ios-half.md)
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
+- [P3 - the iPhone sign-in helper misses the terms page's button when it is below the fold](backlog.d/p3-the-iphone-sign-in-helper-misses-a-terms-button-below-the-fold.md)
+- [P3 - the Thème control's "Automatique" label spills out of its segment at a doubled font](backlog.d/p3-the-theme-control-s-automatique-label-spills-out-of-its-segment-at-a-doubled-font.md)
 
 ## 1.9.0
 
