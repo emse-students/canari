@@ -699,6 +699,7 @@ value, the server's:
   probes did not land on, is `gone` (a case that cannot come from the purge job). A purge in front of existing media is never this. Never a black picture with a spinner
   and a seek stuck in `seeking`.
 
+
 ### The far-ahead trim follows the walk, not media time (alpha.4 defect, 2026-11-19)
 
 `trim` drops what lies beyond `far`, the position `REPLAY_FAR_AHEAD_S` of buffered media ahead across the
