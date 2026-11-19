@@ -321,11 +321,16 @@ export async function smokeLogin(o) {
       }
       answered = challenge.component;
       const csrf = jar.get('authentik_csrf');
+      // Django's CSRF check runs once the session is authenticated (the terms prompt after the
+      // password): it reads Origin when present, else on HTTPS the Referer, and refuses a POST
+      // carrying neither as an HTTP 500. The browser sends both from the flow page; so does this.
       res = await send(executor, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...json,
+          Referer: `${idp}/if/flow/${slug}/`,
+          Origin: new URL(idp).origin,
           ...(csrf ? { 'X-authentik-CSRF': csrf } : {}),
         },
         body: JSON.stringify(body),
