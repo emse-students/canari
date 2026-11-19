@@ -714,3 +714,12 @@ most `REPLAY_SEEK_RELOOKUPS` (3) times and only while that picks another segment
 is the target's media time held inside the segment (never before its start, never past
 `REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
 starts on a keyframe): landing there when the estimate was a little late stays inside the right segment.
+
+## A measurement never narrows (2026-11-20)
+
+`take` recorded the extent a segment ADDED to the buffer. A segment the trim cut in the middle (cut at 100.8 s in
+segment 50, 100-102 s) re-adds only `[100, 100.8]` when a seek re-takes it, so its measured end went from 102
+to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s of content (R16a, since #3860).
+A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
+new values; a new extent reaching OUTSIDE the old one by more than a frame (0.05 s) says the segment moved,
+which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).
