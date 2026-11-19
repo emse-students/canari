@@ -392,9 +392,26 @@ MICONNECT_PREFLIGHT_WORKFLOW="${MICONNECT_PREFLIGHT_WORKFLOW:-.github/workflows/
 # started_at == completed_at, no runner, no step), so a skipped run is no verdict and never read.
 # `filter=all`, not `latest`: `latest` keeps one run per name, and that one is the newest SKIPPED.
 # Only `github-actions` writes it: another app may post a check run of any name.
+# EVERY PAGE (fourth review, 2026-11-19): a commit that stays main's head collects one run of the
+# job per scheduled run, so past 100 the newest verdict sits on a later page. `--paginate` applies
+# the --jq to each page, so the selection is per page and the pick (the caller's sort) is across all
+# of them. Each page also prints `page\t<total_count>\t<runs on it>`, and a listing whose pages add up
+# to less than its own total is refused as incomplete rather than decided on what was read.
 miconnect_preflight_candidates() {
-  gh api -X GET "repos/$REPO/commits/$1/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=all -f per_page=100 \
-    --jq ".check_runs[] | select(.name == \"$MICONNECT_PREFLIGHT_CHECK\" and .app.slug == \"github-actions\" and .status == \"completed\" and .conclusion != \"skipped\") | [.completed_at, .id, .conclusion, .html_url] | @tsv"
+  local out total=0 seen=0 got=0 kind a b
+  out="$(gh api --paginate -X GET "repos/$REPO/commits/$1/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=all -f per_page=100 \
+    --jq "\"page\t\(.total_count)\t\(.check_runs | length)\", (.check_runs[] | select(.name == \"$MICONNECT_PREFLIGHT_CHECK\" and .app.slug == \"github-actions\" and .status == \"completed\" and .conclusion != \"skipped\") | [.completed_at, .id, .conclusion, .html_url] | @tsv)")" || return 1
+  out="${out//$'\r'/}" # a jq built for Windows ends its lines in CRLF; the counts below are arithmetic
+  while IFS=$'\t' read -r kind a b _; do
+    if [ "$kind" = page ]; then
+      total="$a" seen=$((seen + b)) got=$((got + 1))
+    fi
+  done <<<"$out"
+  if [ "$got" -eq 0 ] || [ "$seen" -lt "$total" ]; then
+    printf 'incomplete\t%s of %s check runs read\n' "$seen" "$total"
+    return 2
+  fi
+  grep -v '^page'$'\t' <<<"$out" || true
 }
 
 # Gate 8's reading. Prints ONE line:
@@ -415,32 +432,43 @@ miconnect_preflight_candidates() {
 # judged anything and is passed over as absent; one cancelled while running is a refusal.
 # A pure reader: the API is the `gh` on PATH (the self-test's fake runs these --jq through jq).
 miconnect_preflight_reading() {
-  local target="$1" shas sha lines="" more _completed id conclusion url job runner run_id path
+  local target="$1" shas sha lines="" more _completed id conclusion url job runner run_id job_name path
   if ! shas="$(gh api "repos/$REPO/commits?sha=main&per_page=50" --jq '.[].sha' 2>/dev/null)"; then
     printf 'error\tGET repos/%s/commits?sha=main failed\n' "$REPO"
     return 0
   fi
   for sha in $(printf '%s\n%s\n' "$target" "$shas" | awk 'NF && !seen[$0]++'); do
-    if ! more="$(miconnect_preflight_candidates "$sha" 2>/dev/null)"; then
-      printf 'error\tGET repos/%s/commits/%s/check-runs failed\n' "$REPO" "$sha"
-      return 0
-    fi
+    more="$(miconnect_preflight_candidates "$sha" 2>/dev/null)"
+    case $? in
+      0) ;;
+      2)
+        printf 'error\tGET repos/%s/commits/%s/check-runs was incomplete: %s\n' "$REPO" "$sha" "${more#incomplete$'\t'}"
+        return 0
+        ;;
+      *)
+        printf 'error\tGET repos/%s/commits/%s/check-runs failed\n' "$REPO" "$sha"
+        return 0
+        ;;
+    esac
     if [ -n "$more" ]; then lines+="$(awk -v s="$sha" 'NF { print $0 "\t" s }' <<<"$more")"$'\n'; fi
   done
   while IFS=$'\t' read -r _completed id conclusion url sha; do
     [ -n "$id" ] || continue
-    if ! job="$(gh api "repos/$REPO/actions/jobs/$id" --jq '[.run_id, (.runner_name // "")] | @tsv' 2>/dev/null)"; then
+    # One field per line, never a tab-separated row: a tab is IFS whitespace, so an empty runner
+    # between two tabs would collapse and hand its place to the next field.
+    if ! job="$(gh api "repos/$REPO/actions/jobs/$id" --jq '.run_id, (.runner_name // ""), .name' 2>/dev/null)"; then
       printf 'error\tGET repos/%s/actions/jobs/%s failed\n' "$REPO" "$id"
       return 0
     fi
-    IFS=$'\t' read -r run_id runner <<<"$job"
+    job="${job//$'\r'/}"
+    { read -r run_id; read -r runner; read -r job_name; } <<<"$job"
     if ! path="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.path' 2>/dev/null)"; then
       printf 'error\tGET repos/%s/actions/runs/%s failed\n' "$REPO" "$run_id"
       return 0
     fi
     if [ "$path" != "$MICONNECT_PREFLIGHT_WORKFLOW" ]; then
-      printf "error\tthe newest '%s' check run (%s) is a job of %s, not of %s - two jobs must not share that name\n" \
-        "$MICONNECT_PREFLIGHT_CHECK" "$url" "${path:-an unknown workflow}" "$MICONNECT_PREFLIGHT_WORKFLOW"
+      printf "error\tthe newest '%s' check run (%s) is the job '%s' (id %s) of %s, not of %s - rename that job, two jobs must not share this name\n" \
+        "$MICONNECT_PREFLIGHT_CHECK" "$url" "${job_name:-?}" "$id" "${path:-an unknown workflow}" "$MICONNECT_PREFLIGHT_WORKFLOW"
       return 0
     fi
     if [ "$conclusion" = cancelled ] && [ -z "$runner" ]; then continue; fi

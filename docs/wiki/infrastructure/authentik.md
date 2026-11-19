@@ -106,8 +106,12 @@ cancelled before a runner took it (`runner_name` empty) judged nothing and is pa
 check run counts only when GitHub Actions wrote it AND its job, resolved by id through
 `actions/jobs` and `actions/runs`, belongs to `scheduled.yml` - the listing is per commit, which ties
 a verdict to its pin, while the workflow's own run list is paged by time and crowded by 96 runs a
-day. **A failed API call is classified where it fails**: it refuses as undecidable and names the
-call, never "no run". A pin, not a date, decides whether a verdict still holds.
+day. **Every page is read** (fourth review): a commit that stays main's head collects one run per
+scheduled run, so past 100 the newest verdict is on a later page; the listing is `--paginate`d, the
+selection runs per page and the pick across all of them, and a listing whose pages hold fewer runs
+than its own `total_count` refuses as incomplete. **A failed API call is classified where it fails**:
+it refuses as undecidable and names the call, never "no run". A same-named job of another workflow
+refuses too, naming that job, its id and its workflow file. A pin, not a date, decides whether a verdict still holds.
 The serve-prod step stays as the same question asked at the moment of the change.
 
 **Neither morning preflight checks the root disk ceiling** (85 %): the ceiling depends on the image

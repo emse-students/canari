@@ -572,9 +572,10 @@ mkdir -p "$G8/bin" "$G8/tree/infrastructure/authentik"
 cat >"$G8/bin/gh" <<'FAKE'
 #!/usr/bin/env bash
 shift # api
-path='' expr=''
+path='' expr='' paginate=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --paginate) paginate=1; shift ;;
     -X | -f | -H) shift 2 ;;
     --jq) expr="$2"; shift 2 ;;
     *) path="$1"; shift ;;
@@ -593,10 +594,15 @@ case "$path" in
   *) echo "unexpected gh api $path" >&2; exit 1 ;;
 esac
 [ -f "$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
-if [ -n "$expr" ]; then jq -r "$expr" "$file"; else cat "$file"; fi
+# --paginate follows the pages, `<file>.2`, `<file>.3`..., applying --jq to EACH, as gh does.
+pages=("$file")
+if [ "$paginate" = 1 ]; then n=2; while [ -f "$file.$n" ]; do pages+=("$file.$n"); n=$((n + 1)); done; fi
+for page in "${pages[@]}"; do
+  if [ -n "$expr" ]; then jq -r "$expr" "$page" || exit 1; else cat "$page"; fi
+done
 FAKE
 chmod +x "$G8/bin/gh"
-printf '{"check_runs":[]}\n' >"$G8/none.json"
+printf '{"total_count":0,"check_runs":[]}\n' >"$G8/none.json"
 compose_pinning() { printf 'services:\n  server:\n    image: g/s:%s\n  worker:\n    image: g/s:%s\n' "$1" "$1"; }
 compose_pinning 2026.8.5 >"$G8/tree/infrastructure/authentik/compose.yml"
 for c in target m1 m2 m3; do compose_pinning 2026.8.5 >"$G8/compose-$c"; done
@@ -607,12 +613,23 @@ cr() {
     "$1" "${5:-MiConnect production preflight}" "$2" "$3" "$3" "$1" "${4:-github-actions}"
 }
 # checks <sha> <check run>... - that commit's check runs.
-checks() { local sha="$1"; shift; printf '{"check_runs":[%s]}\n' "$(IFS=,; echo "$*")" >"$G8/check-$sha.json"; }
+checks() {
+  local sha="$1"; shift
+  rm -f "$G8/check-$sha.json".*
+  printf '{"total_count":%s,"check_runs":[%s]}\n' "$#" "$(IFS=,; echo "$*")" >"$G8/check-$sha.json"
+}
+# page2 <sha> <check run>... - a second page for that commit; both pages' total_count become the sum.
+page2() {
+  local sha="$1" total; shift
+  printf '{"total_count":0,"check_runs":[%s]}\n' "$(IFS=,; echo "$*")" >"$G8/check-$sha.json.2"
+  total=$(($(jq '.check_runs | length' "$G8/check-$sha.json") + $#))
+  for f in "$G8/check-$sha.json" "$G8/check-$sha.json.2"; do jq -c --argjson t "$total" '.total_count = $t' "$f" >"$f.tmp" && mv "$f.tmp" "$f"; done
+}
 # job <id> <runner or empty> [workflow path] - the job behind a check run, and its run's workflow.
 job() {
   local runner='null'
   if [ -n "$2" ]; then runner="\"$2\""; fi
-  printf '{"id":%s,"run_id":%s,"runner_name":%s}\n' "$1" "$((1000 + $1))" "$runner" >"$G8/job-$1.json"
+  printf '{"id":%s,"run_id":%s,"runner_name":%s,"name":"MiConnect production preflight"}\n' "$1" "$((1000 + $1))" "$runner" >"$G8/job-$1.json"
   printf '{"id":%s,"path":"%s"}\n' "$((1000 + $1))" "${3:-.github/workflows/scheduled.yml}" >"$G8/run-$((1000 + $1)).json"
 }
 # gate8: runs the loop from the released tree with stub printers, sets G8_OUT.
@@ -657,8 +674,20 @@ compose_pinning 2026.8.0 >"$G8/compose-target"
 expect_g8 1 'judged g/s:2026.8.0, not the g/s:2026.8.5' "a green run on ANOTHER pin refuses as stale"
 compose_pinning 2026.8.5 >"$G8/compose-target"
 job 21 runner-1 .github/workflows/ci.yml
-expect_g8 1 'two jobs must not share that name' "a same-named job of ANOTHER workflow is no verdict, and says so"
+expect_g8 1 "is the job 'MiConnect production preflight' (id 21) of .github/workflows/ci.yml, not of .github/workflows/scheduled.yml - rename that job" \
+  "a same-named job of ANOTHER workflow is no verdict, and the refusal names that job and its workflow"
 job 21 runner-1
+# A commit that stays main's head collects a run per scheduled run: the newest verdict on page 2.
+rm -f "$G8/check-target.json"
+checks m2 "$(cr 30 success 2026-11-18T07:31:00Z)" "$(cr 31 skipped 2026-11-19T07:15:00Z)"
+page2 m2 "$(cr 32 failure 2026-11-19T07:31:00Z)" "$(cr 33 skipped 2026-11-19T07:45:00Z)"
+job 30 runner-1
+job 32 runner-1
+expect_g8 1 "concluded 'failure' in https://run/32" "the newest verdict on the listing's SECOND page is the one read"
+jq -c '.total_count = 9' "$G8/check-m2.json.2" >"$G8/p2" && mv "$G8/p2" "$G8/check-m2.json.2"
+expect_g8 1 "check-runs was incomplete: 4 of 9 check runs read" "a listing whose pages hold fewer runs than its total is refused, never decided on"
+checks m2 "$(cr 22 failure 2026-11-19T07:31:00Z)"
+checks target "$(cr 21 success 2026-11-19T10:00:00Z)"
 for call in 'commits?sha=main' 'commits/m2/check-runs' 'actions/jobs/21' 'actions/runs/1021' 'contents/'; do
   printf '%s' "$call" >"$G8/fail"
   expect_g8 1 "could not decide - GET repos/o/r/" "an API failure on $call is undecidable, never 'no run'"

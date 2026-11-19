@@ -2560,7 +2560,9 @@ authentik pin the stable ships (a pin, not a date and not an ancestry, decides w
 applies). Every other run of `scheduled.yml` posts the job `skipped`, newer than the morning's, so
 skipped runs, runs cancelled before a runner took them, and check runs of any app but GitHub Actions
 are passed over; the winner is resolved through the Actions API as a job of `scheduled.yml` itself,
-and a failed API call is refused as undecidable, naming the call, never read as "no run". Each refusal names the run, and
+every page of the listing is read (`--paginate`, refused as incomplete when the pages hold fewer
+runs than its `total_count`), and a failed API call is refused as undecidable, naming the call,
+never read as "no run". Each refusal names the run, and
 the remedy is `gh workflow run scheduled.yml --ref <alpha tag> -f job=miconnect-preflight`, then
 `gh run rerun` of the release. The job is its own so its conclusion is the preflight's alone, never
 mixed with the image report that `drift` may be red on. The serve-prod step stays: it is the same
