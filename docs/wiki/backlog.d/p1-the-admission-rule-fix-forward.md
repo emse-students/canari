@@ -42,19 +42,22 @@ re-armed:
      entries), 0 `new-person`, 0 of any other kind.
 
 2. **The member side, FIRST - found 2026-11-17, and it orders everything after it.** A user holding
-   no leaf whose roster seat is NOT an invitation-link ask is today added by nobody AND asked about
-   to nobody: `askAMemberToAdmit` (`utils/chat/actions.ts`) logs "not added, and nobody is asked:
-   their seat is not an invitation-link ask" and returns. That is exactly the seat of all three
-   legitimate producers below (a seat a member's invite or the person's own past membership wrote).
-   So today their ONLY door is their own external commit, and an emission side shipped alone would
-   strand every one of them for good. Owed: such a person, in a GROUP conversation, is raised to the
-   members as an ask (the `JoinRequestRow` card, a member's Add on Accept), and a Decline of a seat
-   that is not a link ask is defined server-side (today `declineJoinRequest` answers
-   `not-awaiting`). *Size: about one week (client, chat-delivery, Paraglide fr/en, tests, one rig
-   reading).* **Decided by the owner, 2026-11-17:** the card reuses the existing join-request card
-   as it stands - "X veut rejoindre la conversation", "Accepter" / "Refuser" - with no wording of its
-   own for a person coming back, and a Decline REMOVES the seat
+   no leaf whose roster seat is NOT an invitation-link ask was added by nobody AND asked about to
+   nobody - exactly the seat of all three legitimate producers below - so their ONLY door was their
+   own external commit, and an emission side shipped alone would strand every one of them for good.
+   **Decided by the owner, 2026-11-17:** the card reuses the existing join-request card as it stands
+   - "X veut rejoindre la conversation", "Accepter" / "Refuser" - and a Decline REMOVES the seat
    ([decisions](owner-decisions-of-2026-11-17.md)).
+
+   **BUILT 2026-11-19** ([who admits a new person](../protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)):
+   such a person, in a GROUP conversation, is raised as that card, only on a tree confirmed at the
+   server's epoch (`askAMemberToAdmit`); a Decline sends the epoch of the confirmed tree they are
+   absent from, and the server removes the seat under the seat lock only while the group is still at
+   that epoch (`removed`), else touches nothing (`epoch-moved`; `declineSeat`). **Owed:** one rig
+   reading on the pre-release that carries it (a member revokes their only device and enrols a new
+   one: the other member sees the card; Refuser removes the seat and the person's external commit is
+   refused; Accepter brings them back), then `minClientVersion` raised to that build once BOTH stores
+   serve it - the gate of step 3. *Size: the reading, then a store cycle.*
 3. **The emission side**, only once step 2 is in every client allowed to connect (`minClientVersion`
    raised once BOTH stores serve it - before that, an older member asks nobody and the asker waits
    for ever). A user holding no leaf ASKS a member instead of entering alone, mirroring the

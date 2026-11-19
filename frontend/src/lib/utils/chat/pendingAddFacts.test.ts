@@ -31,7 +31,7 @@ describe('pendingAddFactsOf', () => {
   });
 
   it('reads a confirmed tree once for every row of the pass', async () => {
-    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'] });
+    readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     const facts = factsOf(service());
     await facts(false);
     await facts(false);
@@ -41,10 +41,10 @@ describe('pendingAddFactsOf', () => {
   it('never keeps an unconfirmed tree: the next row reads afresh and may confirm it', async () => {
     readConfirmedTree
       .mockResolvedValueOnce({ status: 'unconfirmed' })
-      .mockResolvedValueOnce({ status: 'read', identities: ['u1:d1'] });
+      .mockResolvedValueOnce({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     const facts = factsOf(service());
     expect((await facts(false)).tree).toEqual({ status: 'unconfirmed' });
-    expect((await facts(false)).tree).toEqual({ status: 'read', identities: ['u1:d1'] });
+    expect((await facts(false)).tree).toEqual({ status: 'read', identities: ['u1:d1'], epoch: 7 });
     expect(readConfirmedTree).toHaveBeenCalledTimes(2);
     // The re-read is said once, on the sweep's own log, naming the group by 8 characters.
     expect(log).toHaveBeenCalledTimes(1);

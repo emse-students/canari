@@ -315,53 +315,81 @@ async function confirmPendingAddPremise(deps: {
 }
 
 /**
- * Puts a NEW PERSON's ask to this device's member ("X asks to join") - ONLY FOR A GROUP
- * CONVERSATION, read off its conversation row.
+ * How the asker's seat stands, for {@link askAMemberToAdmit}: an invitation-link ask the server holds
+ * (`link-ask`, the row's `awaitingAdmission`), or an ordinary seat (`seat`) - whose holder is asked
+ * about only on a tree CONFIRMED at the server's epoch, read lazily and only for a group conversation.
+ */
+type AskerSeat = { kind: 'link-ask' } | { kind: 'seat'; confirmedTree: () => Promise<TreeReading> };
+
+/** An invitation-link ask: the server's flag is the seat's whole standing. */
+const LINK_ASK: AskerSeat = { kind: 'link-ask' };
+
+/**
+ * Puts the ask of a person who holds NO LEAF to this device's member ("X asks to join") - ONLY FOR A
+ * GROUP CONVERSATION, read off its conversation row.
  *
  * The ask's two answers are a group's: Add is `inviteMembersToGroup`, which only a group takes, and
- * Decline removes the person's roster row. Raised for anything else they are wrong on both counts:
+ * Decline removes the person's seat. Raised for anything else they are wrong on both counts:
  * a 1:1 conversation's `pending` rows are written for every group of a registering user, DMs
  * included, so a peer holding no leaf there raised an ask whose Add always failed and whose Decline
  * deleted the peer's own roster row of the DM. A key group has no conversation row at all - its
  * members enter by external commit, entitled by their community. And a row not loaded yet answers
  * nothing: the next sweep asks again, once the row is there.
  *
- * In none of those is the new person added either: an automatic Add never brings one in.
+ * In none of those is the person added either: an automatic Add never brings in a user with no leaf.
  *
- * AND ONLY FOR AN ASK THE SERVER HOLDS (`isAsk`, the row's `awaitingAdmission`): a person absent
- * from the tree whose seat is not an invitation link's ask - a member's invite between its roster
- * write and its Add, a seat written before the rule, a member whose leaves were removed - asked
- * nobody anything, and a Decline would find nothing to withdraw (`not-awaiting`). Such a person is
- * brought in by a member's own invite, never by an ask raised in their name.
+ * TWO KINDS OF SEAT ARE ASKED ABOUT (step 2 of the admission fix-forward, owner 2026-11-17). An
+ * invitation link's ask (`link-ask`), as always. And an ORDINARY seat whose person holds no leaf -
+ * a peer whose key package was skipped at creation, a member whose only device was revoked and swept,
+ * an only leaf evicted while the seat stands, a link seat written before migration 038. Their only
+ * door used to be their own external commit, which the admission rule is to refuse once nothing
+ * legitimate produces one; a member's Add is the door that stays. Such a seat holds no flag that
+ * says "nobody holds a leaf", and a tree behind the server lacks a person an Add just brought in, so
+ * the ask is raised only on a tree CONFIRMED at the server's epoch: unconfirmed raises nothing this
+ * pass, and a person the confirmed tree holds is a member (the local tree was behind). Since ADM-3 no
+ * member's invite writes a seat ahead of its commit, so no Add in flight is mistaken for one.
+ *
+ * @returns whether an ask was raised.
  */
-function askAMemberToAdmit(
+async function askAMemberToAdmit(
   conversations: ReadonlyMap<string, Conversation>,
   request: JoinApprovalRequest,
-  isAsk: boolean | undefined,
+  seat: AskerSeat,
   tag: string,
   log: (message: string) => void,
   onJoinApprovalRequested: ((request: JoinApprovalRequest) => void) | undefined
-): boolean {
+): Promise<boolean> {
   const short = request.groupId.slice(0, 8);
-  if (isAsk !== true) {
-    log(
-      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
-        `their seat is not an invitation-link ask (a member's invite in flight, or a seat older than the rule)`
-    );
-    return false;
-  }
+  const who = `${tag} ${request.requesterUserId} has no leaf in ${short}...`;
   const convo = conversations.get(request.groupId);
   const kind = convo ? (convo.conversationType ?? 'group') : null;
   if (kind !== 'group') {
     log(
-      `${tag} ${request.requesterUserId} has no leaf in ${short}... - not added, and nobody is asked: ` +
+      `${who} - not added, and nobody is asked: ` +
         `${kind === null ? 'no conversation row is loaded for it' : `a ${kind} conversation`} takes no join ask`
     );
     return false;
   }
-  log(
-    `${tag} ${request.requesterUserId} has no leaf in ${short}... - a new person is not added automatically, a member's approval is asked`
-  );
+  if (seat.kind === 'seat') {
+    const tree = await seat.confirmedTree();
+    if (tree.status === 'unconfirmed') {
+      log(
+        `${who} - their seat is not an invitation-link ask, and the tree is not confirmed at the server's epoch: nobody is asked this pass`
+      );
+      return false;
+    }
+    if (treeHoldsUser(tree.identities, request.requesterUserId)) {
+      log(
+        `${tag} ${request.requesterUserId} holds a leaf in ${short}... at the server's epoch ${tree.epoch} - the local tree was behind, a member: nobody is asked`
+      );
+      return false;
+    }
+    log(
+      `${who} at the server's epoch ${tree.epoch}, on a seat that is not an invitation-link ask - not added automatically, a member's approval is asked`
+    );
+  } else {
+    log(`${who} - a new person is not added automatically, a member's approval is asked`);
+  }
   onJoinApprovalRequested?.(request);
   return true;
 }
@@ -380,7 +408,7 @@ export interface AnnouncedJoinAsk {
  * sees it live rather than at its next pending-invitation sweep - any admitted member may answer.
  *
  * The announcement is the server's word that the seat is an invitation-link ask, as the `pending`
- * rows and the roster are ({@link askAMemberToAdmit}'s `isAsk`). What it cannot say is whether the
+ * rows and the roster are ({@link askAMemberToAdmit}'s `link-ask`). What it cannot say is whether the
  * person already holds a leaf, which is read from THIS device's tree - a person a member already
  * added is not asked about. It adds nobody: this is the human-visible ask, and only a member's Add
  * brings the person in. One entry per (group, person) in the store, so the elected member's
@@ -417,10 +445,10 @@ export async function raiseAnnouncedJoinAsk(params: {
     return;
   }
   const request = { groupId: ask.groupId, requesterUserId: ask.requesterUserId, askId: ask.askId };
-  const asked = askAMemberToAdmit(
+  const asked = await askAMemberToAdmit(
     conversations,
     { ...request, requesterDeviceId: first },
-    true,
+    LINK_ASK,
     '[JOIN_ASK]',
     log,
     onJoinApprovalRequested
@@ -780,7 +808,7 @@ export async function processPendingInvitations(params: {
         });
         if (admission === 'unreadable' || admission === 'ask-for-a-member') continue;
         if (admission === 'newcomer') {
-          askAMemberToAdmit(
+          await askAMemberToAdmit(
             conversations,
             {
               groupId,
@@ -788,7 +816,9 @@ export async function processPendingInvitations(params: {
               requesterDeviceId: inv.deviceId,
               ...(inv.askId ? { askId: inv.askId } : {}),
             },
-            inv.awaitingAdmission,
+            inv.awaitingAdmission === true
+              ? LINK_ASK
+              : { kind: 'seat', confirmedTree: async () => (await pendingAddFacts(false)).tree },
             '[PENDING]',
             log,
             onJoinApprovalRequested
@@ -1836,7 +1866,7 @@ export async function handleWelcomeRequest(params: {
   });
   if (admission === 'unreadable' || admission === 'ask-for-a-member') return;
   if (admission === 'newcomer') {
-    askAMemberToAdmit(
+    await askAMemberToAdmit(
       conversations,
       {
         groupId,
@@ -1844,7 +1874,13 @@ export async function handleWelcomeRequest(params: {
         requesterDeviceId,
         ...(seat?.askId ? { askId: seat.askId } : {}),
       },
-      seat?.awaitingAdmission,
+      seat?.awaitingAdmission === true
+        ? LINK_ASK
+        : {
+            kind: 'seat',
+            confirmedTree: () =>
+              readConfirmedTree(mlsService, groupId, userId, '[WELCOME_REQ]', () => false),
+          },
       '[WELCOME_REQ]',
       log,
       onJoinApprovalRequested

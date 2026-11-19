@@ -5,11 +5,14 @@ import { replayAndRecord } from './commitReplay';
 /**
  * A reading of a group's tree that a commit may be decided on:
  * - `read`: the leaf identities, either decided by the local tree alone (the caller's
- *   `decidedLocally` said so) or read at the server's epoch;
+ *   `decidedLocally` said so) or read at the server's epoch, with the `epoch` of the tree they were
+ *   read from - the proof a member's Decline carries (`declineJoinRequest`);
  * - `unconfirmed`: the tree is behind the server and could not be caught up, or the log or the tree
  *   could not be read - it proves nothing.
  */
-export type TreeReading = { status: 'read'; identities: string[] } | { status: 'unconfirmed' };
+export type TreeReading =
+  | { status: 'read'; identities: string[]; epoch: number }
+  | { status: 'unconfirmed' };
 
 /**
  * Reads `groupId`'s leaf identities from a tree CONFIRMED CURRENT whenever the local answer is not
@@ -47,10 +50,10 @@ export async function readConfirmedTree(
   try {
     return await mlsService.runUnderMlsLock(async (): Promise<TreeReading> => {
       const local = await mlsService.getGroupMemberIdentities(groupId);
-      if (decidedLocally(local)) return { status: 'read', identities: local };
       const epoch = mlsService.getEpoch(groupId);
+      if (decidedLocally(local)) return { status: 'read', identities: local, epoch };
       const { activeEpoch } = await mlsService.fetchCommitsSince(groupId, epoch);
-      if (activeEpoch <= epoch) return { status: 'read', identities: local };
+      if (activeEpoch <= epoch) return { status: 'read', identities: local, epoch };
       console.log(
         `${logTag} ${short}… the tree is behind the server (epoch ${epoch} < ${activeEpoch}) - catching up before it is read`
       );
@@ -74,7 +77,11 @@ export async function readConfirmedTree(
         );
         return { status: 'unconfirmed' };
       }
-      return { status: 'read', identities: await mlsService.getGroupMemberIdentities(groupId) };
+      return {
+        status: 'read',
+        identities: await mlsService.getGroupMemberIdentities(groupId),
+        epoch: now,
+      };
     });
   } catch (e) {
     console.warn(`${logTag} ${short}… the tree could not be confirmed: ${String(e).slice(0, 120)}`);
