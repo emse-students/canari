@@ -8,7 +8,7 @@ WP-SMOKE-LOGIN, WP-HOLD-NOTHING, WP-REELS-MENU, WP-PUSH-I18N, WP-MENTION-NAME, W
 (#3177), WP-CHECKPOINT-SKIP ([open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)),
 WP-RESTORE-1 ([design](../account-restore.md); closed by the owner, 2026-11-14), WP-MIGALLERY-OFFSITE
 ([the offsite](p2-migallery-s-only-offsite-still-lands-on-the-old-canari-vm.md)) and WP-SECOND-CAMPAIGN-VENUE
-([the second campaign](a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)).
+(the second campaign, closed by the owner on 2026-11-19: the server specs cover its last case).
 
 Still open here:
 - **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a

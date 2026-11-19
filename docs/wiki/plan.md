@@ -123,7 +123,6 @@ earliest version, as a checklist.
 
 **Chantiers, decisions and questions (no severity)**
 
-- [A SECOND campaign, for everything that is not chat - what is left of it (asked 2026-08-16, audited 2026-11-19)](backlog.d/a-second-campaign-for-everything-that-is-not-chat-asked-2026-08-16.md)
 - [The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided](backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)
 - [The MLS audit items that are still real, with their verified counts (swept 2026-09-12)](backlog.d/the-mls-audit-items-that-are-still-real-with-their-verified-counts-swept-2026.md)
 - [The MiConnect profile reform - WP5 is next (decided 2026-09-29, re-read 2026-11-11)](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)
