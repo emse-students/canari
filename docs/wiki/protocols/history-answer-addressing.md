@@ -287,7 +287,8 @@ trust in the server.
    ask is NOTHING, logged at error (`[HISTORY_SEAL] ... answering nothing rather than unsealed to
    every member`). The key proves the asker seals, so it reached a build that addresses; taking the
    server's word that it cannot would let the server switch the seal off and hand the content to
-   every member. Only an ask with no key (an older asker) may still get the broadcast.
+   every member. Since the `1.7.0` floor no ask comes without a key: one that does is malformed and
+   answered nothing at all.
 4. **The receiver opens it with the ask's secret BEFORE rule 5 takes an answerer slot**
    (`systemMessageHandler.ts`, `answerSecretOf` then `takeAddressedAsk`): bytes that do not open
    consume no slot, so a member relaying garbage cannot crowd the honest answer out of the two an ask
@@ -361,13 +362,13 @@ material. No new primitive and no new dependency.
 | Asker | Answerer | What happens |
 | --- | --- | --- |
 | seals (this build) | seals | sealed, opened |
-| seals | older | the answer arrives unsealed, still addressed (step A) - **accepted**, said ONCE per session at error with `[LEGACY]` so the population is counted ([legacy-compatibility](../legacy-compatibility.md#removal-once-minclientversion-passes-the-first-stable-that-seals---an-unsealed-history-answer-2026-11-17)) |
-| older | seals | the ask carries no key: answered unsealed, as before - the protocol that ask asked for |
+| seals | anything unsealed | **refused** at error (`REFUSED an unsealed history_bundle`), nothing of it ingested |
+| no key | seals | the ask is malformed and answered nothing, like an ask with no `requestId` (D211), said at error |
 
-Both [LEGACY] halves go once the floor passes the first stable carrying this: an unsealed answer to a
-keyed ask is then refused, and an ask with no key is malformed and answered nothing, like an ask with
-no `requestId` (D211) - planned in
-[backlog](../backlog.d/p3-a-history-answer-is-sealed-or-refused-once-the-floor-seals.md).
+Every build at the floor (`1.7.0`) seals, so the two `[LEGACY]` halves that accepted an older build
+- an unsealed answer to a keyed ask, and an ask with no key answered in clear - are gone
+([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). The answerer seals or sends nothing: a server that would
+broadcast the answer is answered with nothing (`[HISTORY_SEAL]`).
 
 ### What is NOT sealed: the inviter's join push - so it carries no message (2026-11-17)
 
@@ -446,14 +447,22 @@ ASKS, on facts it holds durably:
    message, not closing the ask (the diff's last chunk does). Its content is the NICKNAME REGISTER and
    `register: true` - or, from a device that never took its own register, `register: 'none'`, a typed
    DECLINE: it holds none to restate, and an empty register would end the asker's entry on nothing.
-   Never broadcast (a server that does not address gets no register), withheld from an unvouched
-   device, nothing sent when the engine cannot seal. A register ask with no key is a defect of its
-   sender: no state is sent, said at error, and the diff still goes.
+   A device that withholds history from the asker (an unvouched device, `historyWithheld.ts`)
+   declines it too, typed `register: 'withheld'`: the verdict and nothing else, so the asker ends on
+   a cause it can name rather than on a silence it would read as a defect (review of #3837). Only a
+   RECORD on the asker says `'withheld'`: a conversation whose history is SEALED (fail-closed and
+   permanent, nothing about the asker) answers `'none'`, since `'withheld'` tells the asker a member's
+   Add reopens it, and no Add reopens a seal (re-review of #3837). Undecided device events send
+   nothing - they say nothing about the asker.
+   Never broadcast (a server that does not address gets no register), nothing sent when the engine
+   cannot seal. A register ask with no key is malformed like any
+   keyless ask since the `1.7.0` floor: it is dropped whole, said at error - neither state nor diff.
 5. **Taken only from what opened under the ask.** The receiver takes the nicknames - under
    `mergeBundleNicknames`' limits (unverified, current members only) - from an answer only when its
    ask said `register` AND the SEALED content says `register: true`. The flag is never in the clear
    routing: one a relaying server could set would turn an ordinary answer into one the reader takes
-   state from. An unsealed frame saying `register` is taken as an ordinary answer and said at error.
+   state from. An unsealed answer to a keyed ask is refused whole at error; an unsealed frame saying `register` on
+   the join push is taken as an ordinary push and said at error.
    A message riding a register answer or a decline is dropped (at error).
 6. **Ended by the first state TAKEN** - a register answer, or the inviter's join push - and only when
    every merge had its input (`stateTaken` in `systemMessageHandler.ts`): a push finding no
@@ -477,10 +486,13 @@ bound dropped both markers, and both then answered later newcomers with an empty
   most `REGISTER_ASKS_MAX` asks plus one per distinct declining device (an MLS-verified member) ever
   leave, whoever is online. The bound is checked before the next ask (`endSpentRegisterAsks`), so a
   decline that came back meanwhile is already counted out. Counted at the ask, because silence is an
-  answer: an older responder ignores `register`, and when its store matches ours it sends nothing, so no answer-side count would ever
-  move ([legacy](../legacy-compatibility.md)). A device of this account is treated like any other
-  device: on this build it answers or declines, and one on an older build is the legacy case the
-  bound exists for.
+  answer: no answer-side count moves when nothing comes back. A device of this account is treated
+  like any other device. Every build at the floor (`1.7.0`) answers or declines `register`, so
+  reaching the bound means a defect or a server that cannot address - each worth a reader, so its
+  end is said at ERROR, naming them. An asker some device declined as WITHHOLDING is unvouched, a
+  normal state: its end is said at info, naming it, and a member's Add of it - the vouch - arrives
+  as a Welcome, which re-opens the entry from zero
+  ([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
 - **Every other device of the tree DECLINED.** The decliners are kept in the entry; once they cover
   every leaf of the group but this one (`getGroupMemberIdentities`), nobody holds a register to give.
 
@@ -490,10 +502,9 @@ back - so no ask repeats without one.
 **What is still lost, honestly.** A conversation in which NO device holds a register - every member
 admitted offline, the inviter's push lost to each, and the inviter gone or itself never having taken
 one - never gets the nicknames set before those admissions: nobody can give them, and the asking ends
-on the declines. A group whose only holders run a build that ignores `register` - or are offline
-at every election while other devices decline - is asked `REGISTER_ASKS_MAX` plus one per other
+on the declines. A group whose only holders are offline at every election while other devices decline is asked `REGISTER_ASKS_MAX` plus one per other
 device times, and then not again until a re-admission. A FIFO-evicted entry (more than 256 conversations owed at
-once) answers as a holder would. Each is said at warn where it ends.
+once) answers as a holder would. Each is said where it ends (the spent bound at error).
 
 **The register answer carries the nickname register and nothing else (decided 2026-11-17).** The
 ask's key rides the ask, so ANY member of the group can seal an answer to it, and the receiver does

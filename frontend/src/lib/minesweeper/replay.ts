@@ -91,3 +91,29 @@ export function createReplay(source: ReplaySource): Replay {
     },
   };
 }
+
+/**
+ * The smallest and largest cell, in CSS px, a replay draws: below the first the cell's 12 px digit no
+ * longer fits it. A stage too small for the minimum scrolls (see the viewer) rather than shrinking past it.
+ */
+export const REPLAY_CELL_MIN_PX = 14;
+export const REPLAY_CELL_MAX_PX = 44;
+
+/**
+ * The cell size, in whole CSS px, at which a `cols` x `rows` board fits the space it is given - so the
+ * WHOLE grid is on screen at once, as large as the screen allows, instead of a fixed size that scrolls
+ * on a phone. `gapPx` is the space between two cells. Clamped to a readable range.
+ */
+export function fitCellSize(
+  widthPx: number,
+  heightPx: number,
+  cols: number,
+  rows: number,
+  gapPx = 1
+): number {
+  if (cols <= 0 || rows <= 0) return REPLAY_CELL_MIN_PX;
+  const byWidth = (widthPx - gapPx * (cols - 1)) / cols;
+  const byHeight = (heightPx - gapPx * (rows - 1)) / rows;
+  const fit = Math.floor(Math.min(byWidth, byHeight));
+  return Math.min(Math.max(fit, REPLAY_CELL_MIN_PX), REPLAY_CELL_MAX_PX);
+}

@@ -420,21 +420,29 @@ jobs:
       # replays as a no-op, and its CHECK refuses a value no service reads. The spec builds its own
       # `platform_config` in a throwaway schema, so the boot's database is all it needs.
       # THE CHECK-AND-PUBLISH SCRIPT OF AN ADDRESSED HISTORY ANSWER (history-answer-addressing, rule
-      # 6) against the production Redis this job already runs: its point is that the check and the
-      # PUBLISH are one atomic step. Gated on `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is
-      # read and a skipped or absent test fails the step.
-      - name: Addressed publish script against Redis
+      # 6) and THE CLOUDFLARE PROXY'S SEAT SCRIPTS (WP-GC3: the cap check and the seat write are one
+      # step) against the production Redis this job already runs. Gated on
+      # `CHAT_DELIVERY_IT_REDIS_URL`, so jest's own report is read and a skipped or absent FILE fails
+      # the step.
+      - name: Redis scripts against Redis
         if: ${{ matrix.service == 'apps/chat-delivery-service' }}
         working-directory: ${{ matrix.service }}
         env:
           CHAT_DELIVERY_IT_REDIS_URL: redis://localhost:6379
         run: |
-          node --run test -- addressing.redis --json --outputFile "$RUNNER_TEMP/addressing-it.json"
+          node --run test -- '(addressing|cloudflare-sfu)\.redis' --json --outputFile "$RUNNER_TEMP/addressing-it.json"
           node -e '
             const r = require(process.argv[1]);
             if (r.numPendingTests > 0 || r.numPassedTests < 5) {
               console.error(`addressing.redis: ${r.numPassedTests} passed, ${r.numPendingTests} skipped - the script ran nowhere`);
               process.exit(1);
+            }
+            for (const file of ["addressing.redis", "cloudflare-sfu.redis"]) {
+              const ran = r.testResults.find((t) => t.name.includes(file));
+              if (!ran || ran.assertionResults.length === 0 || ran.assertionResults.some((a) => a.status !== "passed")) {
+                console.error(`${file}: absent, empty or not all passed - the script ran nowhere`);
+                process.exit(1);
+              }
             }
           ' "$RUNNER_TEMP/addressing-it.json"
 

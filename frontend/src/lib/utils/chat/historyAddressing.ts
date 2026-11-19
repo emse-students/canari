@@ -152,14 +152,14 @@ function remember(
 /**
  * Records an ask this device is about to send, under the id the frame carries, with the secret of
  * the `answerKey` it carries - the answer is sealed to that key, and opens only with this secret.
- * `null` records an ask whose answer is NOT sealed - the protocol before option B, which the tests
- * of the routing rules still exercise; every ask this build sends passes its secret.
+ * Every ask carries one since option B; only the inviter's join push is unkeyed
+ * ({@link noteJoinSolicited}).
  */
 export function noteHistoryAsk(
   groupId: string,
   requestId: string,
   ask: HistoryAsk,
-  answerSecret: Uint8Array | null
+  answerSecret: Uint8Array
 ): void {
   remember(groupId, requestId, ask, answerSecret);
 }

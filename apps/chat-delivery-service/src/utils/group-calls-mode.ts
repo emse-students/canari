@@ -37,9 +37,11 @@ export const MESH_SEATS_VIDEO = 3;
 export const GROUP_CALL_MESH_VERSION = 1;
 
 /**
- * The group-call version of a binary that ALSO speaks the SFU leg (`Join { mode: 'sfu' }`, one
- * connection to the relay, the sender read from each forwarded stream id). Cumulative: a build at
- * 2 speaks the mesh too. A group call goes through the relay only when its CALLER declared it, and
+ * The group-call version of a binary that ALSO speaks the SFU leg, in BOTH its flavours - `sfu`
+ * (call-service's `Join { mode: 'sfu' }`, one connection to the relay, the sender read from each
+ * forwarded stream id) and `cloudflare` (Cloudflare Realtime through this service's proxy) - since
+ * `call_relay` moves every new call between them and the client reads the mode from the room's
+ * answer (WP-GC3). Cumulative: a build at 2 speaks the mesh too. A group call goes through the relay only when its CALLER declared it, and
  * only builds that declared it are rung for, or given a token to, a relayed call - a mesh-only build
  * joins `p2p` and would be refused `mode-mismatch` (review of #3497).
  */

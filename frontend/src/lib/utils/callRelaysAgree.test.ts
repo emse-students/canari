@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CALL_RELAYS } from './appVersion';
 
 /**
- * THE CALL RELAY IS SPELLED IN FIVE PLACES, AND THEY MUST SPELL IT THE SAME - the reasoning of
+ * THE CALL RELAY IS SPELLED IN FIVE PLACES (the CHECK now in migration 026), AND THEY MUST SPELL IT THE SAME - the reasoning of
  * `groupCallsModesAgree.test.ts`: the SQL CHECK decides what the column may hold, core's entity what
  * the admin route accepts, chat-delivery's reader what `initiate` acts on, this client's list what
  * it reads, and the admin page what it offers. Read as TEXT, since three copies live in other packages.
@@ -23,10 +23,17 @@ function quotedValues(text: string, pattern: RegExp): string[] {
 describe('the five copies of the call relays', () => {
   const expected = [...CALL_RELAYS];
 
-  it("the SQL CHECK of core migration 023, whose default is today's no relay", () => {
+  it("the column of core migration 023, whose default is today's no relay", () => {
     const sql = read('apps/core-service/src/migrations/023_platform_config_call_relay.sql');
-    expect(quotedValues(sql, /CHECK \(call_relay IN \(([^)]*)\)\)/)).toEqual(expected);
     expect(sql).toMatch(/call_relay VARCHAR\(16\) NOT NULL DEFAULT 'none'/);
+  });
+
+  it('the SQL CHECK of core migration 026, the last to write it (023 wrote the first two)', () => {
+    const sql = read(
+      'apps/core-service/src/migrations/026_platform_config_call_relay_cloudflare.sql'
+    );
+    expect(sql).toContain('DROP CONSTRAINT IF EXISTS "CHK_platform_config_call_relay"');
+    expect(quotedValues(sql, /CHECK \(call_relay IN \(([^)]*)\)\)/)).toEqual(expected);
   });
 
   it.each([

@@ -2984,6 +2984,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
 | POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
+| POST, PUT, GET | `/api/calls/sfu/session`, `/tracks`, `/renegotiate`, `/tracks/close`, `/roster`, `/leave` | The Cloudflare Realtime proxy of a group call whose room says `mode: cloudflare` (`call_relay = cloudflare`): a seat per user claimed with the room token, the sessions/tracks API driven with the app secret this service alone holds, every pull checked against the room's seats; 503/502 `GROUP_CALL_RELAY_UNAVAILABLE`, 409 `GROUP_CALL_ROOM_FULL` ([calls](../frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)) |
 
 **The kill switch.** `initiate`, `room-token`, `ring` and `ice-servers` first read
 `platform_config.calls_mode` (core-service's row, plain SQL, every request): `off` answers 403
