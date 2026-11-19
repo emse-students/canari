@@ -22,6 +22,7 @@
  * acking past a row a retry could have stored costs the message.
  * See docs/wiki/frontend/modules/chat.md#a-poison-row-is-dropped-not-kept-2026-11-19.
  */
+import type { IStorage, StoredMessage } from './types';
 
 /** What a failed row write is: a row the store will never take, or a failure a retry may pass. */
 export type RowWriteFailureClass = 'poison' | 'transient';
@@ -54,4 +55,69 @@ export class RowRefusedError extends Error {
  */
 export function classifyRowWriteFailure(e: unknown): RowWriteFailureClass {
   return e instanceof RowRefusedError && POISON_NAMES.has(e.domName) ? 'poison' : 'transient';
+}
+
+/** What {@link writeRowsIsolatingRefused} could not write, by class. */
+export interface IsolatedRowFailures<R> {
+  /** Rows the store refused for what they are: never written, at any retry. */
+  poison: Array<{ row: R; cause: unknown }>;
+  /** Rows whose write failed in a way a retry may pass. */
+  transient: Array<{ row: R; cause: unknown }>;
+}
+
+/**
+ * Writes `rows` ONE BY ONE, once each, and sorts what failed by its class - how a write refused for
+ * ONE row it holds (the store aborts it whole) stores every other row. One pass, no retry loop: it
+ * terminates. The ONE isolation every writer of a batch uses (`useMessaging.writeOrKeep`,
+ * {@link saveMessagesIfAbsentIsolated}).
+ */
+export async function writeRowsIsolatingRefused<R>(
+  rows: readonly R[],
+  writeOne: (row: R) => Promise<void>
+): Promise<IsolatedRowFailures<R>> {
+  const failures: IsolatedRowFailures<R> = { poison: [], transient: [] };
+  for (const row of rows) {
+    try {
+      await writeOne(row);
+    } catch (cause) {
+      failures[classifyRowWriteFailure(cause)].push({ row, cause });
+    }
+  }
+  return failures;
+}
+
+/**
+ * `saveMessagesIfAbsent` for a writer that hands over a whole PAGE and keeps nothing itself - the
+ * archive replay, a re-key's rows only memory held (third review of #3851). The store aborts a write
+ * whole when it refuses one row, so a single poison row used to cost the page: here the write is
+ * isolated row by row ({@link writeRowsIsolatingRefused}), the poison rows said at ERROR and left
+ * out, the rest stored. A transient failure is thrown as before - the caller's own answer to it.
+ * Resolves the ids written.
+ */
+export async function saveMessagesIfAbsentIsolated(
+  storage: Pick<IStorage, 'saveMessagesIfAbsent'>,
+  rows: StoredMessage[],
+  deviceKeyB64: string,
+  writer: string
+): Promise<Set<string>> {
+  try {
+    return await storage.saveMessagesIfAbsent(rows, deviceKeyB64);
+  } catch (e) {
+    if (classifyRowWriteFailure(e) !== 'poison') throw e;
+    console.warn(
+      `[DB] ${writer}: a write of ${rows.length} row(s) was refused for a row it holds - writing them one by one to find it`
+    );
+    const written = new Set<string>();
+    const { poison, transient } = await writeRowsIsolatingRefused(rows, async (row) => {
+      for (const id of await storage.saveMessagesIfAbsent([row], deviceKeyB64)) written.add(id);
+    });
+    for (const { row, cause } of poison) {
+      console.error(
+        `[DB] POISON ROW ${String(row.id).slice(0, 8)} (${writer}): the store refused it for what it is (${cause instanceof RowRefusedError ? cause.domName : 'unknown'}) - not written; the rest of the page is`,
+        cause
+      );
+    }
+    if (transient.length > 0) throw transient[0].cause;
+    return written;
+  }
 }

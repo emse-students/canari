@@ -39,6 +39,7 @@ import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
 import type { IStorage, StoredMessage } from '$lib/db';
+import { saveMessagesIfAbsentIsolated } from '$lib/db/rowWriteFailure';
 import type { ChatMessage } from '$lib/types';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import {
@@ -1872,8 +1873,11 @@ async function rekeyStoredDirectRows(
         isEdited: m.isEdited,
         serverTimestamp: m.serverTimestamp,
       }));
+    // A poison row costs itself, never the rest of the thread (`saveMessagesIfAbsentIsolated`).
     const written: Set<string> =
-      fresh.length > 0 ? await storage.saveMessagesIfAbsent(fresh, key) : new Set();
+      fresh.length > 0
+        ? await saveMessagesIfAbsentIsolated(storage, fresh, key, 'the re-key of a direct thread')
+        : new Set();
     // WHAT WAITED FOR THESE ROWS UNDER THE JOINED GROUP IS SETTLED NOW (review of #3406). The
     // group's buffered frames replay before the move, so a deletion, edit or reaction of an old
     // message found no row under the joined group and was kept as a pending mutation there; the

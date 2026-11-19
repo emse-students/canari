@@ -10,7 +10,7 @@
  * The kill is simulated by never closing the window: what the store holds when the hold resolves is
  * what a reload would find.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
 /**
@@ -55,8 +55,11 @@ vi.mock('$lib/mls-client/mlsRecoveryMetrics', () => ({ logMlsMetric: vi.fn() }))
 const { useMessaging, BufferedRowsNotStoredError } = await import('./useMessaging.svelte');
 const { logMlsMetric } = await import('$lib/mls-client/mlsRecoveryMetrics');
 const { RowRefusedError } = await import('$lib/db/rowWriteFailure');
+const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+const { keepPendingMutation } = await import('$lib/utils/chat/pendingMutationStore');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import type { PendingMutation } from '$lib/db/types';
 import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 
 const ME = 'me-user-id';
@@ -436,6 +439,87 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
    * checkpoint still exported its spent generation - the frame left on the server could then never
    * be decrypted. The message is kept, with its frame, for the checkpoint's hold to write.
    */
+  /**
+   * THE ROW BEFORE ANY EFFECT THAT MAY THROW (third review of #3851, SF-1): the notification ran
+   * between the render and the write, so its throw left the message on screen and off the disk; the
+   * kept rerun met it in memory, called it stored, and the frame was acknowledged.
+   */
+  it('a NOTIFICATION that throws costs nothing: the row is stored before it runs, the add resolves, no frame is withheld', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    let storedWhenNotified: string[] | null = null;
+    // The node environment has no document, and `notifyInbound` asks nothing without one: a page
+    // put away, so the arrival is news.
+    vi.stubGlobal('document', { visibilityState: 'hidden', hidden: true, hasFocus: () => false });
+    vi.stubGlobal('window', {
+      location: { pathname: '/chat' },
+      matchMedia: () => ({ matches: false }),
+    });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    vi.spyOn(notificationPreferences, 'pushAllowed').mockImplementation(() => {
+      storedWhenNotified = storedIds(saveMessage);
+      throw new Error('notification store torn down');
+    });
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'notified', CONVO, ctx, {
+      messageId: 'in-notified',
+      frameId: 'q-notified',
+    });
+
+    expect(storedWhenNotified).toEqual(['in-notified']);
+    expect(storedIds(saveMessage)).toEqual(['in-notified']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('notifying the arrival threw'),
+      expect.anything()
+    );
+  });
+
+  it('a kept live add is rerun by the STORE, not memory: a row shown and not stored is written, one shown and stored is not', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const shown = (id: string) => ({
+      id,
+      senderId: PEER,
+      content: id,
+      timestamp: new Date(1_700_000_000_000),
+      isOwn: false,
+    });
+    conversations.set(CONVO, {
+      ...conversations.get(CONVO)!,
+      messages: [shown('in-memory-only'), shown('in-both')] as never,
+    });
+    const getMessagesByIds = (
+      ctx.storage as unknown as { getMessagesByIds: ReturnType<typeof vi.fn> }
+    ).getMessagesByIds;
+    getMessagesByIds.mockImplementation(async (_key: string, ids: string[]) => ({
+      rows: new Map(
+        ids
+          .filter((id) => id === 'in-both')
+          .map((id) => [id, { ...shown(id), conversationId: CONVO, timestamp: 1_700_000_000_000 }])
+      ),
+      unreadable: new Set(),
+    }));
+    const batch = ['in-memory-only', 'in-both'].map((id) => ({
+      senderId: PEER,
+      content: id,
+      messageId: id,
+      frameId: `q-${id}`,
+    }));
+
+    // Memory decides (an ordinary batch): both are shown, so both are called held.
+    await messaging.batchAddMessages(batch, CONVO, ctx, 'arrival');
+    expect(storedIds(saveMessage)).toEqual([]);
+
+    // The store decides (the rerun of a live add that threw).
+    await messaging.batchAddMessages(batch, CONVO, ctx, 'arrival', { storeDecides: true });
+    expect(storedIds(saveMessage)).toEqual(['in-memory-only']);
+  });
+
   it('an inbound add that THREW keeps the message with its frame: rethrown, withheld, and the next hold writes it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const messaging = useMessaging();
@@ -901,5 +985,125 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     }
     const lines = errors.mock.calls.map((call) => String(call[0]));
     expect(lines.filter((l) => l.includes('threw'))).toHaveLength(1);
+  });
+});
+
+/**
+ * A MUTATION PARKED AGAINST A ROW THAT STANDS IS RETRIED BY THE HOLD (third review of #3851, SF-3):
+ * its frame is acknowledged and its row is never written again, so before this nothing drained the
+ * parked entry - the act's only copy - until a reload happened to look.
+ */
+describe('a mutation parked against a stored row (rows before ratchet)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** A store holding row `m1` and a real list of parked entries; its merge fails while `refuse` says. */
+  function parkedWorld() {
+    const { ctx } = makeContext();
+    const entries: PendingMutation[] = [];
+    const row = {
+      id: 'm1',
+      conversationId: CONVO,
+      senderId: PEER,
+      content: serializeEnvelope(mkTextEnvelope('original')),
+      timestamp: 1_700_000_000_000,
+    };
+    const written: Array<Record<string, unknown>> = [];
+    const state = { refuse: true };
+    Object.assign(ctx.storage as object, {
+      putPendingMutation: vi.fn(async (entry: PendingMutation) => {
+        entries.push(entry);
+        return { written: true, kept: true, evicted: 0 };
+      }),
+      getPendingMutations: vi.fn(async (_c: string, ids: string[]) => ({
+        entries: entries.filter((e) => ids.includes(e.messageId)),
+        removedUnreadable: 0,
+      })),
+      deletePendingMutations: vi.fn(async (gone: PendingMutation[]) => {
+        for (const e of gone) entries.splice(entries.indexOf(e), 1);
+      }),
+      getMessagesByIds: vi.fn(async (_c: string, ids: string[]) => ({
+        rows: new Map(ids.includes('m1') ? [['m1', row]] : []),
+        unreadable: new Set(),
+      })),
+      mergeMessages: vi.fn(
+        async (
+          _c: string,
+          _ids: string[],
+          merge: (r: typeof row) => Record<string, unknown> | null
+        ) => {
+          if (state.refuse) throw new DOMException('full', 'QuotaExceededError');
+          const next = merge(row);
+          if (next) written.push(next);
+          return new Set(['m1']);
+        }
+      ),
+    });
+    const deps = {
+      storage: ctx.storage,
+      deviceKey: () => 'device-key',
+      conversations: ctx.conversations,
+      messageReactions: new SvelteMap(),
+      log: () => {},
+    };
+    return { ctx, entries, written, state, deps };
+  }
+
+  const edit = {
+    conversationId: CONVO,
+    messageId: 'm1',
+    sender: PEER,
+    kind: 'edit' as const,
+    slot: '',
+    rank: 1_700_000_002_000,
+    text: 'edited',
+  };
+
+  it('an EDIT parked against a stored row lands at the next hold, and the hold then resolves', async () => {
+    const messaging = useMessaging();
+    const { ctx, entries, written, state, deps } = parkedWorld();
+    // The edit's write onto its stored row failed: parked (its own look fails the same way).
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+    expect(entries).toHaveLength(1);
+    expect(written).toHaveLength(0);
+
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+
+    expect(written).toEqual([expect.objectContaining({ isEdited: true })]);
+    expect(envelopeBodyText(String(written[0].content))).toBe('edited');
+    expect(entries).toHaveLength(0);
+  });
+
+  it('a parked mutation whose row stands and still refuses it REFUSES the hold, as an unstored row does', async () => {
+    const messaging = useMessaging();
+    const { ctx, entries, state, deps } = parkedWorld();
+    await keepPendingMutation(deps as never, edit, 1_700_000_001_000, 'could not be written');
+
+    await expect(messaging.holdRowsForCheckpoint(ctx)).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    expect(entries).toHaveLength(1);
+
+    // It lands once the store takes it, and the hold is no longer refused.
+    state.refuse = false;
+    (await messaging.holdRowsForCheckpoint(ctx))();
+    expect(entries).toHaveLength(0);
+  });
+
+  it('an entry whose message has NOT arrived does not refuse the hold: it waits for its body', async () => {
+    const messaging = useMessaging();
+    const { ctx, deps } = parkedWorld();
+    await keepPendingMutation(
+      deps as never,
+      { ...edit, messageId: 'not-here-yet' },
+      1_700_000_001_000
+    );
+
+    (await messaging.holdRowsForCheckpoint(ctx))();
   });
 });

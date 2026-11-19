@@ -44,6 +44,58 @@ export interface PendingMutationDeps {
 /** A short id for a log line. */
 const short = (id: string) => id.slice(0, 8);
 
+/**
+ * THE TARGETS THIS SESSION PARKED AN ENTRY FOR, by conversation - what a checkpoint's hold retries
+ * ({@link retryParkedMutations}). An entry parked against a row that already STANDS (an edit, a
+ * deletion or a reaction whose write onto it failed) is settled by nothing else: its frame is
+ * acknowledged, and {@link settlePendingFor} runs only when that row is written again - so the entry
+ * is the only copy of the act left (third review of #3851). Ids only, never content.
+ */
+const parkedThisSession = new Map<string, Set<string>>();
+
+/** Notes that an entry waits for `messageId` in `conversationId` (see {@link parkedThisSession}). */
+function noteParked(conversationId: string, messageId: string): void {
+  const ids = parkedThisSession.get(conversationId) ?? new Set<string>();
+  ids.add(messageId);
+  parkedThisSession.set(conversationId, ids);
+}
+
+/**
+ * Retries every target this session parked an entry for, once - called by a checkpoint's hold next
+ * to the retry of the rows kept unstored. A target that does not stand (its message has not
+ * arrived), that does not open here, or whose entries settled leaves the ledger; one whose row
+ * STANDS and whose entries could not be written onto it stays, and is counted: the hold is refused
+ * for it exactly as for an unstored row - the frame that carried the act is acknowledged, and a
+ * checkpoint must not make the session's word for it the only one. Resolves how many stay.
+ */
+export async function retryParkedMutations(deps: PendingMutationDeps): Promise<number> {
+  if (parkedThisSession.size === 0) return 0;
+  let stuck = 0;
+  // Taken whole first: what stays is noted again below, and must not be visited twice.
+  const pending = new Map(parkedThisSession);
+  parkedThisSession.clear();
+  for (const [conversationId, ids] of pending) {
+    let left: string[];
+    try {
+      left = (await settlePendingFor(deps, conversationId, [...ids])).stuck;
+    } catch (e) {
+      console.error(
+        `[PENDING] retrying the ${ids.size} parked target(s) of ${short(conversationId)}... threw - they stay parked:`,
+        e
+      );
+      left = [...ids];
+    }
+    for (const id of left) noteParked(conversationId, id);
+    stuck += left.length;
+  }
+  if (stuck > 0) {
+    console.error(
+      `[PENDING] ${stuck} parked mutation target(s) stand and still cannot take their mutations - the checkpoint is refused until they do`
+    );
+  }
+  return stuck;
+}
+
 /** Entries the bounds evicted so far in this session, per conversation (see {@link countEvictions}). */
 const evictedSoFar = new Map<string, number>();
 
@@ -162,6 +214,7 @@ async function parkPendingMutation(
     return false;
   }
   if (write.evicted > 0) countEvictions(entry.conversationId, write.evicted);
+  if (write.written) noteParked(entry.conversationId, entry.messageId);
   log(
     !write.written
       ? `[PENDING] ${what} ${why} - a later one of the same sender is already kept`
@@ -288,6 +341,15 @@ export async function pendingFor(
   conversationId: string,
   ids: readonly string[]
 ): Promise<Map<string, PendingMutation[]>> {
+  return (await readPending(deps, conversationId, ids)) ?? new Map();
+}
+
+/** {@link pendingFor}, `null` when the read FAILED (said here) - an answer the retry must not read as "none". */
+async function readPending(
+  deps: Pick<PendingMutationDeps, 'storage' | 'deviceKey'>,
+  conversationId: string,
+  ids: readonly string[]
+): Promise<Map<string, PendingMutation[]> | null> {
   const out = new Map<string, PendingMutation[]>();
   if (!deps.storage || ids.length === 0) return out;
   let read;
@@ -298,7 +360,7 @@ export async function pendingFor(
       `[PENDING] the mutations awaiting ${ids.length} message(s) of ${short(conversationId)}… could not be read:`,
       e
     );
-    return out;
+    return null;
   }
   if (read.removedUnreadable > 0) {
     // Found under this key's tags, so written under this key: bytes that no longer open are damaged,
@@ -401,16 +463,22 @@ export function settleableNow(
  * and the entries are KEPT, for the writer's own look after its write. Consuming them against memory
  * alone lost the mutation at rest, and a reload brought the body back. A message still absent keeps
  * its entries; a stored row this device cannot open is left alone, and so are they.
+ *
+ * Resolves the ids that are STUCK: entries wait for them, and either their row stands and the
+ * entries could not be written onto it, or the store could not be read to say - what
+ * {@link retryParkedMutations} refuses a checkpoint for. Never throws for a store failure: each is
+ * said where it happens.
  */
 export async function settlePendingFor(
   deps: PendingMutationDeps,
   conversationId: string,
   ids: readonly string[]
-): Promise<void> {
+): Promise<{ stuck: string[] }> {
   const { storage, deviceKey, conversations, log } = deps;
-  if (!storage) return;
-  const waiting = await pendingFor(deps, conversationId, ids);
-  if (waiting.size === 0) return;
+  if (!storage) return { stuck: [] };
+  const waiting = await readPending(deps, conversationId, ids);
+  if (waiting === null) return { stuck: [...ids] };
+  if (waiting.size === 0) return { stuck: [] };
 
   const shown = new Map(
     (conversations.get(conversationId)?.messages ?? []).map((row) => [row.id, row])
@@ -426,10 +494,11 @@ export async function settlePendingFor(
       `[PENDING] the store could not say which of ${waiting.size} message(s) of ${short(conversationId)}... it holds - their mutations stay kept:`,
       e
     );
-    return;
+    return { stuck: [...waiting.keys()] };
   }
 
   const consumed: PendingMutation[] = [];
+  const stuck: string[] = [];
   for (const [id, entries] of waiting) {
     const atRest = stored.get(id);
     if (!atRest) {
@@ -463,6 +532,7 @@ export async function settlePendingFor(
     } catch (e) {
       // Not removed: the entries are kept and settle again at the next look.
       console.error(`[PENDING] the settled state of ${short(id)} was not persisted:`, e);
+      stuck.push(id);
       continue;
     }
     const done = settlement as Settlement | null;
@@ -478,13 +548,14 @@ export async function settlePendingFor(
       `[PENDING] ${short(id)} met ${done.consumed.length} mutation(s) that arrived before it - ${shown.has(id) ? 'shown and stored' : 'stored, not shown'}`
     );
   }
-  if (consumed.length === 0) return;
+  if (consumed.length === 0) return { stuck };
   try {
     await storage.deletePendingMutations(consumed, deviceKey());
   } catch (e) {
     // Settling them again is a no-op (see the module header), so a failed removal costs a re-read.
     console.error(`[PENDING] ${consumed.length} settled mutation(s) were not removed:`, e);
   }
+  return { stuck };
 }
 
 /** Applies settled `fields` to what the screen draws of message `id`. */

@@ -1,6 +1,10 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
-import { classifyRowWriteFailure, RowRefusedError } from './rowWriteFailure';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  classifyRowWriteFailure,
+  RowRefusedError,
+  saveMessagesIfAbsentIsolated,
+} from './rowWriteFailure';
 import { IndexedDbStorage } from './indexeddb';
 import type { StoredMessage } from './types';
 
@@ -70,5 +74,54 @@ describe('IndexedDbStorage raises RowRefusedError at the refused row, and nothin
     // Aborted whole: the good row of the same write did not land half a batch.
     const read = await storage.getMessagesByIds('c1', ['good-row'], KEY);
     expect(read.rows.size).toBe(0);
+  });
+});
+
+/**
+ * A WRITER THAT HANDS OVER A PAGE LOSES ONE ROW, NEVER THE PAGE (third review of #3851): the archive
+ * replay and a re-key write a page with `saveMessagesIfAbsent`, which the store aborts whole when it
+ * refuses one row of it.
+ */
+describe('saveMessagesIfAbsentIsolated', () => {
+  const row = (id: unknown) =>
+    ({
+      id,
+      conversationId: 'c1',
+      senderId: 'peer',
+      content: 'fine',
+      timestamp: 1_700_000_000_000,
+    }) as StoredMessage;
+
+  it('a page holding a poison row stores every other row and says the poison one at ERROR', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const storage = new IndexedDbStorage(`row-isolated-${dbCounter++}`);
+    await storage.init();
+
+    const written = await saveMessagesIfAbsentIsolated(
+      storage,
+      [row('first'), row({ not: 'a key' }), row('last')],
+      KEY,
+      'a test page'
+    );
+
+    expect([...written].sort()).toEqual(['first', 'last']);
+    const read = await storage.getMessagesByIds('c1', ['first', 'last'], KEY);
+    expect([...read.rows.keys()].sort()).toEqual(['first', 'last']);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('POISON ROW'),
+      expect.any(RowRefusedError)
+    );
+    vi.restoreAllMocks();
+  });
+
+  it('a transient failure is thrown as before - the caller answers it', async () => {
+    const quota = new DOMException('full', 'QuotaExceededError');
+    const storage = { saveMessagesIfAbsent: vi.fn().mockRejectedValue(quota) };
+
+    await expect(
+      saveMessagesIfAbsentIsolated(storage, [row('a'), row('b')], KEY, 'a test page')
+    ).rejects.toBe(quota);
+    expect(storage.saveMessagesIfAbsent).toHaveBeenCalledTimes(1);
   });
 });

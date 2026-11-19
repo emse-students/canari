@@ -3455,9 +3455,11 @@ checkpoint acknowledges), `useMessaging.rowsBeforeRatchet.svelte.test.ts` (a fai
 kept, refuses the hold, and the next stores it; the frames the ack reads, per frame; a poison row is
 dropped, alone or isolated in a batch, with its metric; a bare `DataError` and a conversation-row
 `DataCloneError` are transient; a thrown inbound add is kept and stored by the next hold; a batch-path
-row withholds its own frame; both upgrade writes are kept on failure),
+row withholds its own frame; both upgrade writes are kept on failure; a notification that throws runs
+after the row is stored; a kept add's rerun asks the store; a mutation parked against a stored row
+lands at the next hold, refuses it while it cannot, and an entry waiting for its body does not),
 `rowWriteFailure.test.ts` (the classes, never a message; the store raises `RowRefusedError` at the
-refused row and lands nothing of its write) and `tabMessageSync.test.ts` (a refused post
+refused row and lands nothing of its write; a page holding a poison row stores every other row) and `tabMessageSync.test.ts` (a refused post
 never throws into its caller).
 
 #### A poison row is dropped, not kept (2026-11-19)
@@ -3480,8 +3482,22 @@ of #3851, which caught the first build doing it): `crypto.subtle.importKey` rais
 empty device key, which sign-in paths hand the store on purpose, so every row of the page would have
 been dropped as poison and its frame acknowledged; and a `DataCloneError` on the CONVERSATION row
 (`saveConversation`, after the message rows landed) would have blamed rows that were stored. Both are
-transient now. Native SQLite refusals carry no type yet, so they are transient too. A message is never
-read.
+transient now. A message is never read.
+
+**Native never classifies a failure as poison.** The SQLite store (`db/sqlite.ts`) raises no
+`RowRefusedError` - its refusals come back over IPC as strings with no type - so on Android, iOS and
+desktop every failed row write is transient: a row SQLite refuses for good stays kept, its frame
+withheld, and every checkpoint is refused for it - per frame, not per page, so other conversations
+still acknowledge, but no commit, join or send's durable state lands until the row does. That is the
+stall the web build no longer has; it is the side this rule errs on (keeping costs a re-listing,
+dropping costs the message), and typing the native refusal at its throw is what would lift it.
+
+**A writer that hands over a whole PAGE isolates the same way** (third review of #3851). The store
+aborts a write whole when it refuses one row, so the archive replay (`utils/chat/history.ts`) and a
+re-key's write of the rows only memory held (`rekeyStoredDirectRows`) lost the page to one poison row.
+Both go through `saveMessagesIfAbsentIsolated` (`db/rowWriteFailure.ts`): the page first, and on a
+poison refusal each row on its own (`writeRowsIsolatingRefused`, the ONE isolation `writeOrKeep` uses
+too), the poison rows said at ERROR and left out, a transient failure thrown to the caller as before.
 
 **What a poison row owes instead of a retry** (`writeOrKeep`, `useMessaging`): a single-row write is
 dropped; a multi-row write is ISOLATED - each row written on its own, once, so the rows the store takes
@@ -3521,6 +3537,16 @@ checkpoint's hold is refused while it cannot be written - so the advance never b
 without its row. What is left - a dispatch of a frame carrying NO message (a reaction, a system event,
 a call signal) that throws - is [a backlog entry](../../backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md).
 
+**The row is written or kept BEFORE any effect that may throw** (third review of #3851). The live add
+rendered the message, then announced it to the other tabs, signalled a salon read, played the tone and
+raised the notification, and only then wrote the row. A throw from any of those left the message on
+screen and off the disk; the rerun of the kept message met it in memory, called it held, and the frame
+was acknowledged - the message lost at the next reload. The order is now render, WRITE (or keep), then
+each effect on its own (`afterTheRow`, which says a throw at ERROR and goes no further): a failed tone
+or banner never costs the message. And the rerun of a message a live add kept decides "stored" from
+the STORE, never from memory (`KeptBatch.storeDecides`, `batchAddMessages(..., { storeDecides })`): a
+row on screen and not on disk is written as it is shown.
+
 **Every row a decrypted frame writes carries that frame's id** (second review of #3851: a row kept
 WITHOUT one released its frame's ack, where the page-wide count had withheld it). The handler wraps
 the row writers once per frame (`framedRowWriters`, `setupMessageHandler`), so every row written by
@@ -3542,6 +3568,27 @@ the frame's dispatch is stamped with its queued id unless the caller named one. 
   a LANDED checkpoint covers it, and a checkpoint is refused while any row stands unstored;
 - outside the ledger, filed below: a community key frame's seed, the history catch-up's archive frames
   (never acknowledged: they are not the mailbox's).
+
+**A mutation parked against a row that STANDS is retried at every checkpoint's hold** (third review of
+#3851). Parking an edit, a tombstone or a reaction whose write onto its stored row failed kept the act
+on disk - but its frame is acknowledged, and `settlePendingFor` ran only when that row was written
+again, which a stored row never is: the parked entry was the act's only copy, and nothing drained it.
+The store of pending mutations now notes every target this session parked for
+(`pendingMutationStore`, `parkedThisSession`), and the hold retries them next to the kept rows
+(`retryParkedMutations`): a target whose message has not arrived, that does not open here, or whose
+entries settled leaves the ledger; one whose row STANDS and still refuses its entries - or whose store
+could not be read to say - refuses the hold exactly as an unstored row does (`settlePendingFor`
+resolves those ids as `stuck`). The ledger is the session's; across a reload, the rows a page LOADS
+settle what waits for them (`useConversations.settleLoadedRows`, one indexed read per page, in the
+background - settling twice changes nothing).
+
+**A mutation with no server time is not parked, and its frame is acknowledged** (`parkPendingMutation`,
+said at ERROR). Withholding that frame would not keep the act: its generation is spent, so the
+redelivered copy reads as a duplicate ([the entry above](../../backlog.d/p2-rows-before-ratchet-dispatch-throw-redelivery-reads-as-duplicate.md)).
+It is not reached by a queued frame: the time is `queued_message.createdAt`, a NOT NULL column the
+gateway forwards on every live frame and refuses at ERROR when its type is unexpected
+(`apps/chat-gateway/src/subscribers.rs`), and a pull carries it from the same row - so the branch
+names a defect upstream, where it is said, rather than an ordinary path.
 
 **Left outside the ledger, filed** (review of #3851): a community key frame's seed
 ([entry](../../backlog.d/p2-rows-before-ratchet-community-key-frames.md)), the Tauri resume's
