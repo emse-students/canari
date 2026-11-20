@@ -3504,10 +3504,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
    through; layout in `lib/birthdays/confettiLayout.ts`). The ring sits FLUSH against the photo,
    OUTSIDE it, no gap: a solid gradient disc a ring-width larger than the box, painted BEHIND the
    opaque face, so only the band shows. Width is `max(2px, 6%)` of the avatar - the same formula as
-   `ringWidthPx`. The wrapper (`.birthday-wrap`) keeps the avatar's own layout box; the ring and
+   `ringWidthPx`. The wrapper (`.avatar-wrap`, on EVERY avatar) keeps the avatar's own layout box; the ring and
    the confetti (floating 14-24% of the size beyond the photo) only OVERFLOW it visually, so nothing reflows. `isolate` makes a local stacking
    context: ring, face and confetti stack by DOM order and never meet the layer ladder. */
-.birthday-wrap {
+.avatar-wrap {
   position: relative;
   isolation: isolate;
 }

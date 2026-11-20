@@ -25,17 +25,23 @@ owed are an entry of [the readings owed](plan.md#readings-owed); the GDPR row is
    edge - 12 pieces from 48 px, 8 from 30 px, 5 dots below. Placement is seeded by the size
    (`frontend/src/lib/birthdays/confettiLayout.ts`, never `Math.random`): one picture every time. A
    gentle twinkle, off under `prefers-reduced-motion`. Drawing outside the face needs it outside the
-   `overflow-hidden` box, so a celebrated avatar is a wrapper with the avatar's own layout box
-   (nothing reflows) holding ring, face and confetti; everybody else renders the bare face. **Presence
+   `overflow-hidden` box, so EVERY avatar is a wrapper (`.avatar-wrap`) with the avatar's own layout box
+   (nothing reflows) around the clipped face, and a celebrating one adds the ring and the confetti as
+   siblings. The wrapper is always rendered so the face node survives a member starting to celebrate
+   at runtime (no remount, no placeholder flash). The confetti waits for the measured box (a
+   `ResizeObserver` on a celebrating avatar only), so its count and sizes never jump. **Presence
    wins its corner**: the app's presence mark is a green dot at the bottom-right (ChatHeader), painted
    after the avatar, so on a birthday it sits over the ring there. The notification row's type badge
    (the cake) has a 3 px surface outline and sits a little further out, so it clears the ring.
    **Callers that clip the avatar** cut the ring and confetti, so a wrapper that only rounded the avatar
    lost its `overflow-hidden` (the avatar clips its own face): `DirectoryRow`, `FollowPersonRow`,
    `SettingsBlockedSection`, `ProfileHeader`, `CallGroupTile`. **Still clipping, deliberately**:
-   `CallBanner` (a rounded-lg thumbnail swapped with the video) and `SuggestionCard` (its 64 px
-   identity box shared with association logos, and the 16 px overlapping facepile) - none is a place
-   a celebrating member's face is read at a glance; lift the clip there the day one needs it. The
+   `CallBanner` (a rounded-lg thumbnail swapped with the video), `SuggestionCard` (its 64 px
+   identity box shared with association logos, and the 16 px overlapping facepile) and
+   `CallGroupTile`'s OUTER tile (its avatar box no longer clips, but the tile around it still does, so
+   the confetti is cut in a dense call grid) - none is a place a celebrating member's face is read
+   at a glance; lift the clip there the day one needs it. Removing `overflow-hidden` from the five
+   wrappers also shows the face's own `shadow-sm` there, which the clip used to cut: accepted. The
    notification row, the chat header pill and the message gutter do not clip.
 4. **On the morning of the day**, "C'est l'anniversaire de X" goes to the member's followers who may
    see the date. The reader can switch it off (notification category `birthdays`).

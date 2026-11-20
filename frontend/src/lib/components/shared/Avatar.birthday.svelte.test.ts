@@ -98,11 +98,20 @@ describe('the birthday ring on the shared avatar', () => {
   });
 });
 
+/** The wrapper's measured width, which happy-dom cannot compute: read from the size class. */
+let measured = 24;
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+  configurable: true,
+  get() {
+    return measured;
+  },
+});
+
 describe('the ring is outside the face and the confetti is deterministic', () => {
   it('wraps the clipped face, with the ring and the confetti OUTSIDE the clip', async () => {
     await render('ann');
-    const wrap = document.querySelector('.birthday-wrap') as HTMLElement;
-    expect(wrap).not.toBeNull();
+    const wrap = document.querySelector('[data-birthday="today"]') as HTMLElement;
+    expect(wrap.classList.contains('avatar-wrap')).toBe(true);
     const ring = wrap.querySelector('.birthday-ring') as HTMLElement;
     expect(ring.closest('.overflow-hidden')).toBeNull();
     // Five dots at the 24 px of `sm` (under 30 px), none inside the clipped face.
@@ -111,22 +120,63 @@ describe('the ring is outside the face and the confetti is deterministic', () =>
     for (const piece of pieces) expect(piece.closest('.overflow-hidden')).toBeNull();
   });
 
-  it('positions the initials face too, or the ring would paint over it', async () => {
-    await render('ann');
-    const face = document.querySelector('.birthday-wrap .avatar-placeholder') as HTMLElement;
-    expect(face.className).toContain('relative');
-  });
-
   it('draws the same confetti every time', async () => {
     await render('ann');
-    const first = document.querySelector('.birthday-wrap')?.innerHTML;
+    const first = document.querySelector('.avatar-wrap')?.innerHTML;
     unmount(component!);
     await render('ann');
-    expect(document.querySelector('.birthday-wrap')?.innerHTML).toBe(first);
+    expect(document.querySelector('.avatar-wrap')?.innerHTML).toBe(first);
   });
 
   it('keeps the avatar box: the wrapper carries the size, not the face', async () => {
     await render('ann');
-    expect(document.querySelector('.birthday-wrap')?.className).toContain('w-6');
+    expect(document.querySelector('.avatar-wrap')?.className).toContain('w-6');
+  });
+
+  it('draws no confetti until the box has been measured, so the pieces never jump', async () => {
+    measured = 0;
+    await render('ann');
+    expect(document.querySelectorAll('[data-confetti]').length).toBe(0);
+    expect(ringed()).toBe(1);
+    measured = 24;
+  });
+
+  it('draws the count of the measured size: 12 at 56 px', async () => {
+    measured = 56;
+    await render('ann');
+    expect(document.querySelectorAll('[data-confetti]').length).toBe(12);
+    measured = 24;
+  });
+
+  it('positions the initials face too, or the ring would paint over it', async () => {
+    await render('ann');
+    const face = document.querySelector('.avatar-wrap .avatar-placeholder') as HTMLElement;
+    expect(face.className).toContain('relative');
+  });
+
+  it('gives the ring the squircle corner for a soft avatar, on the photo branch too', async () => {
+    faces.resolveUserAvatarDisplay.mockResolvedValue({ kind: 'direct', url: '/a.jpg' });
+    component = mount(Avatar, {
+      target: document.body,
+      props: { userId: 'ann', size: 'sm', shape: 'soft' },
+    });
+    await settle();
+    expect(document.querySelector('.birthday-ring')?.className).toContain('squircle');
+    expect(document.querySelector('.avatar-wrap img')).not.toBeNull();
+  });
+
+  it('keeps the SAME face node when the member starts celebrating at runtime', async () => {
+    faces.resolveUserAvatarDisplay.mockResolvedValue({ kind: 'direct', url: '/a.jpg' });
+    api.fetchBirthdaysToday.mockResolvedValue({ date: '2026-11-08', userIds: [] });
+    await birthdaysToday.refresh('me');
+    await render('ann');
+    const img = document.querySelector('.avatar-wrap img');
+    expect(img).not.toBeNull();
+    expect(ringed()).toBe(0);
+    api.fetchBirthdaysToday.mockResolvedValue({ date: '2026-11-08', userIds: ['ann'] });
+    await birthdaysToday.refresh('me');
+    await settle();
+    expect(ringed()).toBe(1);
+    expect(document.querySelector('.avatar-wrap img')).toBe(img);
   });
 });

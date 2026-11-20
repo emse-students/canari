@@ -121,7 +121,6 @@
               ? 'w-12 h-12'
               : 'w-8 h-8'
   );
-  const presetPx = $derived(fill ? 32 : { xs: 16, sm: 24, md: 32, lg: 48, xl: 56 }[size]);
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
   /**
    * THE BIRTHDAY RING (decision 3, docs/wiki/birthdays.md): drawn HERE, on the one component every
@@ -129,17 +128,38 @@
    * reader, wherever the face appears, never per call site.
    *
    * The ring sits FLUSH against the photo and OUTSIDE it, with confetti floating round it, so the
-   * decoration cannot live inside the `overflow-hidden` face. A celebrated avatar is therefore a
-   * WRAPPER with the avatar's own layout box (`boxClass`, so nothing reflows) holding the ring, the
-   * clipped face and the confetti, which only overflow it visually. Anybody else renders the bare
-   * face exactly as before. When a presence dot also applies (ChatHeader), the dot is a sibling
-   * painted after the wrapper, so it WINS the bottom-right corner over the ring.
+   * decoration cannot live inside the `overflow-hidden` face. EVERY avatar is therefore a WRAPPER
+   * with the avatar's own layout box (`boxClass`, so nothing reflows) around the clipped face; a
+   * celebrating one adds the ring and the confetti as SIBLINGS of the face, which only overflow
+   * visually. The wrapper is always there so the face node is the same node before and after a
+   * member starts celebrating at runtime: its loaded photo is kept, and no placeholder flashes.
+   * When a presence dot also applies (ChatHeader), the dot is a sibling painted after the wrapper,
+   * so it WINS the bottom-right corner over the ring.
    */
   const celebrating = $derived(identified && birthdaysToday.has(userId));
-  /** The wrapper's measured width (fill avatars have no preset); the preset until measured. */
+  let wrap = $state<HTMLElement | null>(null);
+  /**
+   * The wrapper's measured width in px, 0 until measured. THE CONFETTI IS NOT DRAWN BEFORE IT IS
+   * KNOWN: its count and its piece sizes depend on the size, so drawing at a guess and redrawing
+   * would make the pieces jump. Only a celebrating avatar observes its box (one observer per
+   * celebrated face, none for the other thousands).
+   */
   let measuredPx = $state(0);
-  const confetti = $derived(celebrating ? confettiLayout(measuredPx || presetPx) : []);
-  const faceBox = $derived(celebrating ? 'w-full h-full' : boxClass);
+  $effect(() => {
+    if (!celebrating || !wrap) {
+      measuredPx = 0;
+      return;
+    }
+    const el = wrap;
+    const read = () => {
+      measuredPx = el.offsetWidth;
+    };
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+  const confetti = $derived(celebrating && measuredPx > 0 ? confettiLayout(measuredPx) : []);
 </script>
 
 {#snippet face()}
@@ -149,15 +169,13 @@
     <AvatarPlaceholder
       seed={userId}
       {initials}
-      class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {faceBox} {textClass} {celebrating
-        ? 'relative'
-        : ''}"
+      class="{shapeClasses} h-full w-full shrink-0 overflow-hidden shadow-sm {textClass} relative"
       title={displayLabel}
       ariaLabel={m.avatar_aria_label({ name: displayLabel })}
     />
   {:else}
     <div
-      class="{shapeClasses} shrink-0 shadow-sm {faceBox} {textClass} relative overflow-hidden"
+      class="{shapeClasses} h-full w-full shrink-0 shadow-sm {textClass} relative overflow-hidden"
       title={displayLabel}
       aria-label={m.avatar_aria_label({ name: displayLabel })}
     >
@@ -197,23 +215,21 @@
   {/if}
 {/snippet}
 
-{#if celebrating}
-  <div
-    class="birthday-wrap shrink-0 {boxClass}"
-    data-birthday="today"
-    bind:clientWidth={measuredPx}
-  >
+<div
+  class="avatar-wrap shrink-0 {boxClass}"
+  data-birthday={celebrating ? 'today' : undefined}
+  bind:this={wrap}
+>
+  {#if celebrating}
     <span class="birthday-ring {shapeClasses}" aria-hidden="true"></span>
-    {@render face()}
-    {#each confetti as piece, i (i)}
-      <span
-        class="birthday-confetti {piece.dot ? 'birthday-confetti-dot' : ''}"
-        aria-hidden="true"
-        data-confetti
-        style="left:{piece.xPct}%;top:{piece.yPct}%;width:{piece.widthPx}px;height:{piece.heightPx}px;background:var(--birthday-c{piece.colour});--birthday-rot:{piece.rotationDeg}deg;--birthday-delay:{piece.delayS}s"
-      ></span>
-    {/each}
-  </div>
-{:else}
+  {/if}
   {@render face()}
-{/if}
+  {#each confetti as piece, i (i)}
+    <span
+      class="birthday-confetti {piece.dot ? 'birthday-confetti-dot' : ''}"
+      aria-hidden="true"
+      data-confetti
+      style="left:{piece.xPct}%;top:{piece.yPct}%;width:{piece.widthPx}px;height:{piece.heightPx}px;background:var(--birthday-c{piece.colour});--birthday-rot:{piece.rotationDeg}deg;--birthday-delay:{piece.delayS}s"
+    ></span>
+  {/each}
+</div>
