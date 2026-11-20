@@ -86,6 +86,16 @@
      * the server - but the PIN typed after it did).
      */
     pin?: string;
+    /**
+     * A gate state WITH NO KEYPAD, shown in the keypad's place whenever it is non-empty: a PIN typed
+     * now could not be used (PIN audit, 2026-11-20). Two causes reach it: this device was removed from
+     * the account (`device_revoked`, `revoked_device_wipe_owed`) - the way on is "Se deconnecter" -
+     * and the gate could not learn whether this account has a PIN yet (`pin-status` unanswered), where
+     * {@link onGateRetry} asks again.
+     */
+    gateNotice?: string;
+    /** Offered as the footer's button while {@link gateNotice} is shown; omitted, there is none. */
+    onGateRetry?: () => void;
   }
 
   let {
@@ -106,7 +116,23 @@
     onRecoverPin,
     onRestartDevice,
     pin = $bindable(''),
+    gateNotice = '',
+    onGateRetry,
   }: Props = $props();
+
+  /**
+   * THE PIN CHOSEN AT CREATION, KEPT WHILE ITS CONFIRMATION IS ASKED (PIN audit row 15, 2026-11-20).
+   * A PIN cannot be recovered, so a typo at creation used to lock its owner out of their own messages
+   * on the next unlock. A first setup now asks it twice: the first submit keeps it here and empties the
+   * keypad, the second must be the same, and only then is it handed to `onSubmit`. A second entry that
+   * differs is emptied and the confirmation asked again; "Choisir un autre PIN" starts over. Never
+   * logged, and dropped whenever the gate leaves first setup, closes, or the parent refuses the PIN.
+   */
+  let chosenPin = $state<string | null>(null);
+  const confirming = $derived(isFirstSetup && chosenPin !== null);
+  $effect(() => {
+    if (!open || !isFirstSetup) chosenPin = null;
+  });
 
   let internalError = $state('');
   /**
@@ -153,7 +179,11 @@
   });
 
   $effect(() => {
-    if (externalError) internalError = '';
+    if (externalError) {
+      internalError = '';
+      // The parent refused the PIN being created: it is chosen again, then confirmed again.
+      chosenPin = null;
+    }
   });
 
   /**
@@ -168,7 +198,8 @@
     target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
-  const displayError = $derived(externalError || internalError);
+  // A refusal of the previous attempt is not shown over the confirmation step it no longer concerns.
+  const displayError = $derived(internalError || (confirming ? '' : externalError));
   /** A returning person's refusal is the long banner (the mismatch text plus the recover link); the header's mark and lead make room for it. */
   const compactHeader = $derived(useNumpad && !isFirstSetup && !!displayError);
 
@@ -186,8 +217,37 @@
       return;
     }
     internalError = '';
+    if (isFirstSetup && chosenPin === null) {
+      Log.d('pin-modal', 'PIN chosen - asking its confirmation');
+      chosenPin = trimmed;
+      pin = '';
+      return;
+    }
+    if (isFirstSetup && trimmed !== chosenPin) {
+      Log.d('pin-modal', 'confirmation differs - asking it again');
+      pin = '';
+      internalError = m.auth_pin_confirm_mismatch();
+      return;
+    }
     onSubmit(trimmed);
   }
+
+  /** Drops the chosen PIN and its confirmation: the person picks another one. */
+  function chooseAnotherPin() {
+    Log.d('pin-modal', 'confirmation abandoned - choosing another PIN');
+    chosenPin = null;
+    pin = '';
+    internalError = '';
+  }
+
+  /** The title the gate shows, for the modal's label and the heading. */
+  const title = $derived(
+    confirming
+      ? m.auth_pin_title_confirm()
+      : isFirstSetup
+        ? m.auth_pin_title_setup()
+        : m.auth_pin_title()
+  );
 
   /** Appends one digit. Never logs the digit: a PIN must not reach a log, even one character of it. */
   function pressDigit(digit: string) {
@@ -275,7 +335,7 @@
 <Modal
   {open}
   gate="PinModal"
-  title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
+  {title}
   dismissible={false}
   phoneFullScreen
   showTitleBar={false}
@@ -352,19 +412,28 @@
           </div>
         {/if}
         <h1 class="font-body text-text-main text-xl font-semibold">
-          {isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
+          {title}
         </h1>
-        {#if !compactHeader}
+        {#if !compactHeader && !gateNotice}
           <p data-pin-lead class="text-text-muted text-sm">
-            {isFirstSetup ? m.auth_pin_setup_lead() : m.auth_pin_unlock_desc()}
+            {confirming
+              ? m.auth_pin_confirm_lead()
+              : isFirstSetup
+                ? m.auth_pin_setup_lead()
+                : m.auth_pin_unlock_desc()}
           </p>
         {/if}
-        {#if isFirstSetup && useNumpad}
+        {#if isFirstSetup && !confirming && useNumpad && !gateNotice}
           <p class="text-text-muted text-xs">{m.auth_pin_hint_setup_short()}</p>
         {/if}
       </header>
 
-      {#if useNumpad}
+      {#if gateNotice}
+        <!-- NO KEYPAD: a PIN typed here could not be used. The notice says what to do instead. -->
+        <p data-pin-gate-notice role="alert" class="text-text-main text-center text-sm font-medium">
+          {gateNotice}
+        </p>
+      {:else if useNumpad}
         <!-- The dots: the focal point. Empty, filled, and (on a refusal) red with one shake. -->
         <div
           aria-hidden="true"
@@ -480,7 +549,7 @@
       {/if}
 
       <!-- Quiet secondary actions: two short text links, never a block of prose. -->
-      <div class="flex flex-wrap items-center justify-center gap-x-1">
+      <div class="flex flex-wrap items-center justify-center gap-x-1 {gateNotice ? 'hidden' : ''}">
         <button
           type="button"
           onclick={() => switchInputMode(!useNumpad)}
@@ -488,6 +557,16 @@
         >
           {useNumpad ? m.auth_pin_manual_entry() : m.auth_pin_numeric_keypad()}
         </button>
+        {#if confirming}
+          <Button
+            variant="bare"
+            data-pin-choose-another
+            onclick={chooseAnotherPin}
+            class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
+          >
+            {m.auth_pin_confirm_restart()}
+          </Button>
+        {/if}
         {#if !isFirstSetup}
           <button
             type="button"
@@ -582,7 +661,7 @@
         </div>
       {/if}
 
-      {#if showStaySignedIn}
+      {#if showStaySignedIn && !gateNotice}
         <div class="w-full">
           <div
             class="flex items-center gap-1 rounded-2xl bg-black/5 py-1 pr-1 pl-4 dark:bg-white/5 {isLoading
@@ -650,16 +729,26 @@
          ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
          BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
     <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
-      <Button class="min-h-13 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
-        {#if isLoading}
-          <LoaderCircle size={16} class="animate-spin" />
-          {loadingStep || m.auth_pin_verifying()}
-        {:else if isFirstSetup}
-          {m.auth_pin_create()}
-        {:else}
-          {m.auth_pin_unlock()}
+      {#if gateNotice}
+        {#if onGateRetry}
+          <Button class="min-h-13 w-full" type="button" disabled={isLoading} onclick={onGateRetry}>
+            {m.common_retry_button()}
+          </Button>
         {/if}
-      </Button>
+      {:else}
+        <Button class="min-h-13 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
+          {#if isLoading}
+            <LoaderCircle size={16} class="animate-spin" />
+            {loadingStep || m.auth_pin_verifying()}
+          {:else if isFirstSetup && !confirming}
+            {m.auth_pin_setup_next()}
+          {:else if isFirstSetup}
+            {m.auth_pin_create()}
+          {:else}
+            {m.auth_pin_unlock()}
+          {/if}
+        </Button>
+      {/if}
     </div>
   {/snippet}
 </Modal>

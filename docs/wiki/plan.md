@@ -128,6 +128,7 @@ earliest version, as a checklist.
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
+- [ ] [the PIN gate's audit rows of 2026-11-20 (deadline, 429, confirmation, removed device)](backlog.d/reading-owed-pin-gate-audit-rows-of-2026-11-20.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
 ## 1.7.3

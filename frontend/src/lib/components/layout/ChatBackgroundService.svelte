@@ -65,6 +65,7 @@
     provesOtherAccountState,
   } from '$lib/composables/session/loginErrors';
   import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
+  import { askPinStatus } from '$lib/composables/session/pinStatus';
   import {
     getToken,
     clearAuth,
@@ -425,6 +426,14 @@
   let isFirstPinSetup = $state(false);
   let pinError = $state('');
   /**
+   * The gate's no-keypad state (`PinModal`'s `gateNotice`): a PIN typed now could not be used. Set
+   * when this device was removed from the account, or when the gate could not learn whether this
+   * account has a PIN yet ({@link pinGateRetry} then asks again). Cleared with the gate.
+   */
+  let pinGateNotice = $state('');
+  /** The retry the no-keypad state offers, or `null` when its way on is "Se deconnecter". */
+  let pinGateRetry = $state<(() => void) | null>(null);
+  /**
    * The local state of this install is PROVEN to be another account's (`device_holds_other_account`:
    * the vaulted key opened `mls.bin` and its credential named someone else). While it holds, the gate
    * offers NO reset - `handlePinReset` -> `resetDeviceAsFresh` -> `removeMlsState` deletes the one
@@ -567,17 +576,27 @@
    * implementation now, branching on the typed code and never on the message.
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
-    if (code === 'account_deleted' || code === 'revoked_device_wipe_owed') {
+    if (code === 'device_revoked' || code === 'revoked_device_wipe_owed') {
+      // THIS DEVICE WAS REMOVED FROM THE ACCOUNT (PIN audit row 18, 2026-11-20): the gate's own state,
+      // no keypad - a PIN typed now met a session the wipe had already ended, and the next submit sent
+      // the person to /login with no word of why. The way on is the gate's "Se deconnecter".
+      canRecoverPin = false;
+      restartOffered = false;
+      pinError = '';
+      pinGateRetry = null;
+      pinGateNotice = m.auth_device_revoked_here();
+      appendLog(
+        `[PIN] This device was removed from the account (${code}) - gate shown without a keypad.`
+      );
+      return;
+    }
+    if (code === 'account_deleted') {
       // An account deleted from this device, or a device its owner revoked whose wipe is still owed:
       // nothing to retry and nothing to recover. No salt for a next try and no state lookup - only
       // the recovery a previous failure may have offered is withdrawn. Each said as what it is: a
       // revoked device's account still exists (round 9 of the review of #2919).
       canRecoverPin = false;
-      appendLog(
-        code === 'account_deleted'
-          ? '[PIN] No salt and no recovery asked - this account was deleted from this device.'
-          : '[PIN] No salt and no recovery asked - this device was revoked and its wipe is still owed.'
-      );
+      appendLog('[PIN] No salt and no recovery asked - this account was deleted from this device.');
       return;
     }
     if (code === 'pin_reset_unsettled') {
@@ -596,7 +615,7 @@
     // path offered the reset the saved-unlock path withheld.
     noteOtherAccountState(code);
     void evaluateRecoverable(uid, code);
-    askSaltForNextTry(code);
+    askSaltForNextTry();
   }
 
   /**
@@ -617,14 +636,10 @@
    *
    * ONE PLACE FOR EVERY FAILED UNLOCK THAT LEAVES THE KEYPAD UP, which is why it is called from
    * `applyPinFailure`: the keypad's own wrong-PIN handler, the saved-PIN path and the biometric
-   * button all pass through there. NOT after a revocation - the device has just been returned to a
-   * fresh install, there is no session to ask the salt with, and the request could only fail.
+   * button all pass through there. Never after a revocation: `applyPinFailure` returns before it, the
+   * device has just been returned to a fresh install and there is no session to ask the salt with.
    */
-  function askSaltForNextTry(code: LoginErrorCode | undefined) {
-    if (code === 'device_revoked') {
-      appendLog('[PIN] No salt asked for a next try - the device was revoked and wiped.');
-      return;
-    }
+  function askSaltForNextTry() {
     if (isFirstPinSetup) return;
     globalSession.prefetchPinSalt(appendLog);
   }
@@ -754,6 +769,8 @@
     noteUnlockNeedsMember();
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
+    pinGateNotice = '';
+    pinGateRetry = null;
     // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
     // resolves this account's id before the state refuses it, so it would read "returning" for an
     // account that has never chosen one, and draw the keypad without its confirmation step.
@@ -762,7 +779,21 @@
       appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
       isFirstPinSetup = knownLocally;
     } else {
-      isFirstPinSetup = await detectFirstPinSetup(uid);
+      const status = await askPinStatus({
+        url: `${deliveryUrl()}/api/mls/security/pin-status/${encodeURIComponent(uid)}`,
+        getToken,
+        log: appendLog,
+      });
+      if (status.kind === 'unanswered') {
+        // NOT "returning" and NOT "first setup": the gate cannot know which, so it draws neither
+        // keypad and asks to retry (PIN audit row 16, 2026-11-20).
+        isFirstPinSetup = false;
+        pinGateNotice = status.message;
+        pinGateRetry = () => void openPinModal(uid, opts);
+        showPinGate('pin status unanswered');
+        return;
+      }
+      isFirstPinSetup = status.kind === 'first-setup';
     }
     // The salt does not depend on the PIN, so it is asked while the person types. A first setup
     // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
@@ -970,30 +1001,6 @@
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 
-  /**
-   * Returns true only when the user has never registered a PIN (no PinVerifier row
-   * server-side) - the genuine "first setup" case. This is the source of truth, unlike
-   * a device-count check which wrongly reports "first setup" for a user whose devices
-   * were all revoked/GC'd but who still has a registered PIN (picking a new PIN would
-   * then fail the verifier with a confusing mismatch). Defaults to false on any
-   * network/auth failure so the "first setup" wording is never shown by mistake.
-   * Asked only by a device holding no enrolled device id ({@link openPinModal}).
-   */
-  async function detectFirstPinSetup(uid: string): Promise<boolean> {
-    try {
-      const token = await getToken();
-      const res = await fetch(
-        `${deliveryUrl()}/api/mls/security/pin-status/${encodeURIComponent(uid)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (!res.ok) return false;
-      const { registered } = (await res.json()) as { registered: boolean };
-      return !registered;
-    } catch {
-      return false;
-    }
-  }
-
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
   // Guard against several observers reaching the "session is dead" verdict at once.
@@ -1002,6 +1009,8 @@
   /** Closes PIN/biometric modals as soon as MLS unlocks; catch-up continues in the background. */
   function dismissAuthPrompts() {
     forgetPinSaltAhead('keypad closed', appendLog);
+    pinGateNotice = '';
+    pinGateRetry = null;
     showBiometricSheet = false;
     showPinModal = false;
     pinLoading = false;
@@ -2691,6 +2700,8 @@
           'asked at the gate, the saved state opens under no key'
         )
     : undefined}
+  gateNotice={pinGateNotice}
+  onGateRetry={pinGateRetry ?? undefined}
 />
 
 <!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->

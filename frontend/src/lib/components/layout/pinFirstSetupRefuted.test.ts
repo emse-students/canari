@@ -4,9 +4,9 @@ import { join } from 'node:path';
 /**
  * A DAMAGED LOCAL STATE MUST NOT BE CALLED A FIRST CONNECTION, because that is what hides the way out.
  *
- * WHAT BROKE, MEASURED ON W2 ON 2026-09-21. `isFirstPinSetup` is computed by `detectFirstPinSetup`
- * from a SERVER fact - whether this account has a `PinVerifier` row - and it is careful about it:
- * it defaults to `false` on any failure so the "first setup" wording is never shown by mistake.
+ * WHAT BROKE, MEASURED ON W2 ON 2026-09-21. `isFirstPinSetup` is computed from a SERVER fact -
+ * whether this account has a `PinVerifier` row (`askPinStatus`; since 2026-11-20 an unanswered
+ * question is its own gate state, never a default).
  * `local_state_unopenable` is a LOCAL fact, raised when this device's own MLS blob will not open.
  * NOTHING SAID THE TWO COULD NOT BE TRUE AT ONCE, and they were: the modal announced "Premiere
  * connexion - choisissez votre PIN", accepted a PIN, and answered that the messages stored here
@@ -95,15 +95,28 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     // account that exists nowhere) and `evaluateRecoverable`. Both are skipped, as the salt already
     // was for `device_revoked`, by a branch that returns BEFORE either call.
     const body = applyPinFailureBody()!;
+    for (const guard of [
+      "if (code === 'account_deleted')",
+      "if (code === 'device_revoked' || code === 'revoked_device_wipe_owed')",
+    ]) {
+      const branch = body.indexOf(guard);
+      expect(branch, guard).toBeGreaterThan(-1);
+      const end = body.indexOf('return;', branch);
+      expect(end).toBeGreaterThan(branch);
+      expect(end).toBeLessThan(body.indexOf('evaluateRecoverable(uid, code)'));
+      expect(end).toBeLessThan(body.indexOf('askSaltForNextTry()'));
+      expect(body.slice(branch, end)).toContain('canRecoverPin = false');
+    }
+  });
+
+  it('shows a removed device the gate without a keypad, never the keypad then /login (row 18)', () => {
+    const body = applyPinFailureBody()!;
     const branch = body.indexOf(
-      "if (code === 'account_deleted' || code === 'revoked_device_wipe_owed')"
+      "if (code === 'device_revoked' || code === 'revoked_device_wipe_owed')"
     );
-    expect(branch).toBeGreaterThan(-1);
     const end = body.indexOf('return;', branch);
-    expect(end).toBeGreaterThan(branch);
-    expect(end).toBeLessThan(body.indexOf('evaluateRecoverable(uid, code)'));
-    expect(end).toBeLessThan(body.indexOf('askSaltForNextTry(code)'));
-    expect(body.slice(branch, end)).toContain('canRecoverPin = false');
+    expect(body.slice(branch, end)).toContain('pinGateNotice = m.auth_device_revoked_here()');
+    expect(body.slice(branch, end)).toContain('pinGateRetry = null');
   });
 
   it('still gates both exits on the flag, which is why clearing it is the fix', () => {

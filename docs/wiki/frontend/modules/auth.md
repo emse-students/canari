@@ -884,6 +884,7 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `pin_salt_rotated` | PIN reset elsewhere during this attempt | type the current PIN | keypad |
 | `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline | retry | "Deverrouiller" |
 | `pin_attempts_throttled` | a PIN route answered 429 | wait until the time shown | "Deverrouiller" |
+| `pin-status` unanswered (before the keypad) | the gate cannot learn whether the account has a PIN | retry | no keypad; "Reessayer" |
 | `other` (check unexpected, login failed, no result) | server or app fault | retry | "Deverrouiller" |
 | `local_state_sealed_under_old_pin` | PIN changed on another device | recover with the old PIN | "Mon PIN a change sur un autre appareil" |
 | `local_state_unopenable` | state opens with no key held | recover, else start fresh | the recover link, "Repartir de zero sur cet appareil" |
@@ -896,8 +897,8 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `device_holds_other_account` | the state is another account's | sign out | "Se deconnecter"; reset withheld |
 | `state_written_by_another_tab`, `state_owned_by_another_tab` | another tab holds the state | close it or use it | none |
 | `pin_reset_unsettled` | a reset waits for the server | go online, retry | "Deverrouiller" |
-| `account_deleted`, `revoked_device_wipe_owed` | account deleted / device removed here | sign out, sign in again | "Se deconnecter" |
-| `device_revoked` | revoked, wiped now | sign in again with the PIN | login page |
+| `account_deleted` | account deleted here | sign out, sign in again | "Se deconnecter" |
+| `device_revoked`, `revoked_device_wipe_owed` | device removed from the account (wiped now, or wipe owed) | sign out, sign in again | no keypad; "Se deconnecter" |
 
 **The PIN-gate audit of 2026-11-20: the requests (rows 11, 12, 19, 25).** Every PIN request (salt,
 check, the recovery's check) goes through `fetchOrUnreachable`, which since then runs `trackedFetch`: the
@@ -907,6 +908,15 @@ app's one request deadline (`requestDeadline.ts`) and the connectivity reading. 
 minute to retry at, rounded up, never a countdown (row 12). The password sign-in link reads "Se
 connecter avec un mot de passe", not "Connexion externe (service-account)" (row 25). Row 19 (salt
 rotation between two devices) is [an entry](../../backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md).
+
+**The same audit: the gate's states (rows 15, 16, 18).** A first setup asks the PIN twice: "Confirmez
+votre PIN"; a second entry that differs is emptied and the confirmation asked again, and "Choisir un
+autre PIN" starts over (`PinModal`'s `chosenPin`, row 15). `pin-status` unanswered is its own gate state
+with "Reessayer", never "returning" (`askPinStatus`, row 16): defaulting to "returning" drew an unlock
+keypad whose PIN `pin-check` would then REGISTER, unconfirmed. A removed device (`device_revoked` after
+its wipe, `revoked_device_wipe_owed`) shows "Cet appareil a ete retire de votre compte" with no keypad,
+the gate's sign-out as the way on (row 18); before, the keypad stayed and the next PIN met the ended
+session and went to `/login` unexplained. Both no-keypad states are one prop, `PinModal`'s `gateNotice`.
 
 The French and English texts are in `messages/{fr,en}.json` under the `auth_` keys each throw names
 (`loginErrors.ts`, `sessionAuth.ts`, `pinUnlock.ts`); a text names a control by its exact label.
