@@ -272,8 +272,10 @@ export function nameChangeNoticeDue(
   before: Pick<Conversation, 'id' | 'name' | 'nameAt'>,
   after: Pick<Conversation, 'name'>
 ): boolean {
-  if (after.name === before.name) return false;
+  // Compared TRIMMED: a statement's name is trimmed on read (`readDatedGroupName`) but the Welcome writes
+  // the server's name as it came, so an old build's trailing space must not make a restatement a change.
   const shown = before.name.trim();
+  if (after.name.trim() === shown) return false;
   const placeholder =
     before.nameAt === undefined && shown !== '' && (isRawId(shown) || shown === before.id);
   return !placeholder;

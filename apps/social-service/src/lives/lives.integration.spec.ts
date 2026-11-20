@@ -160,6 +160,7 @@ class MemoryStore implements LiveSegmentStore {
   /** The trim ANSWERS, but the store refused every delete. */
   refuseTrimDeletes = false;
   private hold: { entered: () => void; release: Promise<void> } | null = null;
+  private trimHold: { entered: () => void; release: Promise<void> } | null = null;
   private gate: { entered: number; release: Promise<void> } | null = null;
 
   /** The next store waits for `release`; resolves `entered` once it is inside. */
@@ -169,6 +170,16 @@ class MemoryStore implements LiveSegmentStore {
     const enteredP = new Promise<void>((r) => (entered = r));
     const releaseP = new Promise<void>((r) => (release = r));
     this.hold = { entered, release: releaseP };
+    return { entered: enteredP, release };
+  }
+
+  /** The next trim delete waits for `release`; resolves `entered` once it is inside. */
+  holdNextTrim(): { entered: Promise<void>; release: () => void } {
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredP = new Promise<void>((r) => (entered = r));
+    const releaseP = new Promise<void>((r) => (release = r));
+    this.trimHold = { entered, release: releaseP };
     return { entered: enteredP, release };
   }
 
@@ -212,6 +223,12 @@ class MemoryStore implements LiveSegmentStore {
   }
 
   async deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult> {
+    const trimHold = this.trimHold;
+    if (trimHold) {
+      this.trimHold = null;
+      trimHold.entered();
+      await trimHold.release;
+    }
     if (this.failTrim) throw Object.assign(new Error('store down'), { code: 'ECONNREFUSED' });
     if (this.refuseTrimDeletes) return { deleted: [], failed: names };
     for (const name of names) this.objects.delete(`live/${liveId}/${name}`);
@@ -1402,7 +1419,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await replayPosts(live.id)).toEqual([]);
     });
 
-    it('a failing trim whose own count also fails is logged, never unhandled: trimsSettled still resolves, and a repeated switch-off queues no second drain', async () => {
+    it('a failing trim whose own count also fails is logged, never unhandled: trimsSettled still resolves', async () => {
       const live = await longLive();
       const total = LIVE_RETAINED_SEGMENTS + 3;
       for (let i = 0; i < total; i++) {
@@ -1423,9 +1440,6 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       process.on('unhandledRejection', onUnhandled);
       try {
         await lives.switchReplayOff(ALICE, live.id);
-        // A second and third switch-off while the drain is queued add nothing to the chain.
-        await lives.switchReplayOff(ALICE, live.id);
-        await lives.switchReplayOff(ALICE, live.id);
         await expect(lives.trimsSettled()).resolves.toBeUndefined();
         await new Promise((resolve) => setImmediate(resolve));
       } finally {
@@ -1435,6 +1449,38 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       }
       expect(unhandled).toEqual([]);
       expect(await keeps(live.id)).toBe(false);
+    });
+
+    it('a repeated switch-off while a drain is RUNNING queues no second drain', async () => {
+      const live = await longLive();
+      const total = LIVE_RETAINED_SEGMENTS + 3;
+      for (let i = 0; i < total; i++) {
+        await lives.ingest(ALICE, live.id, i, segment(i));
+        await lives.trimsSettled();
+      }
+      const drains = jest.spyOn(
+        lives as unknown as { trimUntilDone: (id: string) => Promise<void> },
+        'trimUntilDone'
+      );
+      // The first drain blocks inside the store's delete: it is running while the others arrive.
+      const held = store.holdNextTrim();
+      try {
+        await lives.switchReplayOff(ALICE, live.id);
+        await held.entered;
+        await lives.switchReplayOff(ALICE, live.id);
+        await lives.switchReplayOff(ALICE, live.id);
+        expect(drains).toHaveBeenCalledTimes(1);
+      } finally {
+        held.release();
+      }
+      await lives.trimsSettled();
+      expect(drains).toHaveBeenCalledTimes(1);
+      expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      // Once the drain has ended, a later switch-off may start one again: the guard is not a latch.
+      await lives.switchReplayOff(ALICE, live.id);
+      await lives.trimsSettled();
+      expect(drains).toHaveBeenCalledTimes(2);
+      drains.mockRestore();
     });
 
     it('switched off AFTER the live but inside its drain window: publishReplay refuses, the live is purged, and no post row is ever written', async () => {
@@ -1492,6 +1538,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       );
       await lives.end(ALICE, live.id);
       expect(await replayPosts(live.id)).toEqual([{ ended: false }]);
+      const replayPostId = (
+        (await q(`SELECT id FROM posts WHERE "liveId" = $1 AND kind = 'replay'`, [live.id])) as {
+          id: string;
+        }[]
+      )[0].id;
+      // A bell row naming the replay: the retention purge deletes it beside the post.
+      await q(`INSERT INTO post_notifications ("postId", "recipientId") VALUES ($1, $2)`, [
+        replayPostId,
+        BOB,
+      ]);
       const generation = feedGenerations;
 
       // Another member cannot switch it off: the same 404 as a live that is not theirs.
@@ -1505,6 +1561,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // No wait for an hourly worker or a sweep: the post, the segments and the live are gone.
       expect(await replayPosts(live.id)).toEqual([]);
       expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
+      expect(
+        await q(`SELECT 1 FROM post_notifications WHERE "postId" = $1`, [replayPostId])
+      ).toEqual([]);
       expect(store.countFor(live.id)).toBe(0);
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
       expect(feedGenerations).toBeGreaterThan(generation);
