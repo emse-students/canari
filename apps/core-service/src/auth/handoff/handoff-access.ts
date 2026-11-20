@@ -198,7 +198,11 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
         } else {
           this.logger.log(
             `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} ${describe(access)} ` +
-              '- an active account may be handed off (not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
+              (access.consentBindings > 0
+                ? `- an active account that accepted the MiConnect terms ${CONSENT_VERSION} may be handed off ` +
+                  '(the consent bindings are recognised by the NAMES of their policy and stages, not by the policy content, which this account cannot read) '
+                : '- an active account may be handed off ') +
+              '(not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
           );
         }
       } catch (e) {

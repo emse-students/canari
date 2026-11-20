@@ -1202,7 +1202,16 @@ collection of name and first name, as one required tick, for new AND existing ac
 > consent flow's stage bindings (`miconnect-consent-ask`, `miconnect-consent-write`), and for those
 > mints only a person whose `attributes.cgu_version` is the current version (`CONSENT_VERSION`, the
 > fifth place `check-consent-version.sh` pins); anything else bound still refuses `policy_bound`, and a
-> person on an older text is refused `terms_not_accepted` until they authorize once through MiConnect.
+> person on an older text is refused `terms_not_accepted` (403 `HANDOFF_TERMS_NOT_ACCEPTED`) until they
+> authorize once through MiConnect. **That refusal is EXPECTED and population-wide:** right after a stable
+> that ships a terms version, almost every account is in it for weeks (until its next MiConnect
+> sign-in), so it is logged at INFO on the server (`[HANDOFF] refused class=terms_not_accepted`) and at
+> info, once per open, in the app - never at warn - and the site opens plainly. **The allowlist trusts
+> NAMES, not content:** the reader account cannot read a policy's expression, so "this is the consent
+> policy" means a policy of that name (names are unique) on stage bindings of those names; whoever can
+> rewrite the policy can rewrite what it asks, which is already an administrator. The binding is matched
+> by asking each consent stage binding alone (`target_in`), because a binding's own `target` field is not
+> the id the filter takes (it never matched on a real authentik, CI 2026-11-20).
 > Without it, binding migallery, sky and cercle to the flow refused every handoff mint
 > ([sign-in handoff](../backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)).
 > **The set is asserted twice:** `.github/scripts/tests/held-blueprints.test.sh` reads the providers

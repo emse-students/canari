@@ -119,8 +119,11 @@ function fakeFetch(world: World) {
         ) + consent.length;
       return reply(pick('bindings') ?? 200, {
         pagination: { count },
+        // NOT the string the `target_in` filter takes: a real authentik's binding `target` never
+        // equalled a stage binding's `policybindingmodel_ptr_id` (CI 2026-11-20), so a client comparing
+        // the two matches nothing. The mock must not hand the same string back in both fields.
         results: consent.map((b) => ({
-          target: b.target,
+          target: { pk: `${b.target}-object-pk`, model_name: 'flowstagebinding' },
           negate: b.negate ?? false,
           policy_obj: { name: b.policy },
         })),
@@ -245,7 +248,7 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       const list = calls.filter(
         (c) => c.url.includes('/policies/bindings/') && c.url.includes('page_size')
       );
-      expect(list).toHaveLength(1);
+      expect(list).toHaveLength(3);
     });
 
     it.each<[string, string | null]>([

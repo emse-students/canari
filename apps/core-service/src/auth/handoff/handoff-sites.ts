@@ -78,6 +78,12 @@ export const HandoffRefusal = {
   badDest: 'HANDOFF_BAD_DEST',
   /** 403 - MiConnect would not let this person into the site (inactive, a bound application...). */
   accessRefused: 'HANDOFF_ACCESS_REFUSED',
+  /**
+   * 403 - the person has not accepted the current MiConnect terms. EXPECTED and population-wide
+   * after a terms version ships (every account is in it until its next MiConnect sign-in), so it
+   * is its own code: logged at info on both sides, never at warn.
+   */
+  termsNotAccepted: 'HANDOFF_TERMS_NOT_ACCEPTED',
   /** 503 - MiConnect could not be asked (no reader token, no answer, an unexpected status). */
   miconnectUnavailable: 'HANDOFF_MICONNECT_UNAVAILABLE',
 } as const;

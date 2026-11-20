@@ -200,34 +200,37 @@ export class MiconnectReaderClient {
         `flow ${flowUuid.slice(0, 8)}: its stage bindings were not all read`
       );
     }
-    const total = await this.countBindings([own, ...stageTargets]);
-    if (flow[0].slug !== CONSENT_FLOW_SLUG || total === 0) {
-      return { bindings: total, consent: 0, authentication: requirement };
+    if (flow[0].slug !== CONSENT_FLOW_SLUG) {
+      return {
+        bindings: await this.countBindings([own, ...stageTargets]),
+        consent: 0,
+        authentication: requirement,
+      };
     }
-    // The consent flow: of its bindings, only the allowlisted ones are the person's own to answer.
-    const consentStages = new Set(
-      (stages.results ?? [])
-        .filter((s) => CONSENT_STAGE_NAMES.has(s.stage_obj?.name ?? ''))
-        .map((s) => s.policybindingmodel_ptr_id ?? '')
-    );
+    // The consent flow: ONE listed page of every enabled binding on it gives the total, and the
+    // allowlisted ones are found PER CONSENT STAGE BINDING, through the `target_in` filter. A binding's
+    // own `target` field is NOT compared with a stage binding's id: on a real authentik it never
+    // equalled `policybindingmodel_ptr_id` (CI, 2026-11-20), so that comparison matched nothing.
     const listed = await this.listBindings([own, ...stageTargets]);
-    const consent = listed.filter(
-      (b) =>
-        consentStages.has(b.target ?? '') &&
-        b.policy_obj?.name === CONSENT_POLICY_NAME &&
-        b.negate === false
-    ).length;
-    return { bindings: total - consent, consent, authentication: requirement };
+    let consent = 0;
+    for (const stage of stages.results ?? []) {
+      if (!CONSENT_STAGE_NAMES.has(stage.stage_obj?.name ?? '')) continue;
+      const onStage = await this.listBindings([stage.policybindingmodel_ptr_id ?? '']);
+      consent += onStage.filter(
+        (b) => b.policy_obj?.name === CONSENT_POLICY_NAME && b.negate === false
+      ).length;
+    }
+    return { bindings: listed.length - consent, consent, authentication: requirement };
   }
 
   /** The enabled bindings on these targets, with their policy's name - every one, or a refusal. */
   private async listBindings(
     targets: string[]
-  ): Promise<{ target?: string; negate?: boolean; policy_obj?: { name?: string } }[]> {
+  ): Promise<{ negate?: boolean; policy_obj?: { name?: string } }[]> {
     const query = targets.map((t) => `target_in=${encodeURIComponent(t)}`).join('&');
     const answer = await this.get<{
       pagination?: { count?: number };
-      results?: { target?: string; negate?: boolean; policy_obj?: { name?: string } }[];
+      results?: { negate?: boolean; policy_obj?: { name?: string } }[];
     }>(`/api/v3/policies/bindings/?${query}&enabled=true&page_size=${STAGE_PAGE}`);
     const results = answer.results ?? [];
     if (answer.pagination?.count !== results.length) {

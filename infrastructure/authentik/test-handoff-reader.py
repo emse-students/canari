@@ -99,10 +99,14 @@ try:
                 stage_names = {b["policybindingmodel_ptr_id"]: b["stage_obj"]["name"] for b in body["results"]}
                 check(set(stage_names.values()) == CONSENT_STAGES, f"{slug}'s {kind} is the consent flow, and the reader reads its stage names ({sorted(stage_names.values())})")
                 check(listed["pagination"]["count"] == len(listed["results"]) == 2, f"the consent flow carries exactly two bindings, all read ({listed['pagination']['count']})")
-                for binding in listed["results"]:
-                    check(binding["policy_obj"]["name"] == CONSENT_POLICY and binding["negate"] is False, f"a binding of the consent flow is the consent policy, not negated ({binding['policy_obj']['name']})")
-                    check(stage_names.get(binding["target"]) in CONSENT_STAGES, "and sits on one of the two consent stage bindings")
-                check({stage_names[b["target"]] for b in listed["results"]} == CONSENT_STAGES, "one on each of them")
+                # Each consent stage binding is asked ALONE through the same `target_in` filter the client uses: a
+                # binding's own `target` field is not an id the client can compare (CI 2026-11-20), so the
+                # attribution is by query. Print what `target` is, so the next reader of a failure sees it.
+                print(f"  note target field of a consent binding: {listed['results'][0].get('target')!r}", flush=True)
+                for ptr, name in stage_names.items():
+                    one = call("get", f"/api/v3/policies/bindings/?target_in={ptr}&enabled=true&page_size=100").json()
+                    check(one["pagination"]["count"] == len(one["results"]) == 1, f"the consent stage binding {name} carries exactly one binding")
+                    check(one["results"][0]["policy_obj"]["name"] == CONSENT_POLICY and one["results"][0]["negate"] is False, f"on {name} it is the consent policy, not negated")
             else:
                 check(listed["pagination"]["count"] == 0, f"nothing is bound on {slug}'s {kind} or its stages")
 
