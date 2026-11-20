@@ -476,7 +476,8 @@
   <!--
     Actor avatar with the type badge punched out of its lower-right corner. The ring is the row's
     own ground, not a colour: it is what separates the badge from the photo behind it without
-    drawing an outline.
+    drawing an outline. It is 3 px thick and sits a little further out, so on a birthday it clears the
+    festive ring around the photo instead of cutting it (docs/wiki/birthdays.md, decision 3).
   -->
   <span class="relative shrink-0 {avatarBox}">
     {#if isLiveModerationNotif}
@@ -500,7 +501,7 @@
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
     {/if}
     <span
-      class="ring-cn-surface absolute -right-0.5 -bottom-0.5 flex items-center justify-center rounded-full ring-2 {badgeBox} {badgeClass}"
+      class="ring-cn-surface absolute -right-1 -bottom-1 flex items-center justify-center rounded-full ring-3 {badgeBox} {badgeClass}"
       aria-hidden="true"
     >
       {#if notif.type === 'reaction'}

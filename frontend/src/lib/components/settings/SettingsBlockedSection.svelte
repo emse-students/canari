@@ -85,7 +85,7 @@
         <li
           class="flex items-center gap-3 rounded-xl border border-black/5 bg-black/[0.02] px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.02]"
         >
-          <div class="h-9 w-9 shrink-0 overflow-hidden rounded-full">
+          <div class="h-9 w-9 shrink-0 rounded-full">
             <Avatar userId={person.userId} fill shape="circle" />
           </div>
           <span class="text-text-main min-w-0 flex-1 truncate text-sm font-semibold">

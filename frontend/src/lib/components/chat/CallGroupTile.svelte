@@ -55,9 +55,7 @@
   data-connected={tile.connected}
 >
   {#if !painted}
-    <div
-      class="size-20 overflow-hidden rounded-full md:size-28 {tile.connected ? '' : 'opacity-50'}"
-    >
+    <div class="size-20 rounded-full md:size-28 {tile.connected ? '' : 'opacity-50'}">
       <Avatar userId={tile.userId} fill shape="circle" />
     </div>
   {/if}
