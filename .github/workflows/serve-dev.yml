@@ -130,6 +130,20 @@ jobs:
           git reset --hard "$INPUT_SHA"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
+      # WHAT WOULD STOP THE TEST MICONNECT'S UPGRADE, REFUSED FIRST AND BY NAME (review of #3486,
+      # 2026-11-19), before the dev environment is even rendered: read-only, nothing changes. `preflight`
+      # is the deploy's own read-only half - its decision and, for an upgrade, compose's proof that the
+      # up changes the tag and nothing else; a stack whose files differ from what runs is refused here
+      # with the exact hand command. `rehearsal`: the test stack must start from the version PRODUCTION
+      # runs, or this pre-release would rehearse an upgrade the stable never makes - both tags named.
+      # docs/wiki/infrastructure/authentik.md, "The order: the hand step, then the merge".
+      - name: Refuse early what would stop the test MiConnect's upgrade
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/deploy-stack.sh rehearsal --project miconnect-test --production miconnect
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect-test --newer refuse
+
       # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only -
       # secrets of the `development` environment this job declares (2026-11-13). The DEV_ prefix is
       # KEPT inside the environment: while production's bare names still exist at repository level, a
@@ -215,6 +229,24 @@ jobs:
           # was never applied and dev's .env asked for production's port 8080. They are `computed`
           # manifest rows now, upserted by render-env.sh, so one place decides per environment.
 
+      # THE TEST MICONNECT REHEARSES THE VERSION THE STABLE WILL PUT ON PRODUCTION (owner,
+      # 2026-11-13), and it goes FIRST, before any dev container changes: a failed upgrade rolls the
+      # test stack back and FAILS this job HERE, so the dev estate is never deployed half-way and
+      # `dev-deployed` stays where it was - gate 4 then refuses the stable that would carry that
+      # version. The same script the stable runs, on the test stack (`miconnect-test`): restarts only
+      # when what runs differs from this tree's pin, dumps first, checks Docker's health verdict,
+      # `/-/health/ready/` and the OIDC discovery after, rolls back and fails otherwise.
+      # Dev itself still signs in through PRODUCTION's MiConnect; nothing here touches it.
+      - name: Put the test MiConnect on the pinned authentik version
+        working-directory: ${{ env.DEV_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          # `--newer refuse`: a test stack NEWER than the pin is refused, never kept - the pre-release
+          # exists to rehearse the very upgrade the stable will make, and gate 4 relies on it.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect-test --newer refuse
+
       # `dev` IS DEV'S MOVING TAG, FOR EVERY SERVICE AND NOT JUST THE TWO FRONTENDS. It used to be
       # `TAG=latest` for the shared backends and `FRONTEND_TAG=dev` for the frontends, which worked
       # only while one push deployed both estates from one commit. A pre-release and a stable are
@@ -258,11 +290,15 @@ jobs:
       # every blueprint inside one transaction, prints what the stable release WILL change, and rolls
       # back; a blueprint that does not apply fails here, a pre-release before it could reach the
       # 600 accounts. The mechanism: infrastructure/authentik/README.md.
+      # THE JOB LOG IS PUBLIC, so the applier's output is redacted as the daily drift report's is
+      # (release-lib.sh, ak_redact_blueprint_output): which object and field change, never the values.
+      # `pipefail` keeps the applier's own status.
       - name: Dry-run MiConnect's blueprints
         working-directory: ${{ env.DEV_DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          bash infrastructure/authentik/apply-blueprints.sh dry-run
+          . infrastructure/authentik/release-lib.sh
+          bash infrastructure/authentik/apply-blueprints.sh dry-run 2>&1 | ak_redact_blueprint_output
 
       # THE ESTATE IS ASKED WHAT IT SERVES BEFORE IT IS ALLOWED TO COUNT AS DEV-DEPLOYED. On
       # 2026-09-06 `v0.16.4` deployed green, both estates answered `HTTP 200` and every login was

@@ -40,10 +40,12 @@ Homogeneity is not sameness, and the script says which is which rather than flat
 
 - **Canari has two extra libraries**, `android.yml` and `ios.yml`. It is the only one that ships to
   two app stores.
-- **`release-preflight.sh` is compared across the three siblings only.** Canari's asks FIVE
-  questions where theirs ask three: `dev.canari-emse.fr` must already have served the commit, and
-  `store/whats-new.txt` must name the version. Making five identical to three would delete a gate;
-  making three identical to five would invent one. Canari is excluded **by name**, so the exception
+- **`release-preflight.sh` is compared across the three siblings only.** Canari's asks EIGHT
+  questions where theirs ask three: `dev.canari-emse.fr` must already have served the commit,
+  `store/whats-new.txt` must name the version, no unapproved held migration ships, no advisory touches
+  what a stable ships, and production MiConnect's morning preflight passed on the stable's authentik
+  pin. Making eight identical to three would delete gates; making three identical to eight would
+  invent them. Canari is excluded **by name**, so the exception
   is visible in the output instead of being an absence nobody notices.
 - **`arm-auto-merge.yml` is compared twice, and the two answers mean different things.** Its YAML is
   identical in all four and that is the property that must never fork. **One declared exception:**

@@ -8,7 +8,7 @@
 # 2026-09-03, when the bump's push was rejected and the whole chain quietly declined to run. This is
 # the same mechanism, used on purpose.
 #
-# THE SEVEN QUESTIONS, in the order that makes a refusal cheapest to read:
+# THE EIGHT QUESTIONS, in the order that makes a refusal cheapest to read:
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
 #   2. Is the released commit on `main`?  - it reached the trunk through a pull request; where
@@ -27,6 +27,9 @@
 #                                           would refuse it, after the store builds
 #   7. Does an advisory touch what it     - stable releases only (owner, 2026-11-17); the PR
 #      ships?                               audit's production closure, asked again at shipping
+#   8. Would production MiConnect take    - stable releases only (review of #3486, 2026-11-19): its
+#      this release's authentik pin?        step runs after both stores took the version, so the
+#                                           morning's read-only verdict is read here instead
 #
 # WHY THERE IS NO BYPASS INPUT. A skip flag is a fallback path, and reaching one means the primary
 # path failed - so the fix belongs there. The emergency path is unchanged and is not in software: a
@@ -341,6 +344,17 @@ else
   # (`lib/audit-trees.sh`, `production`), same script, so the merge and the release cannot disagree
   # on what counts; the ignores' premises were asserted by that same `CI passed` on this commit.
   shipped_closure_gate
+fi
+
+# -- 8 -------------------------------------------------------------------------------------------
+step "production MiConnect would take this stable's authentik pin"
+if [ "$KIND" != 'stable' ]; then
+  ok "not asked of a pre-release - its own first step refuses what would stop the test stack's upgrade"
+else
+  # THE MORNING'S VERDICT, CARRIED TO WHERE THE DECISION IS MADE: `serve-prod` puts MiConnect on the
+  # pin only after both stores took the version, so a refusal there ships half a stable.
+  # `miconnect_preflight_gate` carries how the run is found and why a pin, not a date, decides.
+  miconnect_preflight_gate
 fi
 
 printf '\n'

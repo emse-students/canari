@@ -530,6 +530,181 @@ else
 fi
 rm -rf "$G7"
 
+printf '\ngate 8: a stable is refused unless production MiConnect would take its pin (review of #3486, 2026-11-19)\n'
+# =================================================================================================
+# THE MORNING'S VERDICT, CARRIED TO THE PREFLIGHT: its MiConnect step runs after both stores took the
+# version, so a refusal there ships half a stable. Only a SUCCESS on the very pin this stable ships is
+# permission; another pin says nothing, an absent run is no evidence, an unreadable pin decides nothing.
+mic() {
+  local got
+  got="$(classify_miconnect_preflight "$1" "$2" "$3")"
+  if [ "$got" = "$4" ]; then pass "$5"; else fail "$5 - expected '$4', got '$got'"; fi
+}
+mic success g/s:2026.8.5 g/s:2026.8.5 'passed' 'a success on this very pin is the only permission'
+mic failure g/s:2026.8.5 g/s:2026.8.5 'failed failure' 'a failure on this pin refuses'
+mic cancelled g/s:2026.8.5 g/s:2026.8.5 'failed cancelled' 'a run that did not finish refuses'
+mic success g/s:2026.8.0 g/s:2026.8.5 'stale g/s:2026.8.0' 'a success on ANOTHER pin is stale, never permission'
+mic '' g/s:2026.8.5 g/s:2026.8.5 'absent' 'no run is no evidence'
+case "$(classify_miconnect_preflight success '' g/s:2026.8.5)" in
+  undecidable*) pass 'a pin the run judged that cannot be read decides nothing' ;;
+  *) fail 'an unreadable judged pin was taken as an answer' ;;
+esac
+if grep -qxF '  miconnect_preflight_gate' "$PREFLIGHT"; then
+  pass 'release-preflight.sh asks gate 8 through miconnect_preflight_gate'
+else
+  fail 'release-preflight.sh does not run gate 8'
+fi
+# Gate 8 reads check runs, jobs and runs: the preflight job's token must be granted all three reads.
+G8_PERMS="$(awk '/^  preflight:/ { on = 1 } on && /^    outputs:/ { exit } on' "$(dirname "$PREFLIGHT")/../workflows/release.yml")"
+if grep -qx '      checks: read' <<<"$G8_PERMS" && grep -qx '      actions: read' <<<"$G8_PERMS"; then
+  pass "release.yml's preflight job may read the check runs, jobs and runs gate 8 reads"
+else
+  fail "release.yml's preflight job lacks checks: read or actions: read - gate 8 would refuse every stable"
+fi
+
+# THE READING, against a fake `gh` that RECORDS THE API and runs the caller's own `--jq` through the
+# real jq: the selection gate 8 makes (skipped, cancelled before or after it started, another app,
+# another workflow, the newest across every commit) is exercised exactly as GitHub's answers would
+# meet it. Check runs are `check-<sha>.json`, a job `job-<id>.json`, a run `run-<id>.json`, and a
+# path containing what `fail` holds answers like a 502.
+G8="$(mktemp -d)"
+mkdir -p "$G8/bin" "$G8/tree/infrastructure/authentik"
+cat >"$G8/bin/gh" <<'FAKE'
+#!/usr/bin/env bash
+shift # api
+path='' expr='' paginate=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --paginate) paginate=1; shift ;;
+    -X | -f | -H) shift 2 ;;
+    --jq) expr="$2"; shift 2 ;;
+    *) path="$1"; shift ;;
+  esac
+done
+if [ -s "$G8_DIR/fail" ] && [[ "$path" == *"$(cat "$G8_DIR/fail")"* ]]; then
+  echo "gh: Server Error (HTTP 502)" >&2
+  exit 1
+fi
+case "$path" in
+  *"commits?sha=main"*) file="$G8_DIR/main.json" ;;
+  *"/check-runs") sha="${path#*commits/}"; file="$G8_DIR/check-${sha%%/*}.json"; [ -f "$file" ] || file="$G8_DIR/none.json" ;;
+  *"/actions/jobs/"*) file="$G8_DIR/job-${path##*/}.json" ;;
+  *"/actions/runs/"*) file="$G8_DIR/run-${path##*/}.json" ;;
+  *"/contents/"*) cat "$G8_DIR/compose-${path#*ref=}"; exit ;;
+  *) echo "unexpected gh api $path" >&2; exit 1 ;;
+esac
+[ -f "$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+# --paginate follows the pages, `<file>.2`, `<file>.3`..., applying --jq to EACH, as gh does.
+pages=("$file")
+if [ "$paginate" = 1 ]; then n=2; while [ -f "$file.$n" ]; do pages+=("$file.$n"); n=$((n + 1)); done; fi
+for page in "${pages[@]}"; do
+  if [ -n "$expr" ]; then jq -r "$expr" "$page" || exit 1; else cat "$page"; fi
+done
+FAKE
+chmod +x "$G8/bin/gh"
+printf '{"total_count":0,"check_runs":[]}\n' >"$G8/none.json"
+compose_pinning() { printf 'services:\n  server:\n    image: g/s:%s\n  worker:\n    image: g/s:%s\n' "$1" "$1"; }
+compose_pinning 2026.8.5 >"$G8/tree/infrastructure/authentik/compose.yml"
+for c in target m1 m2 m3; do compose_pinning 2026.8.5 >"$G8/compose-$c"; done
+printf '[{"sha":"m1"},{"sha":"m2"},{"sha":"m3"}]\n' >"$G8/main.json"
+# cr <id> <conclusion> <completed_at> [app slug] [name] - one check run, as GitHub writes it.
+cr() {
+  printf '{"id":%s,"name":"%s","status":"completed","conclusion":"%s","started_at":"%s","completed_at":"%s","html_url":"https://run/%s","app":{"slug":"%s"}}' \
+    "$1" "${5:-MiConnect production preflight}" "$2" "$3" "$3" "$1" "${4:-github-actions}"
+}
+# checks <sha> <check run>... - that commit's check runs.
+checks() {
+  local sha="$1"; shift
+  rm -f "$G8/check-$sha.json".*
+  printf '{"total_count":%s,"check_runs":[%s]}\n' "$#" "$(IFS=,; echo "$*")" >"$G8/check-$sha.json"
+}
+# page2 <sha> <check run>... - a second page for that commit; both pages' total_count become the sum.
+page2() {
+  local sha="$1" total; shift
+  printf '{"total_count":0,"check_runs":[%s]}\n' "$(IFS=,; echo "$*")" >"$G8/check-$sha.json.2"
+  total=$(($(jq '.check_runs | length' "$G8/check-$sha.json") + $#))
+  for f in "$G8/check-$sha.json" "$G8/check-$sha.json.2"; do jq -c --argjson t "$total" '.total_count = $t' "$f" >"$f.tmp" && mv "$f.tmp" "$f"; done
+}
+# job <id> <runner or empty> [workflow path] - the job behind a check run, and its run's workflow.
+job() {
+  local runner='null'
+  if [ -n "$2" ]; then runner="\"$2\""; fi
+  printf '{"id":%s,"run_id":%s,"runner_name":%s,"name":"MiConnect production preflight"}\n' "$1" "$((1000 + $1))" "$runner" >"$G8/job-$1.json"
+  printf '{"id":%s,"path":"%s"}\n' "$((1000 + $1))" "${3:-.github/workflows/scheduled.yml}" >"$G8/run-$((1000 + $1)).json"
+}
+# gate8: runs the loop from the released tree with stub printers, sets G8_OUT.
+gate8() {
+  G8_OUT="$(
+    cd "$G8/tree" || exit 1
+    FAILED=0
+    ok() { printf 'OK %s\n' "$1"; }
+    refuse() { FAILED=1; printf 'REFUSE %s\n' "$1"; }
+    hint() { printf 'HINT %s\n' "$1"; }
+    PATH="$G8/bin:$PATH" G8_DIR="$G8" REPO=o/r TARGET_SHA=target GITHUB_RUN_ID=4242 ALPHA_TAG="${G8_ALPHA:-}" miconnect_preflight_gate
+    printf 'FAILED=%s\n' "$FAILED"
+  )"
+}
+# expect_g8 <0|1> <text the output must hold> <what passing means>
+expect_g8() {
+  gate8
+  if grep -qx "FAILED=$1" <<<"$G8_OUT" && grep -qF -- "$2" <<<"$G8_OUT"; then pass "$3"; else fail "$3 - got: $G8_OUT"; fi
+}
+
+# Every scheduled.yml run posts the job; all but the morning one post it skipped, newer than it.
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 15 failure 2026-11-19T09:30:00Z other-app)"
+checks m2 "$(cr 12 success 2026-11-19T07:31:00Z)" "$(cr 16 skipped 2026-11-19T07:15:00Z)"
+checks m3 "$(cr 17 skipped 2026-11-19T07:00:00Z)"
+job 12 runner-1
+expect_g8 0 'https://run/12' "the morning verdict is read past the newer skipped runs and another app's same-named check"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 13 cancelled 2026-11-19T08:00:00Z)"
+job 13 ''
+expect_g8 0 'https://run/12' "a run cancelled before a runner took it is no verdict: the older green one stands"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)" "$(cr 14 cancelled 2026-11-19T08:30:00Z)"
+job 14 runner-1
+expect_g8 1 "concluded 'cancelled' in https://run/14" "a run cancelled while it ran refuses, naming it"
+checks m1 "$(cr 11 skipped 2026-11-19T09:00:00Z)"
+checks target "$(cr 21 success 2026-11-18T07:31:00Z)"
+checks m2 "$(cr 22 failure 2026-11-19T07:31:00Z)"
+job 21 runner-1
+job 22 runner-1
+expect_g8 1 "concluded 'failure' in https://run/22" "an old success on the stable's own commit loses to a newer failure on main"
+checks target "$(cr 21 success 2026-11-19T10:00:00Z)"
+expect_g8 0 'https://run/21' "a run dispatched on the stable's own commit wins when it is the newest"
+compose_pinning 2026.8.0 >"$G8/compose-target"
+expect_g8 1 'judged g/s:2026.8.0, not the g/s:2026.8.5' "a green run on ANOTHER pin refuses as stale"
+compose_pinning 2026.8.5 >"$G8/compose-target"
+job 21 runner-1 .github/workflows/ci.yml
+expect_g8 1 "is the job 'MiConnect production preflight' (id 21) of .github/workflows/ci.yml, not of .github/workflows/scheduled.yml - rename that job" \
+  "a same-named job of ANOTHER workflow is no verdict, and the refusal names that job and its workflow"
+job 21 runner-1
+# A commit that stays main's head collects a run per scheduled run: the newest verdict on page 2.
+rm -f "$G8/check-target.json"
+checks m2 "$(cr 30 success 2026-11-18T07:31:00Z)" "$(cr 31 skipped 2026-11-19T07:15:00Z)"
+page2 m2 "$(cr 32 failure 2026-11-19T07:31:00Z)" "$(cr 33 skipped 2026-11-19T07:45:00Z)"
+job 30 runner-1
+job 32 runner-1
+expect_g8 1 "concluded 'failure' in https://run/32" "the newest verdict on the listing's SECOND page is the one read"
+jq -c '.total_count = 9' "$G8/check-m2.json.2" >"$G8/p2" && mv "$G8/p2" "$G8/check-m2.json.2"
+expect_g8 1 "check-runs was incomplete: 4 of 9 check runs read" "a listing whose pages hold fewer runs than its total is refused, never decided on"
+checks m2 "$(cr 22 failure 2026-11-19T07:31:00Z)"
+checks target "$(cr 21 success 2026-11-19T10:00:00Z)"
+for call in 'commits?sha=main' 'commits/m2/check-runs' 'actions/jobs/21' 'actions/runs/1021' 'contents/'; do
+  printf '%s' "$call" >"$G8/fail"
+  expect_g8 1 "could not decide - GET repos/o/r/" "an API failure on $call is undecidable, never 'no run'"
+  grep -qF -- "$call" <<<"$G8_OUT" || fail "  the refusal does not name the failed call $call: $G8_OUT"
+done
+: >"$G8/fail"
+rm -f "$G8/check-target.json"
+checks m2 "$(cr 16 skipped 2026-11-19T07:15:00Z)"
+expect_g8 1 "run reached a verdict" "only skipped runs: no verdict, refused as such"
+G8_ALPHA=v1.7.2-alpha.3
+expect_g8 1 "HINT Ask it now for this commit: gh workflow run scheduled.yml --ref v1.7.2-alpha.3 -f job=miconnect-preflight" \
+  "the refusal's dispatch command names the latest pre-release gate 7 resolved, literally"
+grep -qF 'VERSION' <<<"$G8_OUT" && fail "  the hint still carries a placeholder: $G8_OUT"
+G8_ALPHA=''
+expect_g8 1 "once one exists (gate 7 found none)" "with no pre-release resolved, the hint says so rather than inventing a tag"
+rm -rf "$G8"
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

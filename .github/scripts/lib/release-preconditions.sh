@@ -349,3 +349,187 @@ shipped_closure_gate() {
     while IFS= read -r line; do hint "  | $line"; done <<<"$out"
   done
 }
+
+# Gate 8, stables only: production MiConnect would take this release's authentik pin (review of
+# #3486, 2026-11-19). A stable's MiConnect step runs in `serve-prod`, AFTER both stores took the
+# version (`serve-prod` needs `android` and `ios`), so a refusal there leaves the stable HALF-SHIPPED.
+# The verdict is already KNOWN before the bump: the daily `miconnect-preflight` job of `scheduled.yml`
+# runs the deploy's read-only half (`deploy-stack.sh preflight`) against production every morning. It
+# is carried here rather than learned again at the end of the release.
+#
+#   classify_miconnect_preflight <job conclusion> <pin the run judged> <pin this stable ships>
+#     passed                    that run's verdict, success, on this very pin
+#     failed <conclusion>       the run judged this pin, and refused (or did not finish)
+#     stale <judged pin>        the run judged ANOTHER pin, so it says nothing about this one
+#     absent                    no completed run found
+#     undecidable <why>         a pin could not be read
+# A PIN, NOT A DATE: the run is relevant when it judged the image this stable ships, whatever its age;
+# production's running state can change by hand in between, and the stable's own step still asks then.
+classify_miconnect_preflight() {
+  local conclusion="$1" judged="$2" shipped="$3"
+  if [ -z "$conclusion" ]; then printf 'absent\n'; return 0; fi
+  if [ -z "$judged" ] || [ -z "$shipped" ]; then
+    printf 'undecidable a pin could not be read (judged %s, shipped %s)\n' "${judged:-?}" "${shipped:-?}"
+    return 0
+  fi
+  if [ "$judged" != "$shipped" ]; then printf 'stale %s\n' "$judged"; return 0; fi
+  case "$conclusion" in
+    success) printf 'passed\n' ;;
+    *) printf 'failed %s\n' "$conclusion" ;;
+  esac
+}
+
+# The job's name, as GitHub names its check run - read by gate 8, written by `scheduled.yml`.
+MICONNECT_PREFLIGHT_CHECK="${MICONNECT_PREFLIGHT_CHECK:-MiConnect production preflight}"
+
+# The workflow file whose job gate 8 believes - a check run of the same name from anywhere else is
+# not its verdict.
+MICONNECT_PREFLIGHT_WORKFLOW="${MICONNECT_PREFLIGHT_WORKFLOW:-.github/workflows/scheduled.yml}"
+
+# miconnect_preflight_candidates <sha> - one line `<completed_at>\t<check run id>\t<conclusion>\t<url>`
+# per check run of that job on that commit that RAN TO A VERDICT. Every run of `scheduled.yml` posts
+# the job, and all but the 07:30 one and a dispatch post it `skipped` (measured on main 2026-11-19:
+# started_at == completed_at, no runner, no step), so a skipped run is no verdict and never read.
+# `filter=all`, not `latest`: `latest` keeps one run per name, and that one is the newest SKIPPED.
+# Only `github-actions` writes it: another app may post a check run of any name.
+# EVERY PAGE (fourth review, 2026-11-19): a commit that stays main's head collects one run of the
+# job per scheduled run, so past 100 the newest verdict sits on a later page. `--paginate` applies
+# the --jq to each page, so the selection is per page and the pick (the caller's sort) is across all
+# of them. Each page also prints `page\t<total_count>\t<runs on it>`, and a listing whose pages add up
+# to less than its own total is refused as incomplete rather than decided on what was read.
+miconnect_preflight_candidates() {
+  local out total=0 seen=0 got=0 kind a b
+  out="$(gh api --paginate -X GET "repos/$REPO/commits/$1/check-runs" -f check_name="$MICONNECT_PREFLIGHT_CHECK" -f filter=all -f per_page=100 \
+    --jq "\"page\t\(.total_count)\t\(.check_runs | length)\", (.check_runs[] | select(.name == \"$MICONNECT_PREFLIGHT_CHECK\" and .app.slug == \"github-actions\" and .status == \"completed\" and .conclusion != \"skipped\") | [.completed_at, .id, .conclusion, .html_url] | @tsv)")" || return 1
+  out="${out//$'\r'/}" # a jq built for Windows ends its lines in CRLF; the counts below are arithmetic
+  while IFS=$'\t' read -r kind a b _; do
+    if [ "$kind" = page ]; then
+      total="$a" seen=$((seen + b)) got=$((got + 1))
+    fi
+  done <<<"$out"
+  if [ "$got" -eq 0 ] || [ "$seen" -lt "$total" ]; then
+    printf 'incomplete\t%s of %s check runs read\n' "$seen" "$total"
+    return 2
+  fi
+  grep -v '^page'$'\t' <<<"$out" || true
+}
+
+# Gate 8's reading. Prints ONE line:
+#   run\t<conclusion>\t<url>\t<sha>   the newest verdict of the job
+#   absent                            no run of it reached a verdict
+#   error\t<what>                     an API call failed, and failing is not "no run"
+# THE NEWEST BY completed_at ACROSS the stable's own commit (a run dispatched on the alpha's tag
+# lands there) AND main's last 50 commits (the morning run lands on main's head of that moment),
+# taken together: a commit's ancestry says nothing about what production can take, the pin the run
+# judged does, and the gate compares that pin. So an old success on the stable's commit loses to a
+# newer failure on main.
+# THE JOB, NOT THE NAME (S3 of the third review, 2026-11-19): the check-run listing is per commit,
+# which is how a verdict is tied to the pin it judged; the alternative, the workflow's run list, is
+# paged by time and 96 runs a day of the 15-minute slot crowd the morning one out of a page. So the
+# listing finds the candidates, and the winner is then resolved as a JOB: a check run of GitHub
+# Actions has its job's id (measured), the job names its run, and the run names its workflow file,
+# which must be `scheduled.yml`. A run cancelled before a runner took it (no `runner_name`) never
+# judged anything and is passed over as absent; one cancelled while running is a refusal.
+# A pure reader: the API is the `gh` on PATH (the self-test's fake runs these --jq through jq).
+miconnect_preflight_reading() {
+  local target="$1" shas sha lines="" more _completed id conclusion url job runner run_id job_name path
+  if ! shas="$(gh api "repos/$REPO/commits?sha=main&per_page=50" --jq '.[].sha' 2>/dev/null)"; then
+    printf 'error\tGET repos/%s/commits?sha=main failed\n' "$REPO"
+    return 0
+  fi
+  for sha in $(printf '%s\n%s\n' "$target" "$shas" | awk 'NF && !seen[$0]++'); do
+    more="$(miconnect_preflight_candidates "$sha" 2>/dev/null)"
+    case $? in
+      0) ;;
+      2)
+        printf 'error\tGET repos/%s/commits/%s/check-runs was incomplete: %s\n' "$REPO" "$sha" "${more#incomplete$'\t'}"
+        return 0
+        ;;
+      *)
+        printf 'error\tGET repos/%s/commits/%s/check-runs failed\n' "$REPO" "$sha"
+        return 0
+        ;;
+    esac
+    if [ -n "$more" ]; then lines+="$(awk -v s="$sha" 'NF { print $0 "\t" s }' <<<"$more")"$'\n'; fi
+  done
+  while IFS=$'\t' read -r _completed id conclusion url sha; do
+    [ -n "$id" ] || continue
+    # One field per line, never a tab-separated row: a tab is IFS whitespace, so an empty runner
+    # between two tabs would collapse and hand its place to the next field.
+    if ! job="$(gh api "repos/$REPO/actions/jobs/$id" --jq '.run_id, (.runner_name // ""), .name' 2>/dev/null)"; then
+      printf 'error\tGET repos/%s/actions/jobs/%s failed\n' "$REPO" "$id"
+      return 0
+    fi
+    job="${job//$'\r'/}"
+    { read -r run_id; read -r runner; read -r job_name; } <<<"$job"
+    if ! path="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.path' 2>/dev/null)"; then
+      printf 'error\tGET repos/%s/actions/runs/%s failed\n' "$REPO" "$run_id"
+      return 0
+    fi
+    if [ "$path" != "$MICONNECT_PREFLIGHT_WORKFLOW" ]; then
+      printf "error\tthe newest '%s' check run (%s) is the job '%s' (id %s) of %s, not of %s - rename that job, two jobs must not share this name\n" \
+        "$MICONNECT_PREFLIGHT_CHECK" "$url" "${job_name:-?}" "$id" "${path:-an unknown workflow}" "$MICONNECT_PREFLIGHT_WORKFLOW"
+      return 0
+    fi
+    if [ "$conclusion" = cancelled ] && [ -z "$runner" ]; then continue; fi
+    printf 'run\t%s\t%s\t%s\n' "$conclusion" "$url" "$sha"
+    return 0
+  done < <(sort -r <<<"$lines")
+  printf 'absent\n'
+}
+
+# Gate 8's loop. Needs the caller's printers (`ok`, `refuse`, `hint`), `REPO`, `TARGET_SHA`, and the
+# released tree checked out (its compose.yml is the pin this stable ships).
+miconnect_preflight_gate() {
+  local here reading kind conclusion url sha shipped judged tmp verdict
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/authentik/release-lib.sh
+  source "$here/../../../infrastructure/authentik/release-lib.sh"
+  shipped="$(ak_pin_image infrastructure/authentik/compose.yml 2>/dev/null)" || shipped=''
+  reading="$(miconnect_preflight_reading "$TARGET_SHA")"
+  IFS=$'\t' read -r kind conclusion url sha <<<"$reading"
+  judged=''
+  case "$kind" in
+    run)
+      tmp="$(mktemp)"
+      if gh api "repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha" -H 'Accept: application/vnd.github.raw' >"$tmp" 2>/dev/null; then
+        judged="$(ak_pin_image "$tmp" 2>/dev/null)" || judged=''
+        verdict="$(classify_miconnect_preflight "$conclusion" "$judged" "$shipped")"
+      else
+        verdict="undecidable GET repos/$REPO/contents/infrastructure/authentik/compose.yml?ref=$sha failed"
+      fi
+      rm -f "$tmp"
+      ;;
+    absent) verdict=absent conclusion='' url='' ;;
+    # An API failure is classified HERE, where it is known, never read later as "no run".
+    error) verdict="undecidable $conclusion" url='' ;;
+    *) verdict="undecidable the reading came back unparsed" url='' ;;
+  esac
+  case "$verdict" in
+    passed)
+      ok "production MiConnect would take $shipped: the preflight passed in $url"
+      return 0
+      ;;
+    failed*)
+      refuse "production MiConnect's preflight on $shipped concluded '${verdict#failed }' in $url"
+      hint 'Its MiConnect step runs AFTER both stores took the version, so refusing there would ship half a'
+      hint 'stable. Read that run: it names what blocks the upgrade and the exact hand command.'
+      ;;
+    stale*)
+      refuse "the newest MiConnect preflight ($url) judged ${verdict#stale }, not the $shipped this stable ships"
+      ;;
+    absent)
+      refuse "no '$MICONNECT_PREFLIGHT_CHECK' run reached a verdict on ${TARGET_SHA:0:8} nor on main's last 50 commits (skipped runs and runs cancelled before they started are not verdicts)"
+      ;;
+    *)
+      refuse "could not decide - ${verdict#undecidable }${url:+ (run: $url)}"
+      ;;
+  esac
+  # The tag gate 7 already resolved, named literally: a placeholder here is a command nobody can paste.
+  if [ -n "${ALPHA_TAG:-}" ]; then
+    hint "Ask it now for this commit: gh workflow run scheduled.yml --ref $ALPHA_TAG -f job=miconnect-preflight"
+  else
+    hint "Ask it on this version's latest pre-release once one exists (gate 7 found none): gh workflow run scheduled.yml --ref <that tag> -f job=miconnect-preflight"
+  fi
+  hint "then re-run this release's preflight once it is green: gh run rerun ${GITHUB_RUN_ID:-<this run>}"
+}

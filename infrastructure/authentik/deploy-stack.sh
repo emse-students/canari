@@ -1,0 +1,705 @@
+#!/usr/bin/env bash
+# THE RELEASE DEPLOYS MICONNECT'S VERSION (owner, 2026-11-13: "Pourquoi on a du authentik dans notre
+# repo si ce n'est pour ça ?"). A pre-release puts the test stack on the authentik image this tree
+# pins, a stable puts production on it - the image of `server` and `worker` in compose.yml, a literal
+# Dependabot moves. Until this script, the tag lived only in each stack's `.env` on the host, and
+# production ran 2026.8.0 while this repository said 2026.8.5.
+#
+#   deploy-stack.sh deploy --project <compose project> [--compose <pinning compose.yml>] [--oidc-slug canari]
+#                          [--newer keep|refuse]
+#   deploy-stack.sh health --project <compose project> [--compose <pinning compose.yml>] [--oidc-slug canari]
+#   deploy-stack.sh access --project <compose project>
+#   deploy-stack.sh prune  --project <compose project>
+#   deploy-stack.sh preflight --project <compose project> [--compose <pinning compose.yml>] [--newer keep|refuse]
+#   deploy-stack.sh rehearsal --project <test project> --production <production project> [--compose <pinning compose.yml>]
+#
+# deploy: decides from the RUNNING images and the `.env` tag line (release-lib.sh, ak_decide) and
+#   restarts only when they differ from the pin. Before a change: compose, in a scrubbed environment,
+#   proves it would run the pin AND (dry run, with the tag each container runs) that nothing else
+#   differs between the host's files and what runs; the root disk's 85 % ceiling is checked against
+#   the image and the dump, the image pulled ANONYMOUSLY; the dump directory's free space is checked, the
+#   database dumped and the dump read IN FULL; the database's state is read (db_state: Django's
+#   migration count AND authentik's own version row, which its system migrations add). Then `.env` is backed up and
+#   its line rewritten, and `server` and `worker` alone are recreated (`--no-deps`: postgres keeps
+#   running). After: Docker's own health verdict for both, both running the pin, `/-/health/live/`,
+#   `/-/health/ready/` and the OIDC discovery document (each probe asked up to AK_PROBE_ATTEMPTS
+#   times in a row before it fails). A failure rolls back - server and worker
+#   stopped, the state read again, the old tag, the dump restored only when the state MOVED - and
+#   exits non-zero. The same after-checks also close the no-restart outcomes.
+#   --newer: what a stack already NEWER than the pin gets. `refuse` (the default, the pre-release):
+#   refused, so the test stack always rehearses the stable's upgrade. `keep` (production's stable):
+#   left on its version - a rerun of an older release is the estate's rollback, and authentik's
+#   migrations do not run backwards - its `.env` line set to what runs, a warning, the checks.
+#   Under GitHub Actions the outcome is a step output, `outcome` = noop | recorded | upgraded |
+#   kept-newer, which the stable reads to skip the OLD release's blueprints on a kept newer version.
+# health: the same after-checks alone, changing nothing (serve-prod runs it after the blueprints).
+# access: is the stack's `.env` readable and writable by this account - the precondition, probed
+#   read-only by the daily `drift` job so a lost permission is seen before a release meets it.
+# prune: the retention alone (owner, 2026-11-19: "3 copies et 30 jours au plus"): per kind, the three
+#   newest copies and none taken more than 30 days ago (release-lib.sh, ak_prune_select). The deploy
+#   prunes on every outcome that keeps the stack (no-op, record, upgrade); the daily `drift` job
+#   prunes too, so a copy expires on time when no release comes.
+# preflight: the deploy's read-only half - the decision and, when it is an upgrade, compose's proof
+#   that the up would change the tag and nothing else - then exit, changing nothing. Run FIRST by both
+#   release jobs and every morning by the `drift` job, so a stack the release would refuse is named,
+#   with the exact hand command, before a release reaches its MiConnect step.
+# rehearsal: the pre-release's test stack must start from the version PRODUCTION runs, or it would
+#   rehearse an upgrade the stable never makes (release-lib.sh, ak_rehearsal_verdict); read-only.
+#
+# WHAT IT DOES NOT DEPLOY: the stack's compose.yml and `.env` beyond that one line. The stack's
+# directory, compose files and project are read from the running containers' compose labels, so no
+# host path is written in this public repository - and none is PRINTED: the job log is public, so the
+# dumps are named relative to the dump directory (`<dumps>`, `~/authentik-release-dumps` of the runner
+# account), the account is never named, pg_restore's messages, which can quote rows, go to a 0600
+# log beside the dump, and so do docker compose's, which name the stack's files by their host path.
+#
+# THE RUNNER ACCOUNT MUST READ AND WRITE THE STACK'S `.env` (compose reads its secrets from it), and
+# the job REFUSES naming the command when it cannot - infrastructure/MIGRATION.md, "MiConnect".
+#
+# Exit: 0 done or nothing to do; 1 refused or rolled back (the stack runs what it ran before);
+#       2 the rollback itself failed, could not decide, or the run was interrupted mid-change (the
+#         stack needs a human NOW - the message says what state it is in and what to do).
+# docs/wiki/infrastructure/authentik.md, "The release deploys MiConnect's version".
+set -euo pipefail
+
+here="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=release-lib.sh
+. "$here/release-lib.sh"
+
+mode="${1:-}"
+shift || true
+project=""
+compose="$here/compose.yml"
+oidc_slug="canari"
+newer_policy="refuse"
+production_project=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project) project="$2"; shift 2 ;;
+    --compose) compose="$2"; shift 2 ;;
+    --oidc-slug) oidc_slug="$2"; shift 2 ;;
+    --newer) newer_policy="$2"; shift 2 ;;
+    --production) production_project="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 64 ;;
+  esac
+done
+case "$mode" in deploy | health | access | prune | preflight | rehearsal) ;; *)
+  echo "usage: deploy-stack.sh deploy|health|access|prune|preflight|rehearsal --project <name> [--compose <file>] [--oidc-slug <slug>] [--newer keep|refuse] [--production <name>]" >&2
+  exit 64
+  ;;
+esac
+[ -n "$project" ] || { echo "::error::--project is required" >&2; exit 64; }
+case "$newer_policy" in keep | refuse) ;; *) echo "::error::--newer is keep or refuse, not '$newer_policy'" >&2; exit 64 ;; esac
+if [ "$mode" = rehearsal ] && [ -z "$production_project" ]; then echo "::error::rehearsal needs --production <project>" >&2; exit 64; fi
+
+# THE COMPOSE FILE AS THE PUBLIC LOG MAY NAME IT: relative to the repository, or not at all - an
+# absolute path names the runner's work directory.
+repo_root="$(cd "$here/../.." && pwd)"
+case "$compose" in
+  "$repo_root"/*) compose_shown="${compose#"$repo_root"/}" ;;
+  /*) compose_shown="the --compose file" ;;
+  *) compose_shown="$compose" ;;
+esac
+
+# set_outcome <outcome> - the step output the stable's blueprint step reads (nothing outside Actions).
+set_outcome() {
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "outcome=$1" >>"$GITHUB_OUTPUT"; fi
+}
+
+poll_seconds="${AK_POLL_SECONDS:-10}"
+# A FLOOR UNDER THE WORST CASE, never the verdict: Docker's healthcheck answers within its start
+# period plus three intervals (~4 min for authentik's), and a migration still running extends the
+# wait up to here. Reaching this deadline FAILS, it never passes.
+deadline_seconds="${AK_HEALTH_DEADLINE_SECONDS:-900}"
+dump_root="${AK_DUMP_DIR:-$HOME/authentik-release-dumps}"
+# THE ONE READ OF THE CLOCK: it names this run's copies and is the "now" their age is measured from.
+# AK_NOW (a stamp) replaces it in the tests, which never assert a wall clock.
+now_stamp="${AK_NOW:-$(date -u +%Y%m%dT%H%M%SZ)}"
+# The owner's bound on the rollback copies (2026-11-19), which hold every MiConnect account.
+keep_copies=3
+max_copy_days=30
+# The release's own words go to the job log; nothing here prints `.env` content.
+unset AUTHENTIK_TAG AUTHENTIK_IMAGE
+
+log() { echo "[miconnect-deploy:$project] $*"; }
+err() { echo "::error title=MiConnect ($project)::$*" >&2; }
+# shown <path> - a path under the dump directory as the public log may name it.
+shown() {
+  if [ -n "${preflight_log:-}" ] && [ "$1" = "$preflight_log" ]; then printf 'not kept - a preflight leaves no file; run the dry run by hand to read them'; return 0; fi
+  case "$1" in "$dump_root"/*) printf '<dumps>/%s' "${1#"$dump_root"/}" ;; "") printf 'none' ;; *) printf '%s' "$1" ;; esac
+}
+
+# prune_copies - deletes this stack's rollback copies beyond the owner's bound (ak_prune_select
+# decides, from the stamp in each name; only the names this script writes are candidates).
+prune_copies() {
+  local dir="$dump_root/$project" doomed name n=0
+  [ -d "$dir" ] || { log "rollback copies: none kept for $project"; return 0; }
+  doomed="$(find "$dir" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null | ak_prune_select "$now_stamp" "$keep_copies" "$max_copy_days")" ||
+    { err "the rollback copies of $project could not be listed, so none was pruned"; return 1; }
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    rm -f -- "${dir:?}/$name" 2>/dev/null || { err "the rollback copy $(shown "$dir/$name") could not be deleted"; return 1; }
+    n=$((n + 1))
+  done <<<"$doomed"
+  log "rollback copies: $n deleted (kept: the $keep_copies newest of each kind, none older than $max_copy_days days)"
+}
+
+if [ "$mode" = prune ]; then
+  prune_copies || exit 1
+  exit 0
+fi
+
+# container_of <service> [<project>] - the ONE running container of a service of this project (or of
+# <project>), or empty.
+container_of() {
+  local ids in="${2:-$project}"
+  ids="$(docker ps -q --filter "label=com.docker.compose.project=$in" --filter "label=com.docker.compose.service=$1")"
+  if [ "$(printf '%s\n' "$ids" | grep -c .)" -gt 1 ]; then
+    err "more than one running $1 container in project $in"
+    exit 1
+  fi
+  printf '%s\n' "$ids"
+}
+image_of() { if [ -n "$1" ]; then docker inspect -f '{{.Config.Image}}' "$1" || true; fi; }
+label_of() { docker inspect -f "{{index .Config.Labels \"$2\"}}" "$1"; }
+
+server_id="$(container_of server)"
+worker_id="$(container_of worker)"
+pg_id="$(container_of postgresql)"
+
+# DOCKER'S RestartCount IS CUMULATIVE over a container's life, so a restart weeks ago would fail every
+# later check. What judges THIS run is the increase from the count each container had when the run
+# began; a container this run creates has a new id, and starts from 0.
+declare -A restarts_at_start=()
+restart_count() { docker inspect -f '{{.RestartCount}}' "$1"; }
+# A count that cannot be read is stored as `unreadable` and judged so - never taken as 0.
+for id in $server_id $worker_id; do
+  count="$(restart_count "$id" 2>/dev/null || true)"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=unreadable
+  restarts_at_start[$id]="$count"
+done
+
+# THE ONE PRECONDITION THE OWNER OWES, refused by name rather than skipped. The account is not named:
+# the log is public.
+env_file=""
+if [ -n "$server_id" ]; then
+  # A LABEL THAT CANNOT BE READ IS SAID, never a silent `set -e` exit that ends the job red with no
+  # line naming why. Docker's own message can name a host path, so it is not relayed.
+  stack_dir="$(label_of "$server_id" com.docker.compose.project.working_dir 2>/dev/null || true)"
+  [ -n "$stack_dir" ] ||
+    { err "the server container's compose label working_dir could not be read, so the stack's directory is unknown - nothing was changed"; exit 1; }
+  config_files="$(label_of "$server_id" com.docker.compose.project.config_files 2>/dev/null || true)"
+  [ -n "$config_files" ] ||
+    { err "the server container's compose label config_files could not be read, so the stack's compose files are unknown - nothing was changed"; exit 1; }
+  env_file="$stack_dir/.env"
+fi
+env_access_ok() { [ -n "$env_file" ] && [ -r "$env_file" ] && [ -w "$env_file" ]; }
+env_access_refusal="the runner account cannot read and write $project's .env, which compose reads its secrets from and which holds the AUTHENTIK_TAG line this release owns. One-off, on the host: sudo chgrp <the runner account's group> <the stack's .env> && sudo chmod 0660 <the stack's .env> (infrastructure/MIGRATION.md, MiConnect)."
+
+if [ "$mode" = access ]; then
+  [ -n "$server_id" ] || { err "no running server container in project $project, so its .env cannot be found"; exit 1; }
+  env_access_ok || { err "$env_access_refusal"; exit 1; }
+  log "the runner account reads and writes the stack's .env"
+  exit 0
+fi
+
+pin="$(ak_pin_image "$compose" 2>&1)" || { err "cannot read the pinned image from $compose_shown: $pin"; exit 1; }
+pin_tag="$(ak_tag_of "$pin")"
+
+# THE PRE-RELEASE REHEARSES PRODUCTION'S UPGRADE, or says it cannot (review of #3486, 2026-11-19):
+# both tags are read from the `server` each stack RUNS.
+if [ "$mode" = rehearsal ]; then
+  test_tag="$(ak_tag_of "$(image_of "$server_id")")"
+  production_tag="$(ak_tag_of "$(image_of "$(container_of server "$production_project")")")"
+  verdict="$(ak_rehearsal_verdict "$production_tag" "$test_tag" "$pin_tag")"
+  case "$verdict" in
+    ok) log "rehearsal: the test stack runs ${test_tag:-?}, production ${production_tag:-?}, the pin is $pin_tag - the stable's upgrade is the one rehearsed" ;;
+    expected:*) log "rehearsal: ${verdict#expected:}" ;;
+    warn:*) echo "::warning title=MiConnect ($project)::${verdict#warn:}" ;;
+    *) err "${verdict#fail:}. Nothing was changed."; exit 1 ;;
+  esac
+  exit 0
+fi
+
+# migrations - django_migrations' row count, or empty when it cannot be read. What the health wait
+# watches rise while a migration runs.
+migrations() {
+  [ -n "$pg_id" ] || return 0
+  docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM django_migrations"' 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# db_state - `<django_migrations rows>:<newest authentik_version_history id>`, or empty when either
+# cannot be read. Whether the DATABASE moved (ak_rollback_plan): authentik's system migrations
+# (lifecycle/migrate.py) run before Django's and, on a new version, add a version row - a release that
+# reached them and no further changed the database without moving the Django count. chr(58) is `:`,
+# spelled so to stay out of the shell's quoting.
+db_state() {
+  [ -n "$pg_id" ] || return 0
+  docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT (SELECT count(*) FROM django_migrations)::text || chr(58) || COALESCE((SELECT max(id) FROM authentik_version_history), 0)::text"' 2>/dev/null | tr -d '[:space:]' || true
+}
+
+# restarts_since_start <id> - how many times the container restarted during this run, or `unreadable`
+# (which ak_health_verdict fails on, as it is not 0).
+restarts_since_start() {
+  local now base="${restarts_at_start[$1]-0}"
+  now="$(restart_count "$1" 2>/dev/null || true)"
+  if [[ "$now" =~ ^[0-9]+$ ]] && [[ "$base" =~ ^[0-9]+$ ]]; then echo $((now - base)); else echo unreadable; fi
+}
+
+# wait_healthy <service> - Docker's verdict, polled until it is one (ak_health_verdict). The migration
+# count is read on every poll: while it still rises, `unhealthy` is a wait, not a verdict.
+wait_healthy() {
+  local service="$1" waited=0 id verdict count previous migrating
+  previous="$(migrations)"
+  while :; do
+    id="$(container_of "$service")"
+    count="$(migrations)"
+    migrating=no
+    if ak_migrations_rising "$previous" "$count"; then migrating=yes; fi
+    previous="$count"
+    if [ -z "$id" ]; then
+      verdict="failed:no running container"
+    else
+      verdict="$(ak_health_verdict \
+        "$(docker inspect -f '{{.State.Status}}' "$id")" \
+        "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$id")" \
+        "$(restarts_since_start "$id")" \
+        "$migrating")"
+    fi
+    case "$verdict" in
+      healthy) log "$service healthy"; return 0 ;;
+      failed:*) err "$service: ${verdict#failed:}"; return 1 ;;
+    esac
+    [ "$migrating" = yes ] && log "$service: migrations still running ($count applied), waiting"
+    if [ "$waited" -ge "$deadline_seconds" ]; then
+      err "$service: no health verdict after ${deadline_seconds}s"
+      return 1
+    fi
+    sleep "$poll_seconds"
+    waited=$((waited + poll_seconds))
+  done
+}
+
+# probe <what> <command...> - the command, asked up to `probe_attempts` times in a row before its
+# failure is a verdict (review of #3486, 2026-11-19). Docker already called the container healthy when
+# a probe runs, and a probe's failure can lead to a rollback that DROPS the database and restores the
+# dump: one answer missed by a server still warming its workers is not the proof such a repair needs,
+# N consecutive misses are. A COUNT decides, never a clock: the pause between two asks only spaces
+# them, and no outcome depends on how long anything took.
+probe_attempts="${AK_PROBE_ATTEMPTS:-5}"
+probe() {
+  local what="$1" n=1
+  shift
+  while :; do
+    if "$@"; then return 0; fi
+    if [ "$n" -ge "$probe_attempts" ]; then
+      err "$what failed $n times in a row"
+      return 1
+    fi
+    log "$what did not answer (attempt $n of $probe_attempts); asking again"
+    sleep "$poll_seconds"
+    n=$((n + 1))
+  done
+}
+
+# oidc_discovery_ok <port> - the discovery document answers and names an issuer.
+oidc_discovery_ok() {
+  local body
+  body="$(curl -fsS --max-time 10 "http://127.0.0.1:$1/application/o/$oidc_slug/.well-known/openid-configuration" || true)"
+  case "$body" in
+    *'"issuer"'*'"authorization_endpoint"'* | *'"authorization_endpoint"'*'"issuer"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# after_checks <expected-tag> - both containers healthy, both on the tag, the endpoints answering.
+after_checks() {
+  local expected="$1" service id running address port body
+  for service in server worker; do
+    wait_healthy "$service" || return 1
+    running="$(image_of "$(container_of "$service")")"
+    if [ "$(ak_tag_of "$running")" != "$expected" ]; then
+      err "$service runs $running, expected the tag $expected - the host's compose.yml does not take AUTHENTIK_TAG"
+      return 1
+    fi
+  done
+  id="$(container_of server)"
+  # The first IPv4 binding; awk reads to the end, so no writer is cut off under pipefail. Its PORT is
+  # asked on loopback: the stacks publish on 127.0.0.1 (a binding on another address fails here,
+  # loudly, rather than being probed somewhere else).
+  address="$(docker port "$id" 9000/tcp | awk '!/^\[/ && !seen++')"
+  [ -n "$address" ] || { err "the server publishes no port 9000"; return 1; }
+  port="${address##*:}"
+  for path in /-/health/live/ /-/health/ready/; do
+    probe "GET $path" curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$port$path" || return 1
+  done
+  probe "the OIDC discovery document of '$oidc_slug' (with an issuer)" oidc_discovery_ok "$port" || return 1
+  log "checks passed: server and worker healthy on $expected, health endpoints and OIDC discovery answer"
+}
+
+if [ "$mode" = health ]; then
+  [ -n "$server_id" ] || { err "no running server container"; exit 1; }
+  after_checks "$(ak_tag_of "$(image_of "$server_id")")" || exit 1
+  exit 0
+fi
+
+[ -n "$server_id" ] || { err "no running server container in project $project - the release upgrades a running stack, it never creates one"; exit 1; }
+env_access_ok || { err "$env_access_refusal Nothing was changed."; exit 1; }
+
+old_server="$(image_of "$server_id")"
+old_worker="$(image_of "$worker_id")"
+old_tag="$(ak_tag_of "$old_server")"
+env_before="$(cat -- "$env_file" 2>/dev/null)" || { err "the stack's .env could not be read - nothing was changed"; exit 1; }
+env_tag="$(printf '%s\n' "$env_before" | ak_env_tag)"
+decision="$(ak_decide "$pin" "$old_server" "$old_worker" "$env_tag" "$newer_policy")"
+log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env tag=${env_tag:-unset} -> $decision"
+
+# PREFLIGHT ASKS ONLY WHAT THE DEPLOY WOULD REFUSE: a refusal, or an upgrade whose compose proof (below)
+# fails. A no-op, a record or a kept newer version restarts nothing, so compose has nothing to prove.
+if [ "$mode" = preflight ]; then
+  case "$decision" in
+    refuse:*) err "${decision#refuse:}. Nothing was changed."; exit 1 ;;
+    upgrade) ;;
+    *) log "preflight: $decision - nothing restarts, so nothing more to prove"; exit 0 ;;
+  esac
+fi
+
+# EVERY FILE THIS RUN WRITES (dump, `.env` backup, logs) is the runner's, mode 0600, in a 0700 tree.
+umask 077
+dump_dir="$dump_root/$project"
+stamp="$now_stamp"
+dump=""
+env_backup=""
+state_before=""
+pull_config=""
+preflight_log=""
+if [ "$mode" = preflight ]; then
+  # A PREFLIGHT LEAVES NO FILE (review of #3486, 2026-11-19): it runs every morning and first in every
+  # release, and a `<stamp>-compose.log` per run would crowd the copies the retention keeps. Compose's
+  # messages, which name host paths, go to a private temporary file deleted on exit - a signal's exit
+  # included, since on_signal ends in `exit`.
+  compose_log="$(mktemp 2>/dev/null)" || { err "no temporary file for compose's messages - nothing was changed"; exit 1; }
+  preflight_log="$compose_log"
+  trap 'rm -f -- "$preflight_log"' EXIT
+else
+  mkdir -p -- "$dump_dir" 2>/dev/null || { err "the dump directory <dumps>/$project could not be created - nothing was changed"; exit 1; }
+  # THE RUN'S PRIVATE LOG: docker compose's own messages and those of the file tools (cp, df, the
+  # dump's redirection) name the stack's files by their HOST path: they go here, 0600, and the public
+  # log names this file as `<dumps>/...` (shown).
+  compose_log="$dump_dir/$stamp-compose.log"
+fi
+
+# WHAT AN INTERRUPTION LEAVES, said rather than discovered. `phase` is what a signal finds: before
+# `changing`, nothing was touched; after it, the stack may be half-way and a human takes it.
+phase=preflight
+manual_steps() {
+  echo "By hand, on the host, in the stack's directory: (1) the .env as it was is $(shown "$env_backup") - put it back, or set the line AUTHENTIK_TAG=$old_tag; (2) ONLY if the database moved - django_migrations' row count and authentik_version_history's newest id no longer read ${state_before:-<unread>} (count:id): server and worker stopped, the database dropped, recreated and restored from $(shown "$dump") with pg_restore; (3) docker compose up -d --no-deps server worker (docs/wiki/infrastructure/authentik.md, 'When the rollback fails')."
+}
+state_now() {
+  local tag s w
+  tag="$( (ak_env_tag <"$env_file") 2>/dev/null || true)"
+  s="$( (image_of "$(container_of server)") 2>/dev/null || true)"
+  w="$( (image_of "$(container_of worker)") 2>/dev/null || true)"
+  echo ".env names ${tag:-?}; server runs ${s:-nothing}; worker runs ${w:-nothing}"
+}
+on_signal() {
+  trap '' INT TERM
+  # The anonymous pull's empty config, if a signal met the pull: nothing in it, but nothing left either.
+  if [ -n "$pull_config" ]; then rm -rf -- "$pull_config"; fi
+  if [ "$phase" = preflight ]; then
+    err "interrupted ($1) before any change - nothing was changed. The dump, if taken: $(shown "$dump")"
+    exit 1
+  fi
+  if [ "$phase" = record ]; then
+    err "INTERRUPTED ($1) while the .env line was being set to the tag the stack already runs, nothing restarted: $(state_now). The .env as it was is $(shown "$env_backup"); check the stack answers (deploy-stack.sh health)."
+    exit 2
+  fi
+  if [ "$phase" = recorded ]; then
+    err "interrupted ($1) during the checks: the .env line already names the tag the stack runs, and nothing was restarted ($(state_now)). Check the stack answers (deploy-stack.sh health)."
+    exit 1
+  fi
+  err "INTERRUPTED ($1) during $phase: $(state_now). $(manual_steps)"
+  exit 2
+}
+arm_traps() { trap 'on_signal INT' INT; trap 'on_signal TERM' TERM; }
+arm_traps
+
+# backup_env - a byte-for-byte copy of `.env`, 0600, beside the dumps; read back before it is trusted.
+backup_env() {
+  env_backup="$dump_dir/$stamp-$project.env"
+  if ! cp -- "$env_file" "$env_backup" 2>>"$compose_log" || ! cmp -s -- "$env_file" "$env_backup"; then
+    err "the .env could not be backed up to $(shown "$env_backup") (the messages: $(shown "$compose_log")) - nothing was changed"
+    exit 1
+  fi
+}
+
+# write_env <content> - the new `.env`, verified. Not a rename: the stack's directory is not the
+# runner's to write, and a rename would hand the file to the runner account; the file is rewritten IN
+# PLACE (inode, owner, mode kept) from a temporary copy that is complete before the one write, the
+# write is read back byte for byte, and signals are ignored while it happens.
+#   0 written; 1 not written and the file is the BACKUP again (byte for byte the `.env` before this
+#   run); 2 neither (the file is damaged).
+# EVERY failure ends on the backup, the temporary copy's included: a 1 that left the file untouched
+# would mean "as before this run" in the change and "still on the failed tag" in the rollback.
+# Their messages name host paths, so they are not relayed to the public log.
+write_env() {
+  local tmp="" rc=0
+  trap '' INT TERM
+  if tmp="$(mktemp "$dump_dir/$stamp-env-next.XXXXXX" 2>/dev/null)" &&
+    { printf '%s\n' "$1" >"$tmp"; } 2>/dev/null &&
+    { cat -- "$tmp" >"$env_file"; } 2>/dev/null &&
+    cmp -s -- "$tmp" "$env_file"; then
+    :
+  else
+    rc=1
+    { cat -- "$env_backup" >"$env_file"; } 2>/dev/null && cmp -s -- "$env_backup" "$env_file" || rc=2
+  fi
+  [ -z "$tmp" ] || rm -f -- "$tmp"
+  arm_traps
+  return "$rc"
+}
+
+# record_line <tag> - the `.env` line set to <tag>, which BOTH containers already run: backed up,
+# written, nothing restarted. Called only when the line differs, so nothing is backed up for nothing.
+record_line() {
+  local st=0
+  backup_env
+  phase=record
+  write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$1")" || st=$?
+  case "$st" in
+    0) ;;
+    1) err "the .env line could not be written; the file is as it was - nothing was changed"; exit 1 ;;
+    *) err "the .env could not be written NOR put back: compose will misread the stack's secrets on its next start. Put $(shown "$env_backup") back by hand."; exit 2 ;;
+  esac
+  # WRITTEN: from here an interrupt meets the checks, not the write.
+  phase=recorded
+  log "the stack already runs $1; the .env line now says so too (nothing restarted)"
+}
+
+case "$decision" in
+  noop)
+    log "nothing to restart"
+    set_outcome noop
+    after_checks "$pin_tag" || { err "$project runs $pin, but its checks fail - this run changed nothing"; exit 1; }
+    prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
+    exit 0
+    ;;
+  keep-newer:*)
+    kept="${decision#keep-newer:}"
+    echo "::warning title=MiConnect ($project)::$project runs authentik $kept, NEWER than the pin $pin_tag of this release - left on its version (authentik's migrations do not run backwards; a rerun of an older release, or of one whose estate deploy failed, meets exactly this), and this release's blueprints are NOT applied to it. The release goes on; pin $kept or newer again on main."
+    set_outcome kept-newer
+    # .env ALWAYS NAMES WHAT RUNS: a line on another tag is set to the running one, as `record` does.
+    if [ "$env_tag" != "$kept" ]; then record_line "$kept"; fi
+    after_checks "$kept" || { err "$project runs authentik $kept (newer than the pin) and its checks fail - nothing was restarted"; exit 1; }
+    prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
+    exit 0
+    ;;
+  record)
+    record_line "$pin_tag"
+    set_outcome recorded
+    after_checks "$pin_tag" || { err "$project runs $pin, but its checks fail - this run restarted nothing"; exit 1; }
+    prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
+    exit 0
+    ;;
+  refuse:*)
+    err "${decision#refuse:}. Nothing was changed."
+    exit 1
+    ;;
+esac
+
+# compose_cmd [--log | --errlog] [AUTHENTIK_TAG=<tag>] <compose arguments> - docker compose on this
+# stack's files, in a SCRUBBED environment: compose lets the caller's environment override `.env`, so
+# a runner exporting PG_PASS, POSTGRES_* or AUTHENTIK_* would leak into what it renders and starts.
+# Only the variables the docker CLI itself needs pass, and the tag when one is given.
+# --log sends compose's output and messages, --errlog its messages only, to the 0600 compose log:
+# they name the stack's files by their host path, and the job log is public. THE REDIRECTION IS ON
+# THE DOCKER COMMAND ITSELF, never on a call of this function: a signal's trap runs inside the
+# redirections of the command it interrupts, and the INT/TERM report must reach the job log.
+compose_cmd() {
+  local envs=("PATH=$PATH" "HOME=$HOME") args=(--project-name "$project" --project-directory "$stack_dir") f files v to=""
+  case "${1:-}" in --log | --errlog) to="$1"; shift ;; esac
+  case "${1:-}" in AUTHENTIK_TAG=*) envs+=("$1"); shift ;; esac
+  for v in DOCKER_HOST DOCKER_CONFIG DOCKER_CONTEXT DOCKER_CERT_PATH DOCKER_TLS_VERIFY XDG_RUNTIME_DIR; do
+    if [ -n "${!v:-}" ]; then envs+=("$v=${!v}"); fi
+  done
+  IFS=',' read -r -a files <<<"$config_files"
+  for f in "${files[@]}"; do args+=(-f "$f"); done
+  case "$to" in
+    --log) env -i "${envs[@]}" docker compose "${args[@]}" "$@" >>"$compose_log" 2>&1 ;;
+    --errlog) env -i "${envs[@]}" docker compose "${args[@]}" "$@" 2>>"$compose_log" ;;
+    *) env -i "${envs[@]}" docker compose "${args[@]}" "$@" ;;
+  esac
+}
+[ -n "$pg_id" ] || { err "no running postgresql container - nothing to dump, so nothing is changed"; exit 1; }
+
+# 1. Everything that can fail without touching the stack, first - and READ-ONLY up to the end of the
+# dry run, which is the whole of `preflight`.
+images="$(compose_cmd --errlog "AUTHENTIK_TAG=$pin_tag" config --images)" ||
+  { err "docker compose cannot read the stack's configuration (its messages: $(shown "$compose_log")) - nothing was changed"; exit 1; }
+if ! grep -qxF "$pin" <<<"$images"; then
+  err "with AUTHENTIK_TAG=$pin_tag, the host's compose would not run $pin (it resolves: $(tr '\n' ' ' <<<"$images")). Its image line must be \${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:\${AUTHENTIK_TAG:-...} and its .env must not set another AUTHENTIK_IMAGE. Nothing was changed."
+  exit 1
+fi
+# THE UP CHANGES THE TAG AND NOTHING ELSE: asked with the tag each container already runs, compose's
+# own dry run must leave both RUNNING. Its comparison is the one `up` makes (the config-hash label);
+# `config --hash` is not, measured 2026-11-13 on the host's compose 2.26.1, where it differed from the
+# label even for an untouched container.
+for service in server worker; do
+  running_tag="$(ak_tag_of "$(image_of "$(container_of "$service")")")"
+  st=0
+  plan="$(compose_cmd "AUTHENTIK_TAG=$running_tag" --dry-run up -d --no-deps --pull never "$service" 2>&1)" || st=$?
+  printf '%s\n' "$plan" >>"$compose_log"
+  [ "$st" -eq 0 ] || { err "docker compose's dry run of $service failed (its messages: $(shown "$compose_log")) - nothing was changed"; exit 1; }
+  if ak_dry_run_recreates <<<"$plan"; then
+    # THE EXACT HAND STEP, said where it is needed: no secret in it, and no host path (the directory is
+    # named by the label that holds it).
+    err "with the tag $service already runs ($running_tag), compose would still recreate it: the host's compose file or .env differ from what runs, and the upgrade would apply that difference too. By hand, on the host, in the stack's directory (its containers' com.docker.compose.project.working_dir label): read what differs with 'AUTHENTIK_TAG=$running_tag docker compose --dry-run up -d --no-deps server worker', then recreate the stack on the version it runs with 'AUTHENTIK_TAG=$running_tag docker compose up -d --no-deps server worker' (sign-in on $project down about a minute) - or bring its files back to what runs. Then re-run this job. Nothing was changed."
+    exit 1
+  fi
+done
+if [ "$mode" = preflight ]; then
+  log "preflight passed: the upgrade from $old_tag to $pin_tag would change the tag and nothing else"
+  exit 0
+fi
+
+# THE SHARED HOST'S ROOT DISK STAYS UNDER ITS CEILING (85 %, the `hosts` report's DISK_FAIL_PERCENT;
+# docs/wiki/infrastructure/host-updates.md, "The root disk"). What this run adds there: the new image,
+# estimated by the size of the image it replaces (an authentik release of the same line; the layers
+# they share make the real download smaller, so the estimate errs towards refusing), 0 when the pin is
+# already present; and the dump, bounded by the database's size.
+disk_ceiling="${AK_DISK_CEILING_PERCENT:-85}"
+db_bytes="$(docker exec "$pg_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT pg_database_size(current_database())"' 2>/dev/null | tr -d '[:space:]' || true)"
+if docker image inspect "$pin" >/dev/null 2>&1; then
+  image_bytes=0
+else
+  image_bytes="$(docker image inspect -f '{{.Size}}' "$old_server" 2>/dev/null | tr -d '[:space:]' || true)"
+fi
+root_line="$(df -Pk / 2>>"$compose_log" | awk 'NR == 2 { print $3, $2 }' || true)"
+read -r root_used_kb root_size_kb <<<"$root_line"
+if [ -z "${root_size_kb:-}" ]; then
+  err "the root filesystem's use could not be read (df's messages: $(shown "$compose_log")), so the host's 85 % ceiling cannot be checked - nothing was changed"
+  exit 1
+fi
+# An unreadable size leaves `added` empty, which ak_disk_ceiling_ok refuses: never taken as 0.
+added=""
+if [[ "${image_bytes:-}" =~ ^[0-9]+$ ]] && [[ "${db_bytes:-}" =~ ^[0-9]+$ ]]; then added=$((image_bytes + db_bytes)); fi
+if ! ak_disk_ceiling_ok "$root_used_kb" "$root_size_kb" "$added" "$disk_ceiling"; then
+  err "the new image (about ${image_bytes:-?} bytes, measured on the image it replaces) and the dump (up to ${db_bytes:-?} bytes) would take the root filesystem past its $disk_ceiling % ceiling ($root_used_kb of $root_size_kb KiB used) - the shared host's rule (docs/wiki/infrastructure/host-updates.md). Nothing was changed."
+  exit 1
+fi
+
+# THE PULL IS ANONYMOUS: the image is public, and the runner's own docker config can hold a STALE login
+# to ghcr.io - the estate's deploy logs in with the job's github.token (deploy-environment.sh), which
+# expires with that job, and a daemon handed an expired credential refuses the pull rather than
+# falling back to none. A private, empty DOCKER_CONFIG for this one call carries no credential at all;
+# DOCKER_HOST is still honoured, and the runner uses the default context.
+pull_config="$(mktemp -d 2>/dev/null)" || { err "no temporary directory for the anonymous pull - nothing was changed"; exit 1; }
+log "pulling $pin (anonymously)"
+pulled=0
+DOCKER_CONFIG="$pull_config" docker pull --quiet "$pin" >/dev/null || pulled=$?
+rm -rf -- "$pull_config"
+pull_config=""
+[ "$pulled" -eq 0 ] || { err "cannot pull $pin - nothing was changed"; exit 1; }
+state_before="$(db_state)"
+[[ "$state_before" =~ ^[0-9]+:[0-9]+$ ]] ||
+  { err "cannot read django_migrations and authentik_version_history - the database is not answering, or is not an authentik database of a version this release knows; nothing is changed"; exit 1; }
+
+# 2. The dump: room for it first, then read back IN FULL before it is trusted.
+avail_kb="$(df -Pk "$dump_dir" 2>>"$compose_log" | awk 'NR == 2 { print $4 }' || true)"
+if [ -z "$avail_kb" ]; then
+  err "the dump directory's free space could not be read (df's messages: $(shown "$compose_log")) - nothing is changed"
+  exit 1
+fi
+if ! ak_space_ok "$db_bytes" "$avail_kb"; then
+  err "no room for the dump: the database is ${db_bytes:-?} bytes and the dump directory has ${avail_kb:-?} KiB free (twice the database is asked) - nothing is changed"
+  exit 1
+fi
+dump="$dump_dir/$stamp-$old_tag-to-$pin_tag.dump"
+restore_log="$dump_dir/$stamp-pg.log"
+log "dumping the database to $(shown "$dump")"
+# THE REDIRECTIONS ARE INSIDE THE BRACES, so bash's own message when one fails (it names the host
+# path) reaches the private log too.
+{ docker exec "$pg_id" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$dump"; } 2>"$restore_log" ||
+  { err "pg_dump failed (its messages: $(shown "$restore_log")) - nothing is changed"; exit 1; }
+entries="$({ docker exec -i "$pg_id" pg_restore --list <"$dump"; } 2>>"$restore_log" | grep -c '^[0-9]' || true)"
+if [ ! -s "$dump" ] || [ "${entries:-0}" -eq 0 ]; then
+  err "the dump $(shown "$dump") is empty or its table of contents unreadable ($entries entries) - nothing is changed"
+  exit 1
+fi
+# The table of contents proves the header; this reads every data block, as a restore would.
+if ! { docker exec -i "$pg_id" pg_restore -f /dev/null <"$dump"; } 2>>"$restore_log"; then
+  err "the dump $(shown "$dump") does not read back in full (pg_restore's messages: $(shown "$restore_log")) - nothing is changed"
+  exit 1
+fi
+log "dump: $(wc -c <"$dump") bytes, $entries entries, read back in full; database state $state_before (migrations:version row)"
+backup_env
+
+# 3. The change.
+rollback_failed() {
+  err "THE ROLLBACK FAILED: $1. State: $(state_now). $(manual_steps)"
+  exit 2
+}
+
+# rollback <why> - never dies on its own: every step is checked, and any failure ends at
+# rollback_failed (exit 2) with the state and the hand procedure. `set -e` would otherwise kill it
+# with status 1, which says "the stack runs what it ran before".
+rollback() {
+  set +e
+  local why="$1" plan after st
+  phase=rollback
+  err "$pin failed ($why); rolling back to $old_server"
+  # STOPPED BEFORE THE STATE IS READ, so nothing is still migrating while it is.
+  compose_cmd --log stop server worker ||
+    rollback_failed "server and worker could not be stopped (compose's messages: $(shown "$compose_log"))"
+  after="$(db_state)"
+  plan="$(ak_rollback_plan "$state_before" "$after")"
+  log "database state (migrations:version row) $state_before -> ${after:-unreadable}: $plan"
+  if [ "$plan" = unknown ]; then
+    rollback_failed "the database's state cannot be read, so whether it moved is unknown and nothing is restored on a guess; server and worker are STOPPED"
+  fi
+  write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$old_tag")"
+  st=$?
+  case "$st" in
+    0) ;;
+    # WRITTEN BACK, by the other route: the file is byte for byte the .env before this run. Compose is
+    # handed the old tag below either way, so the start does not depend on which route wrote it.
+    1) err "the .env line could not be rewritten to $old_tag, so the .env was put back byte for byte as it was before this run ($(shown "$env_backup"))" ;;
+    *) rollback_failed "the .env could not be put back on $old_tag NOR restored from $(shown "$env_backup")" ;;
+  esac
+  if [ "$plan" = restore ]; then
+    phase=restore
+    trap '' INT TERM
+    { docker exec -i "$pg_id" sh -c 'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error' <"$dump"; } >>"$restore_log" 2>&1
+    st=$?
+    arm_traps
+    phase=rollback
+    [ "$st" -eq 0 ] || rollback_failed "the dump could not be restored (pg_restore's messages, which can quote rows, are in $(shown "$restore_log"))"
+  fi
+  compose_cmd --log "AUTHENTIK_TAG=$old_tag" up -d --no-deps server worker ||
+    rollback_failed "compose could not start server and worker on $old_server (its messages: $(shown "$compose_log"))"
+  if after_checks "$old_tag"; then
+    err "ROLLED BACK: $project runs $old_server again ($plan). The release fails so the version is looked at; the dump stays at $(shown "$dump")."
+    exit 1
+  fi
+  rollback_failed "$project is not healthy on $old_server"
+}
+
+phase=changing
+st=0
+write_env "$(printf '%s\n' "$env_before" | ak_env_set_tag "$pin_tag")" || st=$?
+case "$st" in
+  0) ;;
+  1) err "the .env line could not be written; the file is as it was - nothing was changed"; exit 1 ;;
+  *) rollback_failed "the .env could not be written NOR put back" ;;
+esac
+log "recreating server and worker on $pin (postgres keeps running)"
+compose_cmd --log up -d --no-deps server worker || rollback "compose up failed (its messages: $(shown "$compose_log"))"
+after_checks "$pin_tag" || rollback "the checks after the restart failed"
+phase=finished
+set_outcome upgraded
+
+# 4. The owner's bound: three of each kind and none older than 30 days. The dump exists for THIS
+# change's rollback, and the nightly backup is what keeps history.
+prune_copies || err "the retention failed (above); the daily drift job's prune fails red until it is fixed"
+log "$project now runs $pin (was $old_server); dump kept at $(shown "$dump")"

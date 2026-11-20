@@ -83,12 +83,17 @@ detection; TLS 1.2+ (measured on the host and on Cloudflare); a web application 
 | --- | --- | --- | --- | --- | --- | --- |
 | M1 | Single sign-on | authenticate members for the ecosystem's apps | from the CAS: login (`prenom.nom`) and name; declared at enrolment: formation, promo, campus, affiliations (student, school staff, Maison des Eleves, alumni); `cgu_version`, `cgu_accepted_at`; a SYNTHETIC e-mail `username@canari.emse.fr` sent to apps | students, staff, Maison des Eleves (alumni source configured, not live) | 6.1.b (the terms stage records information, not consent) | life of the account; deleted on request |
 | M2 | Authentication logs | security | Authentik events and server access log (IP, time, application) | same | 6.1.f | **policy 90 days max; no `event_retention` is set in the blueprints, so Authentik's default applies (OPEN, to measure and set)** |
+| M3 | Release rollback copies (since 2026-11-13) | put MiConnect back as it was when a release's authentik upgrade fails | a full dump of the identity provider's database taken before each upgrade - **every MiConnect account: e-mails, names, groups, password hashes**, and the rest of M1 and M2 - plus a byte copy of the stack's `.env` (its secrets) and the dump's and compose's logs; in the runner account's dump directory on the shared host (`authentik-release-dumps/<project>/`, directory 0700, files 0600), one set per stack (production and the test instance); read only by the release's own rollback | same | 6.1.f (the service's integrity) | **3 copies per kind and 30 days at most** (owner, 2026-11-19), whichever comes first: expired by every release and by a daily job, from the date in each file's name ([authentik](../infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)); in no offsite copy |
 
 Sources: `infrastructure/authentik/blueprints/`, [authentik](../infrastructure/authentik.md),
 [profiles-and-access](../profiles-and-access.md). Terms text: `frontend/src/routes/legal/miconnect/`
 (pending merge, branch `feat/miconnect-terms-of-use`). Recipients: Canari, Sky, MiGallery, Le Cercle,
 the archives (Wiki.js, Omeka - [mino-access](../infrastructure/mino-access.md)); the school's CAS is
-the source. Backups: `authentik_db.sql.gz`, 14 days (section 7).
+the source. Backups: `authentik_db.sql.gz`, 14 days (section 7); the release's rollback copies, 3 copies
+and 30 days at most (M3). The public face is the MiConnect terms (`/legal/miconnect`, section 5),
+whose "quelques semaines au plus" in the backups already covers both bounds, so its text (and its
+version, which re-asks every member) is unchanged; Canari's privacy policy describes Canari's own
+database and does not hold MiConnect's dumps.
 
 ## 4. MiGallery (controller MiTV)
 
@@ -141,6 +146,7 @@ director and the host (**OPEN**, owed by a human).
 | Hosting agreement | **none written (OPEN)** - roles, access, incident notice, end of hosting | [dso-dossier](dso-dossier.md) |
 | Legacy names | `canari-emse.fr`, `dev.canari-emse.fr`, the archives and MiGallery still pass through Cloudflare (TLS terminated at the edge) | [cloudflare-edge](../infrastructure/cloudflare-edge.md) |
 | Database backups | nightly `auth_db` + `authentik_db` dumps, 14 days (about 16 with the nightly cadence): 7 days on the host and 14 on the mirror at a second school VM (split 2026-10-24; the privacy policy's "14 jours" is the longer of the two and still exact); **to be encrypted (owner decision, OPEN)** | [backup](../infrastructure/backup.md) |
+| Identity-provider rollback copies | a dump of MiConnect's database before each authentik upgrade, on the shared host only: 3 copies and 30 days at most (M3) | [authentik](../infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13) |
 | Media backups | restic (encrypted repository), 14 daily / 8 weekly / 6 monthly snapshots: **a deleted blob can survive 6 months**; most blobs are client-encrypted, but `form-file` objects (CVs) and association public assets (logos) are plaintext | `infrastructure/backup/backup-objects.sh` |
 | Logs | nginx `canari_redacted` format (address, request line with tokens redacted, status, referrer, user agent, plus since 2026-10-18 five technical fields: request and upstream durations, upstream status, content encoding, a degraded-page marker - no new personal data); json-file 10 MB x 3 per Canari container; deploy archive of the last 10 deploys; host `/var/log` under logrotate; **non-Canari containers unbounded** | [logging](../infrastructure/logging.md), [storage-and-retention](../infrastructure/storage-and-retention.md) |
 

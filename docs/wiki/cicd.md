@@ -329,6 +329,19 @@ exists for every service, so re-running an old release's `Deploy to Production S
 release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4 while passing twenty
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
+**Nor does it take MiConnect back**: its step runs first and finds authentik NEWER than the old
+release's pin. Production's stable passes `--newer keep`, so it keeps it (`keep-newer`: a warning
+naming both versions, the `.env` line set to the running tag, the checks on the running version,
+exit 0) and the estate's rollback goes on - authentik's migrations do not run backwards. **The OLD
+release's blueprints are then NOT applied** onto the newer authentik: the step's output is
+`outcome=kept-newer`, and "Apply MiConnect's blueprints" is skipped on it (the health check after
+still runs). A pre-release passes `--newer refuse`, so the test stack never skips rehearsing the
+upgrade the stable will make ([authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+**The guard exists only in releases that carry it**: a rollback to a release OLDER than the one that
+introduced MiConnect's deploy (#3486) runs that release's own `serve-prod.yml`, which has no MiConnect
+step and no `kept-newer` output, so its "Apply MiConnect's blueprints" writes its OLD blueprints onto
+the newer authentik, unguarded. Before rolling back across that release, read what its blueprints
+would change (`apply-blueprints.sh dry-run` with its tree, on the host), or skip that step by hand.
 **A rollback to a build older than 2026-11-15 reopens the live seats' two-build window**, and so does the
 re-deployment after it: a live served only by old instances is refused (`503`) to the viewers a new instance
 serves; bound: the rolling replace, plus one segment ([lives](services/lives.md#no-seat-is-taken-on-a-closed-live-2026-11-15)).
@@ -1399,7 +1412,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The seven gates, and the one that makes a lag impossible
+#### The eight gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -1413,6 +1426,7 @@ both store uploads and the version bump itself:
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 | 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 | 7   | Does an advisory touch what it ships? (stable only)  | an advisory published after the commit's CI is exactly what production would receive ([2026-11-17](#the-audit-blocks-on-what-we-ship-2026-11-17)) |
+| 8   | Did production MiConnect's last preflight pass, on THIS stable's authentik pin? (stable only) | `serve-prod.yml` would otherwise refuse AFTER both store uploads, a stable half-shipped ([MiConnect](#the-release-deploys-miconnects-version-and-the-host-is-asked-what-it-runs-2026-11-13)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1997,7 +2011,7 @@ gh release create vX.Y.Z --target <latest alpha's commit> --generate-notes
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   seven gates; a refusal ends it here, having moved nothing
+       |- preflight   eight gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -2520,6 +2534,70 @@ rebase had not caught up a day later. The backend block now has a `nestjs-securi
 advisory arrives as one pull request per service. A `DIRTY` Dependabot pull request is rebased by
 asking Dependabot for ONE (`@dependabot rebase` on that pull request), never by a sweep.
 
+### The release deploys MiConnect's version, and the host is asked what it runs (2026-11-13)
+
+**The owner's question was the specification**: *"Pourquoi on a du authentik dans notre repo si ce
+n'est pour ça ?"*. Nothing deployed the identity provider's image: production's tag lived in the
+stack's own `.env` on the host, the image scan read this repository's `compose.yml`, and they drifted
+(production on authentik `2026.8.0`, the repository on `2026.8.5`).
+
+| Release | What it does to MiConnect | Where |
+| --- | --- | --- |
+| pre-release | puts the TEST stack (`miconnect-test`) on the pinned version FIRST, before the dev estate, then dry-runs the blueprints against production | `serve-dev.yml` |
+| stable | puts PRODUCTION (`miconnect`) on the pinned version FIRST, before the estate (a failed upgrade stops the release whole, never half-shipped), then after the estate applies the blueprints and checks both | `serve-prod.yml`, before `prod-released` moves |
+
+**Both refuse early, by name**: each job's first step after its checkout is `deploy-stack.sh preflight`
+(and, on a pre-release, `rehearsal`: the test stack must start from production's version), read-only,
+so what would stop the MiConnect step stops the job before anything is rendered, with the exact hand
+command. **A stable is refused earlier still, before the bump and both store uploads (gate 8,
+2026-11-19)**: `serve-prod.yml` runs after `android` and `ios`, so a refusal there would leave the
+version in the stores and production behind them. The verdict is already known by then - the
+`miconnect-preflight` job of `scheduled.yml` runs the same read-only preflight against production
+every morning, as a check run of its own named `MiConnect production preflight` - so
+`release-preflight.sh` reads that check run on the stable's commit AND `main`'s last 50 commits
+together, and refuses unless the newest one that reached a verdict SUCCEEDED and judged the very
+authentik pin the stable ships (a pin, not a date and not an ancestry, decides whether it still
+applies). Every other run of `scheduled.yml` posts the job `skipped`, newer than the morning's, so
+skipped runs, runs cancelled before a runner took them, and check runs of any app but GitHub Actions
+are passed over; the winner is resolved through the Actions API as a job of `scheduled.yml` itself,
+every page of the listing is read (`--paginate`, refused as incomplete when the pages hold fewer
+runs than its `total_count`), and a failed API call is refused as undecidable, naming the call,
+never read as "no run". Each refusal names the run, and
+the remedy is `gh workflow run scheduled.yml --ref <alpha tag> -f job=miconnect-preflight`, then
+`gh run rerun` of the release. The job is its own so its conclusion is the preflight's alone, never
+mixed with the image report that `drift` may be red on. The serve-prod step stays: it is the same
+question asked at the moment of the change, and the only one that sees a host altered since the
+morning. **A MiConnect that is degraded BLOCKS CANARI'S STABLES**: the step runs first and the job
+fails on any failed check, rolled back or not, so no Canari stable ships while production MiConnect
+cannot take the pin and pass its checks - and a pre-release whose test stack fails keeps `dev-deployed`
+where it was, which gate 4 then reads as "no stable". The test stack had to be recreated by hand on
+the version it runs before the first pre-release after the merge, and was, on 2026-11-20
+([the order](infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)).
+
+ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container
+RUNS differs from the pin (durable state, never a clock), dumps the database first, checks Docker's
+health verdict, `/-/health/ready/` and the OIDC discovery after, and on a failure puts the old tag
+back - restoring the dump only when the database provably moved (Django's migrations or authentik's
+own system migrations) - and FAILS the job (exit 2, with the
+hand procedure, when the rollback itself fails or cannot decide). No new secret and no new route: the
+runner already lives on the host, as for `Apply MiConnect's blueprints`; what it needs is read and
+write access to each stack's `.env` (granted 2026-11-13), and it refuses by name without it. The mechanism,
+each decision and its test: [authentik](infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13).
+
+**And a daily job asks the host what it runs**: `scheduled.yml`, job `drift`, four read-only reports.
+The third-party images every RELEASED compose file pins (production and MiConnect from
+`prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`) against what each
+container runs, by `docker inspect`; and the released blueprints' dry run against production, red on
+any change - a hand edit in the admin UI that the next stable would overwrite, which is what `1.6.11`
+did to a provider on 2026-11-13 with nothing to say so beforehand; and whether the runner can still
+write each MiConnect `.env`; and what the next pre-release would refuse on the test stack (`deploy-stack.sh rehearsal`, then `preflight`, against `main`'s pin, the exact hand command named) - production's preflight is the separate `miconnect-preflight` job that gate 8 reads. Neither preflight checks the root disk ceiling (85%), which only the deploy itself measures, just before its dump. And one write, of the runner's own files: the release's MiConnect
+rollback copies are expired to the owner's bound, 3 copies and 30 days at most (2026-11-19). The job
+runs in the `production` environment, as the deploy it mirrors, with `deployment: false` (it deploys nothing and reads no secret). A drift with a known cause is a WARNING until the date written beside it
+in `infrastructure/deploy/image-drift-known.txt`, and red after. No fifth visible workflow: it is
+one more job on the 07:30 slot, and it cannot overlap a deploy because the one runner runs one job at
+a time (it does NOT join `cd-deploy`, where a queued report could cancel a waiting deploy)
+([authentik](infrastructure/authentik.md#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)).
+
 ### Native and identity-provider manifests (2026-10-23)
 
 A dependency audit found three committed manifest trees nothing watched. What is declared now, and
@@ -2589,13 +2667,17 @@ does not (`ceiling_image_name`). The `dependency-ceiling` job's sparse checkout 
 ceiling reads the directory off the branch name, and one block per directory is what guarantees the
 branch carries it.
 
-**Two things this does not cover, owed a decision rather than code:**
+**The authentik server and worker images are watched since 2026-11-13**, and the decision this page
+used to leave to the operator was taken by the owner: the RELEASE deploys that image now
+([the release deploys MiConnect's version](#the-release-deploys-miconnects-version-and-the-host-is-asked-what-it-runs-2026-11-13)),
+so the repository is the truth and the `.env` override is the release's to write. The reference is
+literal (`image: ghcr.io/goauthentik/server:<version>`, Dependabot does not resolve an interpolated
+one), the docker-compose block of `infrastructure/authentik` carries a group `authentik` that keeps
+the server and worker lines in one pull request, and `test-miconnect-blueprints` gates it by booting
+the file.
 
-- **The authentik server and worker images are invisible to Dependabot.** They are written
-  `${AUTHENTIK_IMAGE:-ghcr.io/goauthentik/server}:${AUTHENTIK_TAG:-2026.8.0}` so the host's `.env`
-  can override them, and Dependabot does not resolve an interpolated reference. A literal reference
-  would be watched (and `test-miconnect-blueprints` boots it, so an update would be gated) but would
-  take the `.env` override away on a host this repository does not own. That is the operator's call.
+**One thing this does not cover, owed a decision rather than code:**
+
 - **`gen/android` may not resolve at all.** Its `settings.gradle` applies the git-ignored
   `tauri.settings.gradle`; if Dependabot's update job fails on it, the symptom is an absence of pull
   requests, exactly as for the two cargo directories below. Read the first Monday's update job.

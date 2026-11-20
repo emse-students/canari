@@ -113,6 +113,16 @@ jobs:
           git reset --hard "$INPUT_SHA"
           echo "production tree at $(git rev-parse --short HEAD)"
 
+      # WHAT WOULD STOP MICONNECT'S UPGRADE, REFUSED FIRST AND BY NAME (review of #3486, 2026-11-19),
+      # before production's environment is rendered: read-only, nothing changes. The deploy's own
+      # read-only half: its decision and, for an upgrade, compose's proof that the up changes the tag
+      # and nothing else, refused here with the exact hand command when the host's files differ.
+      - name: Refuse early what would stop MiConnect's upgrade
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/deploy-stack.sh preflight --project miconnect --newer keep
+
       # Renders infrastructure/.env for production and NOTHING ELSE, from the unprefixed secrets.
       # The list is the manifest's own `secret:` rows that production does not skip; a row added
       # there and not here is caught by `.github/scripts/tests/deploy-env.test.sh`, which derives
@@ -190,6 +200,28 @@ jobs:
             --environment prod \
             --domain "$DOMAIN" \
             --out infrastructure/.env
+
+      # MICONNECT'S VERSION IS THE IMAGE THIS TREE PINS (owner, 2026-11-13), and it goes FIRST, before
+      # any application container changes: a failed authentik upgrade rolls MiConnect back and FAILS
+      # this job HERE, so the estate below is never deployed and the release stops whole rather than
+      # half-shipped. It also precedes the blueprints, because CI proved those blueprints on that
+      # version (`test-miconnect-blueprints` boots this compose.yml). Decided from what RUNS: a stack
+      # already on the pin restarts nothing. Otherwise the database is dumped, `server` and `worker`
+      # alone are recreated, and Docker's health verdict, `/-/health/ready/` and the OIDC discovery
+      # document must answer - or the old version is put back (the dump restored if the database
+      # moved) and `prod-released` does not move. infrastructure/authentik/deploy-stack.sh;
+      # docs/wiki/infrastructure/authentik.md, "The release deploys MiConnect's version".
+      # `--newer keep`, PRODUCTION ONLY: a stack already NEWER than this tree's pin (a rerun of an
+      # older release - the estate's rollback - or of one whose estate deploy failed) is left on its
+      # version, with a warning, and the release goes on; its `outcome` output is then `kept-newer`.
+      - name: Put MiConnect on the pinned authentik version
+        id: miconnect-version
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # EXEC, so a cancelled job signals the deploy itself: its INT/TERM traps say what state the
+          # stack was left in, and it ignores them while the dump is restored.
+          exec bash infrastructure/authentik/deploy-stack.sh deploy --project miconnect --newer keep
 
       # THE RELEASE'S OWN TAG, `v<version>`, AND NOT `latest` (2026-10-06). `latest` is whatever the
       # newest stable pushed, so re-running an OLD release's deploy passed twenty steps and
@@ -320,11 +352,30 @@ jobs:
       # a blueprint that fails leaves MiConnect exactly as it was, and fails this job - so
       # `prod-released` below does not move. Re-applying every release is also what reverts an edit
       # made by hand in the admin UI. The pre-release ran the same thing as a dry run first.
+      #
+      # NOT ON A KEPT NEWER VERSION: CI proved this tree's blueprints on this tree's pin, and an OLDER
+      # release's blueprints applied onto a newer authentik would write an old configuration over a
+      # newer one. The health check below still runs.
+      #
+      # THE JOB LOG IS PUBLIC: the applier's output is redacted (release-lib.sh,
+      # ak_redact_blueprint_output) - which object and field changed, never the values. `pipefail`
+      # keeps the applier's own status.
       - name: Apply MiConnect's blueprints
+        if: ${{ steps.miconnect-version.outputs.outcome != 'kept-newer' }}
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
           set -euo pipefail
-          bash infrastructure/authentik/apply-blueprints.sh apply
+          . infrastructure/authentik/release-lib.sh
+          bash infrastructure/authentik/apply-blueprints.sh apply 2>&1 | ak_redact_blueprint_output
+
+      # HEALTH CHECKED AFTER BOTH: the version and the configuration. The same checks the deploy
+      # above ends on, changing nothing - a blueprint that broke sign-in fails here, before
+      # `prod-released` moves.
+      - name: Check MiConnect after its version and its blueprints
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/deploy-stack.sh health --project miconnect
 
       # WHICH COMMIT PRODUCTION IS SERVING, recorded by the thing that made it true. `prod-deployed`
       # was this tag's old name and the change detector's INPUT; the detector reads the previous

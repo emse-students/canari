@@ -35,6 +35,7 @@ earliest version, as a checklist.
 - [Decided - the owner's answers of 2026-11-07](backlog.d/owner-decisions-of-2026-11-07.md)
 - [The owner's decisions of 2026-11-09](backlog.d/owner-decisions-of-2026-11-09.md)
 - [The owner's decisions of 2026-11-11](backlog.d/owner-decisions-of-2026-11-11.md)
+- [The owner's decisions of 2026-11-13](backlog.d/owner-decisions-of-2026-11-13.md)
 - [The owner's decisions of 2026-11-14](backlog.d/owner-decisions-of-2026-11-14.md)
 - [The owner's decisions of 2026-11-15 and 2026-11-16](backlog.d/owner-decisions-of-2026-11-16.md)
 - [A push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)](backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md)
@@ -94,6 +95,7 @@ earliest version, as a checklist.
 
 - [P3 - Two call-resume edges the second review of #2148 found, recorded and not built (2026-10-20)](backlog.d/p3-two-call-resume-edges-the-second-review-of-2148-found-recorded-and-not-built.md)
 - [P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)](backlog.d/p3-connectivity-stays-reachable-through-a-captive-portal-so-the-send-waits-for.md)
+- [P3 - the release deploys MiConnect's version, not its compose file; the test stack is on PostgreSQL 16](backlog.d/miconnect-compose-file-is-not-deployed.md)
 - [P3 - the rig's console classifier calls a seat's ordinary start lines "unexplained", so a KILL row cannot read clean (2026-11-17)](backlog.d/p3-the-rig-console-classifier-calls-ordinary-start-lines-unexplained.md)
 - [P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)](backlog.d/p3-hidden-post-row-names-the-author-not-the-association.md)
 - [P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)](backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)

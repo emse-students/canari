@@ -219,15 +219,16 @@ const SHARED_EVERYWHERE = [
 ];
 
 // TWO FILES ARE COMPARED ACROSS THE THREE SIBLINGS ONLY, and Canari is excluded BY NAME rather than
-// by being quietly absent: its `release-preflight.sh` asks SEVEN questions where theirs ask three.
-// The four extra ones are things only Canari has - `dev.canari-emse.fr` must already have served the
+// by being quietly absent: its `release-preflight.sh` asks EIGHT questions where theirs ask three.
+// The five extra ones are things only Canari has - `dev.canari-emse.fr` must already have served the
 // commit, `store/whats-new.txt` must name the version (a stable there reaches the App Store and
-// Play), no migration the owner must approve ships without his approval, and no advisory touches
-// what a stable ships (owner, 2026-11-17). Making seven identical to three would delete gates;
-// three identical to seven would invent them.
+// Play), no migration the owner must approve ships without his approval, no advisory touches
+// what a stable ships (owner, 2026-11-17), and production MiConnect's morning preflight passed on
+// the stable's authentik pin (2026-11-19). Making eight identical to three would delete gates;
+// three identical to eight would invent them.
 const SHARED_BY_SIBLINGS = [
-  ['.github/scripts/release-preflight.sh', 'Canari asks seven questions, not three'],
-  ['.github/scripts/tests/release-preflight.test.sh', 'it tests the seven-question version'],
+  ['.github/scripts/release-preflight.sh', 'Canari asks eight questions, not three'],
+  ['.github/scripts/tests/release-preflight.test.sh', 'it tests the eight-question version'],
 ];
 
 /** Strip full-line comments and blank lines: what is left is what runs. */
