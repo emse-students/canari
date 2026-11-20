@@ -882,7 +882,8 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 |---|---|---|---|
 | `pin_mismatch` | wrong PIN | retype, or "PIN oublie ?" | keypad, "PIN oublie ?" |
 | `pin_salt_rotated` | PIN reset elsewhere during this attempt | type the current PIN | keypad |
-| `server_unreachable`, salt/check unreachable | no network or server | retry | "Deverrouiller" |
+| `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline | retry | "Deverrouiller" |
+| `pin_attempts_throttled` | a PIN route answered 429 | wait until the time shown | "Deverrouiller" |
 | `other` (check unexpected, login failed, no result) | server or app fault | retry | "Deverrouiller" |
 | `local_state_sealed_under_old_pin` | PIN changed on another device | recover with the old PIN | "Mon PIN a change sur un autre appareil" |
 | `local_state_unopenable` | state opens with no key held | recover, else start fresh | the recover link, "Repartir de zero sur cet appareil" |
@@ -897,6 +898,15 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `pin_reset_unsettled` | a reset waits for the server | go online, retry | "Deverrouiller" |
 | `account_deleted`, `revoked_device_wipe_owed` | account deleted / device removed here | sign out, sign in again | "Se deconnecter" |
 | `device_revoked` | revoked, wiped now | sign in again with the PIN | login page |
+
+**The PIN-gate audit of 2026-11-20: the requests (rows 11, 12, 19, 25).** Every PIN request (salt,
+check, the recovery's check) goes through `fetchOrUnreachable`, which since then runs `trackedFetch`: the
+app's one request deadline (`requestDeadline.ts`) and the connectivity reading. A hung request ends as
+`server_unreachable`, the gate's retryable state, never as a spinner (row 11). A 429 is
+`pin_attempts_throttled`, classified at the throw (`pinThrottle.ts`), its `Retry-After` shown as the
+minute to retry at, rounded up, never a countdown (row 12). The password sign-in link reads "Se
+connecter avec un mot de passe", not "Connexion externe (service-account)" (row 25). Row 19 (salt
+rotation between two devices) is [an entry](../../backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md).
 
 The French and English texts are in `messages/{fr,en}.json` under the `auth_` keys each throw names
 (`loginErrors.ts`, `sessionAuth.ts`, `pinUnlock.ts`); a text names a control by its exact label.
