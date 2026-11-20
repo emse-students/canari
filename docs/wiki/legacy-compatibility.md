@@ -386,8 +386,9 @@ The scan builds it and reads the result ([cicd](cicd.md#container-images-are-sca
 **The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
 gap on a console only a global admin opens) where a pinned image moved only with its digest.
 **Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
-to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of that pull request, or with
-`trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
+to an upstream build whose own `libpq` is `>= 18.7-r0` and, since 2026-11-20, whose `libxml2` is
+`>= 2.13.9-r3` (`CVE-2026-86144`, the second package the `RUN` moves) - read in the scan of that pull
+request, or with `trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).

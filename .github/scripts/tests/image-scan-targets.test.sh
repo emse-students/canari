@@ -36,6 +36,13 @@ echo "the patched adminer is scanned as BUILT, never as the upstream base it upg
 adminer_base="$(awk 'toupper($1) == "FROM" { ref = $2 } END { print ref }' "$repo_root/infrastructure/local/Dockerfile.adminer")"
 if grep -qxF "dockerfile:infrastructure/local/Dockerfile.adminer" <<< "$list"; then ok "Dockerfile.adminer is a build target"; else ko "Dockerfile.adminer is not built for the scan"; fi
 if grep -qxF "$adminer_base" <<< "$list"; then ko "$adminer_base, the base the patch upgrades, is scanned instead of the image production runs"; else ok "the upstream adminer base is not a target"; fi
+echo "every image the scan BUILDS is built uncached by the release, so a cached upgrade layer cannot be older than what was scanned:"
+no_cache="$(grep -E '^[[:space:]]*no-cache:' "$repo_root/.github/workflows/build.yml")"
+while read -r built; do
+  [ -z "$built" ] && continue
+  name="${built##*/Dockerfile.}"
+  if grep -qF "matrix.name == '$name'" <<< "$no_cache"; then ok "$name is built with no-cache"; else ko "build.yml builds $name from its cache, while the scan builds ${built#dockerfile:} fresh"; fi
+done < <(grep '^dockerfile:' <<< "$list")
 if grep -q '^rust:' <<< "$list"; then ko "a rust builder image is scanned, and it never reaches an estate"; else ok "no rust builder image is in the list"; fi
 
 echo "an interpolated reference is read as its default, and this repository's own images are left out:"
@@ -78,6 +85,32 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$stubs/trivy"
 rc=0
 PATH="$stubs:$PATH" bash "$here/../image-scan.sh" >/dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 2 ]; then ok "a database that cannot be downloaded is still an outage (2)"; else ko "a database outage exited $rc, not 2"; fi
+
+echo "image-scan.sh: a build's context is what its COPY names; an IGNORED output is staged empty, a typo fails:"
+# A throwaway repository holding the two scripts, the allowlist and one Dockerfile: `docker` records
+# the context it was handed and fails (the finding path, already asserted above), `trivy` is clean.
+fake="$work/repo"
+mkdir -p "$fake/.github/scripts" "$fake/infrastructure/local" "$fake/infrastructure/authentik" "$fake/web/src"
+cp "$here/../image-scan.sh" "$here/../image-scan-targets.sh" "$fake/.github/scripts/"
+cp "$here/../../image-scan-allowlist.yaml" "$fake/.github/"
+printf 'services:\n  a:\n    image: redis:8\n' | tee "$fake/infrastructure/docker-compose.prod.yml" "$fake/infrastructure/docker-compose.dev.yml" > "$fake/infrastructure/authentik/compose.yml"
+printf '/web/build\n' > "$fake/.gitignore"
+printf 'conf\n' > "$fake/web/src/nginx.conf"
+printf 'FROM node:24 AS b\nFROM nginx:x\nRUN apk upgrade --no-cache libxml2\nCOPY --from=b /out /srv\nCOPY web/build/client web/src/nginx.conf /srv/\n' > "$fake/infrastructure/local/Dockerfile.web"
+git -C "$fake" init -q
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stubs/trivy"
+# shellcheck disable=SC2016 # the stub's own `$ctx` and `$*` expand when docker runs, not here.
+printf '#!/usr/bin/env bash\nctx="${*: -1}"; (cd "$ctx" && find . | sort) > "%s/context-seen"; exit 1\n' "$work" > "$stubs/docker"
+rc=0
+PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" >/dev/null 2>&1 || rc=$?
+seen="$(tr '\n' ' ' < "$work/context-seen" 2>/dev/null)"
+if [ "$seen" = ". ./web ./web/build ./web/build/client ./web/src ./web/src/nginx.conf " ]; then ok "the context holds the COPY sources, the ignored output empty, and no --from path"; else ko "the context read as '$seen'"; fi
+if [ "$rc" -eq 1 ]; then ok "the build was still run (and its failure is a finding)"; else ko "the staged build exited $rc"; fi
+rm -f "$work/context-seen"
+printf 'FROM nginx:x\nRUN apk upgrade --no-cache libxml2\nCOPY web/tpyo /srv/\n' > "$fake/infrastructure/local/Dockerfile.web"
+rc=0
+out="$(PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
+if [ "$rc" -eq 1 ] && [ ! -e "$work/context-seen" ] && grep -F 'git does not ignore it' <<< "$out" >/dev/null; then ok "a COPY source that is neither in the tree nor ignored fails before any build"; else ko "a missing, unignored COPY source exited $rc: $(tail -2 <<< "$out")"; fi
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."

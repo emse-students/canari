@@ -187,8 +187,8 @@ if (from.length !== 1 || !/^FROM\s+adminer:[\w.-]+@sha256:[0-9a-f]{64}$/.test(fr
   fail(`Dockerfile.adminer must have ONE stage, FROM upstream adminer pinned by tag and digest (got ${from.join(' | ')})`);
 }
 const runs = adminerDockerfile.filter((l) => /^RUN\s/i.test(l));
-if (runs.length !== 1 || runs[0] !== "RUN apk upgrade --no-cache libpq && apk info -e 'libpq>=18.7-r0'") {
-  fail(`Dockerfile.adminer may only upgrade libpq (got ${runs.join(' | ')})`);
+if (runs.length !== 1 || runs[0] !== "RUN apk upgrade --no-cache libpq libxml2 && apk info -e 'libpq>=18.7-r0' && apk info -e 'libxml2>=2.13.9-r3'") {
+  fail(`Dockerfile.adminer may only upgrade libpq and libxml2 (got ${runs.join(' | ')})`);
 }
 if (adminerDockerfile.at(-1) !== 'USER adminer') {
   fail('Dockerfile.adminer must end as the user the upstream image runs as, `USER adminer`');
@@ -197,7 +197,7 @@ if (!/\[adminer\]="\.\/infrastructure\/local\/Dockerfile\.adminer"/.test(read('.
   fail('build.yml does not build Dockerfile.adminer, so no release pushes the image production runs');
 }
 // A cached `apk upgrade` layer could carry an old libpq while the scan builds fresh (review of #3442).
-if (!/^\s*no-cache:\s*\$\{\{\s*matrix\.name == 'adminer'\s*\}\}\s*$/m.test(read('.github', 'workflows', 'build.yml'))) {
+if (!/^\s*no-cache:\s*\$\{\{.*\bmatrix\.name == 'adminer'.*\}\}\s*$/m.test(read('.github', 'workflows', 'build.yml'))) {
   fail("build.yml may build adminer from its cache - `no-cache: ${{ matrix.name == 'adminer' }}` is missing");
 }
 

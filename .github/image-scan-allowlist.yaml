@@ -281,6 +281,20 @@ vulnerabilities:
       - "pkg:apk/alpine/libxslt@1.1.43-r3"
     statement: "libxslt 1.1.43-r3 in postgres:18-alpine, nginx:1.31.8-alpine and nginx:stable-alpine: reached only through nginx's optional xslt module, which no configuration loads (nginx -T on the production frontend and edge, 2026-11-10: no load_module, no xslt directive), and postgres's contrib xml2 extension, which no database creates. No patched upstream image yet (Alpine ships 1.1.43-r4); remove when the pins are rebuilt."
 
+  # --- libxml2 2.13.9-r2, Alpine 3.24 (2026-11-20) ----------------------------------------------
+  # CVE-2026-86144 (HIGH), fixed by Alpine in 2.13.9-r3, reported in the five Alpine images on every
+  # pull request from 20:10Z. The two images this repository BUILDS ship the fix (`apk upgrade` in
+  # Dockerfile.adminer and Dockerfile.frontend, each asserting `libxml2>=2.13.9-r3`), so they are not
+  # covered here. What is left is the upstream images compose runs as-is: both postgres:18-alpine pins
+  # and the nginx:1.31.8-alpine edge. Read from Docker Hub's layers that evening, the NEWEST
+  # postgres:18-alpine (sha256:ff64c9e3..., built 2026-11-18), nginx:1.31.8-alpine (still fed7e14b...),
+  # nginx:1.31-alpine and nginx:stable-alpine (built 2026-11-18) all carry 2.13.9-r2: no digest to move
+  # to. Scoped by purl, so the rescan retires it the day the pins move to a build with 2.13.9-r3.
+  - id: CVE-2026-86144
+    purls:
+      - "pkg:apk/alpine/libxml2@2.13.9-r2"
+    statement: "libxml2 2.13.9-r2 in postgres:18-alpine (both pins) and nginx:1.31.8-alpine (the edge): nginx reaches libxml2 only through libxslt, i.e. the optional xslt module no configuration loads (nginx -T, 2026-11-10); postgres parses XML only for the xml type and its functions, which no schema or service query of ours uses (the one xpath() is a dev reset script counting rows over our own query_to_xml), and its SQL is reached only by our services and the admin console. No patched upstream image yet (Alpine ships 2.13.9-r3; newest postgres:18-alpine ff64c9e3 and nginx:1.31.8-alpine fed7e14b carry r2); remove when the pins are rebuilt."
+
   # --- the identity provider, ghcr.io/goauthentik/server:2026.8.6 -------------------------------
   # An upstream image this repository cannot rebuild. Which one RUNS is the pin of
   # infrastructure/authentik/compose.yml since 2026-11-13: the release deploys it (deploy-stack.sh),
