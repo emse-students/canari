@@ -115,9 +115,21 @@
     },
   };
 
+  /**
+   * The live this page plays, or null off screen. A `$derived`, so the effect below re-runs when THIS
+   * value changes and not when the feed hands over a new `post` object for the same replay (the reel
+   * list re-keyed the page it had just activated: the player started, stopped and started again).
+   */
+  const playingLiveId = $derived(active ? post.liveId : null);
+
   $effect(() => {
-    const liveId = active ? post.liveId : null;
+    const liveId = playingLiveId;
     if (!liveId) return;
+    return untrack(() => startPlayer(liveId));
+  });
+
+  /** Starts the player of `liveId`; the returned function stops it and clears the page's state. */
+  function startPlayer(liveId: string): () => void {
     console.debug(`[LIVE_REPLAY] page ${post.id} active - player for live ${liveId}`);
     const next = new ReplayPlayer({
       liveId,
@@ -151,7 +163,7 @@
       meta = null;
       replayState = { kind: 'connecting' };
     };
-  });
+  }
 
   /** Hooks the shared player's `<video>` to the replay player; the returned function unhooks it. */
   function bindVideo(el: HTMLVideoElement): () => void {
