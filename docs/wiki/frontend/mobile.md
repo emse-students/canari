@@ -3890,8 +3890,10 @@ still there after all seven passes, which is the paragraph above, measured.
 
 **A DIAGNOSTIC WORTH KEEPING: `📷 Photo` INSIDE A BUBBLE ALWAYS MEANS A PUSH ROW THAT WAS NEVER
 UPGRADED.** `📷 Photo` is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`),
-while `[Media]` is the app's own label for an envelope it summarises on purpose (a conversation-list
-line, a reply quote). If `📷 Photo` is ever seen in a bubble again, the arrival orders above are
+while the app's own label for an envelope it summarises on purpose (a conversation-list line, a
+reply quote) uses the SAME words since 2026-11-20 (`previewForMedia`, mirrored from `push_text.rs` by a
+test, [chat](modules/chat.md#a-media-message-is-previewed-by-what-it-is-2026-11-20)): the wording alone no longer
+tells a push row from a summary, so the DIAGNOSTIC is the row's origin, not its text. If `📷 Photo` is ever seen in a bubble again, the arrival orders above are
 where to look. The same holds for every media line of `push_text.rs`, `🎬 CanaReel` (WP-RC-7)
 included. Whether the rows already stuck are worth recovering is the user's decision
 ([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).

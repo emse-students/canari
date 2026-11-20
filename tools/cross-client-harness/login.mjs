@@ -7,7 +7,7 @@
  * prints contains the secret.
  *
  * TWO IDENTITY PATHS, AND THE DEFAULT IS THE CAMPAIGN'S. `--flow service-account` (the default)
- * takes the "Connexion externe (service-account)" link and answers Authentik's own two-stage flow;
+ * takes the "Se connecter avec un mot de passe" link and answers Authentik's own two-stage flow;
  * `--flow cas` takes the main button and answers the school's CAS form, which ends at a 2FA no tool
  * here can pass. See `LAUNCHER_BUTTON` below for why that is the default rather than an option.
  *
@@ -199,7 +199,7 @@ console.log(`[login:${account}] start ${await here()}`);
  *
  * The main button federates to the school: canari -> miconnect.emse.fr -> cas.emse.fr, and CAS
  * asks for the EMSE 2FA, which no tool here can answer. The campaign's two accounts are ordinary
- * Authentik users instead, and they sign in through the "Connexion externe (service-account)" link
+ * Authentik users instead, and they sign in through the "Se connecter avec un mot de passe" link
  * the login page already carries - `PASSWORD_LOGIN_FLOW_SLUG` in `frontend/src/lib/stores/auth.ts`,
  * a flow with identification + password and NO `AuthenticatorValidateStage`. That is the whole
  * reason losing a Chrome profile costs no 2FA, so it is the DEFAULT here rather than an option
@@ -207,7 +207,7 @@ console.log(`[login:${account}] start ${await here()}`);
  */
 const FLOW = opt('flow', 'service-account');
 const LAUNCHER_BUTTON =
-  FLOW === 'cas' ? 'text=Se connecter' : 'text=Connexion externe (service-account)';
+  FLOW === 'cas' ? 'text=Se connecter' : 'text=Se connecter avec un mot de passe';
 
 // THE CREDENTIAL STAGES - which one is on screen (`FORM_SHAPE`), the visible-only shadow-root lookup
 // (`DEEP`) and what answers each (`stageTable`) - live in `idpform.mjs`, so the copy the page runs

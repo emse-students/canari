@@ -124,6 +124,7 @@ earliest version, as a checklist.
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
+- [ ] [a media message is worded the same in the list, the quotes and the banners (owner, 2026-11-20)](backlog.d/reading-owed-media-preview-names-the-kind.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [the launcher's long-press conversations and the share sheet show each conversation's picture (Android, owner, 2026-11-20)](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)
 - [ ] [the "you were added as a Lydia cashier" notice (switched on 2026-11-20)](backlog.d/reading-owed-the-lydia-cashier-added-notice.md)
@@ -136,6 +137,10 @@ earliest version, as a checklist.
 **Chantiers, decisions and questions (no severity)**
 
 - [The chat and the reactions of a live replayed in sync with the video, as on Twitch (owner wish, 2026-11-20; designed, not built)](backlog.d/live-replay-chat-and-reactions-replayed.md)
+
+**P2 - correctness**
+
+- [P2 - Voice notes are captured as a phone call (asked by the owner, 2026-11-20)](backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)
 
 **P3 - hygiene**
 
@@ -195,6 +200,7 @@ earliest version, as a checklist.
 - [P2 - rows before ratchet: the history catch-up decrypt sessions take no mark (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)
 - [P2 - rows before ratchet: the Tauri resume's live-ahead persist bypasses both holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)
 - [P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)
+- [P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, four adjacent hazards are (2026-11-20)](backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md)
 
 **P3 - hygiene**
 

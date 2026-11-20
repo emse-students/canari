@@ -243,10 +243,10 @@ describe('notificationGroupName', () => {
 });
 
 describe('composePlainNotificationText', () => {
-  // The preview is Paraglide's `chat_preview_media`, so both locales reach here as a plain string.
+  // The preview is a Paraglide string (`previewForMedia`), so both locales reach here as a plain string.
   it.each([
-    ['fr', '[Média]'],
-    ['en', '[Media]'],
+    ['fr', '📷 Photo'],
+    ['en', '📷 Photo'],
   ])('titles a group by its name and leads the body with the speaker (%s)', (_locale, preview) => {
     expect(
       composePlainNotificationText('Alice', preview, { groupName: 'Les Canaris', isGroup: true })

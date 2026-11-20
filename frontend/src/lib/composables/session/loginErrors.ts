@@ -83,6 +83,11 @@ export type LoginErrorCode =
   /** The server could not be REACHED at all - we never got an answer to disagree with. */
   | 'server_unreachable'
   /**
+   * A PIN route answered 429: too many attempts for this account (`UserThrottlerGuard`). An answer,
+   * never "unreachable": the person waits until the time shown, then retries (`pinThrottle.ts`).
+   */
+  | 'pin_attempts_throttled'
+  /**
    * The server answered `stale-salt` twice: the account's PIN salt changed (a PIN reset) between
    * this login asking for it and checking with it, and again on the one retry. Nothing was
    * compared, so this says nothing about the PIN typed.
@@ -304,6 +309,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     (provesLocalStateExists(code) && code !== 'hardware_key_unavailable') ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
+    code === 'pin_attempts_throttled' ||
     code === 'account_deleted' ||
     code === 'revoked_device_wipe_owed' ||
     code === 'pin_reset_unsettled' ||
