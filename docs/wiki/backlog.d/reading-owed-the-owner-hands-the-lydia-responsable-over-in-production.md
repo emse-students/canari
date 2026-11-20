@@ -1,6 +1,8 @@
 ## Reading owed - the owner hands the Lydia Responsable over in production, then takes it back
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **What is built**: the hand-over of the Responsable, OFF behind `LYDIA_RESPONSABLE_HANDOVER_ENABLED`
 ([payments](../frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)). Its flip

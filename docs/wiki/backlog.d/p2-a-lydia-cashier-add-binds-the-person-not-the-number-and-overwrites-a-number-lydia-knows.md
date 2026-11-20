@@ -1,8 +1,10 @@
 ## P2 - a Lydia cashier add binds the person and not the number, and overwrites a number Lydia already knows
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Found by the adversarial review of the 1.7.1 flip of the cashier gate
 ([payments](../frontend/modules/payments.md#the-cashiers-enrolment-lot-3)). No direct exploit: every

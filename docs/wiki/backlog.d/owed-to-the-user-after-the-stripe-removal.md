@@ -1,6 +1,8 @@
 ## Owed after the Stripe removal - what is left (audited 2026-11-19)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Owner, 2026-11-19:** *"Tu peux tout supprimer en ce qui concerne Stripe, je m'occupe de l'administratif"*.
 The lead removes everything left of Stripe in the code and the database (the three columns, the

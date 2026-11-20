@@ -4999,3 +4999,34 @@ Dev served `1.7.2-alpha.1` (`/api/version` build `dev.21469a9`). **Builds:** the
 **Dev data written** (all in the harness's `WRITTEN-IDS.txt`): `delta`'s birthday row (deleted); two lives (`alpha` from the Mi, kept nothing; `gamma` from the iPhone, a replay that expires by itself on 2026-11-23); the Mi signed out and in as `alpha`; W2 re-enrolled as a new device of `beta`; the iPhone reinstalled and `gamma` enrolled as a new device; one wrong PIN on W2 and one on the iPhone.
 
 **Left as found:** the Mi 9T on `1.7.2-alpha.1` as `alpha` (camera and microphone granted for the live), the iPhone 12 on `1.7.2-alpha.1` as `gamma` (its app now in English, the phone's language), W2 unlocked with "Rester connecté" on.
+
+## The audio/video drift fix (1.7.1), read on 2026-11-20
+
+The confirmation owed by the owner's decision 17 ([decisions](backlog.d/owner-decisions-of-2026-11-20.md)), run by the lead alone: a live in a dark room from the Mi 9T on dev, its replay watched in a desktop browser, once with the fix and once as a control without it. **PASS.** At 12.4 fps the replay's slope of picture-against-sound offset is **+0.21 ms/s** with the fix, against **-38.6 ms/s** for the control without it (the offset moving by about 2.3 s a minute). The stream-level method is the one of S12 and S13 ([S13](#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)); this reading adds the control. Nothing in the backlog was owed to it any more: decision 44 of 2026-11-19 is carried out.
+
+## The readings of 2026-11-20, S18 (`1.7.2-alpha.3`): notice previews, launcher shortcuts, the capture line, live screens and the backup domains
+
+The Mi 9T by sideload (versionCode `100700203`) and the iPhone 12 from TestFlight (`CFBundleVersion` `100700203`). Sitting S17 (on `1.7.2-alpha.2`) left no section of its own: its findings are the ten entries that name it (`git grep "sitting S17" docs/wiki/backlog.d`).
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| #3907 typed previews in Android notifications, Mi 9T | **PASS** | "📷 Photo", "🌀 GIF", "🎥 Vidéo", "📎 Fichier : rapport.pdf", "🎵 Fichier audio" and, with a caption, "📷 Photo : legende test"; the chat list "📷 Photo"; the web list "🎤 Message vocal" ([entry](backlog.d/reading-owed-media-preview-names-the-kind.md)) |
+| #3907 killed-app banners, iPhone 12 | **PASS (three kinds)** | "Photo", "Photo: caption" and "Audio file". GIF, video and file **NOT TAKEN** |
+| #3908 launcher shortcuts carry pictures, Mi 9T | **PASS** | `bitmapPath` set on the published shortcuts. The share sheet's row **NOT TAKEN** ([entry](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)) |
+| #3910 one capture line per voice note, Mi 9T | **PASS** | `capture: echo=true noise=true agc=true rate=48000Hz ch=1 mime=audio/mp4 bps=128000`, once per note ([entry](backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)) |
+| #3905 a second live after an ended live, phones | **PASS** | A fresh pre-live sheet opens ([entry](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)) |
+| #3904 a personal live card by tab | **PASS (personal)** | Under "Pour toi" and "Campus", not under "Organisations". An association's live **NOT TAKEN** ([entry](backlog.d/reading-owed-the-live-card-tab-and-poster-width.md)) |
+| #3902 a comment on an unpublished post | **PASS (server)** | `409 COMMENT_POST_NOT_PUBLISHED`; the card's UI **NOT TAKEN** |
+| #3906 the PIN states | **NOT TAKEN** | Cannot be induced on the bench ([entry](backlog.d/reading-owed-pin-gate-audit-rows-of-2026-11-20.md)) |
+| iOS `backup2`, iPhone 12 | **PASS (two domains)** | `AppDomain-fr.emse.canari` and `AppDomainGroup-group.fr.emse.canari` hold 0 files (35 on `1.7.2-alpha.1`). The extensions' domains were not examined ([entry](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)) |
+| A killed-app push decrypts, iPhone 12 | **PASS** | |
+| The Rediffusion label, Mi 9T | **PASS** | Readable on the dark sheet ([entry](backlog.d/live-replay-switch-readings-owed.md)) |
+| A fresh MiConnect sign-in | **NOT TAKEN** | |
+
+## The readings of 2026-11-20, S19 (`1.7.2-alpha.4`): the last sitting before the stable
+
+`1.7.2-alpha.4` differs from `alpha.3` by the libxml2 CVE-2026-86144 image fix (#3915) and version numbers. **PASS, all rows:** the dev web loads, its console holding only the known Cloudflare CSP inline-script error ([entry](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)); the Mi 9T (`100700204`) sends and receives in the foreground and receives a killed-app push; the iPhone 12 (`100700204`) the same; the Mi's photo push reads "📷 Photo".
+
+## The production reading of 2026-11-20, the `1.7.2` stable deploy
+
+`/api/version` answers `1.7.2`. The release run (the stable on the commit of `1.7.2-alpha.4`) is green: Google Play, the App Store, the deploy and "Did it reach production".

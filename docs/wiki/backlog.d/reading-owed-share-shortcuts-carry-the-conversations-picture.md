@@ -1,6 +1,8 @@
 ## Reading owed - the launcher's long-press conversations and the share sheet show each conversation's picture (Android, owner, 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Built: every share-target shortcut is published with its picture - the cached photo, group image or
 community logo, else the initials disc - and the missing pictures are fetched afterwards and pushed
@@ -17,3 +19,5 @@ shows the initials first and the photo after the next look at the menu (logcat `
 (3) the face is not cropped inside the circle, and the share sheet's direct row shows the same
 pictures; (4) a message notification's conversation header shows the same picture as the menu;
 (5) sign out: the menu lists no Canari conversation afterwards, even when a fetch was in flight.
+
+**2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, Mi 9T): the launcher half PASS, the share sheet NOT TAKEN.** The published shortcuts carry their pictures (`bitmapPath` set). **Left:** the share sheet's direct row, the not-cropped face, the cached-later upgrade and the sign-out clearing (steps 2 to 5).

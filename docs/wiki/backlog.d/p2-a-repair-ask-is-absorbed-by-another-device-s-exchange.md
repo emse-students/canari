@@ -1,8 +1,10 @@
 ## P2 - a repair ask is absorbed by another device's exchange, and the walk never reaches the holder (reading of 2026-11-17; built as "the repair walks to the member that holds the messages")
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **What is built:** an ask raised by a frame this device cannot read carries `incomplete: true`; a
 member that holds nothing the asker lacks answers `history_cannot_repair` instead of staying silent,

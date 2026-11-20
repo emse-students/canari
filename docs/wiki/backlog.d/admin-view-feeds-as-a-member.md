@@ -1,6 +1,8 @@
 ## Admin tool - "Voir en tant que": a platform admin sees the feeds as one chosen member sees them
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Asked by the owner on 2026-11-19, its four answers taken the same day ([decisions](owner-decisions-of-2026-11-19.md)).
 It is a TEST tool: the audience model (campus x formation x public,

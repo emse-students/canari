@@ -1,8 +1,10 @@
 ## P3 - what the production log read of the `1.7.0` stable day left unexplained or noisy (2026-11-18)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Four kinds of WARN in the first 50 minutes of production on `1.7.0` that no wiki page or backlog entry
 owns. Each is either expected and should not be a WARN, or the end of something upstream; the reading

@@ -1,6 +1,8 @@
 ## P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Decided by the owner, 2026-11-19:** a seat whose user holds no active device in the group is SHOWN
 GREYED with "aucun appareil actif" (Paraglide), never hidden and never removed: the person may come back,

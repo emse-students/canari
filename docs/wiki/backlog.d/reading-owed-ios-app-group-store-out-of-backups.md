@@ -1,6 +1,8 @@
 ## Reading owed - iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **What is built.** The fix of the P2 *"the iOS App Group root refuses the backup flag, so `mls.bin`
 and the push secret still go into an iPhone backup"* (read on `1.7.2-alpha.1`, sitting S16). The
@@ -49,3 +51,5 @@ a `1.7.2-alpha.1` signed in with data (so the move has something to move):
 When it passes, record it in [device-verification](../device-verification.md) and delete this file
 together with [the launch pass's own reading](reading-owed-ios-local-data-out-of-backups.md) if that
 one passed in the same sitting.
+
+**2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, iPhone 12): step 3 PASS, the rest not recorded.** A full `backup2`: `AppDomain-fr.emse.canari` and `AppDomainGroup-group.fr.emse.canari` hold 0 files (35 on `1.7.2-alpha.1`). A killed-app push decrypted (step 2, push half). The extension domains of the manifest were not examined. **Left:** the 6/6 launch line, the share extension's path, the relaunch and the downgrade path; the extension domains' files.

@@ -1,8 +1,10 @@
 ## P3 - an object moved onto the idle window after upload carries no stamp, so the idle-file setting never governs it
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-20 ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): the index still holds exactly the seven unstamped `ephemeral` entries created since the `1.7.0` deploy, 27 stamped conversation files beside them, and none created since the `1.7.1` deploy. Nothing new to decide; the replanning to the new version is the plan's whole re-read._
 

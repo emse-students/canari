@@ -1,7 +1,9 @@
 ## P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Fixed in code on 2026-11-19 (owner report on a desktop browser): the replay player now gives every seek
 a ticket and only the latest may write the playhead; stale downloads are aborted

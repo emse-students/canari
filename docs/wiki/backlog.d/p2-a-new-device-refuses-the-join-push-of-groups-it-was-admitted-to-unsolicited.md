@@ -1,8 +1,10 @@
 ## P2 - a freshly minted device logs an error-level `REFUSED` for the join push of groups whose join it never solicited
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Read on dev, `1.7.0-alpha.11`, sitting S4 (2026-11-18, [readings](../device-verification.md#the-web-rig-readings-of-2026-11-18-s4-170-alpha11-the-false-accusers-cost-and-the-web-rows)), during GRP-ADDR-1: the
 owner's web seat W3 was minted as a NEW device (`becomeANewDeviceAndConfirm`: enrolled, PIN answered,
