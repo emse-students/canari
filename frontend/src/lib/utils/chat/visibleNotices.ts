@@ -25,6 +25,7 @@ import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay } from './groupName';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
+import { isRawId } from './rawId';
 
 /** The visible events whose notice every member's device draws, the actor's included. */
 export type VisibleNoticeEvent =
@@ -259,16 +260,23 @@ export function renameAuthorFromNotices(
 
 /**
  * Whether a `groupNamed` statement or answer that turned `before` into `after` draws the rename
- * notice naming its sender (sealed-names.md): whenever it CHANGES a name the members had DATED - any
- * member can send one, and a change with no trace is a forgery nobody sees. An UNDATED name is never
- * one a member stated: it came from the server's list, a newly invited member's placeholder or a raw
- * id, so dating it renames nothing (owner, 2026-11-20) - that device is learning the name.
+ * notice naming its sender (sealed-names.md): whenever it CHANGES the name shown - any member can
+ * send one, and a change with no trace is a forgery nobody sees - EXCEPT over a newly invited
+ * member's PLACEHOLDER (owner, 2026-11-20): an undated, non-empty name that is a raw id (`isRawId`)
+ * or the group's own id, which the Welcome and the push write. No member chose it; that device is
+ * learning the name. An undated list name or an empty one is NOT exempt: a statement changing it
+ * during the rollout, or naming an unnamed group, is exactly the change a forger would make. An
+ * honest restatement draws nothing anyway - it does not change the name.
  */
 export function nameChangeNoticeDue(
-  before: Pick<Conversation, 'name' | 'nameAt'>,
+  before: Pick<Conversation, 'id' | 'name' | 'nameAt'>,
   after: Pick<Conversation, 'name'>
 ): boolean {
-  return before.nameAt !== undefined && after.name !== before.name;
+  if (after.name === before.name) return false;
+  const shown = before.name.trim();
+  const placeholder =
+    before.nameAt === undefined && shown !== '' && (isRawId(shown) || shown === before.id);
+  return !placeholder;
 }
 
 /** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */

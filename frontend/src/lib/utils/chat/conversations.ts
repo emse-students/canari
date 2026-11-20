@@ -32,7 +32,7 @@ import { mergeMessagePage } from './messageMerge';
 import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
-import { isUuidLike } from '$lib/utils/uuidShape';
+import { isRawId } from './rawId';
 import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { PENDING_MUTATION_LIMITS } from './pendingMutations';
 import { settlePendingFor } from './pendingMutationStore';
@@ -45,17 +45,8 @@ class LinkDroppedMidPassError extends Error {
   }
 }
 
-const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
-
-/**
- * True when `value` looks like a raw technical ID that must never be shown in the UI -
- * a UUID, an MLS group ID (64-char lowercase hex hash), or a `channel_<uuid>` conversation ID
- * that has not been replaced yet by the community's synced channel name.
- */
-export function isRawId(value: string): boolean {
-  const trimmed = value.trim();
-  return isUuidLike(trimmed) || HEX_ID_RE.test(trimmed) || isChannelConversationId(trimmed);
-}
+/** Re-exported: callers read the raw-id test from here; it lives low in the graph (`rawId.ts`). */
+export { isRawId };
 
 /** True when `value` is the persisted direct-conversation key (`userId::peerId`). */
 export function isCanonicalDirectKey(value: string): boolean {

@@ -268,13 +268,16 @@ it.
   decision taken). Any member can send a statement or an answer - an answer with a `renameAt` just
   under its own server time - and every statement-dated device takes it. Silent, that was a forged
   rename nobody could see, and the answer's rank (A3) made it stick. So a statement or an answer that
-  CHANGES A DATED NAME draws the rename notice, naming the frame's MLS sender, live and replayed
+  CHANGES THE NAME SHOWN draws the rename notice, naming the frame's MLS sender, live and replayed
   alike (`nameChangeNoticeDue`, `visibleNoticeContent('groupRenamed')`, under the frame's id). Honest
-  changes are rare - a crossing, a heal - so the notice costs little. **One that dates an UNDATED
-  name draws nothing, whatever it replaces** (owner, 2026-11-20): an undated name was never stated
-  by a member - it came from the server's list, a newly invited member's placeholder (the group's
-  own id, which the Welcome writes) or a raw id - so dating it renames nothing; that device is
-  learning the name. Nor does one that only dates the name already shown.
+  changes are rare - a crossing, a heal - so the notice costs little. **The one exception is a newly
+  invited member's PLACEHOLDER** (owner, 2026-11-20; narrowed by the lead under that intent after
+  the round-4 review): an UNDATED, NON-EMPTY name that is a raw id (`isRawId`) or the group's own id,
+  which the Welcome and the push write. No member chose it; that device is learning the name. An
+  undated LIST name and an EMPTY one are not exempt: a dated-only rule let a member state a new name
+  over every still-undated row during the rollout, and name an unnamed group - which stays undated
+  for ever - at any time, both silently. The honest rollout draws nothing anyway: a restatement does
+  not change the name shown.
 
 - **A statement ranks below every rename** (`groupNameSupersedes`). Ordered by date alone, a member
   restating the name it holds put the old name back over a rename accepted a second before its own
@@ -323,8 +326,10 @@ it.
     `[nameAt - 24 h, nameAt + 24 h]` (the notice row is dated by its frame's `sentAt`, bounded by the
     server time either way; `getMessagesSince` with its `until`), so a conversation of any size costs
     the same two days; a search that finds nothing is noted in memory per (conversation, `nameAt`)
-    and not repeated by a later statement. It runs there, not in the store migration, because notice
-    rows are sealed under the device key the migration does not hold; once found it is stored. **What
+    and not repeated by a later statement - so a notice that arrives LATER (a history bundle filling
+    the window) is read only after a restart clears the memo, at the next outranked statement. It
+    runs there, not in the store migration, because notice rows are sealed under the device key the
+    migration does not hold; once found it is stored. **What
     stays uncovered**, logged at INFO and left empty: a rename whose notice this device never wrote
     (it joined after the rename and was handed the name by a step-1 push), whose notice was collected
     by the retention window, or whose notice predates the notice's `actor`. Those rows answer nothing

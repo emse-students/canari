@@ -228,19 +228,31 @@ describe('a received groupNamed statement', () => {
     });
   });
 
-  it('dating an UNDATED name draws no notice, whatever it replaces - a placeholder, a list name (owner, 2026-11-20)', async () => {
+  it("an undated LIST name or an EMPTY one changed by a statement is noticed; an invitee's placeholder replaced is not (2026-11-20)", async () => {
+    // During the rollout every row is undated: a forger stating a new name over the list's is seen.
     const listed = phone();
     await listed.state('Autre', T);
     expect(listed.conversations.get('g1').name).toBe('Autre');
-    expect(listed.addMessageToChat).not.toHaveBeenCalled();
-    const p = phone();
-    // What the Welcome writes: the group's own id, undated.
-    p.conversations.set('g1', { ...p.conversations.get('g1'), name: 'g1' });
-    await p.state('Nouveau', T);
-    expect(p.conversations.get('g1').name).toBe('Nouveau');
-    expect(p.addMessageToChat).not.toHaveBeenCalled();
-    await p.state('Pirate', T + 1_000);
-    expect(p.addMessageToChat).toHaveBeenCalledTimes(1);
+    expect(listed.addMessageToChat).toHaveBeenCalledTimes(1);
+    // An unnamed group stays undated: naming it is a change too.
+    const unnamed = phone();
+    unnamed.conversations.set('g1', { ...unnamed.conversations.get('g1'), name: '' });
+    await unnamed.state('Pirate', T);
+    expect(unnamed.addMessageToChat).toHaveBeenCalledTimes(1);
+    // The honest rollout restates the name shown: nothing changes, nothing is drawn.
+    const honest = phone();
+    await honest.state('Groupe', T);
+    expect(honest.addMessageToChat).not.toHaveBeenCalled();
+    // What the Welcome writes - the group's own id, undated - and a raw id are placeholders: silent.
+    for (const placeholder of ['g1', '3f2b8c1e-0d4a-4c7e-9b1f-2a6d5e8c7b90']) {
+      const p = phone();
+      p.conversations.set('g1', { ...p.conversations.get('g1'), name: placeholder });
+      await p.state('Nouveau', T);
+      expect(p.conversations.get('g1').name).toBe('Nouveau');
+      expect(p.addMessageToChat).not.toHaveBeenCalled();
+      await p.state('Pirate', T + 1_000);
+      expect(p.addMessageToChat).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("an older build's rename frame (no signed sentAt) is refused and does not move a stated name", async () => {

@@ -677,18 +677,23 @@ describe('a replayed groupNamed statement', () => {
     expect(convo().nameFromStatement).toBeUndefined();
   });
 
-  it('draws the notice when it CHANGES a dated name - never when it dates an undated one (owner, 2026-11-20)', async () => {
+  it("draws the notice whenever it CHANGES the name shown - except over an invitee's placeholder (2026-11-20)", async () => {
     const { keys } = await cast();
     // The Welcome's placeholder is the group's own id, undated: the name is learnt, not changed.
     const learnt = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], { name: CONVO });
     expect(learnt.convo()).toMatchObject({ name: 'Nouveau', nameFromStatement: true });
     expect(learnt.pushed).toEqual([]);
-    // Any undated name - the server's list - is learnt the same way: dating it renames nothing.
+    // An undated LIST name, or an empty one, changed by a statement: noticed - the rollout's forgery.
     const listed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
       name: 'Liste',
     });
     expect(listed.convo().name).toBe('Nouveau');
-    expect(listed.pushed).toEqual([]);
+    expect(listed.pushed).toHaveLength(1);
+    const unnamed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], { name: '' });
+    expect(unnamed.pushed).toHaveLength(1);
+    // The honest restatement of the name shown changes nothing: nothing drawn.
+    const honest = await replayFrame(keys, 'alice', statement('Liste'), [], [], { name: 'Liste' });
+    expect(honest.pushed).toEqual([]);
     // A name a member chose, replaced by a later statement: noticed, naming its sender.
     const changed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
       name: 'Ancien',
