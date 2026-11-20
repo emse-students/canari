@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyIdpForm, deepVisible, FORM_SHAPE, stageTable, tickScript } from '../idpform.mjs';
+import { classifyIdpForm, deepAny, deepVisible, FORM_SHAPE, stageTable, tickScript } from '../idpform.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -89,6 +89,14 @@ ok('the CAS page is still CAS', shapeOf(casPage()) === 'cas');
 ok('the hidden autofill trio alone is no stage', shapeOf(root(autofill())) === null);
 ok('the string the page runs agrees on the terms page', evaluateInPage(FORM_SHAPE, termsPage()) === 'authentik-terms');
 ok('the string the page runs agrees on the password page', evaluateInPage(FORM_SHAPE, passwordPage()) === 'authentik-password');
+
+// The 2026-11-20 stall: the terms page whose checkbox is not laid out (a restyled box, a zero-size input).
+const hiddenTerms = () =>
+  authentikPage([el({ tag: 'p', name: 'cgu_notice' }), el({ name: 'cgu_accept', type: 'checkbox', visible: false })]);
+ok('a terms page whose checkbox is not laid out is still the terms stage', evaluateInPage(FORM_SHAPE, hiddenTerms()) === 'authentik-terms');
+ok('and so is it through the plain classifier given the layout-blind lookup', classifyIdpForm((sel) => deepVisible(sel, hiddenTerms()), hiddenTerms(), (sel) => deepAny(sel, hiddenTerms())) === 'authentik-terms');
+ok('the tick reaches that box and ends ticked', evaluateInPage(tickScript('input[name=cgu_accept]'), hiddenTerms()) === 'ticked');
+ok('a stage with no terms box is not read as terms (autofill trio alone)', evaluateInPage(FORM_SHAPE, passwordPage()) === 'authentik-password');
 
 console.log('[idpform] what answers the terms page');
 const terms = stageTable({ username: 'u', password: 'p' })['authentik-terms'];

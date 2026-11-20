@@ -23,7 +23,7 @@ import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 import { PORTS } from './names.mjs';
 import { SITE } from './site.mjs';
-import { DEEP, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
+import { DEEP, DESCRIBE_STAGE, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -483,6 +483,7 @@ const answerOneStage = async (shape, formCx) => {
   }
   // A required box (the MiConnect terms page): ticked, and its END state read back - a box that did
   // not tick is refused by the server's validation policy, so submitting it would only loop.
+  if (STAGE[shape].ticks.length) console.log(`[login:${account}] ${shape}: accepting the terms of use for this TEST account`);
   for (const selector of STAGE[shape].ticks) {
     const ticked = await evaluate(formCx, tickScript(selector));
     console.log(`[login:${account}] ${shape}: ${selector} ${ticked}`);
@@ -571,7 +572,13 @@ for (let n = 0; n <= MAX_STAGES; n++) {
     await sleep(400);
   }
   if (!atAnIdPStill) break;
-  if (!shape) throw new Error(`the ${answered} stage never gave way to another within 24s`);
+  if (!shape) {
+    // An unclassified page names itself: its controls by tag/type/name, never a value.
+    const dump = await freshFormCx().catch(() => null);
+    const seen = dump ? await evaluate(dump, DESCRIBE_STAGE).catch(() => 'unreadable') : 'no page';
+    dump?.close();
+    throw new Error(`the ${answered} stage never gave way to another within 24s; the page holds: ${seen}`);
+  }
   if (n === MAX_STAGES) {
     cxNow.close();
     throw new Error(`still on a ${shape} form after ${MAX_STAGES} stages`);
