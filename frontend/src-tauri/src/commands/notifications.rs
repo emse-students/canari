@@ -17,7 +17,7 @@
 //!
 //! So the WebSocket frame stopped being a second BUILDER and became a second TRIGGER for the same
 //! one. That needs a call in the direction this app had never made - Rust into Kotlin - which is
-//! what [`notifier_message_natif`] is.
+//! what [`notify_native_message`] is.
 //!
 //! The DESKTOP notification path is untouched: it is a different implementation (`notify-rust`)
 //! with a different defect surface, and nothing here has been measured against it.
@@ -58,7 +58,7 @@
 /// only while the app is in front with that conversation off screen, where the push is dropped.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn notifier_message_natif(
+pub(crate) fn notify_native_message(
     group_id: String,
     sender_id: String,
     sender_name: String,
@@ -184,6 +184,11 @@ pub(crate) fn notifier_message_natif(
 ///
 /// `false` when the class cannot be reached (no JavaVM, no attach, no class loader), logged at a
 /// level that accuses: nothing the caller asked of the native builder happened.
+///
+/// A JAVA EXCEPTION THE CALL LEFT PENDING IS CLEARED HERE, the one door: `call_static_method`
+/// answers `Error::JavaException` and leaves the exception set on the thread, where the next JNI
+/// call from it would abort the process. It is described to logcat (its stack is the evidence),
+/// then cleared, and the call reads as not done.
 #[cfg(target_os = "android")]
 fn with_native_builder(
     call: impl FnOnce(&mut jni::JNIEnv<'_>, &jni::objects::JClass<'_>) -> bool,
@@ -207,27 +212,41 @@ fn with_native_builder(
         log::error!("[NOTIF] CanariFirebaseMessagingService not loadable - NOT reached");
         return false;
     };
-    call(&mut env, &class)
+    let done = call(&mut env, &class);
+    if env.exception_check().unwrap_or(false) {
+        log::error!("[NOTIF] the native builder threw - described below, cleared, NOT done");
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+        return false;
+    }
+    done
 }
 
 /// Asks the native side to remove a conversation's notification because THIS ACCOUNT read it on
 /// another device, as the WebView learned it over its socket (Android).
 ///
-/// **THE SECOND TRIGGER OF THE CANCEL**, as [`notifier_message_natif`] is the second trigger of
-/// the post. The push was the cancel's only trigger, and the server pushes only a frame the device
-/// did not ACK: a self read receipt the WebView received over its socket (app in front, or
-/// backgrounded and not yet frozen) was never pushed, so the banner the WebView had posted for that
-/// conversation was never removed (owner's report, 2026-11-20). Kotlin queues the cancel on the
-/// post's own lane, so it cannot overtake a post still being built for the same conversation.
+/// **THE SECOND TRIGGER OF THE CANCEL**, as [`notify_native_message`] is the second trigger of the
+/// post. The push was the cancel's only trigger, and the server pushes only a frame the device did
+/// not ACK: a self read receipt the WebView received over its socket (app in front, or backgrounded
+/// and not yet frozen) was never pushed, so the banner the WebView had posted for that conversation
+/// was never removed (owner's report, 2026-11-20).
 ///
-/// `group_id` is the conversation id the banner was posted under (the MLS group id, or
-/// `channel_<uuid>`); `reason` names the socket event, for the log. Returns whether the cancel was
-/// queued; `false` off Android, where there is no native banner to remove and the caller never
-/// calls.
+/// `at` is the mark and `server_clock` its clock: Kotlin RECORDS it beside the cancel, and every
+/// post checks it, so a post of a message this mark covers that reaches Kotlin AFTER this call is
+/// not posted - the order of the two decides nothing (`ReadElsewhereMarks`). The caller asks only
+/// when nothing is left unread. Returns whether the dismissal was queued; `false` off Android,
+/// where there is no native banner and the caller never calls.
 #[tauri::command]
-pub(crate) fn retirer_notification_conversation(group_id: String, reason: String) -> bool {
+pub(crate) fn dismiss_conversation_notification(
+    group_id: String,
+    at: i64,
+    server_clock: bool,
+    reason: String,
+) -> bool {
     #[cfg(target_os = "android")]
     {
+        use jni::objects::JValue;
+
         with_native_builder(|env, class| {
             let (group, why) = match (env.new_string(&group_id), env.new_string(&reason)) {
                 (Ok(group), Ok(why)) => (group, why),
@@ -242,19 +261,18 @@ pub(crate) fn retirer_notification_conversation(group_id: String, reason: String
                 .call_static_method(
                     class,
                     "dismissConversationFromWebSocket",
-                    "(Ljava/lang/String;Ljava/lang/String;)Z",
-                    &[(&group).into(), (&why).into()],
+                    "(Ljava/lang/String;JZLjava/lang/String;)Z",
+                    &[
+                        (&group).into(),
+                        JValue::Long(at),
+                        JValue::Bool(u8::from(server_clock)),
+                        (&why).into(),
+                    ],
                 )
                 .and_then(|v| v.z())
             {
-                Ok(queued) => {
-                    log::debug!(
-                        "[NOTIF] dismissal of {} {} ({reason})",
-                        group_id.chars().take(8).collect::<String>(),
-                        if queued { "queued" } else { "refused" }
-                    );
-                    queued
-                }
+                // Kotlin logs what it queued; a refusal it already accused there.
+                Ok(queued) => queued,
                 Err(e) => {
                     log::error!(
                         "[NOTIF] dismissConversationFromWebSocket failed: {e} - NOT dismissed"
@@ -266,7 +284,7 @@ pub(crate) fn retirer_notification_conversation(group_id: String, reason: String
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (group_id, reason);
+        let _ = (group_id, at, server_clock, reason);
         false
     }
 }

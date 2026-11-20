@@ -83,10 +83,29 @@ describe('handleSystemEvent - read_watermark', () => {
 
     await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
 
+    // The mark travels with the cancel, so a post still on its way to Kotlin is refused there.
     expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
       'g1',
-      'read_watermark'
+      'read_watermark',
+      1000,
+      'stamped'
     );
+  });
+
+  // Review of #3912: a mark below a newer message must not take that message's banner with it.
+  it('our own mark that leaves a newer message unread dismisses no banner', async () => {
+    dismissNativeConversationNotification.mockClear();
+    const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
+    (ctx.conversations.get('g1') as any).messages.push({
+      id: 'm2',
+      senderId: 'peer',
+      timestamp: new Date(2000),
+    });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
+    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
   });
 
   it("a peer's mark, or our own that moves nothing, dismisses no banner", async () => {

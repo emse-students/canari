@@ -63,7 +63,7 @@ describe('postNativeMessageNotification', () => {
     invoke.mockResolvedValue(true);
 
     expect(await postNativeMessageNotification({ ...NOTIF, mentionsMe: true })).toBe(true);
-    expect(invoke).toHaveBeenCalledWith('notifier_message_natif', {
+    expect(invoke).toHaveBeenCalledWith('notify_native_message', {
       groupId: 'grp-aaaa-bbbb',
       senderId: 'peer-1',
       senderName: 'Alice',
@@ -91,7 +91,7 @@ describe('postNativeMessageNotification', () => {
 
     await postNativeMessageNotification({ ...NOTIF, isGroup: null });
     expect(invoke).toHaveBeenCalledWith(
-      'notifier_message_natif',
+      'notify_native_message',
       expect.objectContaining({ isGroup: null })
     );
   });
@@ -110,7 +110,7 @@ describe('postNativeMessageNotification', () => {
       authorProven: true,
     });
     expect(invoke).toHaveBeenCalledWith(
-      'notifier_message_natif',
+      'notify_native_message',
       expect.objectContaining({ groupId: 'channel_0001', authorProven: true })
     );
   });
@@ -164,7 +164,7 @@ describe('postNativeReactionNotification', () => {
     invoke.mockResolvedValue(true);
 
     expect(await postNativeReactionNotification(REACTION)).toBe(true);
-    expect(invoke).toHaveBeenCalledWith('notifier_message_natif', {
+    expect(invoke).toHaveBeenCalledWith('notify_native_message', {
       groupId: 'grp-aaaa-bbbb',
       senderId: 'peer-1',
       senderName: 'Alice',
@@ -279,7 +279,7 @@ describe('composePlainNotificationText', () => {
 /**
  * THE SECOND TRIGGER OF THE CANCEL (owner's report, 2026-11-20): a read this WebView learned over its
  * socket was never pushed (the server pushes only an un-ACKed frame), so the banner it had posted
- * stayed. The seam is pinned: the conversation id the post used, and the event, reach the command.
+ * stayed. The seam is pinned: the conversation id the post used, the mark and the event reach the command.
  */
 describe('dismissNativeConversationNotification', () => {
   beforeEach(() => {
@@ -291,17 +291,37 @@ describe('dismissNativeConversationNotification', () => {
     isAndroidTauriRuntime.mockReturnValue(true);
     invoke.mockResolvedValue(true);
 
-    expect(await dismissNativeConversationNotification('channel_c1', 'channel.read')).toBe(true);
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('retirer_notification_conversation', {
+    expect(
+      await dismissNativeConversationNotification('channel_c1', 'channel.read', 200, 'stamped')
+    ).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('dismiss_conversation_notification', {
       groupId: 'channel_c1',
+      at: 200,
+      serverClock: false,
       reason: 'channel.read',
+    });
+  });
+
+  // The mark travels with the cancel: Kotlin records it and refuses a post still on its way.
+  it('hands the mark over on the clock it is on', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    await dismissNativeConversationNotification('g1', 'read_watermark', 1234.7, 'server');
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('dismiss_conversation_notification', {
+      groupId: 'g1',
+      at: 1234,
+      serverClock: true,
+      reason: 'read_watermark',
     });
   });
 
   it('invokes nothing off Android, where there is no native banner', async () => {
     isAndroidTauriRuntime.mockReturnValue(false);
 
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark')).toBe(false);
+    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
+      false
+    );
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -310,8 +330,12 @@ describe('dismissNativeConversationNotification', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     invoke.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('no JavaVM'));
 
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark')).toBe(false);
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark')).toBe(false);
+    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
+      false
+    );
+    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
+      false
+    );
     expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
   });

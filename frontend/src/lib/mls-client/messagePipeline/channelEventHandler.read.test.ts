@@ -101,8 +101,33 @@ describe('channelEventHandler - channel.read', () => {
     await handleChannelEvent(read('me', 200), ctx(conversations));
     expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
       'channel_c1',
-      'channel.read'
+      'channel.read',
+      200,
+      'stamped'
     );
+  });
+
+  // Review of #3912: a mark below a newer message must not take that message's banner with it.
+  it('my own mark that leaves a newer message unread dismisses no banner', async () => {
+    dismissNativeConversationNotification.mockClear();
+    const msg = (id: string, at: number) => ({
+      id,
+      senderId: 'bob',
+      isOwn: false,
+      isSystem: false,
+      timestamp: new Date(at),
+    });
+    const conversations = new Map<string, unknown>([
+      [
+        'channel_c1',
+        { id: 'channel_c1', unreadCount: 2, messages: [msg('a', 100), msg('b', 200)] },
+      ],
+    ]);
+
+    await handleChannelEvent(read('me', 100), ctx(conversations));
+
+    expect((conversations.get('channel_c1') as { unreadCount: number }).unreadCount).toBe(1);
+    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
   });
 
   it("someone else's mark never touches my count", async () => {

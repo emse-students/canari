@@ -441,9 +441,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
       // MY OWN MARK MOVED: the salon's Android banner goes too, by the socket as well as by the
       // `channel_read` push - the WebView posted it, and the push alone left it standing in front
-      // (owner's report, 2026-11-20).
-      if (userId.toLowerCase() === ctx.userId.toLowerCase()) {
-        void dismissNativeConversationNotification(key, 'channel.read');
+      // (owner's report, 2026-11-20). Only when nothing stays unread: a mark below a newer message
+      // must leave that message's banner.
+      if (userId.toLowerCase() === ctx.userId.toLowerCase() && next.unreadCount === 0) {
+        void dismissNativeConversationNotification(key, 'channel.read', Number(data.at), 'stamped');
       }
     }
     return;

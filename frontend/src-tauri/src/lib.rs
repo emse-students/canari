@@ -71,7 +71,7 @@ use crate::commands::mls_account_state::{
 };
 use crate::commands::native_push_log::take_native_push_log;
 use crate::commands::notifications::{
-    notifier_message_natif, retirer_notification_conversation, store_avatar_mirror,
+    dismiss_conversation_notification, notify_native_message, store_avatar_mirror,
 };
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
@@ -1855,8 +1855,8 @@ pub fn run() {
             flush_webview_cookies,
             take_picked_file,
             discard_picked_file,
-            notifier_message_natif,
-            retirer_notification_conversation,
+            notify_native_message,
+            dismiss_conversation_notification,
             store_avatar_mirror,
             store_display_names,
             store_conversation_nicknames,

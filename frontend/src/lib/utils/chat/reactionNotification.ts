@@ -16,7 +16,7 @@
  * | | the push | the frame (this file) |
  * | --- | --- | --- |
  * | drawn when | the app is NOT in the foreground | the conversation is off screen, the frame live |
- * | on Android | `handleReactionNotification` | `notifier_message_natif` with `reaction = true` |
+ * | on Android | `handleReactionNotification` | `notify_native_message` with `reaction = true` |
  * | on iOS | the extension / `canari_push.mm` | the plain plugin |
  * | on web and desktop | never (no push) | the Notification API / the plugin |
  *

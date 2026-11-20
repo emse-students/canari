@@ -106,7 +106,7 @@ export async function postNativeMessageNotification(
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<boolean>('notifier_message_natif', {
+    return await invoke<boolean>('notify_native_message', {
       groupId: notification.conversationId,
       senderId: notification.senderId,
       senderName: notification.senderName,
@@ -170,7 +170,7 @@ export async function postNativeReactionNotification(
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<boolean>('notifier_message_natif', {
+    return await invoke<boolean>('notify_native_message', {
       groupId: reaction.conversationId,
       senderId: reaction.actorId,
       senderName: reaction.actorName,
@@ -211,20 +211,32 @@ export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
  * therefore never pushed, and the banner this WebView had posted for the conversation stayed in the
  * shade for good. Same key as the post (the conversation id), so the two triggers of each meet.
  *
- * Called only when this account's OWN mark moved - the fact a banner is made stale by. Off Android
- * there is no native banner to remove: `false`, and nothing is invoked.
+ * Called only when this account's OWN mark moved AND the conversation has nothing left unread - a
+ * mark that leaves a newer message unread must not take that message's banner with it.
+ *
+ * **THE MARK TRAVELS WITH THE CANCEL**, because the cancel alone can lose a race: the post of a
+ * message is asynchronous before it reaches Kotlin, so a read covering it may land first and find
+ * nothing to remove. Kotlin records `at` and refuses any later post at or below it
+ * (`ReadElsewhereMarks`), so the order of arrival decides nothing. `clock` says which clock `at` is
+ * on (readState.ts): `server` for a mark on the server's `createdAt`, `stamped` otherwise.
+ *
+ * Off Android there is no native banner to remove: `false`, and nothing is invoked.
  *
  * @returns whether the native side queued the cancel.
  */
 export async function dismissNativeConversationNotification(
   conversationId: string,
-  event: ReadElsewhereEvent
+  event: ReadElsewhereEvent,
+  at: number,
+  clock: 'server' | 'stamped'
 ): Promise<boolean> {
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const queued = await invoke<boolean>('retirer_notification_conversation', {
+    const queued = await invoke<boolean>('dismiss_conversation_notification', {
       groupId: conversationId,
+      at: Number.isFinite(at) ? Math.trunc(at) : 0,
+      serverClock: clock === 'server',
       reason: event,
     });
     if (!queued) {
