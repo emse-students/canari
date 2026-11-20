@@ -793,3 +793,8 @@ it again. Not the end-of-stream declaration (idempotent through the engine's sta
 **Fix.** ONE predicate, `heldIn`: a range holds the segment's whole MEASURED extent `[placed, placedEnd]` (within
 `EDGE_TOL_S`). It is exact for a short segment, and still false for one the trim cut at either end. Test: a 0.3 s
 last segment, the playhead walked to the end, at most one download per segment.
+
+A last fragment can be a single frame (33 ms) or less: `newMediaExtent` used the HOLE threshold (0.05 s) to decide whether
+a segment added anything, so such a segment was never measured and stayed "not held" for ever. A segment is measured when
+it added more than float noise (`NEW_MEDIA_MIN_S`, 1 ms); the hole threshold stays about holes between segments. `take` also
+answers the segment's own start (the earliest measured), not where a re-take's new piece begins.
