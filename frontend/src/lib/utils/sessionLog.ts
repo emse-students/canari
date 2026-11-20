@@ -22,5 +22,14 @@
  * 2026-09-28, on `main` as well). `globalChatSingleton` re-exports it, so its callers are unchanged.
  */
 export function appendLog(msg: string): void {
-  console.log(msg);
+  console.log(oneLine(msg));
+}
+
+/**
+ * The entry on ONE line: a line break inside it is written as the two characters `\n`, so a value
+ * interpolated into an entry (a server frame's field, an error's text) can never begin a line of its
+ * own in the session narrative and pass for an entry the app wrote.
+ */
+export function oneLine(msg: string): string {
+  return msg.replace(/\r\n|\r|\n/g, '\\n');
 }

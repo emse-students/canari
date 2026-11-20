@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { groundOf } from './imeGround';
+import { vi } from 'vitest';
+import { cssColorToHex, groundOf } from './imeGround';
 
 /**
  * THE GROUND UNDER THE KEYBOARD'S BAND IS THE SCREEN'S, NOT THE THEME'S (review of #3490, N1): a
@@ -38,5 +39,47 @@ describe('groundOf', () => {
   it('answers null when nothing is opaque, and for no element', () => {
     expect(groundOf(tree(['rgba(0, 0, 0, 0)']), bgOf, rgb)).toBeNull();
     expect(groundOf(null, bgOf, rgb)).toBeNull();
+  });
+});
+
+/**
+ * A canvas whose `fillStyle` IGNORES an unparsable value, as every engine's does, so the previous
+ * value survives the assignment - the property the probe's resting colour exists for.
+ */
+function fakeCanvas(): HTMLCanvasElement {
+  const pixels: Record<string, [number, number, number, number]> = {
+    'rgba(0, 0, 0, 0)': [0, 0, 0, 0],
+    red: [255, 0, 0, 255],
+  };
+  let fill = '#000000';
+  let painted: [number, number, number, number] = [0, 0, 0, 0];
+  const ctx = {
+    get fillStyle() {
+      return fill;
+    },
+    set fillStyle(value: string) {
+      if (value in pixels) fill = value;
+    },
+    clearRect: () => {
+      painted = [0, 0, 0, 0];
+    },
+    fillRect: () => {
+      painted = pixels[fill] ?? [0, 0, 0, 255];
+    },
+    getImageData: () => ({ data: painted }),
+  };
+  return { width: 0, height: 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
+}
+
+describe('cssColorToHex', () => {
+  it('reads an unparsable colour as null, never as the colour converted before it', () => {
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) =>
+      tag === 'canvas' ? fakeCanvas() : create(tag)
+    );
+    expect(cssColorToHex('red')).toBe('#ff0000');
+    expect(cssColorToHex('not-a-colour')).toBeNull();
+    expect(cssColorToHex('red')).toBe('#ff0000');
+    vi.restoreAllMocks();
   });
 });

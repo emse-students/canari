@@ -14,6 +14,32 @@
 import { conformNativeFetch, conformPluginFetch } from '$lib/utils/transportFailure';
 
 /**
+ * The WebView's OWN `fetch`, captured when this module is evaluated - which is before anything can
+ * replace `window.fetch`: `hooks.client.ts` imports this module statically and installs its
+ * replacement only in its body, and an ES module is evaluated before its importer's body runs. A hot
+ * update of this module reaches `hooks.client.ts`, which accepts none, so it is a full reload and
+ * the capture is made again on a pristine `fetch`.
+ */
+const ownFetch: typeof fetch | undefined =
+  typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
+
+/**
+ * A request the BROWSER's rules must govern on every platform: the WebView's own `fetch`, never the
+ * HTTP plugin `createRoutedFetch` hands a third-party `http(s)` address to on Tauri.
+ *
+ * The plugin is a network client in Rust: it answers to no CORS policy, so any response is readable.
+ * That is what the app wants for the addresses it chose; for an address handed over by ANOTHER page
+ * (a picture dragged into a composer) it is not, and those go through here - where a host that grants
+ * no CORS is unreadable on Tauri exactly as it is in a browser.
+ *
+ * @throws TypeError when there is no `fetch` at all (a runtime without one), as `fetch` itself would.
+ */
+export function webViewFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!ownFetch) return Promise.reject(new TypeError('this runtime has no fetch'));
+  return ownFetch(input, init);
+}
+
+/**
  * A WebView custom protocol wearing an `http(s)` URL, which no network client can ever resolve.
  *
  * Tauri serves EVERY registered custom protocol as `http(s)://<scheme>.localhost/` on Windows and

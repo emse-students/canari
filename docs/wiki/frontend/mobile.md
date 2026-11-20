@@ -262,7 +262,9 @@ production. Checked from the Android origin against dev: an `Authorization`-bear
 BINARY body (`Blob`/`File`, `FormData`, `ArrayBuffer`, typed array, or a `Request` whose `Content-Type` is not
 text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. **So does every
 READ (`GET`/`HEAD`) to those origins since 2026-10-15** (next section). JSON string bodies, JSON/text
-`Request`s and third-party hosts stay on the plugin, which is what the override is for. A
+`Request`s and third-party hosts stay on the plugin, which is what the override is for. **An address
+another page chose** (a picture dragged into a composer) never reaches the router: `webViewFetch`, captured before the
+override, keeps it under the browser's CORS rules (2026-11-20, [chat](modules/chat.md)). A
 `ReadableStream` or async-iterable body is NEVER native (WKWebView cannot stream a request body; the plugin
 buffers it). A `Request` built from a stream looks like one built from an untyped `Blob` and counts as binary,
 the one case `hasBinaryBody` cannot tell apart. The hook installs `createRoutedFetch` (`utils/fetchRouting.ts`),

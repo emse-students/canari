@@ -1,3 +1,5 @@
+import { webViewFetch } from '$lib/utils/fetchRouting';
+
 /**
  * The files a paste or a drop is carrying, read the one way that sees all of them.
  *
@@ -161,6 +163,11 @@ export class WebImageFetchError extends Error {
 /**
  * Fetches a dropped web image as a `File`, as the browser's CORS rules allow.
  *
+ * The address was chosen by the page the picture was dragged out of, not by Canari, so it is fetched
+ * with no credentials and through {@link webViewFetch} on every platform: on Tauri the `window.fetch`
+ * replacement would hand a third-party address to the HTTP plugin, which applies no CORS and reads
+ * any host the device can reach. Here a host that grants no CORS stays unreadable everywhere.
+ *
  * `unreachable` is what a cross-origin host that sends no CORS headers looks like (the fetch rejects
  * with an opaque `TypeError`, indistinguishable from being offline) - the caller says so rather than
  * attaching nothing in silence.
@@ -171,7 +178,7 @@ export class WebImageFetchError extends Error {
  */
 export async function fetchWebImageFile(
   url: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = webViewFetch
 ): Promise<File> {
   let response: Response;
   try {
