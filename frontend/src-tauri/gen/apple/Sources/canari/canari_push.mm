@@ -567,23 +567,30 @@ static NSData *_Nullable CanariLoadMlsState(void) {
   return [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:kMlsBinFileName]];
 }
 
-static NSString *const kAppGroupId = @"group.fr.emse.canari";
 static NSString *const kGraineSeedsFileName = @"graine_seeds.json";
 static NSString *const kAppGroupPushSecretFileName = @"push_secret.txt";
 
-// The App Group container's path, or nil without the entitlement. The Graine seed mirror lives HERE
-// and nowhere else since 2026-11-17: the foreground writes it (Rust's `seed_mirror_home`) and the
-// notification extension writes it, one file under one lock, so neither erases the other's seeds
-// (channel-encryption section 27). The app-alive push path reads it from here too.
-static NSString *_Nullable CanariAppGroupPath(void) {
-  return [[NSFileManager defaultManager]
-             containerURLForSecurityApplicationGroupIdentifier:kAppGroupId]
-      .path;
+// The App Group directory every file shared with the extensions lives in - its STORE, never the
+// container root, which refuses the backup flag - or nil without the entitlement. Rust's
+// `canari_app_group_store_dir` answers it (`app_group::app_group_dir`), so the move of an older
+// build's root entries into the store has one implementation (`backup_exclusion.rs`). The Graine
+// seed mirror lives HERE and nowhere else since 2026-11-17: the foreground writes it (Rust's
+// `seed_mirror_home`) and the notification extension writes it, one file under one lock, so neither
+// erases the other's seeds (channel-encryption section 27). The app-alive push path reads it from
+// here too.
+NSString *_Nullable CanariAppGroupPath(void) {
+  char *dir = canari_app_group_store_dir();
+  if (dir == NULL) {
+    return nil;
+  }
+  NSString *path = [NSString stringWithUTF8String:dir];
+  canari_free_string(dir);
+  return path;
 }
 
 void CanariMirrorPushStateToAppGroup(void) {
-  NSURL *container = [[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
+  NSString *groupPath = CanariAppGroupPath();
+  NSURL *container = groupPath == nil ? nil : [NSURL fileURLWithPath:groupPath isDirectory:YES];
   if (container == nil) {
     NSLog(@"[CanariPush] mirror: App Group unavailable (missing entitlement?)");
     return;
@@ -1459,8 +1466,8 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
  * decrypted while the app was killed visible to the app at all.
  */
 void CanariDrainAppGroupFcmCache(void) {
-  NSURL *container = [[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
+  NSString *groupPath = CanariAppGroupPath();
+  NSURL *container = groupPath == nil ? nil : [NSURL fileURLWithPath:groupPath isDirectory:YES];
   NSString *dst = CanariTauriDataDir();
   if (container == nil || dst == nil) {
     return;

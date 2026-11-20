@@ -57,6 +57,12 @@ void CanariScheduleBackgroundCleanupTask(void);
 /// Called from CanariMaybeNotifyPendingSync when the opportunistic drain fails.
 void CanariScheduleOutboxRetryTask(void);
 
+/// The App Group directory every file shared with the extensions lives in: the container's STORE,
+/// excluded from backups, never its root (`backup_exclusion.rs`); nil without the entitlement. The
+/// ONE resolver of the app's Objective-C - a direct `containerURLForSecurityApplicationGroupIdentifier`
+/// would write where no flag reaches.
+FOUNDATION_EXPORT NSString *_Nullable CanariAppGroupPath(void);
+
 /// Copies the push decrypt inputs (mls.bin, push_context.json, push_secret.txt) into the
 /// `group.fr.emse.canari` App Group container for the Notification Service Extension. Call it on
 /// both foreground/background transitions. NOT graine_seeds.json: the seed mirror lives in the App

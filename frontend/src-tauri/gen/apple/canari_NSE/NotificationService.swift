@@ -2561,9 +2561,39 @@ class NotificationService: UNNotificationServiceExtension {
     let locale: String
   }
 
+  /// The App Group directory every shared file lives in: the container's STORE, excluded from
+  /// backups, never its root (which refuses the flag). Rust answers it
+  /// (`canari_app_group_store_dir`), and its first call in this process creates and flags the store
+  /// and moves an older build's root entries into it - before this extension reads or writes a
+  /// byte there, so its writes never land where no flag reaches (`backup_exclusion.rs`).
   private static func appGroupDir() -> URL? {
-    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
+    guard let raw = canari_app_group_store_dir() else {
+      NseLog.log.error("[CanariNSE] the App Group store is unavailable")
+      return nil
+    }
+    defer { canari_free_string(raw) }
+    _ = storeOpeningLogged
+    return URL(fileURLWithPath: String(cString: raw), isDirectory: true)
   }
+
+  /// Says ONCE per process how Rust opened the App Group store - the flag and the move of an older
+  /// build's root files - at the severity Rust gives: this extension has no Rust logger, so the
+  /// line `canari_app_group_store_report` keeps is the only trace of the move when the extension
+  /// ran it. A `static let` initialiser runs once, thread-safely.
+  private static let storeOpeningLogged: Void = {
+    var severity: Int32 = 0
+    guard let raw = canari_app_group_store_report(&severity) else { return }
+    defer { canari_free_string(raw) }
+    let report = String(cString: raw)
+    switch severity {
+    case 2:
+      NseLog.log.error("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    case 1:
+      NseLog.log.warning("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    default:
+      NseLog.log.notice("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    }
+  }()
 
   private func loadMlsState() -> Data? {
     guard let dir = Self.appGroupDir() else { return nil }

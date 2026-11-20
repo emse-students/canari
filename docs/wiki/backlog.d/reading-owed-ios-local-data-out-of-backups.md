@@ -5,7 +5,9 @@ target: 1.7.2
 **What is built.** At every launch, before the WebView, `backup_exclusion.rs` sets and reads back
 `NSURLIsExcludedFromBackupKey` on `Library/Application Support` (the SQLite stores, `mls.bin`, the
 at-rest markers), `Library/WebKit` (IndexedDB, LocalStorage), `Library/Preferences`,
-`Library/Cookies`, `Library/HTTPStorages` and the App Group container's root. Reported 2026-11-20:
+`Library/Cookies`, `Library/HTTPStorages` and the App Group's `store/` directory (not the container's
+root, which refuses the flag: [its own reading](reading-owed-ios-app-group-store-out-of-backups.md)).
+Reported 2026-11-20:
 a member's new iPhone arrived holding the stores without the `ThisDeviceOnly` key. The inventory
 before the change, the mechanism and what stays unproven:
 [mobile](../frontend/mobile.md#nothing-local-travels-to-another-phone-2026-11-20).
@@ -31,4 +33,4 @@ NSE's `excludeFromBackup`, the share manifests' per-file calls) and records the 
 the flag (two iPhones and a transfer; the bench has one) - the app's own detection of a copied
 install stays the answer to that.
 
-**2026-11-20, S16 (`1.7.2-alpha.1`, [readings](../device-verification.md#the-readings-of-2026-11-20-s16-172-alpha1-the-birthday-ring-the-composer-gap-the-pin-gate-the-ios-backup-pass-the-rediffusion-switch-the-web-image-drop-miconnect)): FAIL.** Steps 1 and 3: `[BACKUP_EXCLUSION] AppGroup(group.fr.emse.canari) not excluded from backups: setResourceValue refused`, then `5/6 directories excluded - NOT excluded: AppGroup(group.fr.emse.canari)` at ERROR, at each of three launches (the line is caught by polling the Rust log file over `house_arrest` during the launch: the log plugin rotates it away within seconds, and `syslog live` does not carry it). Step 2: the app container passes (16 files, all under `Documents/`), the App Group holds 35 files, `mls.bin` and `push_secret.txt` among them. [Filed](p2-the-ios-app-group-root-refuses-the-backup-flag.md); this reading stays owed until 6/6.
+**2026-11-20, S16 (`1.7.2-alpha.1`, [readings](../device-verification.md#the-readings-of-2026-11-20-s16-172-alpha1-the-birthday-ring-the-composer-gap-the-pin-gate-the-ios-backup-pass-the-rediffusion-switch-the-web-image-drop-miconnect)): FAIL.** Steps 1 and 3: `[BACKUP_EXCLUSION] AppGroup(group.fr.emse.canari) not excluded from backups: setResourceValue refused`, then `5/6 directories excluded - NOT excluded: AppGroup(group.fr.emse.canari)` at ERROR, at each of three launches (the line is caught by polling the Rust log file over `house_arrest` during the launch: the log plugin rotates it away within seconds, and `syslog live` does not carry it). Step 2: the app container passes (16 files, all under `Documents/`), the App Group holds 35 files, `mls.bin` and `push_secret.txt` among them. Fixed by moving the App Group's files into a flagged `store/` ([its reading](reading-owed-ios-app-group-store-out-of-backups.md)); this reading stays owed until 6/6.

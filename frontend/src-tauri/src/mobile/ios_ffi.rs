@@ -55,6 +55,47 @@ pub extern "C" fn canari_free_string(ptr: *mut c_char) {
     }
 }
 
+/// The App Group directory every shared file lives in - `crate::app_group::app_group_dir`, the
+/// store excluded from backups, opened (created, flagged, the root's older entries moved in) on the
+/// process's first call - for the app's Objective-C (`CanariAppGroupPath`) and the notification
+/// extension (`NotificationService.appGroupDir`), so the move has ONE implementation in the two
+/// processes that link this library. NULL when the container is unavailable (said at ERROR); free
+/// with `canari_free_string`.
+#[no_mangle]
+pub extern "C" fn canari_app_group_store_dir() -> *mut c_char {
+    match crate::app_group::app_group_dir() {
+        Ok(dir) => CString::new(dir.to_string_lossy().into_owned())
+            .map(CString::into_raw)
+            .unwrap_or(std::ptr::null_mut()),
+        Err(e) => {
+            log::error!("[AppGroup] ffi: the App Group store is unavailable: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// How this process opened the App Group store (`backup_exclusion::StoreOpening::report`): one
+/// line - the flag's outcome and the move's counts, no file name - and its severity written to
+/// `severity` (0 info, 1 warning, 2 error). For the notification extension, which has no Rust
+/// logger and says it through its own `Logger` once per process. NULL (severity untouched) before
+/// the store was opened; free with `canari_free_string`.
+///
+/// # Safety
+/// `severity` is null or points at a writable `int32_t`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_app_group_store_report(severity: *mut i32) -> *mut c_char {
+    let Some(opening) = crate::app_group::store_opening() else {
+        return std::ptr::null_mut();
+    };
+    let (level, line) = opening.report();
+    if !severity.is_null() {
+        *severity = level as i32;
+    }
+    CString::new(line)
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
 /// Decrypts an MLS message and returns a heap-allocated UTF-8 JSON string. Read-only.
 ///
 /// `locale` is the app language mirrored in `push_context.json` (`""` when none was), and words

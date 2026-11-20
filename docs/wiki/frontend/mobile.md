@@ -3500,7 +3500,7 @@ change. Everything below was IN the backup except the two native caches:
 | `Library/WebKit/WebsiteData/` (the default persistent `WKWebsiteDataStore`) | `Default/<salt>/<salt>/IndexedDB`, `LocalStorage`, `CacheStorage` (254 MB in 159 files), `ResourceLoadStatistics`, `DeviceIdHashSalts`, `MediaKeys` | yes | excluded: the flag is on `Library/WebKit` |
 | `Library/Preferences/` | `fr.emse.canari.plist`, `canari_notif_ids.plist` (conversation ids to notification ids), Firebase's plist | yes | excluded |
 | `Library/Cookies/`, `Library/HTTPStorages/` | absent on that phone | - | excluded (the pass creates them) |
-| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, the extension's copy of the push credential, `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files | yes (only `graine_seeds.json` and the push cache excluded, per file) | excluded: the flag is on the container root |
+| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, `push_secret.txt` (the extension's copy of the push credential), `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files - 35 files | yes (only `graine_seeds.json` and the push cache excluded, per file) | moved into `store/`, which is excluded; the ROOT refuses the flag (`1.7.2-alpha.1`), so nothing of ours stays there ([below](#the-app-group-a-store-directory-never-the-root-172)) |
 | `Documents/` | log exports and an agenda image the member saved there himself | yes | **kept**: the member's own files, which Apple says never to exclude |
 | `Library/Caches/`, `tmp/` | the HTTP cache, the picker's copies | never (Apple: purged, so not backed up) | unchanged |
 | the NSE's and the Share Extension's own containers | nothing in the manifest | - | unchanged |
@@ -3512,16 +3512,126 @@ and before the WebView is built: each directory is created when absent (WebKit c
 One line per launch says what holds, at INFO:
 
 ```
-[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: Library/Application Support, Library/WebKit, Library/Preferences, Library/Cookies, Library/HTTPStorages, AppGroup(group.fr.emse.canari)
+[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: Library/Application Support, Library/WebKit, Library/Preferences, Library/Cookies, Library/HTTPStorages, AppGroup(group.fr.emse.canari)/store
 ```
 
-or, at ERROR, each failure with its reason, then the count and the labels that did not hold. A
+or, at ERROR and still ONE line, the count, each label that did not hold WITH ITS REASON - for a
+Foundation refusal the `NSError`'s domain and code and its underlying error's, and its class
+(`no permission` or `other`, read from the domain and code: `backup_exclusion::FlagError`; never the
+`localizedDescription`, which can quote a path) - then what the App Group root still holds and what
+the move refused (WARN, still one line, when the only news is entries an older build wrote back). A
 directory flag covers its contents (Apple, *Optimizing your app's data for iCloud backup*: "move
 those files into a directory and update the directory's isExcludedFromBackup resource value"), and
 unlike a per-file flag it survives an atomic rewrite of what is inside. It sits on parents nothing of
 ours deletes: `clear_app_data` removes `fr.emse.canari/`, never `Application Support`. The pass also
 checks that Tauri's data directory lies inside an excluded directory, so a home that is not the one
 Tauri derived the path from is said at ERROR.
+
+#### The App Group: a store directory, never the root (1.7.2)
+
+**Read on the bench iPhone, `1.7.2-alpha.1`:** the pass flagged five directories and the App Group
+container's ROOT refused, at every launch (`setResourceValue refused` - the `NSError` was discarded,
+`error: NULL`), and a full backup carried 35 App Group files, `mls.bin` and the push credential among
+them. The container is the system's, not the app's: the fix is not to retry the root but to keep
+nothing of ours there.
+
+- **One directory, `store/`, holds everything the app and its two extensions share**
+  (`backup_exclusion::APP_GROUP_STORE`). Each process kind has ONE resolver, and it answers the store:
+  Rust's `app_group::app_group_dir` (every Rust caller), which the app's Objective-C reaches through
+  `CanariAppGroupPath` and the notification extension through its `appGroupDir()` - both by the FFI
+  `canari_app_group_store_dir`, so the two processes that link `libapp.a` share one implementation -
+  and the share extension's `ShareCapture.storeDir`, which links no Rust and mirrors the rule (a
+  source test, `nativeCacheSeal.test.ts`, holds the name, the allowlist and the classification equal,
+  and fails on any other `containerURL` call).
+- **Flagged by every process that opens it, created or found.** A store created by the app, by the
+  extension woken by a push before the app ever ran after the update, or by the share extension, is
+  flagged before anything is written into it, and each process flags it again at its first
+  resolution (one call); the app's launch pass sets and reads it back at every launch. A file the
+  extension writes later lands under a flagged parent from its first byte: no sweep, no window
+  between sweeps.
+- **The move of an older build's files** (`backup_exclusion::open_store`, `migrate_root`). A
+  process's FIRST resolution moves the root's entries of ours into the store with an EXCLUSIVE rename
+  (`renamex_np`, `RENAME_EXCL`), under an exclusive `flock` on the store directory (the Swift twin
+  takes the same lock), before it returns. The opening runs ONCE per process: a second thread
+  waits for the first rather than opening again, so no write of the process lands before it ends.
+  In the app, the move runs inside a `BackgroundTime` task, as the seed edit does: an app suspended
+  while it holds a lock in the shared container is killed (`0xdead10cc`). An extension has no
+  `UIApplication`, and `sharedApplication` may RAISE there rather than answer nil. So
+  `BackgroundTime::begin` itself reads the process kind first
+  (`NSBundle.mainBundle.bundleURL.pathExtension`: `app` or `appex`, `app_group::process_kind`) and
+  answers `None`, silently, in an extension. No caller can repeat the mistake. So: no process of
+  this build reads or writes a name the root
+  still holds, and the seed mirror, the undrained push cache and the device notices arrive whole.
+  An unreadable root or a refused rename is COUNTED and the store is still answered - the
+  notification extension decrypts from it either way; only a store that cannot be created is an
+  error for the caller.
+- **The move touches an ALLOWLIST** (`OURS_STEMS`, `OURS_PREFIXES`, mirrored by
+  `ShareCapture.rootStems` / `rootPrefixes`): the names our builds write. A stem covers the name and
+  what continues it after a dot (`mls.bin.tmp`); a prefix covers the extension's avatar and logo
+  caches. It includes `channel_keys`, an older build's plaintext epoch keys: once moved in,
+  `native_cache::remove_legacy_channel_keys`, which looks in the store only, deletes them. Each
+  entry of that ONE table also says what the name HOLDS (`Holding`):
+  - a **mirror** the app rewrites from a source of truth that lives elsewhere (`mls`, the push
+    context and secret, the display names and nicknames, the share epoch, the foreground mark,
+    `channel_keys`, the avatar and logo caches);
+  - a **sole copy**, data held nowhere else (the seed mirror, the push cache, the device notices,
+    the extension's outcome records, the share inbox and its manifest).
+
+  The source test compares the holdings too. The
+  system's entries (`Library`, the `.com.apple.*` metadata) are never moved; any other name is
+  counted, left where it is, and fails the verdict: either a writer the list missed, or not ours.
+- **A downgrade, then this build again: the ROOT copy wins.** An older build (`1.7.1`) writes
+  `mls.bin`, the push credential and the rest at the root again; the next upgrade finds the same name
+  in the store. Under the lock no two processes of this build race one name, so a conflict has that
+  one cause, and the root copy is the NEWER one. What happens to the store's copy depends on what
+  the name holds:
+  - a **mirror's** store copy is REMOVED, since the next mirror rewrites it anyway;
+  - a **sole copy's** goes to ONE quarantine generation, `store/.superseded/<name>`. It is flagged
+    with the store, and a previous quarantined copy of the name is replaced, so the quarantine
+    never grows.
+
+  Then the root copy moves in. **A sign-out** (`end_push_registration_files`), **an account's
+  deletion** (`remove_user_push_files`) and **the factory wipe** (`wipe_app_group`) all remove
+  `.superseded` (`storage::remove_superseded`), so nothing of a signed-out account stays on the
+  phone. The launch
+  verdict says it once, at WARN ("n entries came back from an older build"); the next launch is
+  back to INFO. (The real MLS state lives in `Application Support`, so a downgrade does not hinge on
+  the App Group copy.) A pending share keeps working through all of it: its import takes the file
+  NAMES from its manifest, not its paths (`app_group_share::files_in_moved_dir`).
+- **A sign-out an older build made is carried into the store** (`backup_exclusion::carry_sign_out`).
+  The case: a downgrade, a sign-out in `1.7.1`, then this build again. That sign-out never saw the
+  store, where the account's push credential and the quarantine stayed. So the APP's opening, under
+  the store lock and after the move, reads THE FACT: the sign-out mark `push_signed_out`
+  (`push_registration::SIGNED_OUT_FILE`) in the app's data directory. The mark is written at every
+  sign-out, removed when a registration is answered, and the same in `1.7.1`. The opening resolves
+  the directory as `CanariTauriDataDir` does: `app_group::app_data_dir`,
+  `Library/Application Support/fr.emse.canari`.
+  - **The mark is there:** every entry this build's sign-out removes (`AtSignOut::Removed`, a third
+    column of the same table, mirrored in Swift: `push_secret` alone) and `.superseded` are removed.
+  - **No mark:** nothing is touched.
+  - **The directory unknown, or the mark unreadable:** nothing is touched, said at WARN. A
+    destructive control acts on a KNOWN state.
+
+  The store's `push_context.json` plays no part. It is a MIRROR, and it can lag its source: a failed
+  copy (`follow_push_context_in_extension`) is only logged.
+
+  It removes exactly what `end_push_registration_files` removes, never more. The seed mirror (the
+  iPhone's ONLY copy of the seeds), the device notices and the push cache are kept by a sign-out
+  here as in this build's own. The account's deletion and the factory wipe remove them. The
+  extensions never carry it: only the app writes the session's files.
+- **No log names the container's id.** A path inside the App Group is logged relative to its label
+  (`storage::loggable_path`, `backup_exclusion::name_in_group`:
+  `AppGroup(group.fr.emse.canari)/store/...`), in a removal that failed, the share sweep's lines,
+  the push-secret write's error and the bench listing.
+- **What the move did is kept, not only logged** (`StoreOpening`, `app_group::store_opening`). The
+  native bootstrap can open the store before the Rust logger exists, and the notification extension
+  has no Rust logger at all: the extension says the opening once per process through its own
+  `Logger` (`canari_app_group_store_report` carries the line and its severity), and the app's launch
+  verdict reads what its own opening did.
+- **What the verdict reads back:** the store's flag, the root (`root_state`: entries of ours still
+  there, unknown names) and this process's move (moves refused, entries that came back). Entries of
+  ours or unknown names at the root, or a refused move, fail the launch at ERROR; entries that came
+  back from an older build are one WARN.
 
 **The Keychain stays `ThisDeviceOnly`**, checked 2026-11-20 on the four `SecItemAdd` of the app and
 its plugin: the keystore plugin's background copy (`AfterFirstUnlockThisDeviceOnly`) and its primary
@@ -3545,7 +3655,8 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
   restored data set without its key read as a typed state. Excluded together with the data they
   describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
 - **The device reading** is owed on the iPhone 12
-  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md)).
+  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md), and for the App Group store
+  [its own](../backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)).
 
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
@@ -3589,7 +3700,7 @@ only its own: [auth](modules/auth.md#the-seed-mirror-labels-each-entry-with-its-
   goes missing and again when it comes back, never once per poll.
 - **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
   below). **Since 1.7.2 iOS excludes the DIRECTORIES whole at every launch**, the data directory,
-  WebKit's stores and the App Group root included ([below](#nothing-local-travels-to-another-phone-2026-11-20)),
+  WebKit's stores and the App Group's `store/` included ([below](#nothing-local-travels-to-another-phone-2026-11-20)),
   which reverses this bullet's older "never on a directory" (a restored `mls.bin` opened under a
   PIN-derived key; with the at-rest key hardware-held and `ThisDeviceOnly` it no longer opens, and a
   copied install would clone the MLS device anyway). The per-file pass below predates it and is now

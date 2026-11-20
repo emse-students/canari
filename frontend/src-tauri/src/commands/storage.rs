@@ -1058,6 +1058,12 @@ pub(crate) fn wipe_app_group(group: &std::path::Path) -> Result<(), String> {
             failures.push(e);
         }
     }
+    let (mut removed, mut kept) = (0usize, 0usize);
+    remove_superseded(group, &mut removed, &mut kept);
+    log::info!("[RESET] App Group quarantine: {removed} removed, {kept} kept by a failure");
+    if kept > 0 {
+        failures.push("the App Group quarantine was not removed".to_string());
+    }
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1239,7 +1245,7 @@ fn wipe_by_prefix(
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
-            log::warn!("[RESET] read {}: {e}", dir.display());
+            log::warn!("[RESET] read {}: {e}", loggable_path(dir));
             *failures += 1;
             return;
         }
@@ -1259,6 +1265,19 @@ fn wipe_by_prefix(
 
 /// Removes one file or directory tree, counting the outcome. Logs at a level that ACCUSES on
 /// failure: what a wipe leaves behind is only ever found by reading the disk afterwards.
+/// How a path is named in a log or an error: one in the iOS App Group is named relative to its
+/// label (`backup_exclusion::name_in_group`) - its absolute path carries the container's id; any
+/// other is shown whole.
+pub(crate) fn loggable_path(path: &std::path::Path) -> String {
+    #[cfg(target_os = "ios")]
+    if let Some(name) = crate::app_group::store_opening()
+        .and_then(|opening| crate::backup_exclusion::name_in_group(path, &opening.path))
+    {
+        return name;
+    }
+    path.display().to_string()
+}
+
 pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
     let result = if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -1269,10 +1288,27 @@ pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures
         Ok(()) => *removed += 1,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
-            log::error!("[RESET] could not remove {}: {e}", path.display());
+            log::error!("[RESET] could not remove {}: {e}", loggable_path(path));
             *failures += 1;
         }
     }
+}
+
+/// Removes the App Group store's quarantine (`backup_exclusion::SUPERSEDED_DIR`): the copies a
+/// conflict after a downgrade displaced belong to the account that was signed in, so a sign-out
+/// and the factory wipe take them with the rest of the App Group's files. `store` is the App Group
+/// store (`app_group::app_group_dir`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn remove_superseded(
+    store: &std::path::Path,
+    removed: &mut usize,
+    failures: &mut usize,
+) {
+    remove_entry(
+        &store.join(crate::backup_exclusion::SUPERSEDED_DIR),
+        removed,
+        failures,
+    );
 }
 
 /// Stores a boolean flag in {app_data_dir}/native_flags.json.
@@ -2191,6 +2227,22 @@ mod tests {
         assert!(group.join("graine_seeds.lock").exists());
         assert!(group.join("push_context.json").exists());
         // Nothing to remove is a success, not a failure.
+        wipe_app_group(&group).unwrap();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The factory wipe takes the store's quarantine too: what a conflict after a downgrade
+    /// displaced is the wiped install's data like the rest.
+    #[test]
+    fn the_wipe_removes_the_stores_quarantine() {
+        let group = temp_dir("group-quarantine");
+        let quarantine = group.join(crate::backup_exclusion::SUPERSEDED_DIR);
+        std::fs::create_dir_all(quarantine.join("shared_inbox")).unwrap();
+        std::fs::write(quarantine.join("graine_seeds.json"), b"v1").unwrap();
+
+        wipe_app_group(&group).unwrap();
+
+        assert!(!quarantine.exists());
         wipe_app_group(&group).unwrap();
         std::fs::remove_dir_all(&group).ok();
     }
