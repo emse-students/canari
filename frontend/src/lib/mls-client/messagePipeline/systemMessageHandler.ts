@@ -13,6 +13,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
   ownRenameSettledByRelay,
+  nameChangeNoticeDue,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -1275,7 +1276,8 @@ export async function handleSystemEvent(
     if ('row' in outcome) {
       conversations.set(convoKey, outcome.row);
       if (storage) await saveConversation(convoKey);
-      const changed = outcome.row.name !== convo.name;
+      // A newly invited member's placeholder replaced is no change anyone made (`nameChangeNoticeDue`).
+      const changed = nameChangeNoticeDue(convo, outcome.row);
       log(
         `[GROUP_NAME] ${where} ${changed ? 'CHANGED' : 'dated'} the name of ${convoKey.slice(0, 8)}…${changed ? ' - noticed' : ''}`
       );

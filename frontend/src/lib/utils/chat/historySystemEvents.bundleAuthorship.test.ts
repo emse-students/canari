@@ -676,4 +676,27 @@ describe('a replayed groupNamed statement', () => {
     expect(convo()).toMatchObject({ name: 'Nouveau', nameAt: T0 - 60_000 });
     expect(convo().nameFromStatement).toBeUndefined();
   });
+
+  it('draws the notice when it CHANGES a dated name - never when it dates an undated one (owner, 2026-11-20)', async () => {
+    const { keys } = await cast();
+    // The Welcome's placeholder is the group's own id, undated: the name is learnt, not changed.
+    const learnt = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], { name: CONVO });
+    expect(learnt.convo()).toMatchObject({ name: 'Nouveau', nameFromStatement: true });
+    expect(learnt.pushed).toEqual([]);
+    // Any undated name - the server's list - is learnt the same way: dating it renames nothing.
+    const listed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
+      name: 'Liste',
+    });
+    expect(listed.convo().name).toBe('Nouveau');
+    expect(listed.pushed).toEqual([]);
+    // A name a member chose, replaced by a later statement: noticed, naming its sender.
+    const changed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
+      name: 'Ancien',
+      nameAt: T0 - 60_000,
+      nameFromStatement: true,
+    });
+    expect(changed.convo().name).toBe('Nouveau');
+    expect(changed.pushed).toHaveLength(1);
+    expect(JSON.stringify(changed.pushed[0])).toContain('groupRenamed');
+  });
 });

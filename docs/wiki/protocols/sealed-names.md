@@ -268,10 +268,13 @@ it.
   decision taken). Any member can send a statement or an answer - an answer with a `renameAt` just
   under its own server time - and every statement-dated device takes it. Silent, that was a forged
   rename nobody could see, and the answer's rank (A3) made it stick. So a statement or an answer that
-  changes the name a device DISPLAYS draws the rename notice, naming the frame's MLS sender, live and
-  replayed alike (`visibleNoticeContent('groupRenamed')`, under the frame's id). Honest changes are
-  rare - a crossing, a heal - so the notice costs little; one that only dates the name shown draws
-  nothing.
+  CHANGES A DATED NAME draws the rename notice, naming the frame's MLS sender, live and replayed
+  alike (`nameChangeNoticeDue`, `visibleNoticeContent('groupRenamed')`, under the frame's id). Honest
+  changes are rare - a crossing, a heal - so the notice costs little. **One that dates an UNDATED
+  name draws nothing, whatever it replaces** (owner, 2026-11-20): an undated name was never stated
+  by a member - it came from the server's list, a newly invited member's placeholder (the group's
+  own id, which the Welcome writes) or a raw id - so dating it renames nothing; that device is
+  learning the name. Nor does one that only dates the name already shown.
 
 - **A statement ranks below every rename** (`groupNameSupersedes`). Ordered by date alone, a member
   restating the name it holds put the old name back over a rename accepted a second before its own
@@ -316,13 +319,20 @@ it.
     the answer exists for. Before an outranked statement is weighed, a rename-dated row with no
     `nameRenamedBy` reads this device's own stored notice of that rename: a `groupRenamed` notice
     naming the row's name, dated by the server at exactly `nameAt`, whose `actor` is the author
-    (`renameAuthorFromNotices`), decrypted from the window that can hold it (`sentAt` lies within the
-    24 h bound of the server time). It runs there, not in the store migration, because notice rows
-    are sealed under the device key the migration does not hold; once found it is stored. **What
+    (`renameAuthorFromNotices`). It decrypts ONLY the window that can hold it,
+    `[nameAt - 24 h, nameAt + 24 h]` (the notice row is dated by its frame's `sentAt`, bounded by the
+    server time either way; `getMessagesSince` with its `until`), so a conversation of any size costs
+    the same two days; a search that finds nothing is noted in memory per (conversation, `nameAt`)
+    and not repeated by a later statement. It runs there, not in the store migration, because notice
+    rows are sealed under the device key the migration does not hold; once found it is stored. **What
     stays uncovered**, logged at INFO and left empty: a rename whose notice this device never wrote
     (it joined after the rename and was handed the name by a step-1 push), whose notice was collected
     by the retention window, or whose notice predates the notice's `actor`. Those rows answer nothing
     until the next rename.
+  - **A notice relayed by a peer in a history bundle carries a CLAIMED actor**, and the backfill
+    trusts it as it trusts a notice this device drew. The worst case is the same as below: a wrong
+    author answers when it should not (a redundant answer of the name it holds) or a right one
+    stays silent (a missing answer - the residual counted above). It never changes a name.
   - **The `by` a join push relays is the inviter's word, unverified.** A newcomer stores it as its
     row's author. The worst case is bounded: a newcomer told that ITS user made the rename answers
     when it should not - a redundant answer, of the name it holds, which the read-side dedupe and the

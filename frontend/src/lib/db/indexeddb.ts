@@ -1319,7 +1319,8 @@ export class IndexedDbStorage implements IStorage {
   async getMessagesSince(
     conversationId: string,
     since: number,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    until?: number
   ): Promise<StoredMessage[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
@@ -1330,7 +1331,7 @@ export class IndexedDbStorage implements IStorage {
       // phone backup wrote, sorted after every number) - dated below by `storedTimeInWindow`, the
       // rule SQLite applies to the same rows. Before this, IndexedDB dropped them and SQLite kept them.
       const numeric = index.getAll(
-        IDBKeyRange.bound([conversationId, since], [conversationId, Infinity])
+        IDBKeyRange.bound([conversationId, since], [conversationId, until ?? Infinity])
       );
       numeric.onsuccess = () => found.push(...numeric.result);
       const other = index.getAll(
@@ -1347,7 +1348,7 @@ export class IndexedDbStorage implements IStorage {
     });
     const results: StoredMessage[] = [];
     for (const raw of rows) {
-      const at = storedTimeInWindow(raw.timestamp, since);
+      const at = storedTimeInWindow(raw.timestamp, since, until);
       if (at === null) continue;
       const row = { ...raw, timestamp: at };
       try {

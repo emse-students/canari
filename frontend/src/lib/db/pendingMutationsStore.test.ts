@@ -724,6 +724,9 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
       ['as-text', 5_000],
       ['new', 9_000],
     ]);
+    // BOUNDED on both sides when asked (`backfillRenameAuthor`): the same rule, an upper bound added.
+    const bounded = await storage.getMessagesSince('conv', 2_000, KEY, 6_000);
+    expect(bounded.map((m) => [m.id, m.timestamp])).toEqual([['as-text', 5_000]]);
   });
 });
 

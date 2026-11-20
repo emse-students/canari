@@ -10,6 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
   ownRenameSettledByRelay,
+  nameChangeNoticeDue,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -336,7 +337,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           : null;
       if (outcome && 'row' in outcome) {
         setConversation(contactName, outcome.row);
-        if (convo && outcome.row.name !== convo.name) {
+        if (convo && nameChangeNoticeDue(convo, outcome.row)) {
           systemContent = await visibleNoticeContent(
             'groupRenamed',
             { newName: outcome.row.name },

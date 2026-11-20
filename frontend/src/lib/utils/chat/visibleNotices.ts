@@ -257,6 +257,20 @@ export function renameAuthorFromNotices(
   return null;
 }
 
+/**
+ * Whether a `groupNamed` statement or answer that turned `before` into `after` draws the rename
+ * notice naming its sender (sealed-names.md): whenever it CHANGES a name the members had DATED - any
+ * member can send one, and a change with no trace is a forgery nobody sees. An UNDATED name is never
+ * one a member stated: it came from the server's list, a newly invited member's placeholder or a raw
+ * id, so dating it renames nothing (owner, 2026-11-20) - that device is learning the name.
+ */
+export function nameChangeNoticeDue(
+  before: Pick<Conversation, 'name' | 'nameAt'>,
+  after: Pick<Conversation, 'name'>
+): boolean {
+  return before.nameAt !== undefined && after.name !== before.name;
+}
+
 /** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */
 export function renamedToOf(content: string): string | undefined {
   const envelope = parseEnvelope(content);

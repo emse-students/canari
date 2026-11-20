@@ -94,13 +94,18 @@ export async function settleOwedAnswerByRead(params: {
   return true;
 }
 
+/** The renames (conversation, `nameAt`) whose notice was searched for an author and not found. */
+const authorsSearchedInVain = new Set<string>();
+
 /**
  * BACKFILLS THE RENAME'S AUTHOR on a row dated before it was stored beside the name (#3888
  * re-review): without it, nobody answers for that rename - and every group dated by step 1 is such a
  * row, which is the very split the answer exists to heal. Read from this device's own notice of that
  * rename (`renameAuthorFromNotices`: the same name, dated at the same server time), decrypted from
- * the window that can hold it - a notice row is dated by its frame's `sentAt`, which lies within
- * {@link BUNDLE_SERVER_TIME_SKEW_MS} of the server time. Run where it matters, before an outranked
+ * the window that can hold it and no wider - a notice row is dated by its frame's `sentAt`, which
+ * lies within {@link BUNDLE_SERVER_TIME_SKEW_MS} of the server time either way, so a conversation of
+ * any size costs the same two days. A search that finds nothing is noted for the session, per rename,
+ * and not repeated. Run where it matters, before an outranked
  * statement is weighed: the notice rows are sealed under the device key, which a store migration
  * does not hold. Once found it is stored, so it is read once. Where no notice says it, the field stays
  * empty and the line says so: that rename's split stays until the next rename.
@@ -121,12 +126,16 @@ export async function backfillRenameAuthor(params: {
   if (convo.nameRenamedBy !== undefined) return true;
   const short = `${convo.id.slice(0, 8)}…`;
   const at = convo.nameAt;
+  // Searched once per rename: a later statement does not decrypt the same window again for nothing.
+  const searched = `${convo.id}|${at}`;
+  if (authorsSearchedInVain.has(searched)) return false;
   let rows: Awaited<ReturnType<IStorage['getMessagesSince']>>;
   try {
     rows = await params.storage.getMessagesSince(
       convo.id,
       at - BUNDLE_SERVER_TIME_SKEW_MS,
-      params.deviceKeyB64
+      params.deviceKeyB64,
+      at + BUNDLE_SERVER_TIME_SKEW_MS
     );
   } catch (e) {
     console.warn(
@@ -136,6 +145,7 @@ export async function backfillRenameAuthor(params: {
   }
   const author = renameAuthorFromNotices(rows, convo.name, at);
   if (!author) {
+    authorsSearchedInVain.add(searched);
     console.info(
       `[GROUP_NAME] rename author of ${short} unknown - no stored notice names the rename that dated it (${convo.name.length} chars at ${new Date(at).toISOString()}); nobody here answers for it`
     );

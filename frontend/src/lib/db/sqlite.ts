@@ -1114,19 +1114,21 @@ export class SqliteStorage implements IStorage {
   async getMessagesSince(
     conversationId: string,
     since: number,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    until?: number
   ): Promise<StoredMessage[]> {
     // The numeric window, plus every timestamp stored as text or bytes (an Android plugin or a phone
     // backup wrote some), dated by `storedTimeInWindow` - the rule IndexedDB applies to the same rows.
     const rows: any[] = await this.db.select(
       `SELECT *, typeof(timestamp) AS timestamp_type FROM messages WHERE conversation_id = $1
-         AND (timestamp >= $2 OR typeof(timestamp) IN ('text', 'blob'))`,
-      [conversationId, since]
+         AND ((timestamp >= $2 AND ($3 IS NULL OR timestamp <= $3))
+              OR typeof(timestamp) IN ('text', 'blob'))`,
+      [conversationId, since, until ?? null]
     );
     const results: StoredMessage[] = [];
     for (const row of rows) {
       const numeric = row.timestamp_type === 'integer' || row.timestamp_type === 'real';
-      if (!numeric && storedTimeInWindow(row.timestamp, since) === null) continue;
+      if (!numeric && storedTimeInWindow(row.timestamp, since, until) === null) continue;
       try {
         const payload = (await decryptData(
           base64ToUint8(row.cipher_text),

@@ -228,6 +228,21 @@ describe('a received groupNamed statement', () => {
     });
   });
 
+  it('dating an UNDATED name draws no notice, whatever it replaces - a placeholder, a list name (owner, 2026-11-20)', async () => {
+    const listed = phone();
+    await listed.state('Autre', T);
+    expect(listed.conversations.get('g1').name).toBe('Autre');
+    expect(listed.addMessageToChat).not.toHaveBeenCalled();
+    const p = phone();
+    // What the Welcome writes: the group's own id, undated.
+    p.conversations.set('g1', { ...p.conversations.get('g1'), name: 'g1' });
+    await p.state('Nouveau', T);
+    expect(p.conversations.get('g1').name).toBe('Nouveau');
+    expect(p.addMessageToChat).not.toHaveBeenCalled();
+    await p.state('Pirate', T + 1_000);
+    expect(p.addMessageToChat).toHaveBeenCalledTimes(1);
+  });
+
   it("an older build's rename frame (no signed sentAt) is refused and does not move a stated name", async () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const p = phone();
@@ -422,21 +437,33 @@ describe('a statement outranked by a rename-dated name of another text is answer
     const old = member({ name: 'Nouveau', nameAt: T }, 'me', { getMessagesSince });
     await old.read({ name: 'Ancien' }, 's-1', T + 1_000);
     await settle();
+    // BOUNDED: the two days around the rename, whatever the conversation's size.
     expect(getMessagesSince).toHaveBeenCalledWith(
       'g1',
       T - BUNDLE_SERVER_TIME_SKEW_MS,
-      'device-key'
+      'device-key',
+      T + BUNDLE_SERVER_TIME_SKEW_MS
     );
     expect(old.row().nameRenamedBy).toBe('me');
     expect(old.sent).toEqual([{ name: 'Nouveau', answers: 's-1', renameAt: T }]);
     // No notice of that rename on this device: the field stays empty, nobody answers, and it is said.
-    const none = member({ name: 'Nouveau', nameAt: T }, 'me', {
-      getMessagesSince: vi.fn().mockResolvedValue([]),
-    });
+    const empty = vi.fn().mockResolvedValue([]);
+    const none = member({ name: 'Nouveau', nameAt: T + 7 }, 'me', { getMessagesSince: empty });
     await none.read({ name: 'Ancien' }, 's-2', T + 1_000);
     await settle();
     expect(none.row().nameRenamedBy).toBeUndefined();
     expect(none.sent).toEqual([]);
+    // Searched once per rename: a later statement does not decrypt the window again.
+    await none.read({ name: 'Autre' }, 's-3', T + 2_000);
+    expect(empty).toHaveBeenCalledTimes(1);
+    // A notice of the SAME name at ANOTHER time is another rename: it names no author for this one.
+    const elsewhen = member({ name: 'Nouveau', nameAt: T + 8 }, 'me', {
+      getMessagesSince: vi.fn().mockResolvedValue([{ ...notice, serverTimestamp: T + 9 }]),
+    });
+    await elsewhen.read({ name: 'Ancien' }, 's-4', T + 1_000);
+    await settle();
+    expect(elsewhen.row().nameRenamedBy).toBeUndefined();
+    expect(elsewhen.sent).toEqual([]);
     expect(
       (console.info as any).mock.calls.map((c: unknown[]) => String(c[0])).join('\n')
     ).toContain('rename author of g1');
