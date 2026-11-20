@@ -64,15 +64,13 @@ static void CanariEnsureNativeCacheKey(void) {
 }
 
 /// Keeps the two native caches - `graine_seeds.json` and the push cache - out of every backup, in
-/// the app's data directory and in the App Group container the notification extension reads. THE
-/// CACHES ONLY, NEVER THEIR DIRECTORY: it also holds `mls.bin`, `push_context.json` and the identity
-/// files, and those must come back with a restore together with WebKit's IndexedDB: one without the
-/// other would look like a damaged MLS state. (On a phone whose at-rest key is hardware-held, a
-/// restore onto ANOTHER phone brings the files without the key, and the at-rest marker that rides
-/// along makes that a typed lost-key state - auth.md.) The caches gain nothing from a restore:
-/// their key is a ThisDeviceOnly Keychain item that does not travel. Per file, so every writer
-/// re-applies it after its atomic write; this pass at bootstrap and activation covers a file an
-/// older build wrote. Android excludes its data domain (`data_extraction_rules.xml`).
+/// the app's data directory and in the App Group container the notification extension reads.
+/// Since 1.7.2 the Rust launch pass (`backup_exclusion.rs`) excludes those DIRECTORIES whole, with
+/// WebKit's stores and the preferences, so nothing local travels to another phone; this per-file
+/// pass is then redundant and is deleted once the iPhone reading proves the directory flag holds
+/// (mobile.md, "Nothing local travels to another phone"). Per file, so every writer re-applies it
+/// after its atomic write; this pass at bootstrap and activation covers a file an older build
+/// wrote. Android excludes its data domain (`data_extraction_rules.xml`).
 static void CanariExcludeNativeCachesFromBackup(void) {
   CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
   CanariExcludeNativeCacheFilesFromBackup([[NSFileManager defaultManager]

@@ -662,9 +662,10 @@ final class ShareCapture {
     }
 
     /// Keeps a share file or the inbox out of iCloud and computer backups - the NSE's
-    /// `excludeFromBackup`, the same three calls. Never the App Group container itself, which holds
-    /// what a restore must bring back. A failure is said with its error's domain and code, never its
-    /// text, and changes nothing else.
+    /// `excludeFromBackup`, the same three calls. The App Group container itself is the app's to
+    /// exclude, at every launch (`backup_exclusion.rs`, since 1.7.2) - one writer of the root's flag,
+    /// so not here. A failure is said with its error's domain and code, never its text, and changes
+    /// nothing else.
     private func excludeFromBackup(_ url: URL) {
         var target = url
         var values = URLResourceValues()

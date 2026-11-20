@@ -31,6 +31,8 @@ const applicationKt = read(`${ANDROID}CanariApplication.kt`);
 const swift = read('../../../src-tauri/gen/apple/canari_NSE/NotificationService.swift');
 const pushMm = read('../../../src-tauri/gen/apple/Sources/canari/canari_push.mm');
 const iosMm = read('../../../src-tauri/gen/apple/Sources/canari/canari_ios.mm');
+const backupExclusionRs = read('../../../src-tauri/src/backup_exclusion.rs');
+const libRs = read('../../../src-tauri/src/lib.rs');
 
 const ALIAS = 'canari_native_cache_key';
 
@@ -175,10 +177,24 @@ describe('the push key-group join ledger is sealed by Rust alone', () => {
   });
 });
 
-describe('iOS keeps the caches out of backups, and nothing else', () => {
-  it('excludes the two cache files, never a directory', () => {
-    // The data directory also holds mls.bin, push_context.json and the identity files: a restore
-    // that brought IndexedDB back without them would look like a damaged MLS state.
+describe('iOS keeps every local store out of backups: directories in Rust, the caches per file natively', () => {
+  it('the launch pass excludes the directories, before the WebView exists', () => {
+    // Since 1.7.2 nothing local may travel to another phone (mobile.md, "Nothing local travels to
+    // another phone"): the data directory, WebKit's stores and the App Group root are flagged whole.
+    for (const dir of ['Library/Application Support', 'Library/WebKit', 'Library/Preferences']) {
+      expect(backupExclusionRs).toContain(`"${dir}",`);
+    }
+    expect(backupExclusionRs).toContain('label: APP_GROUP_LABEL,');
+    // WebKit creates its stores on the page's first storage access: the pass must come first.
+    const setup = libRs.slice(libRs.indexOf('.setup(move |app| {'));
+    const pass = setup.indexOf('backup_exclusion::exclude_install_from_backup(');
+    expect(pass).toBeGreaterThan(0);
+    expect(setup.indexOf('tauri::WebviewWindowBuilder::new(')).toBeGreaterThan(pass);
+  });
+
+  it('the native side excludes only the two cache files, never a directory', () => {
+    // A directory flag has ONE writer, the Rust launch pass above; the native per-file pass
+    // predates it and is redundant until the iPhone reading retires it.
     const perFile = between(
       pushMm,
       /void CanariExcludeNativeCacheFilesFromBackup\(NSString/,
