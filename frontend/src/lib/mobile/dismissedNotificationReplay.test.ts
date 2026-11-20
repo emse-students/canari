@@ -99,8 +99,16 @@ describe('the native builder remembers what it has already announced', () => {
   });
 
   it('records AFTER the post, so a builder that threw leaves nothing suppressing the retry', () => {
-    const notify = source.indexOf('manager.notify(notifId, notif)\n\n            // WRITTEN AFTER');
-    expect(notify).toBeGreaterThan(-1);
-    expect(source.slice(notify, notify + 400)).toContain('rememberAlerted(it)');
+    // The post is guarded by the read-elsewhere check (2026-11-20), so the notify is no longer the
+    // line right above the record: what holds is the order - post, then record - and a post refused
+    // as already read returns BEFORE the record, leaving nothing to suppress a later banner.
+    const record = source.indexOf('// WRITTEN AFTER THE POST');
+    expect(record).toBeGreaterThan(-1);
+    expect(source.slice(record, record + 400)).toContain('rememberAlerted(it)');
+    const before = source.slice(record - 1600, record);
+    expect(before).toContain('manager.notify(notifId, notif)');
+    const refused = before.indexOf('if (readElsewhere)');
+    expect(refused).toBeGreaterThan(-1);
+    expect(before.slice(refused)).toContain('return 0L');
   });
 });
