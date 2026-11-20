@@ -755,7 +755,7 @@ legal back link, the admin tabs and dashboard link, the notification filters and
 badge. Both rules are held by `touchTargets.test.ts`.
 
 **ONE EXCEPTION TO THE 44px FLOOR, THE OWNER'S: the chat composer's row on a phone** (2026-11-13,
-[keyboard-and-send-motion](keyboard-and-send-motion.md)). Its controls are 40px with no gap and its
+[keyboard-and-send-motion](keyboard-and-send-motion.md)). Its controls are 40px with a 6px gap (Messenger has none, but our "+" and send are disks; owner, 2026-11-20) and its
 field 42px - Messenger's measured row - below 768px only; a touch tablet keeps 44px and its gaps, a
 pointer its 38px. `iconButtonScale.test.ts` holds the rule rather than the value: any icon-button box
 under 44px is under `pointer: fine`, is the hover strip's `--sm`, or is this row inside
