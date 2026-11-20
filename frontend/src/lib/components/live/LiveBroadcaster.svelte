@@ -12,7 +12,7 @@
    * NO KEYBOARD TRAP: every control is a native button, the layer is a labelled dialog, and Escape is
    * the history's Back like any overlay's.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import {
     BatteryWarning,
     CameraOff,
@@ -99,9 +99,19 @@
     associationId = null,
     associationName = null,
     onclose,
-    broadcast = new LiveBroadcast(new CameraSession(openLiveCamera), associationId),
+    broadcast: injected,
     readBattery = readBatteryLevel,
   }: Props = $props();
+
+  /**
+   * THE MACHINE: the injected one, else ONE made here for the life of this screen (untrack: a prop
+   * fallback is a derived and would make a fresh machine on any dependency change). Whichever machine
+   * is held has its rules read by the effect below.
+   */
+  const own: LiveBroadcast | null = untrack(() =>
+    injected ? null : new LiveBroadcast(new CameraSession(openLiveCamera), associationId)
+  );
+  const broadcast: LiveBroadcast = $derived(injected ?? own!);
 
   const camera = $derived(broadcast.camera);
   /** The scenes of a desktop live, or null on a phone (the camera recorded directly). */
@@ -315,11 +325,18 @@
     };
   });
 
+  // THE RULES READ FOLLOWS THE MACHINE, not the mount: whichever machine this screen holds has its
+  // limits, rules and standing read once - a machine swapped in under a mounted screen (the end of a
+  // live) is never left on "Reading the live's rules" with no request behind it.
+  $effect(() => {
+    const machine = broadcast;
+    untrack(() => void machine.loadLimits());
+  });
+
   onMount(() => {
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pagehide', onPageHide);
     const releaseBar = themeStore.holdNativeBar('dark');
-    void broadcast.loadLimits();
     readBattery().then(
       (level) => (batteryLevel = level),
       (err: unknown) => console.warn('[LIVE-SCREEN] battery not read', err)
