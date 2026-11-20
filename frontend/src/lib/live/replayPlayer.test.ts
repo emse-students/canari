@@ -71,6 +71,8 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   hiddenEnd = 0;
   /** The length of the media one segment holds, in seconds. */
   len = 2;
+  /** A segment whose own length differs (the last one of a live is often short), by index. */
+  lenOf: ((index: number) => number) | null = null;
   appends: string[] = [];
   /** Every append's bytes, as given. */
   data: Uint8Array[] = [];
@@ -99,7 +101,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
         this.base +
         this.timestampOffset +
         (this.jump && i > this.jump[0] ? this.jump[1] : 0);
-      this.add(start, start + this.len);
+      this.add(start, start + (this.lenOf ? this.lenOf(i) : this.len));
     }
     this.settle();
   }
@@ -395,6 +397,25 @@ describe('ReplayPlayer', () => {
     }
     expect(source.ended).toBe(1);
     expect(source.readyState).toBe('ended');
+  });
+
+  it('S13: a short LAST segment is downloaded once, not again on every timeupdate near the end', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(10)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    buffer().lenOf = (i) => (i === 9 ? 0.3 : 2); // the live's last fragment is shorter than half a second
+    const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+    for (let t = 6; t <= 18.5; t += 0.25) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 6; i++) await flush();
+    }
+    const counts = new Map<string, number>();
+    for (const c of fetchSegment.mock.calls)
+      counts.set(String(c[1]), (counts.get(String(c[1])) ?? 0) + 1);
+    expect(Math.max(...counts.values())).toBe(1);
+    expect(counts.get('seg-9')).toBe(1);
   });
 
   it('keeps the stream ended when the trim behind the playhead reopened it (S12: a halt before the last frame)', async () => {

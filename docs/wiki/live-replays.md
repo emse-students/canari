@@ -777,3 +777,17 @@ to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s o
 A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
 new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
 which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).
+
+## A segment is held when the buffer holds its whole measured extent (S13, 2026-11-20)
+
+**Symptom (S13, alpha.5):** on two of four replays the LAST segment was downloaded again at every `timeupdate` for
+the final 12 s (46 times), each with a fresh `end of stream declared`; `ended` still fired.
+
+**Cause, measured on the fake engine, 49 downloads of one segment on main.** `isBuffered` and `firstGapAhead` called a
+segment held only when a range ran more than 0.5 s past its start (`start + 0.5 < end`). A live's last fragment is
+often shorter than that: it was never held, `firstGapAhead` rewound the cursor to it on every tick, and the fill took
+it again. Not the end-of-stream declaration (idempotent through the engine's state) nor trim's `far` bound.
+
+**Fix.** ONE predicate, `heldIn`: a range holds the segment's whole MEASURED extent `[placed, placedEnd]` (within
+`EDGE_TOL_S`). It is exact for a short segment, and still false for one the trim cut at either end. Test: a 0.3 s
+last segment, the playhead walked to the end, at most one download per segment.

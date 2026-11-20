@@ -809,10 +809,7 @@ export class ReplayPlayer {
     for (let k = k0; k < this.segments.length; k++) {
       const { index } = this.segments[k];
       if (this.missing.has(index)) continue;
-      const start = this.placed.get(index);
-      const held =
-        start !== undefined && spans.some(([a, b]) => start >= a - EDGE_TOL_S && start + 0.5 < b);
-      if (!held) return k;
+      if (!this.heldIn(spans, index)) return k;
     }
     return this.segments.length;
   }
@@ -925,11 +922,22 @@ export class ReplayPlayer {
     return { media, position: pos };
   }
 
-  /** Whether segment `index` is already buffered where it was placed. */
+  /**
+   * Whether segment `index` is already buffered where it was placed: ONE range holds its whole MEASURED
+   * extent. Never a fixed share of it (a live's last fragment is often under half a second, and a rule
+   * "0.5 s past its start" called it missing for good: fetched again on every timeupdate, S13).
+   */
   private isBuffered(index: number): boolean {
+    if (!this.buffer) return false;
+    return this.heldIn(spansOf(this.buffer), index);
+  }
+
+  /** Whether one of `spans` holds the measured extent of segment `index`. */
+  private heldIn(spans: readonly MediaSpan[], index: number): boolean {
     const start = this.placed.get(index);
-    if (start === undefined || !this.buffer) return false;
-    return spansOf(this.buffer).some(([s, e]) => start >= s - 0.01 && start + 0.5 < e);
+    const end = this.placedEnd.get(index);
+    if (start === undefined || end === undefined) return false;
+    return spans.some(([a, b]) => start >= a - EDGE_TOL_S && end <= b + EDGE_TOL_S);
   }
 
   /** The cursor after the buffered `span`: one past the last segment MEASURED inside it. */
