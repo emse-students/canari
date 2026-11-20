@@ -43,6 +43,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/camera")
         // The keyboard announcement to the page (keyboard-and-send-motion.md), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/keyboard")
+        // The generation guard of the launcher shortcuts' late icon upgrades (sharing.md), same rule.
+        kotlin.srcDir("../plugins/tauri-plugin-gallery/android/src/main/java/pure")
     }
 }
 
