@@ -53,7 +53,12 @@ fn walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) -> Result<
     if depth == 0 {
         return Ok(());
     }
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        format!(
+            "read_dir {}: {e}",
+            crate::commands::storage::loggable_path(dir)
+        )
+    })?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("read_dir entry: {e}"))?;
         let path = entry.path();
@@ -79,8 +84,12 @@ pub(crate) fn footprint(root: &Path) -> Result<(u64, u64), String> {
     let mut bytes = 0u64;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let entries =
-            std::fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+        let entries = std::fs::read_dir(&dir).map_err(|e| {
+            format!(
+                "read_dir {}: {e}",
+                crate::commands::storage::loggable_path(&dir)
+            )
+        })?;
         for entry in entries {
             let entry = entry.map_err(|e| format!("read_dir entry: {e}"))?;
             let kind = entry.file_type().map_err(|e| e.to_string())?;

@@ -3552,10 +3552,15 @@ nothing of ours there.
 - **The move of an older build's files** (`backup_exclusion::open_store`, `migrate_root`). A
   process's FIRST resolution moves the root's entries of ours into the store with an EXCLUSIVE rename
   (`renamex_np`, `RENAME_EXCL`), under an exclusive `flock` on the store directory (the Swift twin
-  takes the same lock), before it returns. In the app, the move runs inside a `BackgroundTime` task,
-  as the seed edit does: an app suspended while it holds a lock in the shared container is killed
-  (`0xdead10cc`). The notification extension has no application to ask and is never suspended
-  mid-call. So: no process of this build reads or writes a name the root
+  takes the same lock), before it returns. The opening runs ONCE per process: a second thread
+  waits for the first rather than opening again, so no write of the process lands before it ends.
+  In the app, the move runs inside a `BackgroundTime` task, as the seed edit does: an app suspended
+  while it holds a lock in the shared container is killed (`0xdead10cc`). An extension has no
+  `UIApplication`, and `sharedApplication` may RAISE there rather than answer nil. So
+  `BackgroundTime::begin` itself reads the process kind first
+  (`NSBundle.mainBundle.bundleURL.pathExtension`: `app` or `appex`, `app_group::process_kind`) and
+  answers `None`, silently, in an extension. No caller can repeat the mistake. So: no process of
+  this build reads or writes a name the root
   still holds, and the seed mirror, the undrained push cache and the device notices arrive whole.
   An unreadable root or a refused rename is COUNTED and the store is still answered - the
   notification extension decrypts from it either way; only a store that cannot be created is an
@@ -3593,6 +3598,26 @@ nothing of ours there.
   back to INFO. (The real MLS state lives in `Application Support`, so a downgrade does not hinge on
   the App Group copy.) A pending share keeps working through all of it: its import takes the file
   NAMES from its manifest, not its paths (`app_group_share::files_in_moved_dir`).
+- **A sign-out an older build made is carried into the store** (`backup_exclusion::carry_sign_out`).
+  The case: a downgrade, a sign-out in `1.7.1`, then this build again. That sign-out stripped
+  `1.7.1`'s push context at the root, but never saw the store, where the account's push credential
+  and the quarantine stayed. So the APP's opening, under the store lock and after the move, reads
+  the store's push context:
+  - **No session** (absent, or no `userId` and `baseUrl` - a sign-out keeps `userId`, so the server
+    is the session): every entry this build's sign-out removes (`AtSignOut::Removed`, a third column
+    of the same table, mirrored in Swift: `push_secret` alone) and `.superseded` are removed.
+  - **A session:** nothing is touched.
+  - **An unreadable or unparsable context:** nothing is touched, said at WARN. A destructive control
+    acts on a KNOWN state.
+
+  It removes exactly what `end_push_registration_files` removes, never more. The seed mirror (the
+  iPhone's ONLY copy of the seeds), the device notices and the push cache are kept by a sign-out
+  here as in this build's own. The account's deletion and the factory wipe remove them. The
+  extensions never carry it: only the app writes the session's files.
+- **No log names the container's id.** A path inside the App Group is logged relative to its label
+  (`storage::loggable_path`, `backup_exclusion::name_in_group`:
+  `AppGroup(group.fr.emse.canari)/store/...`), in a removal that failed, the share sweep's lines,
+  the push-secret write's error and the bench listing.
 - **What the move did is kept, not only logged** (`StoreOpening`, `app_group::store_opening`). The
   native bootstrap can open the store before the Rust logger exists, and the notification extension
   has no Rust logger at all: the extension says the opening once per process through its own

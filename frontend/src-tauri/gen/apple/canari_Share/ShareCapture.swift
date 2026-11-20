@@ -50,30 +50,38 @@ final class ShareCapture {
         case soleCopy
     }
 
-    /// The root names our builds write, as stems and prefixes, each with what it holds - Rust's
-    /// `OURS_STEMS` and `OURS_PREFIXES` (`backup_exclusion.rs`), the same table: a source test holds
-    /// them equal, holdings included.
-    static let rootStems: [(String, RootHolding)] = [
-        ("mls", .mirror),
-        ("push_context", .mirror),
-        ("push_secret", .mirror),
-        ("display_names", .mirror),
-        ("conversation_nicknames", .mirror),
-        ("share_epoch", .mirror),
-        ("app_in_foreground", .mirror),
-        ("channel_keys", .mirror),
-        ("graine_seeds", .soleCopy),
-        ("device_notices", .soleCopy),
-        ("fcm_message_cache", .soleCopy),
-        ("nse_outcomes", .soleCopy),
-        ("nse_inflight", .soleCopy),
-        ("nse_done", .soleCopy),
-        ("shared_inbox", .soleCopy),
-        ("pending_share", .soleCopy),
+    /// What this build's sign-out does to a name in the store - Rust's `AtSignOut`. Only the app
+    /// acts on it (Rust's `carry_sign_out`: an extension writes no session file); the column is
+    /// here so the two tables stay ONE table, compared whole by a source test.
+    enum RootAtSignOut {
+        case removed
+        case kept
+    }
+
+    /// The root names our builds write, as stems and prefixes, each with what it holds and what a
+    /// sign-out does to it - Rust's `OURS_STEMS` and `OURS_PREFIXES` (`backup_exclusion.rs`), the
+    /// same table: a source test holds them equal, every column included.
+    static let rootStems: [(String, RootHolding, RootAtSignOut)] = [
+        ("mls", .mirror, .kept),
+        ("push_context", .mirror, .kept),
+        ("push_secret", .mirror, .removed),
+        ("display_names", .mirror, .kept),
+        ("conversation_nicknames", .mirror, .kept),
+        ("share_epoch", .mirror, .kept),
+        ("app_in_foreground", .mirror, .kept),
+        ("channel_keys", .mirror, .kept),
+        ("graine_seeds", .soleCopy, .kept),
+        ("device_notices", .soleCopy, .kept),
+        ("fcm_message_cache", .soleCopy, .kept),
+        ("nse_outcomes", .soleCopy, .kept),
+        ("nse_inflight", .soleCopy, .kept),
+        ("nse_done", .soleCopy, .kept),
+        ("shared_inbox", .soleCopy, .kept),
+        ("pending_share", .soleCopy, .kept),
     ]
-    static let rootPrefixes: [(String, RootHolding)] = [
-        ("avatar_", .mirror),
-        ("assologo_", .mirror),
+    static let rootPrefixes: [(String, RootHolding, RootAtSignOut)] = [
+        ("avatar_", .mirror, .kept),
+        ("assologo_", .mirror, .kept),
     ]
     /// The store's one quarantine generation - Rust's `SUPERSEDED_DIR`.
     static let supersededDirName = ".superseded"

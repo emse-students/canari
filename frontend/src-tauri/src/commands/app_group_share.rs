@@ -43,6 +43,7 @@ use super::handoff::{
     write_share_epoch, Claimed, PENDING_SHARE_FILE,
 };
 use super::picked_files::SHARED_INBOX;
+use super::storage::loggable_path;
 
 /// The lock file in the App Group the extension holds for a whole capture. Pinned against the Swift
 /// side by `iosShareExtension.test.ts`.
@@ -557,14 +558,14 @@ fn current_pending_share_id(dir: &Path, current: Option<u64>, read: Reader) -> W
         Err(e) if is_locked_read(&e) => {
             log::info!(
                 "[SHARE] the waiting share manifest in {} is locked - its inbox is not swept",
-                dir.display()
+                loggable_path(dir)
             );
             return Waiting::Protected;
         }
         Err(e) => {
             log::warn!(
                 "[SHARE] the waiting share manifest in {} is unreadable: {e}",
-                dir.display()
+                loggable_path(dir)
             );
             return Waiting::Keep(None);
         }
@@ -572,7 +573,7 @@ fn current_pending_share_id(dir: &Path, current: Option<u64>, read: Reader) -> W
     let Some(waiting) = parse_manifest(&raw) else {
         log::warn!(
             "[SHARE] the waiting share manifest in {} is unreadable",
-            dir.display()
+            loggable_path(dir)
         );
         return Waiting::Keep(None);
     };

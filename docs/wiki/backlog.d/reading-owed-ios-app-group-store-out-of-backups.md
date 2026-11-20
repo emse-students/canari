@@ -43,7 +43,8 @@ a `1.7.2-alpha.1` signed in with data (so the move has something to move):
 4. Relaunch once: still 6/6, nothing at ERROR.
 5. Optional, the downgrade path: install `1.7.1` over it, open it once, reinstall this build, and
    read one WARN `... entries came back from an older build`, then INFO at the next launch; the
-   App Group still holds no file in a new `backup2`.
+   App Group still holds no file in a new `backup2`. With a sign-out in `1.7.1` before the
+   reinstall, the opening line also reads `an older build's sign-out carried: n removed, 0 failures`.
 
 When it passes, record it in [device-verification](../device-verification.md) and delete this file
 together with [the launch pass's own reading](reading-owed-ios-local-data-out-of-backups.md) if that

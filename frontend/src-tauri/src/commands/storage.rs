@@ -1245,7 +1245,7 @@ fn wipe_by_prefix(
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
-            log::warn!("[RESET] read {}: {e}", dir.display());
+            log::warn!("[RESET] read {}: {e}", loggable_path(dir));
             *failures += 1;
             return;
         }
@@ -1265,6 +1265,19 @@ fn wipe_by_prefix(
 
 /// Removes one file or directory tree, counting the outcome. Logs at a level that ACCUSES on
 /// failure: what a wipe leaves behind is only ever found by reading the disk afterwards.
+/// How a path is named in a log or an error: one in the iOS App Group is named relative to its
+/// label (`backup_exclusion::name_in_group`) - its absolute path carries the container's id; any
+/// other is shown whole.
+pub(crate) fn loggable_path(path: &std::path::Path) -> String {
+    #[cfg(target_os = "ios")]
+    if let Some(name) = crate::app_group::store_opening()
+        .and_then(|opening| crate::backup_exclusion::name_in_group(path, &opening.path))
+    {
+        return name;
+    }
+    path.display().to_string()
+}
+
 pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
     let result = if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -1275,7 +1288,7 @@ pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures
         Ok(()) => *removed += 1,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => {
-            log::error!("[RESET] could not remove {}: {e}", path.display());
+            log::error!("[RESET] could not remove {}: {e}", loggable_path(path));
             *failures += 1;
         }
     }

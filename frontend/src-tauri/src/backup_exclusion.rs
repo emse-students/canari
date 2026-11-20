@@ -86,6 +86,25 @@ pub(crate) const APP_GROUP_STORE: &str = "store";
 /// not.
 pub(crate) const APP_GROUP_LABEL: &str = "AppGroup(group.fr.emse.canari)/store";
 
+/// The label the App Group container's ROOT is logged under ([`APP_GROUP_LABEL`] is its store).
+pub(crate) const APP_GROUP_ROOT_LABEL: &str = "AppGroup(group.fr.emse.canari)";
+
+/// How `path` is named in a log when it lies in the App Group whose store is `store`: relative to
+/// [`APP_GROUP_LABEL`] (or to [`APP_GROUP_ROOT_LABEL`] outside the store), never with the
+/// container's id its absolute path carries. `None` for a path outside the container.
+pub(crate) fn name_in_group(path: &Path, store: &Path) -> Option<String> {
+    let under = |base: &Path, label: &str| {
+        path.strip_prefix(base).ok().map(|rel| {
+            if rel.as_os_str().is_empty() {
+                label.to_string()
+            } else {
+                format!("{label}/{}", rel.display())
+            }
+        })
+    };
+    under(store, APP_GROUP_LABEL).or_else(|| under(store.parent()?, APP_GROUP_ROOT_LABEL))
+}
+
 /// One directory the launch pass excludes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ExcludedDir {
@@ -233,6 +252,30 @@ pub(crate) enum Severity {
     Error = 2,
 }
 
+/// Which kind of process this is, read from the main bundle's path extension: the app (`.app`) or
+/// one of its extensions (`.appex`) - which have no `UIApplication` to ask for background time and
+/// never carry a sign-out ([`carry_sign_out`]: only the app writes the session's files).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProcessKind {
+    App,
+    Extension,
+    /// Neither: no bundle URL, or an extension Apple never used for either. Nothing that needs the
+    /// app is done, and the caller says so.
+    Unknown,
+}
+
+impl ProcessKind {
+    /// The kind a main bundle's path extension (`NSBundle.mainBundle.bundleURL.pathExtension`)
+    /// names.
+    pub(crate) fn of_bundle_extension(extension: Option<&str>) -> Self {
+        match extension {
+            Some("app") => Self::App,
+            Some("appex") => Self::Extension,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// What a root name of ours holds, which decides a conflict ([`supersede`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Holding {
@@ -246,37 +289,52 @@ pub(crate) enum Holding {
     SoleCopy,
 }
 
-/// The names our builds write at the App Group root, as STEMS, each with what it holds - the ONE
-/// table of what the move may touch. A stem covers the name itself and every name that continues
+/// What this build's sign-out does to a name of ours in the store - the property the opening reads
+/// to carry a sign-out an OLDER build made ([`carry_sign_out`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AtSignOut {
+    /// Bound to the account that signed out, and removed with it: the extension's push credential
+    /// (`end_push_registration_files`).
+    Removed,
+    /// Kept by a sign-out: the device's identity and caches, and data held nowhere else that the
+    /// same account needs again at its next sign-in (the seed mirror is the iPhone's ONLY copy of
+    /// the seeds). The account's DELETION and the factory wipe remove what is theirs.
+    Kept,
+}
+
+/// The names our builds write at the App Group root, as STEMS, each with what it holds and what a
+/// sign-out does to it - the ONE table of what the move may touch. A stem covers the name itself and every name that continues
 /// it after a dot (`mls` covers `mls.bin` and `mls.bin.tmp`, `nse_outcomes` its `.ndjson`,
 /// `.1.ndjson` and `.lock`). Mirrored by the share extension (`ShareCapture.rootStems`); a source
-/// test holds the two equal, holdings included.
-pub(crate) const OURS_STEMS: [(&str, Holding); 16] = [
-    ("mls", Holding::Mirror),
-    ("push_context", Holding::Mirror),
-    ("push_secret", Holding::Mirror),
-    ("display_names", Holding::Mirror),
-    ("conversation_nicknames", Holding::Mirror),
-    ("share_epoch", Holding::Mirror),
-    ("app_in_foreground", Holding::Mirror),
+/// test holds the two equal, every column included.
+pub(crate) const OURS_STEMS: [(&str, Holding, AtSignOut); 16] = [
+    ("mls", Holding::Mirror, AtSignOut::Kept),
+    ("push_context", Holding::Mirror, AtSignOut::Kept),
+    ("push_secret", Holding::Mirror, AtSignOut::Removed),
+    ("display_names", Holding::Mirror, AtSignOut::Kept),
+    ("conversation_nicknames", Holding::Mirror, AtSignOut::Kept),
+    ("share_epoch", Holding::Mirror, AtSignOut::Kept),
+    ("app_in_foreground", Holding::Mirror, AtSignOut::Kept),
     // An older build's plaintext epoch keys: moved in, then deleted by
     // `native_cache::remove_legacy_channel_keys`, which looks in the store only.
-    ("channel_keys", Holding::Mirror),
-    ("graine_seeds", Holding::SoleCopy),
-    ("device_notices", Holding::SoleCopy),
-    ("fcm_message_cache", Holding::SoleCopy),
-    ("nse_outcomes", Holding::SoleCopy),
-    ("nse_inflight", Holding::SoleCopy),
-    ("nse_done", Holding::SoleCopy),
-    ("shared_inbox", Holding::SoleCopy),
-    ("pending_share", Holding::SoleCopy),
+    ("channel_keys", Holding::Mirror, AtSignOut::Kept),
+    ("graine_seeds", Holding::SoleCopy, AtSignOut::Kept),
+    ("device_notices", Holding::SoleCopy, AtSignOut::Kept),
+    ("fcm_message_cache", Holding::SoleCopy, AtSignOut::Kept),
+    ("nse_outcomes", Holding::SoleCopy, AtSignOut::Kept),
+    ("nse_inflight", Holding::SoleCopy, AtSignOut::Kept),
+    ("nse_done", Holding::SoleCopy, AtSignOut::Kept),
+    ("shared_inbox", Holding::SoleCopy, AtSignOut::Kept),
+    ("pending_share", Holding::SoleCopy, AtSignOut::Kept),
 ];
 
 /// The names our builds write at the App Group root by PREFIX: the extension's avatar and logo
 /// caches (`avatar_<sanitised id>.jpg`, `assologo_<id>.jpg`), fetched again on a miss. Mirrored by
 /// `ShareCapture.rootPrefixes`.
-pub(crate) const OURS_PREFIXES: [(&str, Holding); 2] =
-    [("avatar_", Holding::Mirror), ("assologo_", Holding::Mirror)];
+pub(crate) const OURS_PREFIXES: [(&str, Holding, AtSignOut); 2] = [
+    ("avatar_", Holding::Mirror, AtSignOut::Kept),
+    ("assologo_", Holding::Mirror, AtSignOut::Kept),
+];
 
 /// The one quarantine generation inside the store: what a conflict displaced from a
 /// [`Holding::SoleCopy`] name (module doc).
@@ -296,26 +354,37 @@ pub(crate) enum RootEntry {
     Unknown,
 }
 
-/// Classifies one name at the App Group root.
-pub(crate) fn classify_root_entry(name: &std::ffi::OsStr) -> RootEntry {
-    let name = name.to_string_lossy();
+/// The row of the table ([`OURS_STEMS`], then [`OURS_PREFIXES`]) a name of ours falls under.
+fn our_row(name: &str) -> Option<&'static (&'static str, Holding, AtSignOut)> {
     let stem_of = |stem: &str| {
         name == stem
             || name
                 .strip_prefix(stem)
                 .is_some_and(|rest| rest.starts_with('.'))
     };
+    OURS_STEMS
+        .iter()
+        .find(|(s, _, _)| stem_of(s))
+        .or_else(|| OURS_PREFIXES.iter().find(|(p, _, _)| name.starts_with(p)))
+}
+
+/// Classifies one name at the App Group root.
+pub(crate) fn classify_root_entry(name: &std::ffi::OsStr) -> RootEntry {
+    let name = name.to_string_lossy();
     if name == APP_GROUP_STORE {
         return RootEntry::Store;
     }
     if name == "Library" || name.starts_with(".com.apple.") {
         return RootEntry::System;
     }
-    OURS_STEMS
-        .iter()
-        .find(|(s, _)| stem_of(s))
-        .or_else(|| OURS_PREFIXES.iter().find(|(p, _)| name.starts_with(p)))
-        .map_or(RootEntry::Unknown, |(_, holding)| RootEntry::Ours(*holding))
+    our_row(&name).map_or(RootEntry::Unknown, |(_, holding, _)| {
+        RootEntry::Ours(*holding)
+    })
+}
+
+/// What this build's sign-out does to a name in the store, `None` for a name not ours.
+pub(crate) fn at_sign_out(name: &std::ffi::OsStr) -> Option<AtSignOut> {
+    our_row(&name.to_string_lossy()).map(|(_, _, at)| *at)
 }
 
 /// What one pass of [`migrate_root`] did - counts only: the log names no file.
@@ -524,6 +593,108 @@ pub(crate) fn root_state(root: &Path) -> std::io::Result<RootState> {
     Ok(state)
 }
 
+/// What the app's opening did about a sign-out an older build made ([`carry_sign_out`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignOutCarry {
+    /// Not this process's to do: an extension, which writes no session file, or a store that was
+    /// not locked.
+    NotChecked,
+    /// The store's push context carries a session: nothing to carry.
+    SignedIn,
+    /// No session in the store (no push context, or one without a user and a server): what this
+    /// build's sign-out removes was removed, the quarantine with it - `removed` entries, `failures`
+    /// left in place.
+    Carried { removed: usize, failures: usize },
+    /// The push context could not be read or parsed: whether an account is signed in is NOT KNOWN,
+    /// so nothing was touched.
+    Unknown,
+}
+
+/// Whether a push context's bytes name a signed-in session: a non-empty `userId` AND `baseUrl`.
+/// `Some(false)` for an object without them - a sign-out strips the context to its device keys
+/// (`userId`, `deviceId`, `locale`; `push_registration::DEVICE_CONTEXT_KEYS`), so `userId` alone
+/// proves nothing and `baseUrl`, which every background reader requires, is the session. `None`
+/// when the bytes are not a JSON object: nothing is known.
+pub(crate) fn names_a_session(context: &[u8]) -> Option<bool> {
+    let value: serde_json::Value = serde_json::from_slice(context).ok()?;
+    let object = value.as_object()?;
+    let filled = |key: &str| {
+        object
+            .get(key)
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| !v.is_empty())
+    };
+    Some(filled("userId") && filled("baseUrl"))
+}
+
+/// Carries into the store a sign-out an OLDER build made (a downgrade, a sign-out there, this build
+/// again): that build stripped ITS push context at the root - which the move has just carried in -
+/// but never saw the store, where the account's push credential and the quarantine stayed. So, run
+/// by the app only, under the store lock and after the move: when the store's push context names
+/// no session ([`names_a_session`]; absent is no session), every entry this build's sign-out removes
+/// ([`AtSignOut::Removed`]) and [`SUPERSEDED_DIR`] are removed - exactly what
+/// `end_push_registration_files` does, never more. A context that cannot be read or parsed is NOT a
+/// sign-out: nothing is touched, and it is said (a destructive control acts on a KNOWN state).
+pub(crate) fn carry_sign_out(store: &Path) -> SignOutCarry {
+    let context = store.join("push_context.json");
+    let session = match std::fs::read(&context) {
+        Ok(bytes) => match names_a_session(&bytes) {
+            Some(session) => session,
+            None => {
+                log::warn!(
+                    "[BACKUP_EXCLUSION] the store's push context is not a JSON object - whether an account is signed in is unknown, nothing removed"
+                );
+                return SignOutCarry::Unknown;
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            log::warn!(
+                "[BACKUP_EXCLUSION] the store's push context is unreadable ({:?}) - whether an account is signed in is unknown, nothing removed",
+                e.kind()
+            );
+            return SignOutCarry::Unknown;
+        }
+    };
+    if session {
+        return SignOutCarry::SignedIn;
+    }
+    let mut targets = vec![store.join(SUPERSEDED_DIR)];
+    let mut failures = 0usize;
+    match std::fs::read_dir(store) {
+        Ok(entries) => targets.extend(
+            entries
+                .flatten()
+                .filter(|e| at_sign_out(&e.file_name()) == Some(AtSignOut::Removed))
+                .map(|e| e.path()),
+        ),
+        Err(e) => {
+            log::error!(
+                "[BACKUP_EXCLUSION] the store is unreadable - a signed-out account's entries stay: {:?}",
+                e.kind()
+            );
+            failures += 1;
+        }
+    }
+    let mut removed = 0usize;
+    for target in targets {
+        if std::fs::symlink_metadata(&target).is_err() {
+            continue;
+        }
+        match remove_any(&target) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                log::error!(
+                    "[BACKUP_EXCLUSION] a signed-out account's store entry was not removed: {:?}",
+                    e.kind()
+                );
+                failures += 1;
+            }
+        }
+    }
+    SignOutCarry::Carried { removed, failures }
+}
+
 /// How a process's first resolution of the App Group went ([`open_store`]): kept for the life of
 /// the process (`app_group::store_opening`), so the launch verdict - and the notification
 /// extension, through `canari_app_group_store_report` - can say what the move did even when it ran
@@ -536,6 +707,8 @@ pub(crate) struct StoreOpening {
     /// The flag this process set on it.
     pub(crate) flag: Result<(), FlagError>,
     pub(crate) migration: Migration,
+    /// What the app carried of an older build's sign-out ([`carry_sign_out`]).
+    pub(crate) sign_out: SignOutCarry,
 }
 
 impl StoreOpening {
@@ -557,10 +730,29 @@ impl StoreOpening {
         if m.unreadable {
             line.push_str(", the root unreadable or the store not locked");
         }
+        let carried = match self.sign_out {
+            SignOutCarry::NotChecked | SignOutCarry::SignedIn => Severity::Info,
+            SignOutCarry::Carried { removed, failures } => {
+                if removed + failures > 0 {
+                    line.push_str(&format!(
+                        "; an older build's sign-out carried: {removed} removed, {failures} failures"
+                    ));
+                }
+                if failures > 0 {
+                    Severity::Error
+                } else {
+                    Severity::Info
+                }
+            }
+            SignOutCarry::Unknown => {
+                line.push_str("; the push context unreadable, no sign-out carried");
+                Severity::Warn
+            }
+        };
         let severity = if self.flag.is_err() {
             Severity::Error
         } else {
-            m.severity()
+            m.severity().max(carried)
         };
         (severity, line)
     }
@@ -574,6 +766,7 @@ impl StoreOpening {
 /// store is still returned - the notification extension decrypts from it either way.
 pub(crate) fn open_store(
     root: &Path,
+    kind: ProcessKind,
     flag: impl FnOnce(&Path) -> Result<(), FlagError>,
 ) -> std::io::Result<StoreOpening> {
     let path = root.join(APP_GROUP_STORE);
@@ -583,16 +776,24 @@ pub(crate) fn open_store(
         Err(e) => return Err(e),
     };
     let flag = flag(&path);
-    let migration = match lock_store(&path) {
-        Ok(_held) => migrate_root(root, &path, rename_exclusive),
+    let (migration, sign_out) = match lock_store(&path) {
+        Ok(_held) => {
+            let migration = migrate_root(root, &path, rename_exclusive);
+            let sign_out = match kind {
+                ProcessKind::App => carry_sign_out(&path),
+                ProcessKind::Extension | ProcessKind::Unknown => SignOutCarry::NotChecked,
+            };
+            (migration, sign_out)
+        }
         Err(e) => {
             log::error!(
                 "[BACKUP_EXCLUSION] the App Group store could not be locked - nothing moved: {e}"
             );
-            Migration {
+            let migration = Migration {
                 unreadable: true,
                 ..Migration::default()
-            }
+            };
+            (migration, SignOutCarry::NotChecked)
         }
     };
     let opening = StoreOpening {
@@ -600,6 +801,7 @@ pub(crate) fn open_store(
         created,
         flag,
         migration,
+        sign_out,
     };
     let (severity, verdict) = opening.report();
     match severity {
@@ -907,7 +1109,7 @@ mod tests {
         )
         .expect("write");
         let seen = std::cell::RefCell::new(Vec::new());
-        let opening = open_store(&root.0, |p| {
+        let opening = open_store(&root.0, ProcessKind::Extension, |p| {
             // Flagged while still empty: nothing of ours was in it yet.
             assert!(names(p).is_empty());
             seen.borrow_mut().push(p.to_path_buf());
@@ -945,14 +1147,14 @@ mod tests {
     #[test]
     fn an_existing_store_is_flagged_again_and_a_second_open_moves_nothing() {
         let root = TempDir::new("reopen");
-        open_store(&root.0, flagged).expect("first");
+        open_store(&root.0, ProcessKind::Extension, flagged).expect("first");
         std::fs::write(
             root.0.join(APP_GROUP_STORE).join("push_context.json"),
             b"{}",
         )
         .expect("write");
         let calls = std::cell::Cell::new(0);
-        let opening = open_store(&root.0, |_| {
+        let opening = open_store(&root.0, ProcessKind::Extension, |_| {
             calls.set(calls.get() + 1);
             Ok(())
         })
@@ -969,13 +1171,15 @@ mod tests {
         std::fs::write(root.0.join("graine_seeds.json"), b"v1").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/a"), b"v1").expect("write");
-        let store = open_store(&root.0, flagged).expect("first").path;
+        let store = open_store(&root.0, ProcessKind::Extension, flagged)
+            .expect("first")
+            .path;
 
         // A downgrade: the older build writes at the root again, after the move.
         std::fs::write(root.0.join("graine_seeds.json"), b"v2").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/b"), b"v2").expect("write");
-        let opening = open_store(&root.0, flagged).expect("upgrade again");
+        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("upgrade again");
         assert_eq!(
             opening.migration,
             Migration {
@@ -998,7 +1202,7 @@ mod tests {
         assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
 
         // Settled: a second reopen moves nothing and the quarantine is unchanged.
-        let again = open_store(&root.0, flagged).expect("reopen");
+        let again = open_store(&root.0, ProcessKind::Extension, flagged).expect("reopen");
         assert_eq!(again.migration, Migration::default());
         assert_eq!(
             std::fs::read(quarantine.join("graine_seeds.json")).expect("kept"),
@@ -1007,7 +1211,7 @@ mod tests {
 
         // A second downgrade replaces the quarantined generation: it never grows.
         std::fs::write(root.0.join("graine_seeds.json"), b"v3").expect("write");
-        open_store(&root.0, flagged).expect("third upgrade");
+        open_store(&root.0, ProcessKind::Extension, flagged).expect("third upgrade");
         assert_eq!(
             std::fs::read(store.join("graine_seeds.json")).expect("root won"),
             b"v3"
@@ -1027,10 +1231,12 @@ mod tests {
         let root = TempDir::new("mirror");
         std::fs::write(root.0.join("mls.bin"), b"v1").expect("write");
         std::fs::write(root.0.join("avatar_x.jpg"), b"v1").expect("write");
-        let store = open_store(&root.0, flagged).expect("first").path;
+        let store = open_store(&root.0, ProcessKind::Extension, flagged)
+            .expect("first")
+            .path;
         std::fs::write(root.0.join("mls.bin"), b"v2").expect("write");
         std::fs::write(root.0.join("avatar_x.jpg"), b"v2").expect("write");
-        let opening = open_store(&root.0, flagged).expect("upgrade again");
+        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("upgrade again");
         assert_eq!(opening.migration.superseded, 2);
         assert_eq!(
             std::fs::read(store.join("mls.bin")).expect("root won"),
@@ -1082,7 +1288,7 @@ mod tests {
     fn an_older_builds_plaintext_channel_keys_are_moved_then_cleaned() {
         let root = TempDir::new("channel-keys");
         std::fs::write(root.0.join("channel_keys.json"), b"{\"k\":1}").expect("write");
-        let opening = open_store(&root.0, flagged).expect("opened");
+        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
         assert_eq!(opening.migration.moved, 1);
         assert!(!root.0.join("channel_keys.json").exists());
         assert!(crate::native_cache::remove_legacy_channel_keys(
@@ -1096,7 +1302,7 @@ mod tests {
     fn an_unknown_root_name_is_counted_and_never_moved() {
         let root = TempDir::new("unknown");
         std::fs::write(root.0.join("notes.txt"), b"x").expect("write");
-        let opening = open_store(&root.0, flagged).expect("opened");
+        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
         assert_eq!(opening.migration.unknown, 1);
         assert!(root.0.join("notes.txt").exists());
         assert_eq!(opening.report().0, Severity::Error);
@@ -1330,6 +1536,7 @@ mod tests {
                 moved: 4,
                 ..Migration::default()
             },
+            sign_out: SignOutCarry::NotChecked,
         };
         assert_eq!(
             opening.report(),
@@ -1341,6 +1548,184 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    /// The store a 1.7.2 install left before a downgrade: the account's push credential, its
+    /// seeds and notices, and a quarantined generation. Then the root an older build wrote after
+    /// it, holding `context` as its push context.
+    fn downgraded(tag: &str, context: Option<&[u8]>) -> (TempDir, PathBuf) {
+        let root = TempDir::new(tag);
+        let store = root.0.join(APP_GROUP_STORE);
+        std::fs::create_dir_all(store.join(SUPERSEDED_DIR)).expect("store");
+        std::fs::write(store.join("push_secret.txt"), b"s").expect("write");
+        std::fs::write(store.join("graine_seeds.json"), b"seeds").expect("write");
+        std::fs::create_dir(store.join("device_notices")).expect("dir");
+        std::fs::write(store.join(SUPERSEDED_DIR).join("graine_seeds.json"), b"v0").expect("write");
+        if let Some(context) = context {
+            std::fs::write(root.0.join("push_context.json"), context).expect("write");
+        }
+        (root, store)
+    }
+
+    /// A sign-out in the older build (its context stripped to the device keys, carried in by the
+    /// move): the app's opening removes what this build's sign-out removes, and nothing else.
+    #[test]
+    fn an_older_builds_sign_out_is_carried_into_the_store() {
+        let stripped = br#"{"userId":"u-1","deviceId":"d-1","locale":"fr"}"#;
+        let (root, store) = downgraded("carry-signed-out", Some(stripped));
+        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+        assert_eq!(
+            opening.sign_out,
+            SignOutCarry::Carried {
+                removed: 2,
+                failures: 0
+            }
+        );
+        assert!(!store.join("push_secret.txt").exists());
+        assert!(!store.join(SUPERSEDED_DIR).exists());
+        // Kept by a sign-out, here as in this build's own.
+        assert!(store.join("graine_seeds.json").exists());
+        assert!(store.join("device_notices").exists());
+        assert!(store.join("push_context.json").exists());
+        assert_eq!(opening.report().0, Severity::Info);
+        assert!(opening.report().1.contains("sign-out carried: 2 removed"));
+
+        // No push context at all is no session either.
+        let (root, store) = downgraded("carry-absent", None);
+        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+        assert!(matches!(
+            opening.sign_out,
+            SignOutCarry::Carried { removed: 2, .. }
+        ));
+        assert!(!store.join("push_secret.txt").exists());
+
+        // The extensions never carry it: only the app writes the session's files.
+        let (root, store) = downgraded("carry-extension", Some(stripped));
+        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
+        assert_eq!(opening.sign_out, SignOutCarry::NotChecked);
+        assert!(store.join("push_secret.txt").exists());
+    }
+
+    /// A signed-in session in the store: nothing is touched.
+    #[test]
+    fn a_signed_in_store_carries_no_sign_out() {
+        let session = br#"{"userId":"u-1","deviceId":"d-1","baseUrl":"https://x","pushToken":"t"}"#;
+        let (root, store) = downgraded("carry-signed-in", Some(session));
+        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+        assert_eq!(opening.sign_out, SignOutCarry::SignedIn);
+        assert!(store.join("push_secret.txt").exists());
+        assert!(store
+            .join(SUPERSEDED_DIR)
+            .join("graine_seeds.json")
+            .exists());
+        assert_eq!(opening.report().0, Severity::Info);
+    }
+
+    /// A push context that cannot be read or parsed proves nothing: everything stays, said at WARN.
+    #[test]
+    fn an_unreadable_push_context_carries_nothing() {
+        for (tag, context) in [
+            ("carry-garbage", &b"not json"[..]),
+            ("carry-array", &b"[1]"[..]),
+        ] {
+            let (root, store) = downgraded(tag, Some(context));
+            let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+            assert_eq!(opening.sign_out, SignOutCarry::Unknown, "{tag}");
+            assert!(store.join("push_secret.txt").exists(), "{tag}");
+            assert!(store.join(SUPERSEDED_DIR).exists(), "{tag}");
+            assert_eq!(opening.report().0, Severity::Warn, "{tag}");
+        }
+        // Unreadable (a directory where the file should be): the same.
+        let (root, store) = downgraded("carry-unreadable", None);
+        std::fs::create_dir(store.join("push_context.json")).expect("dir");
+        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+        assert_eq!(opening.sign_out, SignOutCarry::Unknown);
+        assert!(store.join("push_secret.txt").exists());
+    }
+
+    #[test]
+    fn a_session_is_a_user_and_a_server() {
+        assert_eq!(
+            names_a_session(br#"{"userId":"u","baseUrl":"https://x"}"#),
+            Some(true)
+        );
+        // What a sign-out leaves: the device's identity, no server.
+        assert_eq!(
+            names_a_session(br#"{"userId":"u","deviceId":"d"}"#),
+            Some(false)
+        );
+        assert_eq!(
+            names_a_session(br#"{"userId":"","baseUrl":"https://x"}"#),
+            Some(false)
+        );
+        assert_eq!(
+            names_a_session(br#"{"userId":"u","baseUrl":""}"#),
+            Some(false)
+        );
+        assert_eq!(names_a_session(br#"{}"#), Some(false));
+        assert_eq!(names_a_session(b"null"), None);
+        assert_eq!(names_a_session(b"{"), None);
+    }
+
+    #[test]
+    fn only_the_push_credential_is_removed_by_a_sign_out() {
+        let removed: Vec<&str> = OURS_STEMS
+            .iter()
+            .chain(OURS_PREFIXES.iter())
+            .filter(|(_, _, at)| *at == AtSignOut::Removed)
+            .map(|(name, _, _)| *name)
+            .collect();
+        assert_eq!(removed, vec!["push_secret"]);
+        assert_eq!(
+            at_sign_out(OsStr::new("push_secret.txt")),
+            Some(AtSignOut::Removed)
+        );
+        assert_eq!(
+            at_sign_out(OsStr::new("graine_seeds.json")),
+            Some(AtSignOut::Kept)
+        );
+        assert_eq!(at_sign_out(OsStr::new("somebody_else")), None);
+    }
+
+    #[test]
+    fn a_group_path_is_logged_without_the_container_id() {
+        let store = group().join(APP_GROUP_STORE);
+        assert_eq!(
+            name_in_group(&store.join(".superseded"), &store).as_deref(),
+            Some("AppGroup(group.fr.emse.canari)/store/.superseded")
+        );
+        assert_eq!(
+            name_in_group(&store, &store).as_deref(),
+            Some(APP_GROUP_LABEL)
+        );
+        assert_eq!(
+            name_in_group(&group().join("mls.bin"), &store).as_deref(),
+            Some("AppGroup(group.fr.emse.canari)/mls.bin")
+        );
+        assert_eq!(name_in_group(&home().join("x"), &store), None);
+        assert_eq!(
+            APP_GROUP_LABEL,
+            format!("{APP_GROUP_ROOT_LABEL}/{APP_GROUP_STORE}")
+        );
+    }
+
+    /// An extension's bundle is an `.appex`: it has no `UIApplication`, and `BackgroundTime` must
+    /// not ask for one there.
+    #[test]
+    fn the_process_kind_is_read_from_the_bundle_extension() {
+        assert_eq!(
+            ProcessKind::of_bundle_extension(Some("app")),
+            ProcessKind::App
+        );
+        assert_eq!(
+            ProcessKind::of_bundle_extension(Some("appex")),
+            ProcessKind::Extension
+        );
+        assert_eq!(
+            ProcessKind::of_bundle_extension(Some("")),
+            ProcessKind::Unknown
+        );
+        assert_eq!(ProcessKind::of_bundle_extension(None), ProcessKind::Unknown);
     }
 
     #[test]

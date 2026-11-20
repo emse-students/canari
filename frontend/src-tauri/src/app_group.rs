@@ -57,6 +57,44 @@ pub(crate) fn app_group_container() -> Result<PathBuf, String> {
     })
 }
 
+/// Which kind of process this is - the app or one of its extensions - read once from
+/// `NSBundle.mainBundle.bundleURL.pathExtension` (`backup_exclusion::ProcessKind`).
+pub(crate) fn process_kind() -> crate::backup_exclusion::ProcessKind {
+    use crate::backup_exclusion::ProcessKind;
+    static KIND: std::sync::OnceLock<ProcessKind> = std::sync::OnceLock::new();
+    *KIND.get_or_init(|| {
+        use objc2::msg_send;
+        use objc2::runtime::{AnyClass, AnyObject};
+        use std::ffi::{c_char, CStr};
+        let Some(bundle_class) = AnyClass::get(c"NSBundle") else {
+            return ProcessKind::Unknown;
+        };
+        objc2::rc::autoreleasepool(|_| {
+            // SAFETY: plain Foundation messages with the return types their headers declare;
+            // every object returned is autoreleased into this pool, and the C string is copied
+            // before the pool drains.
+            unsafe {
+                let bundle: *mut AnyObject = msg_send![bundle_class, mainBundle];
+                if bundle.is_null() {
+                    return ProcessKind::Unknown;
+                }
+                let url: *mut AnyObject = msg_send![bundle, bundleURL];
+                if url.is_null() {
+                    return ProcessKind::Unknown;
+                }
+                let extension: *mut AnyObject = msg_send![url, pathExtension];
+                if extension.is_null() {
+                    return ProcessKind::Unknown;
+                }
+                let utf8: *const c_char = msg_send![extension, UTF8String];
+                let extension =
+                    (!utf8.is_null()).then(|| CStr::from_ptr(utf8).to_string_lossy().into_owned());
+                ProcessKind::of_bundle_extension(extension.as_deref())
+            }
+        })
+    })
+}
+
 /// How this process opened the store, once it has (`backup_exclusion::StoreOpening`).
 static OPENING: std::sync::OnceLock<crate::backup_exclusion::StoreOpening> =
     std::sync::OnceLock::new();
@@ -72,12 +110,22 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
     if let Some(opening) = OPENING.get() {
         return Ok(opening.path.clone());
     }
+    // ONE opening per process: a second thread waits for the first instead of opening again, so
+    // no write of this process reaches the store before its opening - the move, and the carry of
+    // an older build's sign-out, which reads the push context - has finished.
+    static OPENING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _single = OPENING_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(opening) = OPENING.get() {
+        return Ok(opening.path.clone());
+    }
     let root = app_group_container()?;
     // The move holds a `flock` on the store in the shared container: an app suspended holding it is
-    // killed (`0xdead10cc`), so the move asks for background time as the seed edit does. `None` in
-    // the notification extension, which has no application and is never suspended mid-call.
+    // killed (`0xdead10cc`), so the move asks for background time as the seed edit does - which
+    // `begin` itself skips in an extension.
     let _background = BackgroundTime::begin(c"canari-app-group-move");
-    let opening = crate::backup_exclusion::open_store(&root, |store| {
+    let opening = crate::backup_exclusion::open_store(&root, process_kind(), |store| {
         crate::native_cache::ios_exclude_from_backup(store)
     })
     .map_err(|e| format!("the App Group store could not be created: {e}"))?;
@@ -102,8 +150,10 @@ pub(crate) fn store_opening() -> Option<&'static crate::backup_exclusion::StoreO
 /// path - if it comes, it is said at ERROR and the assertion ended, as the API requires.
 ///
 /// Through the Objective-C runtime like [`app_group_container`], for the same reason: `libapp.a` is
-/// linked into the notification extension, which has no `UIApplication` to ask - and never runs
-/// the foreground commands that take this, so a missing application is said and nothing is held.
+/// linked into the notification extension, which has no `UIApplication` to ask. `sharedApplication`
+/// is unavailable in an extension and may RAISE rather than answer nil, so [`BackgroundTime::begin`]
+/// decides by the process kind ([`process_kind`]) before it touches UIKit: in an extension it
+/// answers `None` without a word - the expected path, and every caller is covered.
 pub(crate) struct BackgroundTime {
     /// The task identifier, shared with the expiration handler so exactly one of the two ends it:
     /// 0 before `begin` stored it, [`EXPIRED`] once ended (by either side).
@@ -120,10 +170,23 @@ impl BackgroundTime {
     /// Begins the assertion, named for the system's diagnostics. `None` (said) when there is no
     /// application or the system grants none: the edit goes on, as it did before the assertion.
     pub(crate) fn begin(name: &std::ffi::CStr) -> Option<Self> {
+        use crate::backup_exclusion::ProcessKind;
         use objc2::msg_send;
         use objc2::runtime::{AnyClass, AnyObject};
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+
+        match process_kind() {
+            ProcessKind::App => {}
+            // An extension has no application to ask, and never needs one: not a failure.
+            ProcessKind::Extension => return None,
+            ProcessKind::Unknown => {
+                log::error!(
+                    "[AppGroup] background time: the main bundle is neither an app nor an extension - none asked"
+                );
+                return None;
+            }
+        }
 
         let Some(app_class) = AnyClass::get(c"UIApplication") else {
             log::error!("[AppGroup] background time: UIApplication is not loaded");

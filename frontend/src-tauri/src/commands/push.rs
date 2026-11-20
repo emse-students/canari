@@ -3283,7 +3283,10 @@ pub(crate) fn write_push_secret(
                     "[PushSecret] the extension copy was NOT written - every PushSecret fetch the \
                      notification extension makes will 403 until the next activation: {e}"
                 );
-                format!("write {}: {e}", target.display())
+                format!(
+                    "write {}: {e}",
+                    crate::commands::storage::loggable_path(&target)
+                )
             })?;
     }
     // A SECRET IS THE SERVER'S ANSWER TO A REGISTRATION, so this device is a push destination again
