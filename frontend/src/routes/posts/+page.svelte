@@ -1045,11 +1045,13 @@
     </div>
   </div>
 
-  <!-- THE LIVE CARD, at the top of the feed whatever the tab (L5); hidden while a search replaces
+  <!-- THE LIVE CARD, at the top of the feed and following the tab (L5; owner, 2026-11-19: "Organisations"
+       lists association lives only, the other tabs every live the reader may watch); hidden while a search replaces
        the feed, like the tab row. Only where `livesShown` (the build AND the server's switch). -->
   {#if livesShown && userId && !searchQuery}
     <LiveFeedCard
       refreshKey={liveRefresh}
+      feed={activeFeed}
       viewerId={userId}
       onOpen={(live) => {
         Log.d('POSTS', `live ${live.id} opened from the feed card`);

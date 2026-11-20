@@ -849,7 +849,7 @@ after error 5) updates the cause and its date, with no transition and no second 
   path, logged at INFO (1.7.1; it was a WARN that production read as an alarm):
   `[LYDIA-READINESS] holder <id> marked READY by <cause> (<where>); before: <the earlier marking, or
   "no earlier marking on record">; managers told next` (`at the first request Lydia issues on it` after a bridge switch), or `managers not notified (notices off by
-  switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)` while that switch waits on its floor. The anomalies
+  switch, LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED)` when the kill switch is off. The anomalies
   of this path keep their level: the held refusal and the bridge switch at WARN, the revert at ERROR.
 - **Reverted** when `request/do` answers **error 5** (not validated; core's typed
   `LYDIA_BUSINESS_NOT_VALIDATED`) or **2701** (blocked; `LYDIA_BUSINESS_BLOCKED`), from the shop and
@@ -875,9 +875,9 @@ after error 5) updates the cause and its date, with no transition and no second 
   spec on PostgreSQL commits the revert between the two reads).
 - **The managers** (`MANAGE_PAYOUT_ACCOUNT`) get a bell row and a push on a transition
   (`lydia_payments_active` / `lydia_payments_paused`), behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`
-  (`lydia-payments-notifier.service.ts`), OFF until the stores serve the floor version that renders
-  the two types ([legacy-compatibility](../../legacy-compatibility.md)); while off, the transition line
-  says the managers were not notified.
+  (`lydia-payments-notifier.service.ts`), ON since the 1.7.0 floor (2026-11-20; lot 2 shipped in
+  `v1.5.3`), kept as the kill switch ([legacy-compatibility](../../legacy-compatibility.md)); while off,
+  the transition line says the managers were not notified.
 
 ### The Responsable (enrolment lot 2)
 
@@ -977,7 +977,7 @@ number is not one a live row holds, its own or a Responsable's other number (`LY
 Then `addCashier` sends the role's set signed, `notify=yes`, and READS IT BACK. Once the
 add answered, any failure is `LydiaCashierAddedUnconfirmedException` and the row is recorded UNCONFIRMED,
 as for the Responsable. A confirmed NEW cashier gets a bell row (`lydia_cashier_added`, behind
-`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, OFF until the floor version -
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, ON since the 1.7.0 floor (2026-11-20; lot 3 shipped in `v1.6.0`), kept as the kill switch -
 [legacy-compatibility](../../legacy-compatibility.md)) that opens the Lydia Pro help page
 (`/help/lydia-pro`); no push.
 
@@ -1025,7 +1025,7 @@ production removal himself on 1.7.1
 A WARN `Lydia did not accept the call (...) - the re-read decides` between 1 and 2 is not a failure by
 itself: the re-read decides. An add reads the same way: `adding a vendeur (phone ending NN, 1 right(s))`,
 then `vendeur confirmed with exactly 1 right(s)`, then social's `[AUDIT] Lydia cashier added ...`; with
-the cashier notice switched off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
+the cashier kill switch off (below), the notifier says so at DEBUG and nothing at WARN or ERROR.
 
 **A membership that ends owes its Lydia rights** (review of the flip, built with it in 1.7.1). The debt
 is DURABLE STATE, not a job: a live `lydia_cashiers` row of the managed Business whose person holds no

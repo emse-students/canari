@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { replayEndText, replaysAvailable } from './replayAvailability';
-import { LIVE_REPLAY_MIN_MS } from './constants';
+import { LIVE_POSTER_MAX_CONCURRENT, LIVE_REPLAY_MIN_MS } from './constants';
 
 describe('replaysAvailable', () => {
   it('is on only when the server says on', () => {
@@ -33,5 +33,10 @@ describe('the client copies of the server numbers', () => {
     expect(min).not.toBeNull();
     expect(Number(min![1].replaceAll('_', ''))).toBe(LIVE_REPLAY_MIN_MS);
     expect(server).not.toMatch(/LIVE_REPLAY_RETENTION_DAYS/);
+  });
+  it("the poster fetch width is the server's", () => {
+    const width = /LIVE_POSTER_MAX_CONCURRENT = (\d+);/.exec(server);
+    expect(width).not.toBeNull();
+    expect(Number(width![1])).toBe(LIVE_POSTER_MAX_CONCURRENT);
   });
 });

@@ -565,7 +565,7 @@ the two values together.
 | `components/live/` | `LiveFeedCard`, `LivePosterImage` (one preview, object URLs revoked), `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
 
 **The card (reshaped by the owner on 2026-11-07, [lives](../../services/lives.md#titles-and-the-preview-image-owner-2026-11-07)).**
-At the top of the feed, under the tab row, whatever the tab; hidden during a search and when nothing
+At the top of the feed, under the tab row, FOLLOWING THE TAB (owner, 2026-11-19: "Organisations" lists association lives only, `associationId` set; "Pour toi", "Campus" and the custom tab every live the reader may watch - one predicate, `livesForTab`, on the list the server already filtered, never a second visibility rule); hidden during a search and when nothing
 is on air. ONE live is a LARGE card (4:5): its preview still, the EN DIRECT badge, the viewer count,
 the title (or "X est en live" without one), who broadcasts and the preview's age; SEVERAL are a
 horizontal snap carousel of the same cards, compact (3:4). A tap opens the viewer. The preview is
@@ -576,6 +576,27 @@ again (one live becoming a carousel, a tab switch) asks the network nothing, and
 drops the stills of the lives it no longer names (`forgetLivePostersExcept`). The bytes come from
 the poster's own path, `/api/media/public/live-poster/<id>/<name>`, counted by nginx apart from the
 segments; a `429` there is `rate-limited`, a staler picture.
+
+#### The width of the poster fetches (S14, 2026-11-20)
+
+The `Live poster <id>: 429 - -> rate-limited` WARNs at the load of a feed were NOT the request rate
+(`limit_req` 25 r/s, burst 50) but the CONNECTION bound of the same location: `limit_conn
+lives_posters_conn 4` per address. A feed of about thirty replays mounted thirty covers, each calling
+`loadLivePoster` at once, so thirty fetches were open together and everything past the fourth was refused
+(the sealed still is small, but `limit_rate 250000` keeps each connection open). The fix is in the request
+pattern, not the bound: `livePosterView.ts` holds a module-wide width, `LIVE_POSTER_MAX_CONCURRENT` (3, one
+under the bound because nginx may count a request until it finishes, slightly after the client read the
+body; the figure lives in the server's `live.constants.ts`, the client mirrors it, and
+`live-segments-route.test.mjs` asserts it stays under `limit_conn`); a fourth load waits for a slot, handed straight to the
+longest waiter, an abort while waiting never fetches, and a failed fetch frees its slot. No clock, no retry;
+the live card and the replay covers share it because they share the loader. nginx is unchanged.
+
+Three limits of this fix, stated so nobody reads more into it. (1) `limit_conn` is per ADDRESS
+(`$binary_remote_addr`), not per tab: two tabs, or several readers behind one campus NAT, still add up past
+4 and can still get a 429; the client cap cures the single-reader pattern only. (2) The `custom` tab keeps
+EVERY live - the PR's own call (the owner's decision only named the `associations` tab). (3) The waiting
+line is a plain FIFO with no priority: the live card's refreshed poster queues behind the replay covers
+already waiting.
 
 It asks `GET /api/lives` (no seat) when the FEED asks for its first page - the tab load and
 `refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - AND, while the card

@@ -9,23 +9,23 @@ import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import type { Form } from './entities/form.entity';
 
 /**
- * THE GATE: the organiser alert ships SWITCHED OFF, and only a pull request turns it on.
+ * THE KILL SWITCH: the organiser alert is SWITCHED ON since the 1.7.0 floor (owner, 2026-11-18), and
+ * only a pull request changes it.
  *
  * Its notification type (`form_paid_over_capacity`) is new, and a client older than PR #1911 draws
  * an unknown type as a COMMENT with a dead link to `/posts/<formId>` - a wrong sentence no server
  * change can take back (legacy-compatibility.md, "a NEW notification type"). #1911's first stable is
  * `v1.2.9`; `minClientVersion` reads `1.2.7` on both estates since 2026-10-17 (backlog.md).
  *
- * WHAT FLIPS IT (user, 2026-10-22): `minClientVersion` at or above the version that CARRIES #2228
- * (not merely `1.2.9`: that build also declares the `form-responses` host), on BOTH estates
- * (production and dev each hold their own row), once BOTH Play AND the App Store serve it - THEN a
- * follow-up pull request setting this to `true` and changing the spec that pins it. A runtime read of the floor was not taken: the floor
- * lives in core-service's `platform_config`, and this service reads it nowhere else.
+ * WHAT FLIPPED IT (user, 2026-10-22): `minClientVersion` at or above the version that CARRIES #2228
+ * (`v1.4.0`, not merely `1.2.9`: that build also declares the `form-responses` host), on BOTH
+ * estates - the floor of `1.7.0`. A runtime read of the floor was not taken: the floor lives in
+ * core-service's `platform_config`, and this service reads it nowhere else.
  *
  * While it is off a payment over capacity still lands, is still logged at WARN by `markPaid`, and
  * leaves `organiserNotifiedAt` NULL - nothing is claimed for a notice that was not written.
  */
-export const FORM_ORGANISER_ALERT_ENABLED = false;
+export const FORM_ORGANISER_ALERT_ENABLED = true;
 
 /** The bell row's type; the push's `contentKey` is `form_paid_over_capacity` too. */
 export const FORM_PAID_OVER_CAPACITY_TYPE = 'form_paid_over_capacity';
