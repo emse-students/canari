@@ -14,7 +14,7 @@ entries:
       name: "miconnect-archives"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -46,7 +46,7 @@ entries:
       name: "miconnect-canari"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -70,8 +70,8 @@ entries:
       # it goes when the estate migration retires the origin
       # (docs/wiki/infrastructure/estate-migration.md). Removed the same day: the `tauri.localhost`
       # pair (an Android build from before the deep link, last seen 2026-04-25) and the loopback dev
-      # ports, which belong to `miconnect-canari-local` alone. Authorizes through the implicit-consent
-      # flow: the terms are HELD out of production (45-consent.yaml).
+      # ports, which belong to `miconnect-canari-local` alone. Authorizes through the terms flow
+      # (`miconnect-authorization`, 45-consent.yaml): the hold on production was lifted 2026-11-20.
       redirect_uris:
         - matching_mode: "strict"
           url: "https://canari.emse.fr/auth/callback"
@@ -188,7 +188,7 @@ entries:
       name: "miconnect-cercle"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -219,7 +219,7 @@ entries:
       name: "miconnect-migallery"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -244,7 +244,7 @@ entries:
       name: "miconnect-mino-wiki"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -281,7 +281,7 @@ entries:
       name: "miconnect-sky"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]

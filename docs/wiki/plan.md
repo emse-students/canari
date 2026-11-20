@@ -19,7 +19,7 @@ earliest version, as a checklist.
 **P1 - security, or a user-facing path that is broken**
 
 - [P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)](backlog.d/p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
-- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
+- [P1 - The MiConnect terms stage reaches production with the next STABLE: the hold is lifted in code, the stable's apply and a production read remain (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - rows before ratchet: the orphan buffer, the last window once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)](backlog.d/p1-rows-before-ratchet.md)
