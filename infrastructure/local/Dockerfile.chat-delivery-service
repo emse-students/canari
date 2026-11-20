@@ -22,13 +22,24 @@ RUN cd apps/chat-delivery-service && bun install --frozen-lockfile
 COPY apps/chat-delivery-service ./apps/chat-delivery-service
 RUN cd apps/chat-delivery-service && bunx tsc -p tsconfig.build.json
 
+# -- Production dependencies ---------------------------------------------------
+# What the runtime stage ships: the production closure only. The builder installs devDependencies
+# too (it needs tsc and @nestjs/cli), and copying ITS node_modules put jest, the Nest CLI, ts-jest
+# and the rest next to dist/ on the image's disk, in its size, its pull time and its scan.
+FROM oven/bun:1.4.4-alpine AS prod-deps
+
+WORKDIR /app
+
+COPY apps/chat-delivery-service/package.json apps/chat-delivery-service/bun.lock ./apps/chat-delivery-service/
+RUN cd apps/chat-delivery-service && bun install --production --frozen-lockfile
+
 # -- Runtime stage -------------------------------------------------------------
 FROM oven/bun:1.4.4-alpine
 
 WORKDIR /app
 
 COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
-COPY --from=builder /app/apps/chat-delivery-service/node_modules ./node_modules
+COPY --from=prod-deps /app/apps/chat-delivery-service/node_modules ./node_modules
 COPY --from=builder /app/apps/chat-delivery-service/package.json ./
 
 EXPOSE 3010
