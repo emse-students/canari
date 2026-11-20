@@ -13,7 +13,8 @@ import {
 import { PAYMENTS_BLOCKED, PAYMENTS_NOT_ACTIVATED } from './paymentRefusal';
 import { LYDIA_BUSINESS_HOLDS_PAYMENTS, LYDIA_ONBOARDING_REFUSAL } from './lydiaOnboardingRefusal';
 import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
-import { LYDIA_CASHIER_ADD_ENABLED } from './lydiaCashiers';
+import { LYDIA_CASHIER_ADD_ENABLED, LYDIA_RESPONSABLE_HANDOVER_ENABLED } from './lydiaCashiers';
+import { LEAVE_REFUSAL } from './api';
 import { isKnownNotificationType } from '$lib/posts/notificationTarget';
 
 const CONTRACT = JSON.parse(
@@ -25,7 +26,7 @@ const CONTRACT = JSON.parse(
   core: Record<string, string>;
   social: Record<string, string>;
   notificationTypes: Record<string, string>;
-  switches: { cashierAddEnabled: boolean };
+  switches: { cashierAddEnabled: boolean; responsableHandoverEnabled: boolean };
 };
 
 describe('Lydia codes follow the shared contract', () => {
@@ -65,6 +66,7 @@ describe('Lydia codes follow the shared contract', () => {
       READBACK_INVALID: CONTRACT.core.cashierReadbackInvalid,
       REMOVAL_PRECONDITION: CONTRACT.core.cashierRemovalPrecondition,
       RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: CONTRACT.core.responsableNumberChangeForbidden,
+      RESPONSABLE_HANDOVER_DISABLED: CONTRACT.core.responsableHandoverDisabled,
     });
     expect(LYDIA_CASHIER_SOCIAL_REFUSAL).toEqual({
       IN_FLIGHT: CONTRACT.social.cashierInFlight,
@@ -79,12 +81,18 @@ describe('Lydia codes follow the shared contract', () => {
       NUMBER_CHANGED: CONTRACT.social.cashierNumberChanged,
       CONFIRMED_REQUIRED: CONTRACT.social.cashierConfirmedRequired,
       LIVE_ON_DELETE: CONTRACT.social.cashiersLiveOnDelete,
+      RESPONSABLE_HANDOVER_FORBIDDEN: CONTRACT.social.responsableHandoverForbidden,
+      RESPONSABLE_HANDOVER_SAME_PERSON: CONTRACT.social.responsableHandoverSamePerson,
     });
+    expect(LEAVE_REFUSAL.RESPONSABLE_MUST_HAND_OVER).toBe(CONTRACT.social.responsableMustHandOver);
   });
   it('the bell knows the new cashier notice by its contract type', () => {
     expect(isKnownNotificationType(CONTRACT.notificationTypes.cashierAdded)).toBe(true);
   });
   it('the add gate is the one the servers read', () => {
     expect(LYDIA_CASHIER_ADD_ENABLED).toBe(CONTRACT.switches.cashierAddEnabled);
+  });
+  it('the hand-over gate is the one the servers read', () => {
+    expect(LYDIA_RESPONSABLE_HANDOVER_ENABLED).toBe(CONTRACT.switches.responsableHandoverEnabled);
   });
 });

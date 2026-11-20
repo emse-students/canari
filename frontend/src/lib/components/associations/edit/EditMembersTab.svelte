@@ -91,6 +91,10 @@
     if (code === MEMBER_FLAGS_BEYOND_GRANTER) return m.asso_member_flags_beyond_granter_error();
     // Removing or demoting the last holder of "manage members", from the roster editor.
     if (code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER) return m.asso_member_last_manager_error();
+    // Removing the association's Lydia Responsable: they hand the role over first.
+    if (code === LEAVE_REFUSAL.RESPONSABLE_MUST_HAND_OVER) {
+      return m.asso_member_lydia_responsable_error();
+    }
     if (code === ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY) {
       return m.asso_institution_members_admin_only_error();
     }

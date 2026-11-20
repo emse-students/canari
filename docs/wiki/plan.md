@@ -122,12 +122,14 @@ earliest version, as a checklist.
 - [ ] [a salon invitation's notice carries ids, drawn in the reader's language (2026-11-16)](backlog.d/reading-owed-a-salon-invitation-notice-carries-ids.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [the broadcaster's right-edge control column on both phones (owner, 2026-11-19)](backlog.d/reading-owed-the-broadcasters-control-column.md)
+- [ ] [the owner hands the Lydia Responsable over in production, then takes it back](backlog.d/reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md)
 - [ ] [the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)](backlog.d/live-replay-switch-readings-owed.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
+- [ ] [the Lydia Responsable hand-over runs against homologation](backlog.d/reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
 ## 1.7.3

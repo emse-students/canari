@@ -21,11 +21,29 @@ import {
   LYDIA_CASHIER_ADD_ENABLED,
   LYDIA_CASHIER_PHONE_INVALID,
   LYDIA_CASHIER_PHONE_RE,
+  LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
   LYDIA_UNREACHABLE,
   LydiaCashierAddedUnconfirmedException,
   type LydiaCashierRole,
 } from './lydia-payment-provider';
 import { RouteParams } from '../common/route-params';
+
+/**
+ * social-service's `code` of a member who is not (or no longer) a member, which the hand-over
+ * answers too when its target left while Lydia was being asked (`libs/contracts`, `social`).
+ */
+export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
+
+/** social-service's `code` of a cashier operation refused while another holds the claim. */
+const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
+
+/** What social-service's hand-over record answers (`LydiaCashiersService.recordHandover`). */
+interface HandoverRecord {
+  outcome: 'handed-over' | 'unconfirmed' | 'target-left';
+  cashierId: string;
+  removeOther: boolean;
+}
 
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
 function addableRole(value: unknown): Exclude<LydiaCashierRole, 'responsable'> | null {
@@ -192,18 +210,182 @@ export class LydiaCashiersController {
         );
         return err;
       }
+      await this.afterRefusedAdd(associationId, err, claimToken, role);
+      throw err;
+    }
+  }
+
+  /** The owner's gate on the hand-over (OFF), read through a method so a spec can open it. */
+  responsableHandoverEnabled(): boolean {
+    return LYDIA_RESPONSABLE_HANDOVER_ENABLED;
+  }
+
+  /**
+   * HANDS THE RESPONSABLE OVER to another member (body `{ userId, phone }`, phone E.164, never logged;
+   * owner, 2026-11-19). Asked by the live Responsable themselves or a platform admin, through the
+   * cashier screens (so a MANAGE_PAYOUT_ACCOUNT holder too - social-service checks the identity
+   * under its lock, 403 `LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN`). The order never leaves the Business
+   * without a confirmed Responsable - ADD FIRST, REMOVE SECOND:
+   *
+   * 1. social-service checks and CLAIMS (`lydia-responsable-handover-claim`: one cashier operation of
+   *    the association at a time);
+   * 2. Lydia adds the number with the 13 rights and its SMS, and `getpermission` reads them back
+   *    (`addLydiaBusinessHolder`, the Responsable's own add);
+   * 3. social-service RECORDS (`lydia-responsable-handover`): confirmed, the target becomes the live
+   *    Responsable and the old number the new row's other number; not confirmed, the old Responsable
+   *    stays and the asked number is tracked as their other number - the claim released either way;
+   * 4. the other number is REMOVED through the verified path (`LydiaCashierOps.revoke`, `previous`:
+   *    its own claim, the removal, the re-read at 0 rights).
+   *
+   * A typed refusal before the add answered releases the claim (nothing changed at Lydia); no usable
+   * answer to the add keeps it until a global admin clears it (the add may have happened); a record
+   * that fails after the add keeps it too (`socialStep` says so at ERROR). Answers
+   * `{ outcome: 'handed-over', previousNumberRemoved }` - a removal that did not confirm leaves the
+   * old number flagged on the card for "Retirer cet autre numero", never a failed hand-over. Lydia's
+   * unconfirmed rights are the add's typed error; a target who left meanwhile is the 409
+   * `LYDIA_CASHIER_NOT_A_MEMBER`, their number removed.
+   */
+  @Post('lydia-cashiers/:associationId/responsable-handover')
+  @UseGuards(NginxAuthGuard)
+  @HttpCode(200)
+  async handOverResponsable(
+    @Param('associationId') associationId: string,
+    @Body() body: { userId?: unknown; phone?: unknown },
+    @Req() req: Request
+  ) {
+    await assertCanManageAssociation(req, associationId, this.logger);
+    if (!this.responsableHandoverEnabled()) {
+      this.logger.warn(`Lydia Responsable of ${associationId}: hand-over refused - switched off`);
+      throw new ConflictException({
+        code: LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+        message: 'Handing the Responsable over is not open yet',
+      });
+    }
+    const actorId = (req.headers['x-user-id'] as string | undefined)?.trim() ?? '';
+    const globalAdmin = req.headers['x-global-admin'] === 'true';
+    const userId = typeof body?.userId === 'string' ? body.userId.trim() : '';
+    const phone = typeof body?.phone === 'string' ? body.phone.trim() : '';
+    if (!userId) throw new BadRequestException('userId is required');
+    if (!LYDIA_CASHIER_PHONE_RE.test(phone)) {
+      this.logger.warn(`Lydia Responsable of ${associationId}: hand-over refused, phone not E.164`);
+      throw new BadRequestException({
+        code: LYDIA_CASHIER_PHONE_INVALID,
+        message: 'The phone number must be written +33...',
+      });
+    }
+    const pre = await this.ops.socialStep<{
+      vendorToken: string;
+      claimToken: string;
+      previousResponsableId: string;
+    }>(associationId, 'lydia-responsable-handover-claim', { actorId, globalAdmin, userId, phone });
+    this.logger.log(
+      `Lydia Responsable of ${associationId}: hand-over claimed, adding the new holder`
+    );
+    let added: true | LydiaCashierAddedUnconfirmedException;
+    try {
+      await this.paymentService.addLydiaBusinessHolder(associationId, pre.vendorToken, phone);
+      added = true;
+    } catch (err: unknown) {
+      if (!(err instanceof LydiaCashierAddedUnconfirmedException)) {
+        await this.afterRefusedAdd(associationId, err, pre.claimToken, 'hand-over');
+        throw err;
+      }
+      this.logger.error(
+        `Lydia Responsable of ${associationId}: hand-over add answered, rights UNCONFIRMED - ` +
+          `the old Responsable stays, the number is tracked`
+      );
+      added = err;
+    }
+    const record = await this.ops.socialStep<HandoverRecord>(
+      associationId,
+      'lydia-responsable-handover',
+      {
+        vendorToken: pre.vendorToken,
+        userId,
+        phone,
+        previousResponsableId: pre.previousResponsableId,
+        actorId,
+        confirmed: added === true,
+        claimToken: pre.claimToken,
+      },
+      true
+    );
+    const removed = record.removeOther
+      ? await this.removeAfterHandover(associationId, record.cashierId, actorId)
+      : null;
+    if (added !== true) throw added;
+    if (record.outcome === 'target-left') {
+      this.logger.warn(
+        `Lydia Responsable of ${associationId}: hand-over not made - the new holder left meanwhile ` +
+          `(their number ${removed ? 'removed' : 'NOT removed, flagged'})`
+      );
+      throw new ConflictException({
+        code: LYDIA_CASHIER_NOT_A_MEMBER,
+        message: 'The new Responsable is no longer a member of the association',
+      });
+    }
+    this.logger.log(
+      `Lydia Responsable of ${associationId}: handed over; the old number ` +
+        `${removed ? 'removed (0 rights)' : 'NOT removed yet - flagged on the card'}`
+    );
+    return { ok: true, outcome: record.outcome, previousNumberRemoved: removed === true };
+  }
+
+  /**
+   * After an add that did NOT answer "added": a typed refusal (nothing changed at Lydia) releases
+   * the claim; no usable answer keeps it, at ERROR, until a global admin clears it - the add may
+   * have happened. Shared by the cashier add and the hand-over.
+   */
+  private async afterRefusedAdd(
+    associationId: string,
+    err: unknown,
+    claimToken: string,
+    what: string
+  ): Promise<void> {
+    const answer = err instanceof HttpException ? err.getResponse() : undefined;
+    const code =
+      answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
+    if (err instanceof HttpException && code !== LYDIA_UNREACHABLE) {
+      await this.ops.release(associationId, claimToken);
+      return;
+    }
+    this.logger.error(
+      `Lydia cashiers of ${associationId}: the ${what}'s add has an unknown outcome - the claim ` +
+        `stays until a global admin clears it`
+    );
+  }
+
+  /**
+   * Removes the other number of row `cashierId` right after a hand-over's record - the old
+   * Responsable's number, or a target's who left - through the verified path. Answers whether
+   * Lydia's re-read showed 0 rights. Never throws: the hand-over's own outcome is already recorded,
+   * and every way this fails leaves the number on the card (flagged, or untried while another
+   * operation held the claim - WARN), for "Retirer cet autre numero".
+   */
+  private async removeAfterHandover(
+    associationId: string,
+    cashierId: string,
+    actorId: string
+  ): Promise<boolean> {
+    try {
+      await this.ops.revoke(associationId, cashierId, 'previous', actorId);
+      return true;
+    } catch (err: unknown) {
       const answer = err instanceof HttpException ? err.getResponse() : undefined;
       const code =
         answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
-      if (err instanceof HttpException && code !== LYDIA_UNREACHABLE) {
-        await this.ops.release(associationId, claimToken);
+      if (code === LYDIA_CASHIER_IN_FLIGHT) {
+        this.logger.warn(
+          `Lydia Responsable of ${associationId}: the replaced number's removal waits - another ` +
+            `cashier operation is in flight; it stays on the card`
+        );
       } else {
         this.logger.error(
-          `Lydia cashiers of ${associationId}: the add's outcome is unknown - the claim stays ` +
-            `until a global admin clears it`
+          `Lydia Responsable of ${associationId}: the replaced number's removal failed ` +
+            `(${typeof code === 'string' ? code : 'untyped'}) - it stays on the card`
         );
       }
-      throw err;
+      return false;
     }
   }
 

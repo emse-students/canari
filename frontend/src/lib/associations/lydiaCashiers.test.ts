@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { AssociationPayoutAccount, LydiaCashier } from './api';
 import {
   LYDIA_CASHIER_ADD_ENABLED,
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  handoverConfirmText,
+  handoverDoneText,
   lydiaCashiersView,
   responsableResendText,
 } from './lydiaCashiers';
+import { m } from '$lib/paraglide/messages';
 
 function cashier(overrides: Partial<LydiaCashier>): LydiaCashier {
   return {
@@ -148,5 +152,74 @@ describe('lydiaCashiersView', () => {
     const early = cashier({ id: 'early', addedAt: '2026-10-31T09:00:00.000Z' });
     const view = lydiaCashiersView(account({ cashiers: [late, early, responsable] }));
     expect(view.rows.map((row) => row.cashier.id)).toEqual(['r1', 'early', 'late']);
+  });
+});
+
+describe('lydiaCashiersView - "Transferer le role" (owner, 2026-11-19)', () => {
+  const self = { userId: 'ur', globalAdmin: false };
+  const admin = { userId: 'someone', globalAdmin: true };
+  const treasurer = { userId: 'u1', globalAdmin: false };
+  const handOver = (
+    cashiers: LydiaCashier[],
+    viewer: { userId: string | null; globalAdmin: boolean },
+    gate = true
+  ) =>
+    lydiaCashiersView(account({ cashiers }), true, viewer, gate).rows.map((row) => [
+      row.cashier.id,
+      row.canHandOver,
+    ]);
+
+  it('ships OFF: never drawn, even to the Responsable', () => {
+    expect(LYDIA_RESPONSABLE_HANDOVER_ENABLED).toBe(false);
+    const [row] = lydiaCashiersView(account(), true, self).rows;
+    expect(row.canHandOver).toBe(false);
+  });
+
+  it('gate on: on the Responsable row only, for the Responsable themselves or a platform admin', () => {
+    const cashiers = [responsable, cashier({})];
+    expect(handOver(cashiers, self)).toEqual([
+      ['r1', true],
+      ['c1', false],
+    ]);
+    expect(handOver(cashiers, admin)).toEqual([
+      ['r1', true],
+      ['c1', false],
+    ]);
+    // A payout manager who is not the Responsable: never (the server answers 403 anyway).
+    expect(handOver(cashiers, treasurer)).toEqual([
+      ['r1', false],
+      ['c1', false],
+    ]);
+    expect(handOver(cashiers, { userId: null, globalAdmin: false })).toEqual([
+      ['r1', false],
+      ['c1', false],
+    ]);
+  });
+
+  it('a Responsable whose rights Lydia has not confirmed resends first: no hand-over', () => {
+    expect(handOver([{ ...responsable, state: 'unconfirmed' }], self)).toEqual([['r1', false]]);
+  });
+
+  it('a departed Responsable: a platform admin hands the role over for them', () => {
+    expect(handOver([{ ...responsable, departed: true }], admin)).toEqual([['r1', true]]);
+  });
+});
+
+describe('the hand-over texts', () => {
+  it('the confirmation names the heir and the consequence; the admin reads which number', () => {
+    expect(handoverConfirmText('Bob', '32', true)).toBe(
+      m.asso_lydia_handover_confirm_self({ name: 'Bob' })
+    );
+    expect(handoverConfirmText('Bob', '32', false)).toBe(
+      m.asso_lydia_handover_confirm_admin({ name: 'Bob', phoneEnd: '32' })
+    );
+    expect(handoverConfirmText('Bob', '32', false)).toContain('32');
+  });
+
+  it('done: says whether the old number still waits for its removal', () => {
+    expect(handoverDoneText('Bob', true)).toBe(m.asso_lydia_handover_done({ name: 'Bob' }));
+    expect(handoverDoneText('Bob', false)).toBe(
+      m.asso_lydia_handover_done_old_kept({ name: 'Bob' })
+    );
   });
 });

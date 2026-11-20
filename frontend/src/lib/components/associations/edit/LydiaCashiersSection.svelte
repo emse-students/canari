@@ -4,6 +4,7 @@
   import {
     addLydiaCashier,
     changeLydiaCashierRole,
+    handOverLydiaResponsable,
     listMembers,
     revokeLydiaCashier,
     type AssociationMember,
@@ -12,13 +13,23 @@
     type LydiaCashier,
     type LydiaCashierRole,
   } from '$lib/associations/api';
-  import { LYDIA_ADDABLE_CASHIER_ROLES, lydiaCashiersView } from '$lib/associations/lydiaCashiers';
-  import { lydiaCashierErrorText } from '$lib/associations/lydiaCashierRefusal';
+  import {
+    LYDIA_ADDABLE_CASHIER_ROLES,
+    handoverConfirmText,
+    handoverDoneText,
+    lydiaCashiersView,
+  } from '$lib/associations/lydiaCashiers';
+  import {
+    lydiaCashierErrorText,
+    lydiaHandoverErrorText,
+  } from '$lib/associations/lydiaCashierRefusal';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { toE164Phone } from '$lib/associations/lydiaPhone';
   import { LYDIA_PRO_HELP_ROUTE } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Input from '$lib/components/ui/Input.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
   import { CONTROL_LABEL_CLASS, controlClass } from '$lib/components/ui/controlClasses';
   import { Users } from '@lucide/svelte';
 
@@ -32,7 +43,12 @@
 
   let { associationId, account, reload }: Props = $props();
 
-  const view = $derived(lydiaCashiersView(account));
+  const view = $derived(
+    lydiaCashiersView(account, undefined, {
+      userId: currentUserId(),
+      globalAdmin: isGlobalAdmin(),
+    })
+  );
 
   let error = $state('');
   let notice = $state('');
@@ -45,6 +61,12 @@
   let addPhone = $state('');
   let addPhoneError = $state('');
   let addRole = $state<LydiaAddableCashierRole>('vendeur');
+
+  /** The Responsable row being handed over, and the heir and number picked (owner, 2026-11-19). */
+  let handoverFor = $state<string | null>(null);
+  let handoverUserId = $state('');
+  let handoverPhone = $state('');
+  let handoverPhoneError = $state('');
 
   /** The cashier whose role is being changed, and the role picked for them. */
   let roleFor = $state<string | null>(null);
@@ -85,11 +107,12 @@
     return member.displayName || full || member.userId;
   }
 
-  /** Opens the add form and reads the roster once (members who are not cashiers yet first). */
-  function openAdd() {
-    adding = true;
-    error = '';
-    notice = '';
+  /**
+   * Reads the roster once: the members who are not cashiers yet (the Responsable included), each
+   * once. The add form and the hand-over pick from it; `pick` receives the first one.
+   */
+  function loadPickableMembers(pick: (userId: string) => void) {
+    membersFailed = false;
     void listMembers(associationId)
       .then((rows) => {
         const taken = new Set((account.cashiers ?? []).map((c) => c.userId));
@@ -98,12 +121,77 @@
             !taken.has(row.userId) &&
             rows.findIndex((other) => other.userId === row.userId) === index
         );
-        addUserId = members[0]?.userId ?? '';
+        pick(members[0]?.userId ?? '');
       })
       .catch((err) => {
         console.error('[Lydia] Cashier roster read failed:', err);
         membersFailed = true;
       });
+  }
+
+  /** Opens the add form. */
+  function openAdd() {
+    adding = true;
+    handoverFor = null;
+    error = '';
+    notice = '';
+    loadPickableMembers((userId) => (addUserId = userId));
+  }
+
+  /** Opens the hand-over form under the Responsable's row. */
+  function openHandover(cashier: LydiaCashier) {
+    console.debug('[Lydia] Hand-over form opened');
+    handoverFor = cashier.id;
+    adding = false;
+    roleFor = null;
+    handoverPhone = '';
+    handoverPhoneError = '';
+    error = '';
+    notice = '';
+    loadPickableMembers((userId) => (handoverUserId = userId));
+  }
+
+  /**
+   * Hands the role over once the consequence is confirmed: the heir becomes Responsable, the
+   * current number loses its Lydia rights. The server adds first and removes second.
+   */
+  async function submitHandover(responsable: LydiaCashier) {
+    handoverPhoneError = '';
+    const e164 = toE164Phone(handoverPhone);
+    if (!e164) {
+      console.debug('[Lydia] Hand-over phone refused client-side');
+      handoverPhoneError = m.asso_lydia_resp_phone_format_error();
+      return;
+    }
+    const heir = members.find((member) => member.userId === handoverUserId);
+    if (!heir) return;
+    const heirName = memberLabel(heir);
+    const self = currentUserId() === responsable.userId;
+    if (
+      !(await showConfirm(handoverConfirmText(heirName, responsable.phoneEnd, self), {
+        danger: true,
+        confirmLabel: m.asso_lydia_handover_button(),
+      }))
+    )
+      return;
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      console.debug('[Lydia] Hand-over asked', { self });
+      const done = await handOverLydiaResponsable(associationId, {
+        userId: heir.userId,
+        phone: e164,
+      });
+      notice = handoverDoneText(heirName, done.previousNumberRemoved);
+      handoverFor = null;
+    } catch (err) {
+      console.error('[Lydia] Hand-over refused:', err);
+      error = lydiaHandoverErrorText(err);
+    } finally {
+      busy = false;
+      await reload();
+    }
   }
 
   /** Runs one action, then re-reads the account whatever the outcome. */
@@ -227,7 +315,55 @@
             </p>
           {/if}
 
-          {#if roleFor === cashier.id}
+          {#if handoverFor === cashier.id}
+            <div class="space-y-3">
+              <p class="text-text-muted text-xs">{m.asso_lydia_handover_hint()}</p>
+              {#if membersFailed}
+                <p class="text-red-err text-sm" role="alert">{m.asso_lydia_resp_members_error()}</p>
+              {:else if members.length === 0}
+                <p class="text-text-muted text-sm">{m.asso_lydia_resp_members_empty()}</p>
+              {:else}
+                <Select
+                  id="lydia-handover-member"
+                  label={m.asso_lydia_handover_member_label()}
+                  value={handoverUserId}
+                  options={members.map((member) => ({
+                    value: member.userId,
+                    label: memberLabel(member),
+                  }))}
+                  disabled={busy}
+                  onValueChange={(userId) => (handoverUserId = userId)}
+                />
+              {/if}
+              <Input
+                label={m.asso_lydia_handover_phone_label()}
+                type="tel"
+                inputmode="tel"
+                autocomplete="off"
+                placeholder={m.asso_lydia_resp_phone_placeholder()}
+                bind:value={handoverPhone}
+                error={handoverPhoneError}
+                disabled={busy}
+              />
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  size="compact"
+                  onclick={() => void submitHandover(cashier)}
+                  disabled={busy || !handoverPhone.trim() || !handoverUserId}
+                >
+                  {busy ? m.asso_lydia_cashier_working() : m.asso_lydia_handover_submit()}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  onclick={() => (handoverFor = null)}
+                  disabled={busy}
+                >
+                  {m.asso_lydia_cashier_cancel()}
+                </Button>
+              </div>
+            </div>
+          {:else if roleFor === cashier.id}
             <div class="space-y-2">
               <label for="lydia-cashier-role-{cashier.id}" class={CONTROL_LABEL_CLASS}>
                 {m.asso_lydia_cashier_role_label()}
@@ -264,6 +400,16 @@
             </div>
           {:else}
             <div class="flex flex-wrap gap-2">
+              {#if row.canHandOver}
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  onclick={() => openHandover(cashier)}
+                  disabled={busy}
+                >
+                  {m.asso_lydia_handover_button()}
+                </Button>
+              {/if}
               {#if row.canChangeRole}
                 <Button
                   variant="secondary"

@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { SocialApiError } from './api';
+import { m } from '$lib/paraglide/messages';
 import {
   LYDIA_CASHIER_REFUSAL,
   LYDIA_CASHIER_SOCIAL_REFUSAL,
   lydiaCashierErrorText,
+  lydiaHandoverErrorText,
 } from './lydiaCashierRefusal';
+import {
+  LYDIA_RESPONSABLE_REFUSAL,
+  LYDIA_RESPONSABLE_SOCIAL_REFUSAL,
+} from './lydiaResponsableRefusal';
 
 /**
  * The codes the cashier screen never meets as its own (the Responsable's number change) or that
@@ -61,5 +67,50 @@ describe('lydiaCashierErrorText', () => {
     const generic = lydiaCashierErrorText(new Error('x'));
     expect(lydiaCashierErrorText(new SocialApiError('no', null, 403))).not.toBe(generic);
     expect(lydiaCashierErrorText(new SocialApiError('x', 'WHATEVER', 400))).toBe(generic);
+  });
+});
+
+describe('lydiaHandoverErrorText - the hand-over words its own outcomes', () => {
+  const text = (code: string, status = 409) =>
+    lydiaHandoverErrorText(new SocialApiError('English prose', code, status));
+
+  it('Lydia not confirming the new rights: the Responsable is unchanged, retry or remove', () => {
+    expect(text(LYDIA_RESPONSABLE_REFUSAL.RIGHTS_INCOMPLETE, 502)).toBe(
+      m.asso_lydia_handover_err_unconfirmed()
+    );
+    expect(text(LYDIA_CASHIER_REFUSAL.READBACK_INVALID, 502)).toBe(
+      m.asso_lydia_handover_err_unconfirmed()
+    );
+  });
+
+  it('the other number still waiting, a member already a cashier, a member who left', () => {
+    expect(text(LYDIA_RESPONSABLE_SOCIAL_REFUSAL.PHONE_LOCKED)).toBe(
+      m.asso_lydia_handover_err_other_number()
+    );
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.ALREADY_SET)).toBe(
+      m.asso_lydia_handover_err_already_cashier()
+    );
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.NOT_A_MEMBER)).toBe(
+      m.asso_lydia_handover_err_not_a_member()
+    );
+  });
+
+  it('the gate, the identity rule and the same person have their own sentence', () => {
+    expect(text(LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_DISABLED)).toBe(
+      m.asso_lydia_handover_err_disabled()
+    );
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_FORBIDDEN, 403)).toBe(
+      m.asso_lydia_handover_err_forbidden()
+    );
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_SAME_PERSON, 400)).toBe(
+      m.asso_lydia_handover_err_same_person()
+    );
+  });
+
+  it('every other code reads as the cashier screen words it', () => {
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT)).toBe(
+      lydiaCashierErrorText(new SocialApiError('x', LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT, 409))
+    );
+    expect(lydiaHandoverErrorText(new Error('x'))).toBe(lydiaCashierErrorText(new Error('x')));
   });
 });

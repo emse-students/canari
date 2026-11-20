@@ -170,6 +170,10 @@ import {
 import { promoCutoffFor } from '../common/promo-visibility';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  LYDIA_RESPONSABLE_MUST_HAND_OVER,
+} from './lydia-responsable-handover';
+import {
   isDelegating,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
@@ -2231,6 +2235,9 @@ export class AssociationsService {
     // the association's lock: two managers leaving at once would otherwise both count two.
     const deleted = await this.underMemberLock(associationId, 'removeMember', async (members) => {
       if (guarded) await this.assertNotLastManagerLost(members, associationId, 'removal');
+      // Under the SAME association lock a hand-over's record takes: a Responsable is never removed
+      // between the hand-over's checks and its record (owner, 2026-11-19).
+      await this.assertNotLydiaResponsable(members.manager, associationId, targetUserId, leaving);
       return members.delete({ id: membership.id, permissions: membership.permissions });
     });
     if (deleted.affected !== 1) {
@@ -2249,6 +2256,42 @@ export class AssociationsService {
     // the rows themselves, so a failure here is retried by the next payments-card read.
     this.settleCashierDepartures(associationId, 'departure', targetUserId);
     return { ok: true };
+  }
+
+  /** The owner's gate on the Responsable hand-over, read through a method so a spec can open it. */
+  responsableHandoverEnabled(): boolean {
+    return LYDIA_RESPONSABLE_HANDOVER_ENABLED;
+  }
+
+  /**
+   * A LYDIA RESPONSABLE DOES NOT LEAVE BEFORE HANDING OVER (owner, 2026-11-19: "il doit d'abord passer
+   * la main lui-meme"). While the hand-over is on, removing the membership of the person holding a
+   * live Responsable row of the association - leaving, or removed by anyone, a platform admin
+   * included - is the typed 409 `LYDIA_RESPONSABLE_MUST_HAND_OVER`: the Business would otherwise keep
+   * a manager nobody in the association can reach. Read under the association's lock `manager`
+   * holds. Off, the earlier behaviour holds (the departure keeps the number, said at ERROR).
+   */
+  private async assertNotLydiaResponsable(
+    manager: EntityManager,
+    associationId: string,
+    userId: string,
+    leaving: boolean
+  ): Promise<void> {
+    if (!this.responsableHandoverEnabled()) return;
+    const rows = (await manager.query(
+      `SELECT 1 FROM lydia_cashiers
+        WHERE "associationId" = $1 AND "userId" = $2 AND role = 'responsable' AND "removedAt" IS NULL`,
+      [associationId, userId]
+    )) as unknown[];
+    if (rows.length === 0) return;
+    this.logger.warn(
+      `removeMember refused on association ${sanitizeLog(associationId)}: the ` +
+        `${leaving ? 'leaver' : 'member removed'} is the Lydia Responsable - the role is handed over first`
+    );
+    throw new ConflictException({
+      code: LYDIA_RESPONSABLE_MUST_HAND_OVER,
+      message: 'The Lydia Responsable hands the role over before leaving',
+    });
   }
 
   /**

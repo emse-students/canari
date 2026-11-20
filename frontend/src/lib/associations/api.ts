@@ -1534,6 +1534,11 @@ export async function leaveAssociation(associationId: string): Promise<void> {
 /** The typed refusals of {@link leaveAssociation}, read from `SocialApiError.code`. */
 export const LEAVE_REFUSAL = {
   LAST_MEMBER_MANAGER: 'ASSOCIATION_LAST_MEMBER_MANAGER',
+  /**
+   * The member is the association's Lydia Responsable: the role is handed over first, from the
+   * payments' cashier section (owner, 2026-11-19). Also a removal by a manager.
+   */
+  RESPONSABLE_MUST_HAND_OVER: 'LYDIA_RESPONSABLE_MUST_HAND_OVER',
 } as const;
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
@@ -3105,6 +3110,30 @@ export async function changeLydiaCashierRole(
     cashier: LydiaCashier;
   };
   return body.cashier;
+}
+
+/**
+ * Hands the Lydia Responsable over to member `userId` with number `phone` (E.164), asked by the
+ * Responsable themselves or a platform admin (owner, 2026-11-19). Lydia adds the new number with every
+ * right first, then the old number is removed. Resolves once the new holder is the Responsable;
+ * `previousNumberRemoved` false means the old number still waits for its removal on the card. A
+ * refusal is a typed {@link SocialApiError} (`lydiaCashierRefusal.ts`).
+ */
+export async function handOverLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string }
+): Promise<{ previousNumberRemoved: boolean }> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/responsable-handover`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(
+    res,
+    'POST /api/payments/lydia-cashiers/:id/responsable-handover'
+  )) as { previousNumberRemoved?: unknown };
+  return { previousNumberRemoved: body.previousNumberRemoved === true };
 }
 
 /**

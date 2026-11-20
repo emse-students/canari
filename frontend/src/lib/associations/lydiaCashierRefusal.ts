@@ -1,7 +1,10 @@
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from './api';
 import { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL } from './lydiaCashierCodes';
-import { LYDIA_RESPONSABLE_REFUSAL } from './lydiaResponsableRefusal';
+import {
+  LYDIA_RESPONSABLE_REFUSAL,
+  LYDIA_RESPONSABLE_SOCIAL_REFUSAL,
+} from './lydiaResponsableRefusal';
 
 export { LYDIA_CASHIER_REFUSAL, LYDIA_CASHIER_SOCIAL_REFUSAL };
 
@@ -36,6 +39,12 @@ function lydiaCashierCodeText(code: string | null | undefined): string | null {
       return m.asso_lydia_cashier_err_not_found();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.ROLE_FIXED:
       return m.asso_lydia_cashier_err_role_fixed();
+    case LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_DISABLED:
+      return m.asso_lydia_handover_err_disabled();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_FORBIDDEN:
+      return m.asso_lydia_handover_err_forbidden();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_SAME_PERSON:
+      return m.asso_lydia_handover_err_same_person();
   }
   return null;
 }
@@ -68,4 +77,27 @@ export function lydiaCashierErrorText(err: unknown): string {
     if (err.status === 403) return m.asso_lydia_resp_err_forbidden();
   }
   return m.asso_lydia_cashier_err_generic();
+}
+
+/**
+ * The sentence for a refused or unfinished hand-over of the Responsable (owner, 2026-11-19): the
+ * codes whose meaning differs there - Lydia not confirming the new holder's rights (the old
+ * Responsable stays), the other number still waiting, a member who already is a cashier or left -
+ * then every cashier code as {@link lydiaCashierErrorText} words it.
+ */
+export function lydiaHandoverErrorText(err: unknown): string {
+  if (err instanceof SocialApiError) {
+    switch (err.code) {
+      case LYDIA_RESPONSABLE_REFUSAL.RIGHTS_INCOMPLETE:
+      case LYDIA_CASHIER_REFUSAL.READBACK_INVALID:
+        return m.asso_lydia_handover_err_unconfirmed();
+      case LYDIA_RESPONSABLE_SOCIAL_REFUSAL.PHONE_LOCKED:
+        return m.asso_lydia_handover_err_other_number();
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.ALREADY_SET:
+        return m.asso_lydia_handover_err_already_cashier();
+      case LYDIA_CASHIER_SOCIAL_REFUSAL.NOT_A_MEMBER:
+        return m.asso_lydia_handover_err_not_a_member();
+    }
+  }
+  return lydiaCashierErrorText(err);
 }

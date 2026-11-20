@@ -13,6 +13,8 @@ export const LYDIA_CASHIER_REFUSAL = {
   /** Changing the Responsable's number is off while the add gate is off. */
   /** Only the Responsable themselves, or a global admin, may change their number. */
   RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN',
+  /** Handing the Responsable over is off (the owner's gate). */
+  RESPONSABLE_HANDOVER_DISABLED: 'LYDIA_RESPONSABLE_HANDOVER_DISABLED',
 } as const;
 
 /** The typed refusals social-service answers on the same routes (core passes them on as given). */
@@ -33,4 +35,8 @@ export const LYDIA_CASHIER_SOCIAL_REFUSAL = {
   CONFIRMED_REQUIRED: 'LYDIA_CASHIER_CONFIRMED_REQUIRED',
   /** Deleting the association is refused while its Lydia Business still lists cashiers to remove. */
   LIVE_ON_DELETE: 'LYDIA_CASHIERS_LIVE',
+  /** Only the Responsable themselves, or a platform admin, hands the role over. */
+  RESPONSABLE_HANDOVER_FORBIDDEN: 'LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN',
+  /** The member picked already is the Responsable. */
+  RESPONSABLE_HANDOVER_SAME_PERSON: 'LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON',
 } as const;

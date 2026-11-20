@@ -1,5 +1,5 @@
 {
-  "description": "The typed codes of Lydia enrolment lots 2 and 3 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes. `switches` are the gates both sides must agree on (lot 3: adding a cashier, ON since 1.7.1).",
+  "description": "The typed codes of Lydia enrolment lots 2 and 3 (docs/wiki/frontend/modules/payments.md), shared as data so core-service, social-service and the frontend cannot disagree on a name: each side's contract spec asserts its own constants against this file. `core` codes are answered by core-service; `social` codes by social-service; `notificationTypes` are the bell row types social-service writes. `switches` are the gates both sides must agree on (lot 3: adding a cashier, ON since 1.7.1; the Responsable hand-over, OFF until its homologation run and the owner's production trial).",
   "core": {
     "businessNotValidated": "LYDIA_BUSINESS_NOT_VALIDATED",
     "businessBlocked": "LYDIA_BUSINESS_BLOCKED",
@@ -17,7 +17,8 @@
     "cashierRevokeUnconfirmed": "LYDIA_CASHIER_REVOKE_UNCONFIRMED",
     "cashierReadbackInvalid": "LYDIA_CASHIER_READBACK_INVALID",
     "cashierRemovalPrecondition": "LYDIA_CASHIER_REMOVAL_PRECONDITION",
-    "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN"
+    "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN",
+    "responsableHandoverDisabled": "LYDIA_RESPONSABLE_HANDOVER_DISABLED"
   },
   "social": {
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",
@@ -41,7 +42,10 @@
     "cashierClaimLost": "LYDIA_CASHIER_CLAIM_LOST",
     "cashierNumberChanged": "LYDIA_CASHIER_NUMBER_CHANGED",
     "cashierConfirmedRequired": "LYDIA_CASHIER_CONFIRMED_REQUIRED",
-    "cashiersLiveOnDelete": "LYDIA_CASHIERS_LIVE"
+    "cashiersLiveOnDelete": "LYDIA_CASHIERS_LIVE",
+    "responsableHandoverForbidden": "LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN",
+    "responsableHandoverSamePerson": "LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON",
+    "responsableMustHandOver": "LYDIA_RESPONSABLE_MUST_HAND_OVER"
   },
   "notificationTypes": {
     "active": "lydia_payments_active",
@@ -49,7 +53,8 @@
     "cashierAdded": "lydia_cashier_added"
   },
   "switches": {
-    "cashierAddEnabled": true
+    "cashierAddEnabled": true,
+    "responsableHandoverEnabled": false
   },
   "timeouts": {
     "description": "How long social-service waits for core-service's verified removal of ONE cashier number (an erasure's or a departure's) before it records the outcome NOT confirmed and releases the cashier claim. core bounds each of the removal's three Lydia calls so their sum stays under it (LYDIA_REMOVAL_STEP_TIMEOUT_MS), asserted by each side's spec.",

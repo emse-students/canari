@@ -18,6 +18,20 @@ import type {
 export const LYDIA_CASHIER_ADD_ENABLED = true;
 
 /**
+ * THE OWNER'S GATE ON THE RESPONSABLE HAND-OVER (owner, 2026-11-19), OFF: it has never run against
+ * Lydia. It moves in ONE pull request with core-service's and social-service's constants of the same
+ * name and `switches.responsableHandoverEnabled` in `libs/contracts/lydia-refusal-codes.json`
+ * (asserted equal by `lydiaCodes.contract.test.ts`). Off, "Transferer le role" is never drawn.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_ENABLED = false;
+
+/** Who reads the screen: the hand-over is offered to the Responsable themselves or a platform admin. */
+export interface LydiaCashiersViewer {
+  userId: string | null;
+  globalAdmin: boolean;
+}
+
+/**
  * The Responsable's resend control, in the reader's language. Changing the Responsable's number is
  * behind the same gate as adding a cashier (core-service refuses it with
  * `LYDIA_RESPONSABLE_PHONE_LOCKED` while off), so while the gate is off the control only
@@ -51,6 +65,11 @@ interface LydiaCashierRowView {
   /** "Retirer" for the older number a Responsable number change left behind. */
   canRevokePrevious: boolean;
   /**
+   * "Transferer le role": the confirmed Responsable's row, to the Responsable themselves or a
+   * platform admin (a departed Responsable's too - the admin hands it over for them), gate on.
+   */
+  canHandOver: boolean;
+  /**
    * The person left the association: `cashier`, their access is being removed at Lydia (the
    * row's own state says whether Lydia confirmed it); `responsable`, they keep the Business's
    * current number and a new Responsable is needed. Null for a member.
@@ -74,7 +93,9 @@ export interface LydiaCashiersView {
  */
 export function lydiaCashiersView(
   account: AssociationPayoutAccount,
-  addEnabled: boolean = LYDIA_CASHIER_ADD_ENABLED
+  addEnabled: boolean = LYDIA_CASHIER_ADD_ENABLED,
+  viewer: LydiaCashiersViewer = { userId: null, globalAdmin: false },
+  handoverEnabled: boolean = LYDIA_RESPONSABLE_HANDOVER_ENABLED
 ): LydiaCashiersView {
   const linked = account.lydiaAccountId != null;
   const responsableConfirmed =
@@ -91,6 +112,11 @@ export function lydiaCashiersView(
       canChangeRole: addEnabled && cashier.role !== 'responsable' && cashier.departed !== true,
       canRevokeCurrent: cashier.role !== 'responsable',
       canRevokePrevious: cashier.previousPhoneEnd != null,
+      canHandOver:
+        handoverEnabled &&
+        cashier.role === 'responsable' &&
+        cashier.state === 'confirmed' &&
+        (viewer.globalAdmin || (viewer.userId != null && viewer.userId === cashier.userId)),
       departed:
         cashier.departed === true
           ? cashier.role === 'responsable'
@@ -99,4 +125,25 @@ export function lydiaCashiersView(
           : null,
     }));
   return { visible, canAdd: addEnabled, rows };
+}
+
+/**
+ * The question "Transferer le role" asks before anything is sent, naming the consequence: the heir
+ * becomes Responsable and the current number loses its Lydia rights. `self` when the Responsable
+ * asks (their own number), otherwise a platform admin (the number named by its last two digits).
+ */
+export function handoverConfirmText(heirName: string, phoneEnd: string, self: boolean): string {
+  return self
+    ? m.asso_lydia_handover_confirm_self({ name: heirName })
+    : m.asso_lydia_handover_confirm_admin({ name: heirName, phoneEnd });
+}
+
+/**
+ * What the screen says once the hand-over answered: done, and whether the old number's removal was
+ * confirmed by Lydia - if not, the card still lists it with "Retirer cet autre numero".
+ */
+export function handoverDoneText(heirName: string, previousNumberRemoved: boolean): string {
+  return previousNumberRemoved
+    ? m.asso_lydia_handover_done({ name: heirName })
+    : m.asso_lydia_handover_done_old_kept({ name: heirName });
 }
