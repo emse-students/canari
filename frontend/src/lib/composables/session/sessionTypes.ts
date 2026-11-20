@@ -12,6 +12,7 @@ import type { BulkIngestObserver } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { MessageHandlerDeps } from '$lib/mls-client/messagePipeline/deps';
 import type { LoginErrorCode } from './loginErrors';
+import type { PinIntent } from './pinUnlock';
 import type { HardwareKeyRefusal } from '$lib/crypto/hardwareHeldKey';
 import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 
@@ -153,6 +154,11 @@ export interface SessionContext {
   setUserId(v: string): void;
   getPin(): string;
   setPin(v: string): void;
+  /**
+   * What the PIN set by `setPin` is for ({@link PinIntent}): `create` only from a first setup that
+   * asked it twice. Absent (a test double), the login sends `unlock`.
+   */
+  getPinIntent?(): PinIntent;
   getDeviceKey(): string;
   setDeviceKey(v: string): void;
   getAuthToken(): string;

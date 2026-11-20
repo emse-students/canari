@@ -1,6 +1,5 @@
 import type { AtRestKeyScheme } from '$lib/crypto/hardwareHeldKey';
-import { m } from '$lib/paraglide/messages';
-import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { pinServerRequest, type PinTransport } from './pinServer';
 import { restartsAsNewDevice, type LoginErrorCode } from './loginErrors';
 
 /**
@@ -147,8 +146,8 @@ export interface PinServer {
   baseUrl: string;
   /** A live access token. */
   token: string;
-  /** Defaults to {@link pinServerFetch}: under the request deadline. */
-  fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
+  /** A test's transport; absent, {@link pinServerRequest}'s own, under the request deadline. */
+  fetchFn?: PinTransport;
 }
 
 /**
@@ -159,26 +158,18 @@ export interface PinServer {
  * `pin-status` FIRST: `GET pin-salt` WRITES for a user with no salt (it creates the placeholder row),
  * so it is asked only of a user the server says has one.
  */
-/**
- * The PIN server's requests under the app's request deadline (`fetchOrUnreachable`, PIN audit row 11):
- * one that never answers rejects as unreachable, which the reset reads as "no answer".
- */
-export function pinServerFetch(url: string, init: RequestInit): Promise<Response> {
-  return fetchOrUnreachable(url, init, m.auth_server_unreachable());
-}
-
 export async function serverPinSaltFingerprint(
   userId: string,
-  { baseUrl, token, fetchFn = pinServerFetch }: PinServer
+  { baseUrl, token, fetchFn }: PinServer
 ): Promise<string | null> {
-  const headers = { Authorization: `Bearer ${token}` };
-  const id = encodeURIComponent(userId);
-  const status = await fetchFn(`${baseUrl}/api/mls/security/pin-status/${id}`, { headers });
+  // Under the request deadline (`pinServerRequest`, PIN audit row 11): no answer is "unknown".
+  const init = { headers: { Authorization: `Bearer ${token}` } };
+  const status = await pinServerRequest({ baseUrl, route: 'pin-status', userId, init }, fetchFn);
   if (!status.ok) throw new Error(`pin-status answered ${status.status}`);
   const { registered } = (await status.json()) as { registered: unknown };
   if (typeof registered !== 'boolean') throw new Error('pin-status answered no registered flag');
   if (!registered) return null;
-  const res = await fetchFn(`${baseUrl}/api/mls/security/pin-salt/${id}`, { headers });
+  const res = await pinServerRequest({ baseUrl, route: 'pin-salt', userId, init }, fetchFn);
   if (!res.ok) throw new Error(`pin-salt answered ${res.status}`);
   const { salt } = (await res.json()) as { salt: unknown };
   if (typeof salt !== 'string' || salt.length === 0) throw new Error('pin-salt answered no salt');

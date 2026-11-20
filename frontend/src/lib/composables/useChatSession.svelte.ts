@@ -27,6 +27,7 @@ import {
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
+import type { PinIntent } from './session/pinUnlock';
 export type { ChatSessionCallbacks } from './session/sessionTypes';
 
 import {
@@ -80,6 +81,8 @@ export function useChatSession() {
   // ── Identity ──────────────────────────────────────────────────────────────
   let userId = $state('');
   let pin = $state('');
+  /** What `pin` is for: `create` only from a confirmed first setup ({@link PinIntent}). */
+  let pinIntent = $state<PinIntent>('unlock');
   let deviceKeyB64 = $state('');
   let authToken = $state('');
   let myDeviceId = $state('');
@@ -184,6 +187,7 @@ export function useChatSession() {
       userId = v;
     },
     getPin: () => pin,
+    getPinIntent: () => pinIntent,
     setPin: (v) => {
       pin = v;
     },
@@ -397,6 +401,13 @@ export function useChatSession() {
     },
     set pin(v: string) {
       pin = v;
+    },
+    /** What the next PIN submit is for: the gate sets `create` for a confirmed first setup. */
+    get pinIntent() {
+      return pinIntent;
+    },
+    set pinIntent(v: PinIntent) {
+      pinIntent = v;
     },
     /** Device key (base64, 44 chars) derived from the PIN — used for MLS + local encryption. */
     get deviceKeyB64() {

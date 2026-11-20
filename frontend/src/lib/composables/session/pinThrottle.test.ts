@@ -82,6 +82,14 @@ describe('throwIfPinThrottled', () => {
     expect(logs[0]).toContain('wait 120000 ms');
   });
 
+  it('a body wait of 0 does not win over a usable Retry-After', async () => {
+    const logs: string[] = [];
+    const res = throttled({ code: 'RATE_LIMITED', retryAfterMs: 0 }, { 'Retry-After': '120' });
+    const e = await throwIfPinThrottled(res, (l) => logs.push(l), NOW).catch((x: unknown) => x);
+    expect(logs[0]).toContain('wait 120000 ms');
+    expect((e as Error).message).not.toBe(m.auth_pin_attempts_throttled());
+  });
+
   it('a 14-digit Retry-After falls back to the text without a time', async () => {
     const res = throttled({}, { 'Retry-After': '99999999999999' });
     await expect(throwIfPinThrottled(res, () => {}, NOW)).rejects.toMatchObject({
@@ -114,7 +122,7 @@ describe('every PIN request of the login reads the 429 (wiring)', () => {
   it.each([
     [
       'the login PIN check',
-      'checkPin: async ({ verifier, deviceId, salt }) => {',
+      'checkPin: async ({ verifier, deviceId, salt, intent }) => {',
       'return (await res.json()) as PinCheckAnswer;',
     ],
     ['the salt', 'async function fetchPinSalt(', 'return salt;'],
