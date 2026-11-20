@@ -882,7 +882,8 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 |---|---|---|---|
 | `pin_mismatch` | wrong PIN | retype, or "PIN oublie ?" | keypad, "PIN oublie ?" |
 | `pin_salt_rotated` | PIN reset elsewhere during this attempt | type the current PIN | keypad |
-| `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline | retry | "Deverrouiller" |
+| `pin_not_set` | an unlock on an account with no PIN (`pin-check` answered `not-set`) | choose a PIN, twice | the first-setup keypad |
+| `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline - every PIN request (`pin-salt`, `pin-check`, `pin-status`, `pin-reset`, `pin-change`) goes through `fetchOrUnreachable` or `pinServerFetch`, held by `pinRequestsWiring.test.ts` | retry | "Deverrouiller" |
 | `pin_attempts_throttled` | a PIN route answered 429 | wait until the time shown | "Deverrouiller" |
 | `pin-status` unanswered (before the keypad) | the gate cannot learn whether the account has a PIN | retry | no keypad; "Reessayer" |
 | `other` (check unexpected, login failed, no result) | server or app fault | retry | "Deverrouiller" |
@@ -929,12 +930,17 @@ writes (read as "registered" by `pin-status`). Three changes close it at the cau
   `globalSession.pinIntent`) registers; `unlock` on an account with no PIN answers `not-set`, which
   the client types `pin_not_set` and turns into the first-setup gate. A body with no intent (an older
   app) still registers - a dated shim ([legacy-compatibility](../../legacy-compatibility.md#a-pin-check-with-no-intent-still-registers-unconfirmed-2026-11-20)).
-  The registration is one conditional write (`UPDATE ... WHERE verifier = ''`, or an
-  `INSERT ... ON CONFLICT DO NOTHING` that returned a row): two devices creating at once get one `registered`, the other is
-  compared (`pin-registration.integration.spec.ts`).
+  The registration is one conditional write PINNED TO THE ROW THAT WAS READ
+  (`UPDATE ... WHERE id = <read row> AND verifier = ''`, or an `INSERT ... ON CONFLICT DO NOTHING`
+  that returned a row): two devices creating at once get one `registered` and the other is compared;
+  a write that lost to a reset (the row re-minted under a new salt between its read and its write)
+  answers `stale-salt`, never `registered` on a salt it did not derive from
+  (`pin-registration.integration.spec.ts`, the races held at a barrier). `globalSession.pinIntent` is
+  set by `handlePinSubmit` alone and reset to `unlock` once that login settles.
 - `pin-status` answers `registered` only for a NON-EMPTY verifier.
 - The gate's local shortcut reads `canari_pin_proven:v1:<user>` (`pinFirstSetup.ts`), written only
-  once `pin-check` answered `ok` or `registered` - never the device id. A `mismatch` on a first setup
+  once `pin-check` answered `ok` or `registered` - never the device id - and dropped when a reset
+  enters or commits a first setup or the server answers `not-set`. A `mismatch` on a first setup
   turns the gate to "returning" (the account has a PIN).
 
 The French and English texts are in `messages/{fr,en}.json` under the `auth_` keys each throw names

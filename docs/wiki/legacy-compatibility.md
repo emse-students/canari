@@ -99,12 +99,16 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   intent, so a body with none is answered as before: it REGISTERS on an account with no PIN, through
   the same conditional write (`checkPinVerifier`, `security.controller.ts`). That branch is the
   unconfirmed registration the PIN audit closed, kept open for those builds only.
-- **Measured by.** The line the service writes for each one:
-  `[PIN_VERIFIER] legacy client (no intent) registering for <user> - unconfirmed`.
+- **Measured by.** The two lines the service writes for a body with no intent, a registration AND
+  an unlock (an older app unlocks with no intent too):
+  `[PIN_VERIFIER] legacy client (no intent) registering for <user> - unconfirmed` and
+  `[PIN_VERIFIER] legacy client (no intent) unlocking for <user>`.
 - **Removal condition.** The client floor passes the first stable carrying #3909 (`1.7.2` at the
-  earliest), AND a week of that line's silence on production.
-- **Then delete.** The `intent === undefined` branch: a body with no intent is then `400 intent
-  invalid`, and the spec case `LEGACY: a client sending no intent still registers` goes with it.
+  earliest), AND a week of silence of BOTH lines on production.
+- **Then delete.** The registration of a body with no intent: such a body is then treated as
+  `unlock` - never a `400`, so a build above the floor that somehow omits it still unlocks, and an
+  account with no PIN is answered `not-set`. The spec case `LEGACY: a client sending no intent still
+  registers` becomes "a body with no intent is an unlock", and both log lines go.
 
 ### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
 

@@ -145,8 +145,10 @@ export class SecurityController {
    * client sending NO intent (an app older than this) is answered as before - it registers - until
    * the client floor passes the version that sends one (`legacy-compatibility.md`).
    *
-   * AND THE REGISTRATION IS ONE CONDITIONAL WRITE: `UPDATE ... WHERE verifier = ''` on the placeholder,
-   * an `INSERT ... ON CONFLICT DO NOTHING` on no row, the affected or returned rows deciding. Two devices creating
+   * AND THE REGISTRATION IS ONE CONDITIONAL WRITE, pinned to the row that was read:
+   * `UPDATE ... WHERE id = <read row> AND verifier = ''` on the placeholder, an
+   * `INSERT ... ON CONFLICT DO NOTHING` on no row, the affected or returned rows deciding. A lost
+   * write against a row since replaced (a reset, then a new salt) answers `stale-salt`. Two devices creating
    * at once used to both read the empty verifier and both save, both told `registered`, the row
    * keeping the last - the loser then compares, and is told `ok` or `mismatch` honestly.
    *
@@ -209,21 +211,33 @@ export class SecurityController {
           `[PIN_VERIFIER] legacy client (no intent) registering for ${safeUserId} - unconfirmed`
         );
       }
-      const stored = await this.registerVerifier(safeUserId, safeVerifier, doc !== null);
+      const stored = await this.registerVerifier(safeUserId, safeVerifier, doc);
       if (stored) return { status: 'registered', resetRequired: false };
-      // Another device registered first: this one is compared against what it stored.
-      const winner = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
-      if (!winner || !winner.verifier) {
-        throw new InternalServerErrorException('PIN registration lost and no verifier stored');
+      // THIS WRITE LOST. The row it was computed against is gone (a reset deleted it and a new
+      // placeholder holds another salt) or still has no verifier: the salt the client derived from
+      // is not the row's, so it asks again. Otherwise another device registered first, and this one
+      // is compared against what it stored.
+      const now = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
+      if (!now?.verifier || (doc !== null && now.id !== doc.id)) {
+        this.logger.log(
+          `[PIN_VERIFIER] registration for ${safeUserId} met another row (${now ? 'replaced or unfilled' : 'absent'}) - stale-salt`
+        );
+        return { status: 'stale-salt', resetRequired: false };
       }
       return {
-        status: this.verifierMatches(winner.verifier, safeVerifier) ? 'ok' : 'mismatch',
+        status: this.verifierMatches(now.verifier, safeVerifier) ? 'ok' : 'mismatch',
         resetRequired: false,
       };
     }
 
     if (typeof doc.verifier !== 'string') {
       throw new BadRequestException('stored verifier format invalid');
+    }
+
+    if (intent === undefined) {
+      // MEASURES THE LEGACY SHIM (legacy-compatibility.md): an app that sends no intent also unlocks
+      // with none, and its removal waits for these lines to fall silent too.
+      this.logger.log(`[PIN_VERIFIER] legacy client (no intent) unlocking for ${safeUserId}`);
     }
 
     const match = this.verifierMatches(doc.verifier, safeVerifier);
@@ -254,30 +268,28 @@ export class SecurityController {
 
   /**
    * Stores the FIRST verifier of an account in one conditional write, and says whether THIS call
-   * stored it. On the placeholder row `pin-salt` wrote: `UPDATE ... WHERE verifier = ''`, decided by
-   * the affected count. On no row: `INSERT ... ON CONFLICT DO NOTHING`; a conflict on `userId` (another
-   * device's insert, or a concurrent `pin-salt` mint) returns no row and falls back to that UPDATE.
+   * stored it. The write is PINNED TO THE ROW THE CALLER READ: on a placeholder,
+   * `UPDATE ... WHERE id = <that row> AND verifier = ''` - a row a reset deleted and a later
+   * `pin-salt` re-minted has another id, so a verifier derived from the old salt never lands on the
+   * new one. On no row: `INSERT ... ON CONFLICT DO NOTHING`, a returned row deciding; a conflict is
+   * "not stored", never a fill of a row the caller did not read.
    */
   private async registerVerifier(
     userId: string,
     verifier: string,
-    placeholderSeen: boolean
+    read: PinVerifier | null
   ): Promise<boolean> {
-    if (placeholderSeen) {
-      const filled = await this.pinVerifierRepo.update({ userId, verifier: '' }, { verifier });
+    if (read) {
+      const filled = await this.pinVerifierRepo.update({ id: read.id, verifier: '' }, { verifier });
       return (filled.affected ?? 0) === 1;
     }
-    // `ON CONFLICT DO NOTHING` returns no row when another writer created the row first: that row
-    // is then a placeholder to fill as above, or a verifier the caller will be compared with.
     const inserted = await this.pinVerifierRepo
       .createQueryBuilder()
       .insert()
       .values({ userId, verifier })
       .orIgnore()
       .execute();
-    if (Array.isArray(inserted.raw) && inserted.raw.length > 0) return true;
-    const filled = await this.pinVerifierRepo.update({ userId, verifier: '' }, { verifier });
-    return (filled.affected ?? 0) === 1;
+    return Array.isArray(inserted.raw) && inserted.raw.length > 0;
   }
 
   /**

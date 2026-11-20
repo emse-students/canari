@@ -20,7 +20,8 @@ either. No fix was guessed. What the reading found instead, each owed a decision
    returned by `pin-reset` and kept beside the salt).
 
 Two further hazards the same reading found were fixed in #3909: two first `pin-check` at once were a
-silent lost update (now one conditional write, the loser compared), and `pin-status` read the
+silent lost update (now one conditional write pinned to the row read, the loser compared, a
+write that lost to a reset answered `stale-salt`), and `pin-status` read the
 placeholder row as a PIN (now a non-empty verifier only).
 
 If the audit's observation came from a measurement, the run that showed it decides which of these it

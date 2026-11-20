@@ -1,6 +1,11 @@
 import { LoginFailure, type LoginErrorCode } from './loginErrors';
 import { decideAutomaticRestart } from './pinReset';
-import { unlockWithPin, type PinCheckAnswer, type PinUnlockDeps } from './pinUnlock';
+import {
+  unlockWithPin,
+  type PinCheckAnswer,
+  type PinIntent,
+  type PinUnlockDeps,
+} from './pinUnlock';
 import type { PinSaltAhead } from './pinSaltAhead';
 
 /**
@@ -17,7 +22,7 @@ let order: string[];
 function deps(answers: PinCheckAnswer[], overrides: Partial<PinUnlockDeps> = {}) {
   const queue = [...answers];
   const d = {
-    intent: 'unlock' as 'create' | 'unlock',
+    intent: 'unlock' as PinIntent,
     saltAhead: undefined as Promise<PinSaltAhead> | undefined,
     fetchSalt: vi.fn(async () => {
       order.push('fetch-salt');

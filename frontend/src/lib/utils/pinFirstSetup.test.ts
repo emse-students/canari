@@ -1,10 +1,15 @@
-import { firstPinSetupFromDevice, notePinProven } from './pinFirstSetup';
+import { firstPinSetupFromDevice, forgetPinProven, notePinProven } from './pinFirstSetup';
 
-function storageWith(entries: Record<string, string>): Pick<Storage, 'getItem' | 'setItem'> {
+function storageWith(
+  entries: Record<string, string>
+): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
   return {
     getItem: (key: string) => entries[key] ?? null,
     setItem: (key: string, value: string) => {
       entries[key] = value;
+    },
+    removeItem: (key: string) => {
+      delete entries[key];
     },
   };
 }
@@ -30,5 +35,14 @@ describe('firstPinSetupFromDevice', () => {
     const storage = storageWith({});
     notePinProven(storage, 'u2');
     expect(firstPinSetupFromDevice(storage, 'u1')).toBeNull();
+  });
+
+  it('a dropped proof (a reset, or not-set) sends the next gate back to the server', () => {
+    const storage = storageWith({});
+    notePinProven(storage, 'u1');
+    notePinProven(storage, 'u2');
+    forgetPinProven(storage, 'u1');
+    expect(firstPinSetupFromDevice(storage, 'u1')).toBeNull();
+    expect(firstPinSetupFromDevice(storage, 'u2')).toBe(false);
   });
 });

@@ -78,12 +78,41 @@ describe('SecurityController - checkPinVerifier', () => {
       'u1'
     );
 
+    // Pinned to the row that was READ, never "whatever placeholder this user has now".
     expect(pinVerifierRepo.update).toHaveBeenCalledWith(
-      { userId: 'u1', verifier: '' },
+      { id: 'p', verifier: '' },
       { verifier: 'a'.repeat(64) }
     );
     expect(pinVerifierRepo.save).not.toHaveBeenCalled();
     expect(result).toEqual({ status: 'registered', resetRequired: false });
+  });
+
+  it('a write that lost to a reset (the row re-minted under another id) answers stale-salt', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce({ id: 'q', userId: 'u1', verifier: '', salt: 's2' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
+  });
+
+  it('a lost write with no row left answers stale-salt, never a 500', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce(null);
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
   });
 
   it('a creation that lost the race is COMPARED with the winner, never told registered', async () => {
@@ -171,18 +200,28 @@ describe('SecurityController - checkPinVerifier', () => {
     expect(builder.values).toHaveBeenCalledWith({ userId: 'u1', verifier: 'a'.repeat(64) });
     expect(builder.orIgnore).toHaveBeenCalled();
 
-    // A concurrent insert won (no row returned): the row is then filled or compared.
+    // A concurrent insert won (no row returned): its verifier is compared, nothing is filled.
     pinVerifierRepo.findOne
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'w', userId: 'u1', verifier: 'a'.repeat(64) });
     insertReturning([]);
-    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
     await expect(
       controller.checkPinVerifier(
         { userId: 'u1', verifier: 'a'.repeat(64), intent: 'create' },
         'u1'
       )
     ).resolves.toEqual({ status: 'ok', resetRequired: false });
+    expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+
+    // The conflict was a placeholder `pin-salt` minted meanwhile: its salt is not the caller's.
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'm', userId: 'u1', verifier: '', salt: 's9' });
+    insertReturning([]);
+    await expect(
+      controller.checkPinVerifier({ userId: 'u1', verifier: 'a'.repeat(64) }, 'u1')
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
+    expect(pinVerifierRepo.update).not.toHaveBeenCalled();
   });
 
   describe('getPinStatus - registered means a NON-EMPTY verifier', () => {

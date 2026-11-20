@@ -29,3 +29,11 @@ export function firstPinSetupFromDevice(
 export function notePinProven(storage: Pick<Storage, 'setItem'>, userId: string): void {
   storage.setItem(ACCOUNT_KEY.pinProven(userId), '1');
 }
+
+/**
+ * Drops `userId`'s proof: the account's PIN is gone (a reset entered or committed a first setup, or
+ * the server answered `not-set`), so the next gate on this device must ask the server again.
+ */
+export function forgetPinProven(storage: Pick<Storage, 'removeItem'>, userId: string): void {
+  storage.removeItem(ACCOUNT_KEY.pinProven(userId));
+}

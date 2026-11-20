@@ -129,7 +129,7 @@
   import { MlsSessionVacantError } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
-  import { firstPinSetupFromDevice } from '$lib/utils/pinFirstSetup';
+  import { firstPinSetupFromDevice, forgetPinProven } from '$lib/utils/pinFirstSetup';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
   import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -577,6 +577,15 @@
    * two interactive handlers never did, and they are the ones a person reaches by typing. One
    * implementation now, branching on the typed code and never on the message.
    */
+  /**
+   * The account has NO PIN, as the server or a reset just proved: the gate asks one (twice), and this
+   * device's `pinProven` marker is dropped so no later gate draws "returning" from it.
+   */
+  function enterFirstPinSetup(uid: string) {
+    isFirstPinSetup = true;
+    forgetPinProven(localStorage, uid);
+  }
+
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
     const removedNotice = noKeypadNoticeFor(code);
     if (removedNotice) {
@@ -612,7 +621,7 @@
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
     // THE SERVER'S ANSWER DECIDES THE GATE'S SHAPE: `not-set` proves the account has no PIN (the gate
     // asks one, twice), a `mismatch` proves it has one (a creation that met another device's PIN).
-    if (code === 'pin_not_set') isFirstPinSetup = true;
+    if (code === 'pin_not_set') enterFirstPinSetup(uid);
     if (code === 'pin_mismatch') isFirstPinSetup = false;
     keyReadRefused = withholdsResetForUnreadKey(code);
     restartOffered = offersDeviceRestart(code);
@@ -765,9 +774,10 @@
   /**
    * Opens the PIN modal for the given user.
    *
-   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
-   * returning one, so the server's `pin-status` - which waited for the token refresh, then a round
-   * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
+   * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device on which the server accepted
+   * this account's PIN (`pinProven`, written after `ok` or `registered`) is a returning one, so the
+   * server's `pin-status` - which waited for the token refresh, then a round trip, ~0.5 s of a cold
+   * start behind a notification - is asked only by a device holding no such proof.
    * See {@link firstPinSetupFromDevice}.
    */
   async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
@@ -775,12 +785,10 @@
     noteUnlockNeedsMember();
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
-    // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
-    // resolves this account's id before the state refuses it, so it would read "returning" for an
-    // account that has never chosen one, and draw the keypad without its confirmation step.
+    // An attempt that just FAILED leaves no proof worth reading: the server is asked.
     const knownLocally = opts?.deviceIdUnproven ? null : firstPinSetupFromDevice(localStorage, uid);
     if (knownLocally !== null) {
-      appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
+      appendLog('[PIN] Gate drawn from the PIN proof on this device - no pin-status round trip');
       isFirstPinSetup = knownLocally;
     } else {
       const status = await askPinStatus({
@@ -2395,6 +2403,11 @@
           },
         })
       )
+      // The intent is THIS submit's: any later login (a saved PIN, the biometric key, a restart)
+      // checks a PIN the server already holds, never one it may register.
+      .finally(() => {
+        globalSession.pinIntent = 'unlock';
+      })
       .then(() => {
         if (restartPending) {
           void restartThisDevice(
@@ -2468,7 +2481,8 @@
       });
       if (outcome !== 'committed' && outcome !== 'committed_pin_chosen') return false;
       globalSession.userId = uid;
-      isFirstPinSetup = outcome === 'committed';
+      if (outcome === 'committed') enterFirstPinSetup(uid);
+      else isFirstPinSetup = false;
       if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
       showPinGate('PIN reset settled');
       return true;
@@ -2616,7 +2630,7 @@
         enterFirstSetup: () => {
           serverReset = true;
           globalSession.userId = uid;
-          isFirstPinSetup = true;
+          enterFirstPinSetup(uid);
         },
         commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
         log: appendLog,
