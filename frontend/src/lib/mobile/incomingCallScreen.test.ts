@@ -163,13 +163,18 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
   const tauriMls = readFileSync(resolve(here, '../services/TauriMlsService.ts'), 'utf8');
 
   it('Android: the foreground guard lets call_ring through to the ring', () => {
-    const guard = between(
-      push,
-      'val showsWhileForeground =',
-      'skip background processing',
-      'the foreground guard'
+    // The guard asks `ForegroundGuard`, the one list of what acts in front (2026-11-20).
+    expect(push).toContain(
+      'if (MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction))'
     );
-    expect(guard).toContain('msgType == "call_ring"');
+    const guard = readFileSync(
+      resolve(
+        here,
+        '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/ForegroundGuard.kt'
+      ),
+      'utf8'
+    );
+    expect(guard).toContain('type == "call_ring"');
   });
 
   it('Android: the ring stands back only for a page in front that holds the socket', () => {

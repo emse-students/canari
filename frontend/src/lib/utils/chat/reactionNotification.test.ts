@@ -166,10 +166,16 @@ describe('the push half', () => {
 
   it('Android drops a reaction push in the foreground, before it reaches the reaction builder', () => {
     expect(kotlin).toMatch(/val isReaction = msgType == "social" && data\["reaction"\] == "true"/);
-    // The `social` exemption does not cover a reaction...
-    expect(kotlin).toContain('(msgType == "social" && !isReaction)');
+    // The `social` exemption does not cover a reaction (`ForegroundGuard`, the one list of what acts
+    // in front)...
+    const foregroundGuard = read(
+      'gen/android/app/src/main/java/fr/emse/canari/push/ForegroundGuard.kt'
+    );
+    expect(foregroundGuard).toContain('(type == "social" && !isReaction)');
     // ...so the foreground guard returns before the reaction branch is reached.
-    const guard = kotlin.indexOf('if (MainActivity.isInForeground && !showsWhileForeground)');
+    const guard = kotlin.indexOf(
+      'if (MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction))'
+    );
     const branch = kotlin.indexOf(
       'runWithWakeLock("fcm_reaction") { handleReactionNotification(data) }'
     );
