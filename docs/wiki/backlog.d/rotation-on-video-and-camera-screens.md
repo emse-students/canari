@@ -1,6 +1,8 @@
 ## Rotation on the video, live and camera screens, owed on both phones (a reading deferred to 1.7.1)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _Deferred 2026-11-18 under the owner's rule of 2026-11-18 ([owner-decisions-of-2026-11-18.md](owner-decisions-of-2026-11-18.md)): needs a hand rotating the phone, not a regression._
 

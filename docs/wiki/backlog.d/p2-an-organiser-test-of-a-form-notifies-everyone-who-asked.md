@@ -1,6 +1,8 @@
 ## P2 - an organiser testing a form by moving its opening to "now" notifies everyone who asked to be told
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **Seen on production, 2026-11-17.** An organiser moved a form's opening to "now" to try it, and the
 opening reminder ("Le formulaire est disponible - dépêchez-vous...", `form_reminder`, sent by

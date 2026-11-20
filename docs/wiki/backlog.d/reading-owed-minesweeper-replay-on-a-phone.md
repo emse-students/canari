@@ -1,6 +1,8 @@
 ## Reading owed - Minesweeper replay and the instant dig, on a phone
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **What is built:** every ranked move is timed, the server keeps the log of a win (migration 175, `minesweeper_replays`), and every member replays it from the Games ranking ([minesweeper](../frontend/modules/minesweeper.md#the-replay-timed-moves-and-a-moderator-who-can-watch-a-win-owner-2026-11-17)); the cell's colour crossfade follows the animation setting.
 

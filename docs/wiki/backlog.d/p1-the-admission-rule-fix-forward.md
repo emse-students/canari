@@ -1,6 +1,8 @@
 ## P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md)).
 Step 1's table (#3774) ships in `1.7.0`; its reading needs two weeks of production after that

@@ -1,6 +1,8 @@
 ## P2 - every service image ships its dev dependencies in the runtime stage
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 Measured 2026-11-17, while the picomatch advisory was being traced
 ([what we ship](../cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)). The four NestJS

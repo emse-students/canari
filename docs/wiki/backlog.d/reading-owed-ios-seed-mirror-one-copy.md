@@ -1,6 +1,8 @@
 ## Reading owed - the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **what is left is read in production a day after the stable (the `[PUSH_BLIND]` count by platform); it does NOT block cutting the stable.** The iPhone half was read on `alpha.8`; the fold it named is replaced by a delete since the `1.7.0` floor, and neither line has an instrument on a store build (below)._
 

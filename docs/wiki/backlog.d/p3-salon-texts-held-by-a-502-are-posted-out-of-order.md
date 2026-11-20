@@ -1,6 +1,8 @@
 ## P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **Found by:** the iPhone salon half of the deploy drill, sitting S5 on `1.7.0-alpha.12`
 ([readings](../device-verification.md#the-phone-readings-of-2026-11-18-s5-170-alpha12-the-alpha12-fixes-on-both-phones)).

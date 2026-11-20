@@ -1,6 +1,8 @@
 ## P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 `processWelcomeRequestBackground` (`CanariFirebaseMessagingService.kt`) asks for the group's add
 lock up to three times with `Thread.sleep(2_000)` between the attempts, and gives up after the third.

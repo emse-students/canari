@@ -1,6 +1,8 @@
 ## P3 - the dev estate logs one CSP `inline script` refusal on every page load
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 Seen 2026-11-17 in a browser console on dev: every page load logs one Content Security Policy
 refusal of an inline script. A refusal on every load is noise by the project's rule (a line is

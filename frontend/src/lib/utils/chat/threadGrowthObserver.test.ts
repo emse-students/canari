@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { isPinnedToBottom } from './threadAnchor';
-import { observeThreadGrowth } from './threadGrowthObserver';
+import { motionMs, observeThreadGrowth } from './threadGrowthObserver';
 
 /**
  * THE OBSERVER DRIVEN THROUGH A KEYBOARD RISE ON A THREAD THAT GREW AFTER IT OPENED.
@@ -246,5 +246,25 @@ describe('observeThreadGrowth - an older page prepended', () => {
     relayout();
     expect(scroller.scrollTop).toBe(reach());
     stop();
+  });
+});
+
+describe('motionMs', () => {
+  it('reads the authored millisecond form', () => {
+    expect(motionMs('220ms')).toBe(220);
+    expect(motionMs(' 220ms ')).toBe(220);
+  });
+
+  it('reads the second form Chromium normalises the token to, leading dot included', () => {
+    expect(motionMs('.22s')).toBe(220);
+    expect(motionMs('0.22s')).toBe(220);
+    expect(motionMs('1s')).toBe(1000);
+    expect(motionMs('1.5s')).toBe(1500);
+  });
+
+  it('refuses what is not a time', () => {
+    expect(motionMs('')).toBeNull();
+    expect(motionMs('220')).toBeNull();
+    expect(motionMs('fast')).toBeNull();
   });
 });
