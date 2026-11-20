@@ -93,8 +93,9 @@ describe('PinModal - the reset withheld for another account', () => {
   });
 
   it('is wired by the shell: the reset is withheld while the state is proven foreign, or its key unread', () => {
-    expect(shell).toContain(
-      'onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}'
+    // The decision is `offersForgotPinReset` (tested in `deviceRestart.test.ts`); this reads its wiring.
+    expect(shell).toMatch(
+      /onForgotPinReset=\{offersForgotPinReset\(\{\s+otherAccountState: deviceHoldsOtherAccount,\s+keyReadRefused,\s+restartOffered,\s+\}\)\s+\? handlePinReset\s+: undefined\}/
     );
     expect(shell).toMatch(
       /resetWithheldNotice=\{deviceHoldsOtherAccount\s+\? m\.auth_pin_reset_blocked_other_account\(\)\s+: keyReadRefused\s+\? m\.auth_pin_reset_withheld_key_unreadable\(\)\s+: ''\}/

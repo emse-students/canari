@@ -716,7 +716,7 @@ Four questions were settled the same day as lead decisions:
 |---|---|
 | 1. One backup recovery code per device (`crypto/deviceRecoveryCode.ts`) | Losing that code loses every backup the device made; knowing it opens all of them. |
 | 2. The key is not bound to the device credential (passcode, enrolled biometrics) | Nothing is lost when a fingerprint or a Face ID is enrolled, and locked-phone pushes and "stay signed in" keep working - which is also why those read the key without the user. |
-| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the phone restarts as a new device once the PIN is accepted (`hardware_key_unavailable`, 2026-11-20). History comes back from the account's other devices and from other members. |
+| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the phone restarts as a new device once the PIN is accepted (`hardware_key_unavailable`, 2026-11-20). History can come back from the account's other devices and from other members. |
 | 4. A backup made before a phone's move to the hardware key stops opening on that phone | Those older backups cannot be imported there, so once the move re-sealed existing data the phone asks for a new backup: a toast at once, and a notice in the backup panel until an export is saved (`noteBackupOwedAfterKeyMove`). A fresh install, which takes the same path with no data, is not asked. |
 
 #### Backups get their own recovery secret
@@ -784,8 +784,12 @@ textes, les rendre beaucoup plus succincts et clairs, et adaptes a toutes les si
 `mismatch`, PIN accepted by the server): no error, no button. The phone restarts BY ITSELF as a new
 device of the account (`restartsAsNewDevice`, `decideAutomaticRestart`, the shell's
 `restartThisDevice`), says it in one toast, and unlocks again with the same PIN. It is ACCUSED at
-ERROR with its refusal (`hardwareKeyLoginFailure`, and the shell's `[DEVICE_RESTART]` line): the data
-travelled without its key, which is the leak being counted. Charter: principle 2, "the essential is
+ERROR ONCE, by the shell's `[DEVICE_RESTART]` line with the keystore's refusal (carried on
+`LoginFailure.refusal`): the data travelled without its key, which is the leak being counted.
+`hardwareKeyLoginFailure` only narrates, because it runs inside the PIN unlock's key derivation
+BEFORE the server answered - a wrong PIN over a lost key must accuse nothing - and the login's own
+catch narrates the code at `warn` for the same reason. A restart withheld (another account's state,
+or already restarted in this page) is its own event's one ERROR. Charter: principle 2, "the essential is
 never lost" - the account, its PIN and its other devices are untouched, and the history comes back
 from them.
 
@@ -799,6 +803,31 @@ COMMITS (no server salt has that fingerprint), never puts back - the state set a
 key. Once per account per page (`restartedThisPage`): a key gone again right after a restart is
 accused and shown (`auth_device_restart_failed`), never restarted in a loop.
 
+**The end state is read from the disk, never taken from the commit.** `resetDeviceAsFresh` swallows a
+database that would not clear (and then KEEPS the at-rest marker) and a marker that would not be
+forgotten, each logged. So after the commit `runDeviceRestart` reads the scheme back
+(`cle_au_repos_schema`): anything but `pin-derived` throws `DeviceRestartUnfinishedError`, accused at
+ERROR, `auth_device_restart_failed` is shown, and nothing is unlocked again - the next unlock would
+meet the same lost key. Without it, every launch would restart, toast and unlock into the same wall.
+
+**What the restart costs another copy of this device (a clone).** After the erase, the next unlock
+resolves this device's id again from the native mirror (`restoreDeviceIdFromNative`), finds the state
+provably absent, and re-enrols as a new device (`reenrolLostState`), which RETIRES the old id on the
+server. When the data came by Quick Start or a restore while the OLD phone is still in use under that
+same id, the retirement reaches the old phone too: it meets its id revoked and rotates its own
+identity. Nothing of the account's PIN or its other devices changes; that phone pays one rotation.
+
+**Android: `absent` is answered only when the Keystore proves it** (`KeystorePlugin.kt`,
+`storedEntryState`). The wrapped key lives in SharedPreferences and opens only under a wrapping key
+held by the Android Keystore. A SharedPreferences file that cannot be parsed loads as an EMPTY map, so
+"no wrapped key" alone proved nothing: it is `absent` only when `KeyStore.containsAlias(alias)` is
+also false, and a rejection (read as `unreadable`, no reset) when the alias is still there. The real
+transfer case is the converse: the app's files, SharedPreferences included, travel with a data
+transfer or a restore, and the Keystore never does - a wrapped key whose alias is GONE can never be
+opened, so it is `absent` too (it used to land on a decryption failure, `unreadable`, and stayed stuck
+with the reset withheld). `containsAlias` is the Keystore's own answer, not a parse; a Keystore that
+cannot be asked rejects. No gate runs the plugin's Kotlin; this is owed the phone reading below.
+
 **Its guards.** Never on `hardware_key_unreadable` (the key may still exist: "try again", no reset,
 `withholdsResetForUnreadKey`). Never over another account's state (`device_holds_other_account`,
 `decideAutomaticRestart` -> `withheld_other_account`, and the second lock on the act itself). Only
@@ -806,7 +835,7 @@ on the TYPED-PIN path (`handlePinSubmit`): a saved unlock or a biometric one has
 shows the keypad with one sentence and the restart follows the PIN.
 
 **A state that opens under no key** (`local_state_unopenable`, PIN accepted) shows "Repartir de zero
-sur cet appareil" DIRECTLY under the error (`offersDeviceRestart`, `PinModal`'s `onRestartDevice`),
+sur cet appareil" DIRECTLY under the error (`offersDeviceRestart`, `PinModal`'s `onRestartDevice`), and the account-wide forgot-PIN reset is WITHHELD there (`offersForgotPinReset`): the PIN is right and only this device is broken, so resetting the account's PIN would cost every other device. It stays offered on the saved/biometric `hardware_key_unavailable` path, where no PIN was typed yet,
 with the same two-tap guard as the forgot-PIN reset (one snippet, `twoTapDestructive`), and the same
 local-only restart. The old-PIN recovery stays beside it; it is no longer offered on a plain
 `pin_mismatch` (a typo is answered by retyping, `isRecoverableWithOldPin`).

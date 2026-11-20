@@ -1,3 +1,4 @@
+import type { AtRestKeyScheme } from '$lib/crypto/hardwareHeldKey';
 import { restartsAsNewDevice, type LoginErrorCode } from './loginErrors';
 
 /**
@@ -296,7 +297,24 @@ export interface DeviceRestartSteps {
   stage: (serverBasis: string) => Promise<void>;
   /** The forgot-PIN reset's `commit`: removes what was set apart, with the account's local records. */
   commit: () => Promise<void>;
+  /**
+   * This account's at-rest scheme as the DISK holds it now (`cle_au_repos_schema`), read once the
+   * commit returned; `pin-derived` on a build with no hardware-held key.
+   */
+  atRestScheme: () => Promise<AtRestKeyScheme>;
   log: (msg: string) => void;
+}
+
+/**
+ * A restart whose commit returned while the disk still names a hardware-held key: the erase it
+ * reports did not happen (a database that would not clear keeps the marker, and a marker that would
+ * not be forgotten stays). Unlocking again would meet the same lost key, so nothing is retried.
+ */
+export class DeviceRestartUnfinishedError extends Error {
+  constructor(readonly scheme: AtRestKeyScheme) {
+    super(`the device restart did not complete - the at-rest marker still reads "${scheme}"`);
+    this.name = 'DeviceRestartUnfinishedError';
+  }
 }
 
 /**
@@ -309,6 +327,10 @@ export interface DeviceRestartSteps {
  * the stage and the commit leaves a journalled reset that the next sign-in's settle COMMITS (no salt
  * the server mints has that fingerprint), never one it puts back - the state set apart opens under no
  * key, so putting it back would only meet the same refusal again.
+ *
+ * THE END STATE IS READ FROM THE DISK, NEVER TAKEN FROM THE COMMIT. The commit swallows a database
+ * that would not clear and a marker that would not be forgotten (each logged), so "it returned" is
+ * not "it erased". Anything but `pin-derived` afterwards throws {@link DeviceRestartUnfinishedError}.
  */
 export async function runDeviceRestart(steps: DeviceRestartSteps): Promise<void> {
   steps.log(
@@ -316,5 +338,7 @@ export async function runDeviceRestart(steps: DeviceRestartSteps): Promise<void>
   );
   await steps.stage(await noServerPinBasis());
   await steps.commit();
+  const scheme = await steps.atRestScheme();
+  if (scheme !== 'pin-derived') throw new DeviceRestartUnfinishedError(scheme);
   steps.log('[DEVICE_RESTART] local MLS state removed - the next unlock enrols a new device');
 }

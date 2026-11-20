@@ -12,3 +12,9 @@ the keystore entry (or restore the app's data onto the other bench phone), type 
 (1) no error and no button, one toast; (2) the logcat or syslog line `[DEVICE_RESTART]` at ERROR with
 the refusal; (3) the phone signed in as a NEW device (a new device id, the other device still listed
 and still signed in, the PIN unchanged on it); (4) the history coming back from the other device.
+On Android, also (5) a data restore onto the other bench phone (SharedPreferences travel, the Keystore
+alias does not) answers `absent`, never `unreadable`.
+
+**A clone pays one rotation.** The re-enrolment retires the old device id on the server
+(`reenrolLostState`). When the data came by Quick Start or a restore while the OLD phone is still in
+use under the same id, that phone meets its id retired and rotates its own identity: read it too.

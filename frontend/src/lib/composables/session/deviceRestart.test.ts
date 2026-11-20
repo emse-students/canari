@@ -11,18 +11,28 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { hardwareKeyLoginFailure, offersDeviceRestart, type LoginErrorCode } from './loginErrors';
-import { decideAutomaticRestart, noServerPinBasis, runDeviceRestart } from './pinReset';
+import type { AtRestKeyScheme } from '$lib/crypto/hardwareHeldKey';
+import {
+  hardwareKeyLoginFailure,
+  offersDeviceRestart,
+  offersForgotPinReset,
+  type LoginErrorCode,
+} from './loginErrors';
+import {
+  decideAutomaticRestart,
+  DeviceRestartUnfinishedError,
+  noServerPinBasis,
+  runDeviceRestart,
+  settleUnsettledPinReset,
+  type DeviceRestartSteps,
+} from './pinReset';
 
 const NO_FACT = { otherAccountState: false, alreadyRestarted: false };
 const quiet = () => {};
 
 /** The code the unlock reports for a keystore refusal - built by the one function that decides it. */
 function codeOf(refusal: 'absent' | 'mismatch' | 'unreadable'): LoginErrorCode {
-  vi.spyOn(console, 'error').mockImplementation(quiet);
-  const code = hardwareKeyLoginFailure(refusal, quiet).code;
-  vi.restoreAllMocks();
-  return code;
+  return hardwareKeyLoginFailure(refusal, quiet).code;
 }
 
 describe('the automatic restart - decided by the typed code', () => {
@@ -59,46 +69,117 @@ describe('the automatic restart - decided by the typed code', () => {
     }
   });
 
-  it('accuses the key gone at ERROR, with its refusal - the data travelled without its key', () => {
+  it('carries the refusal to the one accusing line, and accuses nothing itself', () => {
+    // It runs before the server answered the PIN: a wrong PIN over a lost key must not accuse.
     const error = vi.spyOn(console, 'error').mockImplementation(quiet);
-    hardwareKeyLoginFailure('absent', quiet);
-    expect(String(error.mock.calls[0]?.[0])).toContain('(absent)');
+    const failure = hardwareKeyLoginFailure('mismatch', quiet);
+    expect(failure.refusal).toBe('mismatch');
+    expect(error).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 });
 
+describe('the account-wide forgot-PIN reset - withheld where the device restart is the remedy', () => {
+  const none = { otherAccountState: false, keyReadRefused: false, restartOffered: false };
+
+  it('is offered on an ordinary gate', () => {
+    expect(offersForgotPinReset(none)).toBe(true);
+  });
+
+  it("is withheld over another account's state, an unread key, or a broken state the PIN opened", () => {
+    expect(offersForgotPinReset({ ...none, otherAccountState: true })).toBe(false);
+    expect(offersForgotPinReset({ ...none, keyReadRefused: true })).toBe(false);
+    expect(offersForgotPinReset({ ...none, restartOffered: true })).toBe(false);
+  });
+
+  it('stays offered on the saved/biometric `hardware_key_unavailable` path (no restart offered there)', () => {
+    expect(offersDeviceRestart('hardware_key_unavailable')).toBe(false);
+    expect(offersForgotPinReset(none)).toBe(true);
+  });
+});
+
+/** A restart's steps over a small model of the disk: the journalled stage and the at-rest marker. */
+function disk(opts: { commitClearsMarker: boolean }) {
+  const order: string[] = [];
+  const state = { journal: null as string | null, marker: 'hardware' as AtRestKeyScheme };
+  const steps: DeviceRestartSteps = {
+    stage: vi.fn(async (basis: string) => {
+      order.push('stage');
+      state.journal = basis;
+    }),
+    commit: vi.fn(async () => {
+      order.push('commit');
+      state.journal = null;
+      // The real commit swallows a database that would not clear (the marker is then KEPT).
+      if (opts.commitClearsMarker) state.marker = 'pin-derived';
+    }),
+    atRestScheme: vi.fn(async () => {
+      order.push('scheme');
+      return state.marker;
+    }),
+    log: quiet,
+  };
+  return { order, state, steps };
+}
+
 describe('runDeviceRestart - the forgot-PIN reset LOCAL half, and only it', () => {
-  it('stages under the no-PIN basis, then commits - so a cut restart is committed by the next settle', async () => {
-    const order: string[] = [];
-    const stage = vi.fn(async (basis: string) => {
-      order.push(`stage ${basis}`);
-    });
-    await runDeviceRestart({
-      stage,
-      commit: async () => {
-        order.push('commit');
-      },
-      log: quiet,
-    });
-    expect(order).toEqual([`stage ${await noServerPinBasis()}`, 'commit']);
+  it('stages under the no-PIN basis, commits, then reads the end state from the disk', async () => {
+    const { order, state, steps } = disk({ commitClearsMarker: true });
+    await runDeviceRestart(steps);
+    expect(order).toEqual(['stage', 'commit', 'scheme']);
+    expect(steps.stage).toHaveBeenCalledWith(await noServerPinBasis());
+    expect(state.marker).toBe('pin-derived');
+  });
+
+  it('a commit that returned while the marker still reads hardware is NOT a restart', async () => {
+    const { steps } = disk({ commitClearsMarker: false });
+    const run = runDeviceRestart(steps);
+    await expect(run).rejects.toBeInstanceOf(DeviceRestartUnfinishedError);
+    await expect(run).rejects.toMatchObject({ scheme: 'hardware' });
+  });
+
+  it('an end state the disk cannot say is not a restart either', async () => {
+    const { steps } = disk({ commitClearsMarker: true });
+    steps.atRestScheme = async () => 'unreadable';
+    await expect(runDeviceRestart(steps)).rejects.toMatchObject({ scheme: 'unreadable' });
   });
 
   it('a refused stage removes nothing', async () => {
+    const { steps } = disk({ commitClearsMarker: true });
+    steps.stage = async () => {
+      throw new Error('refused');
+    };
+    await expect(runDeviceRestart(steps)).rejects.toThrow('refused');
+    expect(steps.commit).not.toHaveBeenCalled();
+  });
+
+  it('a restart cut after its stage is COMMITTED by the next sign-in, never put back', async () => {
+    const { state, steps } = disk({ commitClearsMarker: true });
+    steps.commit = async () => {
+      throw new Error('the page went away');
+    };
+    await expect(runDeviceRestart(steps)).rejects.toThrow('the page went away');
+    expect(state.journal).toBe(await noServerPinBasis());
+
+    // The next sign-in: the server still holds the account's PIN (its salt is not the empty one).
     const commit = vi.fn(async () => {});
-    await expect(
-      runDeviceRestart({
-        stage: async () => {
-          throw new Error('refused');
-        },
-        commit,
-        log: quiet,
-      })
-    ).rejects.toThrow('refused');
-    expect(commit).not.toHaveBeenCalled();
+    const rollback = vi.fn(async () => {});
+    const outcome = await settleUnsettledPinReset({
+      adopt: async () => state.journal,
+      serverSaltFingerprint: async () => 'f'.repeat(64),
+      commit,
+      rollback,
+      log: quiet,
+    });
+    expect(outcome).toBe('committed_pin_chosen');
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rollback).not.toHaveBeenCalled();
   });
 });
 
 describe('the shell - wired to the local half, never to the server reset', () => {
+  // The shell is a 2,500-line component no test mounts; what it decides is tested above, and only
+  // the wiring of those decisions is read here.
   const shell = readFileSync(
     join(process.cwd(), 'src/lib/components/layout/ChatBackgroundService.svelte'),
     'utf8'
@@ -108,31 +189,19 @@ describe('the shell - wired to the local half, never to the server reset', () =>
     shell.indexOf('async function handlePinReset(')
   );
 
-  it('restarts through the stage and commit the forgot-PIN reset uses', () => {
+  it('restarts through the stage, the commit and the disk read, never the server reset', () => {
     expect(restart).toContain('runDeviceRestart({');
     expect(restart).toContain('globalSession.stageDeviceReset(uid, basis)');
     expect(restart).toContain('globalSession.resetDeviceAsFresh(uid, sessionCb())');
-  });
-
-  it('never asks the server to reset the PIN (it would purge every device of the account)', () => {
+    expect(restart).toContain('tauriHardwareKeyPort.scheme(uid)');
     expect(restart).not.toContain('pin-reset');
     expect(restart).not.toContain('runPinReset');
   });
 
-  it("refuses on the act itself over another account's state or a key that may exist", () => {
-    expect(restart).toContain('if (deviceHoldsOtherAccount || keyReadRefused) {');
-  });
-
-  it('decides the automatic restart from the typed code, with the other-account fact', () => {
-    expect(shell).toMatch(
-      /decideAutomaticRestart\(code, \{\s+otherAccountState: deviceHoldsOtherAccount \|\| provesOtherAccountState\(code\),/
-    );
-  });
-
-  it('offers the direct button from the typed code, withheld like the reset', () => {
-    expect(shell).toContain('restartOffered = offersDeviceRestart(code);');
-    expect(shell).toContain(
-      'onRestartDevice={restartOffered && !deviceHoldsOtherAccount && !keyReadRefused'
-    );
+  it('unlocks again only after a restart the disk confirmed', () => {
+    const failure = restart.indexOf('pinError = m.auth_device_restart_failed();');
+    const unlockAgain = restart.indexOf('handlePinSubmit(pin);');
+    expect(failure).toBeGreaterThan(0);
+    expect(restart.slice(failure, unlockAgain)).toContain('return;');
   });
 });

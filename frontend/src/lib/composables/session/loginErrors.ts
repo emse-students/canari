@@ -164,7 +164,15 @@ export type LoginErrorCode =
 export class LoginFailure extends LocalizedError {
   readonly code: LoginErrorCode;
 
-  constructor(code: LoginErrorCode, message: string) {
+  /**
+   * @param refusal the keystore's refusal behind a hardware-key code, carried to the one line that
+   *   accuses it (the shell's `[DEVICE_RESTART]`), which runs only once the PIN was accepted.
+   */
+  constructor(
+    code: LoginErrorCode,
+    message: string,
+    readonly refusal?: HardwareKeyRefusal
+  ) {
     super(message);
     this.name = 'LoginFailure';
     this.code = code;
@@ -348,6 +356,27 @@ export function offersDeviceRestart(code: LoginErrorCode | undefined): boolean {
   return code === 'local_state_unopenable';
 }
 
+/** What the PIN gate currently knows, for {@link offersForgotPinReset}. */
+export interface GateFacts {
+  /** This install's state is proven to be another account's (`provesOtherAccountState`). */
+  otherAccountState: boolean;
+  /** The hardware-held key could not be read and may still exist (`withholdsResetForUnreadKey`). */
+  keyReadRefused: boolean;
+  /** The PIN was accepted and this device's state opens under no key (`offersDeviceRestart`). */
+  restartOffered: boolean;
+}
+
+/**
+ * Whether the gate offers the ACCOUNT-WIDE forgot-PIN reset (`POST /pin-reset`: the account's PIN
+ * and every device's footprint). Withheld over another account's state and over a key that may still
+ * exist, and - since 2026-11-20 - whenever the PIN was ACCEPTED and only this device's state is
+ * broken: the device-only restart is the remedy then, and a reset of the account's PIN would cost
+ * every other device for a fault that is this one's.
+ */
+export function offersForgotPinReset(facts: GateFacts): boolean {
+  return !facts.otherAccountState && !facts.keyReadRefused && !facts.restartOffered;
+}
+
 /**
  * The login failure for a hardware-held key the unlock could not use, decided by WHY: only a refusal
  * that proves the key gone (`absent`: the entry is empty; `mismatch`: it holds another key) is
@@ -360,19 +389,18 @@ export function hardwareKeyLoginFailure(
   refusal: HardwareKeyRefusal,
   log: (msg: string) => void
 ): LoginFailure {
+  // NARRATED HERE, ACCUSED ONCE ELSEWHERE. This runs inside the PIN unlock's key derivation, BEFORE
+  // the server has said whether the PIN is right: a wrong PIN over a lost key must not leave an
+  // accusing line. The one ERROR of the event is the shell's `[DEVICE_RESTART]`, written once the
+  // PIN was accepted, with this refusal (`LoginFailure.refusal`).
   if (refusal === 'absent' || refusal === 'mismatch') {
-    // ACCUSED, ALWAYS: the data reached this phone without its key - a transfer or a restore carried
-    // what the keystore never lets travel. Counted, never ordinary (`isExpectedLoginOutcome`).
-    console.error(
-      `[AT_REST_KEY] the hardware-held key is gone (${refusal}) - this phone's data travelled without its key; a PIN the server accepts restarts it as a new device`
-    );
     log(
-      `[AT_REST_KEY] ERROR: the hardware-held key is gone (${refusal}) - restart as a new device`
+      `[AT_REST_KEY] the hardware-held key is gone (${refusal}) - used only if the PIN is accepted`
     );
-    return new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+    return new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable(), refusal);
   }
   log(
-    `[AT_REST_KEY] ERROR: the hardware-held key could not be read (${refusal}) - retry, no reset offered`
+    `[AT_REST_KEY] the hardware-held key could not be read (${refusal}) - retry, no reset offered`
   );
-  return new LoginFailure('hardware_key_unreadable', m.auth_hardware_key_unreadable());
+  return new LoginFailure('hardware_key_unreadable', m.auth_hardware_key_unreadable(), refusal);
 }

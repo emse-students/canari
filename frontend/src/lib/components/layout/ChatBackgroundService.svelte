@@ -20,6 +20,11 @@
    */
   import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
+  import {
+    hardwareHeldKeyApplies,
+    tauriHardwareKeyPort,
+    type HardwareKeyRefusal,
+  } from '$lib/crypto/hardwareHeldKey';
   import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { navigating } from '$app/state';
@@ -38,6 +43,7 @@
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import {
     decideAutomaticRestart,
+    DeviceRestartUnfinishedError,
     oneSettlePerAccount,
     PinResetRefusedError,
     runDeviceRestart,
@@ -50,6 +56,7 @@
   import {
     isRecoverableWithOldPin,
     offersDeviceRestart,
+    offersForgotPinReset,
     withholdsResetForUnreadKey,
     isVaultRefusal,
     LoginFailure,
@@ -2300,6 +2307,8 @@
      * restarts as a new device once this login has settled (owner, 2026-11-20), with this same PIN.
      */
     let restartPending = false;
+    /** Why the restart runs, for its one accusing line: the keystore's refusal. */
+    let restartCause = '';
 
     void globalSession
       .login(
@@ -2308,7 +2317,7 @@
             answered = true;
             clearTimeout(stepTimer);
           },
-          onLoginFailed: (msg: string, code?: LoginErrorCode) => {
+          onLoginFailed: (msg: string, code?: LoginErrorCode, refusal?: HardwareKeyRefusal) => {
             answered = true;
             clearTimeout(stepTimer);
             const uid = globalSession.userId || currentUserId() || '';
@@ -2320,11 +2329,18 @@
               // THIS failure is the fact: a key proven gone is not a key that may still exist.
               keyReadRefused = false;
               restartPending = true;
+              restartCause = `PIN accepted, hardware-held key gone (${refusal ?? 'refusal unknown'})`;
               return;
             }
+            // Each refusal of the restart is its event's one accusing line (the login's own catch
+            // narrates a key gone at `warn`).
             if (restart === 'already_restarted') {
               console.error(
-                '[DEVICE_RESTART] the hardware-held key is gone again right after a restart - not restarted twice'
+                `[DEVICE_RESTART] the hardware-held key is gone again (${refusal ?? 'refusal unknown'}) right after a restart - not restarted twice`
+              );
+            } else if (restart === 'withheld_other_account') {
+              console.error(
+                `[DEVICE_RESTART] the hardware-held key is gone (${refusal ?? 'refusal unknown'}) over another account's state - nothing restarted`
               );
             }
             refusePinAttempt(
@@ -2340,7 +2356,11 @@
       )
       .then(() => {
         if (restartPending) {
-          void restartThisDevice(globalSession.userId || currentUserId() || '', submittedPin);
+          void restartThisDevice(
+            globalSession.userId || currentUserId() || '',
+            submittedPin,
+            restartCause
+          );
           return;
         }
         // Settled with no answer: something returned early without resolving this caller's UI.
@@ -2365,7 +2385,11 @@
         clearTimeout(stepTimer);
         if (restartPending) {
           appendLog(`[PIN] login() rejected after its refusal - the restart goes on: ${String(e)}`);
-          void restartThisDevice(globalSession.userId || currentUserId() || '', submittedPin);
+          void restartThisDevice(
+            globalSession.userId || currentUserId() || '',
+            submittedPin,
+            restartCause
+          );
           return;
         }
         refusePinAttempt(localizedMessage(e, m.auth_pin_login_failed()));
@@ -2425,13 +2449,17 @@
    * PIN the server accepted met a hardware-held key proven gone (owner, 2026-11-20), or from the
    * gate's "start fresh on this device" button when the saved state opens under no key. The
    * forgot-PIN reset's LOCAL half only - the account's PIN and its other devices are untouched, and
-   * they are where the history comes back from. Then the same PIN, when this page holds it, unlocks
+   * they are where the history can come back from. Then the same PIN, when this page holds it, unlocks
    * again and enrols this device afresh; otherwise the keypad asks for it.
    *
-   * ACCUSED AT ERROR, ALWAYS: a key gone means the data travelled without it (a phone transfer or a
-   * restore), and an unopenable state is a defect somewhere upstream. Both are counted.
+   * ACCUSED AT ERROR, ONCE, HERE: a key gone means the data travelled without it (a phone transfer or
+   * a restore), and an unopenable state is a defect somewhere upstream. Both are counted. An erase
+   * the disk does not confirm ({@link DeviceRestartUnfinishedError}) is a second event, accused as
+   * such, and nothing is unlocked again over it.
+   *
+   * @param cause what decided the restart, written into the accusing line
    */
-  async function restartThisDevice(uid: string, pin: string | null) {
+  async function restartThisDevice(uid: string, pin: string | null, cause: string) {
     if (!uid) return;
     // The second lock, on the act itself: never another account's state, never a key that may exist.
     if (deviceHoldsOtherAccount || keyReadRefused) {
@@ -2442,7 +2470,7 @@
       return;
     }
     console.error(
-      `[DEVICE_RESTART] this device restarts as a new device of ${uid.slice(0, 8)} (${pin ? 'automatic, hardware-held key gone, PIN accepted' : 'asked at the gate'}) - its local state could not be opened`
+      `[DEVICE_RESTART] this device restarts as a new device of ${uid.slice(0, 8)} (${cause}) - its local state could not be opened`
     );
     restartedThisPage.add(uid);
     restartOffered = false;
@@ -2454,11 +2482,16 @@
       await runDeviceRestart({
         stage: (basis) => globalSession.stageDeviceReset(uid, basis),
         commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        atRestScheme: async () =>
+          hardwareHeldKeyApplies() ? tauriHardwareKeyPort.scheme(uid) : 'pin-derived',
         log: appendLog,
       });
     } catch (e) {
+      // Nothing is unlocked again and no toast is shown: the next unlock would meet the same state.
       console.error(
-        '[DEVICE_RESTART] the restart did not complete - the next sign-in settles it:',
+        e instanceof DeviceRestartUnfinishedError
+          ? '[DEVICE_RESTART] the erase did not reach the disk - nothing is unlocked again:'
+          : '[DEVICE_RESTART] the restart did not complete - the next sign-in settles it:',
         e
       );
       pinError = m.auth_device_restart_failed();
@@ -2498,6 +2531,12 @@
         '[PIN_RESET] REFUSED - the hardware-held key could not be read but may exist; a reset would erase data a retry opens.'
       );
       pinError = m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
+    if (restartOffered) {
+      appendLog(
+        "[PIN_RESET] REFUSED - the PIN was accepted and only this device's state is broken: the device restart is the remedy, not the account's PIN."
+      );
       return;
     }
     pinError = '';
@@ -2631,7 +2670,13 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}
+  onForgotPinReset={offersForgotPinReset({
+    otherAccountState: deviceHoldsOtherAccount,
+    keyReadRefused,
+    restartOffered,
+  })
+    ? handlePinReset
+    : undefined}
   resetWithheldNotice={deviceHoldsOtherAccount
     ? m.auth_pin_reset_blocked_other_account()
     : keyReadRefused
@@ -2639,7 +2684,12 @@
       : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   onRestartDevice={restartOffered && !deviceHoldsOtherAccount && !keyReadRefused
-    ? () => void restartThisDevice(globalSession.userId || currentUserId() || '', null)
+    ? () =>
+        void restartThisDevice(
+          globalSession.userId || currentUserId() || '',
+          null,
+          'asked at the gate, the saved state opens under no key'
+        )
     : undefined}
 />
 
