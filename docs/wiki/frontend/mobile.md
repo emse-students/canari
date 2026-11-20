@@ -3483,9 +3483,8 @@ backup restored onto the SAME iPhone also brings back no data and no at-rest mar
 enrols as a new device, its history from the account's other devices, from peers or from a
 `.canari` backup. Charter principle 1 (no second holder) wins over principle 2 for that restore;
 principle 2 is still served by the peers and the `.canari` file ([principes](../../principes.md)).
-Android refuses both
-channels since 2026-08-26 (`data_extraction_rules.xml` with `allowBackup=false`,
-[below](#plays-q3-2026-quality-requirements-measured-against-this-app)).
+Android refuses both channels since 2026-08-26 (`data_extraction_rules.xml` with
+`allowBackup=false`, [below](#plays-q3-2026-quality-requirements-measured-against-this-app)).
 
 **What the iOS app stores, measured** on the bench iPhone 12's full backup of 2026-11-20
 (`pymobiledevice3 backup2 backup --full`, its `Manifest.db` read, the backup deleted), before this
@@ -3534,8 +3533,9 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
   has one.
 - **The flag is guidance, not a guarantee** - Apple's own words: "it's not a mechanism to guarantee
   those items never appear in a backup or on a restored device". And a backup taken BEFORE 1.7.2
-  still carries everything (the session and push credentials in it are dead: both rotate, the push
-  credential at every registration and the refresh token at every use, [sessions](../sessions.md)). So the app must still recognise a copied install by itself, from the
+  still carries everything. The session and push credentials in it expire: a refresh token at its
+  next use or at the session's idle expiry, the push credential at the next registration
+  ([sessions](../sessions.md)). So the app must still recognise a copied install by itself, from the
   at-rest key proven absent ([auth](modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)).
   This pass stops new backups from carrying the data; it does not make that detection unnecessary.
 - **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a
