@@ -519,8 +519,18 @@ export function useMessaging() {
     Array<{ senderId: string; content: string } & AddMessageToChatOptions>
   >();
 
-  /** Buffer of orphan messages that arrived before their conversation was in the map.
-   *  Capped per conversation to avoid memory leaks. */
+  /**
+   * Buffer of orphan messages: added while their conversation was not in the map. Capped per
+   * conversation to avoid memory leaks.
+   *
+   * TWO KINDS, AND ONLY ONE IS A RATCHET'S (rows before ratchet, the orphan window, 2026-11-20). A
+   * message with no `frameId` (an own send, an own notice, a salon event) has no MLS advance behind
+   * it and waits here for `drainOrphanMessages`. A message WITH one was decrypted from a queued
+   * frame, so its generation is spent: it is FRAMED, counted by every checkpoint's hold and settled
+   * by the next store of either kind ({@link settleFramedOrphans}), never left for a Welcome that
+   * may not come - stored when its conversation is back in the map, dropped and said when it is not
+   * (deleted or purged). Its frame's ack is withheld while it stands ({@link framesLeftUnstored}).
+   */
   const MAX_ORPHAN_MESSAGES_PER_CONVERSATION = 50;
   const orphanBuffer = new SvelteMap<
     string,
@@ -704,7 +714,74 @@ export function useMessaging() {
     for (const kept of unstoredBatches) {
       for (const message of kept.messages) if (message.frameId) frames.add(message.frameId);
     }
+    // A framed orphan is held in memory only: its frame stays on the server until a store settles it.
+    for (const entries of orphanBuffer.values()) {
+      for (const entry of entries) if (entry.options.frameId) frames.add(entry.options.frameId);
+    }
     return frames;
+  }
+
+  /** How many framed orphans {@link orphanBuffer} holds - what a checkpoint's hold must settle. */
+  function framedOrphanCount(): number {
+    let count = 0;
+    for (const entries of orphanBuffer.values()) {
+      for (const entry of entries) if (entry.options.frameId) count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * ROWS BEFORE RATCHET, THE ORPHAN WINDOW: settles every FRAMED orphan the buffer holds, so no
+   * checkpoint exports a ratchet advance whose row only memory holds. One pass, no wait - a Welcome
+   * that would drain it may never come, and this is not a reason to hold an export:
+   *
+   * - its conversation is in the map again: stored now, through the batch path - a failed write is
+   *   kept ({@link unstoredRowWrites}), a throw kept as a batch, and either refuses the hold;
+   * - it is not: the conversation LEFT the map while the frame's handler ran (`handleKnownGroup`
+   *   refuses an absent conversation before it decrypts, and the Welcome's re-key runs under the MLS
+   *   lock the handler holds), so the reader deleted it or it was purged. Dropped, said with its
+   *   frames, and never blocking: writing it would resurrect what the reader removed.
+   *
+   * An unframed orphan has no advance behind it and stays for `drainOrphanMessages`. Never throws
+   * past its own line: called inside {@link storeBufferedRows}' step.
+   */
+  async function settleFramedOrphans(
+    ctx: MessagingContext,
+    origin: 'hold' | 'close'
+  ): Promise<void> {
+    if (framedOrphanCount() === 0) return;
+    const droppedFrames: string[] = [];
+    let dropped = 0;
+    for (const [key, entries] of Array.from(orphanBuffer.entries())) {
+      const framed = entries.filter((entry) => entry.options.frameId);
+      if (framed.length === 0) continue;
+      const unframed = entries.filter((entry) => !entry.options.frameId);
+      if (unframed.length > 0) orphanBuffer.set(key, unframed);
+      else orphanBuffer.delete(key);
+      if (!ctx.conversations.has(key)) {
+        dropped += framed.length;
+        for (const entry of framed) droppedFrames.push(entry.options.frameId as string);
+        continue;
+      }
+      const messages = framed.map((entry) => ({
+        senderId: entry.senderId,
+        content: entry.content,
+        ...entry.options,
+      }));
+      console.log(
+        `[ORPHAN] storing ${messages.length} decrypted orphan message(s) of "${key}" (${origin}): their conversation is in the map again`
+      );
+      try {
+        await batchAddMessages(messages, key, ctx, 'arrival');
+      } catch (e) {
+        keepThrownBatch(ctx, key, messages, origin, e);
+      }
+    }
+    if (dropped > 0) {
+      console.warn(
+        `[ORPHAN] ${dropped} decrypted orphan message(s) dropped (${origin}): their conversation left the map before their row was written (deleted or purged) - nothing written back, frame(s) ${droppedFrames.join(',')}`
+      );
+    }
   }
 
   /** The frames each row of `messages` was decrypted from, keyed by the row id they are written as. */
@@ -916,6 +993,9 @@ export function useMessaging() {
   ): Promise<{ stored: boolean; left: number }> {
     const step = bufferedRowsStored
       .then(async () => {
+        // FIRST, the framed orphans: decrypted, held in memory only, and settled in one pass - a
+        // batch one of them throws is kept below like any other, and counted.
+        await settleFramedOrphans(ctx, origin);
         // The batches an earlier store kept run first, each on its own, under the key that shows
         // their thread now - at a close too, so their messages show without waiting for a hold.
         const kept = unstoredBatches.splice(0);
@@ -977,12 +1057,17 @@ export function useMessaging() {
         // durable in the pending store before it is noted, so a refusal would protect no copy.
         if (origin === 'hold') await retryParkedMutations(pendingDeps(ctx));
         // The count is THIS step's, read before a store queued behind it can take the kept batches.
-        const left = writesLeft + keptMessageCount();
+        // A framed orphan added while this step ran (a history bundle's row, whose mark settles
+        // before its dispatch) is not settled yet: counted, so a hold refuses and the next settles it.
+        const left = writesLeft + keptMessageCount() + framedOrphanCount();
         return { stored: left === 0, left };
       })
       .catch((e: unknown) => {
         console.error(`[ADD_MSG] a store of the buffered messages threw (${origin}):`, e);
-        return { stored: false, left: unstoredRowCount() + keptMessageCount() };
+        return {
+          stored: false,
+          left: unstoredRowCount() + keptMessageCount() + framedOrphanCount(),
+        };
       });
     bufferedRowsStored = step;
     return step;
@@ -1013,6 +1098,12 @@ export function useMessaging() {
       const count = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
       console.log(
         `[ADD_MSG] A checkpoint is about to export: storing the ${count} buffered message(s) first, the window stays open`
+      );
+    }
+    const orphans = framedOrphanCount();
+    if (orphans > 0) {
+      console.log(
+        `[ORPHAN] A checkpoint is about to export: settling the ${orphans} decrypted orphan message(s) first`
       );
     }
     let allStored = false;
@@ -1630,7 +1721,73 @@ export function useMessaging() {
   }
 
   /**
-   * Keeps a message whose conversation is not in the map yet, for `drainOrphanMessages` to replay.
+   * Replays the orphans buffered for `convoKey`, which has just entered the map (a Welcome).
+   *
+   * THE REPLAY IS A STEP OF THE STORE CHAIN ({@link bufferedRowsStored}), so a checkpoint's hold
+   * taken meanwhile - the Welcome's own `persistNow` is the next thing it does - resolves only once
+   * these adds returned: each stored by the live path (a hold is taken), or buffered into the window
+   * the hold's own step stores next. It used to run beside the chain, so that export could claim a
+   * framed orphan's advance while its row was still being written. The step never rejects: each
+   * add's failure is its own (`addMessageToChat` keeps a framed one that threw) and is said here.
+   */
+  function drainOrphanMessages(convoKey: string, ctx: MessagingContext): void {
+    const normalized = convoKey.toLowerCase();
+    const messages = orphanBuffer.get(normalized);
+    if (!messages || messages.length === 0) return;
+    orphanBuffer.delete(normalized);
+    console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
+    const step = bufferedRowsStored.then(async () => {
+      const replays = await Promise.allSettled(
+        messages.map((msg) =>
+          addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
+        )
+      );
+      const failed = replays.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed.length > 0) {
+        console.error(
+          `[ORPHAN] ${failed.length} of ${messages.length} replayed message(s) of "${normalized}" failed; first cause:`,
+          failed[0].reason
+        );
+      }
+    });
+    bufferedRowsStored = step.catch((e: unknown) => {
+      console.error(`[ORPHAN] the replay of "${normalized}" threw:`, e);
+    });
+    // AN OWN SEND'S STATUS IS READ FROM THE DURABLE QUEUE ONCE ITS ROW IS BACK, as at a reload: a
+    // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
+    // dropped at the buffering, so it can no longer outlive the send (re-review of #2874). OUTSIDE
+    // the chain: a queue read is nothing a checkpoint waits for.
+    if (messages.some((msg) => msg.ownSend)) {
+      void bufferedRowsStored
+        .then(() => applyOutboxPendingStatuses())
+        .catch((e: unknown) =>
+          console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
+        );
+    }
+  }
+
+  /**
+   * WHO SENT A MESSAGE TO THE ORPHAN BUFFER, for its line: the one fact that says whether a ratchet
+   * advance stands behind the row (a decrypted frame, named by its queued id) or not (every other
+   * writer). Derived from what the add carries, so no caller has to remember to say it.
+   */
+  function orphanSource(
+    senderId: string,
+    ctx: MessagingContext,
+    options: AddMessageToChatOptions
+  ): string {
+    if (options.frameId) return `decrypted frame ${options.frameId}`;
+    if (options.outboxEntry) return 'own send';
+    if (options.soleWriter) return 'own notice';
+    if (options.isFcmPreview) return 'push preview';
+    if (options.isSystem || isSystemSender(senderId)) return 'local notice';
+    if (isOwnMessage(senderId, ctx.userId)) return 'own message';
+    return 'unframed message';
+  }
+
+  /**
+   * Keeps a message whose conversation is not in the map yet, for `drainOrphanMessages` to replay -
+   * or, FRAMED (decrypted from a queued frame), for the next store to settle ({@link settleFramedOrphans}).
    *
    * NEVER WITH ITS OUTBOX ENTRY (review of #2874). The replay goes back through `addMessageToChat`,
    * and an entry carried along would be written - and so SENT - a second time by
@@ -1737,7 +1894,7 @@ export function useMessaging() {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
         console.warn(
-          `[ADD_MSG] conversation "${normalized}" introuvable (bulk) — bufferisation orpheline`
+          `[ADD_MSG] conversation "${normalized}" introuvable (bulk) - orphan buffered, source: ${orphanSource(senderId, ctx, options)}`
         );
         bufferOrphan(normalized, senderId, content, contactName, options);
         return;
@@ -1792,7 +1949,9 @@ export function useMessaging() {
 
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
-      console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" introuvable (live) - orphan buffered, source: ${orphanSource(senderId, ctx, options)}`
+      );
       bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
@@ -4672,26 +4831,7 @@ export function useMessaging() {
      * map (e.g. after processing an MLS Welcome).
      * Called via MessageHandlerDeps.drainOrphanMessages.
      */
-    drainOrphanMessages: (convoKey: string, ctx: MessagingContext) => {
-      const normalized = convoKey.toLowerCase();
-      const messages = orphanBuffer.get(normalized);
-      if (!messages || messages.length === 0) return;
-      orphanBuffer.delete(normalized);
-      console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
-      const replays = messages.map((msg) =>
-        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
-      );
-      // AN OWN SEND'S STATUS IS READ FROM THE DURABLE QUEUE ONCE ITS ROW IS BACK, as at a reload: a
-      // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
-      // dropped at the buffering, so it can no longer outlive the send (re-review of #2874).
-      if (messages.some((msg) => msg.ownSend)) {
-        void Promise.allSettled(replays)
-          .then(() => applyOutboxPendingStatuses())
-          .catch((e: unknown) =>
-            console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
-          );
-      }
-    },
+    drainOrphanMessages,
     /** Appends multiple messages in one reactive update and one batch DB write. */
     batchAddMessages,
     /** Main send handler: uploads pending media then sends a text message. */

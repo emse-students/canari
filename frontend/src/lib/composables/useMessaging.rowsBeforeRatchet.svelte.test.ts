@@ -1271,3 +1271,120 @@ describe('a mutation parked against a stored row (rows before ratchet)', () => {
     (await messaging.holdRowsForCheckpoint(ctx))();
   });
 });
+
+/**
+ * THE ORPHAN WINDOW (rows before ratchet, the last one, 2026-11-20). A message whose conversation
+ * is not in the map was held in memory until a Welcome drained it, outside every checkpoint's
+ * hold: an export could claim its frame's ratchet advance while only memory held its row. A FRAMED
+ * orphan (one decrypted from a queued frame) is now settled by the hold - stored when its
+ * conversation is back, dropped and said when it was deleted or purged - and the drain is a step of
+ * the store chain the hold waits on.
+ */
+describe('the orphan buffer (rows before ratchet)', () => {
+  const ORPHAN_KEY = 'orphan-conversation';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  /** Puts the orphan's conversation (back) in the map, as a Welcome's upsert does. */
+  function admit(conversations: SvelteMap<string, Conversation>): void {
+    conversations.set(ORPHAN_KEY, {
+      id: ORPHAN_KEY,
+      name: ORPHAN_KEY,
+      messages: [],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+  }
+
+  it('a checkpoint does not export past a still-buffered DECRYPTED orphan: the hold stores it, and its frame is withheld until then', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // The conversation left the map while the frame's handler ran: the add meets no conversation.
+    await messaging.addMessageToChat(PEER, 'orphaned', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-1',
+      frameId: 'q-orphan',
+    });
+    expect(storedIds(saveMessage)).toEqual([]);
+    // Shown nowhere, stored nowhere: its frame must stay on the server.
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-orphan']);
+
+    // Back in the map, and no Welcome drained it: the checkpoint's hold settles it before the export.
+    admit(conversations);
+    const release = await observer.holdRowsForCheckpoint();
+
+    expect(storedIds(saveMessage)).toEqual(['orphan-1']);
+    expect(conversations.get(ORPHAN_KEY)?.messages.map((m) => m.id)).toEqual(['orphan-1']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    release();
+  });
+
+  it('a decrypted orphan whose conversation was DELETED or purged is dropped and said - it never blocks the hold', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'for a deleted thread', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-gone',
+      frameId: 'q-gone',
+    });
+
+    // Two checkpoints in a row: neither is refused, and the second has nothing left to settle.
+    (await observer.holdRowsForCheckpoint())();
+    (await observer.holdRowsForCheckpoint())();
+
+    expect(storedIds(saveMessage)).toEqual([]);
+    expect(conversations.has(ORPHAN_KEY)).toBe(false);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    const dropped = warn.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith('[ORPHAN]') && line.includes('dropped'));
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toContain('q-gone');
+
+    // And a Welcome for that key later finds nothing to bring back.
+    admit(conversations);
+    messaging.drainOrphanMessages(ORPHAN_KEY, ctx);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual([]);
+  });
+
+  it('drainOrphanMessages stores the row BEFORE a hold taken right after it releases', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    // An orphan with no frame waits for its Welcome; the drain's write is held open below.
+    await messaging.addMessageToChat(PEER, 'awaiting its welcome', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-2',
+    });
+    let openTheWrite: () => void = () => {};
+    const writeHeld = new Promise<void>((resolve) => (openTheWrite = resolve));
+    saveMessage.mockImplementationOnce(async () => {
+      await writeHeld;
+    });
+
+    // The Welcome: the conversation enters the map, the orphans drain, the checkpoint follows.
+    admit(conversations);
+    messaging.drainOrphanMessages(ORPHAN_KEY, ctx);
+    let resolved = false;
+    const hold = observer.holdRowsForCheckpoint().then((release) => {
+      resolved = true;
+      return release;
+    });
+
+    // Let every microtask and timer turn run: the hold must still be waiting for the drain's write.
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(resolved).toBe(false);
+
+    openTheWrite();
+    (await hold)();
+    expect(storedIds(saveMessage)).toEqual(['orphan-2']);
+  });
+});
