@@ -19,6 +19,12 @@
    * persists across all routes, not only /chat.
    */
   import { onMount, untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import {
+    hardwareHeldKeyApplies,
+    tauriHardwareKeyPort,
+    type HardwareKeyRefusal,
+  } from '$lib/crypto/hardwareHeldKey';
   import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { navigating } from '$app/state';
@@ -36,8 +42,11 @@
   import { setMlsSessionLostHandler, type MlsSessionLoss } from '$lib/mls-client/mlsSessionLoss';
   import { reopenAtPinGate } from '$lib/composables/session/reopenAtPinGate';
   import {
+    decideAutomaticRestart,
+    DeviceRestartUnfinishedError,
     oneSettlePerAccount,
     PinResetRefusedError,
+    runDeviceRestart,
     runPinReset,
     serverPinSaltFingerprint,
     settleUnsettledPinReset,
@@ -46,6 +55,8 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    offersDeviceRestart,
+    offersForgotPinReset,
     withholdsResetForUnreadKey,
     isVaultRefusal,
     LoginFailure,
@@ -429,6 +440,19 @@
    * and cleared by every failed unlock (`applyPinFailure`), and cleared with the other flag.
    */
   let keyReadRefused = $state(false);
+  /**
+   * The last unlock accepted the PIN and met a saved state that opens under no key this device holds
+   * (`offersDeviceRestart`): the gate shows its "start fresh on this device" button directly, never
+   * behind "forgot PIN". Set and cleared by every failed unlock (`applyPinFailure`), cleared with the
+   * flags above.
+   */
+  let restartOffered = $state(false);
+  /**
+   * The accounts this page has restarted as a new device ({@link restartThisDevice}). A second
+   * proven-gone key right after a restart is not restarted again: it could only loop, so it is
+   * accused and shown instead. A fact of this page, which a reload starts empty.
+   */
+  const restartedThisPage = new SvelteSet<string>();
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
   });
@@ -461,7 +485,10 @@
     return () => setNativeQuickReplySender(null);
   });
   $effect(() => {
-    if (globalSession.isLoggedIn) keyReadRefused = false;
+    if (globalSession.isLoggedIn) {
+      keyReadRefused = false;
+      restartOffered = false;
+    }
   });
   // A NOTIFICATION NAMES A MEMBER BY THEIR NICKNAME IN THAT CONVERSATION (owner, 2026-11-14), and
   // the native push path reads it from the device's copy (`nicknameMirror.ts`): every register this
@@ -504,9 +531,8 @@
   );
 
   /**
-   * Enables the recovery link when a local MLS state exists and the failure is either a
-   * PIN mismatch (tried the old PIN) or the explicit "PIN changed on another device"
-   * signal (tried the new PIN but the local state is still sealed under the old one).
+   * Enables the recovery link when a local MLS state exists and a PIN the server accepted did not
+   * open it (`isRecoverableWithOldPin`): never on a plain mismatch, which is answered by retyping.
    *
    * Branches on the machine-readable {@link LoginErrorCode}, never on the message: the
    * message is localized, so a regex over it stops matching as soon as the locale changes.
@@ -564,6 +590,7 @@
     }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
     keyReadRefused = withholdsResetForUnreadKey(code);
+    restartOffered = offersDeviceRestart(code);
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
     // path offered the reset the saved-unlock path withheld.
@@ -645,6 +672,8 @@
       if (e instanceof LoginFailure && e.code === 'pin_reset_unsettled' && uid) {
         void settleUnsettledPinResetOf(uid);
       }
+      // A state no PIN opens: the gate below offers to start this device fresh, as at the unlock.
+      if (e instanceof LoginFailure && offersDeviceRestart(e.code)) restartOffered = true;
     } finally {
       recoverLoading = false;
       recoverProgress = null;
@@ -783,6 +812,7 @@
     // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
     deviceHoldsOtherAccount = false;
     keyReadRefused = false;
+    restartOffered = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 
@@ -897,6 +927,7 @@
   async function handlePinSignOut() {
     deviceHoldsOtherAccount = false;
     keyReadRefused = false;
+    restartOffered = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
@@ -2271,6 +2302,13 @@
      * `docs/wiki/backlog.md`, the 19.5 MB entry.
      */
     let answered = false;
+    /**
+     * Set when the server ACCEPTED this PIN and the hardware-held key is proven gone: the phone
+     * restarts as a new device once this login has settled (owner, 2026-11-20), with this same PIN.
+     */
+    let restartPending = false;
+    /** Why the restart runs, for its one accusing line: the keystore's refusal. */
+    let restartCause = '';
 
     void globalSession
       .login(
@@ -2279,15 +2317,52 @@
             answered = true;
             clearTimeout(stepTimer);
           },
-          onLoginFailed: (msg: string, code?: LoginErrorCode) => {
+          onLoginFailed: (msg: string, code?: LoginErrorCode, refusal?: HardwareKeyRefusal) => {
             answered = true;
             clearTimeout(stepTimer);
-            refusePinAttempt(msg);
-            applyPinFailure(globalSession.userId || currentUserId() || '', code);
+            const uid = globalSession.userId || currentUserId() || '';
+            const restart = decideAutomaticRestart(code, {
+              otherAccountState: deviceHoldsOtherAccount || provesOtherAccountState(code),
+              alreadyRestarted: restartedThisPage.has(uid),
+            });
+            if (restart === 'automatic' && uid) {
+              // THIS failure is the fact: a key proven gone is not a key that may still exist.
+              keyReadRefused = false;
+              restartPending = true;
+              restartCause = `PIN accepted, hardware-held key gone (${refusal ?? 'refusal unknown'})`;
+              return;
+            }
+            // Each refusal of the restart is its event's one accusing line (the login's own catch
+            // narrates a key gone at `warn`).
+            if (restart === 'already_restarted') {
+              console.error(
+                `[DEVICE_RESTART] the hardware-held key is gone again (${refusal ?? 'refusal unknown'}) right after a restart - not restarted twice`
+              );
+            } else if (restart === 'withheld_other_account') {
+              console.error(
+                `[DEVICE_RESTART] the hardware-held key is gone (${refusal ?? 'refusal unknown'}) over another account's state - nothing restarted`
+              );
+            }
+            refusePinAttempt(
+              restart === 'already_restarted'
+                ? m.auth_device_restart_failed()
+                : restart === 'withheld_other_account'
+                  ? m.auth_pin_reset_blocked_other_account()
+                  : msg
+            );
+            applyPinFailure(uid, code);
           },
         })
       )
       .then(() => {
+        if (restartPending) {
+          void restartThisDevice(
+            globalSession.userId || currentUserId() || '',
+            submittedPin,
+            restartCause
+          );
+          return;
+        }
         // Settled with no answer: something returned early without resolving this caller's UI.
         // Nothing else can release the modal, and the message says what happened rather than
         // guessing why.
@@ -2308,6 +2383,15 @@
         // "your PIN is wrong".
         answered = true;
         clearTimeout(stepTimer);
+        if (restartPending) {
+          appendLog(`[PIN] login() rejected after its refusal - the restart goes on: ${String(e)}`);
+          void restartThisDevice(
+            globalSession.userId || currentUserId() || '',
+            submittedPin,
+            restartCause
+          );
+          return;
+        }
         refusePinAttempt(localizedMessage(e, m.auth_pin_login_failed()));
         _loginInProgress = false;
         appendLog(`[PIN] login() rejected: ${String(e)}`);
@@ -2361,6 +2445,72 @@
   }
 
   /**
+   * RESTARTS THIS DEVICE AS A NEW DEVICE OF THE ACCOUNT ({@link runDeviceRestart}): by itself when a
+   * PIN the server accepted met a hardware-held key proven gone (owner, 2026-11-20), or from the
+   * gate's "start fresh on this device" button when the saved state opens under no key. The
+   * forgot-PIN reset's LOCAL half only - the account's PIN and its other devices are untouched, and
+   * they are where the history can come back from. Then the same PIN, when this page holds it, unlocks
+   * again and enrols this device afresh; otherwise the keypad asks for it.
+   *
+   * ACCUSED AT ERROR, ONCE, HERE: a key gone means the data travelled without it (a phone transfer or
+   * a restore), and an unopenable state is a defect somewhere upstream. Both are counted. An erase
+   * the disk does not confirm ({@link DeviceRestartUnfinishedError}) is a second event, accused as
+   * such, and nothing is unlocked again over it.
+   *
+   * @param cause what decided the restart, written into the accusing line
+   */
+  async function restartThisDevice(uid: string, pin: string | null, cause: string) {
+    if (!uid) return;
+    // The second lock, on the act itself: never another account's state, never a key that may exist.
+    if (deviceHoldsOtherAccount || keyReadRefused) {
+      appendLog('[DEVICE_RESTART] REFUSED - another account state, or a key that may still exist.');
+      pinError = deviceHoldsOtherAccount
+        ? m.auth_pin_reset_blocked_other_account()
+        : m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
+    console.error(
+      `[DEVICE_RESTART] this device restarts as a new device of ${uid.slice(0, 8)} (${cause}) - its local state could not be opened`
+    );
+    restartedThisPage.add(uid);
+    restartOffered = false;
+    canRecoverPin = false;
+    pinError = '';
+    pinLoading = true;
+    pinStep = m.auth_pin_step_restarting();
+    try {
+      await runDeviceRestart({
+        stage: (basis) => globalSession.stageDeviceReset(uid, basis),
+        commit: () => globalSession.resetDeviceAsFresh(uid, sessionCb()),
+        atRestScheme: async () =>
+          hardwareHeldKeyApplies() ? tauriHardwareKeyPort.scheme(uid) : 'pin-derived',
+        log: appendLog,
+      });
+    } catch (e) {
+      // Nothing is unlocked again and no toast is shown: the next unlock would meet the same state.
+      console.error(
+        e instanceof DeviceRestartUnfinishedError
+          ? '[DEVICE_RESTART] the erase did not reach the disk - nothing is unlocked again:'
+          : '[DEVICE_RESTART] the restart did not complete - the next sign-in settles it:',
+        e
+      );
+      pinError = m.auth_device_restart_failed();
+      return;
+    } finally {
+      pinLoading = false;
+      pinStep = '';
+    }
+    globalSession.userId = uid;
+    isFirstPinSetup = false;
+    showToast(m.auth_device_restarted(), 'info', 10000);
+    if (pin) {
+      handlePinSubmit(pin);
+      return;
+    }
+    showPinGate('device restarted');
+  }
+
+  /**
    * "Forgot PIN" reset: wipes the user's PIN-protected MLS state server-side (keeping
    * the account, posts and community), clears local MLS state, then re-opens the modal
    * in first-setup mode so the user chooses a new PIN. Past encrypted messages are lost.
@@ -2381,6 +2531,12 @@
         '[PIN_RESET] REFUSED - the hardware-held key could not be read but may exist; a reset would erase data a retry opens.'
       );
       pinError = m.auth_pin_reset_withheld_key_unreadable();
+      return;
+    }
+    if (restartOffered) {
+      appendLog(
+        "[PIN_RESET] REFUSED - the PIN was accepted and only this device's state is broken: the device restart is the remedy, not the account's PIN."
+      );
       return;
     }
     pinError = '';
@@ -2514,13 +2670,27 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}
+  onForgotPinReset={offersForgotPinReset({
+    otherAccountState: deviceHoldsOtherAccount,
+    keyReadRefused,
+    restartOffered,
+  })
+    ? handlePinReset
+    : undefined}
   resetWithheldNotice={deviceHoldsOtherAccount
     ? m.auth_pin_reset_blocked_other_account()
     : keyReadRefused
       ? m.auth_pin_reset_withheld_key_unreadable()
       : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
+  onRestartDevice={restartOffered && !deviceHoldsOtherAccount && !keyReadRefused
+    ? () =>
+        void restartThisDevice(
+          globalSession.userId || currentUserId() || '',
+          null,
+          'asked at the gate, the saved state opens under no key'
+        )
+    : undefined}
 />
 
 <!-- "Envoyer a...": where a share from another app goes (visible on all routes, after the PIN) -->

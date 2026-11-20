@@ -10,6 +10,7 @@ const HANDOFF_LANDING_PATH = '/auth/handoff';
 
 /** The 404 code of an estate that holds no signing key: its configured state, not a failure. */
 const HANDOFF_NOT_OFFERED = 'HANDOFF_NOT_OFFERED';
+const HANDOFF_TERMS_NOT_ACCEPTED = 'HANDOFF_TERMS_NOT_ACCEPTED';
 
 /**
  * The mint answered with a URL that is not on the site asked for - which the server never composes.
@@ -64,6 +65,19 @@ function reportPlainOpen(site: EcosystemSite, err: unknown): void {
       notOfferedSaid = true;
       Log.i('ecosystemSite', 'no sign-in handoff on this estate - sites open plainly');
     }
+    return;
+  }
+  // The person has not accepted the current MiConnect terms: EXPECTED for everyone after a terms
+  // version ships, until their next MiConnect sign-in. One info line per open, never a warn.
+  if (
+    err instanceof ApiRefusalError &&
+    err.status === 403 &&
+    err.code === HANDOFF_TERMS_NOT_ACCEPTED
+  ) {
+    Log.i(
+      'ecosystemSite',
+      `${site.id} opens plainly: the current MiConnect terms are not accepted yet`
+    );
     return;
   }
   const cls =

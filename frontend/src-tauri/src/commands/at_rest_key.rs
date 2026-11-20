@@ -146,9 +146,33 @@ impl Scheme {
     }
 }
 
+/// Why an unattended read of one keystore entry gave no key, when it did not answer "nothing".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EntryReadError {
+    /// The platform holds the entry's WRAPPING key, and no wrapped key could be read beside it
+    /// (Android: the Keystore alias exists, SharedPreferences hold nothing for it). Left by a crash,
+    /// a kill or a full disk between a write's alias creation and its SharedPreferences commit - or
+    /// by a SharedPreferences file that does not parse. For a WRITER it means "the entry does not hold
+    /// its key": [`settle_scheme`] reverts a migrating marker and [`prepare`] starts over, exactly as
+    /// on an empty entry, which is safe because rows move only after the key reads back. For the
+    /// hardware-held READ it proves nothing gone, so [`read_hardware_key`] answers `Unreadable`.
+    NotWrapped,
+    /// The platform could not be read: a locked keychain, an entitlement error, a decrypt failure.
+    Failed(String),
+}
+
+impl std::fmt::Display for EntryReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EntryReadError::NotWrapped => write!(f, "the wrapping key is held, no wrapped key"),
+            EntryReadError::Failed(why) => write!(f, "{why}"),
+        }
+    }
+}
+
 /// An unattended read of one keystore entry: the key, nothing (`Ok(None)`), or a failure to read -
-/// which is NOT "nothing" and is never treated as such.
-pub(crate) type EntryRead = Result<Option<[u8; 32]>, String>;
+/// which is NOT "nothing" and is never treated as such ([`EntryReadError`]).
+pub(crate) type EntryRead = Result<Option<[u8; 32]>, EntryReadError>;
 
 /// The key check value of `key` - see the module doc for why it exists and why it leaks nothing.
 pub(crate) fn key_check_value(key: &[u8; 32]) -> String {
@@ -315,11 +339,18 @@ pub(crate) fn settle_scheme(
         MarkerRead::Present(m) if m.scheme == MarkerScheme::Hardware => Scheme::Hardware,
         MarkerRead::Present(m) => match read_entry(&m.alias) {
             Ok(Some(key)) if key_check_value(&key) == m.kcv => Scheme::Migrating,
-            Ok(found) => {
-                log::warn!(
-                    "[AT_REST_KEY] migrating, and the entry {} its key - no row moved: marker reverted",
-                    if found.is_some() { "holds another key than" } else { "does not hold" }
-                );
+            found @ (Ok(_) | Err(EntryReadError::NotWrapped)) => {
+                match found {
+                    Ok(Some(_)) => log::warn!(
+                        "[AT_REST_KEY] migrating, and the entry holds another key than its key - no row moved: marker reverted"
+                    ),
+                    Err(_) => log::warn!(
+                        "[AT_REST_KEY] migrating, and the entry holds a wrapping key but no wrapped key - no row moved: marker reverted"
+                    ),
+                    Ok(None) => log::warn!(
+                        "[AT_REST_KEY] migrating, and the entry does not hold its key - no row moved: marker reverted"
+                    ),
+                }
                 match forget_marker(data_dir, user_id) {
                     Ok(()) => Scheme::PinDerived,
                     Err(e) => {
@@ -328,7 +359,7 @@ pub(crate) fn settle_scheme(
                     }
                 }
             }
-            Err(e) => {
+            Err(EntryReadError::Failed(e)) => {
                 log::error!("[AT_REST_KEY] migrating, and the keystore entry cannot be read: {e}");
                 Scheme::Unreadable
             }
@@ -364,10 +395,12 @@ pub(crate) fn prepare(
                 log::info!("[AT_REST_KEY] migration resumed with the key already in the keystore");
                 return Ok(key);
             }
-            Ok(_) => log::info!(
+            Ok(_) | Err(EntryReadError::NotWrapped) => log::info!(
                 "[AT_REST_KEY] marker says migrating but the keystore never received its key - a new key"
             ),
-            Err(e) => return Err(format!("the keystore entry cannot be read ({e}) - no re-key")),
+            Err(EntryReadError::Failed(e)) => {
+                return Err(format!("the keystore entry cannot be read ({e}) - no re-key"))
+            }
         },
         MarkerRead::Unreadable(why) => {
             return Err(format!("marker unreadable ({why}) - refusing to start a re-key"));
@@ -449,6 +482,8 @@ pub(crate) fn read_hardware_key(
         Ok(None) => HardwareKeyRead::Absent,
         Ok(Some(key)) if key_check_value(&key) == marker.kcv => HardwareKeyRead::Key(key),
         Ok(Some(_)) => HardwareKeyRead::Mismatch,
+        // NOT WRAPPED IS NOT GONE: the wrapping key is still held, so nothing proves the key lost,
+        // and a restart over it would erase data a retry might open.
         Err(e) => {
             log::error!("[AT_REST_KEY] the hardware-held key's entry cannot be read: {e}");
             HardwareKeyRead::Unreadable
@@ -944,10 +979,71 @@ mod tests {
         let d = dir();
         migrating(&d);
         assert_eq!(
-            settle_scheme(&d, "alice", |_| Err("keystore busy".into())),
+            settle_scheme(&d, "alice", |_| Err(EntryReadError::Failed(
+                "keystore busy".into()
+            ))),
             Scheme::Unreadable
         );
         assert!(matches!(read_marker(&d, "alice"), MarkerRead::Present(_)));
+    }
+
+    fn not_wrapped(_: &str) -> EntryRead {
+        Err(EntryReadError::NotWrapped)
+    }
+
+    /// The crash state of a cut `prepare` on Android: the Keystore alias was created, the wrapped
+    /// key never committed. Nothing moved, so the migrating marker reverts as on an empty entry -
+    /// never `Unreadable`, which would withhold every reset and lock the phone out for good.
+    #[test]
+    fn migrating_over_a_wrapping_key_without_its_wrapped_key_is_reverted() {
+        let d = dir();
+        migrating(&d);
+        assert_eq!(settle_scheme(&d, "alice", not_wrapped), Scheme::PinDerived);
+        assert_eq!(read_marker(&d, "alice"), MarkerRead::Absent);
+    }
+
+    /// The same crash state met by the next re-key: it starts over with a new key and writes it.
+    #[test]
+    fn a_re_key_over_a_wrapping_key_without_its_wrapped_key_starts_over() {
+        let d = dir();
+        let first = migrating(&d);
+        let wrote = std::cell::Cell::new(false);
+        let second = prepare(&d, "alice", ALICE_ENTRY, not_wrapped, |_, _| {
+            wrote.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(wrote.get());
+        assert_ne!(second, first);
+        mark_hardware(&d, "alice", &second).unwrap();
+    }
+
+    /// A failed read still refuses the re-key: nothing is written over an entry that was not read.
+    #[test]
+    fn a_re_key_over_an_unreadable_entry_is_refused() {
+        let d = dir();
+        migrating(&d);
+        prepare(
+            &d,
+            "alice",
+            ALICE_ENTRY,
+            |_| Err(EntryReadError::Failed("keystore busy".into())),
+            |_, _| panic!("written over an unread entry"),
+        )
+        .unwrap_err();
+    }
+
+    /// For the hardware-held READ, "wrapping key held" proves nothing lost: unreadable, so the
+    /// login never restarts the device over it.
+    #[test]
+    fn a_hardware_marker_over_a_wrapping_key_without_its_wrapped_key_is_unreadable() {
+        let d = dir();
+        let key = migrating(&d);
+        mark_hardware(&d, "alice", &key).unwrap();
+        assert_eq!(
+            read_hardware_key(&d, "alice", not_wrapped),
+            HardwareKeyRead::Unreadable
+        );
     }
 
     /// A marker restored onto a new phone whose keystore never held the key: a typed answer the

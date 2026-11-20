@@ -62,6 +62,7 @@ import {
   LoginStoppedForPromotionError,
   type LoginStop,
   hardwareKeyLoginFailure,
+  restartsAsNewDevice,
   isExpectedLoginOutcome,
   isVaultRefusal,
   loginErrorCode,
@@ -2949,7 +2950,9 @@ export async function loginImpl(
     // log is the first thing anybody looks at, and a mistyped PIN or a train tunnel filed under
     // `[INIT] Login failed` beside a WASM that would not load is a line whose reader learns to skip
     // it. The code is NAMED in the line so the two can still be told apart at a glance.
-    if (isExpectedLoginOutcome(code)) {
+    // A hardware-held key gone is ACCUSED ONCE, by the restart it decides (`[DEVICE_RESTART]`, once
+    // the PIN was accepted) - so it is narrated here, never filed twice at `error`.
+    if (isExpectedLoginOutcome(code) || restartsAsNewDevice(code)) {
       cb.log(`[INIT] Login did not complete (${code}): ${String(_e)}`);
       console.warn(`[INIT] Login did not complete (${code}):`, _e);
     } else {
@@ -2994,7 +2997,7 @@ export async function loginImpl(
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void gotoLoginAfterExpiry();
     } else if (cb.onLoginFailed) {
-      cb.onLoginFailed(shown, code);
+      cb.onLoginFailed(shown, code, _e instanceof LoginFailure ? _e.refusal : undefined);
     } else {
       const loc = window.location;
       void goto(resolve(internalPath(loginReturningTo(loc.pathname, loc.search, loc.hash))), {
@@ -3574,7 +3577,8 @@ async function recoverPinSteps(
       cb.log(
         `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
       );
-      throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+      // TYPED, so the gate under the recovery offers "start fresh on this device" for it.
+      throw new LoginFailure('local_state_unopenable', m.auth_pin_recover_state_unopenable());
     }
     if (e instanceof LocalStateNotReadyError) {
       // The state OPENED with the old key, but could not be made ready (its groups not listed):

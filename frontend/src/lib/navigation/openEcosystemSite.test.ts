@@ -116,6 +116,18 @@ describe('openEcosystemSite', () => {
       expect(String(warn.mock.calls[0][0])).toContain('class=HandoffUrlMismatchError');
     });
 
+    it('says the unaccepted MiConnect terms at info, never at warn, and opens plainly', async () => {
+      apiFetch.mockImplementation(async () => json(403, { code: 'HANDOFF_TERMS_NOT_ACCEPTED' }));
+      openEcosystemSite('migallery');
+      await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+      expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr');
+      expect(warn).not.toHaveBeenCalled();
+      const said = vi
+        .mocked(Log.i)
+        .mock.calls.filter(([, line]) => String(line).includes('terms are not accepted'));
+      expect(said).toHaveLength(1);
+    });
+
     it('says an estate without the handoff once, at info, and never at warn', async () => {
       apiFetch.mockImplementation(async () => json(404, { code: 'HANDOFF_NOT_OFFERED' }));
       openEcosystemSite('migallery');

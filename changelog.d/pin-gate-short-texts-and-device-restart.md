@@ -1,0 +1,3 @@
+### Changed - the PIN screen says one short thing, and a phone that lost its key restarts as a new device
+
+Every PIN-screen and sign-in message is now one or two plain sentences that name the exact control to use. When the PIN is right but the phone's key did not survive a transfer or a restore, the phone starts again by itself as a new device: the account's PIN and its other devices are kept, and the history can come back from them. A saved state that will not open gets its start-fresh button on the screen itself, not behind the forgot-PIN link ([auth](docs/wiki/frontend/modules/auth.md#the-pin-gate-says-one-short-thing-and-shows-the-control-that-does-it-2026-11-20)).

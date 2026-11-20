@@ -5,6 +5,7 @@
 //! implementations. On desktop, the plugin falls back to the OS keyring
 //! (keyring crate).
 
+use crate::commands::at_rest_key::{EntryRead, EntryReadError};
 use base64::Engine;
 use mls_core::keystore::DeviceKeyStore;
 use tauri::Runtime;
@@ -87,7 +88,7 @@ impl std::fmt::Display for KeyEntryError {
 fn run_guarded_store(
     verdict: crate::commands::at_rest_key::EntryWrite,
     key: &[u8; 32],
-    read: impl Fn() -> Result<Option<[u8; 32]>, String>,
+    read: impl Fn() -> crate::commands::at_rest_key::EntryRead,
     write: impl FnOnce() -> Result<(), String>,
 ) -> Result<KeyEntryWrite, KeyEntryError> {
     use crate::commands::at_rest_key::EntryWrite;
@@ -97,7 +98,14 @@ fn run_guarded_store(
             return Err(KeyEntryError::Refused(why));
         }
         EntryWrite::KeepIfHeld => {
-            if read().map_err(KeyEntryError::Failed)? == Some(*key) {
+            // An entry holding its wrapping key but no wrapped key does not hold this key: a write
+            // cut before its SharedPreferences commit, which this write completes.
+            let held = match read() {
+                Ok(held) => held,
+                Err(EntryReadError::NotWrapped) => None,
+                Err(EntryReadError::Failed(e)) => return Err(KeyEntryError::Failed(e)),
+            };
+            if held == Some(*key) {
                 log::debug!("[KEYSTORE] the guarded entry already holds this key - not rewritten");
                 return Ok(KeyEntryWrite::AlreadyHeld);
             }
@@ -128,28 +136,47 @@ fn run_guarded_store(
     }
 }
 
+/// The rejection code the Android plugin answers for "the Keystore holds the alias, and no wrapped
+/// key could be read beside it" (`KeystorePlugin.kt`, `KEY_NOT_WRAPPED`). Kept in step with it.
+pub(crate) const KEY_NOT_WRAPPED: &str = "KEY_NOT_WRAPPED";
+
+/// A rejected plugin call: its typed code, if the platform gave one, and its message for the log.
+#[derive(Debug)]
+struct PluginRejection {
+    code: Option<String>,
+    message: String,
+}
+
 /// What one unattended plugin read MEANS for the at-rest key. ONLY a resolved `keyBytes: null` is
-/// "absent" (`Ok(None)`) - the plugin answers that for `errSecItemNotFound` / no stored entry alone.
-/// A rejected call (a locked keychain, an entitlement error, a decrypt failure) stays an `Err`, and
-/// so does an entry that is not 32 base64 bytes: `settle_scheme`, `prepare` and the guarded write
-/// revert a marker or write a new key on "absent", so a failure read as absent would destroy the
-/// only copy of a hardware-held key.
-fn unattended_read_outcome(
-    plugin: Result<Option<String>, String>,
-) -> Result<Option<[u8; 32]>, String> {
-    let Some(b64) = plugin.map_err(|e| {
-        log::error!("[KEYSTORE] unattended read failed (not 'absent'): {e}");
-        e
-    })?
-    else {
-        return Ok(None);
+/// "absent" (`Ok(None)`) - the plugin answers that for `errSecItemNotFound`, and on Android only when
+/// the Keystore itself holds no such alias. A rejection coded [`KEY_NOT_WRAPPED`] is its own answer
+/// ([`EntryReadError::NotWrapped`]); every other rejection (a locked keychain, an entitlement error,
+/// a decrypt failure) stays a failure, and so does an entry that is not 32 base64 bytes:
+/// `settle_scheme`, `prepare` and the guarded write revert a marker or write a new key on "absent",
+/// so a failure read as absent would destroy the only copy of a hardware-held key.
+fn unattended_read_outcome(plugin: Result<Option<String>, PluginRejection>) -> EntryRead {
+    let b64 = match plugin {
+        Ok(Some(b64)) => b64,
+        Ok(None) => return Ok(None),
+        Err(r) if r.code.as_deref() == Some(KEY_NOT_WRAPPED) => {
+            let e = r.message;
+            log::warn!(
+                "[KEYSTORE] unattended read: the wrapping key is held, no wrapped key ({e})"
+            );
+            return Err(EntryReadError::NotWrapped);
+        }
+        Err(r) => {
+            let e = r.message;
+            log::error!("[KEYSTORE] unattended read failed (not 'absent'): {e}");
+            return Err(EntryReadError::Failed(e));
+        }
     };
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64.trim())
-        .map_err(|e| format!("entry is not base64: {e}"))?;
-    let key: [u8; 32] = bytes
-        .try_into()
-        .map_err(|b: Vec<u8>| format!("entry holds {} bytes, not 32", b.len()))?;
+        .map_err(|e| EntryReadError::Failed(format!("entry is not base64: {e}")))?;
+    let key: [u8; 32] = bytes.try_into().map_err(|b: Vec<u8>| {
+        EntryReadError::Failed(format!("entry holds {} bytes, not 32", b.len()))
+    })?;
     Ok(Some(key))
 }
 
@@ -162,7 +189,7 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
 
     /// Reads one entry with NO biometric sheet, telling "nothing there" (`Ok(None)`) from "could not
     /// read" (`Err`) - the difference `at_rest_key::settle_scheme` stands on.
-    pub fn read_unattended(&self, alias: &str) -> Result<Option<[u8; 32]>, String> {
+    pub(crate) fn read_unattended(&self, alias: &str) -> EntryRead {
         unattended_read_outcome(
             self.app
                 .keystore()
@@ -170,7 +197,10 @@ impl<R: Runtime> PluginDeviceKeyStore<R> {
                     alias: alias.to_string(),
                 })
                 .map(|resp| resp.key_bytes)
-                .map_err(|e| e.to_string()),
+                .map_err(|e| PluginRejection {
+                    code: e.rejection_code().map(str::to_string),
+                    message: e.to_string(),
+                }),
         )
     }
 
@@ -300,10 +330,33 @@ mod tests {
         assert_eq!(unattended_read_outcome(Ok(None)), Ok(None));
         let b64 = base64::engine::general_purpose::STANDARD.encode(K);
         assert_eq!(unattended_read_outcome(Ok(Some(b64))), Ok(Some(K)));
-        assert!(unattended_read_outcome(Err("OSStatus -25308".into())).is_err());
+        assert!(matches!(
+            unattended_read_outcome(Err(rejected(None, "OSStatus -25308"))),
+            Err(EntryReadError::Failed(_))
+        ));
         assert!(unattended_read_outcome(Ok(Some("not base64!".into()))).is_err());
         let short = base64::engine::general_purpose::STANDARD.encode([1u8; 16]);
         assert!(unattended_read_outcome(Ok(Some(short))).is_err());
+    }
+
+    /// Android's "alias held, no wrapped key" is told by its CODE, never by its message.
+    #[test]
+    fn the_not_wrapped_code_is_its_own_answer_and_only_the_code_says_it() {
+        assert_eq!(
+            unattended_read_outcome(Err(rejected(Some(KEY_NOT_WRAPPED), "unreadable: x"))),
+            Err(EntryReadError::NotWrapped)
+        );
+        assert!(matches!(
+            unattended_read_outcome(Err(rejected(Some("OTHER"), KEY_NOT_WRAPPED))),
+            Err(EntryReadError::Failed(_))
+        ));
+    }
+
+    fn rejected(code: Option<&str>, message: &str) -> PluginRejection {
+        PluginRejection {
+            code: code.map(str::to_string),
+            message: message.to_string(),
+        }
     }
 
     /// An entry in memory, counting writes.
@@ -376,7 +429,44 @@ mod tests {
         assert!(matches!(r, Err(KeyEntryError::Failed(_))));
         let r = run_guarded_store(EntryWrite::Free, &K, || Ok(Some([2u8; 32])), || Ok(()));
         assert!(matches!(r, Err(KeyEntryError::Failed(_))));
-        let r = run_guarded_store(EntryWrite::Free, &K, || Err("busy".into()), || Ok(()));
+        let r = run_guarded_store(
+            EntryWrite::Free,
+            &K,
+            || Err(EntryReadError::Failed("busy".into())),
+            || Ok(()),
+        );
+        assert!(matches!(r, Err(KeyEntryError::Failed(_))));
+    }
+
+    /// A write cut between the alias creation and the SharedPreferences commit (a crash, a kill, a
+    /// full disk during `prepare`) leaves "wrapping key held, no wrapped key": the guarded write
+    /// completes it, as it would an empty entry - never refuses it, which would lock the re-key out.
+    #[test]
+    fn a_guarded_entry_holding_no_wrapped_key_takes_its_key() {
+        let written = Cell::new(false);
+        let r = run_guarded_store(
+            EntryWrite::KeepIfHeld,
+            &K,
+            || {
+                if written.get() {
+                    Ok(Some(K))
+                } else {
+                    Err(EntryReadError::NotWrapped)
+                }
+            },
+            || {
+                written.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(r.unwrap(), KeyEntryWrite::Written);
+        // A failed read stays a failure: nothing is written over an entry that could not be read.
+        let r = run_guarded_store(
+            EntryWrite::KeepIfHeld,
+            &K,
+            || Err(EntryReadError::Failed("locked".into())),
+            || panic!("written over an unread entry"),
+        );
         assert!(matches!(r, Err(KeyEntryError::Failed(_))));
     }
 

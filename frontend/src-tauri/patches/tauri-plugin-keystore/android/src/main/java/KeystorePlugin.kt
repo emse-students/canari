@@ -28,6 +28,11 @@ private const val DEFAULT_UNLOCK_TITLE = "Déverrouiller Canari"
 private const val DEFAULT_UNLOCK_SUBTITLE = "Confirmez votre identité pour continuer"
 private const val DEFAULT_CANCEL = "Annuler"
 
+/// The rejection code for "the Keystore holds the alias, and no wrapped key could be read beside it"
+/// - read by `keystore_bridge::unattended_read_outcome`, never by a message. Kept in step with
+/// `KEY_NOT_WRAPPED` there.
+private const val KEY_NOT_WRAPPED = "KEY_NOT_WRAPPED"
+
 @TauriPlugin
 class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     /// Request/response classes for the key-bytes API.
@@ -168,17 +173,36 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     /// one `getKeyBytes` reads and it was never auth-bound (`setUserAuthenticationRequired(false)`,
     /// which background FCM decryption depends on), so this read opens nothing that was closed:
     /// it skips the UX gate, and the frontend decides when that is allowed.
+    ///
+    /// `keyBytes: null` means the key is PROVEN gone, and nothing else may answer it: the caller
+    /// (`at_rest_key::read_hardware_key`) reads it as `absent`, on which a PIN the server accepts
+    /// discards this phone's data. So the stored entry is classified by [storedEntryState]
+    /// first, and anything it cannot prove is a rejection the caller reads as `unreadable`.
     @Command
     fun getKeyBytesUnattended(invoke: Invoke) {
         val args = invoke.parseArgs(GetKeyBytesUnattendedRequest::class.java)
-        val cipherData = readCipherDataForAlias(args.alias)
         val ret = JSObject()
-        if (cipherData == null) {
-            ret.put("keyBytes", null)
-            invoke.resolve(ret)
+        val state = try {
+            storedEntryState(args.alias)
+        } catch (e: Exception) {
+            invoke.reject("unreadable: the Android Keystore could not be asked: ${e.message}")
             return
         }
-        val (iv, ciphertext) = cipherData
+        val cipherData = when (state) {
+            is StoredEntry.Gone -> {
+                android.util.Log.w("KeystorePlugin", "the unattended key entry is gone: ${state.why}")
+                ret.put("keyBytes", null)
+                invoke.resolve(ret)
+                return
+            }
+            is StoredEntry.Unproven -> {
+                invoke.reject("unreadable: ${state.why}", KEY_NOT_WRAPPED)
+                return
+            }
+            is StoredEntry.Present -> state
+        }
+        val iv = cipherData.iv
+        val ciphertext = cipherData.ciphertext
         try {
             val cipher = getDecryptionCipherForAlias(args.alias, iv)
             // NO_WRAP for the same reason as getKeyBytes: the value crosses into Rust's STANDARD
@@ -307,6 +331,37 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
             .putString("${alias}_ct", Base64.encodeToString(ct, Base64.DEFAULT))
             .commit()
         if (!written) throw IllegalStateException("the key entry could not be written to disk")
+    }
+
+    /// What this alias's stored entry is, told from TWO facts: the wrapped key in SharedPreferences
+    /// and the wrapping key in the Android Keystore. The wrapped key opens only under the wrapping
+    /// key, so the entry is GONE when the Keystore holds no such alias - with or without the
+    /// SharedPreferences half. That covers a data transfer or a restore onto another phone: the app's
+    /// files (SharedPreferences included) travel, the Keystore never does.
+    ///
+    /// The other half alone proves nothing: a SharedPreferences file that cannot be parsed loads as
+    /// an EMPTY map, so "no wrapped key" while the Keystore still holds the alias is `Unproven` - a
+    /// TYPED rejection ([KEY_NOT_WRAPPED]). It is also what a crash, a kill or a full disk leaves
+    /// between `storeKeyBytes`'s alias creation and its SharedPreferences commit, so the Rust side
+    /// reads it as "the entry does not hold its key" for a WRITER (a migrating marker reverted, a
+    /// re-key started over) and as unreadable for the hardware-held READ (never a restart).
+    private fun storedEntryState(alias: String): StoredEntry {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        val aliasPresent = keyStore.containsAlias(alias)
+        val cipherData = readCipherDataForAlias(alias)
+        return when {
+            !aliasPresent && cipherData == null -> StoredEntry.Gone("no wrapped key, no Keystore alias")
+            !aliasPresent -> StoredEntry.Gone("a wrapped key whose Keystore alias is gone (transferred or restored data)")
+            cipherData == null -> StoredEntry.Unproven("the Keystore holds the alias but no wrapped key could be read")
+            else -> StoredEntry.Present(cipherData.first, cipherData.second)
+        }
+    }
+
+    /// The three answers of [storedEntryState].
+    private sealed class StoredEntry {
+        class Present(val iv: ByteArray, val ciphertext: ByteArray) : StoredEntry()
+        class Gone(val why: String) : StoredEntry()
+        class Unproven(val why: String) : StoredEntry()
     }
 
     /// Reads IV + ciphertext from SharedPreferences for the given alias.

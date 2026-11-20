@@ -860,9 +860,11 @@ which also holds **the contract a site implements**. This section is what Canari
   ask no more than a signed-in user, and the tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
   That is exactly when authentik's `check_access` answers passing; `check_access?for_user` itself
   cannot be asked, because authentik 2026.8 honours `for_user` for a superuser only. A bound
-  application is REFUSED, never evaluated in Canari. Refusals are typed and logged
+  application is REFUSED, never evaluated in Canari - except the two bindings of the terms-of-use
+  flow (`miconnect-authorization`), recognised by an allowlist of policy and stage names and answered
+  from the person's `cgu_version` ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)). Refusals are typed and logged
   `[HANDOFF] refused class=<class> aud=<site> user=<sub>`: `not_linked`, `unknown_miconnect_user`,
-  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off` (403
+  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off`, `terms_not_accepted` (the person has not accepted the current MiConnect terms, which the authorization flow would have asked; 403
   `HANDOFF_ACCESS_REFUSED`, at warn), and
   `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
   `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
