@@ -1,3 +1,3 @@
 version: 1.7.2
 
-Vous choisissez si votre live est rediffusé : l'interrupteur « Rediffusion » est proposé au lancement, et le couper supprime ce qui a été gardé. L'anneau d'anniversaire se pose proprement autour de la photo. Un nouveau groupe reçoit un nom daté, et les raccourcis d'une conversation affichent sa photo. Les textes du code PIN sont plus courts. Vos données locales ne suivent plus une sauvegarde vers un autre téléphone. Les boutons du champ de message ne se touchent plus.
+Vous choisissez si votre live est rediffusé : l'interrupteur « Rediffusion » est proposé au lancement, et le couper supprime ce qui a été gardé. L'anneau d'anniversaire se pose proprement autour de la photo. Un nouveau groupe reçoit un nom daté. Les textes du code PIN sont plus courts. Les boutons du champ de message ne se touchent plus.
