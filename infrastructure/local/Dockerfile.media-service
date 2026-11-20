@@ -23,13 +23,24 @@ COPY apps/media-service ./apps/media-service
 # that would have explained it already thrown away.
 RUN cd apps/media-service && bun run build
 
+# -- Production dependencies ---------------------------------------------------
+# What the runtime stage ships: the production closure only. The builder installs devDependencies
+# too (it needs tsc and @nestjs/cli), and copying ITS node_modules put jest, the Nest CLI, ts-jest
+# and the rest next to dist/ on the image's disk, in its size, its pull time and its scan.
+FROM oven/bun:1.4.4-alpine AS prod-deps
+
+WORKDIR /app
+
+COPY apps/media-service/package.json apps/media-service/bun.lock ./apps/media-service/
+RUN cd apps/media-service && bun install --production --frozen-lockfile
+
 # -- Runtime stage -------------------------------------------------------------
 FROM oven/bun:1.4.4-alpine
 
 WORKDIR /app
 
 COPY --from=builder /app/apps/media-service/dist ./dist
-COPY --from=builder /app/apps/media-service/node_modules ./node_modules
+COPY --from=prod-deps /app/apps/media-service/node_modules ./node_modules
 COPY --from=builder /app/apps/media-service/package.json ./
 
 EXPOSE 3011
