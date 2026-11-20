@@ -120,7 +120,9 @@ export async function readHardwareHeldKey(
     log('[AT_REST_KEY] hardware-held key read from the keystore');
     return read.key;
   }
-  log(`[AT_REST_KEY] ERROR: the hardware-held key is unavailable (${read.refusal})`);
+  // Narration only: the PIN check has not run yet, and the one ERROR of this event is the login's,
+  // once a PIN it accepted meets the refusal (`ChatBackgroundService`).
+  log(`[AT_REST_KEY] the hardware-held key did not read (${read.refusal}) - the PIN check decides`);
   throw new HardwareKeyUnavailableError(read.refusal);
 }
 
