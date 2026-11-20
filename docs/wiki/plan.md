@@ -127,6 +127,7 @@ earliest version, as a checklist.
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
+- [ ] [the conversation list names a media message by its kind (owner, 2026-11-20)](backlog.d/reading-owed-media-preview-names-the-kind.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 

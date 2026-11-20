@@ -10,6 +10,7 @@
  */
 
 import type { MediaRef } from '$lib/media';
+import { isReelMessage } from '$lib/reels/chatReel';
 import { isMediaLoudness } from '$lib/video/loudnessMeter';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
@@ -167,6 +168,36 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 }
 
 /**
+ * What a media message IS, in words: the ONE classification behind the conversation list, a reply
+ * quote, a notification body and the share sheet (the Rust push scanner words the same kinds in
+ * `mobile/push_text.rs`). A recorded voice note is told from an imported audio file by the
+ * sender's declaration, a CanaReel by its declared intent and a GIF by its mime type - none of
+ * which the `type` field says. A file is named when it has a name.
+ */
+export function mediaKindLabel(ref: MediaRef, withFileName = true): string {
+  if (isReelMessage(ref)) return m.chat_preview_reel();
+  if (ref.type === 'image') {
+    return ref.mimeType === 'image/gif' ? m.chat_preview_gif() : m.chat_preview_photo();
+  }
+  if (ref.type === 'video') return m.chat_preview_video();
+  if (ref.type === 'audio') {
+    return ref.voiceNote ? m.chat_preview_voice_note() : m.chat_preview_audio();
+  }
+  const name = ref.fileName?.trim();
+  return withFileName && name ? m.chat_preview_file({ name }) : m.chat_preview_attachment();
+}
+
+/**
+ * The list/quote/notification line of a media message: what it is, then its caption when it has
+ * one (`Photo : coucou`). A file is named only when no caption follows, so the line stays short.
+ */
+export function previewForMedia(ref: MediaRef, caption?: string): string {
+  const text = caption ? formatMentionsForPreview(caption) : '';
+  const label = mediaKindLabel(ref, !text);
+  return text ? m.chat_preview_captioned({ label, caption: text }) : label;
+}
+
+/**
  * Returns a short preview string suitable for lists or reply contexts.
  */
 export function getPreviewText(env: MessageEnvelope): string {
@@ -174,9 +205,7 @@ export function getPreviewText(env: MessageEnvelope): string {
     case 'text':
       return previewForTextMessage(env.text);
     case 'media':
-      return env.caption
-        ? `${m.chat_preview_media()} ${formatMentionsForPreview(env.caption)}`
-        : m.chat_preview_media();
+      return previewForMedia(env.media, env.caption);
     case 'system':
       return formatMentionsForPreview(env.text);
     case 'poll':

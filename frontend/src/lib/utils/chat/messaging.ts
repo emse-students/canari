@@ -17,7 +17,7 @@ import {
   mkReaction,
   mkSystem,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope, previewForMedia } from '$lib/envelope';
 import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
@@ -848,7 +848,7 @@ export function quoteReference(replyingTo: ChatMessage): NonNullable<ChatMessage
         ? cutReplyPreview(replyEnv.text)
         : replyEnv.kind === 'media'
           ? replyEnv.caption === undefined
-            ? m.chat_preview_media()
+            ? previewForMedia(replyEnv.media)
             : cutReplyPreview(replyEnv.caption)
           : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
   return { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };

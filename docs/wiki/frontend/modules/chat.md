@@ -888,8 +888,38 @@ the keyboard with the conversation around it; and a reply to a GIF quoted the GI
   (2026-10-05: a raw `@[id]` mention weighs ~40 characters but draws short, so a bare cut at 100
   fell under the display's 84 and ended mid-word with no mark; a cut inside a token is pulled back
   before it. Quotes stored before that stay unmarked); a quote already stored cut short is not a GIF URL any more and stays text.
-  **Not done: an image or video quote still reads `[Media]`** - drawing it needs a thumbnail the
-  quote does not carry.
+  **Not done: an image or video quote shows no thumbnail** - drawing it needs one the quote does not
+  carry; it names what the message is instead ([below](#a-media-message-is-previewed-by-what-it-is-2026-11-20)).
+
+### A media message is previewed by what it is (2026-11-20)
+
+The conversation list read `[Media]` for every photo, video, voice note and file (owner, 2026-11-20,
+screenshot: say what it is, the way Messenger does). **ONE classification, `mediaKindLabel(ref)`
+(`envelope.ts`), and ONE composer of the line, `previewForMedia(ref, caption)`**, feed every
+consumer: `getPreviewText` (the list tile, the composer's reply strip, the thread's plain text, the
+search, the in-app notification body of `useMessaging`) and `quoteReference` (the quote a reply
+carries, so it no longer stores `[Media]` either). `chat_preview_media` is deleted.
+
+| What the ref says | fr | en |
+| --- | --- | --- |
+| `type: image` | `Photo` | `Photo` |
+| `type: image`, mime `image/gif` | `[GIF]` (the existing string) | `[GIF]` |
+| `type: video` | `Vidéo` | `Video` |
+| a video declaring `intent: reel-message` (`isReelMessage`) | `CanaReel` | `CanaReel` |
+| `type: audio`, `voiceNote` | `Message vocal` | `Voice message` |
+| `type: audio`, undeclared (an import, or before 2026-09-17) | `Fichier audio` | `Audio file` |
+| `type: file`, named | `Fichier : <nom>` | `File: <name>` |
+| `type: file`, nameless | `Pièce jointe` | `Attachment` |
+
+A caption follows the kind (`Photo : coucou`, `{label} : {caption}` in fr, `{label}: {caption}` in
+en); a file is named only when no caption follows. **A media envelope holds ONE file** (several files
+are several messages), so there is no `N photos` line, and none is faked. **Style, reversible:** plain
+words, no emoji, because the app's own strings carry none and a list tile is not a banner; the native
+push banners (`mobile/push_text.rs`) keep their leading emoji (`📷 Photo`) and are NOT touched here - the
+same words, one emoji apart. Native code never builds `[Media]`: the Rust scanner words its own kinds
+from the proto, and the JS path only passes the string through (`composePlainNotificationText`).
+Changing the style is one edit in `fr.json`/`en.json`. Tests: `envelope.mediaPreview.test.ts`.
+**Owed: one look at the list on a phone** (backlog entry `reading-owed-media-preview-names-the-kind`).
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 

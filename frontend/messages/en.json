@@ -4520,7 +4520,14 @@
       }
     }
   ],
-  "chat_preview_media": "[Media]",
+  "chat_preview_photo": "Photo",
+  "chat_preview_video": "Video",
+  "chat_preview_voice_note": "Voice message",
+  "chat_preview_audio": "Audio file",
+  "chat_preview_reel": "CanaReel",
+  "chat_preview_file": "File: {name}",
+  "chat_preview_attachment": "Attachment",
+  "chat_preview_captioned": "{label}: {caption}",
   "chat_preview_poll": "[Poll]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Link]",
