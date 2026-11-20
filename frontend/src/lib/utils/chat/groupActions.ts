@@ -345,7 +345,9 @@ async function sendRenameFrame(params: {
     throw e;
   } finally {
     // Whatever the send did to the ratchet is checkpointed, delivered or not.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (line) =>
+      console.error(`[GROUP_NAME] rename frame in ${groupId.slice(0, 8)}…: ${line}`)
+    );
   }
   if (sent.receivedAt !== null) {
     const own = readRenameFrame(newName, sent.receivedAt, sent.sentAt);
@@ -492,12 +494,17 @@ export async function sendNameStatement(params: {
   userId: string;
   deviceKeyB64: string;
   minted: Omit<OwnNameStatement, 'answered'>;
+  /** The id of the statement this one ANSWERS (`statementAnswerDue`): an answer is never answered. */
+  answers?: string;
 }): Promise<NameStatementOutcome> {
-  const { mlsService, groupId, userId, deviceKeyB64, minted } = params;
+  const { mlsService, groupId, userId, deviceKeyB64, minted, answers } = params;
   const id = `${minted.messageId.slice(0, 8)} in ${groupId.slice(0, 8)}…`;
   console.debug(`[GROUP_NAME] stating the group's name silently: ${id}`);
   const frame = {
-    ...mkSystem('groupNamed', JSON.stringify({ name: minted.name })),
+    ...mkSystem(
+      'groupNamed',
+      JSON.stringify({ name: minted.name, ...(answers ? { answers } : {}) })
+    ),
     messageId: minted.messageId,
     sentAt: minted.sentAt,
   };
@@ -524,7 +531,9 @@ export async function sendNameStatement(params: {
     return { kept: 'not-sent' };
   } finally {
     // Whatever the send did to the ratchet is checkpointed, delivered or not.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (line) =>
+      console.error(`[GROUP_NAME] name statement in ${groupId.slice(0, 8)}…: ${line}`)
+    );
   }
   if (receivedAt !== null) {
     const own = readRenameFrame(minted.name, receivedAt, minted.sentAt);

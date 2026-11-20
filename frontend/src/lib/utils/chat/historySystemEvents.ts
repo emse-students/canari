@@ -335,9 +335,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           `[GROUP_NAME] replayed name statement in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
         );
       } else if (convo && outcome) {
-        reportOutrankedStatement(convo, data.name, 'replayed name statement', (line) =>
-          console.debug(line)
-        );
+        // Counted at the live path's level; never ANSWERED from the archive - a replayed statement
+        // was live once, and the device that held the rename then answered it (sealed-names.md).
+        reportOutrankedStatement(convo, data.name, 'replayed name statement');
       }
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
       systemContent = await visibleNoticeContent('memberRemoved', data, senderNorm);

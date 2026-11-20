@@ -13,7 +13,7 @@
  */
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import type { NameStatementOutcome, PendingRename } from './groupName';
+import { applyNameStatement, type NameStatementOutcome, type PendingRename } from './groupName';
 import { restoredConversationRow, toConversationMeta } from './conversations';
 import { SqliteStorage } from '$lib/db/sqlite';
 import type { RenameResendOutcome } from './groupActions';
@@ -22,6 +22,7 @@ import { resetServerClockForTests, serverTimeSeen } from './serverClock';
 import {
   ensureConversationForServerGroup,
   RENAME_RESEND_MARGIN_MS,
+  newSweepClock,
   type NameSyncSettler,
   type ServerGroupRow,
 } from './serverGroupConversation';
@@ -51,6 +52,7 @@ function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
   return {
     resend: vi.fn().mockResolvedValue(DELIVERED),
     state: vi.fn().mockResolvedValue({ sent: { receivedAt: T + 60_000 } }),
+    clock: newSweepClock(),
     ...over,
   };
 }
@@ -208,6 +210,37 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
   };
   const pendingRow = (over: Partial<Conversation> = {}) =>
     row({ name: 'Old', nameAt: T - 1_000, nameSync: { pending: PENDING }, ...over });
+
+  // #3888 review, B1: a member's one-time restatement of the base - the rollout itself - read as a
+  // later name cancelled this device's unanswered rename without a word.
+  it('a foreign STATEMENT of the base never supersedes the pending rename: it is re-sent, and outranks it', async () => {
+    const undatedBase = { ...PENDING, over: { name: 'Old' }, serverSeenAt: T - 5_000 };
+    // A member's restatement of "Old", stamped AFTER this device last heard the server - so it does
+    // not date the base, it dates the row.
+    const stated = applyNameStatement(
+      row({ name: 'Old', nameSync: { pending: undatedBase } }),
+      'Old',
+      T + 30_000,
+      T + 30_000
+    );
+    if (!('row' in stated)) throw new Error('statement not applied');
+    expect(stated.row).toMatchObject({ nameAt: T + 30_000, nameFromStatement: true });
+    const { row: after, nameSync } = await sweep(stated.row, 'Old');
+    expect(nameSync!.resend).toHaveBeenCalledWith(undatedBase, GROUP_ID, GROUP_ID);
+    // Delivered at T + 60 000: the rename outranks the statement whatever the dates.
+    expect(after).toMatchObject({ name: 'X', nameAt: T + 60_000 });
+    expect(after.nameFromStatement).toBeUndefined();
+    expect(after.nameSync?.unconfirmed).toBeUndefined();
+  });
+
+  it('two statements of the base, the later one held: still re-sent', async () => {
+    const { nameSync, row: after } = await sweep(
+      pendingRow({ nameAt: T + 40_000, nameFromStatement: true }),
+      'Old'
+    );
+    expect(nameSync!.resend).toHaveBeenCalledWith(PENDING, GROUP_ID, GROUP_ID);
+    expect(after.nameSync?.unconfirmed).toBeUndefined();
+  });
 
   it('re-sent while the row holds what it was made over; delivered, dated, then the copy written', async () => {
     const { row: after, renameGroup, nameSync } = await sweep(pendingRow(), 'Old');
@@ -433,9 +466,17 @@ describe('the one-time name statement of an undated group', () => {
     conversations: Map<string, Conversation>,
     storage: SqliteStorage,
     serverName: string,
-    opts: { state?: NameStatementOutcome; drained?: boolean; serverNow?: number } = {}
+    opts: {
+      state?: NameStatementOutcome;
+      drained?: boolean | (() => boolean);
+      /** The first-drained waiter, when the test drives it. */
+      whenDrained?: Promise<void>;
+      serverNow?: number;
+      resend?: NameSyncSettler['resend'];
+    } = {}
   ) {
     const state = vi.fn().mockResolvedValue(opts.state ?? STATED);
+    const resend = opts.resend ?? vi.fn().mockResolvedValue({ kept: 'unanswered' });
     const meta = {
       groupId: GROUP_ID,
       name: serverName,
@@ -449,7 +490,9 @@ describe('the one-time name statement of an undated group', () => {
         renameGroup: vi.fn(),
         getGroupMeta: vi.fn().mockResolvedValue(meta),
         getGroupServerStatus: vi.fn().mockResolvedValue(meta),
-        isGroupDrained: () => opts.drained ?? true,
+        isGroupDrained: () =>
+          typeof opts.drained === 'function' ? opts.drained() : (opts.drained ?? true),
+        whenGroupDrained: () => opts.whenDrained ?? Promise.resolve(),
       } as unknown as IMlsService,
       userId: 'u1',
       conversations,
@@ -458,9 +501,9 @@ describe('the one-time name statement of an undated group', () => {
       },
       owedExits: new Set<string>(),
       log,
-      nameSync: { resend: vi.fn().mockResolvedValue({ kept: 'unanswered' }), state },
+      nameSync: { resend, state, clock: newSweepClock() },
     });
-    return { state, log };
+    return { state, log, resend };
   }
 
   /** What a restart reads back: the row rebuilt from the store alone. */
@@ -525,12 +568,25 @@ describe('the one-time name statement of an undated group', () => {
     expect(reopened.get(GROUP_ID)!.nameSync).toBeUndefined();
   });
 
-  it('not before this link has drained the group: a rename among what arrived may date it', async () => {
+  it('an undrained group is CHAINED on its first drain - never skipped to the next sweep, one chain at a time', async () => {
     const storage = await sqliteStore();
     const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
-    const { state, log } = await connect(phone, storage, 'Les ROOTz', { drained: false });
-    expect(state).not.toHaveBeenCalled();
-    expect(said(log)).toContain('not drained');
+    let drainedNow = false;
+    let drain!: () => void;
+    const whenDrained = new Promise<void>((resolve) => (drain = resolve));
+    const drained = () => drainedNow;
+    const first = await connect(phone, storage, 'Les ROOTz', { drained, whenDrained });
+    expect(first.state).not.toHaveBeenCalled();
+    expect(said(first.log)).toContain('waits for this link to drain');
+    // A second sweep while the chain waits adds no chain and says nothing.
+    const second = await connect(phone, storage, 'Les ROOTz', { drained, whenDrained });
+    expect(said(second.log)).not.toContain('waits for this link to drain');
+    drainedNow = true;
+    drain();
+    // The chain states the name once the group drained - once, through the first sweep's chain.
+    await vi.waitFor(() => expect(phone.get(GROUP_ID)!.nameFromStatement).toBe(true));
+    expect(first.state).toHaveBeenCalledTimes(1);
+    expect(second.state).not.toHaveBeenCalled();
   });
 
   it("never states a name the server's list does not hold: a raw id never becomes the members' word", async () => {
@@ -575,5 +631,44 @@ describe('the one-time name statement of an undated group', () => {
     const { state } = await connect(phone, storage, 'Renamed by an old build');
     expect(phone.get(GROUP_ID)!.name).toBe('Les ROOTz');
     expect(state).not.toHaveBeenCalled();
+  });
+
+  it("the server's clock is read ONCE per sweep, and a skewed device clock said once per sweep, not per group", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const other = 'e4c1f0aa-0000-4000-8000-0000000000b2';
+    const conversations = new Map<string, Conversation>([
+      [GROUP_ID, row({ name: 'A' })],
+      [other, row({ id: other, contactName: other, name: 'B' })],
+    ]);
+    const meta = {
+      name: 'x',
+      isGroup: true,
+      deletedAt: null,
+      serverNow: T + 2 * BUNDLE_SERVER_TIME_SKEW_MS,
+    };
+    const getGroupServerStatus = vi.fn().mockResolvedValue(meta);
+    const settler = { resend: vi.fn(), state: vi.fn(), clock: newSweepClock() };
+    for (const [id, name] of [
+      [GROUP_ID, 'A'],
+      [other, 'B'],
+    ]) {
+      await ensureConversationForServerGroup(
+        { groupId: id, name, isGroup: true },
+        {
+          mlsService: {
+            getGroupServerStatus,
+            isGroupDrained: () => true,
+          } as unknown as IMlsService,
+          userId: 'u1',
+          conversations,
+          owedExits: new Set<string>(),
+          log: vi.fn(),
+          nameSync: settler,
+        }
+      );
+    }
+    expect(getGroupServerStatus).toHaveBeenCalledTimes(1);
+    expect(settler.state).not.toHaveBeenCalled();
+    expect(error.mock.calls.filter((c) => String(c[0]).includes('NOT stated'))).toHaveLength(1);
   });
 });

@@ -6,6 +6,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
+import { decodeAppMessage } from '$lib/proto/codec';
 
 /**
  * A GROUP'S NAME IS THE NEWEST ONE ITS MEMBERS STATED, NOT THE LAST ONE THIS DEVICE READ.
@@ -144,7 +145,8 @@ describe('a received groupNamed statement', () => {
   /** The handler context `device()` built, with this test's notice writer. */
   function base(d: ReturnType<typeof device>, addMessageToChat: ReturnType<typeof vi.fn>) {
     return {
-      mlsService: {},
+      // A rename-dated row answers an outranked statement once the group drains - never, here.
+      mlsService: { whenGroupDrained: () => new Promise(() => {}) },
       storage: {},
       userId: 'me',
       deviceKey: () => 'device-key',
@@ -214,5 +216,121 @@ describe('a received groupNamed statement', () => {
     await p.state('Groupe', T);
     await p.rename('Ancien build', T + 60_000, 0);
     expect(p.conversations.get('g1').name).toBe('Groupe');
+  });
+});
+
+/**
+ * #3888 review, S1: A SPLIT A STATEMENT REVEALS IS ANSWERED, AND THE ANSWERS TERMINATE. A device
+ * holding a RENAME-dated name that reads a statement of another name answers once with a statement of
+ * its own name; devices holding statement-dated names take the later statement; an answer is never
+ * answered and a statement-dated device never answers, so it ends.
+ */
+describe('a statement outranked by a rename-dated name of another text is answered', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  type Frame = { name: string; answers?: string };
+
+  /** One member device holding `held`; `sent` collects the statements it answers with. */
+  function member(held: { name: string; nameAt?: number; nameFromStatement?: true }) {
+    const conversations = new Map<string, any>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'g1',
+          lifecycle: 'active',
+          messages: [],
+          conversationType: 'group',
+          ...held,
+        },
+      ],
+    ]);
+    const sent: Frame[] = [];
+    const mlsService = {
+      whenGroupDrained: vi.fn().mockResolvedValue(undefined),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn(async (_g: string, bytes: Uint8Array) => {
+        sent.push(JSON.parse(decodeAppMessage(bytes)?.system?.data ?? '{}'));
+        return { receivedAt: Date.now() };
+      }),
+    };
+    const read = (frame: Frame, id: string, serverAt: number) =>
+      handleSystemEvent('groupNamed', frame, {
+        mlsService,
+        storage: {},
+        userId: 'me',
+        deviceKey: () => 'device-key',
+        conversations,
+        messageReactions: new Map(),
+        addMessageToChat: vi.fn().mockResolvedValue(undefined),
+        batchAddMessages: vi.fn(),
+        deleteConversation: vi.fn().mockResolvedValue(undefined),
+        saveConversation: vi.fn().mockResolvedValue(undefined),
+        getSelectedContact: () => 'g1',
+        setSelectedContact: vi.fn(),
+        onReadStateAdvanced: vi.fn(),
+        log: vi.fn(),
+        convoKey: 'g1',
+        persistMlsStateNow: vi.fn(),
+        convo: conversations.get('g1'),
+        senderNorm: 'peer',
+        messageId: id,
+        sentAt: serverAt,
+        deliveryMeta: { queuedCreatedAt: serverAt },
+      } as never);
+    const name = () => conversations.get('g1').name as string;
+    return { read, sent, name, row: () => conversations.get('g1') };
+  }
+
+  /** Lets every chained answer run. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('two devices: the rename holder answers once; the statement holder converges; a re-delivery answers nothing', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const renamed = member({ name: 'Nouveau', nameAt: T });
+    const stated = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
+    await renamed.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    expect(renamed.sent).toEqual([{ name: 'Nouveau', answers: 's-1' }]);
+    expect(renamed.name()).toBe('Nouveau');
+    expect(renamed.row().nameSync).toEqual({ answered: 's-1' });
+    // The answer reaches the statement holder: a later statement, taken.
+    await stated.read(renamed.sent[0], 'a-1', T + 2_000);
+    expect(stated.name()).toBe('Nouveau');
+    await settle();
+    expect(stated.sent).toEqual([]);
+    // TERMINATION: the same statement again answers nothing.
+    await renamed.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    expect(renamed.sent).toHaveLength(1);
+  });
+
+  it('three devices, two rename holders whose answers CROSS: every statement holder converges, and nobody answers an answer', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const x = member({ name: 'Nouveau', nameAt: T });
+    const z = member({ name: 'Autre', nameAt: T + 10 });
+    await x.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await z.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    const ax = x.sent[0];
+    const az = z.sent[0];
+    expect(ax).toEqual({ name: 'Nouveau', answers: 's-1' });
+    expect(az).toEqual({ name: 'Autre', answers: 's-1' });
+    // Two statement holders read the two answers in opposite orders: the later one wins on both.
+    const y1 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
+    const y2 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
+    await y1.read(ax, 'a-x', T + 2_000);
+    await y1.read(az, 'a-z', T + 3_000);
+    await y2.read(az, 'a-z', T + 3_000);
+    await y2.read(ax, 'a-x', T + 2_000);
+    expect(y1.name()).toBe('Autre');
+    expect(y2.name()).toBe('Autre');
+    // Each rename holder reads the other's answer: an answer is never answered - it ends here.
+    await x.read(az, 'a-z', T + 3_000);
+    await z.read(ax, 'a-x', T + 2_000);
+    await settle();
+    expect(x.sent).toHaveLength(1);
+    expect(z.sent).toHaveLength(1);
+    expect([y1.sent, y2.sent]).toEqual([[], []]);
   });
 });

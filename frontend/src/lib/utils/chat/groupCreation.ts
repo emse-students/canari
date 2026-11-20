@@ -438,9 +438,13 @@ export async function createNewGroup(
     await saveConversation(conversationKey);
     dischargeCreatedGroupAudit(mlsService, userId, groupId);
     // THE NAME IS DATED AT CREATION, by a silent statement in the group's first epoch (sealed-names.md,
-    // step 2), before anyone else is invited: every later member is handed it dated by the join push.
+    // step 2). An invitee admitted after it lands is handed the name dated by the join push; one whose
+    // Add crossed it reads it live if it went out in the new epoch, and otherwise restates the very
+    // same name at its own first sweep - the same name either way.
     if (groupDisplayName) {
-      await stateCreatedGroupName({
+      // NOT AWAITED: the creation returns at once, and the statement's outcome is written on the row
+      // when it comes (`ownNameStatementOutcome`) - an unanswered one is re-sent by the next sweep.
+      void stateCreatedGroupName({
         mlsService,
         userId,
         deviceKeyB64,
@@ -449,6 +453,10 @@ export async function createNewGroup(
         name: groupDisplayName,
         save: () => saveConversation(conversationKey!),
         log,
+      }).catch((e: unknown) => {
+        console.error(
+          `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`
+        );
       });
     }
     log(`[OK] Group ${groupId} created.`);

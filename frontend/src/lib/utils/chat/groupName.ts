@@ -276,26 +276,53 @@ export function applyNameStatement(
 const outrankedStatementsSaid = new Set<string>();
 
 /**
- * Says, ONCE per conversation and name, that a silent statement named the group differently from a
- * name a RENAME dated here, and lost to it by rank. Not a fault: the stating device never read that
- * rename (outside its window, older than its seat, or crossing its statement). But that device shows
- * another name than this one until the next rename, so the rate is counted before anything else is
- * built for it. The length is said, never the text.
+ * Whether a statement of `statedName` lost to a name a RENAME dated on `convo` while naming the
+ * group DIFFERENTLY - a split: the stating device never read that rename (outside its window, older
+ * than its seat, a stale list, or crossing its statement). Said ONCE per conversation and name, at
+ * INFO on the live path and the replay alike, so the rate is one count; the length is said, never
+ * the text. The live path then ANSWERS it ({@link statementAnswerDue}).
  */
 export function reportOutrankedStatement(
   convo: Pick<Conversation, 'id' | 'name' | 'nameAt' | 'nameFromStatement'>,
   statedName: unknown,
-  where: string,
-  log: (msg: string) => void
-): void {
-  if (convo.nameAt === undefined || convo.nameFromStatement) return;
-  if (typeof statedName !== 'string' || statedName.trim() === convo.name) return;
+  where: string
+): boolean {
+  if (convo.nameAt === undefined || convo.nameFromStatement) return false;
+  if (typeof statedName !== 'string' || statedName.trim() === convo.name) return false;
   const key = `${convo.id}|${statedName.trim()}`;
-  if (outrankedStatementsSaid.has(key)) return;
-  outrankedStatementsSaid.add(key);
-  log(
-    `[GROUP_NAME] ${where} in ${convo.id.slice(0, 8)}… names it differently (${statedName.trim().length} chars) from the name a rename dated ${new Date(convo.nameAt).toISOString()} - the rename stands, a statement never renames`
-  );
+  if (!outrankedStatementsSaid.has(key)) {
+    outrankedStatementsSaid.add(key);
+    console.info(
+      `[GROUP_NAME] ${where} in ${convo.id.slice(0, 8)}… names it differently (${statedName.trim().length} chars) from the name a rename dated ${new Date(convo.nameAt).toISOString()} - the rename stands, a statement never renames`
+    );
+  }
+  return true;
+}
+
+/**
+ * THE HEAL OF A SPLIT A STATEMENT REVEALS (#3888 review, S1). A device holding a RENAME-dated name
+ * that reads a statement of ANOTHER name knows the stating device - and every member that took the
+ * statement - shows a name the group was renamed away from. It ANSWERS: one silent statement of its
+ * own name, marked as an answer. Between statements the later wins, so every device holding a
+ * statement-dated name converges on it; a device holding a rename-dated name keeps its own.
+ *
+ * TERMINATION IS A PROOF, NOT A COUNT: an answer is never answered (`answers` set), a device holding
+ * a statement-dated name never answers, and each device answers a given statement at most once -
+ * by the id it records on the row ({@link NameSync.answered}), so a re-delivery after a restart
+ * answers nothing again. Statements that are not answers are finite (a creation, one restatement),
+ * so the answers are too.
+ */
+export function statementAnswerDue(
+  convo: Conversation,
+  statedName: unknown,
+  statement: { id: string | undefined; isAnswer: boolean }
+): boolean {
+  if ((convo.conversationType ?? 'group') !== 'group') return false;
+  if (statement.isAnswer || !statement.id) return false;
+  if (convo.nameAt === undefined || convo.nameFromStatement) return false;
+  if (convo.name.trim() === '' || convo.lifecycle !== 'active') return false;
+  if (typeof statedName !== 'string' || statedName.trim() === convo.name) return false;
+  return convo.nameSync?.answered !== statement.id;
 }
 
 /**
@@ -350,6 +377,11 @@ export type NameSync = {
   pending?: PendingRename;
   unconfirmed?: PendingRename;
   statement?: OwnNameStatement;
+  /**
+   * The id of the last statement this device ANSWERED ({@link statementAnswerDue}) - written before
+   * the answer goes out, so a statement re-delivered after a restart is answered once, not twice.
+   */
+  answered?: string;
 };
 
 /**
@@ -438,6 +470,7 @@ export function withNameSync<T extends { nameSync?: NameSync }>(row: T, sync: Na
     ...(sync.pending ? { pending: sync.pending } : {}),
     ...(sync.unconfirmed ? { unconfirmed: sync.unconfirmed } : {}),
     ...(sync.statement ? { statement: sync.statement } : {}),
+    ...(sync.answered ? { answered: sync.answered } : {}),
   };
   return (Object.keys(kept).length ? { ...rest, nameSync: kept } : rest) as T;
 }
@@ -480,6 +513,7 @@ export function parseNameSync(raw: unknown): NameSync | undefined {
     pending: pending ?? undefined,
     unconfirmed: unconfirmed ?? undefined,
     statement: statement ?? undefined,
+    answered: nonEmptyString(v.answered) ? v.answered : undefined,
   }).nameSync;
 }
 
@@ -546,15 +580,20 @@ export function pendingRenameOutcome(
  *   frame, a join push) dates `over` in the same write (`withDatedGroupName`);
  * - `landed`: the row holds the pending name, dated - its own frame came back to it, so it reached
  *   the server and only the server's copy is still owed;
- * - `superseded`: the row holds a later statement (another name, or the same name under another
- *   date) - re-sending would put the
+ * - `superseded`: the row holds a later RENAME (another name, or the same name under another
+ *   date) - a name a silent statement dated never counts, it is outranked - re-sending would put the
  *   older rename back on top of it, at a later server time. Not dropped: kept `unconfirmed`, since
  *   its first copy may have reached the members after that statement.
  */
 export function pendingRenameVerdict(
-  row: Pick<Conversation, 'name' | 'nameAt'>,
+  row: Pick<Conversation, 'name' | 'nameAt' | 'nameFromStatement'>,
   pending: PendingRename
 ): 'resend' | 'landed' | 'superseded' {
+  // A NAME A SILENT STATEMENT DATED NEVER SUPERSEDES A RENAME: the statement only dates a name, and
+  // the re-sent rename outranks it on every device (`groupNameSupersedes`). Read as superseded, a
+  // member's one-time restatement of the base - the rollout itself - cancelled this device's
+  // unanswered rename without a word (#3888 review, B1).
+  if (row.nameAt !== undefined && row.nameFromStatement) return 'resend';
   if (row.name === pending.name && row.nameAt !== undefined) return 'landed';
   if (row.name !== pending.over.name) return 'superseded';
   return row.nameAt === pending.over.at ? 'resend' : 'superseded';

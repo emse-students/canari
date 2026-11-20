@@ -389,7 +389,9 @@ describe('discoverMissingGroups orphan cleanup', () => {
     // label changing under a reader who is looking at it must be findable afterwards.
     const said = log.mock.calls.map((c) => String(c[0]));
     expect(said.filter((l) => l.includes('relabelled'))).toHaveLength(1);
-    expect(said.join('\n')).toContain('relabelled "Groupe" -> "Les ROOTz"');
+    // By LENGTH, never the text: a group name is the members' word (#3888 review, S5).
+    expect(said.join('\n')).toContain('relabelled (6 -> 9 chars)');
+    expect(said.join('\n')).not.toContain('Les ROOTz');
   });
 
   // CONTROL: a name that already agrees with the server must move nothing and say nothing. Without

@@ -3,6 +3,7 @@ import {
   applyNameStatement,
   applyRenameFrame,
   nameStatementDue,
+  statementAnswerDue,
   ownNameStatementOutcome,
   boundedRestatedGroupName,
   groupNameSupersedes,
@@ -585,5 +586,41 @@ describe("what this device's own statement does to its row (ownNameStatementOutc
     expect(parseNameSync(JSON.stringify({ statement: { name: 'x' } }))).toBeUndefined();
     expect(error).toHaveBeenCalled();
     error.mockRestore();
+  });
+});
+
+describe('#3888 review: statements and the rest of the rule', () => {
+  const PENDING = { name: 'New', messageId: 'p-1', sentAt: T, over: { name: 'Old', at: T - 1 } };
+
+  it('B1: a row a statement dated never supersedes a pending rename, whatever its name or date', () => {
+    for (const held of [
+      { name: 'Old', nameAt: T + 5, nameFromStatement: true as const },
+      { name: 'Other', nameAt: T + 9, nameFromStatement: true as const },
+      { name: 'New', nameAt: T + 9, nameFromStatement: true as const },
+    ]) {
+      expect(pendingRenameVerdict(held, PENDING)).toBe('resend');
+    }
+    // A RENAME dated after the base still supersedes it, as before.
+    expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 5 }, PENDING)).toBe('superseded');
+  });
+
+  it('S1: a rename-dated row answers a statement of ANOTHER name, once per id, never an answer', () => {
+    const renamed = group({ name: 'Nouveau', nameAt: T });
+    const s1 = { id: 's-1', isAnswer: false };
+    expect(statementAnswerDue(renamed, 'Ancien', s1)).toBe(true);
+    expect(statementAnswerDue(renamed, 'Nouveau', s1)).toBe(false);
+    expect(statementAnswerDue(renamed, 'Ancien', { id: 's-2', isAnswer: true })).toBe(false);
+    expect(statementAnswerDue({ ...renamed, nameSync: { answered: 's-1' } }, 'Ancien', s1)).toBe(
+      false
+    );
+    // A statement-dated row, or an undated one, never answers: that is what terminates it.
+    expect(statementAnswerDue(group({ nameAt: T, nameFromStatement: true }), 'Ancien', s1)).toBe(
+      false
+    );
+    expect(statementAnswerDue(group(), 'Ancien', s1)).toBe(false);
+  });
+
+  it('the answered id survives the store', () => {
+    expect(parseNameSync(JSON.stringify({ answered: 's-1' }))).toEqual({ answered: 's-1' });
   });
 });

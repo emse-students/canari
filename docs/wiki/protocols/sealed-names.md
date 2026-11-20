@@ -273,14 +273,32 @@ ignores it.
   (`Conversation.nameFromStatement`, local SQLite v22 column `name_from_statement`; IndexedDB keeps
   the field) and travels in the join push (`groupName.statement`). An absent rank is a rename's: a
   step-1 inviter dated names from renames only.
+- **A pending rename is never superseded by a statement** (`pendingRenameVerdict`). A row a
+  statement dated answers `resend`: the re-sent rename outranks the statement on every device. Read
+  as "a later name", a member's restatement of the base - the rollout itself - cancelled this
+  device's unanswered rename without a word (#3888 review, B1).
 - **Read, live and replayed, by one rule** (`applyNameStatement`): the rename frame's bound on the
   signed `sentAt`, then written only when it supersedes. A statement that loses to a rename-dated name
-  of ANOTHER text is said once per conversation and name (`reportOutrankedStatement`, its length and
-  never its text): that member shows another name until the next rename, and the rate is counted
-  before anything else is built for it.
+  of ANOTHER text is a SPLIT: the stating device never read that rename (a stale list, a missed
+  frame, a crossing). It is counted once per conversation and name at INFO on both paths
+  (`reportOutrankedStatement`, its length and never its text).
+- **The answer heals the split** (`statementAnswerDue`, `answerOutrankedStatement`, live path only).
+  The device holding the rename-dated name answers with ONE silent statement of its own name, marked
+  `answers: <statement id>`, chained on the group's drain. Between statements the later wins, so every
+  device holding a statement-dated name converges on the answer; a device holding a rename-dated name
+  keeps its own. **It terminates by construction:** an answer is never answered, a statement-dated
+  device never answers, and each device answers a given statement once - its id is written on the row
+  (`nameSync.answered`) before the answer goes out, so a re-delivery after a restart answers nothing.
+  Statements that are not answers are finite (a creation, one restatement), so the answers are too.
+  Two rename holders that disagree with EACH OTHER both answer, and the statement holders converge
+  on the later answer; the rename holders' own split is a rename-level one, older than this step,
+  closed only by a later rename. The archive replay counts but never answers: an answer is made where
+  the statement was read live.
 - **At creation** (`createNewGroup`, `stateCreatedGroupName`): a named group sends its statement right
-  after its row is written, in the first epoch and before anyone is invited, so every invitee is
-  handed the name dated by the join push. A statement that fails never fails the creation.
+  after its row is written, in the first epoch. The creation does NOT wait for it (#3888 review, S2):
+  the outcome is written on the row when it comes. An invitee admitted after it lands is handed the
+  name dated by the join push; one whose Add crossed it reads it live, or restates the very same name
+  at its own first sweep. A statement that fails never fails the creation.
 - **Once for each existing group** (`stateGroupNameOnce`, in the connection sweep after the label
   repair, `NameSyncSettler.state`). Any member device of this build may be the one: the first to sweep
   the group after the update. Concurrent ones settle by the tie rule. `nameStatementDue` decides from
@@ -292,10 +310,12 @@ ignores it.
     compares the row's date with the base, so a statement would stop the re-send. An `unconfirmed`
     frame does not block: if it landed, its relayed copy is a rename and outranks the statement;
   - only once the link has drained the group (`isGroupDrained`), so a rename among what arrived
-    dates the row first;
-  - only within the receivers' bound, as the server's clock read in that pass proves it
-    (`getGroupServerStatus`, with the rename re-send's `RENAME_RESEND_MARGIN_MS`). A device whose
-    clock is outside the bound states nothing, and says so once.
+    dates the row first. An undrained group is CHAINED on its first drain (`whenGroupDrained`, one
+    chain per group), never skipped to the next sweep;
+  - only within the receivers' bound, as the server's clock read ONCE for the whole sweep proves it
+    (`SweepClock`, `sweepServerNow`, from the group row read's `Date`, with the rename re-send's
+    `RENAME_RESEND_MARGIN_MS`); a chained statement reads its own. A device whose clock is outside the
+    bound states nothing, and says so once per sweep.
 - **"Once" is stored state, never a clock.** A row a frame dated is never stated again: the date and
   its rank are persisted with the name, and a restart reads them back. The send's outcome is a type
   (`NameStatementOutcome`, from `sendNameStatement`, classified at the throw) and is written to the row
@@ -310,6 +330,19 @@ ignores it.
 - **The accepted cost, unchanged from step 1:** an older build's rename made through the server's list
   alone does not move a dated name. Once every group is dated, that covers every group. The minimum
   version for step 3 is this build (owner, 2026-11-17).
+- **A step-1 newcomer mis-ranks a statement.** An inviter of this build relays a statement-dated name
+  with `statement: true`; a step-1 (1.7.1) device ignores the field and stores the date with no rank,
+  as it stores every date. While it runs 1.7.1 nothing differs: 1.7.1 orders by date alone and
+  ignores `groupNamed`. Once it updates, that row reads as RENAME-dated: a later statement no longer
+  moves it, and it answers a statement of another name with its own. Both still converge - the
+  statement holders take its answer - but on its name, and that is the measured residual
+  (`reportOutrankedStatement`).
+- **A downgrade to 1.7.1** keeps the store (SQLite at v22: 1.7.1 runs no branch above 21) and
+  writes rows without `name_from_statement` (its `INSERT OR REPLACE` names no such column, so the
+  column goes NULL on every save). Every statement-dated name it saves comes back RENAME-ranked on the
+  next update, with the effect above; the `nameSync.statement` and `answered` records are dropped by
+  1.7.1's parser on its next write, so an unanswered statement is minted afresh and a statement may
+  be answered a second time - finite, as answers are never answered.
 
 Readings owed: none on a phone. A statement is silent, and its order is read deterministically by the
 unit tests (`groupName.test.ts`, `systemMessageHandler.groupName.test.ts`,

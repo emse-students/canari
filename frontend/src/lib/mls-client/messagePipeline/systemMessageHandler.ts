@@ -111,6 +111,7 @@ import {
   reportRenameRefusal,
   withRestatedGroupName,
 } from '$lib/utils/chat/groupName';
+import { answerOutrankedStatement } from '$lib/utils/chat/nameStatementAnswer';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -1260,8 +1261,20 @@ export async function handleSystemEvent(
       console.warn(
         `[GROUP_NAME] ${where} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
       );
-    } else {
-      reportOutrankedStatement(convo, data.name, where, log);
+    } else if (reportOutrankedStatement(convo, data.name, where)) {
+      // A SPLIT THIS DEVICE CAN HEAL: the stating device shows a name the group was renamed away
+      // from. Answered once per statement, never an answer (`answerOutrankedStatement`).
+      await answerOutrankedStatement({
+        mlsService,
+        userId,
+        deviceKeyB64: deviceKey(),
+        conversations,
+        convoKey,
+        statedName: data.name,
+        statement: { id: messageId, isAnswer: typeof data.answers === 'string' },
+        save: (key) => (storage ? saveConversation(key) : Promise.resolve()),
+        log,
+      });
     }
     return true;
   }

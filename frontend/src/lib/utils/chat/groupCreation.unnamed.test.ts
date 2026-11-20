@@ -108,6 +108,8 @@ describe('a named group dates its name at creation', () => {
     const at = Date.UTC(2026, 10, 20, 9, 0, 0);
     const d = withSend(async () => ({ receivedAt: at }));
     await createNewGroup('Les ROOTz', d.args);
+    // Not awaited by the creation (#3888 review, S2): its outcome lands on the row when it comes.
+    await vi.waitFor(() => expect(d.conversations.get('g-new')?.nameAt).toBe(at));
     expect(d.sent).toHaveLength(1);
     expect(d.sent[0].groupId).toBe('g-new');
     expect(d.sent[0].frame?.system?.event).toBe('groupNamed');
@@ -127,10 +129,17 @@ describe('a named group dates its name at creation', () => {
       throw new TransportFailureError(new Error('offline'));
     });
     expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
+    await vi.waitFor(() => expect(d.conversations.get('g-new')?.nameSync?.statement).toBeDefined());
     const row = d.conversations.get('g-new')!;
     expect(row.nameAt).toBeUndefined();
     expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
     vi.restoreAllMocks();
+  });
+
+  it('the creation returns without waiting for the statement round trip', async () => {
+    const d = withSend(() => new Promise(() => {}));
+    expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
+    expect(d.conversations.get('g-new')?.nameAt).toBeUndefined();
   });
 
   it('an unnamed group states nothing', async () => {
