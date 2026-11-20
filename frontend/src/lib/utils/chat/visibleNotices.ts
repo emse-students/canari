@@ -22,7 +22,7 @@ import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
 import { mkNoticeEnvelope, parseEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
 import { noticeText, noticeUserIds } from './noticeText';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
-import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay } from './groupName';
+import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay, sameShownName } from './groupName';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
 import { isRawId } from './rawId';
@@ -272,10 +272,8 @@ export function nameChangeNoticeDue(
   before: Pick<Conversation, 'id' | 'name' | 'nameAt'>,
   after: Pick<Conversation, 'name'>
 ): boolean {
-  // Compared TRIMMED: a statement's name is trimmed on read (`readDatedGroupName`) but the Welcome writes
-  // the server's name as it came, so an old build's trailing space must not make a restatement a change.
   const shown = before.name.trim();
-  if (after.name.trim() === shown) return false;
+  if (sameShownName(after.name, before.name)) return false;
   const placeholder =
     before.nameAt === undefined && shown !== '' && (isRawId(shown) || shown === before.id);
   return !placeholder;
