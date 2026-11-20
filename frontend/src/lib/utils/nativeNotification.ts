@@ -202,8 +202,8 @@ export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
 
 /**
  * Tells the Android builder that this account read a conversation on another device, as this
- * WebView learned it over its socket - and, when nothing is left unread, to REMOVE the
- * conversation's notification.
+ * WebView learned it over its socket, so it REMOVES the conversation's notification once the read
+ * covers every line of it.
  *
  * **THE SECOND TRIGGER OF THE CANCEL**, as {@link postNativeMessageNotification} is the second
  * trigger of the post (owner's report, 2026-11-20). The cancel had one trigger, the push - a silent
@@ -212,14 +212,14 @@ export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
  * therefore never pushed, and the banner this WebView had posted for the conversation stayed in the
  * shade for good. Same key as the post (the conversation id), so the two triggers of each meet.
  *
- * **THE MARK IS RECORDED ON EVERY OWN READ; THE BANNER GOES ONLY AT ZERO UNREAD.** The post of a
- * message is asynchronous before it reaches Kotlin, so a read covering it may land first and find
- * nothing to remove: Kotlin records `at` and refuses any later post at or below it
- * (`ReadElsewhereMarks`), so the order of arrival decides nothing - and that holds even when a newer
- * message stays unread, which is why the record does not wait for `dismiss`. `dismiss` is whether the
- * conversation has nothing left unread: a mark below a newer message must not take that message's
- * banner with it. `clock` says which clock `at` is on (readState.ts): `server` for a mark on the
- * server's `createdAt`, `stamped` otherwise.
+ * **THE NATIVE SIDE DECIDES, NOT THIS ROW.** The post of a message is asynchronous before it reaches
+ * Kotlin, so a read covering it may land first and find nothing to remove: Kotlin records `at` and
+ * refuses any later post at or below it (`ReadElsewhereMarks`), so the order of arrival decides
+ * nothing. And it removes the banner only when `at` covers every line the shade holds: this row can
+ * lag behind the shade (a frozen WebView drains a read from before a message the push already
+ * announced, and counts nothing unread), so whether anything is unread is not this side's to say.
+ * Handed over on EVERY own read, moved or not. `clock` says which clock `at` is on (readState.ts):
+ * `server` for a mark on the server's `createdAt`, `stamped` otherwise.
  *
  * Off Android there is no native banner: `false`, and nothing is invoked.
  *
@@ -229,8 +229,7 @@ export async function recordNativeReadElsewhere(
   conversationId: string,
   event: ReadElsewhereEvent,
   at: number,
-  clock: 'server' | 'stamped',
-  dismiss: boolean
+  clock: 'server' | 'stamped'
 ): Promise<boolean> {
   if (!isAndroidTauriRuntime()) return false;
   try {
@@ -239,7 +238,6 @@ export async function recordNativeReadElsewhere(
       groupId: conversationId,
       at: Number.isFinite(at) ? Math.trunc(at) : 0,
       serverClock: clock === 'server',
-      dismiss,
       reason: event,
     });
     if (!queued) {

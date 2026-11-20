@@ -292,6 +292,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * it as `serverAt` and `read_watermarks.ndjson` as a second field.
          */
         const val EXTRA_SERVER_AT    = "serverAt"
+
+        /**
+         * The instants a message line of the shade carries in its own extras, written when this side
+         * posts it ([showMessageNotification]): the sender's and the server's. They are what a read
+         * on another device is weighed against before the banner is removed
+         * ([ReadElsewhereMarks.recordThenCancel]) - the shade's own record of what it shows, which
+         * survives the process, unlike anything held in memory here.
+         */
+        const val LINE_SENT_AT = "canari.line.sentAt"
+        const val LINE_SERVER_AT = "canari.line.serverAt"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
@@ -883,17 +893,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             read: ReadElsewhereMarks.Read? = null,
         ) {
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-            val notifId = prefs.getInt(groupId, -1)
-            if (notifId == -1) {
-                read?.let { READ_ELSEWHERE.record(groupId, it) }
-                Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
-                return
-            }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (read != null) {
-                READ_ELSEWHERE.recordThenCancel(groupId, read) { manager.cancel(notifId) }
+            var notifId = -1
+            val cancelled = if (read == null) {
+                notifId = prefs.getInt(groupId, -1)
+                if (notifId != -1) manager.cancel(notifId)
+                notifId != -1
             } else {
-                manager.cancel(notifId)
+                // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner
+                // posted between an outside lookup and the record would otherwise stand.
+                READ_ELSEWHERE.recordThenCancel(
+                    groupId,
+                    read,
+                    shadeLines = {
+                        notifId = prefs.getInt(groupId, -1)
+                        if (notifId == -1) null else shadeLinesOf(manager, notifId)
+                    },
+                    cancel = { manager.cancel(notifId) },
+                )
+            }
+            if (!cancelled) {
+                if (notifId == -1) {
+                    Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
+                } else {
+                    Log.d(TAG, "cancelConversationNotification: kept group=${groupId.take(8)} id=$notifId - a line newer than the read stays unread")
+                }
+                return
             }
             // The real posts this notification stood for are gone: none may cover a later refused
             // push (see [GenericBannerLedger.groupCleared]).
@@ -915,6 +940,33 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // cancel above is asynchronous too: the shade can still report this conversation as
             // active, which would keep a summary whose last child has just gone.
             refreshBadgeSummary(context, justCancelled = notifId)
+        }
+
+        /**
+         * The lines of conversation notification [notifId] as this side stamped them
+         * ([LINE_SENT_AT], [LINE_SERVER_AT]), for [ReadElsewhereMarks.recordThenCancel]; null when
+         * none is posted. A line without the stamp (an own reply drawn in the shade) is not news
+         * and is left out. A shade that cannot be read is reported as nothing posted, at a level
+         * that accuses: the banner then stays, which is noise - never a lost message.
+         */
+        private fun shadeLinesOf(manager: NotificationManager, notifId: Int): List<ReadElsewhereMarks.Line>? {
+            val posted = try {
+                manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
+            } catch (e: Exception) {
+                Log.e(TAG, "shadeLinesOf: activeNotifications unavailable - the banner is kept: ${throwableSite(e)}")
+                return null
+            } ?: return null
+            return NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)
+                ?.messages
+                ?.mapNotNull { line ->
+                    val stamps = line.extras
+                    if (!stamps.containsKey(LINE_SENT_AT)) {
+                        null
+                    } else {
+                        ReadElsewhereMarks.Line(stamps.getLong(LINE_SENT_AT), stamps.getLong(LINE_SERVER_AT))
+                    }
+                }
+                ?: emptyList()
         }
 
         /**
@@ -2285,6 +2337,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
                 try {
+                    // READ ON ANOTHER DEVICE ALREADY: nothing to build. Asked BEFORE the avatar fetch
+                    // and the generic-banner ledger, which a refused post must not consume - the
+                    // generic line it would retire stays standing otherwise. The builder asks again,
+                    // and decides, under the lock ([ReadElsewhereMarks.postUnlessRead]).
+                    if (READ_ELSEWHERE.covers(groupId, sentAt, serverAt)) {
+                        Log.d(TAG, "notifyMessageFromWebSocket: already read on another device -> nothing built (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                        return@execute
+                    }
                     // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
                     // push's rule ([ChannelBannerAuthor.of]) with the same three inputs: the message
                     // is shown, the open's proof (the WebView's v2 open, the push's native one), and
@@ -2370,40 +2430,40 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * NOTHING HERE RELIES ON ARRIVAL ORDER. The WebView's post of a message is asynchronous
          * before it reaches [notifyMessageFromWebSocket] (the sender's name is resolved and the name
          * files flushed first), so the read covering a message can reach this side BEFORE its post.
-         * The mark is therefore RECORDED ([ReadElsewhereMarks]) - ALWAYS, whether or not anything is
-         * dismissed - and every post checks it in the critical section of its side effects
-         * ([showMessageNotification], [ReadElsewhereMarks.postUnlessRead]): a post first is
-         * cancelled, a read first stops the post. Queued on [WS_NOTIF_LANE] only to keep the binder
-         * calls off the IPC thread.
+         * The mark is therefore RECORDED ([ReadElsewhereMarks]) - always - and every post checks it
+         * in the critical section of its side effects ([showMessageNotification],
+         * [ReadElsewhereMarks.postUnlessRead]): a post first is weighed by the cancel, a read first
+         * stops the post. Queued on [WS_NOTIF_LANE] only to keep the binder calls off the IPC thread.
          *
-         * [dismiss] is the WebView's answer to "is anything left unread here" (from its own row): a
-         * mark that leaves a newer message unread is still RECORDED - a late post of an older
-         * message must still be refused - but the banner, which is the newer message's now, stays.
+         * THE BANNER GOES ONLY WHEN THE MARK COVERS EVERY LINE IT HOLDS, decided here against the
+         * instants this side stamped on those lines ([ReadElsewhereMarks.recordThenCancel],
+         * [shadeLinesOf]) - not by the WebView's row, which can lag behind the shade: a frozen
+         * WebView drains an own read from before a message the push already announced, and its row,
+         * not holding that message yet, counts nothing unread. A newer line keeps the banner.
+         *
+         * Called on every own read the socket brings, whether or not it moved the row: the decision
+         * is the shade's, so a read the row already held costs one comparison and settles nothing
+         * wrongly.
          *
          * @param groupId the conversation id: the MLS group id, or `channel_<uuid>` for a salon.
          * @param at the mark, in ms.
          * @param serverClock whether [at] is on the server's clock (a DM or group mark from a current
          *   build) or the stamped one (a salon, whose stamp IS its server time, or an older `at`).
-         * @param dismiss whether the conversation has nothing unread left, so its banner goes.
          * @param reason which socket event said so (`read_watermark`, `channel.read`), for the log.
          * @return whether the work was queued; `false` only with no Application context.
          */
         @JvmStatic
-        fun readElsewhereFromWebSocket(groupId: String, at: Long, serverClock: Boolean, dismiss: Boolean, reason: String): Boolean {
+        fun readElsewhereFromWebSocket(groupId: String, at: Long, serverClock: Boolean, reason: String): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${groupId.take(8)} NOT recorded ($reason)")
                 return false
             }
-            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${groupId.take(8)} at=$at clock=${if (serverClock) "server" else "stamped"} dismiss=${if (dismiss) "yes" else "no"} - read on another device ($reason)")
+            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${groupId.take(8)} at=$at clock=${if (serverClock) "server" else "stamped"} - read on another device ($reason)")
             val read = ReadElsewhereMarks.Read(at, serverClock)
             WS_NOTIF_LANE.execute {
                 try {
-                    if (dismiss) {
-                        cancelConversationNotification(context, groupId, read)
-                    } else {
-                        READ_ELSEWHERE.record(groupId, read)
-                    }
+                    cancelConversationNotification(context, groupId, read)
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: the banner of a conversation already read stays.
                     Log.e(TAG, "readElsewhereFromWebSocket: failed for ${groupId.take(8)}: ${throwableSite(e)}")
@@ -3058,6 +3118,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // added a second time.
             val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
             val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
+            // Re-injected with the line on every later post (`extractMessagingStyleFromNotification`
+            // carries a message's extras), so each line keeps its own instants for as long as it shows.
+            newMessage.extras.putLong(LINE_SENT_AT, sentAt)
+            newMessage.extras.putLong(LINE_SERVER_AT, serverAt)
             if (mediaUri != null && mediaMime != null) {
                 newMessage.setData(mediaMime, mediaUri)
             }
@@ -3897,10 +3961,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The decrypt still runs afterwards - it is what advances the MLS state - it just no
         // longer gates the dismissal.
         //
-        // IT CANNOT ASK WHETHER A NEWER MESSAGE STAYS UNREAD, unlike the WebView's trigger
-        // ([readElsewhereFromWebSocket], which dismisses only at zero unread): the mark is in
-        // the ciphertext, which this deliberately does not wait for, and this process holds no
-        // conversation row to count against. A killed app's banner is redrawn by the next message.
+        // IT CANNOT ASK WHETHER A NEWER LINE STAYS UNREAD, unlike the WebView's trigger
+        // ([readElsewhereFromWebSocket], which weighs the mark against every line of the shade):
+        // the mark is in the ciphertext, which this deliberately does not wait for. A killed app's
+        // banner is redrawn by the next message.
         if (silent && groupId.isNotEmpty() && senderId.isNotEmpty()) {
             val myUserId = MlsContextLoader.loadPushContext(this)?.userId
             if (senderId.equals(myUserId, ignoreCase = true)) {

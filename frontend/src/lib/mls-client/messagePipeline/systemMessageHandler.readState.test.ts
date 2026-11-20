@@ -87,14 +87,14 @@ describe('handleSystemEvent - read_watermark', () => {
       'g1',
       'read_watermark',
       1000,
-      'stamped',
-      true
+      'stamped'
     );
   });
 
-  // Review of #3912: a mark below a newer message must not take that message's banner with it -
-  // but it is still RECORDED, so an older message's post still on its way is refused.
-  it('our own mark that leaves a newer message unread is recorded, and dismisses no banner', async () => {
+  // Re-review of #3912: this row can lag behind the shade, so it does not decide the cancel - the
+  // native side weighs the mark against the shade's own lines (`ReadElsewhereMarksTest`). The mark
+  // is handed over all the same: an older message's post still on its way is refused against it.
+  it('our own mark that leaves a newer message unread is still handed over - the shade decides', async () => {
     recordNativeReadElsewhere.mockClear();
     const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
     (ctx.conversations.get('g1') as any).messages.push({
@@ -110,8 +110,7 @@ describe('handleSystemEvent - read_watermark', () => {
       'g1',
       'read_watermark',
       1000,
-      'stamped',
-      false
+      'stamped'
     );
   });
 
@@ -128,7 +127,7 @@ describe('handleSystemEvent - read_watermark', () => {
 
   // Review of #3912: a mark this row already held (learned on a reconnect) moves nothing here, and
   // the banner posted for the conversation still has to go.
-  it('our own mark that moves nothing still dismisses when nothing is unread', async () => {
+  it('our own mark that moves nothing is still handed over', async () => {
     recordNativeReadElsewhere.mockClear();
     const conversations = new Map<string, any>([
       [
@@ -150,8 +149,7 @@ describe('handleSystemEvent - read_watermark', () => {
       'g1',
       'read_watermark',
       1000,
-      'stamped',
-      true
+      'stamped'
     );
   });
 

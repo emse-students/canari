@@ -291,14 +291,13 @@ describe('recordNativeReadElsewhere', () => {
     isAndroidTauriRuntime.mockReturnValue(true);
     invoke.mockResolvedValue(true);
 
-    expect(
-      await recordNativeReadElsewhere('channel_c1', 'channel.read', 200, 'stamped', true)
-    ).toBe(true);
+    expect(await recordNativeReadElsewhere('channel_c1', 'channel.read', 200, 'stamped')).toBe(
+      true
+    );
     expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
       groupId: 'channel_c1',
       at: 200,
       serverClock: false,
-      dismiss: true,
       reason: 'channel.read',
     });
   });
@@ -308,12 +307,11 @@ describe('recordNativeReadElsewhere', () => {
     isAndroidTauriRuntime.mockReturnValue(true);
     invoke.mockResolvedValue(true);
 
-    await recordNativeReadElsewhere('g1', 'read_watermark', 1234.7, 'server', false);
+    await recordNativeReadElsewhere('g1', 'read_watermark', 1234.7, 'server');
     expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
       groupId: 'g1',
       at: 1234,
       serverClock: true,
-      dismiss: false,
       reason: 'read_watermark',
     });
   });
@@ -321,7 +319,7 @@ describe('recordNativeReadElsewhere', () => {
   it('invokes nothing off Android, where there is no native banner', async () => {
     isAndroidTauriRuntime.mockReturnValue(false);
 
-    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server')).toBe(false);
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -330,8 +328,8 @@ describe('recordNativeReadElsewhere', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     invoke.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('no JavaVM'));
 
-    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
-    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server')).toBe(false);
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server')).toBe(false);
     expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
   });

@@ -438,15 +438,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     // MY OWN MARK: the salon's Android banner goes too, by the socket as well as by the
     // `channel_read` push - the WebView posted it, and the push alone left it standing in front
     // (owner's report, 2026-11-20). OUTSIDE `next !== convo`: a mark already held moves nothing here
-    // and its banner still has to go. Recorded on every own read, dismissed only at zero unread.
+    // and its banner still has to go. The native side decides the cancel against its shade's lines.
     if (userId.toLowerCase() === ctx.userId.toLowerCase()) {
-      void recordNativeReadElsewhere(
-        key,
-        'channel.read',
-        Number(data.at),
-        'stamped',
-        next.unreadCount === 0
-      );
+      void recordNativeReadElsewhere(key, 'channel.read', Number(data.at), 'stamped');
     }
     if (next !== convo) {
       conversations.set(key, next);

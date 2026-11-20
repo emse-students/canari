@@ -12,6 +12,13 @@ package fr.emse.canari.push
  * its mark - always, even when something newer stays unread and nothing is cancelled - and every
  * post asks it: a message at or below the mark is not posted, whichever arrived first.
  *
+ * THE SHADE DECIDES THE CANCEL, NOT THE WEBVIEW'S ROW. A read removes the conversation's banner
+ * only when its mark covers EVERY line that banner holds, compared on the same clock rule as a post
+ * ([covers]). The WebView's row can lag behind the shade - a frozen WebView drains an own read from
+ * before a message the push already announced, and its row, which has not received that message
+ * yet, counts nothing unread - so "nothing unread here" is not the fact; the lines in the shade, and
+ * the instants this side stamped on them, are (re-review of #3912, 2026-11-20).
+ *
  * ONE LOCK, OWNED HERE, and the two halves that must not interleave both run inside it:
  * [recordThenCancel] (a read: record, then remove the banner) and [postUnlessRead] (a post: check,
  * then EVERY side effect of the post - the channel-switch cancel of the previous banner as much as
@@ -39,6 +46,12 @@ class ReadElsewhereMarks {
     /** A read as the WebView hands it over: the instant, and whether it is on the server's clock. */
     data class Read(val at: Long, val serverClock: Boolean)
 
+    /**
+     * One line of a conversation's notification, as this side stamped it when it posted it: the
+     * sender's instant and the server's (0 when unknown).
+     */
+    data class Line(val sentAt: Long, val serverAt: Long)
+
     private val lock = Any()
 
     /** Guarded by [lock]. */
@@ -53,14 +66,30 @@ class ReadElsewhereMarks {
     }
 
     /**
-     * Records [read], then runs [cancel] - in ONE critical section, so no post can fall between the
-     * two: one that checked before the record has already posted and is removed by [cancel], one
-     * that checks after it sees the mark.
+     * Records [read], then reads the conversation's notification ([shadeLines]: its lines, or null
+     * when none is posted) and runs [cancel] only when the mark covers EVERY line - all in ONE
+     * critical section, so no post can fall between them: one that checked before the record has
+     * already posted and its line is weighed here, one that checks after it sees the mark.
+     *
+     * A line the mark does not cover - a message newer than the read, or one comparable on neither
+     * clock - keeps the banner: it is a message this account has not read. A notification with no
+     * stamped line is covered (nothing in it is news this side announced).
+     *
+     * @return whether [cancel] ran.
      */
-    fun recordThenCancel(conversationId: String, read: Read, cancel: () -> Unit) {
-        synchronized(lock) {
-            recordLocked(conversationId, read)
+    fun recordThenCancel(
+        conversationId: String,
+        read: Read,
+        shadeLines: () -> List<Line>?,
+        cancel: () -> Unit,
+    ): Boolean = synchronized(lock) {
+        recordLocked(conversationId, read)
+        val lines = shadeLines() ?: return@synchronized false
+        if (lines.all { coversLocked(conversationId, it.sentAt, it.serverAt) }) {
             cancel()
+            true
+        } else {
+            false
         }
     }
 

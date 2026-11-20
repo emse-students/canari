@@ -223,8 +223,8 @@ fn with_native_builder(
 }
 
 /// Tells the native side that THIS ACCOUNT read a conversation on another device, as the WebView
-/// learned it over its socket, and asks it to remove the conversation's notification when nothing
-/// is left unread (Android).
+/// learned it over its socket, so it removes the conversation's notification once the read covers
+/// every line of it (Android).
 ///
 /// **THE SECOND TRIGGER OF THE CANCEL**, as [`notify_native_message`] is the second trigger of the
 /// post. The push was the cancel's only trigger, and the server pushes only a frame the device did
@@ -234,16 +234,16 @@ fn with_native_builder(
 ///
 /// `at` is the mark and `server_clock` its clock: Kotlin RECORDS it beside the cancel, and every
 /// post checks it, so a post of a message this mark covers that reaches Kotlin AFTER this call is
-/// not posted - the order of the two decides nothing (`ReadElsewhereMarks`). The mark is recorded
-/// on every own read; `dismiss` (nothing left unread, from the WebView's row) decides the cancel, so
-/// a newer unread message keeps its banner. Returns whether the work was queued; `false` off
-/// Android, where there is no native banner and the caller never calls.
+/// not posted - the order of the two decides nothing (`ReadElsewhereMarks`). The cancel is decided
+/// there too, against the instants stamped on the shade's lines: a line newer than the read keeps
+/// the banner, whatever the WebView's row (which can lag behind the shade) counts. Returns whether
+/// the work was queued; `false` off Android, where there is no native banner and the caller never
+/// calls.
 #[tauri::command]
 pub(crate) fn record_read_elsewhere(
     group_id: String,
     at: i64,
     server_clock: bool,
-    dismiss: bool,
     reason: String,
 ) -> bool {
     #[cfg(target_os = "android")]
@@ -264,12 +264,11 @@ pub(crate) fn record_read_elsewhere(
                 .call_static_method(
                     class,
                     "readElsewhereFromWebSocket",
-                    "(Ljava/lang/String;JZZLjava/lang/String;)Z",
+                    "(Ljava/lang/String;JZLjava/lang/String;)Z",
                     &[
                         (&group).into(),
                         JValue::Long(at),
                         JValue::Bool(u8::from(server_clock)),
-                        JValue::Bool(u8::from(dismiss)),
                         (&why).into(),
                     ],
                 )
@@ -286,7 +285,7 @@ pub(crate) fn record_read_elsewhere(
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (group_id, at, server_clock, dismiss, reason);
+        let _ = (group_id, at, server_clock, reason);
         false
     }
 }

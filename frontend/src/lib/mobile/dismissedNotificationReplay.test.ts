@@ -147,3 +147,32 @@ describe('the builder decides "already read elsewhere" before touching the shade
     expect(builder.slice(0, step)).not.toContain('manager.cancel(notifId)');
   });
 });
+
+/**
+ * A READ IS WEIGHED AGAINST THE SHADE, NOT AGAINST THE WEBVIEW'S ROW (round-3 review of #3912).
+ * The row can lag behind the shade, so the cancel compares the mark with the instants this side
+ * stamped on each line - `ReadElsewhereMarksTest` runs the decision; this pins the wiring.
+ */
+describe('the read-elsewhere cancel reads the shade inside its critical section', () => {
+  it('stamps both instants on every line it posts', () => {
+    expect(source).toContain('newMessage.extras.putLong(LINE_SENT_AT, sentAt)');
+    expect(source).toContain('newMessage.extras.putLong(LINE_SERVER_AT, serverAt)');
+  });
+
+  it('looks the notification up inside recordThenCancel, never before it', () => {
+    const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
+    const guarded = fn.indexOf('READ_ELSEWHERE.recordThenCancel(');
+    expect(guarded).toBeGreaterThan(-1);
+    const lambda = fn.slice(guarded, fn.indexOf('cancel = {', guarded));
+    expect(lambda).toContain('notifId = prefs.getInt(groupId, -1)');
+    expect(lambda).toContain('shadeLinesOf(manager, notifId)');
+  });
+
+  it('a WebSocket post asks the record before the avatar and the generic ledger', () => {
+    const fn = source.slice(source.indexOf('fun notifyMessageFromWebSocket('));
+    const covers = fn.indexOf('READ_ELSEWHERE.covers(groupId, sentAt, serverAt)');
+    expect(covers).toBeGreaterThan(-1);
+    expect(covers).toBeLessThan(fn.indexOf('GENERIC_BANNERS.realPosted('));
+    expect(covers).toBeLessThan(fn.indexOf('context.fetchAvatar(senderId)'));
+  });
+});

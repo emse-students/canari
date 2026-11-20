@@ -100,13 +100,12 @@ describe('channelEventHandler - channel.read', () => {
       'channel_c1',
       'channel.read',
       200,
-      'stamped',
-      true
+      'stamped'
     );
   });
 
   // Review of #3912: a mark already held moves nothing here, and the salon's banner still has to go.
-  it('my own mark that moves nothing still dismisses when nothing is unread', async () => {
+  it('my own mark that moves nothing is still handed over', async () => {
     recordNativeReadElsewhere.mockClear();
     const conversations = new Map<string, unknown>([
       [
@@ -121,14 +120,14 @@ describe('channelEventHandler - channel.read', () => {
       'channel_c1',
       'channel.read',
       200,
-      'stamped',
-      true
+      'stamped'
     );
   });
 
-  // Review of #3912: a mark below a newer message must not take that message's banner with it -
-  // but it is still RECORDED, so an older message's post still on its way is refused.
-  it('my own mark that leaves a newer message unread is recorded, and dismisses no banner', async () => {
+  // Re-review of #3912: this row can lag behind the shade, so it does not decide the cancel - the
+  // native side weighs the mark against the shade's own lines (`ReadElsewhereMarksTest`). The mark
+  // is handed over all the same: an older message's post still on its way is refused against it.
+  it('my own mark that leaves a newer message unread is still handed over - the shade decides', async () => {
     recordNativeReadElsewhere.mockClear();
     const msg = (id: string, at: number) => ({
       id,
@@ -151,8 +150,7 @@ describe('channelEventHandler - channel.read', () => {
       'channel_c1',
       'channel.read',
       100,
-      'stamped',
-      false
+      'stamped'
     );
   });
 
