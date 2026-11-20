@@ -10,6 +10,7 @@
  */
 
 import type { MediaRef } from '$lib/media';
+import { stripInvisible } from '$lib/utils/users/visibleText';
 import { isReelMessage } from '$lib/reels/chatReel';
 import { isMediaLoudness } from '$lib/video/loudnessMeter';
 import type { MessageReference } from '$lib/types';
@@ -167,6 +168,26 @@ export function serializeEnvelope(env: MessageEnvelope): string {
   return JSON.stringify(env);
 }
 
+/** Longest file name a preview shows, in code points. */
+export const PREVIEW_FILE_NAME_MAX = 60;
+
+/**
+ * A file name as a preview may draw it: a name is SENDER-CHOSEN text, so control, bidi and
+ * invisible-format characters are stripped (`stripInvisible`, the nickname rule - an override would
+ * let a name reorder the line it sits in), whitespace is collapsed, and it is capped.
+ */
+function previewFileName(raw: string | undefined): string {
+  // Whitespace first: a newline is a control character, and stripping it would glue two words.
+  const clean = stripInvisible((raw ?? '').replace(/\s+/g, ' ')).trim();
+  const points = Array.from(clean);
+  return points.length > PREVIEW_FILE_NAME_MAX
+    ? `${points
+        .slice(0, PREVIEW_FILE_NAME_MAX - 1)
+        .join('')
+        .trimEnd()}…`
+    : clean;
+}
+
 /**
  * What a media message IS, in words: the ONE classification behind the conversation list, a reply
  * quote, a notification body and the share sheet (the Rust push scanner words the same kinds in
@@ -177,22 +198,25 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 export function mediaKindLabel(ref: MediaRef, withFileName = true): string {
   if (isReelMessage(ref)) return m.chat_preview_reel();
   if (ref.type === 'image') {
-    return ref.mimeType === 'image/gif' ? m.chat_preview_gif() : m.chat_preview_photo();
+    return ref.mimeType.toLowerCase() === 'image/gif'
+      ? m.chat_preview_gif_media()
+      : m.chat_preview_photo();
   }
   if (ref.type === 'video') return m.chat_preview_video();
   if (ref.type === 'audio') {
     return ref.voiceNote ? m.chat_preview_voice_note() : m.chat_preview_audio();
   }
-  const name = ref.fileName?.trim();
+  const name = previewFileName(ref.fileName);
   return withFileName && name ? m.chat_preview_file({ name }) : m.chat_preview_attachment();
 }
 
 /**
  * The list/quote/notification line of a media message: what it is, then its caption when it has
- * one (`Photo : coucou`). A file is named only when no caption follows, so the line stays short.
+ * one (`📷 Photo : coucou`). The CALLER passes the caption as it wants it drawn (mentions resolved for
+ * a list, raw for a stored quote). A file is named only when no caption follows, so the line stays short.
  */
 export function previewForMedia(ref: MediaRef, caption?: string): string {
-  const text = caption ? formatMentionsForPreview(caption) : '';
+  const text = caption ?? '';
   const label = mediaKindLabel(ref, !text);
   return text ? m.chat_preview_captioned({ label, caption: text }) : label;
 }
@@ -205,7 +229,10 @@ export function getPreviewText(env: MessageEnvelope): string {
     case 'text':
       return previewForTextMessage(env.text);
     case 'media':
-      return previewForMedia(env.media, env.caption);
+      return previewForMedia(
+        env.media,
+        env.caption ? formatMentionsForPreview(env.caption) : undefined
+      );
     case 'system':
       return formatMentionsForPreview(env.text);
     case 'poll':

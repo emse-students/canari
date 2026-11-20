@@ -847,9 +847,8 @@ export function quoteReference(replyingTo: ChatMessage): NonNullable<ChatMessage
       : replyEnv.kind === 'text' || replyEnv.kind === 'system'
         ? cutReplyPreview(replyEnv.text)
         : replyEnv.kind === 'media'
-          ? replyEnv.caption === undefined
-            ? previewForMedia(replyEnv.media)
-            : cutReplyPreview(replyEnv.caption)
+          ? // The kind stays with the caption (owner, 2026-11-20), the caption RAW like a text quote's.
+            cutReplyPreview(previewForMedia(replyEnv.media, replyEnv.caption))
           : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
   return { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
 }

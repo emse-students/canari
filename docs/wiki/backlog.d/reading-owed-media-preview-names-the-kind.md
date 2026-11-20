@@ -1,12 +1,13 @@
-## Reading owed - the conversation list names a media message by its kind (owner, 2026-11-20)
+## Reading owed - a media message is worded the same in the list, the quotes and the banners (owner, 2026-11-20)
 
 target: 1.7.2
 
-Built: a conversation whose last message is a photo, video, voice note, GIF, file or CanaReel now
-previews as `Photo`, `Vidéo`, `Message vocal`, `[GIF]`, `Fichier : <nom>`, `CanaReel` (caption
-appended) instead of `[Média]`, through ONE function for the list, the reply quotes and the in-app
-notification body ([chat](../frontend/modules/chat.md#a-media-message-is-previewed-by-what-it-is-2026-11-20)).
+Built: a photo, GIF, video, voice note, audio file, file or CanaReel reads `📷 Photo`, `🌀 GIF`,
+`🎥 Vidéo`... (caption after it, a file named) in the conversation list, the reply quotes, the in-app
+notification AND the native push banner, one table guarded by a test
+([chat](../frontend/modules/chat.md#a-media-message-is-previewed-by-what-it-is-2026-11-20)).
 
-The reading that closes it, on a phone: send each kind to a bench account and read the list row of
-that conversation in French and in English; reply to a photo and read the quote above the reply; and
-background the app so the in-app notification path words a photo. No phone reading has been taken.
+The reading that closes it, on a phone: send each kind, with and without a caption, to a bench account in
+French and in English; read the list row, the banner while the app is closed (Android FCM and the iOS
+extension: the native change is in `push_text.rs`), a reply quote above a reply to a photo, and a named file.
+The two wordings must be identical. No phone reading has been taken.

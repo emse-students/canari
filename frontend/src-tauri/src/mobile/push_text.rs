@@ -60,12 +60,16 @@ pub enum PushText<'a> {
     VoiceNote,
     /// An audio file that is not declared a voice note: imported, or recorded before 2026-09-17.
     Audio,
-    /// A CanaReel sent in a conversation (`MediaMsg.intent = REEL_MESSAGE`, WP-RC-7), with the
-    /// caption the sender typed when there is one. Unlike a photo, the caption FOLLOWS the
-    /// announcement rather than replacing it: a reel expires, and a banner showing only its caption
-    /// would not say there is a 30-day video to open.
-    Reel(Option<&'a str>),
+    /// A CanaReel sent in a conversation (`MediaMsg.intent = REEL_MESSAGE`, WP-RC-7).
+    Reel,
+    /// An animated GIF sent as a file (`MediaMsg.mime_type` is `image/gif`, any case).
+    Gif,
+    /// A file that is not a picture, a video or audio, carrying its (already cleaned) name.
+    File(&'a str),
     Attachment,
+    /// ANY media line followed by the caption the sender typed (`Photo : coucou`): the kind is
+    /// never replaced by its caption (owner, 2026-11-20), so a banner says what the message is.
+    Captioned(&'a str, &'a str),
     Poll(&'a str),
     VideoCallIncoming,
     CallIncoming,
@@ -117,10 +121,15 @@ impl PushText<'_> {
             Self::Video => s("\u{1f3a5} Vidéo", "\u{1f3a5} Video"),
             Self::VoiceNote => s("\u{1f3a4} Message vocal", "\u{1f3a4} Voice message"),
             Self::Audio => s("\u{1f3b5} Fichier audio", "\u{1f3b5} Audio file"),
-            Self::Reel(None) => s("\u{1f3ac} CanaReel", "\u{1f3ac} CanaReel"),
-            Self::Reel(Some(caption)) => pick(
-                format!("\u{1f3ac} CanaReel : {caption}"),
-                format!("\u{1f3ac} CanaReel: {caption}"),
+            Self::Reel => s("\u{1f3ac} CanaReel", "\u{1f3ac} CanaReel"),
+            Self::Gif => s("\u{1f300} GIF", "\u{1f300} GIF"),
+            Self::File(name) => pick(
+                format!("\u{1f4ce} Fichier : {name}"),
+                format!("\u{1f4ce} File: {name}"),
+            ),
+            Self::Captioned(label, caption) => pick(
+                format!("{label} : {caption}"),
+                format!("{label}: {caption}"),
             ),
             Self::Attachment => s("\u{1f4ce} Pièce jointe", "\u{1f4ce} Attachment"),
             Self::Poll(question) => pick(
@@ -136,15 +145,115 @@ impl PushText<'_> {
     }
 }
 
+/// Longest file name a banner shows, in code points - `PREVIEW_FILE_NAME_MAX` in `envelope.ts`.
+const FILE_NAME_MAX: usize = 60;
+
+/// A sender-chosen file name as a banner may draw it, the app's rule (`previewFileName`): control,
+/// bidi and invisible-format characters (Unicode `Cc`, `Cf`, `Zl`, `Zp`) are dropped, whitespace is
+/// collapsed and the name is capped with an ellipsis. Empty once cleaned means "no name".
+///
+/// One known edge: the app keeps a zero-width joiner INSIDE an emoji (`stripInvisible`), this strips
+/// every joiner, so a name holding a joined emoji reads as separate emoji here.
+pub fn clean_file_name(raw: &str) -> String {
+    // Whitespace first: a newline is a control character, and stripping it would glue two words.
+    let spaced = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    let kept: String = spaced.chars().filter(|c| !is_invisible(*c)).collect();
+    let collapsed = kept.trim().to_string();
+    if collapsed.chars().count() <= FILE_NAME_MAX {
+        return collapsed;
+    }
+    let cut: String = collapsed.chars().take(FILE_NAME_MAX - 1).collect();
+    format!("{}\u{2026}", cut.trim_end())
+}
+
+/// The Unicode `Cc`, `Cf`, `Zl` and `Zp` characters: std covers `Cc`, the rest is listed.
+fn is_invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(c as u32,
+            0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2
+            | 0x180E | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F
+            | 0xFEFF | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3 | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_name_is_cleaned_and_capped_like_the_app() {
+        assert_eq!(
+            clean_file_name("a\u{202E}cod.exe\u{0}\u{200B}b\nc.pdf"),
+            "acod.exeb c.pdf"
+        );
+        assert_eq!(clean_file_name("\u{200B}\u{202E} "), "");
+        let long = clean_file_name(&"x".repeat(500));
+        assert_eq!(long, format!("{}\u{2026}", "x".repeat(59)));
+    }
+
+    /// THE APP AND THE BANNER SAY THE SAME WORDS (owner, 2026-11-20): the app's table is Paraglide's
+    /// `chat_preview_*` in `messages/{fr,en}.json`, this table is `PushText::render`. They are two
+    /// copies of ONE table, so each media sentence is rendered here and compared with the message
+    /// the app would draw, parameters filled in; a word changed on one side fails here.
+    #[test]
+    fn media_lines_match_the_apps_paraglide_messages() {
+        let fr: serde_json::Value =
+            serde_json::from_str(include_str!("../../../messages/fr.json")).unwrap();
+        let en: serde_json::Value =
+            serde_json::from_str(include_str!("../../../messages/en.json")).unwrap();
+        let message = |json: &serde_json::Value, key: &str, params: &[(&str, &str)]| {
+            let mut text = json[key]
+                .as_str()
+                .unwrap_or_else(|| panic!("messages lack {key}"))
+                .to_string();
+            for (name, value) in params {
+                text = text.replace(&format!("{{{name}}}"), value);
+            }
+            text
+        };
+        let cases: [(PushText<'_>, &str, &[(&str, &str)]); 8] = [
+            (PushText::Photo, "chat_preview_photo", &[]),
+            (PushText::Video, "chat_preview_video", &[]),
+            (PushText::VoiceNote, "chat_preview_voice_note", &[]),
+            (PushText::Audio, "chat_preview_audio", &[]),
+            (PushText::Reel, "chat_preview_reel", &[]),
+            (PushText::Gif, "chat_preview_gif_media", &[]),
+            (
+                PushText::File("cours.pdf"),
+                "chat_preview_file",
+                &[("name", "cours.pdf")],
+            ),
+            (PushText::Attachment, "chat_preview_attachment", &[]),
+        ];
+        for (text, key, params) in cases {
+            assert_eq!(
+                text.render(PushLanguage::French),
+                message(&fr, key, params),
+                "{key} fr"
+            );
+            assert_eq!(
+                text.render(PushLanguage::English),
+                message(&en, key, params),
+                "{key} en"
+            );
+        }
+        let captioned = PushText::Captioned("L", "c");
+        let params = [("label", "L"), ("caption", "c")];
+        assert_eq!(
+            captioned.render(PushLanguage::French),
+            message(&fr, "chat_preview_captioned", &params)
+        );
+        assert_eq!(
+            captioned.render(PushLanguage::English),
+            message(&en, "chat_preview_captioned", &params)
+        );
+    }
 
     /// EVERY sentence, both languages, written out. The `match` guarantees each variant HAS two
     /// renderings; this guarantees the English one is English - a copy-pasted French arm compiles.
     #[test]
     fn every_sentence_is_written_in_both_languages() {
-        let cases: [(PushText<'_>, &str, &str); 21] = [
+        let cases: [(PushText<'_>, &str, &str); 23] = [
             (
                 PushText::GroupRenamed(None),
                 "a renommé le groupe",
@@ -213,13 +322,15 @@ mod tests {
                 "\u{1f3b5} Fichier audio",
                 "\u{1f3b5} Audio file",
             ),
+            (PushText::Reel, "\u{1f3ac} CanaReel", "\u{1f3ac} CanaReel"),
+            (PushText::Gif, "\u{1f300} GIF", "\u{1f300} GIF"),
             (
-                PushText::Reel(None),
-                "\u{1f3ac} CanaReel",
-                "\u{1f3ac} CanaReel",
+                PushText::File("cours.pdf"),
+                "\u{1f4ce} Fichier : cours.pdf",
+                "\u{1f4ce} File: cours.pdf",
             ),
             (
-                PushText::Reel(Some("Au gala")),
+                PushText::Captioned("\u{1f3ac} CanaReel", "Au gala"),
                 "\u{1f3ac} CanaReel : Au gala",
                 "\u{1f3ac} CanaReel: Au gala",
             ),
