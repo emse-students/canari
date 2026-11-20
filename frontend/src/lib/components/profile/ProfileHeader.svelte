@@ -45,9 +45,7 @@
   >
     <!-- `isolate`: the avatar's own layers (the gradient story ring) stack inside this box, and the badge (`z-10`) always sits above them. -->
     <div class="relative isolate h-24 w-24 shrink-0 sm:h-28 sm:w-28">
-      <div
-        class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
-      >
+      <div class="h-full w-full rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20">
         <Avatar {userId} fill shape="circle" />
       </div>
       {@render avatarBadge?.()}
