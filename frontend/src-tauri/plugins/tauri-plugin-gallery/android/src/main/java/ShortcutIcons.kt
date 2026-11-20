@@ -34,23 +34,44 @@ object ShortcutIcons {
     /** Edge of the part of that canvas every launcher mask shows. */
     private const val ADAPTIVE_VISIBLE = 72f
 
+    /** The avatar kinds the page may name, one per route the app's fetch knows. */
+    const val AVATAR_USER = "user"
+    const val AVATAR_MEDIA = "media"
+
+    /** WHICH picture a shortcut is drawn with: a person's photo or a public media object, by id. */
+    class Avatar(val kind: String, val id: String)
+
+    /** What the local cache says about one [Avatar] - three different facts, three different actions. */
+    sealed class Cached {
+        /** The picture is cached. */
+        class Hit(val picture: Bitmap) : Cached()
+
+        /** The server ANSWERED that there is none (remembered): initials, nothing to fetch. */
+        object Absent : Cached()
+
+        /** Nothing is known: the initials for now, the picture to fetch afterwards. */
+        object Miss : Cached()
+    }
+
     /** Where the app answers for what this module cannot reach. */
     interface Source {
         /**
-         * The circular picture of [avatar] from the LOCAL cache only - no network, so it is cheap
-         * enough to answer inside a publish. Null when it is not cached, or the server answered
-         * that there is none.
+         * What the LOCAL cache holds for [avatar] - no network, so it is cheap enough to answer
+         * inside a publish.
          */
-        fun cached(context: Context, avatar: ShareTargets.Avatar): Bitmap?
+        fun cached(context: Context, avatar: Avatar): Cached
 
         /**
-         * The same picture, fetched when the cache misses. NETWORK I/O: never on the main thread.
-         * Null when there is none or the fetch failed (the app side logs which).
+         * The picture, fetched. NETWORK I/O: never on the main thread. Null when there is none or
+         * the fetch failed (the app side logs which).
          */
-        fun fetch(context: Context, avatar: ShareTargets.Avatar): Bitmap?
+        fun fetch(context: Context, avatar: Avatar): Bitmap?
 
-        /** The circular initials disc of [label] - the one every notification falls back to. */
-        fun initials(label: String): Bitmap
+        /**
+         * The circular initials disc of [label], at the size of a fetched picture so the two sit
+         * alike on the adaptive canvas - the disc every notification falls back to.
+         */
+        fun initials(context: Context, label: String): Bitmap
     }
 
     /** Registered by the app at start; null in a process that never ran `CanariApplication`. */

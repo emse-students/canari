@@ -59,7 +59,7 @@ describe('the initials disc, across the three notification implementations', () 
   it('renders iOS larger than Android, deliberately', () => {
     // NOT a drift: an Android large icon is a small square beside the text, an iOS attachment is
     // rendered at banner size. The two Apple copies must still agree with each other.
-    expect(kotlin).toContain('val size   = 96');
+    expect(kotlin).toContain('name: String, size: Int = 96');
     expect(objc).toContain('kCanariInitialsSize = 192');
     expect(swift).toContain('kInitialsSize: CGFloat = 192');
   });

@@ -228,12 +228,13 @@ describe('the launcher shortcuts are drawn with one icon helper', () => {
       'ShortcutIcons.source = CanariFirebaseMessagingService.shortcutIconSource'
     );
     expect(service).toMatch(
-      /override fun initials\(label: String\): Bitmap = generateInitialsBitmap\(label\)/
+      /override fun initials\(context: Context, label: String\): Bitmap =\s*generateInitialsBitmap\(label, context\.notificationIconSizePx\(\)\)/
     );
-    // The synchronous half never asks the network.
-    expect(service).toMatch(
-      /override fun cached\([^)]*\): Bitmap\? = load\(context, avatar, false\)/
-    );
+    // The synchronous half never asks the network, and tells a remembered absence from a miss
+    // (an absent picture is neither fetched nor logged again).
+    expect(service).toMatch(/val hit = load\(context, avatar, false\)/);
+    expect(service).toMatch(/context\.knownAbsent\(avatar\) -> ShortcutIcons\.Cached\.Absent/);
+    expect(targets).toMatch(/if \(state is ShortcutIcons\.Cached\.Miss\) toFetch\.add/);
   });
 
   it('a publish never waits for the network: misses are fetched on their own thread', () => {
@@ -242,16 +243,21 @@ describe('the launcher shortcuts are drawn with one icon helper', () => {
   });
 
   it('a clear and a publish supersede an upgrade still in flight', () => {
-    expect(targets).toMatch(/val started = \+\+generation/);
-    expect(targets).toMatch(/fun clear\(context: Context\): Int \{\s*(\/\/.*\s*)*generation\+\+/);
-    expect(targets).toMatch(/if \(generation != started\)/);
+    const guard = codeOnly(readFileSync(resolve(JAVA, 'pure/UpgradeGeneration.kt'), 'utf8'));
+    expect(targets).toMatch(/val started = generations\.next\(\)/);
+    expect(targets).toMatch(
+      /fun clear\(context: Context\): Int \{\s*(\/\/.*\s*)*generations\.invalidate\(\)/
+    );
+    expect(targets).toMatch(/generations\.runIfCurrent\(started\)/);
+    // The check and the push are one step under the guard's lock (JVM-tested: UpgradeGenerationTest).
+    expect(guard).toMatch(/@Synchronized\s+fun <T> runIfCurrent/);
   });
 
   it('the page names a picture by kind and id, never bytes', () => {
     expect(plugin).toMatch(
       /class ShareTargetAvatarArg \{\s*lateinit var kind: String\s*lateinit var id: String/
     );
-    expect(targets).toContain('AVATAR_USER = "user"');
-    expect(targets).toContain('AVATAR_MEDIA = "media"');
+    expect(icons).toContain('AVATAR_USER = "user"');
+    expect(icons).toContain('AVATAR_MEDIA = "media"');
   });
 });

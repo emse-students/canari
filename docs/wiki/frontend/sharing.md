@@ -135,16 +135,20 @@ preselection, never a destination by itself.
     (`CanariFirebaseMessagingService`: `fetchAvatar`, `fetchPublicMediaIcon`, `cachedRemoteIcon`,
     `generateInitialsBitmap`) - and the plugin cannot reach the app. `CanariApplication.onCreate`
     registers `shortcutIconSource`, so the shortcuts use THE SAME fetch, the SAME cache files and the
-    SAME initials disc as every notification. Nothing crosses the bridge but the id.
+    SAME initials disc as every notification, sized like a fetched picture (`notificationIconSizePx`, so a
+    disc and a photo sit alike on the icon canvas). Nothing crosses the bridge but the id. `ShortcutIcons`
+    (public) carries `Avatar`, the two kind constants and `Cached`; `ShareTargets` stays internal to the plugin.
   - **A publish never waits for the network.** `cachedRemoteIcon(networkAllowed = false)` answers from
     the cache alone. `ShareTargets.publish` pushes each target with the cached picture, else the
-    initials disc; the targets whose picture was NOT cached (and not known to be absent) are then
+    initials disc; the cache answers `Cached.Hit`, `Cached.Absent` (the server answered there is no photo,
+    remembered: initials, nothing fetched, nothing logged) or `Cached.Miss`; only the misses are then
     fetched one at a time on `ShareTargets.iconThread` and pushed AGAIN under the same id, which
     replaces the shortcut (idempotent; `pushOne` serves both pushes). No timer. A target whose photo
     is cached costs one push, so the platform's background rate limit on shortcut updates is spent
     only by genuine misses.
-  - **A late fetch cannot outlive a clear.** `generation` is bumped by every publish and every clear
-    (under the object's lock); an upgrade runs only under the generation it started in, and the
+  - **A late fetch cannot outlive a clear.** `UpgradeGeneration` (pure, JVM-tested by `UpgradeGenerationTest`) starts a
+    generation at every publish and ends it at every clear; an upgrade pushes only through
+    `runIfCurrent`, the check and the push one step under its lock, and the
     sign-out's `clear` therefore drops one still in flight - it cannot put a conversation back.
   - **One icon helper for both kinds of shortcut** (`ShortcutIcons.adaptive`): the circular picture
     (or disc) is centred on a 108-unit adaptive canvas at 72 units - the window every launcher mask

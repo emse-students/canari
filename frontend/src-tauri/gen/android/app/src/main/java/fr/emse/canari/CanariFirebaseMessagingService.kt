@@ -23,7 +23,6 @@ import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
 import app.tauri.gallery.ConversationShortcuts
-import app.tauri.gallery.ShareTargets
 import app.tauri.gallery.ShortcutIcons
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
@@ -2481,6 +2480,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
             }
 
+        /** A media id as the route and the cache file name take it: a plain token. */
+        private fun safeMediaId(mediaId: String): String = mediaId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64)
+
+        /** Cache file of a public media icon (an association logo, a group image), by its [safeMediaId]. */
+        private fun Context.mediaCacheFile(safeId: String): File = File(filesDir, "assologo_$safeId.jpg")
+
+        /**
+         * Whether the cache REMEMBERS that [avatar] has no picture ([absentMarkerFile], still fresh)
+         * and no fresher picture sits beside it. Read after a cache miss, so a hit always wins.
+         */
+        private fun Context.knownAbsent(avatar: ShortcutIcons.Avatar): Boolean {
+            val file = when (avatar.kind) {
+                ShortcutIcons.AVATAR_USER -> avatarCacheFile(avatar.id)
+                ShortcutIcons.AVATAR_MEDIA -> mediaCacheFile(safeMediaId(avatar.id))
+                else -> return false
+            }
+            val marker = absentMarkerFile(file)
+            return marker.exists() && (System.currentTimeMillis() - marker.lastModified()) < AVATAR_CACHE_MAX_AGE_MS
+        }
+
         /**
          * Downloads a PUBLIC media object - an association logo - for a notification icon.
          *
@@ -2490,8 +2509,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * the two routes to call is decided by the payload's own field, never guessed from a string.
          */
         private fun Context.fetchPublicMediaIcon(mediaId: String, networkAllowed: Boolean = true): Bitmap? {
-            val safe = mediaId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64)
-            return cachedRemoteIcon("fetchPublicMediaIcon", safe, File(filesDir, "assologo_$safe.jpg"), networkAllowed) {
+            val safe = safeMediaId(mediaId)
+            return cachedRemoteIcon("fetchPublicMediaIcon", safe, mediaCacheFile(safe), networkAllowed) {
                 val ctx = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
                 "${ctx.baseUrl}/api/media/public/$safe" to null
             }
@@ -2503,20 +2522,29 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * reached through the plugin the app module depends on. [cached] never touches the network.
          */
         internal val shortcutIconSource = object : ShortcutIcons.Source {
-            private fun load(context: Context, avatar: ShareTargets.Avatar, networkAllowed: Boolean): Bitmap? = when (avatar.kind) {
-                ShareTargets.AVATAR_USER -> context.fetchAvatar(avatar.id, networkAllowed)
-                ShareTargets.AVATAR_MEDIA -> context.fetchPublicMediaIcon(avatar.id, networkAllowed)
+            private fun load(context: Context, avatar: ShortcutIcons.Avatar, networkAllowed: Boolean): Bitmap? = when (avatar.kind) {
+                ShortcutIcons.AVATAR_USER -> context.fetchAvatar(avatar.id, networkAllowed)
+                ShortcutIcons.AVATAR_MEDIA -> context.fetchPublicMediaIcon(avatar.id, networkAllowed)
                 else -> {
                     Log.e(TAG, "shortcutIconSource: unknown avatar kind (length ${avatar.kind.length}) - initials")
                     null
                 }
             }
 
-            override fun cached(context: Context, avatar: ShareTargets.Avatar): Bitmap? = load(context, avatar, false)
+            override fun cached(context: Context, avatar: ShortcutIcons.Avatar): ShortcutIcons.Cached {
+                val hit = load(context, avatar, false)
+                return when {
+                    hit != null -> ShortcutIcons.Cached.Hit(hit)
+                    context.knownAbsent(avatar) -> ShortcutIcons.Cached.Absent
+                    else -> ShortcutIcons.Cached.Miss
+                }
+            }
 
-            override fun fetch(context: Context, avatar: ShareTargets.Avatar): Bitmap? = load(context, avatar, true)
+            override fun fetch(context: Context, avatar: ShortcutIcons.Avatar): Bitmap? = load(context, avatar, true)
 
-            override fun initials(label: String): Bitmap = generateInitialsBitmap(label)
+            // At the size a fetched picture has, so the disc and a photo sit alike on the icon canvas.
+            override fun initials(context: Context, label: String): Bitmap =
+                generateInitialsBitmap(label, context.notificationIconSizePx())
         }
 
         /**
@@ -2615,10 +2643,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "$label: no picture for ${subject.take(8)} (answered ${(now - absent.lastModified()) / 1_000}s ago) -> initials, no request")
                 return null
             }
-            if (!networkAllowed) {
-                Log.d(TAG, "$label: not cached for ${subject.take(8)}, network not allowed here")
-                return null
-            }
+            // A MISS the caller asked not to pay for: expected and handled by it (a shortcut is
+            // published with its initials, then fetched), so it is not a line here.
+            if (!networkAllowed) return null
             val (url, authorization) = request() ?: return null
             return try {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -2726,8 +2753,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /** Generates a circular bitmap with the first letter of the name (fallback when no avatar). */
-        private fun generateInitialsBitmap(name: String): Bitmap {
-            val size   = 96
+        private fun generateInitialsBitmap(name: String, size: Int = 96): Bitmap {
             val bmp    = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bmp)
             val paint  = Paint(Paint.ANTI_ALIAS_FLAG)
