@@ -1,6 +1,8 @@
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { Log } from '$lib/utils/Log';
+import { connectAllows, enforcedConnectSources } from '$lib/security/connectAllowlist';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import {
   carriesUninsertableMarkup,
   fetchWebImageFile,
@@ -25,7 +27,10 @@ export interface ComposerDropHandlers {
  * 1. real files (`files` / `items`) -> `onFiles`;
  * 2. a local file's ADDRESS the file manager withheld (Firefox + Nemo) -> refusal toast, nothing inserted;
  * 3. an image dragged from a web page (an address, no bytes) -> fetched and handed to `onFiles` when
- *    the host allows it, else a toast saying so (the refusal is logged with its host and cause);
+ *    the `connect-src` this runtime enforces allows its origin (Canari's own hosts) and the host
+ *    answers it; an origin the policy refuses is refused HERE, before any request, with the same
+ *    toast and no console line (`connectAllowlist.ts`); a fetch that fails is logged with its host
+ *    and cause;
  * 4. plain text -> `onText`.
  *
  * The transfer is read synchronously, before any `await`: a `DataTransfer` is emptied once the
@@ -56,7 +61,13 @@ export function handleComposerDrop(
 
   const urls = onFiles ? webImageUrlsFromTransfer(dt) : [];
   if (urls.length > 0) {
-    void attachWebImages(urls, onFiles!);
+    const sources = enforcedConnectSources(isTauriRuntime());
+    const fetchable = urls.filter((url) => connectAllows(url, sources, location.origin));
+    if (fetchable.length === 0) {
+      showToast(m.composer_drop_web_image_refused());
+      return;
+    }
+    void attachWebImages(fetchable, urls.length - fetchable.length, onFiles!);
     return;
   }
 
@@ -70,8 +81,15 @@ export function handleComposerDrop(
   }
 }
 
-/** Fetches each address; whatever arrives is attached, whatever does not is said out loud. */
-async function attachWebImages(urls: string[], onFiles: (files: File[]) => void): Promise<void> {
+/**
+ * Fetches each address; whatever arrives is attached, whatever does not is said out loud - once,
+ * together with the `refused` addresses the policy kept from being fetched at all.
+ */
+async function attachWebImages(
+  urls: string[],
+  refused: number,
+  onFiles: (files: File[]) => void
+): Promise<void> {
   Log.d('COMPOSER', `drop carried ${urls.length} web image address(es), no file - fetching`);
   const results = await Promise.allSettled(urls.map((url) => fetchWebImageFile(url)));
   const files: File[] = [];
@@ -93,5 +111,5 @@ async function attachWebImages(urls: string[], onFiles: (files: File[]) => void)
     console.warn(`[COMPOSER] dropped web image from ${host} not attached (${reason})`);
   });
   if (files.length > 0) onFiles(files);
-  if (failed > 0) showToast(m.composer_drop_web_image_refused());
+  if (failed + refused > 0) showToast(m.composer_drop_web_image_refused());
 }

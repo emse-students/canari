@@ -161,16 +161,17 @@ export class WebImageFetchError extends Error {
 }
 
 /**
- * Fetches a dropped web image as a `File`, as the browser's CORS rules allow.
+ * Fetches a dropped web image as a `File`.
  *
- * The address was chosen by the page the picture was dragged out of, not by Canari, so it is fetched
- * with no credentials and through {@link webViewFetch} on every platform: on Tauri the `window.fetch`
- * replacement would hand a third-party address to the HTTP plugin, which applies no CORS and reads
- * any host the device can reach. Here a host that grants no CORS stays unreadable everywhere.
+ * The address was chosen by the page the picture was dragged out of, not by Canari. The caller
+ * (`composerDrop.ts`) has already refused every origin the enforced `connect-src` does not allow -
+ * which is every host but Canari's own (and Klipy's on the web) - so no request the policy refuses is
+ * ever made. What reaches here is fetched with no credentials through {@link webViewFetch} on every
+ * platform, never through the HTTP plugin the Tauri `window.fetch` replacement routes third-party
+ * hosts to.
  *
- * `unreachable` is what a cross-origin host that sends no CORS headers looks like (the fetch rejects
- * with an opaque `TypeError`, indistinguishable from being offline) - the caller says so rather than
- * attaching nothing in silence.
+ * `unreachable` is a transport failure (offline, or the host did not answer): the caller says so
+ * rather than attaching nothing in silence.
  *
  * @param url - an `http(s)` image address from `webImageUrlsFromTransfer`.
  * @param fetchImpl - injectable for tests.

@@ -145,20 +145,32 @@ describe('CreatePostForm - the sheet is one drop zone', () => {
     expect((editorOver.dataTransfer as DataTransfer).dropEffect).toBe('move');
   });
 
-  it('fetches a web image dropped with no file and attaches it', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => new Response(new Blob(['x'], { type: 'image/png' })))
-    );
+  it("fetches a web image from an origin the page's connect-src allows, and attaches it", async () => {
+    const fetched = vi.fn(async () => new Response(new Blob(['x'], { type: 'image/png' })));
+    vi.stubGlobal('fetch', fetched);
     const target = await open();
     dragEvent('drop', sheetBody(target), {
-      data: { 'text/uri-list': 'https://cdn.example/cat.png' },
+      data: { 'text/uri-list': `${location.origin}/cat.png` },
     });
     await vi.waitFor(() => expect(attached(target)).toBe(1));
+    expect(fetched).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it('says so when the host refuses, and attaches nothing', async () => {
+  it('refuses an origin the policy does not allow BEFORE any request, without a console line', async () => {
+    const fetched = vi.fn(async () => new Response(new Blob(['x'], { type: 'image/png' })));
+    vi.stubGlobal('fetch', fetched);
+    const target = await open();
+    dragEvent('drop', editor(target), {
+      data: { 'text/html': '<img src="https://other.example/cat.png">' },
+    });
+    await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(m.composer_drop_web_image_refused()));
+    expect(fetched).not.toHaveBeenCalled();
+    expect(attached(target)).toBe(0);
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('says so when an allowed host does not answer, and attaches nothing', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -167,11 +179,11 @@ describe('CreatePostForm - the sheet is one drop zone', () => {
     );
     const target = await open();
     dragEvent('drop', editor(target), {
-      data: { 'text/html': '<img src="https://other.example/cat.png">' },
+      data: { 'text/html': `<img src="${location.origin}/cat.png">` },
     });
     await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(m.composer_drop_web_image_refused()));
     expect(attached(target)).toBe(0);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('other.example'));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining(location.host));
   });
 
   it('refuses a local file address instead of attaching or pasting it', async () => {

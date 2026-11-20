@@ -33,6 +33,8 @@
  *    `blob:`: an attachment's decrypted object URL is read back to save it.
  *    `https://static.klipy.com`: a tab still on a bundle older than the GIF relay
  *    (docs/wiki/frontend/modules/chat.md); the current bundle reads GIFs through `/api/mls/gifs/media`.
+ *    A picture dragged into a composer from another page is fetched only from an origin this
+ *    directive allows, and refused before any request otherwise (`connectAllowlist.ts`).
  *  - `img-src https:`: a GIF pasted from any host is drawn directly (owner decision 2026-10-18,
  *    `gifMediaProxy.ts`). `data:`: generated avatars (`avatar.ts`); `blob:`: decrypted media.
  *  - `font-src data:`: fonts embedded as data URLs by the exports (`calendarExport.ts`).
@@ -44,37 +46,11 @@
 
 import { createHash } from 'node:crypto';
 import { parse } from 'parse5';
+import { WEB_POLICY_DIRECTIVES } from './cspDirectives.js';
 
-/** @typedef {Record<string, string[]>} CspDirectives */
+/** @typedef {import('./cspDirectives.js').CspDirectives} CspDirectives */
 
-/**
- * The directives every web response carries, page or not, before any per-page hash is added.
- *
- * @type {Readonly<CspDirectives>}
- */
-export const WEB_POLICY_DIRECTIVES = Object.freeze({
-  'default-src': ['self'],
-  'script-src': ['self', 'wasm-unsafe-eval'],
-  'style-src': ['self', 'unsafe-inline'],
-  'connect-src': [
-    'self',
-    'blob:',
-    'wss://canari.emse.fr',
-    'wss://canari-emse.fr',
-    'wss://www.canari-emse.fr',
-    'wss://dev.canari-emse.fr',
-    'https://static.klipy.com',
-  ],
-  'img-src': ['self', 'data:', 'blob:', 'https:'],
-  'font-src': ['self', 'data:'],
-  'worker-src': ['self', 'blob:'],
-  'media-src': ['self', 'blob:'],
-  'frame-src': ['self'],
-  'form-action': ['self'],
-  'object-src': ['none'],
-  'frame-ancestors': ['none'],
-  'base-uri': ['self'],
-});
+export { WEB_POLICY_DIRECTIVES };
 
 /** The keywords CSP writes between single quotes; everything else is a scheme or a host. */
 const QUOTED_KEYWORDS = new Set([

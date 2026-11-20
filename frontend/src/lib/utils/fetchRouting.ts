@@ -24,13 +24,14 @@ const ownFetch: typeof fetch | undefined =
   typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined;
 
 /**
- * A request the BROWSER's rules must govern on every platform: the WebView's own `fetch`, never the
- * HTTP plugin `createRoutedFetch` hands a third-party `http(s)` address to on Tauri.
+ * A request the WEBVIEW's rules must govern on every platform - its `connect-src` and CORS - never
+ * the HTTP plugin `createRoutedFetch` hands a third-party `http(s)` address to on Tauri.
  *
- * The plugin is a network client in Rust: it answers to no CORS policy, so any response is readable.
- * That is what the app wants for the addresses it chose; for an address handed over by ANOTHER page
- * (a picture dragged into a composer) it is not, and those go through here - where a host that grants
- * no CORS is unreadable on Tauri exactly as it is in a browser.
+ * The plugin is a network client in Rust: no page policy and no CORS apply to it, so any response is
+ * readable. That is what the app wants for the addresses it chose; an address handed over by ANOTHER
+ * page (a picture dragged into a composer) must not get it. Such an address is first checked against
+ * the enforced `connect-src` (`connectAllowlist.ts`), so in practice only Canari's own hosts reach
+ * this function, and every other one is refused before any request.
  *
  * @throws TypeError when there is no `fetch` at all (a runtime without one), as `fetch` itself would.
  */

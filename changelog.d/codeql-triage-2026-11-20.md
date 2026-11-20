@@ -1,3 +1,3 @@
-### Security - a dragged-in image address is fetched under the browser's rules, and session log entries stay on one line
+### Security - a dragged-in web image is fetched only from Canari's own hosts, and the in-app log keeps every Unicode line break on one line
 
-On Tauri, a picture dragged into a composer from another page is now fetched by the WebView's own `fetch` (no credentials, CORS applies) rather than the native HTTP client; `appendLog` writes a line break inside an entry as `\n`; the colour probe of `imeGround` no longer writes `fillStyle` twice. Triage of the open code-scanning alerts ([chat](docs/wiki/frontend/modules/chat.md)).
+A picture dragged into a composer from another page is fetched only when the `connect-src` the runtime enforces allows its origin, through the WebView's own `fetch` with no credentials; every other origin is refused up front with the existing toast. The in-app log now also folds NEL and the Unicode line and paragraph separators, and the `imeGround` colour probe writes `fillStyle` once per call ([chat](docs/wiki/frontend/modules/chat.md)).
