@@ -1734,7 +1734,7 @@ export async function loginImpl(
               },
               m.auth_pin_check_unreachable()
             );
-            throwIfPinThrottled(res, cb.log);
+            await throwIfPinThrottled(res, cb.log);
             if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
             return (await res.json()) as PinCheckAnswer;
           },
@@ -3249,7 +3249,7 @@ async function fetchPinSalt(
     { headers: { Authorization: `Bearer ${token}` }, signal },
     m.auth_pin_salt_unreachable()
   );
-  throwIfPinThrottled(res, (msg) => console.info(msg));
+  await throwIfPinThrottled(res, (msg) => console.info(msg));
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
   return salt;
@@ -3322,11 +3322,16 @@ export async function changePinImpl(
   ]);
 
   onProgress?.({ percent: 6, stage: 'server' });
-  const res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-change`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ userId, oldVerifier, newVerifier }),
-  });
+  // Under the request deadline, as every PIN request (`fetchOrUnreachable`, PIN audit row 11).
+  const res = await fetchOrUnreachable(
+    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-change`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId, oldVerifier, newVerifier }),
+    },
+    m.auth_server_unreachable()
+  );
   if (!res.ok) {
     // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
     // status: a 403 here is the one refusal, but the code is what says so.
@@ -3502,7 +3507,7 @@ async function recoverPinSteps(
     stillWanted('the new PIN check');
     throw e;
   }
-  throwIfPinThrottled(res, cb.log);
+  await throwIfPinThrottled(res, cb.log);
   if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {

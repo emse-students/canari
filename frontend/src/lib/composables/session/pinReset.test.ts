@@ -1,3 +1,4 @@
+import { isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
 import {
   noServerPinBasis,
   oneSettlePerAccount,
@@ -258,6 +259,20 @@ describe("the server's PIN salt fingerprint", () => {
     await expect(
       serverPinSaltFingerprint('u1', { baseUrl: 'https://x', token: 't', fetchFn })
     ).rejects.toThrow('503');
+  });
+
+  it('by default goes through the request deadline, so a dead link rejects as unreachable', async () => {
+    // PIN audit row 11: `fetchFn` defaulted to the bare `fetch`, with no deadline.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    try {
+      const e = await serverPinSaltFingerprint('u1', { baseUrl: 'https://x', token: 't' }).catch(
+        (x: unknown) => x
+      );
+      expect(isServerUnreachable(e)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
