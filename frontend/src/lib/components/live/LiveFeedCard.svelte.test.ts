@@ -192,6 +192,29 @@ describe('LiveFeedCard', () => {
     expect(onOpen).toHaveBeenCalledWith(b);
   });
 
+  it('follows the feed tab: "Organisations" lists association lives only, the others every live (owner, 2026-11-19)', async () => {
+    const mine = item('l1', 'u1', null, { title: 'Perso' });
+    const asso = item('l2', 'u2', 'asso-9');
+    const { props } = render([{ kind: 'answered', lives: [mine, asso] }]);
+    // @ts-expect-error the render helper's props are loosely typed
+    props.feed = 'associations';
+    await settle();
+    expect(cards().map((c) => c.getAttribute('data-live-card-size'))).toEqual(['large']);
+    expect(cards()[0].getAttribute('aria-label')).toBe(
+      m.live_card_is_live({ name: 'Asso asso-9' })
+    );
+    for (const tab of ['foryou', 'all'] as const) {
+      // @ts-expect-error as above
+      props.feed = tab;
+      await settle();
+      expect(cards()).toHaveLength(2);
+    }
+    // @ts-expect-error as above
+    props.feed = 'associations';
+    await settle();
+    expect(cards()).toHaveLength(1);
+  });
+
   it('asks again at each feed refresh: a lost answer keeps the cards, a refusal removes them', async () => {
     const { load, props } = render([
       { kind: 'answered', lives: [item('l1', 'u1')] },
