@@ -449,7 +449,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one. **S13 (2026-11-20, `1.7.1-alpha.5`, desktop Chrome only):** four replays played from 0 to their end, each fired `ended`; seeks landed in their target's segment; a 53.3 s hole of a Mi 9T live was crossed by play alone with the segment after it downloaded once ([S13](device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)). The two phones playing a replay are STILL owed, and one defect found: [the last segment re-downloaded at every `timeupdate`](backlog.d/p2-a-replay-s-last-segment-is-downloaded-again-on-every-timeupdate-over-its-final-seconds.md).
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -740,6 +740,8 @@ known holes. When less than that was buffered, `positionAhead` fell back to the 
 "far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
 a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
 walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
+
+**What a real live can leave (S13, 2026-11-20).** A hole longer than 60 s cannot be read from a live: a broadcaster away more than 60 s has the live stopped by the server ("Le live s'est arrete pendant que la camera etait en pause"), and on the web the "Je reviens" scene and a camera-and-microphone-off keep producing slate segments (about 35 KB each, no hole). The reachable range of the defect above is therefore a background pause of 48 to 60 s on a phone: one of 52 s left a hole of 53.3 s that the fixed player crossed with the segment after it requested once.
 
 ## A seek looks its segment up in media time (S12, 2026-11-19)
 
