@@ -57,7 +57,7 @@ import {
   resumeConnectionImpl,
   scheduleReconnectImpl,
 } from './session/sessionConnection';
-import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
+import { exportBackupImpl, importBackupImpl, restoreAfterImport } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
@@ -586,13 +586,7 @@ export function useChatSession() {
         isExporting = v;
       }),
     /** Imports a previously exported backup file and reloads conversations. */
-    handleImport: (
-      file: File,
-      log: (msg: string) => void,
-      clearConversations: () => void,
-      reloadConversations: () => Promise<void>,
-      recoveryCode?: string
-    ) =>
+    handleImport: (file: File, log: (msg: string) => void, recoveryCode?: string) =>
       importBackupImpl(
         ctx,
         log,
@@ -600,8 +594,7 @@ export function useChatSession() {
         (v) => {
           isImporting = v;
         },
-        clearConversations,
-        reloadConversations,
+        restoreAfterImport(() => tabLeaderSessionCb, log),
         recoveryCode
       ),
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
