@@ -13,6 +13,9 @@
  * - the legacy path (no intent, no salt, no row): two inserts racing, decided by the returned row,
  *   and an insert meeting a placeholder minted meanwhile, which it must not fill;
  * - an unlock on an account with no PIN: `not-set`, nothing stored;
+ * - a PIN from before salts (`salt IS NULL`): `pin-salt` salts it IN PLACE and the account still
+ *   reads as having a PIN, so its next unlock re-registers it - never `not-set`;
+ * - two first `pin-salt` at once on an account with no row: one salt, one row, no 500;
  * - `pin-status` reads the placeholder as NOT registered, a stored verifier as registered.
  *
  * THE RACES ARE HELD, NOT HOPED FOR: {@link afterReads} parks every racer after its read of the row
@@ -205,6 +208,52 @@ maybe('the first PIN of an account (PostgreSQL)', () => {
       )
     ).resolves.toEqual({ status: 'not-set', resetRequired: false });
     expect(await storedVerifier('u-unlock')).toBe('');
+  });
+
+  it('a PIN from before salts: salted in place, still registered, its next unlock re-registers', async () => {
+    await q(`INSERT INTO pin_verifier ("userId", verifier, salt) VALUES ($1, $2, NULL)`, [
+      'u-legacy-salt',
+      B,
+    ]);
+    const { salt } = await placeholder('u-legacy-salt');
+    expect(salt).toMatch(/^[0-9a-f]{32}$/);
+    await expect(controller.getPinStatus('u-legacy-salt', 'u-legacy-salt')).resolves.toEqual({
+      registered: true,
+    });
+
+    const unlock = () =>
+      controller.checkPinVerifier(
+        { userId: 'u-legacy-salt', verifier: A, salt, intent: 'unlock' },
+        'u-legacy-salt'
+      );
+    await expect(unlock()).resolves.toEqual({ status: 'registered', resetRequired: false });
+    expect(await storedVerifier('u-legacy-salt')).toBe(A);
+    // From then on an ordinary PIN: compared, never registered again.
+    await expect(unlock()).resolves.toEqual({ status: 'ok', resetRequired: false });
+  });
+
+  it('two first pin-salt GETs at once: the same salt, one row, no 500', async () => {
+    const done = afterReads(2);
+    const answers = await Promise.all([placeholder('u-salt-race'), placeholder('u-salt-race')]);
+    done();
+
+    expect(answers[0].salt).toBe(answers[1].salt);
+    const rows = (await q(`SELECT salt FROM pin_verifier WHERE "userId" = $1`, [
+      'u-salt-race',
+    ])) as { salt: string }[];
+    expect(rows).toEqual([{ salt: answers[0].salt }]);
+  });
+
+  it('two pin-salt GETs at once on a legacy row: the same salt', async () => {
+    await q(`INSERT INTO pin_verifier ("userId", verifier, salt) VALUES ($1, $2, NULL)`, [
+      'u-legacy-race',
+      B,
+    ]);
+    const done = afterReads(2);
+    const answers = await Promise.all([placeholder('u-legacy-race'), placeholder('u-legacy-race')]);
+    done();
+
+    expect(answers[0].salt).toBe(answers[1].salt);
   });
 
   it('pin-status reads the placeholder as not registered, a stored PIN as registered', async () => {

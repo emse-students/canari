@@ -263,6 +263,7 @@ function exactKeys(userId: string): string[] {
   return [
     ACCOUNT_KEY.sendRatchetLedger(userId),
     ACCOUNT_KEY.deviceId(userId),
+    ACCOUNT_KEY.pinProven(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.owedInvitations(userId),
     ACCOUNT_KEY.owedRemovalNotices(userId),

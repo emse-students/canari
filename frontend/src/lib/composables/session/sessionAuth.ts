@@ -49,7 +49,7 @@ import {
 } from '$lib/utils/chat/hardwareKeyMigration';
 import { noteBackupOwedAfterKeyMove } from '$lib/crypto/deviceRecoveryCode';
 import { showToast } from '$lib/stores/toast.svelte';
-import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { pinServerRequest } from './pinServer';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
@@ -1223,7 +1223,7 @@ export async function loginImpl(
    * therefore verifies everything it verifies online - nothing is skipped and nothing is deferred.
    *
    * The PIN path is deliberately excluded: its at-rest key derives from a per-user salt that only
-   * the server holds (`/api/mls/security/pin-salt`), and caching that salt on the device is what
+   * the server holds (`GET pin-salt`), and caching that salt on the device is what
    * would turn a 4-character PIN into an offline-bruteforceable secret. A PIN user offline still
    * gets the honest "cannot reach the server".
    */
@@ -1723,9 +1723,10 @@ export async function loginImpl(
           },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
           checkPin: async ({ verifier, deviceId, salt, intent }) => {
-            const res = await fetchOrUnreachable(
-              `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
-              {
+            const res = await pinServerRequest({
+              baseUrl: ctx.getHistoryBaseUrl(),
+              route: 'pin-check',
+              init: {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -1734,8 +1735,8 @@ export async function loginImpl(
                 body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
                 signal: loginAbort.signal,
               },
-              m.auth_pin_check_unreachable()
-            );
+              unreachable: m.auth_pin_check_unreachable(),
+            });
             await throwIfPinThrottled(res, cb.log);
             if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
             return (await res.json()) as PinCheckAnswer;
@@ -3249,11 +3250,13 @@ async function fetchPinSalt(
   token: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const res = await fetchOrUnreachable(
-    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
-    { headers: { Authorization: `Bearer ${token}` }, signal },
-    m.auth_pin_salt_unreachable()
-  );
+  const res = await pinServerRequest({
+    baseUrl: ctx.getHistoryBaseUrl(),
+    route: 'pin-salt',
+    userId,
+    init: { headers: { Authorization: `Bearer ${token}` }, signal },
+    unreachable: m.auth_pin_salt_unreachable(),
+  });
   await throwIfPinThrottled(res, (msg) => console.info(msg));
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
@@ -3278,7 +3281,7 @@ export function prefetchPinSaltImpl(ctx: SessionContext, log: (msg: string) => v
  * Changes the account PIN for a logged-in user.
  *
  * Two halves that must both happen, in this order:
- *  1. Rotate the account-wide verifier server-side (`POST mls/security/pin-change`), which
+ *  1. Rotate the account-wide verifier server-side (`POST pin-change`), which
  *     also proves the user knows the current PIN. Done FIRST: if the local re-encryption
  *     then fails, the account already expects the new PIN and the user can finish with
  *     {@link recoverPinImpl} (old PIN -> new PIN). The reverse order would leave the
@@ -3327,16 +3330,17 @@ export async function changePinImpl(
   ]);
 
   onProgress?.({ percent: 6, stage: 'server' });
-  // Under the request deadline, as every PIN request (`fetchOrUnreachable`, PIN audit row 11).
-  const res = await fetchOrUnreachable(
-    `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-change`,
-    {
+  // Under the request deadline, as every PIN request (`pinServerRequest`, PIN audit row 11).
+  const res = await pinServerRequest({
+    baseUrl: ctx.getHistoryBaseUrl(),
+    route: 'pin-change',
+    init: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ userId, oldVerifier, newVerifier }),
     },
-    m.auth_server_unreachable()
-  );
+    unreachable: m.auth_server_unreachable(),
+  });
   if (!res.ok) {
     // Worded from the refusal's stable code (PIN_INCORRECT, PIN_NOT_SET), never its prose or a bare
     // status: a 403 here is the one refusal, but the code is what says so.
@@ -3497,18 +3501,19 @@ async function recoverPinSteps(
     const token = await getToken();
     salt = await fetchPinSalt(ctx, userId, token, stop.signal);
     const newVerifier = await computePinVerifier(userId, newPin, salt);
-    // Under the request deadline, as the login's own check (`fetchOrUnreachable`, row 11).
-    res = await fetchOrUnreachable(
-      `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
-      {
+    // Under the request deadline, as the login's own check (`pinServerRequest`, row 11).
+    res = await pinServerRequest({
+      baseUrl: ctx.getHistoryBaseUrl(),
+      route: 'pin-check',
+      init: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         // `unlock`: the new PIN must already be the account's; never registered from a recovery.
         body: JSON.stringify({ userId, verifier: newVerifier, intent: 'unlock' }),
         signal: stop.signal,
       },
-      m.auth_pin_verify_new_unreachable()
-    );
+      unreachable: m.auth_pin_verify_new_unreachable(),
+    });
   } catch (e) {
     stillWanted('the new PIN check');
     throw e;
@@ -3516,6 +3521,12 @@ async function recoverPinSteps(
   await throwIfPinThrottled(res, cb.log);
   if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
+  // `not-set` is not a wrong PIN: the account has none, so there is nothing to recover TO - the gate
+  // asks one instead (review of #3909). Typed, so the modal routes it rather than reading its text.
+  if (data.status === 'not-set') {
+    cb.log(`[PIN_RECOVER] The account has no PIN (not-set) - first setup, not a recovery.`);
+    throw new LoginFailure('pin_not_set', m.auth_pin_not_set());
+  }
   if (data.status !== 'ok') {
     throw new LocalizedError(m.auth_pin_new_incorrect());
   }

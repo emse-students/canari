@@ -110,6 +110,22 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   account with no PIN is answered `not-set`. The spec case `LEGACY: a client sending no intent still
   registers` becomes "a body with no intent is an unlock", and both log lines go.
 
+### A PIN from before salts re-registers on its next check (2026-11-20)
+
+- **What.** A `pin_verifier` row with `salt IS NULL` holds a verifier derived from the old
+  predictable salt, which no client computes any more. `GET pin-salt` gives it a salt IN PLACE and
+  marks its verifier `LEGACY_UNSALTED_VERIFIER` (`security.controller.ts`): `pin-status` reads it as
+  registered, and the next `pin-check` - `unlock` included - re-registers the PIN typed, unconfirmed,
+  as the pre-salt check did ([auth](frontend/modules/auth.md#pin-and-device-key)). Deleting the row
+  instead told someone with a PIN that they had none.
+- **Measured by.** One `GROUP BY` on production: `SELECT salt IS NULL AS unsalted, verifier =
+  'legacy-unsalted' AS marked, count(*) FROM pin_verifier GROUP BY 1, 2`; and the service's lines
+  `[PIN_SALT] new salt minted for <user> (legacy row, ...)` and `[PIN_VERIFIER] legacy unsalted PIN
+  of <user> re-registered`.
+- **Removal condition.** Both counts at zero: no unsalted row and no marked row left.
+- **Then delete.** The `IsNull()` branch of `getPinSalt`, the `LEGACY_UNSALTED_VERIFIER` branch of
+  `checkPinVerifier`, the constant, and the spec cases `a PIN from before salts`.
+
 ### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
 
 "Carried by" is read as for `1.6.6` below (`git tag --contains` on the squash commit found by its

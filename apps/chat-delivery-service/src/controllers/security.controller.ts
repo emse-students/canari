@@ -7,6 +7,7 @@ import {
   Param,
   Res,
   BadRequestException,
+  ConflictException,
   BadGatewayException,
   InternalServerErrorException,
   ForbiddenException,
@@ -16,7 +17,7 @@ import {
 } from '@nestjs/common';
 import type { Response as ExpressResponse } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -80,6 +81,19 @@ const IMAGE_MAX_REDIRECTS = 5;
 /** Hard ceiling on what an image proxy will download, and on what it will retain. */
 const IMAGE_MAX_BYTES = 3_000_000;
 const IMAGE_CACHEABLE_BYTES = 256_000;
+
+/**
+ * The verifier of a PIN chosen before salts existed, once `GET pin-salt` gave its row a salt.
+ *
+ * That PIN's verifier was derived from a predictable salt the client no longer computes, so it can
+ * never be compared again - but the account HAS a PIN, and answering its next unlock `not-set` would
+ * tell someone who has typed it for months to choose a new one, twice. So the row keeps the FACT:
+ * this value (never a 64-hex verifier, so it cannot collide with one) reads as registered in
+ * `pin-status`, and the next `pin-check` under the new salt re-registers the PIN typed, whatever its
+ * intent - what the pre-salt check always did for that population - logged as legacy. A dated shim:
+ * `legacy-compatibility.md`, "A PIN from before salts re-registers on its next check".
+ */
+export const LEGACY_UNSALTED_VERIFIER = 'legacy-unsalted';
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
 @RouteParams({ userId: 'opaque' })
@@ -201,6 +215,13 @@ export class SecurityController {
       throw new BadRequestException('intent invalid');
     }
 
+    if (doc?.verifier === LEGACY_UNSALTED_VERIFIER) {
+      this.logger.log(
+        `[PIN_VERIFIER] legacy unsalted PIN of ${safeUserId} re-registered under its salt (intent ${intent ?? 'none'})`
+      );
+      return this.registerOrCompare(safeUserId, safeVerifier, doc);
+    }
+
     if (!doc || !doc.verifier || doc.verifier.length === 0) {
       if (intent === 'unlock') {
         this.logger.log(`[PIN_VERIFIER] unlock asked for ${safeUserId} with no PIN set - not-set`);
@@ -211,23 +232,7 @@ export class SecurityController {
           `[PIN_VERIFIER] legacy client (no intent) registering for ${safeUserId} - unconfirmed`
         );
       }
-      const stored = await this.registerVerifier(safeUserId, safeVerifier, doc);
-      if (stored) return { status: 'registered', resetRequired: false };
-      // THIS WRITE LOST. The row it was computed against is gone (a reset deleted it and a new
-      // placeholder holds another salt) or still has no verifier: the salt the client derived from
-      // is not the row's, so it asks again. Otherwise another device registered first, and this one
-      // is compared against what it stored.
-      const now = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
-      if (!now?.verifier || (doc !== null && now.id !== doc.id)) {
-        this.logger.log(
-          `[PIN_VERIFIER] registration for ${safeUserId} met another row (${now ? 'replaced or unfilled' : 'absent'}) - stale-salt`
-        );
-        return { status: 'stale-salt', resetRequired: false };
-      }
-      return {
-        status: this.verifierMatches(now.verifier, safeVerifier) ? 'ok' : 'mismatch',
-        resetRequired: false,
-      };
+      return this.registerOrCompare(safeUserId, safeVerifier, doc);
     }
 
     if (typeof doc.verifier !== 'string') {
@@ -267,38 +272,74 @@ export class SecurityController {
   }
 
   /**
-   * Stores the FIRST verifier of an account in one conditional write, and says whether THIS call
-   * stored it. The write is PINNED TO THE ROW THE CALLER READ: on a placeholder,
-   * `UPDATE ... WHERE id = <that row> AND verifier = ''` - a row a reset deleted and a later
-   * `pin-salt` re-minted has another id, so a verifier derived from the old salt never lands on the
-   * new one. On no row: `INSERT ... ON CONFLICT DO NOTHING`, a returned row deciding; a conflict is
-   * "not stored", never a fill of a row the caller did not read.
+   * Registers `verifier` as the account's PIN when the row is still what the caller READ, and
+   * otherwise answers what the row now says.
+   *
+   * THE WRITE IS PINNED TO THE ROW AND THE VALUE THAT WERE READ: `UPDATE ... WHERE id = <read row>
+   * AND verifier = <read verifier>` (the empty placeholder, or {@link LEGACY_UNSALTED_VERIFIER}) - a
+   * row a reset deleted and a later `pin-salt` re-minted has another id, so a verifier derived from
+   * the old salt never lands on the new one. With no row read: `INSERT ... ON CONFLICT DO NOTHING`, a
+   * returned row deciding; a conflict fills nothing the caller did not read.
+   *
+   * A LOST WRITE: a row that is gone, replaced, or still unfilled means the salt the client derived
+   * from is not the row's - `stale-salt`, and it asks again; otherwise another device registered
+   * first, and this one is compared against what it stored.
    */
-  private async registerVerifier(
+  private async registerOrCompare(
     userId: string,
     verifier: string,
     read: PinVerifier | null
-  ): Promise<boolean> {
+  ): Promise<{ status: 'registered' | 'ok' | 'mismatch' | 'stale-salt'; resetRequired: false }> {
+    let stored: boolean;
     if (read) {
-      const filled = await this.pinVerifierRepo.update({ id: read.id, verifier: '' }, { verifier });
-      return (filled.affected ?? 0) === 1;
+      const filled = await this.pinVerifierRepo.update(
+        { id: read.id, verifier: read.verifier },
+        { verifier }
+      );
+      stored = (filled.affected ?? 0) === 1;
+    } else {
+      const inserted = await this.pinVerifierRepo
+        .createQueryBuilder()
+        .insert()
+        .values({ userId, verifier })
+        .orIgnore()
+        .execute();
+      stored = Array.isArray(inserted.raw) && inserted.raw.length > 0;
     }
-    const inserted = await this.pinVerifierRepo
-      .createQueryBuilder()
-      .insert()
-      .values({ userId, verifier })
-      .orIgnore()
-      .execute();
-    return Array.isArray(inserted.raw) && inserted.raw.length > 0;
+    if (stored) return { status: 'registered', resetRequired: false };
+
+    const now = await this.pinVerifierRepo.findOne({ where: { userId } });
+    if (
+      !now?.verifier ||
+      now.verifier === LEGACY_UNSALTED_VERIFIER ||
+      (read !== null && now.id !== read.id)
+    ) {
+      this.logger.log(
+        `[PIN_VERIFIER] registration for ${userId} met another row (${now ? 'replaced or unfilled' : 'absent'}) - stale-salt`
+      );
+      return { status: 'stale-salt', resetRequired: false };
+    }
+    return {
+      status: this.verifierMatches(now.verifier, verifier) ? 'ok' : 'mismatch',
+      resetRequired: false,
+    };
   }
 
   /**
-   * Returns the PBKDF2 salt for the user so the client can compute the PIN
-   * verifier with a per-user random salt instead of a predictable one.
-   * On first call for a user without a salt, generates a fresh 16-byte hex salt,
-   * stores it alongside a placeholder verifier, and returns it.
-   * For legacy rows (salt = null), invalidates the old verifier by replacing the row
-   * so the next pin-check forces a clean re-registration with the new salt.
+   * Returns the account's PBKDF2 salt, minting it when there is none - IDEMPOTENTLY, from durable
+   * state: every concurrent first GET answers the same salt.
+   *
+   * - A row with a salt: returned as it is.
+   * - No row: `INSERT ... ON CONFLICT DO NOTHING` of a placeholder (empty verifier) under a fresh
+   *   salt; on a conflict, the row another GET minted is read back and its salt returned.
+   * - A legacy row (`salt IS NULL`, a PIN from before salts): given a fresh salt in one conditional
+   *   write (`WHERE id = <read row> AND salt IS NULL`), and its verifier - derived from the old
+   *   predictable salt, never comparable again - becomes {@link LEGACY_UNSALTED_VERIFIER}, so the
+   *   account still reads as HAVING a PIN and its next check re-registers it. A legacy row with no
+   *   verifier is a plain placeholder.
+   *
+   * A row that changed again between the lost write and the read back (a reset in between) is a
+   * `409`: nothing is guessed, and the client asks again.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/security/pin-salt/:userId')
@@ -309,35 +350,50 @@ export class SecurityController {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     this.assertSelf(safeUserId, headerUserId);
 
-    let doc = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
+    const doc = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
+    if (doc?.salt) return { salt: doc.salt };
 
-    // Existing user with a salt already set — return it as-is
-    if (doc?.salt) {
-      return { salt: doc.salt };
-    }
-
-    // Legacy user (salt = null) or no row yet: generate a fresh salt.
-    // For legacy users, delete the old row so the next pin-check treats it as a
-    // clean registration (the verifier was computed with the old predictable salt,
-    // so it would never match a verifier derived from the new random salt).
     const newSalt = crypto.randomBytes(16).toString('hex');
+    let minted: boolean;
     if (doc) {
-      await this.pinVerifierRepo.delete({ userId: safeUserId });
+      const verifier = doc.verifier ? LEGACY_UNSALTED_VERIFIER : '';
+      const salted = await this.pinVerifierRepo.update(
+        { id: doc.id, salt: IsNull() },
+        { salt: newSalt, verifier }
+      );
+      minted = (salted.affected ?? 0) === 1;
+    } else {
+      const inserted = await this.pinVerifierRepo
+        .createQueryBuilder()
+        .insert()
+        .values({ userId: safeUserId, verifier: '', salt: newSalt })
+        .orIgnore()
+        .execute();
+      minted = Array.isArray(inserted.raw) && inserted.raw.length > 0;
     }
-    await this.pinVerifierRepo.save(
-      this.pinVerifierRepo.create({ userId: safeUserId, verifier: '', salt: newSalt })
-    );
-    this.logger.log(`[PIN_SALT] new salt generated for ${safeUserId} (legacy=${!!doc})`);
+    if (minted) {
+      const what = !doc
+        ? 'no row'
+        : doc.verifier
+          ? 'legacy row, its PIN kept as legacy-unsalted'
+          : 'legacy row, no PIN chosen';
+      this.logger.log(`[PIN_SALT] new salt minted for ${safeUserId} (${what})`);
+      return { salt: newSalt };
+    }
 
-    return { salt: newSalt };
+    // Another GET minted it first: its salt is the account's.
+    const now = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
+    if (now?.salt) return { salt: now.salt };
+    this.logger.warn(`[PIN_SALT] the row of ${safeUserId} changed while its salt was minted - 409`);
+    throw new ConflictException('pin salt changed concurrently');
   }
 
   /**
-   * Reports whether the user has ever registered a PIN (i.e. a PinVerifier row
-   * exists). This is the source of truth for "first setup": the client shows the
-   * "choose your PIN" flow only when `registered` is false. Unlike a device-count
-   * heuristic, it stays correct for a user whose devices have all been revoked or
-   * garbage-collected but who still has a registered PIN.
+   * Reports whether the account HAS a PIN: a row with a NON-EMPTY verifier (a chosen PIN, or
+   * {@link LEGACY_UNSALTED_VERIFIER} for one chosen before salts). The placeholder `GET pin-salt`
+   * writes (an empty verifier) is not one. This is the source of truth for "first setup": the client
+   * shows the "choose your PIN" flow only when `registered` is false. Unlike a device-count heuristic,
+   * it stays correct for a user whose devices have all been revoked or garbage-collected.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/security/pin-status/:userId')

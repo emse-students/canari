@@ -1,7 +1,8 @@
 import { m } from '$lib/paraglide/messages';
-import { fetchOrUnreachable, isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { SessionExpiredError } from '$lib/stores/auth';
 import { LoginFailure } from './loginErrors';
+import { pinServerRequest } from './pinServer';
 import { throwIfPinThrottled } from './pinThrottle';
 
 /**
@@ -21,24 +22,27 @@ export type PinStatus =
   | { kind: 'session-ended' };
 
 export interface PinStatusDeps {
-  /** `.../api/mls/security/pin-status/<userId>`. */
-  url: string;
+  /** The delivery service's origin (`deliveryUrl()`). */
+  baseUrl: string;
+  /** The account asked about. */
+  userId: string;
   getToken: () => Promise<string>;
   log: (msg: string) => void;
 }
 
 /**
- * Asks the server whether the account has a PIN, under the request deadline (`fetchOrUnreachable`).
+ * Asks the server whether the account has a PIN, under the request deadline (`pinServerRequest`).
  * Never rejects: every failure is an `unanswered` outcome, logged by kind.
  */
 export async function askPinStatus(deps: PinStatusDeps): Promise<PinStatus> {
   try {
     const token = await deps.getToken();
-    const res = await fetchOrUnreachable(
-      deps.url,
-      { headers: { Authorization: `Bearer ${token}` } },
-      m.auth_server_unreachable()
-    );
+    const res = await pinServerRequest({
+      baseUrl: deps.baseUrl,
+      route: 'pin-status',
+      userId: deps.userId,
+      init: { headers: { Authorization: `Bearer ${token}` } },
+    });
     await throwIfPinThrottled(res, deps.log);
     if (res.status === 401 || res.status === 403) {
       deps.log(`[PIN] pin-status answered ${res.status} - the session is over, not a retry.`);

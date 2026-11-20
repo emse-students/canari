@@ -14,7 +14,8 @@ afterEach(() => {
 
 const ask = () =>
   askPinStatus({
-    url: 'https://x/api/mls/security/pin-status/u',
+    baseUrl: 'https://x',
+    userId: 'u',
     getToken: async () => 'token',
     log: () => {},
   });
@@ -56,7 +57,8 @@ describe('askPinStatus', () => {
 
   it('a refresh credential proven dead is the session ending too', async () => {
     const out = await askPinStatus({
-      url: 'https://x/api/mls/security/pin-status/u',
+      baseUrl: 'https://x',
+      userId: 'u',
       getToken: async () => {
         throw new SessionExpiredError();
       },

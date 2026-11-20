@@ -6,9 +6,11 @@ import { join, relative, sep } from 'node:path';
  *
  * Two wirings no behaviour test of one module can hold (PIN audit, 2026-11-20, rows 11 and 15):
  *
- * - A bare `fetch(` to `/api/mls/security/pin-*` has no deadline: a request the network swallows
- *   leaves the keypad spinning for ever. Every one goes through `fetchOrUnreachable` (or its PIN-reset
- *   wrapper `pinServerFetch`), which turns no answer into the typed "unreachable".
+ * - A PIN request built at a call site can skip the deadline: a bare `fetch(` - or a URL kept in a
+ *   variable and fetched later - leaves the keypad spinning for ever. So the route path exists in ONE
+ *   module, `pinServer.ts`, whose one request is `fetchOrUnreachable`; every caller names a route. The
+ *   guard is STRUCTURAL: the path segment `mls/security` written in code anywhere else fails, however
+ *   the URL around it is built.
  * - `pin-check` REGISTERS a PIN on `intent: 'create'` alone. The gate sets it from `isFirstPinSetup`
  *   - a gate that asked the PIN twice - at ONE place, and resets it once that submit's login
  *   settled, so a later saved-PIN or biometric login never carries a stale `create`.
@@ -26,27 +28,55 @@ function sources(dir: string): string[] {
   });
 }
 
+/** `text` without its comments: `/* ... *\/` blocks, `<!-- -->` and whole-line `//` comments. */
+function code(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+const HELPER = join(root, 'lib/composables/session/pinServer.ts');
+
+/** The tree, read and stripped ONCE: walking 3000 sources per test is what times a test out. */
+const tree = sources(root).map((file) => {
+  const text = readFileSync(file, 'utf8');
+  return { file, name: relative(root, file).replaceAll(sep, '/'), text, code: code(text) };
+});
+
 describe('PIN requests', () => {
-  it('no bare fetch( reaches /api/mls/security/pin-*', () => {
-    const offenders: string[] = [];
-    for (const file of sources(root)) {
-      const text = readFileSync(file, 'utf8');
-      // A bare call: `fetch(` not preceded by an identifier character or a dot.
-      for (const call of text.matchAll(/(?<![\w.$])fetch\(/g)) {
-        const argument = text.slice(call.index, call.index + 240);
-        if (argument.includes('/api/mls/security/pin-')) {
-          offenders.push(`${relative(root, file)} @${call.index}`);
-        }
-      }
-    }
+  it('the PIN route path is written in pinServer.ts alone', () => {
+    const offenders = tree
+      .filter((source) => source.file !== HELPER && source.code.includes('mls/security'))
+      .map((source) => source.name);
     expect(offenders).toEqual([]);
   });
 
-  it('the guard sees the PIN requests it is about (it would pass on an empty tree otherwise)', () => {
-    const named = sources(root).filter((file) =>
-      readFileSync(file, 'utf8').includes('/api/mls/security/pin-')
+  it('pinServer.ts builds the path, and its one request is under the deadline', () => {
+    const helper = code(readFileSync(HELPER, 'utf8'));
+    expect(helper).toContain('/api/mls/security/');
+    expect(helper).toContain('return fetchOrUnreachable(url, init,');
+    // The only other way out is a test's injected transport; never the global `fetch`.
+    expect(helper).not.toMatch(/(?<![\w.$])fetch\(/);
+  });
+
+  it('the strip keeps code and drops comments (so the first guard cannot pass vacuously)', () => {
+    expect(code('const u = `${b}/api/mls/security/pin-check`;')).toContain('mls/security');
+    expect(code('/** see `/api/mls/security/pin-salt` */\nconst x = 1;')).not.toContain(
+      'mls/security'
     );
-    expect(named.length).toBeGreaterThanOrEqual(3);
+    expect(code('  // GET /api/mls/security/pin-salt\nconst x = 1;')).not.toContain('mls/security');
+  });
+
+  it('every PIN call site goes through pinServerRequest', () => {
+    const callers = tree.filter((source) => source.code.includes('pinServerRequest('));
+    expect(callers.map((source) => source.name).sort()).toEqual([
+      'lib/components/layout/ChatBackgroundService.svelte',
+      'lib/composables/session/pinReset.ts',
+      'lib/composables/session/pinServer.ts',
+      'lib/composables/session/pinStatus.ts',
+      'lib/composables/session/sessionAuth.ts',
+    ]);
   });
 });
 
@@ -65,10 +95,8 @@ describe('the PIN intent', () => {
   });
 
   it('no other place of the app writes the intent', () => {
-    const writers = sources(root).filter((file) =>
-      /\.pinIntent\s*=(?!=)/.test(readFileSync(file, 'utf8'))
-    );
-    expect(writers.map((file) => relative(root, file).replaceAll(sep, '/'))).toEqual([
+    const writers = tree.filter((source) => /\.pinIntent\s*=(?!=)/.test(source.text));
+    expect(writers.map((source) => source.name)).toEqual([
       'lib/components/layout/ChatBackgroundService.svelte',
     ]);
     expect(gate.match(/\.pinIntent\s*=(?!=)/g)).toHaveLength(2);

@@ -49,9 +49,9 @@
     runDeviceRestart,
     runPinReset,
     serverPinSaltFingerprint,
-    pinServerFetch,
     settleUnsettledPinReset,
   } from '$lib/composables/session/pinReset';
+  import { pinServerRequest } from '$lib/composables/session/pinServer';
   import { MlsResetRefusedError } from '$lib/utils/hex';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
@@ -704,6 +704,12 @@
       }
       // A state no PIN opens: the gate below offers to start this device fresh, as at the unlock.
       if (e instanceof LoginFailure && offersDeviceRestart(e.code)) restartOffered = true;
+      // The account has NO PIN: nothing to recover to, so the gate asks one, twice.
+      if (e instanceof LoginFailure && e.code === 'pin_not_set' && uid) {
+        showRecoverModal = false;
+        enterFirstPinSetup(uid);
+        pinError = recoverError;
+      }
     } finally {
       recoverLoading = false;
       recoverProgress = null;
@@ -792,7 +798,8 @@
       isFirstPinSetup = knownLocally;
     } else {
       const status = await askPinStatus({
-        url: `${deliveryUrl()}/api/mls/security/pin-status/${encodeURIComponent(uid)}`,
+        baseUrl: deliveryUrl(),
+        userId: uid,
         getToken,
         log: appendLog,
       });
@@ -2613,10 +2620,14 @@
           forgetPinSaltAhead('PIN reset', appendLog);
           const token = await getToken();
           // Under the request deadline: a reset that never answers is "no answer", settled by the salt.
-          const res = await pinServerFetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ userId: uid }),
+          const res = await pinServerRequest({
+            baseUrl: deliveryUrl(),
+            route: 'pin-reset',
+            init: {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ userId: uid }),
+            },
           });
           // A 4xx is a definite refusal; a 5xx (and a rejected fetch) is no answer, decided by
           // the salt (round 10 of the review of #2919: the server may have reset and then failed).
