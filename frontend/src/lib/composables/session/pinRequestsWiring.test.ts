@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { withoutAnyComments } from '$lib/styles/markupSources';
+import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 
 /**
  * EVERY PIN REQUEST RUNS UNDER THE REQUEST DEADLINE, AND ONLY A CONFIRMED FIRST SETUP MAY CREATE.
@@ -15,45 +15,31 @@ import { join, relative, sep } from 'node:path';
  *   - a gate that asked the PIN twice - at ONE place, and resets it once that submit's login
  *   settled, so a later saved-PIN or biometric login never carries a stale `create`.
  */
-// FROM `process.cwd()`, as the sibling guards: Vite hands a non-`file:` `import.meta.url` here.
-const root = join(process.cwd(), 'src');
+const HELPER = 'lib/composables/session/pinServer.ts';
 
-/** Every non-test `.ts` / `.svelte` source under `src/`. */
-function sources(dir: string): string[] {
-  return readdirSync(dir).flatMap((name) => {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) return sources(path);
-    const isSource = /\.(ts|svelte)$/.test(name) && !/\.test\.ts$|\.spec\.ts$/.test(name);
-    return isSource ? [path] : [];
-  });
-}
-
-/** `text` without its comments: `/* ... *\/` blocks, `<!-- -->` and whole-line `//` comments. */
-function code(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
-}
-
-const HELPER = join(root, 'lib/composables/session/pinServer.ts');
-
-/** The tree, read and stripped ONCE: walking 3000 sources per test is what times a test out. */
-const tree = sources(root).map((file) => {
-  const text = readFileSync(file, 'utf8');
-  return { file, name: relative(root, file).replaceAll(sep, '/'), text, code: code(text) };
-});
+/**
+ * The non-test sources, their CODE read through the repository's one comment stripper: a file may
+ * name the route in prose, only code counts.
+ */
+const tree = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' }).map(
+  ({ path, text }) => ({ name: relativeTo(path, 'src'), text, code: withoutAnyComments(text) })
+);
 
 describe('PIN requests', () => {
+  it('reads the tree it thinks it is', () => {
+    expect(tree.length).toBeGreaterThan(500);
+    expect(tree.map((source) => source.name)).toContain(HELPER);
+  });
+
   it('the PIN route path is written in pinServer.ts alone', () => {
     const offenders = tree
-      .filter((source) => source.file !== HELPER && source.code.includes('mls/security'))
+      .filter((source) => source.name !== HELPER && source.code.includes('mls/security'))
       .map((source) => source.name);
     expect(offenders).toEqual([]);
   });
 
   it('pinServer.ts builds the path, and its one request is under the deadline', () => {
-    const helper = code(readFileSync(HELPER, 'utf8'));
+    const helper = withoutAnyComments(readSource(`src/${HELPER}`));
     expect(helper).toContain('/api/mls/security/');
     expect(helper).toContain('return fetchOrUnreachable(url, init,');
     // The only other way out is a test's injected transport; never the global `fetch`.
@@ -61,11 +47,12 @@ describe('PIN requests', () => {
   });
 
   it('the strip keeps code and drops comments (so the first guard cannot pass vacuously)', () => {
-    expect(code('const u = `${b}/api/mls/security/pin-check`;')).toContain('mls/security');
-    expect(code('/** see `/api/mls/security/pin-salt` */\nconst x = 1;')).not.toContain(
+    expect(withoutAnyComments('const u = `${b}/api/mls/security/pin-check`;')).toContain(
       'mls/security'
     );
-    expect(code('  // GET /api/mls/security/pin-salt\nconst x = 1;')).not.toContain('mls/security');
+    expect(withoutAnyComments('// GET /api/mls/security/pin-salt\nconst x = 1;')).not.toContain(
+      'mls/security'
+    );
   });
 
   it('every PIN call site goes through pinServerRequest', () => {
@@ -81,10 +68,7 @@ describe('PIN requests', () => {
 });
 
 describe('the PIN intent', () => {
-  const gate = readFileSync(
-    join(root, 'lib/components/layout/ChatBackgroundService.svelte'),
-    'utf8'
-  );
+  const gate = readSource('src/lib/components/layout/ChatBackgroundService.svelte');
   const submit = gate.slice(
     gate.indexOf('function handlePinSubmit('),
     gate.indexOf('\n  }\n', gate.indexOf('function handlePinSubmit('))
