@@ -86,6 +86,40 @@ if ! trivy image --quiet --download-db-only; then
   outage "the Trivy vulnerability database could not be downloaded, so NO image was scanned"
 fi
 
+# THE CONTEXT A `dockerfile:` BUILD READS: exactly the sources its `COPY`/`ADD` lines name (not a
+# `--from` stage's), copied from the repository into a fresh directory, whose path is printed.
+# A source the checkout does not hold is a build OUTPUT the release produces before it builds
+# (`frontend/build`, downloaded from `build-frontend` in `build.yml`), and this job does not produce
+# it. It is staged EMPTY only when git IGNORES that path - the proof it is an output and not a source
+# of ours: the packages the scan reads come from the base and the `RUN` lines, and that output's code
+# is what the lockfile audits read. A missing source git does NOT ignore is a typo the release would
+# meet too, so it fails the staging and the run (exit 1), like a build that fails.
+# Usage: stage_context <Dockerfile> <directory to create>
+stage_context() {
+  local dockerfile="$1" dir="$2" src
+  mkdir -p "$dir" || return 1
+  while read -r src; do
+    [ -n "$src" ] || continue
+    mkdir -p "$dir/$(dirname "$src")" || return 1
+    if [ -e "$root/$src" ]; then
+      cp -R "$root/$src" "$dir/$src" || return 1
+    elif git -C "$root" check-ignore -q "$src"; then
+      echo "    $src is a build output this checkout does not hold (git ignores it): staged empty" >&2
+      mkdir -p "$dir/$src" || return 1
+    else
+      echo "    $src, copied by ${dockerfile##*/}, is not in the tree and git does not ignore it" >&2
+      return 1
+    fi
+  done < <(awk '
+    toupper($1) == "COPY" || toupper($1) == "ADD" {
+      n = 0; from = 0
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--from=/) from = 1; else if ($i !~ /^--/) args[++n] = $i }
+      if (!from) for (i = 1; i < n; i++) print args[i]
+    }
+  ' "$dockerfile")
+  printf '%s\n' "$dir"
+}
+
 common=(--quiet --skip-db-update --scanners vuln --severity 'HIGH,CRITICAL' --ignore-unfixed)
 root="$(cd "$here/../.." && pwd)"
 found=""
@@ -105,7 +139,12 @@ while IFS= read -r target; do
       path="${target#dockerfile:}"
       name="${path##*/Dockerfile.}"
       image="canari-image-scan/$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]'):local"
-      if ! DOCKER_BUILDKIT=1 docker build --quiet --no-cache --file "$root/$path" --tag "$image" "$root" </dev/null >/dev/null; then
+      if ! context="$(stage_context "$root/$path" "$work/context-$name")"; then
+        echo "    $path could not be staged"
+        broken="$broken $target"
+        continue
+      fi
+      if ! DOCKER_BUILDKIT=1 docker build --quiet --no-cache --file "$root/$path" --tag "$image" "$context" </dev/null >/dev/null; then
         echo "    $path could not be built"
         broken="$broken $target"
         continue

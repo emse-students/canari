@@ -11,3 +11,5 @@ floating `nginx:stable-alpine` follows on its own, and the allowlist entry is de
 request - the image scan's retirement check fails until it is
 ([cicd](../cicd.md#container-images-are-scanned-2026-10-23)). Re-read 2026-11-11: the allowlist still
 carries the entries, so no rebuild has been taken; the scheduled image scan names the day one exists.
+
+**2026-11-20: `CVE-2026-86144` (`libxml2` 2.13.9-r2, fixed in 2.13.9-r3) joined it** for the edge `nginx:1.31.8-alpine` and both `postgres:18-alpine` pins, whose newest builds still carry r2. The images built here ship r3 already (`apk upgrade` in `Dockerfile.adminer` and `Dockerfile.frontend`). The rebuild the pins move to must carry r3 too, and that entry is deleted with them; the frontend's `apk upgrade` line goes the day `nginx:stable-alpine` itself carries r3, and adminer's `libxml2` with the rest of that Dockerfile ([legacy-compatibility](../legacy-compatibility.md#removal-once-upstream-adminer-ships-libpq--187-r0---the-adminer-image-this-repository-builds-owner-2026-11-13)).
