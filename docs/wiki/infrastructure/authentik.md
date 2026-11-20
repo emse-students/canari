@@ -74,10 +74,11 @@ Both hand steps are DONE, so this pull request may merge:
    image was the same, and so was every environment value compose sets. Afterwards the dry run reads
    `Running` for both, and the health and OIDC discovery endpoints answer 200.
 2. **MEASURED 2026-11-20, read-only - production's verdict: `Running` / `Running`.** The same dry run
-   in production's stack directory recreates nothing. Production already runs `2026.8.5` (upgraded
+   in production's stack directory recreates nothing. Production already ran `2026.8.5` (upgraded
    by hand on 2026-11-13, `.env` line included), which is the pin, so the first stable after the
    merge DOES NOTHING to MiConnect: `deploy-stack.sh` decides a no-op, pulls nothing, dumps nothing
    and recreates nothing, and gate 8's preflight passes on that same decision.
+   **Superseded by #3877 (2026.8.6)**: the pin moved one patch ahead of what both stacks run, so the next pre-release upgrades `miconnect-test` for real (dump, restart, checks, rollback on failure) and the stable after it upgrades production the same way. No hand step is owed: both stacks already read `Running` under their own tag.
 3. **Then the merge**, and the next pre-release.
 
 **The refusal is early and names that command** (review of #3486, 2026-11-19): `deploy-stack.sh
