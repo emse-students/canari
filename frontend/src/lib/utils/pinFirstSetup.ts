@@ -6,20 +6,34 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * The gate used to ask the server (`pin-status`) before drawing anything, and that question needs an
  * access token - so on a cold start the keypad waited for the token refresh AND a second round trip:
  * `[PIN] No device key in vault` at ~1.6 s, the gate on screen at ~2.1 s (Mi 9T, dev estate,
- * 2026-10-11). A device that holds an enrolled MLS device id for this user is a RETURNING one, and
- * that is a fact already on disk: `resolveDeviceId` writes it and no sign-out clears it.
+ * 2026-10-11). A device on which the server has ACCEPTED this account's PIN is a returning one.
  *
- * The answer only chooses the WORDING. Registration is decided by the server at `pin-check`, so a
- * device id minted by a first setup that never reached `pin-check` reads "enter your PIN" and still
- * registers the PIN it is given. And "first setup" is the wrong reading for any device holding a
- * local state: it hides the recovery and the reset (`pinFirstSetupRefuted.test.ts`).
+ * THE PROOF IS THE SERVER'S ANSWER, NEVER THE DEVICE ID (PIN audit, 2026-11-20). The answer was read
+ * from the stored MLS device id, which `resolveDeviceId` writes BEFORE `pin-check` - so a first setup
+ * abandoned after that point read "returning" for an account with no PIN, and the next PIN typed into
+ * an unlock keypad was registered unconfirmed. The marker is written by {@link notePinProven}, only
+ * once `pin-check` answered `ok` or `registered`. And should it still be wrong, the server answers an
+ * unlock on an account with no PIN `not-set`, which draws the first-setup gate: it chooses wording,
+ * never a registration.
  *
- * @returns `false` when this device holds an enrolled device id for `userId`; `null` when only the
- *   server can say.
+ * @returns `false` when this device holds the proof for `userId`; `null` when only the server can say.
  */
 export function firstPinSetupFromDevice(
   storage: Pick<Storage, 'getItem'>,
   userId: string
 ): false | null {
-  return storage.getItem(ACCOUNT_KEY.deviceId(userId)) !== null ? false : null;
+  return storage.getItem(ACCOUNT_KEY.pinProven(userId)) !== null ? false : null;
+}
+
+/** Records that the server accepted or registered `userId`'s PIN on this device. */
+export function notePinProven(storage: Pick<Storage, 'setItem'>, userId: string): void {
+  storage.setItem(ACCOUNT_KEY.pinProven(userId), '1');
+}
+
+/**
+ * Drops `userId`'s proof: the account's PIN is gone (a reset entered or committed a first setup, or
+ * the server answered `not-set`), so the next gate on this device must ask the server again.
+ */
+export function forgetPinProven(storage: Pick<Storage, 'removeItem'>, userId: string): void {
+  storage.removeItem(ACCOUNT_KEY.pinProven(userId));
 }

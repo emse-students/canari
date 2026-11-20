@@ -1,6 +1,11 @@
 import { LoginFailure, type LoginErrorCode } from './loginErrors';
 import { decideAutomaticRestart } from './pinReset';
-import { unlockWithPin, type PinCheckAnswer, type PinUnlockDeps } from './pinUnlock';
+import {
+  unlockWithPin,
+  type PinCheckAnswer,
+  type PinIntent,
+  type PinUnlockDeps,
+} from './pinUnlock';
 import type { PinSaltAhead } from './pinSaltAhead';
 
 /**
@@ -17,6 +22,7 @@ let order: string[];
 function deps(answers: PinCheckAnswer[], overrides: Partial<PinUnlockDeps> = {}) {
   const queue = [...answers];
   const d = {
+    intent: 'unlock' as PinIntent,
     saltAhead: undefined as Promise<PinSaltAhead> | undefined,
     fetchSalt: vi.fn(async () => {
       order.push('fetch-salt');
@@ -31,12 +37,14 @@ function deps(answers: PinCheckAnswer[], overrides: Partial<PinUnlockDeps> = {})
       return `key(${salt})`;
     }),
     resolveDeviceId: vi.fn(async () => 'dev-1'),
-    checkPin: vi.fn(async (args: { verifier: string; deviceId: string; salt: string }) => {
-      order.push(`check:${args.salt}`);
-      const next = queue.shift();
-      if (!next) throw new Error('no answer scripted');
-      return next;
-    }),
+    checkPin: vi.fn(
+      async (args: { verifier: string; deviceId: string; salt: string; intent: string }) => {
+        order.push(`check:${args.salt}`);
+        const next = queue.shift();
+        if (!next) throw new Error('no answer scripted');
+        return next;
+      }
+    ),
     wipeRevokedDevice: vi.fn(async () => {
       order.push('wipe');
     }),
@@ -117,7 +125,20 @@ describe('unlockWithPin', () => {
       verifier: 'v(salt-ahead)',
       deviceId: 'dev-1',
       salt: 'salt-ahead',
+      intent: 'unlock',
     });
+  });
+
+  it('sends the intent it was given: a confirmed creation says create', async () => {
+    const d = deps([{ status: 'registered' }], { intent: 'create' });
+    await unlockWithPin(d);
+    expect(d.checkPin).toHaveBeenCalledWith(expect.objectContaining({ intent: 'create' }));
+  });
+
+  it('an unlock on an account with no PIN is pin_not_set, and installs no key', async () => {
+    const d = deps([{ status: 'not-set' }]);
+    expect(await failureCode(unlockWithPin(d))).toBe('pin_not_set');
+    expect(d.installDeviceKey).not.toHaveBeenCalled();
   });
 
   it('turns a salt made stale by a PIN reset into a second check, never a wrong PIN', async () => {

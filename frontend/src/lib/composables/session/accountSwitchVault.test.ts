@@ -240,7 +240,7 @@ describe('the login carries the vault owner from the vault to the init', () => {
     const lock = reset.indexOf('if (deviceHoldsOtherAccount) {');
     expect(lock).toBeGreaterThan(-1);
     // Before the server reset and before the local wipe that deletes mls.bin.
-    expect(lock).toBeLessThan(reset.indexOf('/api/mls/security/pin-reset'));
+    expect(lock).toBeLessThan(reset.indexOf("route: 'pin-reset'"));
     expect(lock).toBeLessThan(reset.indexOf('resetDeviceAsFresh('));
     expect(reset.slice(lock, reset.indexOf('}', lock) + 1)).toContain('return;');
   });

@@ -131,7 +131,7 @@ describe('PinModal - the exits do not scroll', () => {
     raiseGate({ isFirstSetup: true });
 
     const submit = document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    expect(submit.textContent).toContain(m.auth_pin_create());
+    expect(submit.textContent).toContain(m.auth_pin_setup_next());
     expect(scrollport()?.contains(submit)).toBe(false);
     expect(scrollport()?.contains(buttonLabelled(m.auth_pin_sign_out())!)).toBe(false);
   });

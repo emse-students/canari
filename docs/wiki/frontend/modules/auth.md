@@ -882,8 +882,11 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 |---|---|---|---|
 | `pin_mismatch` | wrong PIN | retype, or "PIN oublie ?" | keypad, "PIN oublie ?" |
 | `pin_salt_rotated` | PIN reset elsewhere during this attempt | type the current PIN | keypad |
-| `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline | retry | "Deverrouiller" |
+| `pin_not_set` | an unlock on an account with no PIN (`pin-check` answered `not-set`) | choose a PIN, twice | the first-setup keypad |
+| `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline - every PIN request (`pin-salt`, `pin-check`, `pin-status`, `pin-reset`, `pin-change`) goes through `pinServerRequest` (`pinServer.ts`, the one module that writes the route path; `pinRequestsWiring.test.ts` fails on the path anywhere else) | retry | "Deverrouiller" |
 | `pin_attempts_throttled` | a PIN route answered 429 | wait until the time shown | "Deverrouiller" |
+| `pin_salt_changed` | `pin-salt` answered 409: the PIN row changed (a reset elsewhere) while its salt was minted | retry | "Deverrouiller" |
+| `pin-status` unanswered (before the keypad) | the gate cannot learn whether the account has a PIN | retry | no keypad; "Reessayer" |
 | `other` (check unexpected, login failed, no result) | server or app fault | retry | "Deverrouiller" |
 | `local_state_sealed_under_old_pin` | PIN changed on another device | recover with the old PIN | "Mon PIN a change sur un autre appareil" |
 | `local_state_unopenable` | state opens with no key held | recover, else start fresh | the recover link, "Repartir de zero sur cet appareil" |
@@ -896,8 +899,8 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `device_holds_other_account` | the state is another account's | sign out | "Se deconnecter"; reset withheld |
 | `state_written_by_another_tab`, `state_owned_by_another_tab` | another tab holds the state | close it or use it | none |
 | `pin_reset_unsettled` | a reset waits for the server | go online, retry | "Deverrouiller" |
-| `account_deleted`, `revoked_device_wipe_owed` | account deleted / device removed here | sign out, sign in again | "Se deconnecter" |
-| `device_revoked` | revoked, wiped now | sign in again with the PIN | login page |
+| `account_deleted` | account deleted here | sign out, sign in again | "Se deconnecter" |
+| `device_revoked`, `revoked_device_wipe_owed` | device removed from the account (wiped now, or wipe owed) | sign out, sign in again | no keypad; "Se deconnecter" |
 
 **The PIN-gate audit of 2026-11-20: the requests (rows 11, 12, 19, 25).** Every PIN request (salt,
 check, the recovery's check) goes through `fetchOrUnreachable`, which since then runs `trackedFetch`: the
@@ -907,6 +910,52 @@ app's one request deadline (`requestDeadline.ts`) and the connectivity reading. 
 minute to retry at, rounded up, never a countdown (row 12). The password sign-in link reads "Se
 connecter avec un mot de passe", not "Connexion externe (service-account)" (row 25). Row 19 (salt
 rotation between two devices) is [an entry](../../backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md).
+
+**The same audit: the gate's states (rows 15, 16, 18).** A first setup asks the PIN twice: "Confirmez
+votre PIN"; a second entry that differs is emptied and the confirmation asked again, and "Choisir un
+autre PIN" starts over (`PinModal`'s `chosenPin`, row 15). `pin-status` unanswered is its own gate state
+with "Reessayer", never "returning" (`askPinStatus`, row 16): defaulting to "returning" drew an unlock
+keypad whose PIN `pin-check` would then REGISTER, unconfirmed. A removed device (`device_revoked` after
+its wipe, `revoked_device_wipe_owed`) shows "Cet appareil a ete retire de votre compte" with no keypad,
+the gate's sign-out as the way on (row 18); before, the keypad stayed and the next PIN met the ended
+session and went to `/login` unexplained. Both no-keypad states are one prop, `PinModal`'s `gateNotice`,
+and under it no PIN exit is drawn (recover, restart, forgot-PIN, the withheld-reset notice). A
+`pin-status` 401/403 is the session ending (`handleSessionExpired`), never "retry"; "Reessayer" is
+disabled while its question is in flight.
+
+**A PIN is REGISTERED only on a confirmed creation (review of #3909).** Two things drew the gate
+"returning" for an account with no PIN, so its first PIN was registered unconfirmed: the stored MLS
+device id (written by `resolveDeviceId` BEFORE `pin-check`) and the placeholder row `GET pin-salt`
+writes (read as "registered" by `pin-status`). Three changes close it at the cause:
+- `pin-check` takes `intent`: `create` (sent only by a first setup that asked the PIN twice,
+  `globalSession.pinIntent`) registers; `unlock` on an account with no PIN answers `not-set`, which
+  the client types `pin_not_set` and turns into the first-setup gate. A body with no intent (an older
+  app) still registers - a dated shim ([legacy-compatibility](../../legacy-compatibility.md#a-pin-check-with-no-intent-still-registers-unconfirmed-2026-11-20)).
+  The registration is one conditional write PINNED TO THE ROW THAT WAS READ
+  (`UPDATE ... WHERE id = <read row> AND verifier = ''`, or an `INSERT ... ON CONFLICT DO NOTHING`
+  that returned a row): two devices creating at once get one `registered` and the other is compared;
+  a write that lost to a reset (the row re-minted under a new salt between its read and its write)
+  answers `stale-salt`, never `registered` on a salt it did not derive from
+  (`pin-registration.integration.spec.ts`, the races held at a barrier). `globalSession.pinIntent` is
+  set by `handlePinSubmit` alone and reset to `unlock` once that login settles.
+- `pin-status` answers `registered` only for a NON-EMPTY verifier.
+- **A PIN chosen before salts is still a PIN.** `GET pin-salt` on a legacy row (`salt IS NULL`, a
+  real verifier) used to DELETE it and mint a placeholder, so the next `unlock` was answered
+  `not-set` and someone who had typed their PIN for months was asked to choose one. The salt is now
+  minted IN PLACE (`UPDATE ... WHERE id = <row> AND salt IS NULL`) and the unusable verifier becomes
+  `LEGACY_UNSALTED_VERIFIER`: `pin-status` reads it as registered, and the next `pin-check` under the
+  new salt re-registers the PIN typed, whatever its intent - what the pre-salt check did - logged as
+  legacy ([legacy-compatibility](../../legacy-compatibility.md#a-pin-from-before-salts-re-registers-on-its-next-check-2026-11-20)).
+- **`GET pin-salt` mints idempotently:** an `INSERT ... ON CONFLICT DO NOTHING`, the salt of the row
+  another GET minted read back; two first GETs at once answer the same salt, never a 500. A row
+  replaced between the lost write and the read back is a `409`.
+- A recovery whose new PIN meets `not-set` ends as `pin_not_set`, never "the new PIN is incorrect":
+  the recovery modal closes and the gate asks a first PIN; a new PIN the check answers `registered` (a PIN from before
+  salts, re-registered under its salt) is a success, not an incorrect PIN.
+- The gate's local shortcut reads `canari_pin_proven:v1:<user>` (`pinFirstSetup.ts`), written only
+  once `pin-check` answered `ok` or `registered` - never the device id - and dropped when a reset
+  enters or commits a first setup or the server answers `not-set`. A `mismatch` on a first setup
+  turns the gate to "returning" (the account has a PIN).
 
 The French and English texts are in `messages/{fr,en}.json` under the `auth_` keys each throw names
 (`loginErrors.ts`, `sessionAuth.ts`, `pinUnlock.ts`); a text names a control by its exact label.
