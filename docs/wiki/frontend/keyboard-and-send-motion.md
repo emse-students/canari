@@ -120,7 +120,7 @@ with its buttons. The bubble hands that row its Retry and Delete (`MessageBubble
 **The composer bar (phone, both platforms).** Below 768 px only: controls on a 40 px box with a 6 px gap
 (owner, 2026-11-20: Messenger's 0 suits its bare glyphs, our glass "+" and yellow send are disks and
 touched the field), a 42 px field (11 px padding), 4 px from the screen's edges, the send's extra
-padding gone. Expected with the keyboard up at 390 pt: "+" 4-44, microphone 50-90, field 96-338, send
+padding gone. Expected with the keyboard up at 390 pt: "+" 4-44, microphone 50-90, field 96-340, send
 346-386; while typing, the field starts after the chevron. The widest row at 320 px leaves an 88 px field. It is the owner's one exception to the 44 px touch floor ([design-reference](design-reference.md)):
 a touch tablet keeps 44 px and its gaps, a pointer its 38 px. `iconButtonScale.test.ts` asserts the
 rule, not the value: a box under 44 px sits under `pointer: fine`, is the hover strip's `--sm`, or is
