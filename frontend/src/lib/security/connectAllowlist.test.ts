@@ -17,7 +17,7 @@ describe('connectAllowlist - the connect-src a drop is checked against', () => {
     }
   });
 
-  it('allows the web page its own origin and the hosts its policy names, nothing else', () => {
+  it('allows the web page its own origin and the https hosts its policy names - never a host named only as a wss: socket', () => {
     const web = enforcedConnectSources(false);
     expect(connectAllows(`${WEB_PAGE}/api/media/x.png`, web, WEB_PAGE)).toBe(true);
     expect(connectAllows('https://static.klipy.com/a.gif', web, WEB_PAGE)).toBe(true);
@@ -41,9 +41,12 @@ describe('connectAllowlist - the connect-src a drop is checked against', () => {
     expect(connectAllows('not an address', sources, APP_PAGE)).toBe(false);
   });
 
-  it('reads a scheme source and the http-to-https upgrade as CSP Level 3 does', () => {
+  it('reads a scheme source and the http-to-https upgrade, and never lets a wss: source allow https:', () => {
     expect(connectAllows('https://any.example/x', ['http:'], APP_PAGE)).toBe(true);
     expect(connectAllows('http://any.example/x', ['https:'], APP_PAGE)).toBe(false);
     expect(connectAllows('https://ipc.localhost/x', ['http://ipc.localhost'], APP_PAGE)).toBe(true);
+    expect(connectAllows('https://canari.emse.fr/x', ['wss://canari.emse.fr'], APP_PAGE)).toBe(
+      false
+    );
   });
 });

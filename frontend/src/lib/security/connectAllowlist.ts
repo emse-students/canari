@@ -15,7 +15,7 @@
  * a few hosts the overlay would allow - a narrower answer, never a request the policy refuses.
  *
  * Only the source shapes these two policies use are understood (`'self'`, a bare scheme, a
- * `scheme://host[:port]` origin); `csp.test.ts` fails if either list gains another shape, so no
+ * `scheme://host[:port]` origin); `connectAllowlist.test.ts` fails if either list gains another shape, so no
  * source is ever matched by a rule written for a different one.
  */
 import { WEB_POLICY_DIRECTIVES } from './cspDirectives.js';
@@ -36,9 +36,12 @@ export function isUnderstoodConnectSource(source: string): boolean {
 }
 
 /**
- * Whether one source allows `target` (CSP Level 3 matching, restricted to the shapes above): `'self'`
- * is the page's origin; a bare scheme allows that scheme (`http:` also allows `https:`); an origin
- * allows itself, an `http`/`ws` origin also its `https`/`wss` upgrade on the same host and port.
+ * Whether one source allows `target`, restricted to the shapes above: `'self'` is the page's origin;
+ * a bare scheme allows that scheme (`http:` also allows `https:`); an origin allows itself, an
+ * `http`/`ws` origin also its `https`/`wss` upgrade on the same host and port. DELIBERATELY STRICTER
+ * than CSP Level 3, which would also let a `wss:` source allow `https:` on its host: a socket origin
+ * named for the call signalling is not a statement that pictures may be read from that host, and a
+ * narrower answer can only refuse a drop, never make a request the policy refuses.
  */
 function connectSourceAllows(source: string, target: URL, pageOrigin: string): boolean {
   if (source === 'self' || source === "'self'") return target.origin === pageOrigin;

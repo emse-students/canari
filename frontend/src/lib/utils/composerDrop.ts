@@ -63,6 +63,13 @@ export function handleComposerDrop(
   if (urls.length > 0) {
     const sources = enforcedConnectSources(isTauriRuntime());
     const fetchable = urls.filter((url) => connectAllows(url, sources, location.origin));
+    if (fetchable.length < urls.length) {
+      const refused = urls.filter((url) => !fetchable.includes(url));
+      Log.d(
+        'COMPOSER',
+        `drop carried ${refused.length} web image address(es) outside connect-src (${hostsOf(refused)}) - refused before any request`
+      );
+    }
     if (fetchable.length === 0) {
       showToast(m.composer_drop_web_image_refused());
       return;
@@ -112,4 +119,17 @@ async function attachWebImages(
   });
   if (files.length > 0) onFiles(files);
   if (failed + refused > 0) showToast(m.composer_drop_web_image_refused());
+}
+
+/** The hosts of some addresses, for a log line: the query string may carry a token, so never the URL. */
+function hostsOf(urls: string[]): string {
+  return urls
+    .map((url) => {
+      try {
+        return new URL(url).host;
+      } catch {
+        return 'unparsable address';
+      }
+    })
+    .join(', ');
 }
