@@ -24,10 +24,13 @@ package fr.emse.canari.push
  * lost) or find nothing to cancel (a read banner left standing); re-injecting from it, a second post
  * would drop the first one's line. So every post records the [Banner] it handed to `notify` - its id,
  * its channel, its messages - and both the next post and a read start from that record; the shade
- * ([bannerOf]'s fallback) answers only when this process has posted nothing for the conversation (a
- * fresh process, whose banner an earlier one left). The record goes with the banner: removed by a
- * read ([recordThenCancel]), any other cancel or the user's own dismissal ([forget], [forgetAll]) -
- * each under this lock with the cancel it follows, so no post falls between the two.
+ * ([bannerOf]'s fallback) answers only when this process has neither posted nor removed anything
+ * for the conversation (a fresh process, whose banner an earlier one left): the shade lags a
+ * `cancel` exactly as it lags a `notify`, so once this process has removed a banner, the shade's
+ * copy of it is stale and nothing may rebuild on it, weigh it or cancel it a second time. The record
+ * goes with the banner: removed by a read ([recordThenCancel]), any other cancel ([withdraw]) or the
+ * user's own dismissal ([forget], [forgetAll]) - each under this lock with the cancel it follows, so
+ * no post falls between the two.
  *
  * ONE LOCK, [lock], held by a post from the moment it reads the banner it re-injects to the moment
  * it records what it posted ([showMessageNotification] takes it around that whole section), and by a
@@ -41,9 +44,9 @@ package fr.emse.canari.push
  * (which commits its shortcut record - a durability the sign-out relies on - and pushes the
  * shortcut). Its blocking work is binder calls (the shade read, `notify`, `cancel`, the shortcut
  * push), that shortcut record's commit, and building the notification from bitmaps loaded BEFORE
- * the lock - no fetch or decode of a picture runs under it. The WebSocket post enters it holding the generic-banner lock;
- * nothing under it takes that lock, and no path takes them the other way round. A read does only
- * the shade read and the `cancel` under it.
+ * the lock - no fetch or decode of a picture runs under it. The WebSocket post enters it holding
+ * the generic-banner lock; nothing under it takes that lock, and no path takes them the other way
+ * round. A read or a cancel does only the shade read and the `cancel` under it.
  *
  * IN MEMORY, ON PURPOSE. The races it closes are between a post still being built, a read this
  * process was told about, and the system's own queue; all of them die with the process.
@@ -67,9 +70,10 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     /**
      * One line of a conversation's notification, as this side stamped it when it posted it: the
      * sender's instant and the server's (0 when unknown, and both 0 for a line that carries no
-     * stamp - never covered).
+     * stamp - never covered), and whether it is this account's PENDING REPLY - which no read covers
+     * and no cancel that cannot weigh lines removes ([withdraw]).
      */
-    data class Line(val sentAt: Long, val serverAt: Long) {
+    data class Line(val sentAt: Long, val serverAt: Long, val pendingReply: Boolean = false) {
         companion object {
             /**
              * The line a message of the notification counts as: its stamps when it carries them, and
@@ -79,7 +83,8 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
              * its lines (not proven read by any mark, so it is kept).
              */
             fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?): Line = when {
-                pendingReply || sentAt == null -> Line(0L, 0L)
+                pendingReply -> Line(0L, 0L, pendingReply = true)
+                sentAt == null -> Line(0L, 0L)
                 else -> Line(sentAt, serverAt ?: 0L)
             }
         }
@@ -87,6 +92,18 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
     /** A conversation notification as posted: its id, its channel (null below API 26), its messages. */
     data class Banner<M>(val notifId: Int, val channelId: String?, val messages: List<M>)
+
+    /** What a [withdraw] did. */
+    enum class Withdrawal {
+        /** No banner: never posted, or already removed by this process - nothing to do, nothing to say. */
+        NONE,
+
+        /** The banner holds a pending reply, and the caller asked to keep one. */
+        KEPT_PENDING_REPLY,
+
+        /** The banner was cancelled. */
+        CANCELLED,
+    }
 
     /** The one lock - see the class comment. */
     val lock = Any()
@@ -98,6 +115,18 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     private val posted = HashMap<String, Banner<M>>()
 
     /**
+     * The conversations whose banner THIS process removed and has not posted since: the shade's copy
+     * of them is stale (it lags a `cancel`), so [bannerOf] does not ask it. Guarded by [lock].
+     */
+    private val withdrawn = HashSet<String>()
+
+    /**
+     * Every banner was removed at once ([forgetAll]): from then on the shade holds nothing this
+     * process did not post and record, so it is never asked again. Guarded by [lock].
+     */
+    private var allWithdrawn = false
+
+    /**
      * Raises [conversationId]'s mark to [read]'s instant, on its clock. A lower or non-positive
      * instant changes nothing.
      */
@@ -107,10 +136,34 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
     /**
      * The conversation's banner as a post should build on it and a read should weigh it: what this
-     * process last posted, else what [shade] answers (null when nothing is posted there either).
+     * process last posted, else - when this process has not removed it - what [shade] answers (null
+     * when nothing is posted there either).
      */
     fun bannerOf(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
-        synchronized(lock) { posted[conversationId] ?: shade() }
+        synchronized(lock) { bannerOfLocked(conversationId, shade) }
+
+    /**
+     * Cancels the conversation's banner ([bannerOf]) for a dismissal that cannot weigh its lines (no
+     * mark: a push whose mark is in the ciphertext, a "mark as read" action, a delivered reply), all
+     * in ONE critical section, so no post falls between the cancel and the record's removal. A banner
+     * holding a pending reply stays when [keepPendingReply] - a read on another device says nothing
+     * about a send that has not gone out. A banner this process already removed is not cancelled
+     * twice: the shade's lagging copy of it is not asked.
+     */
+    fun withdraw(
+        conversationId: String,
+        keepPendingReply: Boolean,
+        shade: () -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
+    ): Withdrawal = synchronized(lock) {
+        val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Withdrawal.NONE
+        if (keepPendingReply && banner.messages.any { lineOf(it).pendingReply }) {
+            return@synchronized Withdrawal.KEPT_PENDING_REPLY
+        }
+        cancel(banner.notifId)
+        withdrawnLocked(conversationId)
+        Withdrawal.CANCELLED
+    }
 
     /**
      * Records [read], then weighs the conversation's banner ([bannerOf]) and runs [cancel] with
@@ -128,11 +181,11 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         cancel: (notifId: Int) -> Unit,
     ): Boolean = synchronized(lock) {
         recordLocked(conversationId, read)
-        val banner = posted[conversationId] ?: shade() ?: return@synchronized false
+        val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized false
         val lines = banner.messages.map(lineOf)
         if (lines.all { coversLocked(conversationId, it.sentAt, it.serverAt) }) {
             cancel(banner.notifId)
-            posted.remove(conversationId)
+            withdrawnLocked(conversationId)
             true
         } else {
             false
@@ -159,14 +212,14 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
             false
         } else {
             post()
-            posted[conversationId] = banner
+            postedLocked(conversationId, banner)
             true
         }
     }
 
     /** Records [banner] as posted for [conversationId], for a post that is not a message (an own line). */
     fun remember(conversationId: String, banner: Banner<M>) {
-        synchronized(lock) { posted[conversationId] = banner }
+        synchronized(lock) { postedLocked(conversationId, banner) }
     }
 
     /**
@@ -179,13 +232,17 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     fun forget(conversationId: String, notifId: Int? = null): Boolean = synchronized(lock) {
         val held = posted[conversationId] ?: return@synchronized false
         if (notifId != null && held.notifId != notifId) return@synchronized false
-        posted.remove(conversationId)
+        withdrawnLocked(conversationId)
         true
     }
 
     /** Drops every record: every message banner was removed at once (the app came to the front). */
     fun forgetAll() {
-        synchronized(lock) { posted.clear() }
+        synchronized(lock) {
+            posted.clear()
+            withdrawn.clear()
+            allWithdrawn = true
+        }
     }
 
     /** The mark held for [conversationId], or null. */
@@ -201,6 +258,19 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      */
     fun covers(conversationId: String, sentAt: Long, serverAt: Long): Boolean =
         synchronized(lock) { coversLocked(conversationId, sentAt, serverAt) }
+
+    private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
+        posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()
+
+    private fun postedLocked(conversationId: String, banner: Banner<M>) {
+        posted[conversationId] = banner
+        withdrawn.remove(conversationId)
+    }
+
+    private fun withdrawnLocked(conversationId: String) {
+        posted.remove(conversationId)
+        withdrawn.add(conversationId)
+    }
 
     private fun recordLocked(conversationId: String, read: Read) {
         if (conversationId.isEmpty() || read.at <= 0L) return

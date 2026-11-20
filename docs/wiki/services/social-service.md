@@ -867,15 +867,29 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   branch, so the usual case cancelled id -1.)
 - **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
   between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
-  `forget`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
-  user's swipe does too, through the delete intent of a MESSAGE banner (`ACTION_BANNER_DISMISSED` ->
-  `forgetPostedBanner`) - otherwise the next post would bring back the lines the user dismissed.
+  `withdraw`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
+  user's swipe does too, through the delete intent of a conversation banner (`ACTION_BANNER_DISMISSED`
+  -> `forgetPostedBanner`) - otherwise the next post would bring back the lines the user dismissed.
+  BOTH builders of a conversation banner - the message post and the pending reply's re-post - build
+  it through ONE helper, `conversationBanner`, which sets that intent: the re-post once had none, and
+  the next message rebuilt on swiped lines, a reply already delivered still marked `non envoyé`
+  (device reading of #3912). A reaction is built without it.
   The intent names the notification's id and the record is forgotten only when it is that banner's,
   so a swipe of the conversation's reaction notification leaves it; a swipe that cold-starts a
   process with no record logs nothing (`forget` says whether it dropped one). A post whose dismissal
   broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
+- **A banner this process removed is not asked of the shade again** (`ReadElsewhereMarks.withdrawn`,
+  and every conversation after `forgetAll`): the shade lags a `cancel` as it lags a `notify`, so its
+  copy is stale. A second dismissal of the same banner - a salon's `channel.read` on the socket, then
+  its `channel_read` push - finds nothing and says so at debug only (`no notif`), where it used to
+  log a second `notif removed`; a post rebuilds on nothing, and the pending reply's re-post does not
+  bring the banner back.
 - **The pending reply** (`repostReplyPending`) builds on the same record and records what it posts,
-  so its bound (`takeLast`) is the record's too.
+  so its bound (`takeLast`) is the record's too. No dismissal that cannot weigh lines removes it when
+  the dismissal only announces a read elsewhere: the push's silent-from-self cancel passes
+  `keepPendingReply`, and `ReadElsewhereMarks.withdraw` keeps a banner whose record (or, in a fresh
+  process, shade) holds a `LINE_PENDING_REPLY` line - it removed one while the reply was still queued
+  (device reading of #3912). The delivered reply and the "mark as read" action remove it.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
@@ -919,7 +933,11 @@ step, that the stamps survive `extractMessagingStyleFromNotification`, and the b
 on `WS_NOTIF_LANE`, and a post still in flight is covered by the socket's own `channel.read`, which
 does. The push silent-from-self cancel (`handleMlsFrame`) cannot weigh the shade's lines: the mark is
 inside the ciphertext the service does not open, so it still removes the whole notification - the one
-place where a newer message's banner can go with an older read.
+place where a newer message's banner can go with an older read - unless it holds a pending reply.
+
+**The log names a conversation by `ConversationRef.of`**: `ch:` and 8 characters of a salon's own id
+(the `channel_` prefix stripped - `take(8)` of the key printed `channel_` for every salon), `g:` and 8
+of an MLS conversation; the scheme of the push-outcome line (#3914), which must stay the same.
 
 Pinned by `systemMessageHandler.readState.test.ts` and `channelEventHandler.read.test.ts` (every own
 mark is handed over, moved or not, and a peer's is not), `nativeNotification.test.ts`,

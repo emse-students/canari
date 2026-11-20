@@ -44,6 +44,7 @@ import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ConversationNicknames
+import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
@@ -641,7 +642,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .build()
                 if (ConversationShortcuts.push(context, info)) id else null
             } catch (e: Exception) {
-                Log.e(TAG, "publishConversationShortcut: refused for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
+                Log.e(TAG, "publishConversationShortcut: refused for group=${ConversationRef.of(groupId)}: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -736,13 +737,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val notifId = getStableNotifId(context, groupId)
                 val existing = manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
                 if (existing == null) {
-                    Log.w(TAG, "repostReplyPending: no active notification for group=${groupId.take(8)} - spinner cannot be cleared")
+                    Log.w(TAG, "repostReplyPending: no active notification for group=${ConversationRef.of(groupId)} - spinner cannot be cleared")
                     return
                 }
                 val previous = NotificationCompat.MessagingStyle
                     .extractMessagingStyleFromNotification(existing)
                 if (previous == null) {
-                    Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${groupId.take(8)}")
+                    Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${ConversationRef.of(groupId)}")
                     return
                 }
                 val res = appLocaleContext(context)
@@ -784,17 +785,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // are what this process last posted (the shade only when it posted nothing), and
                 // what it posts is recorded under the same lock - so a read weighs this re-post,
                 // the line its bound dropped included, exactly as the shade will show it.
-                synchronized(READ_ELSEWHERE.lock) {
+                // A banner this process already removed is not brought back: the shade read above may
+                // still show it (it lags a `cancel`), the record does not.
+                val reposted = synchronized(READ_ELSEWHERE.lock) {
                     val held = READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
-                    (held?.messages ?: previous.messages)
+                        ?: return@synchronized false
+                    held.messages
                         .takeLast(MAX_NOTIF_MESSAGES - 1)
                         .forEach { style.addMessage(it) }
                     style.addMessage(pending)
                     builder.setStyle(style)
-                    manager.notify(notifId, builder.build())
+                    manager.notify(notifId, conversationBanner(context, builder, groupId, notifId))
                     READ_ELSEWHERE.remember(groupId, ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList()))
+                    true
                 }
-                Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
+                if (!reposted) {
+                    Log.d(TAG, "repostReplyPending: banner already removed by this process - group=${ConversationRef.of(groupId)} - nothing to correct")
+                    return
+                }
+                Log.i(TAG, "repostReplyPending: re-posted group=${ConversationRef.of(groupId)} - spinner cleared, actions restored")
             } catch (e: Exception) {
                 Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
@@ -917,51 +926,54 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *   ([readElsewhereFromWebSocket]): recorded in the SAME critical section as the cancel
          *   ([ReadElsewhereMarks.recordThenCancel]), where every post checks it, so the post and the
          *   dismissal of one message cannot interleave, whichever reaches the native side first.
+         * @param keepPendingReply for a dismissal with no mark that announces a read on another device
+         *   (the push's silent-from-self): a banner holding this account's pending reply stays - that
+         *   read says nothing about a send that has not gone out ([ReadElsewhereMarks.withdraw]).
          */
         internal fun cancelConversationNotification(
             context: Context,
             groupId: String,
             read: ReadElsewhereMarks.Read? = null,
+            keepPendingReply: Boolean = false,
         ) {
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner posted
+            // between an outside lookup and the cancel would otherwise stand. THE ID COMES WITH THE
+            // BANNER, whichever source supplied it - what this process posted, or the shade - and a
+            // banner this process already removed is found by neither, so a second dismissal of it
+            // (the salon's `channel.read`, then its `channel_read` push) has nothing to do.
+            val shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } }
             var notifId = -1
-            val cancelled = if (read == null) {
-                // The cancel and the forget are ONE step: a post between them would be forgotten
-                // while it stands, or rebuild on a banner already gone.
-                synchronized(READ_ELSEWHERE.lock) {
-                    notifId = prefs.getInt(groupId, -1)
-                    if (notifId != -1) manager.cancel(notifId)
-                    READ_ELSEWHERE.forget(groupId)
-                }
-                notifId != -1
-            } else {
-                // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner
-                // posted between an outside lookup and the record would otherwise stand.
-                // THE ID COMES WITH THE BANNER WEIGHED, whichever source supplied it - what this
-                // process posted, or the shade.
-                READ_ELSEWHERE.recordThenCancel(
-                    groupId,
-                    read,
-                    shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } },
-                    cancel = { id ->
-                        notifId = id
-                        manager.cancel(id)
-                    },
-                )
+            val cancelById = { id: Int ->
+                notifId = id
+                manager.cancel(id)
             }
-            if (!cancelled) {
-                if (notifId == -1 && read == null) {
-                    Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
-                } else {
-                    Log.d(TAG, "cancelConversationNotification: kept group=${groupId.take(8)} - no banner, or a line newer than the read stays unread")
+            if (read != null) {
+                if (!READ_ELSEWHERE.recordThenCancel(groupId, read, shade, cancelById)) {
+                    Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - no banner, or a line newer than the read stays unread")
+                    return
                 }
-                return
+            } else {
+                when (READ_ELSEWHERE.withdraw(groupId, keepPendingReply, shade, cancelById)) {
+                    ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> {
+                        Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - it holds a reply not sent yet")
+                        return
+                    }
+                    ReadElsewhereMarks.Withdrawal.NONE -> {
+                        // No message banner, but a reaction may stand alone: the conversation is
+                        // read, so it goes too (idempotent - a reaction already gone costs nothing).
+                        prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }
+                        Log.d(TAG, "cancelConversationNotification: no notif for group=${ConversationRef.of(groupId)}")
+                        return
+                    }
+                    ReadElsewhereMarks.Withdrawal.CANCELLED -> Unit
+                }
             }
             // The real posts this notification stood for are gone: none may cover a later refused
             // push (see [GenericBannerLedger.groupCleared]).
             synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
-            Log.d(TAG, "cancelConversationNotification: notif removed group=${groupId.take(8)} id=$notifId")
+            Log.d(TAG, "cancelConversationNotification: notif removed group=${ConversationRef.of(groupId)} id=$notifId")
 
             // A reaction to one of your messages in THIS conversation stops being news the moment
             // the conversation is read, and it lives under its own id since 2026-09-17 - so it
@@ -970,7 +982,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val reactionId = prefs.getInt(reactionNotifKey(groupId), -1)
             if (reactionId != -1) {
                 manager.cancel(reactionId)
-                Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${groupId.take(8)} id=$reactionId")
+                Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${ConversationRef.of(groupId)} id=$reactionId")
             }
 
             // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
@@ -1020,8 +1032,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * Builds a CONVERSATION BANNER - a message post or the pending reply's re-post - the one way
+         * either builder may: with the delete intent that forgets the record when the user swipes it
+         * away ([bannerDismissedIntent], [ReadElsewhereMarks.forget]). Otherwise the next post would
+         * rebuild on the swiped lines - a reply already delivered still marked "not sent" included
+         * (device reading of #3912, 2026-11-20, when the re-post was built without it).
+         */
+        private fun conversationBanner(
+            context: Context,
+            builder: NotificationCompat.Builder,
+            groupId: String,
+            notifId: Int,
+        ): android.app.Notification =
+            builder.setDeleteIntent(bannerDismissedIntent(context, groupId, notifId)).build()
+
+        /**
          * The delete intent of a conversation notification: the user swiped it away, so what this
-         * process recorded as posted is forgotten ([forgetPostedBanner]).
+         * process recorded as posted is forgotten ([forgetPostedBanner]). It names the notification,
+         * so a swipe of another notification of the conversation cannot forget this one's record.
          */
         private fun bannerDismissedIntent(context: Context, groupId: String, notifId: Int): PendingIntent =
             PendingIntent.getBroadcast(
@@ -1041,7 +1069,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         internal fun forgetPostedBanner(groupId: String, notifId: Int) {
             if (READ_ELSEWHERE.forget(groupId, notifId)) {
-                Log.d(TAG, "forgetPostedBanner: dismissed by the user - group=${groupId.take(8)} id=$notifId")
+                Log.d(TAG, "forgetPostedBanner: dismissed by the user - group=${ConversationRef.of(groupId)} id=$notifId")
             }
         }
 
@@ -1082,7 +1110,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } finally {
                     CACHE_LOCK.unlock()
                 }
-                Log.d(TAG, "writeFcmCache: ✓ messageId=${messageId.take(8)} groupId=${groupId.take(8)}")
+                Log.d(TAG, "writeFcmCache: ✓ messageId=${messageId.take(8)} groupId=${ConversationRef.of(groupId)}")
             } catch (e: Throwable) {
                 // UnsatisfiedLinkError included: the seal is a JNI call, and an older native library
                 // has no such symbol - a crash here would take the notification with it.
@@ -1157,7 +1185,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         internal fun appendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
             if (groupId.isEmpty() || at <= 0L) {
-                Log.w(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at -> nothing to record")
+                Log.w(TAG, "appendReadWatermark: group=${ConversationRef.of(groupId)} at=$at -> nothing to record")
                 return
             }
             try {
@@ -1182,7 +1210,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } finally {
                     CACHE_LOCK.unlock()
                 }
-                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at serverAt=$serverAt recorded for the next boot")
+                Log.d(TAG, "appendReadWatermark: group=${ConversationRef.of(groupId)} at=$at serverAt=$serverAt recorded for the next boot")
             } catch (e: Exception) {
                 Log.w(TAG, "appendReadWatermark: failed: ${e.javaClass.simpleName}")
             }
@@ -1257,7 +1285,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.javaClass.simpleName}")
+                Log.w(TAG, "shadeReadWatermark: unreadable for group=${ConversationRef.of(groupId)}: ${e.javaClass.simpleName}")
                 none
             }
         }
@@ -1535,7 +1563,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     silent = silent,
                 )
                 manager.notify(notifId, notif)
-                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo silent=$silent")
+                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${ConversationRef.of(groupId)} video=$hasVideo silent=$silent")
                 Triple(answerPending, declinePending, fullScreenPending)
             } ?: return
 
@@ -1833,11 +1861,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val entry = OutboxMirrorEntry(messageId, groupId, protoB64, System.currentTimeMillis(), silent = true, durable = false)
             val ciphertext = encryptQueuedMessages(context, service, ctx, listOf(entry))?.get(messageId)
             if (ciphertext == null) {
-                Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
+                Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${ConversationRef.of(groupId)} -> not sent")
                 return@synchronized false
             }
             val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false) != null
-            Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
+            Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${ConversationRef.of(groupId)} sent=$sent")
             sent
         }
 
@@ -2018,7 +2046,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 try {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
-                    Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
+                    Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${ConversationRef.of(groupId)} msg=${messageId.take(8)}")
                     // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
                     // app orders this message by it (messageOrder.ts). Only a JSON 2xx counts as sent;
                     // a non-JSON body and a body the transport lost are both kept (QueuedSendAnswer),
@@ -2400,18 +2428,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (reaction) {
                 // THE FRAME TRIGGER OF A REACTION: the WebView decided this conversation is off
                 // screen. The push may draw the same reaction too; the shared stamp makes them one.
-                Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${groupId.take(8)} actor=${senderId.take(8)}")
+                Log.d(TAG, "notifyMessageFromWebSocket: reaction queued groupId=${ConversationRef.of(groupId)} actor=${senderId.take(8)}")
                 WS_NOTIF_LANE.execute {
                     try {
                         context.showReactionNotification(groupId, senderId, senderName, body, sentAt, suppressInForeground = false)
                     } catch (e: Exception) {
                         // EVERY SWALLOWED BRANCH LOGS: in the foreground this lane is the only path.
-                        Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                        Log.e(TAG, "notifyMessageFromWebSocket: reaction build failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
                     }
                 }
                 return true
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${ConversationRef.of(groupId)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven isGroup=$isGroup")
             WS_NOTIF_LANE.execute {
                 try {
                     // READ ON ANOTHER DEVICE ALREADY: nothing to build. Asked BEFORE the avatar fetch
@@ -2419,7 +2447,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // generic line it would retire stays standing otherwise. The builder asks again,
                     // and decides, under the lock ([ReadElsewhereMarks.postUnlessRead]).
                     if (READ_ELSEWHERE.covers(groupId, sentAt, serverAt)) {
-                        Log.d(TAG, "notifyMessageFromWebSocket: already read on another device -> nothing built (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                        Log.d(TAG, "notifyMessageFromWebSocket: already read on another device -> nothing built (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
                         return@execute
                     }
                     // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
@@ -2458,7 +2486,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
                         val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
                         if (generics.isNotEmpty()) {
-                            Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
+                            Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${ConversationRef.of(groupId)} covers=$covers)")
                         }
                         context.showMessageNotification(
                             senderName = salonLine?.personName ?: senderName,
@@ -2484,7 +2512,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // EVERY SWALLOWED BRANCH LOGS: this lane is the only path to a banner for a
                     // message the server will never push, so a silent throw here is a message the
                     // user is never told about.
-                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                    Log.e(TAG, "notifyMessageFromWebSocket: build failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
                 }
             }
             return true
@@ -2533,17 +2561,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         fun readElsewhereFromWebSocket(groupId: String, at: Long, serverClock: Boolean, reason: String): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
-                Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${groupId.take(8)} NOT recorded ($reason)")
+                Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT recorded ($reason)")
                 return false
             }
-            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${groupId.take(8)} at=$at clock=${if (serverClock) "server" else "stamped"} - read on another device ($reason)")
+            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - read on another device ($reason)")
             val read = ReadElsewhereMarks.Read(at, serverClock)
             WS_NOTIF_LANE.execute {
                 try {
                     cancelConversationNotification(context, groupId, read)
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: the banner of a conversation already read stays.
-                    Log.e(TAG, "readElsewhereFromWebSocket: failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                    Log.e(TAG, "readElsewhereFromWebSocket: failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
                 }
             }
             return true
@@ -3090,7 +3118,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             senderKey: String? = null,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
-                Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
+                Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${ConversationRef.of(groupId)})")
                 return 0L
             }
             // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
@@ -3100,7 +3128,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (sentAt > 0L && supersedes == 0L) {
                 val readUpTo = shadeReadWatermark(this, groupId)
                 if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
-                    Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                    Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
                     return 0L
                 }
             }
@@ -3109,7 +3137,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // so a covered post changes nothing at all. Asked again, and decided, under the lock at
             // the post itself ([ReadElsewhereMarks.postUnlessRead]), for a read landing in between.
             if (channel != CHANNEL_REACTIONS && READ_ELSEWHERE.covers(groupId, sentAt, serverAt)) {
-                Log.d(TAG, "showMessageNotification: already read on another device -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                Log.d(TAG, "showMessageNotification: already read on another device -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
                 return 0L
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -3208,7 +3236,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     newMessage.setData(mediaMime, mediaUri)
                 }
                 if (alreadyPosted) {
-                    Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
+                    Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${ConversationRef.of(groupId)})")
                     // THE SECOND TRIGGER MAY KNOW MORE: a line keeps its first trigger's stamps, and the
                     // first may not have had the server's instant. The re-injected line is restamped, so
                     // a read on the server clock can cover it ([ReadElsewhereMarks.recordThenCancel]).
@@ -3242,7 +3270,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // it would drop the decrypted redraw and leave the generic line standing for ever.
                 val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
                 if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
-                    Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                    Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt)")
                     return 0L
                 }
 
@@ -3261,12 +3289,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     hasExistingPost = held != null,
                 )
                 if (repostMode == RepostAlert.Mode.SILENT) {
-                    Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${held != null})")
+                    Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${ConversationRef.of(groupId)} channel=$channel existing=${held != null})")
                 }
                 // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
                 val callHolds = callHoldsSound()
                 if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
-                    Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
+                    Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${ConversationRef.of(groupId)} channel=$channel)")
                 }
                 val alertMode = CallSoundHold.alert(repostMode, callHolds)
 
@@ -3294,7 +3322,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 )
                 shape.title?.let { style.conversationTitle = it }
                 style.isGroupConversation = shape.groupConversation
-                Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${groupId.take(8)})")
+                Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${ConversationRef.of(groupId)})")
 
                 val notifBuilder = NotificationCompat.Builder(this, channel)
                     .setSmallIcon(R.drawable.ic_notification)
@@ -3330,7 +3358,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             } else {
                                 // No line by somebody else carries a face (an unnamed speaker's is drawn as
                                 // initials into the icon, so this is a line with no icon): no large icon.
-                                Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
+                                Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${ConversationRef.of(groupId)})")
                             }
                         } else {
                             setLargeIcon(largeIcon)
@@ -3368,12 +3396,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
                 }
 
-                // THE USER'S SWIPE FORGETS WHAT WAS POSTED ([ReadElsewhereMarks.forget]): the next post
-                // builds on that record, and must not bring back the lines the user dismissed. A
-                // message banner only - a reaction has no record - and naming its id, so a swipe of
-                // another notification of the conversation cannot forget this one's.
-                if (!isReactionNotif) notifBuilder.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))
-                val notif = notifBuilder.build()
+                // A message banner is built by [conversationBanner] (its swipe forgets the record); a
+                // reaction has no record, and its swipe must not forget the message banner's.
+                val notif = if (isReactionNotif) notifBuilder.build() else conversationBanner(this, notifBuilder, groupId, notifId)
 
                 // EVERY SIDE EFFECT ON THE SHADE, AS ONE STEP: the channel switch's removal of the
                 // previous banner, then the post. A message is decided against a read on another device
@@ -3394,7 +3419,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     )
                 }
                 if (readElsewhere) {
-                    Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                    Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
                     return 0L
                 }
                 Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
@@ -4073,8 +4098,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (silent && groupId.isNotEmpty() && senderId.isNotEmpty()) {
             val myUserId = MlsContextLoader.loadPushContext(this)?.userId
             if (senderId.equals(myUserId, ignoreCase = true)) {
-                Log.d(TAG, "FCM silent from self -> cancelling notification for group=${groupId.take(8)}")
-                cancelConversationNotification(this, groupId)
+                Log.d(TAG, "FCM silent from self -> cancelling notification for group=${ConversationRef.of(groupId)}")
+                // A banner holding a reply this device has not sent yet stays: it is the only place
+                // saying "not sent yet", and a read elsewhere says nothing about it.
+                cancelConversationNotification(this, groupId, keepPendingReply = true)
             }
         }
 
@@ -4116,7 +4143,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // thread no amount of waiting HERE lets that task run. Queued again, it runs after the
         // join - no retry, no clock, and no fallback banner for a message about to be readable.
         if (outcome is PushDecrypt.Refused && (WELCOMES_ON_LANE[groupId] ?: 0) > 0) {
-            Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)}: its Welcome is queued behind this frame -> re-queued after it")
+            Log.d(TAG, "tryDecrypt refused group=${ConversationRef.of(groupId)}: its Welcome is queued behind this frame -> re-queued after it")
             runSerializedWithWakeLock("fcm_decrypt", requeueOfThisFrame = true) { handleMlsFrame(data, silent) }
             return
         }
@@ -4185,7 +4212,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 is PushDecrypt.RefusedForGood -> "MLS refused it at an epoch this device holds"
                 else -> "it could not be decrypted"
             }
-            Log.d(TAG, "Silent push group=${groupId.take(8)} shows nothing - $why")
+            Log.d(TAG, "Silent push group=${ConversationRef.of(groupId)} shows nothing - $why")
             return
         }
 
@@ -4227,7 +4254,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // enqueued, because the worker advances the state, which is owed whatever is drawn.
         val gate = NotificationLevelGate.decide(data["notifLevel"], decrypted?.mentionedUserIds, myUserId)
         if (gate is NotificationLevelGate.Decision.Withhold) {
-            Log.d(TAG, "[NOTIF] group=${groupId.take(8)} withheld: ${gate.reason}")
+            Log.d(TAG, "[NOTIF] group=${ConversationRef.of(groupId)} withheld: ${gate.reason}")
             if (decrypted != null) {
                 writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
             }
@@ -4261,7 +4288,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
-                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${groupId.take(8)}") }
+                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${ConversationRef.of(groupId)}") }
             }
 
         if (silent) {
@@ -4301,7 +4328,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val refusedForGood = outcome is PushDecrypt.RefusedForGood
         synchronized(GENERIC_BANNERS_LOCK) {
             if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
-                Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
+                Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${ConversationRef.of(groupId)})")
             } else {
                 val stamp = showMessageNotification(
                     shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
@@ -4312,7 +4339,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 )
                 if (refusedForGood && stamp != 0L) {
                     GENERIC_BANNERS.genericPosted(groupId, stamp)
-                    Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${groupId.take(8)} stamp=$stamp)")
+                    Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${ConversationRef.of(groupId)} stamp=$stamp)")
                 }
             }
         }
@@ -5720,7 +5747,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 locale = ctx.locale,
             )
             val elapsedMs = android.os.SystemClock.elapsedRealtime() - startedAt
-            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)}")
+            Log.i(TAG, "catchup: replay since epoch=$epoch took $elapsedMs ms (state ${stateBytes.size} B, commits ${commitsJson.length} ch) outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)}")
             outcome
         }
     }
@@ -5755,22 +5782,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val read = MlsContextLoader.readPushContext(this)
         val ctx = read.context
         if (ctx == null) {
-            Log.w(TAG, "groupLocality: push context ${read.verdict.describe()} group=${groupId.take(8)} -> UNKNOWN")
+            Log.w(TAG, "groupLocality: push context ${read.verdict.describe()} group=${ConversationRef.of(groupId)} -> UNKNOWN")
             return GroupLocality.UNKNOWN
         }
         val locality = withMlsStateLock(5) {
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
-                Log.w(TAG, "groupLocality: mls.bin unreadable group=${groupId.take(8)} -> UNKNOWN")
+                Log.w(TAG, "groupLocality: mls.bin unreadable group=${ConversationRef.of(groupId)} -> UNKNOWN")
                 return@withMlsStateLock GroupLocality.UNKNOWN
             }
             if (ctx.deviceKeyB64.isEmpty()) {
-                Log.w(TAG, "groupLocality: device key absent group=${groupId.take(8)} -> UNKNOWN")
+                Log.w(TAG, "groupLocality: device key absent group=${ConversationRef.of(groupId)} -> UNKNOWN")
                 return@withMlsStateLock GroupLocality.UNKNOWN
             }
             try {
                 val epoch = nativeGroupEpochWithKey(stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
-                Log.d(TAG, "groupLocality: epoch=$epoch group=${groupId.take(8)}")
+                Log.d(TAG, "groupLocality: epoch=$epoch group=${ConversationRef.of(groupId)}")
                 if (epoch >= 0) GroupLocality.LOCAL else GroupLocality.ABSENT
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "groupLocality: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
@@ -5783,7 +5810,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // `withMlsStateLock` returns null on a timeout, and that is the case this whole enum exists
         // for: it says nothing about the group, only about the lock.
         if (locality == null) {
-            Log.w(TAG, "groupLocality: MlsStateLock not acquired group=${groupId.take(8)} -> UNKNOWN")
+            Log.w(TAG, "groupLocality: MlsStateLock not acquired group=${ConversationRef.of(groupId)} -> UNKNOWN")
             return GroupLocality.UNKNOWN
         }
         return locality
@@ -6454,7 +6481,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)}")
+        Log.d(TAG, "reaction: group=${ConversationRef.of(groupId)} actor=${actorId.take(8)}")
         // The reaction's own instant, the stamp the frame trigger uses too; absent from an older reactor.
         val reactionAt = data["at"]?.toLongOrNull() ?: 0L
         // The push's title is the server's name for the actor - the fallback behind their nickname.
@@ -6617,13 +6644,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Yielded is the foreground holding the state, which the WebSocket serves; everything
             // else is a frame that should have opened and did not, which is why this is a warning.
             val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
-            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${groupId.take(8)} channel=$channelId session=$sessionId")
+            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
             return false
         }
         absorbGraineSeeds(cacheKey, keyMaterial.seedsJson, groupId)
         val held = graineSeedHeld(cacheKey, channelId, sessionId)
         if (!held) {
-            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${groupId.take(8)} channel=$channelId session=$sessionId")
+            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
         }
         return held
     }
@@ -7156,15 +7183,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // check (Rust `store_graine_seeds_json`), so it is said apart and never counted as one.
             val leftToApp = parsed?.optInt("leftToApp", 0) ?: 0
             if (leftToApp > 0) {
-                Log.i(TAG, "absorbGraineSeeds: $leftToApp relayed seed(s) left to the app group=${groupId.take(8)}")
+                Log.i(TAG, "absorbGraineSeeds: $leftToApp relayed seed(s) left to the app group=${ConversationRef.of(groupId)}")
             }
             if (stored < 0) {
-                Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
+                Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${ConversationRef.of(groupId)}")
             } else if (offered > 0 && stored + leftToApp < offered) {
-                Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${groupId.take(8)} - the rest never reached the mirror")
+                Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${ConversationRef.of(groupId)} - the rest never reached the mirror")
                 if (stored > 0) drainPendingChannelFrames(cacheKey)
             } else {
-                Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${groupId.take(8)}")
+                Log.d(TAG, "absorbGraineSeeds: stored $stored seed(s) group=${ConversationRef.of(groupId)}")
                 // THE OTHER HALF OF THE ORDER-INDEPENDENCE. A seed is only useful against the
                 // messages it unlocks, and some of them may already have gone up generic.
                 drainPendingChannelFrames(cacheKey)

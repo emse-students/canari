@@ -160,16 +160,28 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
 
   // Round-5 review: the id was resolved only on the shade's branch, so the usual case cancelled -1.
   // The cancel now takes the id of the banner it weighed, whichever source supplied it.
-  it('cancels the id of the banner it weighed, looked up inside recordThenCancel', () => {
+  it('cancels the id of the banner it weighed, looked up inside the critical section', () => {
     const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
-    const guarded = fn.indexOf('READ_ELSEWHERE.recordThenCancel(');
-    expect(guarded).toBeGreaterThan(-1);
-    const call = fn.slice(guarded, fn.indexOf('if (!cancelled)', guarded));
-    expect(call).toContain('prefs.getInt(groupId, -1)');
-    expect(call).toContain('shadeBannerOf(manager, it)');
-    expect(call).toContain('cancel = { id ->');
-    expect(call).toContain('manager.cancel(id)');
-    expect(call).not.toContain('manager.cancel(notifId)');
+    const body = fn.slice(0, fn.indexOf('GENERIC_BANNERS.groupCleared(groupId)'));
+    // One shade lookup and one cancel-by-id, handed to BOTH dismissals - with a mark and without.
+    expect(body).toContain(
+      'val shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } }'
+    );
+    expect(body).toContain('READ_ELSEWHERE.recordThenCancel(groupId, read, shade, cancelById)');
+    expect(body).toContain('READ_ELSEWHERE.withdraw(groupId, keepPendingReply, shade, cancelById)');
+    expect(body).toContain('manager.cancel(id)');
+    expect(body).not.toContain('manager.cancel(notifId)');
+    expect(body).not.toContain('READ_ELSEWHERE.forget(');
+  });
+
+  // Device reading of #3912 (item 2): the silent-from-self push removed a banner whose reply was
+  // still queued. `ReadElsewhereMarksTest` runs the rule; this pins that the push asks for it.
+  it("the push's silent-from-self cancel keeps a banner holding a pending reply", () => {
+    const at = source.indexOf('FCM silent from self -> cancelling notification');
+    expect(at).toBeGreaterThan(-1);
+    expect(source.slice(at, at + 600)).toContain(
+      'cancelConversationNotification(this, groupId, keepPendingReply = true)'
+    );
   });
 
   it('a WebSocket post asks the record before the avatar and the generic ledger', () => {
@@ -210,10 +222,23 @@ describe('the builder records what it posted and keeps the stamps current', () =
   });
 
   it("forgets the record on the user's swipe of THAT banner, and when every banner is cleared", () => {
-    // A message banner only, naming its id: a reaction's swipe cannot forget the message banner.
-    expect(source).toContain(
-      'if (!isReactionNotif) notifBuilder.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))'
+    // ONE builder of a conversation banner sets the delete intent, and BOTH posts - the message
+    // and the pending reply's re-post (device reading of #3912: the re-post had none) - use it.
+    expect(source.split('.setDeleteIntent(').length - 1).toBe(1);
+    const helper = source.slice(source.indexOf('private fun conversationBanner('));
+    expect(helper.slice(0, 400)).toContain(
+      'builder.setDeleteIntent(bannerDismissedIntent(context, groupId, notifId)).build()'
     );
+    const show = source.slice(source.indexOf('fun Context.showMessageNotification('));
+    expect(show).toContain(
+      'val notif = if (isReactionNotif) notifBuilder.build() else conversationBanner(this, notifBuilder, groupId, notifId)'
+    );
+    const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
+    const record = repost.indexOf('READ_ELSEWHERE.remember(');
+    expect(repost.slice(0, record)).toContain(
+      'manager.notify(notifId, conversationBanner(context, builder, groupId, notifId))'
+    );
+    expect(repost.slice(0, record)).not.toContain('builder.build()');
     expect(source).toContain('putExtra(EXTRA_BANNER_NOTIF_ID, notifId)');
     expect(source).toContain('if (READ_ELSEWHERE.forget(groupId, notifId)) {');
     // The cancels and the forget are one step under the lock a post holds.
@@ -235,15 +260,14 @@ describe('the builder records what it posted and keeps the stamps current', () =
     );
   });
 
-  it('forgets the record when the banner is removed another way, in one step with the cancel', () => {
+  it('a dismissal with no mark ends with nothing to do once the banner is gone', () => {
     const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
-    const plain = fn.slice(0, fn.indexOf('READ_ELSEWHERE.recordThenCancel('));
-    const lock = plain.indexOf('synchronized(READ_ELSEWHERE.lock) {');
-    expect(lock).toBeGreaterThan(-1);
-    expect(lock).toBeLessThan(plain.indexOf('manager.cancel(notifId)'));
-    expect(plain.indexOf('manager.cancel(notifId)')).toBeLessThan(
-      plain.indexOf('READ_ELSEWHERE.forget(groupId)')
-    );
+    const none = fn.indexOf('ReadElsewhereMarks.Withdrawal.NONE ->');
+    expect(none).toBeGreaterThan(-1);
+    const branch = fn.slice(none, fn.indexOf('ReadElsewhereMarks.Withdrawal.CANCELLED', none));
+    expect(branch).toContain('return');
+    expect(branch).not.toContain('Log.i(');
+    expect(branch).not.toContain('Log.w(');
   });
 
   it('commits the announced-message record and rebuilds the summary after the lock', () => {

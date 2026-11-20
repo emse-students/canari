@@ -4,6 +4,7 @@ import fr.emse.canari.push.ReadElsewhereMarks
 import fr.emse.canari.push.ReadElsewhereMarks.Banner
 import fr.emse.canari.push.ReadElsewhereMarks.Line
 import fr.emse.canari.push.ReadElsewhereMarks.Read
+import fr.emse.canari.push.ReadElsewhereMarks.Withdrawal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -215,7 +216,7 @@ class ReadElsewhereMarksTest {
     @Test
     fun `an unstamped line and a pending reply are never covered`() {
         assertEquals(Line(0L, 0L), Line.of(pendingReply = false, sentAt = null, serverAt = null))
-        assertEquals(Line(0L, 0L), Line.of(pendingReply = true, sentAt = 5L, serverAt = 6L))
+        assertEquals(Line(0L, 0L, pendingReply = true), Line.of(pendingReply = true, sentAt = 5L, serverAt = 6L))
         assertEquals(Line(5L, 0L), Line.of(pendingReply = false, sentAt = 5L, serverAt = null))
 
         val marks = marks()
@@ -377,5 +378,59 @@ class ReadElsewhereMarksTest {
         marks.record("", Read(9_000L, serverClock = true))
         assertEquals(ReadElsewhereMarks.Mark(stamped = 0L, server = 2_000L), marks.of("g1"))
         assertNull(marks.of(""))
+    }
+
+    /** A cancel with no mark, as `cancelConversationNotification` runs it. */
+    private fun ReadElsewhereMarks<Msg>.withdrawOn(shade: AsyncShade, id: String, keepPendingReply: Boolean): Withdrawal =
+        withdraw(id, keepPendingReply, shade = { shade.read() }, cancel = { shade.cancel(it) })
+
+    // Device reading of #3912 (item 2): the push's silent-from-self cancel removed a banner whose
+    // reply was still queued. It cannot weigh peer lines (the mark is in the ciphertext), but it
+    // keeps a banner holding a pending reply - from the record or, in a fresh process, the shade.
+    @Test
+    fun `a cancel with no mark keeps a pending reply when asked, and cancels it otherwise`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "g1", 1001, m1)
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, Msg(null, null, pendingReply = true))))
+        assertEquals(Withdrawal.KEPT_PENDING_REPLY, marks.withdrawOn(shade, "g1", keepPendingReply = true))
+        assertTrue(shade.events.none { it.startsWith("cancel") })
+        assertEquals(Withdrawal.CANCELLED, marks.withdrawOn(shade, "g1", keepPendingReply = false))
+        assertEquals("cancel 1001", shade.events.last())
+
+        val fresh = marks()
+        val pendingInShade = Banner(77, "messages", listOf(Msg(null, null, pendingReply = true)))
+        assertEquals(Withdrawal.KEPT_PENDING_REPLY, fresh.withdraw("g2", true, shade = { pendingInShade }) { fail("kept") })
+        // A banner with no pending reply goes, whatever its lines.
+        assertEquals(Withdrawal.CANCELLED, fresh.withdraw("g3", true, shade = { Banner(78, "messages", listOf(m2)) }) {})
+    }
+
+    // Device reading of #3912 (item 3): the salon's `channel.read` removed the banner, then its
+    // `channel_read` push cancelled it a second time - the shade, which lags a cancel, still showed it.
+    @Test
+    fun `a banner this process removed is not removed twice, though the shade still shows it`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "ch1", 1002, m1)
+        shade.drain()
+        assertTrue(marks.readOn(shade, "ch1", Read(1_000L, serverClock = true)))
+        // The cancel is queued, not applied: the shade still shows the banner.
+        assertEquals(1002, shade.read()?.notifId)
+        assertEquals(Withdrawal.NONE, marks.withdrawOn(shade, "ch1", keepPendingReply = false))
+        assertEquals(1, shade.events.count { it == "cancel 1002" })
+        // ...nor does a post rebuild on the stale copy: it starts a new thread.
+        marks.post(shade, "ch1", 1002, m2)
+        assertEquals(listOf(m2), marks.bannerOf("ch1") { shade.read() }?.messages)
+    }
+
+    @Test
+    fun `after every banner was removed at once the shade is never asked again`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.forgetAll()
+        assertNull(marks.bannerOf("g1") { fail("the shade is stale"); null })
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, shade = { fail("the shade is stale"); null }) {})
+        marks.post(shade, "g1", 1001, m1)
+        assertEquals(listOf(m1), marks.bannerOf("g1") { null }?.messages)
     }
 }

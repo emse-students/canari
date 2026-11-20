@@ -7,6 +7,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.throwableSite
 import java.util.UUID
 
@@ -111,7 +112,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                 messageId, groupId, protoB64, sentAt, silent = false, durable = true
             )
         )
-        Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${groupId.take(8)}")
+        Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${ConversationRef.of(groupId)}")
 
         // The server's receive time of THIS reply, as its POST answered it: the cache row is dated
         // by it, so the reply sits where the server placed it (chat.md, server order).
@@ -183,7 +184,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun sendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
         if (at <= 0L) {
-            Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${groupId.take(8)} - nothing announced")
+            Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${ConversationRef.of(groupId)} - nothing announced")
             return
         }
         CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at, serverAt)
@@ -196,7 +197,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         }
         val service = CanariFirebaseMessagingService()
         if (serverAt <= 0L) {
-            Log.w(TAG, "sendReadWatermark: no server time on the intent for group=${groupId.take(8)} - the mark is stated on the sender's clock alone")
+            Log.w(TAG, "sendReadWatermark: no server time on the intent for group=${ConversationRef.of(groupId)} - the mark is stated on the sender's clock alone")
         }
         val protoB64 = service.nativeBuildReadWatermarkProto(at, serverAt)
         if (protoB64.isEmpty()) {
@@ -213,7 +214,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             )
         )
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
-        Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${groupId.take(8)}")
+        Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${ConversationRef.of(groupId)}")
     }
 
     /**
@@ -254,7 +255,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun handleCallDecline(context: Context, intent: Intent, groupId: String) {
         val callId = intent.getStringExtra(CanariFirebaseMessagingService.EXTRA_CALL_ID) ?: ""
-        Log.d(TAG, "handleCallDecline: call=$callId group=${groupId.take(8)}")
+        Log.d(TAG, "handleCallDecline: call=$callId group=${ConversationRef.of(groupId)}")
         CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
         if (callId.isEmpty()) {
             Log.e(TAG, "handleCallDecline: no callId on the intent -> the caller is not told")

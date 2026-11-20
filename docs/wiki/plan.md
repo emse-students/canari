@@ -142,6 +142,7 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
+- [P2 - an inline reply sent with the app in front sits queued until the app is backgrounded](backlog.d/p2-an-inline-reply-sent-with-the-app-in-front-sits-queued-until-it-is-backgrounded.md)
 - [P2 - to verify: iOS, opening the app through the share notice re-showed a banner for an already delivered message (S17, 2026-11-20)](backlog.d/p2-ios-opening-the-app-through-the-share-notice-reshowed-a-banner-for-a-delivered-message.md)
 - [P2 - Voice notes are captured as a phone call (asked by the owner, 2026-11-20)](backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)
 
