@@ -510,7 +510,11 @@ describe('a sign-out during a login in progress', () => {
     await loginImpl(s.ctx, s.cb);
 
     expect(wipeDeviceToFactory).toHaveBeenCalled();
-    expect(s.cb.onLoginFailed).toHaveBeenCalledWith(expect.any(String), 'device_revoked');
+    expect(s.cb.onLoginFailed).toHaveBeenCalledWith(
+      expect.any(String),
+      'device_revoked',
+      undefined
+    );
     expect(logs(s.cb)).not.toContain('[INIT] Login stopped');
     expect(logs(s.cb)).not.toContain('wipe FAILED');
     expect(errors.mock.calls.flat().join(' ')).not.toContain('wipe failed');

@@ -203,6 +203,15 @@ export class HandoffService {
     } catch (e) {
       if (!(e instanceof HandoffAccessRefused)) throw e;
       const line = `[HANDOFF] refused class=${e.accessClass} aud=${site.id} user=${userId} (${e.detail})`;
+      if (e.accessClass === HandoffAccessClass.termsNotAccepted) {
+        // An expected, population-wide state after a terms version ships (the person's next MiConnect
+        // sign-in clears it): info, with its own code so the app can say the same.
+        this.logger.log(line);
+        throw this.refuse(
+          HandoffRefusal.termsNotAccepted,
+          'the current MiConnect terms are not accepted yet'
+        );
+      }
       if (e.unavailable) this.logger.error(line);
       else this.logger.warn(line);
       throw e.unavailable
@@ -217,6 +226,7 @@ export class HandoffService {
       case HandoffRefusal.notOffered:
         return new NotFoundException(body);
       case HandoffRefusal.accessRefused:
+      case HandoffRefusal.termsNotAccepted:
         return new ForbiddenException(body);
       case HandoffRefusal.miconnectUnavailable:
         return new ServiceUnavailableException(body);

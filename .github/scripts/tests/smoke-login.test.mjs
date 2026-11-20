@@ -40,7 +40,11 @@ const bad = (m) => {
 const check = (cond, m) => (cond ? ok(m) : bad(m));
 
 const PASSWORD = 'correct-horse-battery';
-const VERSION = '2026-10-16';
+// Read from the blueprint, never typed: a version bump must not leave this test on the old text.
+const VERSION = /get\("cgu_version"\) != "(\d{4}-\d{2}-\d{2})"/.exec(
+  readFileSync(new URL('../../../infrastructure/authentik/blueprints/45-consent.yaml', import.meta.url), 'utf8')
+)?.[1];
+if (!VERSION) throw new Error('45-consent.yaml no longer names the version in its policy');
 
 /** The prompt challenge `45-consent.yaml` builds, in the order the blueprint declares its fields. */
 const termsChallenge = () => ({

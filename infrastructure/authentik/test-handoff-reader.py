@@ -26,6 +26,10 @@ TOKEN = os.environ["MICONNECT_READER_TOKEN"]
 USERNAME = "miconnect-canari-handoff-reader"
 PROBE = "miconnect-reader-probe"
 HANDOFF_APPS = ("migallery", "sky", "cercle")
+# The terms-of-use flow the handoff providers authorize through, and the only bindings the mint recognises on it.
+CONSENT_FLOW = "miconnect-authorization"
+CONSENT_POLICY = "miconnect-consent-needed"
+CONSENT_STAGES = {"miconnect-consent-ask", "miconnect-consent-write"}
 
 
 def check(condition, message):
@@ -84,8 +88,27 @@ try:
             check(body["pagination"]["count"] == len(body["results"]), f"one page holds every stage binding of {slug}'s {kind}")
             targets = [flow["policybindingmodel_ptr_id"]] + [b["policybindingmodel_ptr_id"] for b in body["results"]]
             query = "&".join(f"target_in={t}" for t in targets)
-            counted = call("get", f"/api/v3/policies/bindings/?{query}&enabled=true")
-            check(counted.status_code == 200 and counted.json()["pagination"]["count"] == 0, f"nothing is bound on {slug}'s {kind} or its stages")
+            counted = call("get", f"/api/v3/policies/bindings/?{query}&enabled=true&page_size=100")
+            check(counted.status_code == 200, f"the reader lists the bindings on {slug}'s {kind} and its stages")
+            listed = counted.json()
+            if flow["slug"] == CONSENT_FLOW:
+                # Since the terms hold was lifted (2026-11-20) the providers authorize through the consent flow, whose
+                # two bindings the mint recognises by an ALLOWLIST (miconnect-reader.client.ts flowGate): exactly the
+                # policy `miconnect-consent-needed`, not negated, on the stage bindings of the prompt and the write.
+                # The reader must SEE the names the allowlist reads - a missing field would silently refuse every mint.
+                stage_names = {b["policybindingmodel_ptr_id"]: b["stage_obj"]["name"] for b in body["results"]}
+                check(set(stage_names.values()) == CONSENT_STAGES, f"{slug}'s {kind} is the consent flow, and the reader reads its stage names ({sorted(stage_names.values())})")
+                check(listed["pagination"]["count"] == len(listed["results"]) == 2, f"the consent flow carries exactly two bindings, all read ({listed['pagination']['count']})")
+                # Each consent stage binding is asked ALONE through the same `target_in` filter the client uses: a
+                # binding's own `target` field is not an id the client can compare (CI 2026-11-20), so the
+                # attribution is by query. Print what `target` is, so the next reader of a failure sees it.
+                print(f"  note target field of a consent binding: {listed['results'][0].get('target')!r}", flush=True)
+                for ptr, name in stage_names.items():
+                    one = call("get", f"/api/v3/policies/bindings/?target_in={ptr}&enabled=true&page_size=100").json()
+                    check(one["pagination"]["count"] == len(one["results"]) == 1, f"the consent stage binding {name} carries exactly one binding")
+                    check(one["results"][0]["policy_obj"]["name"] == CONSENT_POLICY and one["results"][0]["negate"] is False, f"on {name} it is the consent policy, not negated")
+            else:
+                check(listed["pagination"]["count"] == 0, f"nothing is bound on {slug}'s {kind} or its stages")
 
     other = call("get", "/api/v3/core/applications/canari/")
     check(other.status_code in (403, 404), f"the reader may NOT see another application (got {other.status_code})")
