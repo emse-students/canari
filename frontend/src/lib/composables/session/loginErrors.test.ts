@@ -119,11 +119,13 @@ describe('provesLocalStateExists - is this device new, which is a different ques
   });
 
   it('a PIN mismatch does NOT - the verifier is account-wide and says nothing about this disk', () => {
-    // THE WHOLE REASON THIS IS NOT `isRecoverableWithOldPin`. The two agree on one code and part on
-    // this one, and a caller that reused the first for the second would call a device with nothing
-    // on it "not a first setup" on a plain typo.
-    expect(isRecoverableWithOldPin('pin_mismatch')).toBe(true);
+    // A caller reading it as "this device holds a state" would call a device with nothing on it
+    // "not a first setup" on a plain typo.
     expect(provesLocalStateExists('pin_mismatch')).toBe(false);
+  });
+
+  it('a PIN mismatch offers no old-PIN recovery either - a typo is answered by retyping (2026-11-20)', () => {
+    expect(isRecoverableWithOldPin('pin_mismatch')).toBe(false);
   });
 
   it('a revoked device does NOT - that path WIPES the local state before it reports', () => {

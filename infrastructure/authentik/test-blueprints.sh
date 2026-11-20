@@ -133,17 +133,16 @@ if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -
 fi
 echo "a challenged code is redeemed with its verifier only, and a verifier is never ignored"
 
-# THE TERMS OF USE, DRIVEN - AND THE HOLD. 45-consent.yaml builds the flow on every instance; which
-# providers ask for it is declared in 50-providers.yaml (2026-11-18): dev and local, where the
-# pre-release apps and the harness sign in, while production stays held (user, 2026-10-17). The
-# driven test asserts that exact set, walks the page on a bound provider, and proves production's
-# provider signs in a person who never accepted without showing it (test-consent-flow.py).
+# THE TERMS OF USE, DRIVEN. 45-consent.yaml builds the flow on every instance; which providers ask
+# for it is declared in 50-providers.yaml: all eight since the hold on production was lifted
+# (2026-11-20). The driven test asserts that exact set, walks the page on a bound provider, and
+# proves production's provider stops a person who never accepted on it (test-consent-flow.py).
 echo "terms of use: driving the stage, and asserting which providers ask for it"
 if ! run_ak_shell "$worker" <"$here/test-consent-flow.py" 2>&1 | tee >(cat >&2) | grep -x 'CONSENT-OK' >/dev/null; then
   echo "::error::the terms-of-use stage did not behave, or a provider outside the declared set asks for it - read the assertion above"
   exit 1
 fi
-echo "the terms stage asks on dev and local only, once per version, and production is held"
+echo "the terms stage asks on every provider, once per version"
 
 # EVERY SAML SOURCE IS SIGNED AND GATED. A SAML source with no verification key pair verifies no
 # signature (authentik's ResponseProcessor.parse checks signatures only `if source.verification_kp`),

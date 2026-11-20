@@ -138,8 +138,9 @@ export type LoginErrorCode =
    * PIN accepted, on a phone whose data is sealed under a HARDWARE-HELD key (2026-10-22), and the
    * keystore PROVABLY no longer holds that key: the entry is empty, or holds another key than the one
    * the marker names. No PIN can open data sealed under a random key, so the old-PIN recovery is NOT
-   * offered; the local state exists, so the reset is. Accused, never an ordinary outcome: a keystore
-   * that loses its entry is the event the device readings are watching for.
+   * offered; once the server accepted the PIN the phone restarts as a new device by itself
+   * ({@link restartsAsNewDevice}, owner, 2026-11-20). Accused, never an ordinary outcome: the data
+   * travelled without its key (a phone transfer or a restore), which is the leak being counted.
    */
   | 'hardware_key_unavailable'
   /**
@@ -163,7 +164,15 @@ export type LoginErrorCode =
 export class LoginFailure extends LocalizedError {
   readonly code: LoginErrorCode;
 
-  constructor(code: LoginErrorCode, message: string) {
+  /**
+   * @param refusal the keystore's refusal behind a hardware-key code, carried to the one line that
+   *   accuses it (the shell's `[DEVICE_RESTART]`), which runs only once the PIN was accepted.
+   */
+  constructor(
+    code: LoginErrorCode,
+    message: string,
+    readonly refusal?: HardwareKeyRefusal
+  ) {
     super(message);
     this.name = 'LoginFailure';
     this.code = code;
@@ -223,21 +232,25 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
   return 'other';
 }
 
-/** True when the "PIN changed on another device" recovery flow can resolve this failure. */
+/**
+ * True when the "PIN changed on another device" recovery flow can resolve this failure: a PIN the
+ * server ACCEPTED met a local state that does not open with it. Not a plain `pin_mismatch` (owner's
+ * audit, 2026-11-20): a typo is answered by retyping, and the recovery asks for an old PIN AND the new
+ * one - a person holding the current PIN reaches it through `local_state_sealed_under_old_pin` anyway.
+ */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
   // Not a lost hardware-held key: no PIN derives it, so the recovery could only fail.
   if (code === 'hardware_key_unavailable') return false;
-  return code === 'pin_mismatch' || provesLocalStateExists(code);
+  return provesLocalStateExists(code);
 }
 
 /**
  * True when the failure itself PROVES this device already holds a local MLS state.
  *
  * **WHY A SECOND PREDICATE OVER THE SAME CODE.** `isRecoverableWithOldPin` answers "is there
- * something the old PIN could still do"; this answers "is this device new". They agree today on
- * one code and disagree on the other - a mismatch against the account verifier says nothing about
- * what is on disk - and a caller that reused the first for the second would be reading a column
- * written for another question ([durable-rules](../../../../../docs/wiki/durable-rules.md)).
+ * something the old PIN could still do"; this answers "is this device new". They disagree on the
+ * hardware-held key that is gone (a state exists, no PIN helps), and a caller that reused the first
+ * for the second would be reading a column written for another question ([durable-rules](../../../../../docs/wiki/durable-rules.md)).
  *
  * **WHAT IT IS FOR.** `PinModal`'s `isFirstSetup` is computed from a SERVER fact - no
  * `PinVerifier` row for this account - and it hides both remedies the modal can offer: the
@@ -323,9 +336,52 @@ export function withholdsResetForUnreadKey(code: LoginErrorCode | undefined): bo
 }
 
 /**
+ * True when a PIN the server ACCEPTED met data whose hardware-held key is PROVEN gone
+ * (`hardware_key_unavailable`: the keystore entry is empty, or holds another key). Nothing can ever
+ * open that data, so the phone restarts BY ITSELF as a new device of the account (owner,
+ * 2026-11-20): the local state is discarded and the same PIN is offered again - no error, no button.
+ * Never for `hardware_key_unreadable`, where the key may still exist.
+ */
+export function restartsAsNewDevice(code: LoginErrorCode | undefined): boolean {
+  return code === 'hardware_key_unavailable';
+}
+
+/**
+ * True when the gate offers, DIRECTLY and without "PIN oublie ?", to start this device afresh: the PIN
+ * was accepted and this device's saved state opens under no key it holds (`local_state_unopenable`).
+ * The old-PIN recovery stays beside it (a PIN changed elsewhere is one of the two causes); the
+ * restart discards this device's state only - the account's PIN and its other devices are untouched.
+ */
+export function offersDeviceRestart(code: LoginErrorCode | undefined): boolean {
+  return code === 'local_state_unopenable';
+}
+
+/** What the PIN gate currently knows, for {@link offersForgotPinReset}. */
+export interface GateFacts {
+  /** This install's state is proven to be another account's (`provesOtherAccountState`). */
+  otherAccountState: boolean;
+  /** The hardware-held key could not be read and may still exist (`withholdsResetForUnreadKey`). */
+  keyReadRefused: boolean;
+  /** The PIN was accepted and this device's state opens under no key (`offersDeviceRestart`). */
+  restartOffered: boolean;
+}
+
+/**
+ * Whether the gate offers the ACCOUNT-WIDE forgot-PIN reset (`POST /pin-reset`: the account's PIN
+ * and every device's footprint). Withheld over another account's state and over a key that may still
+ * exist, and - since 2026-11-20 - whenever the PIN was ACCEPTED and only this device's state is
+ * broken: the device-only restart is the remedy then, and a reset of the account's PIN would cost
+ * every other device for a fault that is this one's.
+ */
+export function offersForgotPinReset(facts: GateFacts): boolean {
+  return !facts.otherAccountState && !facts.keyReadRefused && !facts.restartOffered;
+}
+
+/**
  * The login failure for a hardware-held key the unlock could not use, decided by WHY: only a refusal
  * that proves the key gone (`absent`: the entry is empty; `mismatch`: it holds another key) is
- * `hardware_key_unavailable`, which says the messages are lost and offers the reset. Every other one
+ * `hardware_key_unavailable`, on which a PIN the server accepted restarts the phone as a new device
+ * ({@link restartsAsNewDevice}). Every other one
  * - an unreadable entry or marker, a marker that is not `hardware` - is `hardware_key_unreadable`:
  * try again, no reset.
  */
@@ -333,12 +389,18 @@ export function hardwareKeyLoginFailure(
   refusal: HardwareKeyRefusal,
   log: (msg: string) => void
 ): LoginFailure {
+  // NARRATED HERE, ACCUSED ONCE ELSEWHERE. This runs inside the PIN unlock's key derivation, BEFORE
+  // the server has said whether the PIN is right: a wrong PIN over a lost key must not leave an
+  // accusing line. The one ERROR of the event is the shell's `[DEVICE_RESTART]`, written once the
+  // PIN was accepted, with this refusal (`LoginFailure.refusal`).
   if (refusal === 'absent' || refusal === 'mismatch') {
-    log(`[AT_REST_KEY] ERROR: the hardware-held key is gone (${refusal}) - the reset is offered`);
-    return new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable());
+    log(
+      `[AT_REST_KEY] the hardware-held key is gone (${refusal}) - used only if the PIN is accepted`
+    );
+    return new LoginFailure('hardware_key_unavailable', m.auth_hardware_key_unavailable(), refusal);
   }
   log(
-    `[AT_REST_KEY] ERROR: the hardware-held key could not be read (${refusal}) - retry, no reset offered`
+    `[AT_REST_KEY] the hardware-held key could not be read (${refusal}) - retry, no reset offered`
   );
-  return new LoginFailure('hardware_key_unreadable', m.auth_hardware_key_unreadable());
+  return new LoginFailure('hardware_key_unreadable', m.auth_hardware_key_unreadable(), refusal);
 }

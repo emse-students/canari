@@ -18,7 +18,7 @@ earliest version, as a checklist.
 
 **P1 - security, or a user-facing path that is broken**
 
-- [P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
+- [P1 - The MiConnect terms stage reaches production with the next STABLE: the hold is lifted in code, the stable's apply and a production read remain (2026-10-16)](backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)
 - [P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)](backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)
 - [P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)
 - [P1 - the admission rule's fix-forward: a conversation may refuse an entry no member made only once nothing legitimate produces one](backlog.d/p1-the-admission-rule-fix-forward.md)
@@ -124,6 +124,7 @@ earliest version, as a checklist.
 - [ ] [the broadcaster's right-edge control column on both phones (owner, 2026-11-19)](backlog.d/reading-owed-the-broadcasters-control-column.md)
 - [ ] [the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)](backlog.d/live-replay-switch-readings-owed.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
+- [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 

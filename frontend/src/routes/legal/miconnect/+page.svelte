@@ -20,7 +20,7 @@
 <LegalDocument
   title={m.legal_miconnect_title()}
   subtitle={m.legal_miconnect_subtitle()}
-  updated="16/10/2026"
+  updated="20/11/2026"
   {sections}
 >
   <section id="objet">
@@ -86,9 +86,9 @@
     <h2>4. Qui les reçoit</h2>
     <p>
       Ces données sont transmises, à chaque connexion, aux services auxquels tu te connectes avec
-      MiConnect : Canari, Sky, MiGallery, Le Cercle et les archives des Mines. Chacun ne s'en sert
-      que pour te reconnaître et afficher ton profil, et publie ses propres conditions pour le reste
-      de ce qu'il fait.
+      MiConnect : Canari, Sky, MiGallery, Le Cercle, le wiki Mino et les archives des Mines. Chacun
+      ne s'en sert que pour te reconnaître et afficher ton profil, et publie ses propres conditions
+      pour le reste de ce qu'il fait.
     </p>
     <p>
       MiConnect fonctionne sur le serveur partagé de l'École, administré avec sa direction des

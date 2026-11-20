@@ -732,11 +732,13 @@ recreated BEFORE the merge (the applier refuses an unset `!Env`), then the GitHu
   `hashed_user_id` mode, so `uid` IS the OIDC `sub` Canari keyed the account by. Otherwise
   `identity_mismatch` (403).
 - **The flows are counted too.** An OIDC sign-in to a site walks through its provider's
-  authentication flow (`miconnect-auth`) and authorization flow
-  (`default-provider-authorization-implicit-consent`); a policy bound on either, or on one of their
-  stage bindings, would stop a person there, and a handoff skips both. So the mint counts the
-  enabled bindings on the application, both flows and every stage binding of them (`policy_bound`
-  if any), and refuses an authorization flow asking more than a signed-in user (`flow_restricted`).
+  authentication flow (`miconnect-auth`) and authorization flow (since 2026-11-20 the terms flow
+  `miconnect-authorization`, whose two stage bindings carry the policy `miconnect-consent-needed`);
+  a policy bound on either, or on one of their stage bindings, would stop a person there, and a
+  handoff skips both. So the mint counts the enabled bindings on the application, both flows and
+  every stage binding of them (`policy_bound` if any) - EXCEPT those two consent bindings, which it
+  recognises by an allowlist (policy name, stage names, not negated, on that flow only) and answers
+  from the person's `attributes.cgu_version` (`terms_not_accepted` unless it is the current text), and refuses an authorization flow asking more than a signed-in user (`flow_restricted`).
   The account gains global `view_flow` and `view_flowstagebinding`, global for the reason
   `view_policybinding` is. A provider naming no authentication flow (the brand default) is refused,
   never assumed open. Read on production 2026-11-11, read-only: 0 bindings on the three
