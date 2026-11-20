@@ -26,10 +26,10 @@ import java.util.concurrent.CountDownLatch
  */
 class ReadElsewhereMarksTest {
 
-    /** A message line as the builder stamps it: the sender's and server's instants, or none; own or not. */
-    private data class Msg(val sentAt: Long?, val serverAt: Long?, val own: Boolean = false)
+    /** A message line as the builder stamps it: the sender's and server's instants, or none; a pending reply or not. */
+    private data class Msg(val sentAt: Long?, val serverAt: Long?, val pendingReply: Boolean = false)
 
-    private fun marks() = ReadElsewhereMarks<Msg> { Line.of(it.own, it.sentAt, it.serverAt) }
+    private fun marks() = ReadElsewhereMarks<Msg> { Line.of(it.pendingReply, it.sentAt, it.serverAt) }
 
     /**
      * The system's notification list for one conversation: a `notify` or a `cancel` only QUEUES, as
@@ -179,7 +179,8 @@ class ReadElsewhereMarksTest {
         val marks = marks()
         val shade = AsyncShade()
         marks.post(shade, "g1", 1001, m1)
-        marks.forget("g1")
+        assertTrue(marks.forget("g1"))
+        assertFalse(marks.forget("g1"))
         marks.post(shade, "g1", 1001, m2)
         shade.drain()
         assertEquals(listOf(m2), shade.read()?.messages)
@@ -209,24 +210,36 @@ class ReadElsewhereMarksTest {
         assertTrue(marks.readOn(shade, "g1", Read(600L, serverClock = false)))
     }
 
-    // Round-4 minor 1 and round-5 minor 5: an unstamped line from someone else is never covered (a
-    // banner from the previous build), and only a line MARKED own is left out - never by its name.
+    // Round-4 minor 1: an unstamped line is never covered (a banner from the previous build).
+    // Round-6 item 5: nor is a PENDING REPLY - the banner is the only place that says "not sent yet".
     @Test
-    fun `only an explicitly own line is left out, an unstamped foreign line is never covered`() {
-        assertEquals(Line(0L, 0L), Line.of(own = false, sentAt = null, serverAt = null))
-        assertNull(Line.of(own = true, sentAt = null, serverAt = null))
-        assertEquals(Line(5L, 0L), Line.of(own = false, sentAt = 5L, serverAt = null))
+    fun `an unstamped line and a pending reply are never covered`() {
+        assertEquals(Line(0L, 0L), Line.of(pendingReply = false, sentAt = null, serverAt = null))
+        assertEquals(Line(0L, 0L), Line.of(pendingReply = true, sentAt = 5L, serverAt = 6L))
+        assertEquals(Line(5L, 0L), Line.of(pendingReply = false, sentAt = 5L, serverAt = null))
 
         val marks = marks()
         val legacy = Banner(1001, "messages", listOf(Msg(sentAt = null, serverAt = null)))
         assertFalse(marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { legacy }) {})
 
-        val ownOnly = Banner(1002, "messages", listOf(Msg(sentAt = null, serverAt = null, own = true)))
-        assertTrue(marks.recordThenCancel("g2", Read(1L, serverClock = true), shade = { ownOnly }) {})
+        // A read covering every peer line leaves a banner whose pending reply has not gone out.
+        val pending = Banner(1002, "messages", listOf(m1, Msg(null, null, pendingReply = true)))
+        assertFalse(marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = true), shade = { pending }) {})
+        assertFalse(marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = false), shade = { pending }) {})
+    }
 
-        // An own reply under an unread peer line keeps the banner: the peer line decides.
-        val mixed = Banner(1003, "messages", listOf(m2, Msg(null, null, own = true)))
-        assertFalse(marks.recordThenCancel("g3", Read(1_000L, serverClock = true), shade = { mixed }) {})
+    // Round-6 item 1: a swipe names the notification it removed; another notification of the same
+    // conversation (its reaction) must not forget the message banner's record.
+    @Test
+    fun `a forget naming another notification leaves the record`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "g1", 1001, m1)
+        assertFalse(marks.forget("g1", notifId = 4242))
+        assertEquals(listOf(m1), marks.bannerOf("g1") { null }?.messages)
+        assertTrue(marks.forget("g1", notifId = 1001))
+        assertNull(marks.bannerOf("g1") { null })
+        assertFalse(marks.forget("g1", notifId = 1001))
     }
 
     @Test

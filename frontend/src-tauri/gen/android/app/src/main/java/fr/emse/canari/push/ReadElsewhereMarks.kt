@@ -26,13 +26,24 @@ package fr.emse.canari.push
  * its channel, its messages - and both the next post and a read start from that record; the shade
  * ([bannerOf]'s fallback) answers only when this process has posted nothing for the conversation (a
  * fresh process, whose banner an earlier one left). The record goes with the banner: removed by a
- * read ([recordThenCancel]), any other cancel or the user's own dismissal ([forget], [forgetAll]).
+ * read ([recordThenCancel]), any other cancel or the user's own dismissal ([forget], [forgetAll]) -
+ * each under this lock with the cancel it follows, so no post falls between the two.
  *
  * ONE LOCK, [lock], held by a post from the moment it reads the banner it re-injects to the moment
  * it records what it posted ([showMessageNotification] takes it around that whole section), and by a
  * read across record, weigh and cancel. Whichever takes it first, the other sees its effect. It is
- * reentrant (the methods below take it too). Nothing inside it takes another of the app's locks; a
- * post may already hold the generic-banner lock when it takes this one, never the reverse.
+ * reentrant (the methods below take it too).
+ *
+ * WHAT RUNS UNDER IT, so its ordering stays checkable. Inside a post's section the builder takes
+ * three LEAF locks, none of which ever takes this one: `ALERTED_LOCK` (the announced-message set,
+ * read only - the write that commits it runs after the lock is released), the ring sequencer's
+ * lock (`callHoldsSound` counts the native rings), and the monitor of `ConversationShortcuts.push`
+ * (which commits its shortcut record - a durability the sign-out relies on - and pushes the
+ * shortcut). Its blocking work is binder calls (the shade read, `notify`, `cancel`, the shortcut
+ * push), that shortcut record's commit, and building the notification from bitmaps loaded BEFORE
+ * the lock - no fetch or decode of a picture runs under it. The WebSocket post enters it holding the generic-banner lock;
+ * nothing under it takes that lock, and no path takes them the other way round. A read does only
+ * the shade read and the `cancel` under it.
  *
  * IN MEMORY, ON PURPOSE. The races it closes are between a post still being built, a read this
  * process was told about, and the system's own queue; all of them die with the process.
@@ -45,7 +56,7 @@ package fr.emse.canari.push
  * says what each message counts as. Compiled by the JVM test project too, so nothing here may import
  * Android - see [PushRecoveryLadder] for why that is the guard.
  */
-class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line?) {
+class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
     /** One conversation's mark on each clock; 0 = not known on that clock. */
     data class Mark(val stamped: Long, val server: Long)
@@ -61,14 +72,14 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line?) {
     data class Line(val sentAt: Long, val serverAt: Long) {
         companion object {
             /**
-             * The line a message of the notification counts as: none for this account's OWN line
-             * (marked so explicitly when it was posted - a reply drawn in the shade is not news), the
-             * stamps when it carries them, and an UNCOVERABLE line when it does not - a banner from a
-             * build that did not stamp its lines is not proven read by any mark, so it is kept.
+             * The line a message of the notification counts as: its stamps when it carries them, and
+             * an UNCOVERABLE line otherwise - for a PENDING REPLY (this account's own send that has
+             * not gone out: no read on another device says anything about it, and the banner is the
+             * only place that says "not sent yet"), and for a banner from a build that did not stamp
+             * its lines (not proven read by any mark, so it is kept).
              */
-            fun of(own: Boolean, sentAt: Long?, serverAt: Long?): Line? = when {
-                own -> null
-                sentAt == null -> Line(0L, 0L)
+            fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?): Line = when {
+                pendingReply || sentAt == null -> Line(0L, 0L)
                 else -> Line(sentAt, serverAt ?: 0L)
             }
         }
@@ -105,8 +116,8 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line?) {
      * Records [read], then weighs the conversation's banner ([bannerOf]) and runs [cancel] with
      * ITS id only when the mark covers EVERY line - all in ONE critical section, so no post can fall
      * between them. A line the mark does not cover - a message newer than the read, or one comparable
-     * on neither clock - keeps the banner: it is a message this account has not read. A banner whose
-     * every line is this account's own is covered.
+     * on neither clock, or a pending reply - keeps the banner: it is a message this account has not
+     * read, or a send that has not gone out.
      *
      * @return whether [cancel] ran.
      */
@@ -119,7 +130,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line?) {
         recordLocked(conversationId, read)
         val banner = posted[conversationId] ?: shade() ?: return@synchronized false
         val lines = banner.messages.map(lineOf)
-        if (lines.all { it == null || coversLocked(conversationId, it.sentAt, it.serverAt) }) {
+        if (lines.all { coversLocked(conversationId, it.sentAt, it.serverAt) }) {
             cancel(banner.notifId)
             posted.remove(conversationId)
             true
@@ -158,9 +169,18 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line?) {
         synchronized(lock) { posted[conversationId] = banner }
     }
 
-    /** Drops what this process posted for [conversationId]: its banner was removed another way. */
-    fun forget(conversationId: String) {
-        synchronized(lock) { posted.remove(conversationId) }
+    /**
+     * Drops what this process posted for [conversationId]: its banner was removed another way. With
+     * [notifId], only when the record is THAT notification's - a swipe of another notification of the
+     * same conversation (its reaction) leaves the message banner's record alone.
+     *
+     * @return whether a record was dropped.
+     */
+    fun forget(conversationId: String, notifId: Int? = null): Boolean = synchronized(lock) {
+        val held = posted[conversationId] ?: return@synchronized false
+        if (notifId != null && held.notifId != notifId) return@synchronized false
+        posted.remove(conversationId)
+        true
     }
 
     /** Drops every record: every message banner was removed at once (the app came to the front). */

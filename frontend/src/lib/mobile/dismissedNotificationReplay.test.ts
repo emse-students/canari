@@ -190,7 +190,9 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
 describe('the builder records what it posted and keeps the stamps current', () => {
   it('builds on the record under its lock and hands the posted banner to it', () => {
     const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
-    const lock = fn.indexOf('return synchronized(READ_ELSEWHERE.lock) {');
+    const lock = fn.indexOf(
+      'val (postedStamp, postedAlertedKey) = synchronized(READ_ELSEWHERE.lock) {'
+    );
     expect(lock).toBeGreaterThan(-1);
     // The banner a post re-injects comes from the record (the shade only when there is none)...
     const held = fn.indexOf('READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }');
@@ -200,17 +202,28 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(fn).toContain('ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList())');
   });
 
-  it("marks this account's own line explicitly, never by its name", () => {
-    expect(source).toContain('extras.putBoolean(LINE_OWN, true)');
+  it('marks the pending reply explicitly, never by its name, so no read covers it', () => {
+    expect(source).toContain('extras.putBoolean(LINE_PENDING_REPLY, true)');
     const fn = source.slice(source.indexOf('private fun lineOfMessage('));
-    expect(fn.slice(0, 700)).toContain('stamps.getBoolean(LINE_OWN, false)');
+    expect(fn.slice(0, 700)).toContain('stamps.getBoolean(LINE_PENDING_REPLY, false)');
     expect(fn.slice(0, 700)).not.toContain('.name');
   });
 
-  it("forgets the record on the user's swipe and when every banner is cleared", () => {
-    expect(source).toContain('.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))');
+  it("forgets the record on the user's swipe of THAT banner, and when every banner is cleared", () => {
+    // A message banner only, naming its id: a reaction's swipe cannot forget the message banner.
+    expect(source).toContain(
+      'if (!isReactionNotif) notifBuilder.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))'
+    );
+    expect(source).toContain('putExtra(EXTRA_BANNER_NOTIF_ID, notifId)');
+    expect(source).toContain('if (READ_ELSEWHERE.forget(groupId, notifId)) {');
+    // The cancels and the forget are one step under the lock a post holds.
     const all = source.slice(source.indexOf('fun cancelAllMessageNotifications('));
-    expect(all.slice(0, 3000)).toContain('READ_ELSEWHERE.forgetAll()');
+    const lock = all.indexOf('synchronized(READ_ELSEWHERE.lock) {');
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(all.indexOf('manager.cancel(sbn.id)'));
+    expect(all.indexOf('READ_ELSEWHERE.forgetAll()')).toBeLessThan(
+      all.indexOf('CallRingPlayer.rings')
+    );
   });
 
   it('restamps a re-injected line when the second trigger knows the server instant', () => {
@@ -222,10 +235,22 @@ describe('the builder records what it posted and keeps the stamps current', () =
     );
   });
 
-  it('forgets the record when the banner is removed another way', () => {
+  it('forgets the record when the banner is removed another way, in one step with the cancel', () => {
     const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
-    expect(fn.slice(0, fn.indexOf('READ_ELSEWHERE.recordThenCancel('))).toContain(
-      'READ_ELSEWHERE.forget(groupId)'
+    const plain = fn.slice(0, fn.indexOf('READ_ELSEWHERE.recordThenCancel('));
+    const lock = plain.indexOf('synchronized(READ_ELSEWHERE.lock) {');
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(plain.indexOf('manager.cancel(notifId)'));
+    expect(plain.indexOf('manager.cancel(notifId)')).toBeLessThan(
+      plain.indexOf('READ_ELSEWHERE.forget(groupId)')
     );
+  });
+
+  it('commits the announced-message record and rebuilds the summary after the lock', () => {
+    const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
+    const end = fn.indexOf('stamp to alertedKey');
+    expect(end).toBeGreaterThan(-1);
+    expect(fn.indexOf('postedAlertedKey?.let { rememberAlerted(it) }')).toBeGreaterThan(end);
+    expect(fn.indexOf('refreshBadgeSummary(this, justPosted')).toBeGreaterThan(end);
   });
 });

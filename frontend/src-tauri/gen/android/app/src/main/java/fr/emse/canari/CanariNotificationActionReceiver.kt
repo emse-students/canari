@@ -51,7 +51,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
                         handleCallDecline(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_BANNER_DISMISSED ->
-                        CanariFirebaseMessagingService.forgetPostedBanner(groupId)
+                        CanariFirebaseMessagingService.forgetPostedBanner(
+                            groupId,
+                            intent.getIntExtra(CanariFirebaseMessagingService.EXTRA_BANNER_NOTIF_ID, -1),
+                        )
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {

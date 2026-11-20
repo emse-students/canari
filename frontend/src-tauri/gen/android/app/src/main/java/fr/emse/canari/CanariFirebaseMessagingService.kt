@@ -304,13 +304,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val LINE_SERVER_AT = "canari.line.serverAt"
 
         /**
-         * Set on a line this ACCOUNT wrote (the pending reply drawn in the shade): it is not news,
-         * so no read is weighed against it. Explicit, because a peer may carry the same name.
+         * Set on the PENDING REPLY drawn in the shade (this account's inline send that has not gone
+         * out): no read on another device covers it, so a banner holding one stays - it is the only
+         * place that says "not sent yet". Explicit, never inferred from a name a peer may share.
          */
-        const val LINE_OWN = "canari.line.own"
+        const val LINE_PENDING_REPLY = "canari.line.pendingReply"
 
         /** The user swiped a conversation notification away ([bannerDismissedIntent]). */
         const val ACTION_BANNER_DISMISSED = "fr.emse.canari.ACTION_BANNER_DISMISSED"
+
+        /** The id of the notification the user swiped away, on [ACTION_BANNER_DISMISSED]. */
+        const val EXTRA_BANNER_NOTIF_ID = "bannerNotifId"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
@@ -506,19 +510,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 val manager =
                     context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                for (sbn in manager.activeNotifications) {
-                    val channelId =
-                        if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
-                    // Only touch message notifications (leave social/forms alone; the mentions
-                    // and reactions channels are message tiers so they clear on open too). Ring
-                    // notifications are also cleared: once the app is open the in-app CallOverlay
-                    // rings.
-                    if (channelId == null || channelId == CHANNEL_MESSAGES ||
-                        channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
-                        channelId == CHANNEL_REACTIONS
-                    ) {
-                        manager.cancel(sbn.id)
+                // THE CANCELS AND THE FORGET ARE ONE STEP, under the lock a post holds from the banner it
+                // builds on to its record: a post between them would be forgotten while it stands, or
+                // rebuild on a banner already gone. The next post starts a new thread.
+                synchronized(READ_ELSEWHERE.lock) {
+                    for (sbn in manager.activeNotifications) {
+                        val channelId =
+                            if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
+                        // Only touch message notifications (leave social/forms alone; the mentions
+                        // and reactions channels are message tiers so they clear on open too). Ring
+                        // notifications are also cleared: once the app is open the in-app CallOverlay
+                        // rings.
+                        if (channelId == null || channelId == CHANNEL_MESSAGES ||
+                            channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
+                            channelId == CHANNEL_REACTIONS
+                        ) {
+                            manager.cancel(sbn.id)
+                        }
                     }
+                    READ_ELSEWHERE.forgetAll()
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
                 // and so does each ring's call screen, which must never outlive its ring. Under the
@@ -530,8 +540,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
-                // And what this process recorded as posted: the next post starts a new thread.
-                READ_ELSEWHERE.forgetAll()
                 // The one "could not be loaded" notice of the wake-up push: the app is open, so the
                 // queue it asked to drain is draining. Named, not left to the channel sweep above,
                 // which an API below 26 does not filter by channel and a channel move would miss.
@@ -745,12 +753,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 // Attributed to US, like the in-flight reply Android was drawing, so the thread
                 // reads as the user's own pending message and not as a new incoming one - and
-                // marked so ([LINE_OWN]): no read is weighed against it.
+                // marked so ([LINE_PENDING_REPLY]): no read elsewhere covers it, so the banner that
+                // says "not sent yet" stays.
                 val pending = NotificationCompat.MessagingStyle.Message(
                     res.getString(R.string.notif_reply_pending, replyText),
                     System.currentTimeMillis(),
                     previous.user
-                ).apply { extras.putBoolean(LINE_OWN, true) }
+                ).apply { extras.putBoolean(LINE_PENDING_REPLY, true) }
                 val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
                     existing.channelId ?: CHANNEL_MESSAGES
                 } else {
@@ -918,9 +927,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             var notifId = -1
             val cancelled = if (read == null) {
-                notifId = prefs.getInt(groupId, -1)
-                if (notifId != -1) manager.cancel(notifId)
-                READ_ELSEWHERE.forget(groupId)
+                // The cancel and the forget are ONE step: a post between them would be forgotten
+                // while it stands, or rebuild on a banner already gone.
+                synchronized(READ_ELSEWHERE.lock) {
+                    notifId = prefs.getInt(groupId, -1)
+                    if (notifId != -1) manager.cancel(notifId)
+                    READ_ELSEWHERE.forget(groupId)
+                }
                 notifId != -1
             } else {
                 // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner
@@ -993,14 +1006,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /**
          * What a line of a conversation notification counts as for a read
-         * ([ReadElsewhereMarks.Line.of]): this account's own line when it says so ([LINE_OWN] - never
-         * a name, which a peer can share), its stamps ([LINE_SENT_AT], [LINE_SERVER_AT]) otherwise, and
-         * an uncoverable line when it carries none.
+         * ([ReadElsewhereMarks.Line.of]): its stamps ([LINE_SENT_AT], [LINE_SERVER_AT]), or an
+         * uncoverable line for a pending reply ([LINE_PENDING_REPLY] - never inferred from a name)
+         * and for a line that carries no stamp.
          */
-        private fun lineOfMessage(line: NotificationCompat.MessagingStyle.Message): ReadElsewhereMarks.Line? {
+        private fun lineOfMessage(line: NotificationCompat.MessagingStyle.Message): ReadElsewhereMarks.Line {
             val stamps = line.extras
             return ReadElsewhereMarks.Line.of(
-                own = stamps.getBoolean(LINE_OWN, false),
+                pendingReply = stamps.getBoolean(LINE_PENDING_REPLY, false),
                 sentAt = if (stamps.containsKey(LINE_SENT_AT)) stamps.getLong(LINE_SENT_AT) else null,
                 serverAt = if (stamps.containsKey(LINE_SERVER_AT)) stamps.getLong(LINE_SERVER_AT) else null,
             )
@@ -1017,14 +1030,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Intent(context, CanariNotificationActionReceiver::class.java).apply {
                     action = ACTION_BANNER_DISMISSED
                     putExtra(EXTRA_GROUP_ID, groupId)
+                    putExtra(EXTRA_BANNER_NOTIF_ID, notifId)
                 },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
 
-        /** The user dismissed [groupId]'s banner: forget what this process recorded as posted. */
-        internal fun forgetPostedBanner(groupId: String) {
-            READ_ELSEWHERE.forget(groupId)
-            Log.d(TAG, "forgetPostedBanner: dismissed by the user - group=${groupId.take(8)}")
+        /**
+         * The user dismissed [groupId]'s banner [notifId]: forget what this process recorded as
+         * posted for it. A process cold-started by the swipe holds no record, and says nothing.
+         */
+        internal fun forgetPostedBanner(groupId: String, notifId: Int) {
+            if (READ_ELSEWHERE.forget(groupId, notifId)) {
+                Log.d(TAG, "forgetPostedBanner: dismissed by the user - group=${groupId.take(8)} id=$notifId")
+            }
         }
 
         /**
@@ -3142,7 +3160,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // still show the banner from BEFORE it, and two posts back to back would drop the first
             // one's line. The shade answers only when this process has posted nothing here (a fresh
             // process). A reaction has its own notification and no record: it reads the shade.
-            return synchronized(READ_ELSEWHERE.lock) {
+            val (postedStamp, postedAlertedKey) = synchronized(READ_ELSEWHERE.lock) {
                 val held = if (channel == CHANNEL_REACTIONS) {
                     shadeBannerOf(manager, notifId)
                 } else {
@@ -3289,9 +3307,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         else NotificationCompat.PRIORITY_HIGH
                     )
                     .setContentIntent(pendingIntent)
-                    // THE USER'S SWIPE FORGETS WHAT WAS POSTED ([ReadElsewhereMarks.forget]): the next post
-                    // builds on that record, and must not bring back the lines the user dismissed.
-                    .setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))
                     // ONE IDENTITY, NOT TWO. A conversation-shaped post (group shape: a group, or a DM
                     // naming each author) is drawn by the platform from its SHORTCUT: the shortcut's icon
                     // is the header circle, with the app's small icon as the corner badge. Without one the
@@ -3353,6 +3368,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
                 }
 
+                // THE USER'S SWIPE FORGETS WHAT WAS POSTED ([ReadElsewhereMarks.forget]): the next post
+                // builds on that record, and must not bring back the lines the user dismissed. A
+                // message banner only - a reaction has no record - and naming its id, so a swipe of
+                // another notification of the conversation cannot forget this one's.
+                if (!isReactionNotif) notifBuilder.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))
                 val notif = notifBuilder.build()
 
                 // EVERY SIDE EFFECT ON THE SHADE, AS ONE STEP: the channel switch's removal of the
@@ -3378,21 +3398,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     return 0L
                 }
                 Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
-
-                // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
-                // announcement that never reached the shade - the record would then suppress the retry.
-                alertedKey?.let { rememberAlerted(it) }
-
-                // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
-                // conversation's notification is active. IT IS NAMED, not looked up: the post above has
-                // not necessarily landed, and a count that missed it cancelled the summary - which took
-                // this very notification with it. A reaction passes nothing: it is not in the bundle.
-                refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
-
-                // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
-                // has on the line it must replace - see [supersedes].
-                stamp
+                stamp to alertedKey
             }
+
+            // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
+            // announcement that never reached the shade - the record would then suppress the retry.
+            // Outside the lock: its `commit()` (durable on purpose) must not hold up a read.
+            postedAlertedKey?.let { rememberAlerted(it) }
+
+            // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
+            // conversation's notification is active. IT IS NAMED, not looked up: the post above has
+            // not necessarily landed, and a count that missed it cancelled the summary - which took
+            // this very notification with it. A reaction passes nothing: it is not in the bundle.
+            refreshBadgeSummary(this, justPosted = if (channel == CHANNEL_REACTIONS) 0 else notifId)
+
+            // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
+            // has on the line it must replace - see [supersedes].
+            return postedStamp
         }
 
     }

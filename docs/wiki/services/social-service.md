@@ -855,22 +855,32 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
 - **One lock from the banner a post builds on to the record of what it posted.**
   `showMessageNotification` holds `READ_ELSEWHERE.lock` from the moment it reads the banner it
   re-injects to the end of its post; a read holds it across record, weigh and cancel. The lock is
-  reentrant, takes no other app lock inside it, and may be taken while the generic-banner lock is
-  held (the WebSocket path), never the reverse.
+  reentrant. Under a post it takes three LEAF locks, none of which ever takes it: `ALERTED_LOCK`
+  (read only - `rememberAlerted`'s durable `commit()` and `refreshBadgeSummary` run after the lock
+  is released), the ring sequencer's lock (`callHoldsSound`) and the `ConversationShortcuts.push`
+  monitor (whose shortcut record is committed on purpose: the sign-out relies on it). Its blocking
+  work is binder calls (the shade read, `notify`, `cancel`, the shortcut push), that commit, and
+  building the notification from bitmaps loaded BEFORE the lock - no fetch under it. It may be
+  taken while the generic-banner lock is held (the WebSocket path), never the reverse.
 - **The cancel takes the id of the banner it weighed**, whichever source supplied it - the record,
   or the shade looked up by id inside the lock. (Round 5 found the id resolved only on the shade's
   branch, so the usual case cancelled id -1.)
-- **The record goes with the banner**: a cancel by a read drops it, every other cancel `forget`s it,
-  `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the user's swipe
-  does too, through the notification's delete intent (`ACTION_BANNER_DISMISSED` -> `forgetPostedBanner`)
-  - otherwise the next post would bring back the lines the user dismissed. A post whose dismissal
+- **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
+  between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
+  `forget`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
+  user's swipe does too, through the delete intent of a MESSAGE banner (`ACTION_BANNER_DISMISSED` ->
+  `forgetPostedBanner`) - otherwise the next post would bring back the lines the user dismissed.
+  The intent names the notification's id and the record is forgotten only when it is that banner's,
+  so a swipe of the conversation's reaction notification leaves it; a swipe that cold-starts a
+  process with no record logs nothing (`forget` says whether it dropped one). A post whose dismissal
   broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
 - **The pending reply** (`repostReplyPending`) builds on the same record and records what it posts,
   so its bound (`takeLast`) is the record's too.
-- **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): this account's own line
-  only when MARKED so (`LINE_OWN`, set on the pending reply - never by its name, which a peer may
-  share), its stamps otherwise, and an uncoverable line when it carries none (a banner from a build
-  that did not stamp).
+- **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
+  UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
+  name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
+  the banner is the only place that says "not sent yet") and for a line that carries no stamp (a
+  banner from a build that did not stamp).
 
 The WebView's row used to decide
 (`unreadCount === 0`), and it can lag behind the shade: the WebView is frozen, the account reads on
