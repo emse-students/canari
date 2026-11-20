@@ -49,6 +49,7 @@
     runDeviceRestart,
     runPinReset,
     serverPinSaltFingerprint,
+    pinServerFetch,
     settleUnsettledPinReset,
   } from '$lib/composables/session/pinReset';
   import { MlsResetRefusedError } from '$lib/utils/hex';
@@ -2566,7 +2567,8 @@
           // The reset deletes the account's salt; one asked before it can only be stale.
           forgetPinSaltAhead('PIN reset', appendLog);
           const token = await getToken();
-          const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
+          // Under the request deadline: a reset that never answers is "no answer", settled by the salt.
+          const res = await pinServerFetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ userId: uid }),

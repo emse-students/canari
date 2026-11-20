@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveRefusalError } from './api';
 import { LivePosterOpenError } from './livePosterCrypto';
 import { forgetLivePostersExcept, LIVE_POSTER_MEMO_MAX, loadLivePoster } from './livePosterView';
+import { LIVE_POSTER_MAX_CONCURRENT } from './constants';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 const LIVE = { id: 'l1', poster: { name: 'p1', ageMs: 3000 }, posterKey: 'ab'.repeat(32) };
@@ -133,5 +134,134 @@ describe('loadLivePoster', () => {
     expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 1);
     await loadLivePoster(live(1), undefined, d);
     expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 2);
+  });
+});
+
+describe('loadLivePoster - the width of the fetches (S14)', () => {
+  const lives = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `w${i}`,
+      poster: { name: `n${i}`, ageMs: 1 },
+      posterKey: 'ab'.repeat(32),
+    }));
+
+  it('never has more than LIVE_POSTER_MAX_CONCURRENT fetches out, and drains all of them', async () => {
+    forgetLivePostersExcept([]);
+    let out = 0;
+    let peak = 0;
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      out++;
+      peak = Math.max(peak, out);
+      await new Promise<void>((r) => gates.push(r));
+      out--;
+      return new ArrayBuffer(2);
+    });
+    const loads = lives(10).map((l) => loadLivePoster(l, undefined, d));
+    await Promise.resolve();
+    // ten asked, three out: the rest wait for a slot, no clock involved
+    expect(d.fetch).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    const outcomes = await Promise.all(loads);
+    expect(outcomes.every((o) => o.kind === 'shown')).toBe(true);
+    expect(d.fetch).toHaveBeenCalledTimes(10);
+    expect(peak).toBe(3);
+  });
+
+  it('frees the slot when a fetch fails, and an abort while waiting never fetches', async () => {
+    forgetLivePostersExcept([]);
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      await new Promise<void>((r) => gates.push(r));
+      throw refusal(429, 'rate-limited');
+    });
+    const [a, b, c, e, f] = lives(5);
+    const running = [a, b, c].map((l) => loadLivePoster(l, undefined, d));
+    const ctl = new AbortController();
+    const waitingAborted = loadLivePoster(e, ctl.signal, d);
+    const waitingKept = loadLivePoster(f, undefined, d);
+    await Promise.resolve();
+    ctl.abort();
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    expect((await waitingAborted).kind).toBe('aborted');
+    expect((await waitingKept).kind).toBe('rate-limited');
+    expect((await Promise.all(running)).map((o) => o.kind)).toEqual(Array(3).fill('rate-limited'));
+    expect(d.fetch).toHaveBeenCalledTimes(4);
+    // every slot is back: a new load starts at once
+    const again = deps(async () => new ArrayBuffer(2));
+    await expect(loadLivePoster(lives(1)[0], undefined, again)).resolves.toMatchObject({
+      kind: 'shown',
+    });
+  });
+
+  it('refuses at once a load whose signal is already aborted, even with every slot taken', async () => {
+    forgetLivePostersExcept([]);
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      await new Promise<void>((r) => gates.push(r));
+      return new ArrayBuffer(2);
+    });
+    const all = lives(LIVE_POSTER_MAX_CONCURRENT + 2);
+    const running = all
+      .slice(0, LIVE_POSTER_MAX_CONCURRENT)
+      .map((l) => loadLivePoster(l, undefined, d));
+    await Promise.resolve();
+    const ctl = new AbortController();
+    ctl.abort();
+    // no slot is free, and no `abort` event will ever fire: it must not queue
+    await expect(loadLivePoster(all[LIVE_POSTER_MAX_CONCURRENT], ctl.signal, d)).resolves.toEqual({
+      kind: 'aborted',
+    });
+    expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MAX_CONCURRENT);
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    await Promise.all(running);
+    // nothing leaked: a new load starts at once
+    const again = deps(async () => new ArrayBuffer(2));
+    await expect(loadLivePoster(lives(1)[0], undefined, again)).resolves.toMatchObject({
+      kind: 'shown',
+    });
+  });
+
+  it('hands a freed slot to the longest waiter, never to a newcomer', async () => {
+    forgetLivePostersExcept([]);
+    const order: string[] = [];
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      await new Promise<void>((r) => gates.push(r));
+      return new ArrayBuffer(2);
+    });
+    const orderedFetch = vi.fn(async (id: string) => {
+      order.push(id);
+      await new Promise<void>((r) => gates.push(r));
+      return new ArrayBuffer(2);
+    });
+    const tracked = { ...d, fetch: orderedFetch };
+    const all = lives(LIVE_POSTER_MAX_CONCURRENT + 2);
+    const loads = all.map((l) => loadLivePoster(l, undefined, tracked));
+    await Promise.resolve();
+    expect(order).toEqual(all.slice(0, LIVE_POSTER_MAX_CONCURRENT).map((l) => l.id));
+    // one slot frees; a newcomer arrives in the same turn, behind two waiters
+    gates.shift()!();
+    const newcomer = { ...lives(1)[0], id: 'newcomer', poster: { name: 'nn', ageMs: 1 } };
+    loads.push(loadLivePoster(newcomer, undefined, tracked));
+    for (let i = 0; i < 80; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    await Promise.all(loads);
+    expect(order.slice(LIVE_POSTER_MAX_CONCURRENT)).toEqual([
+      all[LIVE_POSTER_MAX_CONCURRENT].id,
+      all[LIVE_POSTER_MAX_CONCURRENT + 1].id,
+      'newcomer',
+    ]);
   });
 });

@@ -431,6 +431,16 @@ export const LIVE_POSTER_TYPICAL_BYTES = 48 * 1024;
  */
 export const LIVE_POSTER_EGRESS_PER_ADDRESS_BPS = 8_000_000;
 
+/**
+ * THE MOST POSTER FETCHES A CLIENT HAS OUT AT ONCE (S14, 2026-11-20): one under nginx's
+ * `limit_conn lives_posters_conn` (4) on the poster location, because nginx may count a request
+ * until it finishes, slightly after the client read the body. The client MIRRORS it
+ * (`frontend/src/lib/live/constants.ts`); `live-segments-route.test.mjs` asserts it is under the
+ * `limit_conn`, `replayAvailability.test.ts` that the client copy agrees. The limit is per ADDRESS,
+ * so this fixes one reader's pattern only (lives.md, "What the preview costs").
+ */
+export const LIVE_POSTER_MAX_CONCURRENT = 3;
+
 /** The numbers as the API serves them. */
 export function liveLimits(): {
   segmentMaxBytes: number;
