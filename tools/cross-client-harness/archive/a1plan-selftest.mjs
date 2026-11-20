@@ -86,6 +86,17 @@ ok("dev's own host is not mistaken for the legacy production name", bundleTarget
 ok('the identity provider is not production\'s application', bundleTargetVerdict([chunk('a.js', `"${DEV}" "https://auth.canari-emse.fr/x"`)], DEV).ok);
 ok('a production origin in a LOCAL build is refused as well', !bundleTargetVerdict([chunk('a.js', `"${LOCAL}" "https://canari-emse.fr"`)], LOCAL).ok);
 
+// ── a CSP allowlist lists hosts, it is not a request target (2026-11-20: every dev build failed on it) ──
+const WEB_CSP = `n=["self","blob:","wss://canari.emse.fr","wss://canari-emse.fr","wss://www.canari-emse.fr","wss://dev.canari-emse.fr","https://static.klipy.com"]`;
+const APP_CSP = `m={"connect-src":"'self' ipc: http://ipc.localhost blob: https://canari.emse.fr wss://canari.emse.fr https://canari-emse.fr wss://canari-emse.fr https://dev.canari-emse.fr wss://dev.canari-emse.fr"}`;
+const allow = bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('csp.js', `${WEB_CSP};${APP_CSP}`)], DEV);
+ok('the web connect-src array and the app connect-src string are allowlists, not targets', allow.ok && allow.production.length === 0 && allow.allowlists.length === 7);
+ok('a production origin BESIDE the allowlist, as a lone literal, is still refused', !bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('csp.js', `${WEB_CSP};f("wss://canari.emse.fr")`)], DEV).ok);
+ok('an array of origins with no keyword or scheme (API bases) is still refused', !bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('b.js', 'n=["https://canari.emse.fr","https://static.klipy.com"]')], DEV).ok);
+ok('an array with a non-source neighbour is still refused', !bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('b.js', 'n=["self","https://canari.emse.fr","/api/x"]')], DEV).ok);
+ok('a listed origin with a path is still refused', !bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('b.js', 'n=["self","blob:","https://canari.emse.fr/api"]')], DEV).ok);
+ok('a baked VITE-style lone literal is still refused', !bundleTargetVerdict([chunk('a.js', `x="${DEV}"`), chunk('b.js', 'VITE_API_URL:"https://canari.emse.fr"')], DEV).ok);
+
 // ── the ONE allowance: publicAppUrl.ts's link constants, as whole literals (2026-10-24, Dypz5d_W.js) ──
 const SOURCE = readFileSync(join(REPO, 'frontend', LINK_MODULE), 'utf8');
 const MODULE = linkModuleOf(SOURCE);
