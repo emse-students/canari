@@ -34,15 +34,16 @@ describe('LydiaPaymentsNotifier', () => {
     expect(LYDIA_PAYMENTS_PAUSED_TYPE).toBe(CONTRACT.notificationTypes.paused);
   });
 
-  // The gate is a deliberate pull request, not a forgotten constant: this fails the day it flips,
-  // and that pull request must say the floor covers Lydia enrolment lot 2 on both estates.
-  it('ships switched off, until minClientVersion covers the release carrying lot 2', () => {
-    expect(LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED).toBe(false);
-    expect(make().service.enabled()).toBe(false);
+  // The kill switch is a deliberate pull request, not a forgotten constant: it flipped on with the
+  // 1.7.0 floor (lot 2 shipped in v1.5.3), and turning it off again must change this too.
+  it('ships switched on, the 1.7.0 floor covering the release carrying lot 2', () => {
+    expect(LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED).toBe(true);
+    expect(make().service.enabled()).toBe(true);
   });
 
-  it('writes nothing and pushes nothing while switched off', async () => {
+  it('writes nothing and pushes nothing while the kill switch is off', async () => {
     const { service, notifications, push } = make();
+    jest.spyOn(service, 'enabled').mockReturnValue(false);
     await expect(service.tell(asso, 'active', holders)).resolves.toBe(0);
     await flush();
     expect(notifications.createNotifications).not.toHaveBeenCalled();
