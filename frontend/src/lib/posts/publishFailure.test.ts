@@ -140,4 +140,9 @@ describe("publishFailureMessage - the member's daily upload bound", () => {
     );
     expect(overDailyLimitSentence(new MediaUploadError(413, 'x'))).toBeNull();
   });
+
+  it('says a post not published yet takes no comment, from the typed 409 code', () => {
+    const refusal = new ApiRefusalError(409, 'COMMENT_POST_NOT_PUBLISHED', 'server prose');
+    expect(publishFailureMessage(refusal, FALLBACK)).toBe(m.post_comment_not_published_refusal());
+  });
 });

@@ -37,7 +37,10 @@ import {
   INSTITUTION_REACH_OUTSIDE_AUDIENCE,
   INSTITUTION_REACH_REQUIRED,
 } from '$lib/posts/institutionReach';
-import { COMMENT_REMOVED_BY_MODERATION } from '$lib/posts/commentRemovedRefusal';
+import {
+  COMMENT_POST_NOT_PUBLISHED,
+  COMMENT_REMOVED_BY_MODERATION,
+} from '$lib/posts/commentRemovedRefusal';
 import { MutedError } from '$lib/moderation/muteCheck';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { localizedMessage } from '$lib/utils/localizedError';
@@ -114,6 +117,10 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
   // A reply to (or a like of) a comment moderation removed while this copy still showed it live.
   if (error instanceof ApiRefusalError && error.code === COMMENT_REMOVED_BY_MODERATION) {
     return m.post_comment_removed_by_moderation_refusal();
+  }
+  // A comment on a post a reschedule moved back into the future after this copy was read.
+  if (error instanceof ApiRefusalError && error.code === COMMENT_POST_NOT_PUBLISHED) {
+    return m.post_comment_not_published_refusal();
   }
   if (isVideoPrepareError(error)) return videoPrepareFailureMessage(error) ?? fallback;
   // A file the media service refused because the member reached the daily bound: its own sentence,

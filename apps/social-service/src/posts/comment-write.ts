@@ -1,6 +1,8 @@
 import { Logger, NotFoundException } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import type { StoredComment } from './comment-identity';
+import { refuseUnpublishedPost } from './comment-publication';
+import { PUBLISHED_SQL } from './publication-time';
 
 const logger = new Logger('CommentWrite');
 
@@ -28,22 +30,26 @@ export interface CommentsWrite<T> {
  * @param manager The entity manager to open the transaction on (any service's).
  * @param write Decides from the locked comments; may await (the rights of the writer are asked of
  *   the rows it sees under the lock). Throwing rolls the transaction back.
+ * @param opts.requirePublished Refuse (typed 409) a post not published yet, decided in the SAME locked
+ *   read on the database clock, so a reschedule committed while the writer waited is seen.
  * @throws NotFoundException when the post is gone.
  */
 export async function writeComments<T>(
   manager: EntityManager,
   postId: string,
-  write: (comments: StoredComment[]) => Promise<CommentsWrite<T>> | CommentsWrite<T>
+  write: (comments: StoredComment[]) => Promise<CommentsWrite<T>> | CommentsWrite<T>,
+  opts: { requirePublished?: boolean } = {}
 ): Promise<T> {
   return manager.transaction(async (m) => {
-    const rows: { comments: StoredComment[] | null }[] = await m.query(
-      `SELECT comments FROM posts WHERE id = $1 FOR UPDATE`,
+    const rows: { comments: StoredComment[] | null; published?: boolean }[] = await m.query(
+      `SELECT comments, ${PUBLISHED_SQL} AS published FROM posts WHERE id = $1 FOR UPDATE`,
       [postId]
     );
     if (rows.length === 0) {
       logger.debug(`writeComments ${postId.slice(0, 8)}: no post`);
       throw new NotFoundException('Post not found');
     }
+    if (opts.requirePublished && rows[0].published === false) refuseUnpublishedPost(postId);
     const { next, result } = await write(rows[0].comments ?? []);
     if (next) {
       await m.query(`UPDATE posts SET comments = $2::jsonb WHERE id = $1`, [

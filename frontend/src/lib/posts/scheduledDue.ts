@@ -49,3 +49,11 @@ export function applyScheduledEdit<T extends DueAt & { id: string }>(
   const next = [...rest, edited].sort((a, b) => dueTime(a) - dueTime(b));
   return { posts: next, published: false };
 }
+
+/**
+ * Whether ONE post is still waiting for its scheduled time - what a card asks, whatever page drew
+ * it, so a scheduled post opened by deep link is drawn (and gated) like one in the strip.
+ */
+export function isStillScheduled(post: DueAt, now: number): boolean {
+  return dueTime(post) > now;
+}
