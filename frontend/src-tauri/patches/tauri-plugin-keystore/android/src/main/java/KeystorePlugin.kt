@@ -28,6 +28,11 @@ private const val DEFAULT_UNLOCK_TITLE = "Déverrouiller Canari"
 private const val DEFAULT_UNLOCK_SUBTITLE = "Confirmez votre identité pour continuer"
 private const val DEFAULT_CANCEL = "Annuler"
 
+/// The rejection code for "the Keystore holds the alias, and no wrapped key could be read beside it"
+/// - read by `keystore_bridge::unattended_read_outcome`, never by a message. Kept in step with
+/// `KEY_NOT_WRAPPED` there.
+private const val KEY_NOT_WRAPPED = "KEY_NOT_WRAPPED"
+
 @TauriPlugin
 class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     /// Request/response classes for the key-bytes API.
@@ -191,7 +196,7 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                 return
             }
             is StoredEntry.Unproven -> {
-                invoke.reject("unreadable: ${state.why}")
+                invoke.reject("unreadable: ${state.why}", KEY_NOT_WRAPPED)
                 return
             }
             is StoredEntry.Present -> state
@@ -335,7 +340,11 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
     /// files (SharedPreferences included) travel, the Keystore never does.
     ///
     /// The other half alone proves nothing: a SharedPreferences file that cannot be parsed loads as
-    /// an EMPTY map, so "no wrapped key" while the Keystore still holds the alias is `Unproven`.
+    /// an EMPTY map, so "no wrapped key" while the Keystore still holds the alias is `Unproven` - a
+    /// TYPED rejection ([KEY_NOT_WRAPPED]). It is also what a crash, a kill or a full disk leaves
+    /// between `storeKeyBytes`'s alias creation and its SharedPreferences commit, so the Rust side
+    /// reads it as "the entry does not hold its key" for a WRITER (a migrating marker reverted, a
+    /// re-key started over) and as unreadable for the hardware-held READ (never a restart).
     private fun storedEntryState(alias: String): StoredEntry {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val aliasPresent = keyStore.containsAlias(alias)

@@ -828,6 +828,36 @@ opened, so it is `absent` too (it used to land on a decryption failure, `unreada
 with the reset withheld). `containsAlias` is the Keystore's own answer, not a parse; a Keystore that
 cannot be asked rejects. No gate runs the plugin's Kotlin; this is owed the phone reading below.
 
+**"Alias held, no wrapped key" is a TYPED rejection, `KEY_NOT_WRAPPED`** (round 3 of the review).
+It is also exactly what a crash, a kill or a full disk leaves between `storeKeyBytes`'s alias creation
+and its SharedPreferences commit, during a re-key's `prepare`. The plugin rejects it with the code
+`KEY_NOT_WRAPPED` (`invoke.reject(message, code)`), `keystore_bridge::unattended_read_outcome` maps
+that CODE - never the message - to `EntryReadError::NotWrapped`, and each reader keeps its own meaning:
+
+| Reader | `NotWrapped` means | Why |
+| --- | --- | --- |
+| `settle_scheme`, marker `migrating` | the entry does not hold its key: the marker reverts to `pin-derived` | rows move only after the key reads back, so nothing moved; read as unreadable, the phone stayed on `hardware_key_unreadable` with every reset withheld, locked for good |
+| `prepare` (a re-key) | the entry does not hold its key: a new key, written | the same crash state; refusing it locked the re-key out |
+| the guarded write (`run_guarded_store`, `KeepIfHeld`) | the entry does not hold this key: the write completes | the write the crash cut |
+| `read_hardware_key`, marker `hardware` | `Unreadable`: "try again", no restart | the wrapping key is still held, so nothing proves the data key lost |
+
+Every other rejection stays `EntryReadError::Failed`: unreadable everywhere, nothing written over it.
+Tests: `migrating_over_a_wrapping_key_without_its_wrapped_key_is_reverted`,
+`a_re_key_over_a_wrapping_key_without_its_wrapped_key_starts_over`,
+`a_re_key_over_an_unreadable_entry_is_refused`,
+`a_hardware_marker_over_a_wrapping_key_without_its_wrapped_key_is_unreadable` (`at_rest_key.rs`);
+`the_not_wrapped_code_is_its_own_answer_and_only_the_code_says_it`,
+`a_guarded_entry_holding_no_wrapped_key_takes_its_key` (`keystore_bridge.rs`).
+
+**The case this leaves stuck, said plainly.** A `hardware` marker over SharedPreferences that are
+genuinely corrupted (the alias held, the wrapped key unparseable) reads `Unreadable` on every login:
+the gate says "try again", forever, and offers no reset, because nothing on the phone can tell that
+file from one a retry would read. What the person can do is clear the app's data (Android settings,
+Storage, Clear data) and sign in again: the phone then enrols as a new device, exactly as the automatic
+restart would, and its history can come back from the account's other devices and from other members.
+No measurement shows this state on a real phone; it is the price of never erasing over a key that may
+still exist (principle 2: the essential is never lost).
+
 **Its guards.** Never on `hardware_key_unreadable` (the key may still exist: "try again", no reset,
 `withholdsResetForUnreadKey`). Never over another account's state (`device_holds_other_account`,
 `decideAutomaticRestart` -> `withheld_other_account`, and the second lock on the act itself). Only
