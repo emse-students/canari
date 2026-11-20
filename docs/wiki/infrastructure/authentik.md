@@ -1181,11 +1181,30 @@ collection of name and first name, as one required tick, for new AND existing ac
 > `-mino-wiki`, `-sky`), so the next stable's `apply-blueprints.sh apply` makes production ask: **a
 > person sees the terms page ONCE, at their next MiConnect authorization, whichever service starts
 > it, and never again for that version.** The lift came after the web reading (2026-11-17), the
-> iPhone half (S9) and the Mi 9T half (S15), in the app, signed in. **Rollback:** revert the pull
-> request (the next stable's apply writes the implicit-consent flow back), or at once, in an
-> `ak shell`, set a provider's `authorization_flow` to `default-provider-authorization-implicit-consent`;
-> the flow and stages may stay, inert. The failure is open: a person who cannot be asked is not
-> blocked from a service the flow does not run for (an impersonated session skips both stages).
+> iPhone half (S9) and the Mi 9T half (S15), in the app, signed in. **The notice names every service
+> and the version moved to `2026-11-20`** when the wiki Mino was added to it (it was missing from the
+> list), so the six accounts that accepted `2026-10-16` are asked once more.
+> **Rollback, and who may take it:** merge a revert of the pull request - the next stable's apply
+> then writes the implicit-consent flow back. A hand rollback in an `ak shell` (set a provider's
+> `authorization_flow` to `default-provider-authorization-implicit-consent`) is an identity-provider
+> WRITE, so during the owner's absence it needs the owner's explicit yes (the standing authority covers
+> restarting production or rolling it back to the last good release, not this write), **and the next
+> stable's apply overwrites it unless the revert is merged first.** The flow and stages may stay, inert.
+> **Which failure is open and which is closed.** OPEN: if the policy `miconnect-consent-needed`
+> ERRORS, authentik skips the stage and the person is let through without the page; the only trace is
+> a `policy_exception` event (execution logging is OFF on both consent policies since 2026-11-20, which
+> keeps errors and drops the per-evaluation noise), so a broken policy is found in those events, not by a
+> user. CLOSED: if `miconnect-consent-validate-accept` or the user-write stage fails, the person is stuck
+> on the page and no code is issued; that shows as the user's failed sign-in and, for the write, in the
+> flow's `error` events. An impersonated session skips both stages by design.
+> **The handoff mint follows the same text** (decided 2026-11-20 by the lead, reversible): core-service's
+> gate recognises, by an ALLOWLIST, exactly the two bindings of `miconnect-consent-needed` on the
+> consent flow's stage bindings (`miconnect-consent-ask`, `miconnect-consent-write`), and for those
+> mints only a person whose `attributes.cgu_version` is the current version (`CONSENT_VERSION`, the
+> fifth place `check-consent-version.sh` pins); anything else bound still refuses `policy_bound`, and a
+> person on an older text is refused `terms_not_accepted` until they authorize once through MiConnect.
+> Without it, binding migallery, sky and cercle to the flow refused every handoff mint
+> ([sign-in handoff](../backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)).
 > **The set is asserted twice:** `.github/scripts/tests/held-blueprints.test.sh` reads the providers
 > naming the flow out of the blueprint (no Docker); `test-blueprints.sh` runs `test-consent-flow.py`
 > on a built instance (fresh AND upgraded from main), which asserts the exact set (`BOUND`) and that
@@ -1207,8 +1226,9 @@ collection of name and first name, as one required tick, for new AND existing ac
   the stored version differs from the current one - so each version is asked once, for all services.
 - **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
   `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
-  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py`.
-  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the four
+  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py` and
+  `CONSENT_VERSION` in core-service's `miconnect-reader.client.ts`.
+  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the five
   disagree.
 - **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
   password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and

@@ -7,7 +7,7 @@ import {
   MiconnectHandoffAccess,
   type HandoffAccessClassCode,
 } from './handoff-access';
-import { MiconnectReaderClient } from './miconnect-reader.client';
+import { CONSENT_VERSION, MiconnectReaderClient } from './miconnect-reader.client';
 
 /**
  * F3-BOUND, against a MOCKED MiConnect (its real API is proven by
@@ -21,7 +21,7 @@ const TOKEN = 'reader-token-under-test';
 const UUID = '0b6c1c52-3d7c-4a3e-9d8a-2f1e7c9a0b11';
 
 interface World {
-  users: { pk: number; is_active: boolean; uid?: string }[];
+  users: { pk: number; is_active: boolean; uid?: string; attributes?: Record<string, unknown> }[];
   /** Enabled bindings on the application itself. */
   bindings: number;
   /** Enabled bindings per binding target other than the application (a flow's or a stage's pbm). */
@@ -31,6 +31,15 @@ interface World {
   /** The provider's flows; a null one is a provider that names none. */
   providerFlows?: { authentication_flow: string | null; authorization_flow: string | null };
   flags: Record<string, unknown>;
+  /**
+   * The authorization flow IS the terms-of-use flow (slug `miconnect-authorization`): its stage
+   * bindings (pbm, stage name) and the enabled bindings on them or on the flow (target pbm, policy
+   * name, negate).
+   */
+  consentFlow?: {
+    stages: { pbm: string; stage: string }[];
+    bindings: { target: string; policy: string; negate?: boolean }[];
+  };
   status?: Partial<Record<'users' | 'app' | 'bindings' | 'settings' | 'flows' | 'stages', number>>;
   down?: boolean;
 }
@@ -73,24 +82,49 @@ function fakeFetch(world: World) {
       const authentication =
         flow === AUTHZ ? (world.flowAuth ?? 'require_authenticated') : 'require_unauthenticated';
       return reply(pick('flows') ?? 200, {
-        results: [{ pk: flow, policybindingmodel_ptr_id: flowPbm(flow), authentication }],
+        results: [
+          {
+            pk: flow,
+            policybindingmodel_ptr_id: flowPbm(flow),
+            authentication,
+            slug: world.consentFlow && flow === AUTHZ ? 'miconnect-authorization' : 'login',
+          },
+        ],
       });
     }
     if (path === '/api/v3/flows/bindings/') {
       const flow = query.get('target') ?? '';
+      if (world.consentFlow && flow === AUTHZ) {
+        return reply(pick('stages') ?? 200, {
+          pagination: { count: world.consentFlow.stages.length },
+          results: world.consentFlow.stages.map((s) => ({
+            pk: `${s.pbm}-pk`,
+            policybindingmodel_ptr_id: s.pbm,
+            stage_obj: { name: s.stage },
+          })),
+        });
+      }
       return reply(pick('stages') ?? 200, {
         pagination: { count: 1 },
         results: [{ pk: `${flow}-stage`, policybindingmodel_ptr_id: stagePbm(flow) }],
       });
     }
     if (path === '/api/v3/policies/bindings/') {
-      const count = query
-        .getAll('target_in')
-        .reduce(
+      const wanted = query.getAll('target_in');
+      const consent = (world.consentFlow?.bindings ?? []).filter((b) => wanted.includes(b.target));
+      const count =
+        wanted.reduce(
           (n, t) => n + (t === 'app-pbm-uuid' ? world.bindings : (world.flowBindings?.[t] ?? 0)),
           0
-        );
-      return reply(pick('bindings') ?? 200, { pagination: { count }, results: [] });
+        ) + consent.length;
+      return reply(pick('bindings') ?? 200, {
+        pagination: { count },
+        results: consent.map((b) => ({
+          target: b.target,
+          negate: b.negate ?? false,
+          policy_obj: { name: b.policy },
+        })),
+      });
     }
     if (path === '/api/v3/admin/settings/') {
       return reply(pick('settings') ?? 200, { flags: world.flags });
@@ -181,6 +215,95 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
     expect(targets.flatMap((q) => q.getAll('target_in')).sort()).toEqual(
       ['app-pbm-uuid', flowPbm(AUTHN), flowPbm(AUTHZ), stagePbm(AUTHN), stagePbm(AUTHZ)].sort()
     );
+  });
+
+  describe('the terms-of-use flow is the one binding the mint recognises', () => {
+    const CONSENT_POLICY = 'miconnect-consent-needed';
+    const consentFlow = (
+      bindings: { target: string; policy: string; negate?: boolean }[] = [
+        { target: 'pbm-ask', policy: CONSENT_POLICY },
+        { target: 'pbm-write', policy: CONSENT_POLICY },
+      ]
+    ): NonNullable<World['consentFlow']> => ({
+      stages: [
+        { pbm: 'pbm-ask', stage: 'miconnect-consent-ask' },
+        { pbm: 'pbm-write', stage: 'miconnect-consent-write' },
+      ],
+      bindings,
+    });
+    const accepted = (version: string | null) => [
+      { pk: 7, is_active: true, attributes: version ? { cgu_version: version } : {} },
+    ];
+
+    it('lets a person who accepted the current text through, reading the bindings by name', async () => {
+      const { access, calls } = build({
+        ...OPEN_WORLD,
+        consentFlow: consentFlow(),
+        users: accepted(CONSENT_VERSION),
+      });
+      await expect(access.assertMayEnter('user-a', 'migallery')).resolves.toBeUndefined();
+      const list = calls.filter(
+        (c) => c.url.includes('/policies/bindings/') && c.url.includes('page_size')
+      );
+      expect(list).toHaveLength(1);
+    });
+
+    it.each<[string, string | null]>([
+      ['nothing', null],
+      ['an older text', '2026-10-16'],
+    ])('refuses a person who accepted %s: terms_not_accepted', async (_label, version) => {
+      const { access } = build({
+        ...OPEN_WORLD,
+        consentFlow: consentFlow(),
+        users: accepted(version),
+      });
+      const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
+      expect(e.accessClass).toBe(HandoffAccessClass.termsNotAccepted);
+      expect(e.unavailable).toBe(false);
+    });
+
+    it.each<[string, NonNullable<World['consentFlow']>]>([
+      [
+        'another policy bound beside the consent ones',
+        consentFlow([
+          { target: 'pbm-ask', policy: CONSENT_POLICY },
+          { target: 'pbm-write', policy: CONSENT_POLICY },
+          { target: 'pbm-write', policy: 'a-group-check' },
+        ]),
+      ],
+      [
+        'the consent policy negated',
+        consentFlow([{ target: 'pbm-ask', policy: CONSENT_POLICY, negate: true }]),
+      ],
+      [
+        'the consent policy on the flow itself, not on a stage',
+        consentFlow([{ target: flowPbm(AUTHZ), policy: CONSENT_POLICY }]),
+      ],
+      [
+        'the consent policy on a stage that is not one of the two',
+        {
+          stages: [{ pbm: 'pbm-other', stage: 'a-stage-someone-added' }],
+          bindings: [{ target: 'pbm-other', policy: CONSENT_POLICY }],
+        },
+      ],
+    ])('still refuses %s: policy_bound', async (_label, flow) => {
+      const { access } = build({
+        ...OPEN_WORLD,
+        consentFlow: flow,
+        users: accepted(CONSENT_VERSION),
+      });
+      const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
+      expect(e.accessClass).toBe(HandoffAccessClass.policyBound);
+    });
+
+    it('does not read the bindings by name on a flow that is not the consent flow', async () => {
+      const { access, calls } = build({ ...OPEN_WORLD, flowBindings: { [flowPbm(AUTHZ)]: 1 } });
+      const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
+      expect(e.accessClass).toBe(HandoffAccessClass.policyBound);
+      expect(
+        calls.filter((c) => c.url.includes('page_size') && c.url.includes('policies'))
+      ).toHaveLength(0);
+    });
   });
 
   it('lets the flag set explicitly true through as well', async () => {
@@ -324,7 +447,7 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       expect(
         lines.filter((l) =>
           l.includes(
-            'bindings=0 flow_bindings=0 flow_auth=require_authenticated default_access=unset'
+            'bindings=0 flow_bindings=0 consent_bindings=0 flow_auth=require_authenticated default_access=unset'
           )
         )
       ).toHaveLength(3);

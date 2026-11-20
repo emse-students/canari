@@ -32,7 +32,29 @@ export interface MiconnectAccount {
    * read 2026-11-11), so it is the Canari account's own id when the uuid link is right.
    */
   uid: string;
+  /**
+   * `attributes.cgu_version`: the terms-of-use text the person accepted (written by the consent
+   * stage, infrastructure/authentik/blueprints/45-consent.yaml), `null` when they never accepted.
+   */
+  cguVersion: string | null;
 }
+
+/**
+ * THE TERMS-OF-USE VERSION, the fifth place of the version `check-consent-version.sh` pins: the
+ * handoff mint passes a person through the consent flow's bindings only when they accepted THIS
+ * text, which is what the flow itself would have asked of them.
+ */
+export const CONSENT_VERSION = '2026-11-20';
+
+/** The consent flow's slug, and the only bindings the handoff gate vouches for on it. */
+export const CONSENT_FLOW_SLUG = 'miconnect-authorization';
+/** The policy bound on the consent flow's two stage bindings (true = the page is shown). */
+export const CONSENT_POLICY_NAME = 'miconnect-consent-needed';
+/** The consent flow's two stage bindings that carry that policy: the prompt and the user write. */
+export const CONSENT_STAGE_NAMES: ReadonlySet<string> = new Set([
+  'miconnect-consent-ask',
+  'miconnect-consent-write',
+]);
 
 /** The authorization-flow `authentication` modes that ask nothing beyond a signed-in user. */
 export const OPEN_FLOW_AUTHENTICATION: ReadonlySet<string> = new Set([
@@ -52,6 +74,13 @@ export interface MiconnectApplicationAccess {
    * skip if it minted past it.
    */
   flowBindings: number;
+  /**
+   * Enabled bindings those flows carry that are EXACTLY the consent bindings (policy
+   * {@link CONSENT_POLICY_NAME}, not negated, on a stage binding of {@link CONSENT_FLOW_SLUG} whose
+   * stage is one of {@link CONSENT_STAGE_NAMES}). They are NOT in `flowBindings`: the person's own
+   * `cguVersion` answers them, so a mint through such a flow needs it to be current.
+   */
+  consentBindings: number;
   /** The authorization flow's `authentication` requirement (`require_authenticated`, ...). */
   authorizationFlowAuthentication: string;
   /** The flag, `null` when the tenant never set it (authentik then applies its default, true). */
@@ -78,9 +107,14 @@ export class MiconnectReaderClient {
 
   /** The MiConnect user with this uuid; `null` when MiConnect knows no such user. */
   async findAccount(uuid: string): Promise<MiconnectAccount | null> {
-    const body = await this.get<{ results?: { pk: number; is_active: boolean; uid: string }[] }>(
-      `/api/v3/core/users/?uuid=${encodeURIComponent(uuid)}`
-    );
+    const body = await this.get<{
+      results?: {
+        pk: number;
+        is_active: boolean;
+        uid: string;
+        attributes?: Record<string, unknown>;
+      }[];
+    }>(`/api/v3/core/users/?uuid=${encodeURIComponent(uuid)}`);
     const results = body.results ?? [];
     if (results.length === 0) return null;
     if (results.length > 1) {
@@ -89,7 +123,13 @@ export class MiconnectReaderClient {
     if (typeof results[0].uid !== 'string' || !results[0].uid) {
       throw new MiconnectReadError('refused', 'the user answer carries no uid');
     }
-    return { pk: results[0].pk, isActive: results[0].is_active === true, uid: results[0].uid };
+    const accepted = (results[0].attributes ?? {}).cgu_version;
+    return {
+      pk: results[0].pk,
+      isActive: results[0].is_active === true,
+      uid: results[0].uid,
+      cguVersion: typeof accepted === 'string' ? accepted : null,
+    };
   }
 
   /** The inputs of `application`'s access decision (its slug at MiConnect). */
@@ -120,21 +160,28 @@ export class MiconnectReaderClient {
     return {
       enabledBindings: appBindings,
       flowBindings: authz.bindings + authn.bindings,
+      consentBindings: authz.consent + authn.consent,
       authorizationFlowAuthentication: authz.authentication,
       defaultAccessFlag: typeof flag === 'boolean' ? flag : null,
     };
   }
 
-  /** A flow's own enabled bindings plus those on each of its stage bindings, and its requirement. */
-  private async flowGate(flowUuid: string): Promise<{ bindings: number; authentication: string }> {
+  /**
+   * A flow's own enabled bindings plus those on each of its stage bindings, and its requirement.
+   * `bindings` EXCLUDES the consent bindings ({@link MiconnectApplicationAccess.consentBindings}),
+   * which are recognised, by an ALLOWLIST, on the consent flow alone.
+   */
+  private async flowGate(
+    flowUuid: string
+  ): Promise<{ bindings: number; consent: number; authentication: string }> {
     const id = encodeURIComponent(flowUuid);
     const [flows, stages] = await Promise.all([
       this.get<{
-        results?: { policybindingmodel_ptr_id?: string; authentication?: string }[];
+        results?: { policybindingmodel_ptr_id?: string; authentication?: string; slug?: string }[];
       }>(`/api/v3/flows/instances/?flow_uuid=${id}`),
       this.get<{
         pagination?: { count?: number };
-        results?: { policybindingmodel_ptr_id?: string }[];
+        results?: { policybindingmodel_ptr_id?: string; stage_obj?: { name?: string } }[];
       }>(`/api/v3/flows/bindings/?target=${id}&page_size=${STAGE_PAGE}`),
     ]);
     const flow = flows.results ?? [];
@@ -153,8 +200,40 @@ export class MiconnectReaderClient {
         `flow ${flowUuid.slice(0, 8)}: its stage bindings were not all read`
       );
     }
-    const bindings = await this.countBindings([own, ...stageTargets]);
-    return { bindings, authentication: requirement };
+    const total = await this.countBindings([own, ...stageTargets]);
+    if (flow[0].slug !== CONSENT_FLOW_SLUG || total === 0) {
+      return { bindings: total, consent: 0, authentication: requirement };
+    }
+    // The consent flow: of its bindings, only the allowlisted ones are the person's own to answer.
+    const consentStages = new Set(
+      (stages.results ?? [])
+        .filter((s) => CONSENT_STAGE_NAMES.has(s.stage_obj?.name ?? ''))
+        .map((s) => s.policybindingmodel_ptr_id ?? '')
+    );
+    const listed = await this.listBindings([own, ...stageTargets]);
+    const consent = listed.filter(
+      (b) =>
+        consentStages.has(b.target ?? '') &&
+        b.policy_obj?.name === CONSENT_POLICY_NAME &&
+        b.negate === false
+    ).length;
+    return { bindings: total - consent, consent, authentication: requirement };
+  }
+
+  /** The enabled bindings on these targets, with their policy's name - every one, or a refusal. */
+  private async listBindings(
+    targets: string[]
+  ): Promise<{ target?: string; negate?: boolean; policy_obj?: { name?: string } }[]> {
+    const query = targets.map((t) => `target_in=${encodeURIComponent(t)}`).join('&');
+    const answer = await this.get<{
+      pagination?: { count?: number };
+      results?: { target?: string; negate?: boolean; policy_obj?: { name?: string } }[];
+    }>(`/api/v3/policies/bindings/?${query}&enabled=true&page_size=${STAGE_PAGE}`);
+    const results = answer.results ?? [];
+    if (answer.pagination?.count !== results.length) {
+      throw new MiconnectReadError('refused', 'the consent flow bindings were not all read');
+    }
+    return results;
   }
 
   /** The enabled policy bindings on any of these binding targets (their `pbm_uuid`). */

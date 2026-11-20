@@ -40,7 +40,7 @@ from authentik.providers.oauth2.models import OAuth2Provider, RedirectURIType
 from authentik.tenants.models import Tenant
 
 SLUG = "miconnect-authorization"
-VERSION = "2026-10-16"
+VERSION = "2026-11-20"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
