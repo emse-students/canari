@@ -202,6 +202,53 @@ export function linkChunkOf(chunks, hosts) {
   return found[0];
 }
 
+/** One CSP source expression of a `connect-src` list: a keyword, a bare scheme, or a bare origin (no path, no query). */
+const CSP_SOURCE = /^(?:'?self'?|'none'|[a-z][a-z0-9+.-]*:|[a-z][a-z0-9+.-]*:\/\/[a-z0-9.-]+(?::\d+)?)$/i;
+/** What makes a list a POLICY and not a list of hosts: a keyword or a bare scheme, which no request base ever is. */
+const CSP_ANCHOR = /^(?:'?self'?|'none'|[a-z][a-z0-9+.-]*:)$/i;
+const STRING_LITERAL = String.raw`(?:"[^"\\]*"|'[^'\\]*'|\`[^\`\\$]*\`)`;
+const LITERAL_ARRAY = new RegExp(String.raw`^\[\s*${STRING_LITERAL}(?:\s*,\s*${STRING_LITERAL})+\s*\]$`);
+const isSourceList = (items) => items.length >= 2 && items.every((i) => CSP_SOURCE.test(i)) && items.some((i) => CSP_ANCHOR.test(i));
+
+/**
+ * Whether the origin at `[start, end)` is a MEMBER OF A CSP SOURCE LIST - an allowlist of hosts the
+ * page MAY talk to, not a request target. Decided by the SHAPE of the list around it, never by which
+ * string it is:
+ *
+ * - it is a whole string literal that is an element of an array literal of at least two string
+ *   literals, ALL of them CSP source expressions (`cspDirectives.js`'s `connect-src` array); or
+ * - it is a whitespace-separated token of a string literal of at least two tokens, ALL of them CSP
+ *   source expressions (`tauri.conf.json`'s `connect-src` string, bundled as JSON).
+ *
+ * In both, at least one member must be a keyword (`'self'`) or a bare scheme (`blob:`): a list of
+ * origins alone could be a set of API bases and stays production. A path, a template hole or a
+ * non-source neighbour fails closed. The `VITE_*` values are unaffected: `buildEnvVerdict` checks
+ * them at their source, and a baked one is a lone literal, never a source list.
+ *
+ * @param {string} text the chunk
+ * @param {number} start index of the origin's first character
+ * @param {number} end index after the origin's last character
+ */
+export function isCspSourceListMember(text, start, end) {
+  const quote = text[start - 1];
+  if (['"', "'", '`'].includes(quote) && text[end] === quote) {
+    const open = text.lastIndexOf('[', start);
+    const close = text.indexOf(']', end);
+    if (open === -1 || close === -1) return false;
+    const list = text.slice(open, close + 1);
+    if (!LITERAL_ARRAY.test(list)) return false;
+    return isSourceList([...list.matchAll(new RegExp(STRING_LITERAL, 'g'))].map((m) => m[0].slice(1, -1)));
+  }
+  // The delimiter is not known (`'self'` carries single quotes inside a double-quoted literal): try each.
+  return ['"', "'", '`'].some((q) => {
+    const open = text.lastIndexOf(q, start - 1);
+    const close = text.indexOf(q, end);
+    if (open === -1 || close === -1) return false;
+    const inner = text.slice(open + 1, close);
+    return !/[\\\r\n$]/.test(inner) && isSourceList(inner.split(/\s+/).filter(Boolean));
+  });
+}
+
 /**
  * Whether a packaged bundle targets `origin` AND NOTHING ELSE that is production.
  *
@@ -215,6 +262,10 @@ export function linkChunkOf(chunks, hosts) {
  * trailing dot, or a concatenation is refused. The bundle cannot see a constant used through an
  * imported binding - that is why the build ENVIRONMENT is checked at its source too
  * (`buildEnvVerdict`) and why the one such use was removed from the product (#2385).
+ *
+ * CSP ALLOWLISTS ARE NOT TARGETS: an origin that is a member of a `connect-src` source list
+ * ({@link isCspSourceListMember}) names a host the page MAY reach and is reported in `allowlists`,
+ * not refused - decided structurally, by the shape of the list around the literal.
  *
  * ONE EXPLICIT ACCEPTANCE, for old refs only (`--accept-dead-production-literal`, decided
  * 2026-10-24 for the floor/old-client rows ADM-5..7): `acceptDeadLiterals` lets through at most ONE
@@ -237,6 +288,7 @@ export function bundleTargetVerdict(chunks, origin, link = null, { acceptDeadLit
   const production = [];
   const links = [];
   const accepted = [];
+  const allowlists = [];
   for (const c of chunks) {
     for (const m of c.text.matchAll(all)) {
       const before = c.text[m.index - 1];
@@ -248,7 +300,9 @@ export function bundleTargetVerdict(chunks, origin, link = null, { acceptDeadLit
         !isLink && acceptDeadLiterals && isWholeLiteral
           ? Object.keys(DEAD_LITERAL_SHAPES).find((n) => !used.has(n) && DEAD_LITERAL_SHAPES[n](c.text, m.index, end, link))
           : undefined;
-      if (isLink) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
+      const isAllowlist = !isLink && !shape && isCspSourceListMember(c.text, m.index, m.index + m[0].length);
+      if (isAllowlist) allowlists.push(`${c.name}: ${c.text.slice(Math.max(0, m.index - 19), m.index + m[0].length + 2)}`);
+      else if (isLink) links.push(`${c.name}: ${c.text.slice(m.index, end)}`);
       else if (shape) {
         used.add(shape);
         accepted.push(`${shape} ${c.name}: ${c.text.slice(Math.max(0, m.index - 19), end + 2)}`);
@@ -256,7 +310,7 @@ export function bundleTargetVerdict(chunks, origin, link = null, { acceptDeadLit
       else production.push(`${c.name}: ${c.text.slice(m.index, Math.min(c.text.length, end + 20))}`);
     }
   }
-  return { ok: hits.length > 0 && production.length === 0, hits, production, links, accepted };
+  return { ok: hits.length > 0 && production.length === 0, hits, production, links, accepted, allowlists };
 }
 
 
