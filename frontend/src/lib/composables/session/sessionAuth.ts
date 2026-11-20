@@ -3258,6 +3258,13 @@ async function fetchPinSalt(
     unreachable: m.auth_pin_salt_unreachable(),
   });
   await throwIfPinThrottled(res, (msg) => console.info(msg));
+  // A 409 is an ANSWER (the row changed while its salt was minted), classified here, at the throw.
+  if (res.status === 409) {
+    console.info(
+      '[PIN] pin-salt answered 409 - the PIN row changed meanwhile; the next try asks again.'
+    );
+    throw new LoginFailure('pin_salt_changed', m.auth_pin_salt_changed());
+  }
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
   return salt;
@@ -3508,7 +3515,9 @@ async function recoverPinSteps(
       init: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        // `unlock`: the new PIN must already be the account's; never registered from a recovery.
+        // `unlock`: the new PIN must already be the account's. The one registration this check can
+        // cause is a PIN from before salts (`LEGACY_UNSALTED_VERIFIER` on the server), re-registered
+        // under its salt as any unlock of it is - answered `registered`, which is a success here.
         body: JSON.stringify({ userId, verifier: newVerifier, intent: 'unlock' }),
         signal: stop.signal,
       },
@@ -3527,7 +3536,7 @@ async function recoverPinSteps(
     cb.log(`[PIN_RECOVER] The account has no PIN (not-set) - first setup, not a recovery.`);
     throw new LoginFailure('pin_not_set', m.auth_pin_not_set());
   }
-  if (data.status !== 'ok') {
+  if (data.status !== 'ok' && data.status !== 'registered') {
     throw new LocalizedError(m.auth_pin_new_incorrect());
   }
 

@@ -885,6 +885,7 @@ local-only restart. The old-PIN recovery stays beside it; it is no longer offere
 | `pin_not_set` | an unlock on an account with no PIN (`pin-check` answered `not-set`) | choose a PIN, twice | the first-setup keypad |
 | `server_unreachable`, salt/check unreachable | no network or server, or no answer within the request deadline - every PIN request (`pin-salt`, `pin-check`, `pin-status`, `pin-reset`, `pin-change`) goes through `pinServerRequest` (`pinServer.ts`, the one module that writes the route path; `pinRequestsWiring.test.ts` fails on the path anywhere else) | retry | "Deverrouiller" |
 | `pin_attempts_throttled` | a PIN route answered 429 | wait until the time shown | "Deverrouiller" |
+| `pin_salt_changed` | `pin-salt` answered 409: the PIN row changed (a reset elsewhere) while its salt was minted | retry | "Deverrouiller" |
 | `pin-status` unanswered (before the keypad) | the gate cannot learn whether the account has a PIN | retry | no keypad; "Reessayer" |
 | `other` (check unexpected, login failed, no result) | server or app fault | retry | "Deverrouiller" |
 | `local_state_sealed_under_old_pin` | PIN changed on another device | recover with the old PIN | "Mon PIN a change sur un autre appareil" |
@@ -949,7 +950,8 @@ writes (read as "registered" by `pin-status`). Three changes close it at the cau
   another GET minted read back; two first GETs at once answer the same salt, never a 500. A row
   replaced between the lost write and the read back is a `409`.
 - A recovery whose new PIN meets `not-set` ends as `pin_not_set`, never "the new PIN is incorrect":
-  the recovery modal closes and the gate asks a first PIN.
+  the recovery modal closes and the gate asks a first PIN; a new PIN the check answers `registered` (a PIN from before
+  salts, re-registered under its salt) is a success, not an incorrect PIN.
 - The gate's local shortcut reads `canari_pin_proven:v1:<user>` (`pinFirstSetup.ts`), written only
   once `pin-check` answered `ok` or `registered` - never the device id - and dropped when a reset
   enters or commits a first setup or the server answers `not-set`. A `mismatch` on a first setup

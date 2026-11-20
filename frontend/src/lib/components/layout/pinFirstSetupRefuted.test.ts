@@ -122,3 +122,31 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     expect(modal).toContain('{#if !isFirstSetup}');
   });
 });
+
+/**
+ * AN ACCOUNT WITH NO PIN HAS NOTHING TO RECOVER TO (review of #3909). The recovery types the server's
+ * `not-set` as `pin_not_set`; the gate must then leave the recovery and ask a first PIN - through the
+ * one function that also drops this device's stale PIN proof.
+ */
+describe('a recovery answered pin_not_set becomes a first setup', () => {
+  const body = (head: string) => {
+    const start = source.indexOf(head);
+    expect(start, head).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf('\n  }\n', start));
+  };
+
+  it('closes the recovery modal and enters first setup, from the TYPE', () => {
+    const recover = body('async function handleRecoverSubmit(');
+    const branch = recover.indexOf("e instanceof LoginFailure && e.code === 'pin_not_set'");
+    expect(branch).toBeGreaterThan(recover.indexOf('} catch (e) {'));
+    const handled = recover.slice(branch, recover.indexOf('}', branch));
+    expect(handled).toContain('showRecoverModal = false;');
+    expect(handled).toContain('enterFirstPinSetup(uid);');
+  });
+
+  it('enterFirstPinSetup draws the first-setup gate and drops the PIN proof', () => {
+    const enter = body('function enterFirstPinSetup(');
+    expect(enter).toContain('isFirstPinSetup = true;');
+    expect(enter).toContain('forgetPinProven(localStorage, uid);');
+  });
+});

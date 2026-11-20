@@ -235,13 +235,21 @@ let pinCheckHangs = false;
 let pinCheckRevoked = false;
 /** `pin-check` answers that the account has no PIN. */
 let pinCheckNotSet = false;
+/** `pin-check` answers `registered` (a PIN from before salts, re-registered under its salt). */
+let pinCheckRegistered = false;
+/** `pin-salt` answers 409: the row changed while its salt was minted. */
+let pinSaltConflict = false;
 let pinCheckReached = deferred();
 function server() {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
+      if (u.includes('pin-salt') && pinSaltConflict) return new Response('', { status: 409 });
       if (u.includes('pin-salt')) return Response.json({ salt: 'salt' });
+      if (u.includes('pin-check') && pinCheckRegistered) {
+        return Response.json({ status: 'registered', resetRequired: false });
+      }
       if (u.includes('pin-check') && pinCheckHangs) {
         pinCheckReached.resolve();
         return new Promise<Response>((_, reject) =>
@@ -266,6 +274,8 @@ beforeEach(() => {
   pinCheckHangs = false;
   pinCheckRevoked = false;
   pinCheckNotSet = false;
+  pinCheckRegistered = false;
+  pinSaltConflict = false;
   pinCheckReached = deferred();
   server();
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -581,6 +591,34 @@ describe('the PIN recovery on an account with no PIN', () => {
     expect(loginErrorCode(failure)).toBe('pin_not_set');
     expect((failure as Error).message).toBe(m.auth_pin_not_set());
     expect(logs(s.cb)).toContain('[PIN_RECOVER] The account has no PIN (not-set)');
+  });
+
+  it('a new PIN the check REGISTERED (a PIN from before salts) is a success, not an incorrect PIN', async () => {
+    pinCheckRegistered = true;
+    vi.mocked(loadMlsState).mockResolvedValueOnce(new Uint8Array([1]));
+    const s = session([fakeClient().client]);
+
+    const failure = await recoverPinImpl(s.ctx, s.cb, '1111', '2222').then(
+      () => null,
+      (e: unknown) => e
+    );
+
+    // Whatever the recovery meets after the check, it is past it: never "the new PIN is incorrect".
+    expect((failure as Error | null)?.message).not.toBe(m.auth_pin_new_incorrect());
+  });
+
+  it('a 409 from pin-salt is its own typed answer, never "unreachable"', async () => {
+    pinSaltConflict = true;
+    vi.mocked(loadMlsState).mockResolvedValueOnce(new Uint8Array([1]));
+    const s = session([fakeClient().client]);
+
+    const failure = await recoverPinImpl(s.ctx, s.cb, '1111', '2222').then(
+      () => null,
+      (e: unknown) => e
+    );
+
+    expect(loginErrorCode(failure)).toBe('pin_salt_changed');
+    expect((failure as Error).message).toBe(m.auth_pin_salt_changed());
   });
 });
 

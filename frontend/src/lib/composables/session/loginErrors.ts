@@ -93,6 +93,12 @@ export type LoginErrorCode =
    */
   | 'pin_attempts_throttled'
   /**
+   * `GET pin-salt` answered 409: the account's PIN row changed (a reset on another device) while
+   * this salt was being minted. An answer, never "unreachable": nothing was compared, and the next
+   * try asks the salt again.
+   */
+  | 'pin_salt_changed'
+  /**
    * The server answered `stale-salt` twice: the account's PIN salt changed (a PIN reset) between
    * this login asking for it and checking with it, and again on the one retry. Nothing was
    * compared, so this says nothing about the PIN typed.
@@ -316,6 +322,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'pin_attempts_throttled' ||
+    code === 'pin_salt_changed' ||
     code === 'account_deleted' ||
     code === 'revoked_device_wipe_owed' ||
     code === 'pin_reset_unsettled' ||

@@ -122,7 +122,14 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   'legacy-unsalted' AS marked, count(*) FROM pin_verifier GROUP BY 1, 2`; and the service's lines
   `[PIN_SALT] new salt minted for <user> (legacy row, ...)` and `[PIN_VERIFIER] legacy unsalted PIN
   of <user> re-registered`.
-- **Removal condition.** Both counts at zero: no unsalted row and no marked row left.
+- **Removal condition.** Both counts at zero, OR **2027-02-20**, whichever comes first. The date
+  exists because the counts may never reach zero: an account dormant since the salts arrived (July
+  2026) never asks for its salt, and the shim would then live for ever.
+- **On that date, what is left.** One migration turns every remaining row into a placeholder: a
+  marked row loses its marker (`verifier = ''`, its salt kept), and an unsalted row is deleted (the
+  next `GET pin-salt` mints a fresh placeholder). Those accounts are then asked to CHOOSE a PIN,
+  twice, at their next unlock - their old PIN was never comparable since July, and no server fact
+  can re-register it once the marker is gone.
 - **Then delete.** The `IsNull()` branch of `getPinSalt`, the `LEGACY_UNSALTED_VERIFIER` branch of
   `checkPinVerifier`, the constant, and the spec cases `a PIN from before salts`.
 

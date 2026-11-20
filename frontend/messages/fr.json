@@ -4621,6 +4621,7 @@
   "auth_pin_status_failed": "Le serveur n'a pas pu vérifier votre compte. Réessayez.",
   "auth_pin_not_set": "Aucun PIN n'est encore choisi pour ce compte. Choisissez-en un.",
   "auth_pin_salt_rotated": "Votre PIN vient d'être réinitialisé. Entrez votre PIN actuel.",
+  "auth_pin_salt_changed": "Votre PIN vient de changer sur un autre appareil. Réessayez.",
   "auth_pin_check_unexpected": "Le serveur n'a pas pu vérifier votre PIN. Réessayez dans un instant.",
   "auth_pin_mismatch": "PIN incorrect. Réessayez, ou touchez \"PIN oublié ?\".",
   "auth_pin_recovery_login_failed": "La connexion n'a pas abouti après la récupération.",

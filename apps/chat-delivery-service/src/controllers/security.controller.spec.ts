@@ -239,8 +239,9 @@ describe('SecurityController - checkPinVerifier', () => {
       const { salt } = await controller.getPinSalt('u1', 'u1');
 
       expect(salt).toMatch(/^[0-9a-f]{32}$/);
+      // Pinned on the verifier READ too: a row that changed meanwhile is not marked from stale facts.
       expect(pinVerifierRepo.update).toHaveBeenCalledWith(
-        { id: 'l', salt: expect.anything() },
+        { id: 'l', salt: expect.anything(), verifier: 'c'.repeat(64) },
         { salt, verifier: LEGACY_UNSALTED_VERIFIER }
       );
       expect(pinVerifierRepo.save).not.toHaveBeenCalled();
@@ -272,6 +273,15 @@ describe('SecurityController - checkPinVerifier', () => {
       );
     });
 
+    it('a legacy row that changed between the read and the salting is not marked: its salt is read back', async () => {
+      pinVerifierRepo.findOne
+        .mockResolvedValueOnce(LEGACY)
+        .mockResolvedValueOnce({ id: 'l', verifier: 'd'.repeat(64), salt: 'other' });
+      pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(controller.getPinSalt('u1', 'u1')).resolves.toEqual({ salt: 'other' });
+    });
+
     it('a legacy row with no PIN becomes a plain placeholder', async () => {
       pinVerifierRepo.findOne.mockResolvedValue({ ...LEGACY, verifier: '' });
       pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
@@ -279,7 +289,7 @@ describe('SecurityController - checkPinVerifier', () => {
       const { salt } = await controller.getPinSalt('u1', 'u1');
 
       expect(pinVerifierRepo.update).toHaveBeenCalledWith(
-        { id: 'l', salt: expect.anything() },
+        { id: 'l', salt: expect.anything(), verifier: '' },
         { salt, verifier: '' }
       );
     });

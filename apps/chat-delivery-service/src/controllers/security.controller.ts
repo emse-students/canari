@@ -333,7 +333,7 @@ export class SecurityController {
    * - No row: `INSERT ... ON CONFLICT DO NOTHING` of a placeholder (empty verifier) under a fresh
    *   salt; on a conflict, the row another GET minted is read back and its salt returned.
    * - A legacy row (`salt IS NULL`, a PIN from before salts): given a fresh salt in one conditional
-   *   write (`WHERE id = <read row> AND salt IS NULL`), and its verifier - derived from the old
+   *   write (`WHERE id = <read row> AND salt IS NULL AND verifier = <read verifier>`), and its verifier - derived from the old
    *   predictable salt, never comparable again - becomes {@link LEGACY_UNSALTED_VERIFIER}, so the
    *   account still reads as HAVING a PIN and its next check re-registers it. A legacy row with no
    *   verifier is a plain placeholder.
@@ -357,8 +357,9 @@ export class SecurityController {
     let minted: boolean;
     if (doc) {
       const verifier = doc.verifier ? LEGACY_UNSALTED_VERIFIER : '';
+      // Pinned on the row, its missing salt AND the verifier read: the marker says what THAT row held.
       const salted = await this.pinVerifierRepo.update(
-        { id: doc.id, salt: IsNull() },
+        { id: doc.id, salt: IsNull(), verifier: doc.verifier },
         { salt: newSalt, verifier }
       );
       minted = (salted.affected ?? 0) === 1;
