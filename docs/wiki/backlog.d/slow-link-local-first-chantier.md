@@ -5,11 +5,9 @@ target: 1.7.2
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
-_The same day the owner moved the community-open **200 ms budget** here: the
-[community entry](p1-opening-a-community-f1-f7-built-the-200-ms-budget-is-what-is-left-user-2026.md)
-closes for `1.7.0` on #3769's reading, and its "what is left" list (the `Icon` count, whatever the
-`--chain` run names, the section 7 readings of
-[community-open-budget](../frontend/community-open-budget.md)) is carried on by this chantier._
+_The same day the owner moved the community-open **200 ms budget** here: the community entry
+(F1-F7 built, deleted 2026-11-20 once its list was moved below) closed for `1.7.0` on #3769's reading
+([community-open-budget](../frontend/community-open-budget.md))._
 
 **Decision.** The owner, 2026-11-10: *"a slow connection is common and a real plague"*. The chantier
 starts right after `1.6.10` and is carried to the end, not abandoned at the first improvement.
@@ -108,3 +106,23 @@ Still real: a CHAT attachment restarts at byte 0 after a failure - only a chat r
 post resume, the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md)
 ([section 13](../frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for));
 and a salon poll is not queued while the link is down.
+
+**The community-open 200 ms budget** (moved here from the deleted community entry, 2026-11-20). The goal
+(user, 2026-10-14): on a slow network and a poor phone, opening a community is almost instantaneous -
+rail, salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**.
+F1-F7 are built; the last Mi 9T reading (`1.7.0-alpha.8`, 2026-11-17, cold medians) is tap to rail and
+salons 915 ms, salon to pane 433, salon to messages 865, cached reopen 354, 49 API calls, so the budget
+is met on no row ([readings](../device-verification.md#the-phone-readings-of-2026-11-17-170-alpha8-both-phones-one-sitting)).
+What is left, in order:
+
+1. **The Mi 9T `--profile-salon` and `--chain` reading** on the cold first open, to name the time before
+   the pane and the long tasks (one bench sitting, half a day). It decides step 3.
+2. **The `Icon` count and cost** - count the `@lucide/svelte` icons a first open mounts, then draw the
+   per-bubble and per-row ones as plain inline SVG if the count says so (one to two days, desktop
+   bench first).
+3. **Whatever the chain names** - the layout of the first frame (111 of 279 ms on the bench, text
+   shaping) and the cold open's 49 API calls are the two candidates; neither is sized until step 1.
+4. **The [section 7](../frontend/community-open-budget.md#7-not-measured-and-owed) readings** - the warm
+   resume at 4x and the iOS protocol (a day each).
+
+The 200 ms on every row is several weeks beyond these steps, not one pull request.
