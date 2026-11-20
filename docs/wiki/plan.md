@@ -81,8 +81,8 @@ earliest version, as a checklist.
 - [P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
-- [P2 - a live's sound drifts ahead of its picture under 15 fps: fixed in the viewer, owed one reading](backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
+- [P2 - a replay's LAST segment is downloaded again on every `timeupdate` for the final ~12 seconds, and `end of stream declared` is logged each time (S13, 2026-11-20)](backlog.d/p2-a-replay-s-last-segment-is-downloaded-again-on-every-timeupdate-over-its-final-seconds.md)
 
 **P3 - hygiene**
 
@@ -134,6 +134,8 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
+- [P3 - opening a replay in the CanaReels viewer starts its player twice: the listing and segment 0 are fetched twice (S13, 2026-11-20)](backlog.d/p3-opening-a-replay-starts-its-player-twice-and-lists-and-downloads-segment-0-twice.md)
+- [P3 - on the web, ending a live leaves the studio on a pre-live screen whose "Start the live" stays disabled on "Reading the live's rules..." (S13, 2026-11-20)](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)
 
 ## 1.7.3
 
