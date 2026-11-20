@@ -478,9 +478,11 @@ function redactUncapped(raw: string): RedactedLine {
     redactions++;
   }
 
-  // One physical line per entry: a newline would let a dumped body start a line of its own.
+  // One physical line per entry: a newline would let a dumped body start a line of its own. The C1
+  // controls (NEL, U+0085) and the Unicode line and paragraph separators (U+2028-9) are breaks too
+  // for some readers, so they go with the C0 ones.
   // eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
-  line = line.replace(/[\r\n\t\u0000-\u001f\u007f]+/g, ' | ');
+  line = line.replace(/[\r\n\t\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' | ');
   line = line.replace(INVISIBLE_RE, '');
 
   line = line.replace(JWT_RE, count('[jwt]'));

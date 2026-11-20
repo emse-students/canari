@@ -161,6 +161,11 @@ describe('redactLogLine - what must never enter', () => {
     expect(line.includes(nul)).toBe(false);
   });
 
+  it('treats NEL and the Unicode line and paragraph separators as line breaks too', () => {
+    const line = redact('[ERR] a\u0085b\u2028c\u2029d');
+    expect(line).toBe('[ERR] a | b | c | d');
+  });
+
   it('caps a line, so a dump cannot take the ring over', () => {
     const line = redact(`[DUMP] ${'word '.repeat(500)}`);
     expect(line.length).toBeLessThanOrEqual(MAX_LOG_LINE_CHARS + 20);
