@@ -2,6 +2,7 @@
   import { m } from '$lib/paraglide/messages';
   import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
   import { birthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
+  import { confettiLayout } from '$lib/birthdays/confettiLayout';
   import { getInitials } from '$lib/utils/avatar';
   import { avatarUrl } from '$lib/utils/avatarUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -94,76 +95,125 @@
     };
   });
 
-  const sizeClasses = $derived(
+  const textClass = $derived(
     fill
-      ? 'w-full h-full text-base'
+      ? 'text-base'
       : size === 'xs'
-        ? 'w-4 h-4 text-2xs'
+        ? 'text-2xs'
         : size === 'sm'
-          ? 'w-6 h-6 text-xs'
+          ? 'text-xs'
           : size === 'xl'
-            ? 'w-14 h-14 text-lg'
+            ? 'text-lg'
             : size === 'lg'
-              ? 'w-12 h-12 text-base'
-              : 'w-8 h-8 text-sm'
+              ? 'text-base'
+              : 'text-sm'
   );
+  const boxClass = $derived(
+    fill
+      ? 'w-full h-full'
+      : size === 'xs'
+        ? 'w-4 h-4'
+        : size === 'sm'
+          ? 'w-6 h-6'
+          : size === 'xl'
+            ? 'w-14 h-14'
+            : size === 'lg'
+              ? 'w-12 h-12'
+              : 'w-8 h-8'
+  );
+  const presetPx = $derived(fill ? 32 : { xs: 16, sm: 24, md: 32, lg: 48, xl: 56 }[size]);
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
   /**
    * THE BIRTHDAY RING (decision 3, docs/wiki/birthdays.md): drawn HERE, on the one component every
    * person's face goes through, for a member whose birthday the server says is today - to every
-   * reader, wherever the face appears, never per call site. `.birthday-ring` draws it inside the
-   * avatar's own edge, so no caller's layout or clip changes.
+   * reader, wherever the face appears, never per call site.
+   *
+   * The ring sits FLUSH against the photo and OUTSIDE it, with confetti floating round it, so the
+   * decoration cannot live inside the `overflow-hidden` face. A celebrated avatar is therefore a
+   * WRAPPER with the avatar's own layout box (`boxClass`, so nothing reflows) holding the ring, the
+   * clipped face and the confetti, which only overflow it visually. Anybody else renders the bare
+   * face exactly as before. When a presence dot also applies (ChatHeader), the dot is a sibling
+   * painted after the wrapper, so it WINS the bottom-right corner over the ring.
    */
   const celebrating = $derived(identified && birthdaysToday.has(userId));
-  const ringClass = $derived(celebrating ? 'birthday-ring' : '');
+  /** The wrapper's measured width (fill avatars have no preset); the preset until measured. */
+  let measuredPx = $state(0);
+  const confetti = $derived(celebrating ? confettiLayout(measuredPx || presetPx) : []);
+  const faceBox = $derived(celebrating ? 'w-full h-full' : boxClass);
 </script>
 
-{#if imageFailed || display?.kind === 'none'}
-  <AvatarPlaceholder
-    seed={userId}
-    {initials}
-    class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {sizeClasses} {ringClass}"
-    title={displayLabel}
-    ariaLabel={m.avatar_aria_label({ name: displayLabel })}
-  />
-{:else}
+{#snippet face()}
+  <!-- The ring and the confetti are POSITIONED, and a positioned element paints above a static one:
+       the face must be positioned too (`relative`) or the ring disc would be drawn over it. -->
+  {#if imageFailed || display?.kind === 'none'}
+    <AvatarPlaceholder
+      seed={userId}
+      {initials}
+      class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {faceBox} {textClass} {celebrating
+        ? 'relative'
+        : ''}"
+      title={displayLabel}
+      ariaLabel={m.avatar_aria_label({ name: displayLabel })}
+    />
+  {:else}
+    <div
+      class="{shapeClasses} shrink-0 shadow-sm {faceBox} {textClass} relative overflow-hidden"
+      title={displayLabel}
+      aria-label={m.avatar_aria_label({ name: displayLabel })}
+    >
+      {#if !imageLoaded}
+        <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
+             synchrone) : evite l'attente d'un round-trip reseau avant de voir quelque chose. -->
+        <AvatarPlaceholder seed={userId} {initials} class="absolute inset-0" />
+      {/if}
+      <!-- `none` is already excluded by the branch above, so this only waits for the answer. -->
+      {#if display}
+        <!-- THE ELEMENT IS NOT RENDERED BEFORE THE CACHE HAS ANSWERED. It used to be created with
+             the HTTP URL straight away and re-pointed at the blob afterwards, so every avatar cost a
+             network request the cache existed to avoid. -->
+        <img
+          src={display.url}
+          alt={m.avatar_aria_label({ name: displayLabel })}
+          decoding="async"
+          class="h-full w-full object-cover transition-opacity duration-150 select-none {imageLoaded
+            ? 'opacity-100'
+            : 'opacity-0'}"
+          onload={() => {
+            imageLoaded = true;
+          }}
+          onerror={() => {
+            // A blob that will not decode is a damaged cache entry, not an answer about this avatar,
+            // so the network is worth asking once. Anything else is a refusal already established.
+            if (!triedDirectFallback && display?.kind === 'blob') {
+              triedDirectFallback = true;
+              display = { kind: 'direct', url: avatarUrl(userId) };
+              return;
+            }
+            imageFailed = true;
+          }}
+        />
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#if celebrating}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden {ringClass}"
-    title={displayLabel}
-    aria-label={m.avatar_aria_label({ name: displayLabel })}
-    data-birthday={celebrating ? 'today' : undefined}
+    class="birthday-wrap shrink-0 {boxClass}"
+    data-birthday="today"
+    bind:clientWidth={measuredPx}
   >
-    {#if !imageLoaded}
-      <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
-           synchrone) : evite l'attente d'un round-trip reseau avant de voir quelque chose. -->
-      <AvatarPlaceholder seed={userId} {initials} class="absolute inset-0" />
-    {/if}
-    <!-- `none` is already excluded by the branch above, so this only waits for the answer. -->
-    {#if display}
-      <!-- THE ELEMENT IS NOT RENDERED BEFORE THE CACHE HAS ANSWERED. It used to be created with
-           the HTTP URL straight away and re-pointed at the blob afterwards, so every avatar cost a
-           network request the cache existed to avoid. -->
-      <img
-        src={display.url}
-        alt={m.avatar_aria_label({ name: displayLabel })}
-        decoding="async"
-        class="h-full w-full object-cover transition-opacity duration-150 select-none {imageLoaded
-          ? 'opacity-100'
-          : 'opacity-0'}"
-        onload={() => {
-          imageLoaded = true;
-        }}
-        onerror={() => {
-          // A blob that will not decode is a damaged cache entry, not an answer about this avatar,
-          // so the network is worth asking once. Anything else is a refusal already established.
-          if (!triedDirectFallback && display?.kind === 'blob') {
-            triedDirectFallback = true;
-            display = { kind: 'direct', url: avatarUrl(userId) };
-            return;
-          }
-          imageFailed = true;
-        }}
-      />
-    {/if}
+    <span class="birthday-ring {shapeClasses}" aria-hidden="true"></span>
+    {@render face()}
+    {#each confetti as piece, i (i)}
+      <span
+        class="birthday-confetti {piece.dot ? 'rounded-full' : 'rounded-[1px]'}"
+        aria-hidden="true"
+        data-confetti
+        style="left:{piece.xPct}%;top:{piece.yPct}%;width:{piece.widthPx}px;height:{piece.heightPx}px;background:var(--birthday-c{piece.colour});--birthday-rot:{piece.rotationDeg}deg;--birthday-delay:{piece.delayS}s"
+      ></span>
+    {/each}
   </div>
+{:else}
+  {@render face()}
 {/if}

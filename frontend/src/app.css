@@ -418,17 +418,21 @@
   --avatar-hue-6-to: #b91c1c;
   --avatar-hue-7-from: #d08200;
   --avatar-hue-7-to: #b45309;
-  /* THE BIRTHDAY RING (docs/wiki/birthdays.md): drawn by `.birthday-ring` around the avatar of a
-     member whose birthday it is today, in every theme - built from the avatar hues and the brand
-     yellow, so it adds no colour of its own. */
+  /* THE BIRTHDAY RING AND ITS CONFETTI (docs/wiki/birthdays.md, decision 3): four warm colours,
+     the brand yellow first, in every theme. Dark has its own steps (lighter, so they hold against
+     the near-black surface) in the dark block. `--birthday-ring` is the ring's gradient,
+     `--birthday-c0..3` the same four as flat confetti fills. */
+  --birthday-c0: var(--cn-yellow);
+  --birthday-c1: #f97316;
+  --birthday-c2: #ec4899;
+  --birthday-c3: #8b5cf6;
   --birthday-ring: conic-gradient(
-    from 0deg,
-    var(--cn-yellow),
-    var(--avatar-hue-0-from),
-    var(--avatar-hue-1-from),
-    var(--avatar-hue-2-from),
-    var(--avatar-hue-3-from),
-    var(--cn-yellow)
+    from 200deg,
+    var(--birthday-c0),
+    var(--birthday-c1),
+    var(--birthday-c2),
+    var(--birthday-c3),
+    var(--birthday-c0)
   );
 
   /* CATEGORICAL CHART SERIES (admin status curves): the eight validated slots of the dataviz
@@ -609,6 +613,18 @@
 }
 
 :root[data-theme='dark'] {
+  --birthday-c0: var(--cn-yellow);
+  --birthday-c1: #fb923c;
+  --birthday-c2: #f472b6;
+  --birthday-c3: #a78bfa;
+  --birthday-ring: conic-gradient(
+    from 200deg,
+    var(--birthday-c0),
+    var(--birthday-c1),
+    var(--birthday-c2),
+    var(--birthday-c3),
+    var(--birthday-c0)
+  );
   --chart-series-1: #3987e5;
   --chart-series-2: #d95926;
   --chart-series-3: #199e70;
@@ -3480,29 +3496,47 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   --avatar-hue-to: var(--avatar-hue-7-to);
 }
 
-/* THE BIRTHDAY RING, on the avatar's OWN box (`Avatar.svelte`, the one component every person's
-   face goes through): a gradient band drawn INSIDE the edge by a masked pseudo-element, so it needs
-   no wrapper, moves no layout and is never clipped by a caller's `overflow-hidden rounded-full`. Its
-   width is a share of the avatar, so a 16 px face and a 112 px one carry the same ring. */
-.birthday-ring {
+/* THE BIRTHDAY RING AND CONFETTI (`Avatar.svelte`, the one component every person's face goes
+   through; layout in `lib/birthdays/confettiLayout.ts`). The ring sits FLUSH against the photo,
+   OUTSIDE it, no gap: a solid gradient disc a ring-width larger than the box, painted BEHIND the
+   opaque face, so only the band shows. Width is `max(2px, 6%)` of the avatar - the same formula as
+   `ringWidthPx`. The wrapper (`.birthday-wrap`) keeps the avatar's own layout box; the ring and
+   the confetti (floating 14-24% of the size beyond the photo) only OVERFLOW it visually, so nothing reflows. `isolate` makes a local stacking
+   context: ring, face and confetti stack by DOM order and never meet the layer ladder. */
+.birthday-wrap {
   position: relative;
+  isolation: isolate;
 }
-.birthday-ring::after {
-  content: '';
+.birthday-ring {
   position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  padding: 9%;
+  inset: calc(-1 * max(2px, 6%));
   background: var(--birthday-ring);
-  -webkit-mask:
-    linear-gradient(black 0 0) content-box,
-    linear-gradient(black 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(black 0 0) content-box exclude,
-    linear-gradient(black 0 0);
   pointer-events: none;
+}
+.birthday-confetti {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 20%;
+  transform: translate(-50%, -50%) rotate(var(--birthday-rot));
+  animation: birthdayTwinkle 2.6s ease-in-out infinite;
+  animation-delay: var(--birthday-delay);
+}
+.birthday-confetti-dot {
+  border-radius: 50%;
+}
+@keyframes birthdayTwinkle {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .birthday-confetti {
+    animation: none;
+  }
 }
 
 /* GLASS FALLBACK - THE ONE PLACE `.glass-chrome` GIVES UP BLUR. Where `backdrop-filter` is missing, or

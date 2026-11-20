@@ -49,7 +49,7 @@
     class="flex min-w-0 flex-1 items-center gap-3"
     data-follow-person={userId}
   >
-    <span class="h-10 w-10 shrink-0 overflow-hidden rounded-full">
+    <span class="h-10 w-10 shrink-0 rounded-full">
       <Avatar {userId} fill shape="circle" fallbackLabel={name ?? ''} />
     </span>
     <span class="min-w-0 flex-1">

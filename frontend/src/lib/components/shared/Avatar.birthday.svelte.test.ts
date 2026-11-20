@@ -97,3 +97,36 @@ describe('the birthday ring on the shared avatar', () => {
     expect(ringed()).toBe(0);
   });
 });
+
+describe('the ring is outside the face and the confetti is deterministic', () => {
+  it('wraps the clipped face, with the ring and the confetti OUTSIDE the clip', async () => {
+    await render('ann');
+    const wrap = document.querySelector('.birthday-wrap') as HTMLElement;
+    expect(wrap).not.toBeNull();
+    const ring = wrap.querySelector('.birthday-ring') as HTMLElement;
+    expect(ring.closest('.overflow-hidden')).toBeNull();
+    // Five dots at the 24 px of `sm` (under 30 px), none inside the clipped face.
+    const pieces = wrap.querySelectorAll('[data-confetti]');
+    expect(pieces.length).toBe(5);
+    for (const piece of pieces) expect(piece.closest('.overflow-hidden')).toBeNull();
+  });
+
+  it('positions the initials face too, or the ring would paint over it', async () => {
+    await render('ann');
+    const face = document.querySelector('.birthday-wrap .avatar-placeholder') as HTMLElement;
+    expect(face.className).toContain('relative');
+  });
+
+  it('draws the same confetti every time', async () => {
+    await render('ann');
+    const first = document.querySelector('.birthday-wrap')?.innerHTML;
+    unmount(component!);
+    await render('ann');
+    expect(document.querySelector('.birthday-wrap')?.innerHTML).toBe(first);
+  });
+
+  it('keeps the avatar box: the wrapper carries the size, not the face', async () => {
+    await render('ann');
+    expect(document.querySelector('.birthday-wrap')?.className).toContain('w-6');
+  });
+});

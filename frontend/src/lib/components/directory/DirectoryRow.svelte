@@ -34,7 +34,7 @@
   class="hover:bg-cn-surface-alt relative flex min-w-0 items-center gap-3 rounded-xl px-2 py-2.5 transition-colors"
   data-directory-row
 >
-  <div class="h-12 w-12 shrink-0 overflow-hidden rounded-full">
+  <div class="h-12 w-12 shrink-0 rounded-full">
     <Avatar userId={user.id} fill shape="circle" />
   </div>
   <div class="min-w-0 flex-1">
