@@ -163,6 +163,11 @@ describe('LiveBroadcaster', () => {
     const box = q<HTMLInputElement>('[data-live-replay-switch] input[type="checkbox"]')!;
     expect(box).not.toBeNull();
     expect(box.checked).toBe(true);
+    // The sheet is dark over the camera in both themes: label and hint take the on-camera white.
+    const label = q('[data-live-replay-switch] span.text-sm')!;
+    expect(label.className).toContain('text-white');
+    expect(label.className).not.toContain('text-text-main');
+    expect(q('[data-live-replay-switch] p')!.className).toContain('text-white/70');
     expect(on.broadcast.replayOffered).toBe(true);
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();

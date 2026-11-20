@@ -732,6 +732,7 @@
             label={m.live_replay_switch_label()}
             hint={m.live_replay_switch_hint({ days: replayDaysLabel() })}
             disabled={broadcast.phase !== 'preview'}
+            tone="on-media"
           />
         </div>
       {/if}
