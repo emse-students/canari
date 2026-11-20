@@ -6,6 +6,7 @@ import {
   LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
   LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
   handoverOutcome,
+  heirRefused,
   planHandover,
   type HandoverAsk,
   type HandoverRow,
@@ -204,23 +205,30 @@ describe('planHandover - who may hand the Responsable over, to whom, with which 
 });
 
 describe('handoverOutcome - what a record does with Lydia answer', () => {
-  it('confirmed, the old Responsable live, the target a member: handed over', () => {
-    expect(handoverOutcome(true, true, true)).toBe('handed-over');
+  const ELIGIBLE = { isMember: true, managesPayout: true };
+  const LEFT = { isMember: false, managesPayout: false };
+  const NO_PAYOUT = { isMember: true, managesPayout: false };
+
+  it('confirmed, the heir still an eligible member: handed over', () => {
+    expect(handoverOutcome(true, ELIGIBLE)).toBe('handed-over');
   });
-  it('not confirmed: the old Responsable stays (unconfirmed)', () => {
-    expect(handoverOutcome(true, false, true)).toBe('unconfirmed');
-    expect(handoverOutcome(true, false, false)).toBe('unconfirmed');
-    expect(handoverOutcome(false, false, true)).toBe('unconfirmed');
+  it('not confirmed, the heir still eligible: unconfirmed (tracked, retried or removed)', () => {
+    expect(handoverOutcome(false, ELIGIBLE)).toBe('unconfirmed');
   });
-  it('confirmed but the target left meanwhile: target-left (their number removed next)', () => {
-    expect(handoverOutcome(true, true, false)).toBe('target-left');
+  it('the heir LEFT: target-left whatever Lydia answered - their number is removed next', () => {
+    expect(handoverOutcome(true, LEFT)).toBe('target-left');
+    // Unconfirmed rights for a non-member are removed too, never left tracked with nobody to end them.
+    expect(handoverOutcome(false, LEFT)).toBe('target-left');
   });
-  it('confirmed with no old Responsable left (an erasure took it): handed over to the only holder', () => {
-    expect(handoverOutcome(false, true, true)).toBe('handed-over');
+  it('the heir lost MANAGE_PAYOUT_ACCOUNT since the claim: heir-ineligible whatever Lydia answered', () => {
+    expect(handoverOutcome(true, NO_PAYOUT)).toBe('heir-ineligible');
+    expect(handoverOutcome(false, NO_PAYOUT)).toBe('heir-ineligible');
   });
-  it('no old Responsable left AND the target left too: target-left, confirmed or not (M4)', () => {
-    expect(handoverOutcome(false, true, false)).toBe('target-left');
-    expect(handoverOutcome(false, false, false)).toBe('target-left');
+  it('only the two refused outcomes leave the heir out', () => {
+    expect(heirRefused('target-left')).toBe(true);
+    expect(heirRefused('heir-ineligible')).toBe(true);
+    expect(heirRefused('handed-over')).toBe(false);
+    expect(heirRefused('unconfirmed')).toBe(false);
   });
 });
 

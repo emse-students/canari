@@ -1,6 +1,10 @@
 import axios from 'axios';
 import { HttpException, Logger } from '@nestjs/common';
-import { LYDIA_CASHIER_NOT_A_MEMBER, LydiaCashiersController } from './lydia-cashiers.controller';
+import {
+  LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+  LydiaCashiersController,
+} from './lydia-cashiers.controller';
 import { InternalLydiaCashiersController } from './internal-lydia-cashiers.controller';
 import {
   LYDIA_CASHIER_ADD_DISABLED,
@@ -348,7 +352,7 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     retry: false,
   };
   /** social-service answering a hand-over that ends `outcome`, and the removal's claim. */
-  function socialFor(outcome: 'handed-over' | 'unconfirmed' | 'target-left') {
+  function socialFor(outcome: 'handed-over' | 'unconfirmed' | 'target-left' | 'heir-ineligible') {
     const handed = outcome === 'handed-over';
     social({
       '/lydia-responsable-handover-claim': CLAIMED,
@@ -575,7 +579,44 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', CONTEXT_PHONE, HEIR);
   });
 
+  it('the heir lost MANAGE_PAYOUT_ACCOUNT at the record: their number removed, the typed 409 HEIR_NOT_PAYOUT_MANAGER', async () => {
+    socialFor('heir-ineligible');
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const removeLydiaCashier = jest.fn().mockResolvedValue({ verified: true, held: 0 });
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER },
+    });
+    expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', CONTEXT_PHONE, HEIR);
+    expect(String(warn.mock.calls)).toContain('no longer manages the payout account');
+    warn.mockRestore();
+  });
+
+  it('the heir left AND Lydia did not confirm the rights: the refusal wins - removed, the typed 409, not the rights error', async () => {
+    socialFor('target-left');
+    const removeLydiaCashier = jest.fn().mockResolvedValue({ verified: true, held: 0 });
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest
+          .fn()
+          .mockRejectedValue(
+            new LydiaCashierAddedUnconfirmedException(
+              new HttpException({ code: LYDIA_CASHIER_RIGHTS_INCOMPLETE }, 502)
+            )
+          ),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_CASHIER_NOT_A_MEMBER } });
+    expect(removeLydiaCashier).toHaveBeenCalledWith(ASSO, 'vendor-1', CONTEXT_PHONE, HEIR);
+  });
+
   it('the record failing after the add (no answer): a 503, the claim kept for a global admin, no removal', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     mockedAxios.get.mockResolvedValue({ status: 200, data: { ok: true } });
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url.endsWith('/lydia-responsable-handover-claim')) return { status: 200, data: CLAIMED };
@@ -590,6 +631,11 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     ).rejects.toMatchObject({ status: 503 });
     expect(steps()).toEqual(['lydia-responsable-handover-claim', 'lydia-responsable-handover']);
     expect(removeLydiaCashier).not.toHaveBeenCalled();
+    // The claim is KEPT: the advice starts with a global admin clearing it, never a bare retry.
+    const said = String(error.mock.calls);
+    expect(said).toContain('the claim KEPT - a global admin clears it first');
+    expect(said).not.toContain('refused the record');
+    error.mockRestore();
   });
 
   it('the record REFUSED (typed) after Lydia added the 13 rights: said at ERROR - the heir, the last two digits, the way back', async () => {
@@ -613,7 +659,9 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     expect(said).toContain('every right confirmed');
     expect(said).toContain('user heir-use');
     expect(said).toContain('phone ending 22');
+    expect(said).toContain('refused the record (LYDIA_CASHIER_CLAIM_LOST), the claim released');
     expect(said).toContain('hand over again to the same member with the same number');
+    expect(said).not.toContain('a global admin clears it first');
     expect(said).not.toContain(HEIR);
     expect(removeLydiaCashier).not.toHaveBeenCalled();
     error.mockRestore();

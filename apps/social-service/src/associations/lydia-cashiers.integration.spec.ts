@@ -643,6 +643,34 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect((await responsableNumbers()).other).toBeNull();
     });
 
+    it('the heir left AND Lydia did not confirm: target-left wins - the number removed next, never tracked with nobody to end it', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const pre = await claim();
+      await ds.query(`DELETE FROM association_members WHERE "userId" = 'member-2'`);
+      const out = await recordAfter(pre, false);
+      expect(out).toMatchObject({ outcome: 'target-left', remove: 'previous' });
+      expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: HEIR });
+      await revoke(out.cashierId, 'previous', true);
+      expect((await responsableNumbers()).other).toBeNull();
+      expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+    });
+
+    it('the heir lost MANAGE_PAYOUT_ACCOUNT between claim and record: never recorded, their number tracked and removed', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const pre = await claim();
+      await ds.query(`UPDATE association_members SET permissions = 0 WHERE "userId" = 'member-2'`);
+      const out = await recordAfter(pre, true);
+      expect(out).toMatchObject({ outcome: 'heir-ineligible', remove: 'previous' });
+      expect(tellResponsable).not.toHaveBeenCalled();
+      expect(await claimHeld()).toBe(false);
+      expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+      expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: HEIR });
+      await revoke(out.cashierId, 'previous', true);
+      expect((await responsableNumbers()).other).toBeNull();
+    });
+
     it('crash between the add and the record: the claim stays, every next attempt is IN_FLIGHT until a global admin clears it', async () => {
       await reset();
       await members('holder', 'member-2');

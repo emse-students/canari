@@ -1184,8 +1184,12 @@ pre-releases already out cannot draw it, and a floor compares the version core o
    could never be confirmed.
 3. **Record** (`lydia-responsable-handover`, `recordHandover`), ONE transaction under the claim token
    (`LYDIA_CASHIER_CLAIM_LOST` otherwise, nothing written), the Business re-read
-   (`LYDIA_BUSINESS_CHANGED`), the heir's membership and own cashier row re-read. `handoverOutcome`
-   decides, and the record answers the number core removes next (`remove`: `previous`, `current` or none):
+   (`LYDIA_BUSINESS_CHANGED`), the heir's membership, `MANAGE_PAYOUT_ACCOUNT` and own cashier row
+   re-read, and the association's name read for the heir's notice - nothing after the commit can fail
+   the answer. `handoverOutcome` decides, and a refused heir WINS over Lydia's answer (left first, then
+   no payout permission, then unconfirmed): a number for someone who may not hold it is never left
+   tracked with nothing to remove it. The record answers the number core removes next (`remove`:
+   `previous`, `current` or none):
    - **confirmed** - a promoted heir's cashier row and the old Responsable row are CLOSED (as a removal
      closes one), then the heir INSERTED as the live, confirmed Responsable, the old number moved to the
      new row's OTHER number (`previousPhoneSealed`, the slot every removal path, the departure debt and
@@ -1198,12 +1202,15 @@ pre-releases already out cannot draw it, and a floor compares the version core o
      over; "Retirer cet autre numéro" removes it instead. A promoted cashier's row is marked UNCONFIRMED
      instead (its rights are unknown now, as after a role change Lydia did not confirm), and the hand-over
      may be asked again.
-   - **the heir left meanwhile** (confirmed) - the same tracking, and its removal next: a number with
-     every right for a non-member (`previous` on the old Responsable, or `current` on a promoted cashier's
-     own row). Answered as the typed 409 `LYDIA_CASHIER_NOT_A_MEMBER`.
+   - **the heir left meanwhile, or lost `MANAGE_PAYOUT_ACCOUNT`** (`target-left`, `heir-ineligible`;
+     confirmed or not) - the same tracking, and its removal next: a number with every right, or unknown
+     rights, for someone who may not hold the role (`previous` on the old Responsable, or `current` on a
+     promoted cashier's own row). Core removes it, then answers the typed 409 `LYDIA_CASHIER_NOT_A_MEMBER`
+     or `LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER`, WARN in its log, before Lydia's own
+     unconfirmed answer.
    - **no old row left** (an account erasure took it while the step ran) - the heir is recorded as the
-     Responsable, confirmed or not, as lot 2 records one. If the heir left too, the outcome is
-     `target-left` and the number is tracked as a DEPARTED Responsable's: no other Responsable number
+     Responsable, confirmed or not, as lot 2 records one. If the heir left too (or lost the
+     permission), the outcome is `target-left` (or `heir-ineligible`) and the number is tracked as a DEPARTED Responsable's: no other Responsable number
      remains to remove it with (a removal needs one as its context, and the Business needs a manager),
      so the departed-Responsable card asks a platform admin to hand over, which removes it.
 4. **Remove** the number the record names through the existing verified path (`LydiaCashierOps.revoke`:
@@ -1220,8 +1227,9 @@ half-hand-over:
 | the add refused, typed | claim released, nothing at Lydia | retry |
 | the add unanswered | claim KEPT | `IN_FLIGHT` for everyone until a global admin clears it |
 | the read-back short of the 13 | old Responsable stays; the number tracked as their other number (a promoted cashier's row marked unconfirmed) | the card names it; retry the same number, or remove it |
-| the record failed (no answer from social) | claim KEPT; core's ERROR names the heir (8 characters) and the number's last two digits, and Lydia holds that number with every right (or unknown rights) | a global admin clears the claim, then the SAME hand-over again with the same number, or the number removed in the Lydia Pro app |
-| the record REFUSED, typed, after Lydia added (`CLAIM_LOST`, `BUSINESS_CHANGED`, a lock or a unique index) | nothing recorded, claim released; Lydia holds the number with no row; core's ERROR names the heir and the last two digits | the SAME hand-over again with the same number (re-adding is safe, the read-back decides), or the number removed in the Lydia Pro app |
+| the record failed (no answer from social, or a 5xx) | claim KEPT; core's ERROR names the heir (8 characters) and the number's last two digits, and Lydia holds that number with every right (or unknown rights); its advice: "the claim KEPT - a global admin clears it first" | a global admin clears the claim (`lydia-enrolment-clear`), then the SAME hand-over again with the same number, or the number removed in the Lydia Pro app |
+| the record REFUSED, typed, after Lydia added (`CLAIM_LOST`, `BUSINESS_CHANGED`, a lock, or a unique index answered as `ALREADY_SET`: the cashiers changed meanwhile) | nothing recorded, claim released; Lydia holds the number with no row; core's ERROR names the heir, the last two digits and the refusal's code ("refused the record (CODE), the claim released") | the SAME hand-over again with the same number (re-adding is safe, the read-back decides), or the number removed in the Lydia Pro app |
+| the Responsable's stored number unreadable at the record | social logs an ERROR, then the 503; nothing written, claim kept | as "the record failed" |
 | core stopped after the record, before the removal | the heir is Responsable; the old number is their other number, untried | the card names it; "Retirer cet autre numéro"; a new hand-over is `PHONE_LOCKED` until it is gone |
 | the removal not confirmed (rights still read) | the old number flagged NOT confirmed on the heir's row | the card shows the flag; "Retirer cet autre numéro" asks again |
 | another operation took the claim before the removal | the old number untried on the heir's row | the card names it (WARN, not ERROR) |
@@ -1229,7 +1237,8 @@ half-hand-over:
 A successful hand-over answers `{ outcome: 'handed-over', previousNumberRemoved }`: an old number whose
 removal is not confirmed never turns a done hand-over into a failure - the screen says the role is
 handed over and that the old number still holds rights. Refusals are classified on the typed code
-(`LYDIA_UNREACHABLE` versus any other `HttpException`), never on a message.
+(`LYDIA_UNREACHABLE` versus any other `HttpException`), never on a message; core's record-failure advice
+(`recordFailureAdvice`) follows the status social answered (a 4xx refusal, or no answer), never its text.
 
 **The old holder is REMOVED, not demoted to Tresorier**: the simplest reversible option. Their row is
 closed by the record and their number removed at Lydia; they stay a member and can be added back as a

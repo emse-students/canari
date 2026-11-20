@@ -29,6 +29,7 @@
   import { toE164Phone } from '$lib/associations/lydiaPhone';
   import { LYDIA_PRO_HELP_ROUTE } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -170,7 +171,12 @@
       return;
     }
     const heir = members.find((member) => member.userId === handoverUserId);
-    if (!heir) return;
+    if (!heir) {
+      // The picker only offers listed members: a pick missing from the list means the roster
+      // changed under the form, and saying nothing would leave the button dead.
+      Log.w('lydia-cashiers', 'hand-over: the picked member is not in the roster', handoverUserId);
+      return;
+    }
     const heirName = memberLabel(heir);
     const self = currentUserId() === responsable.userId;
     if (

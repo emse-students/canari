@@ -214,27 +214,38 @@ export function planHandover(
  * What a hand-over's record did, once Lydia answered the add:
  * - `handed-over`: the target is the live Responsable; the old number is the new row's OTHER number,
  *   to remove next - or there was no old Responsable left to replace;
- * - `unconfirmed`: Lydia did not confirm the 13 rights - the old Responsable stays, the asked number
- *   is TRACKED (as the Responsable's other number, or on the heir's own cashier row, unconfirmed),
- *   for a retry or a removal;
- * - `target-left`: the target is no longer a member - the old Responsable stays, the asked number is
- *   tracked and removed next. With NO old Responsable left (an erasure took it meanwhile), the number
- *   is tracked as a departed Responsable's: no other Responsable number remains to remove it with,
- *   so a platform admin hands the role over and that removes it.
+ * - `unconfirmed`: Lydia did not confirm the 13 rights to an heir still eligible - the old
+ *   Responsable stays, the asked number is TRACKED (as the Responsable's other number, or on the
+ *   heir's own cashier row, unconfirmed), for a retry or a removal; with no old Responsable left, the
+ *   heir is recorded as an unconfirmed Responsable;
+ * - `target-left`: the target is no longer a member, Lydia confirmed or NOT - the asked number is
+ *   tracked and removed next (its rights, whatever they are, belong to nobody here);
+ * - `heir-ineligible`: the target is still a member but no longer holds MANAGE_PAYOUT_ACCOUNT (it
+ *   was taken away between the claim and the record) - handled as `target-left`: never recorded as
+ *   the Responsable, the number tracked and removed next.
+ * With NO old Responsable left (an erasure took it meanwhile), an ineligible heir's number is tracked
+ * as a departed Responsable's: no other Responsable number remains to remove it with, so a platform
+ * admin hands the role over and that removes it.
  */
-export type HandoverOutcome = 'handed-over' | 'unconfirmed' | 'target-left';
+export type HandoverOutcome = 'handed-over' | 'unconfirmed' | 'target-left' | 'heir-ineligible';
 
 /**
- * The outcome of a record, from what it read under its lock: whether the old Responsable row is
- * still live (`previousLive`), whether Lydia confirmed the rights, and whether the target is still
- * a member.
+ * The outcome of a record, from what it read under its lock: whether Lydia confirmed the rights, and
+ * the target's membership and MANAGE_PAYOUT_ACCOUNT re-read there. Whether the old Responsable row is
+ * still live changes what the record WRITES, never the outcome. An heir who is no longer eligible wins over everything:
+ * whatever Lydia answered, their number must not stay with rights.
  */
 export function handoverOutcome(
-  previousLive: boolean,
   confirmed: boolean,
-  targetIsMember: boolean
+  target: { isMember: boolean; managesPayout: boolean }
 ): HandoverOutcome {
-  if (!targetIsMember && (confirmed || !previousLive)) return 'target-left';
+  if (!target.isMember) return 'target-left';
+  if (!target.managesPayout) return 'heir-ineligible';
   if (!confirmed) return 'unconfirmed';
   return 'handed-over';
+}
+
+/** Whether an outcome leaves the heir out (their number tracked and removed, never recorded). */
+export function heirRefused(outcome: HandoverOutcome): boolean {
+  return outcome === 'target-left' || outcome === 'heir-ineligible';
 }

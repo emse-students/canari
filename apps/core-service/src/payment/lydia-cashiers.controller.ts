@@ -34,16 +34,49 @@ import { RouteParams } from '../common/route-params';
  * answers too when its target left while Lydia was being asked (`libs/contracts`, `social`).
  */
 export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
+/**
+ * social-service's `code` (equal to `social.responsableHandoverHeirNotPayoutManager` in the contract)
+ * for an heir who no longer holds MANAGE_PAYOUT_ACCOUNT when the hand-over is recorded: core answers
+ * it, typed, for the record's `heir-ineligible` outcome.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER =
+  'LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER';
 
 /** social-service's `code` of a cashier operation refused while another holds the claim. */
 const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 
 /** What social-service's hand-over record answers (`LydiaCashiersService.recordHandover`). */
 interface HandoverRecord {
-  outcome: 'handed-over' | 'unconfirmed' | 'target-left';
+  outcome: 'handed-over' | 'unconfirmed' | 'target-left' | 'heir-ineligible';
   cashierId: string;
   /** The number of row `cashierId` to remove next through the verified path, or none. */
   remove: LydiaCashierNumber | null;
+}
+
+/**
+ * What core's ERROR advises when a hand-over's record failed AFTER Lydia added the number, by what
+ * the record answered - the rows of payments.md's failure table. A TYPED refusal (a 4xx social-service
+ * answered, passed on as an `HttpException` carrying its code) released the claim: the same hand-over
+ * may be asked again at once. No answer (a 503, or anything else) kept the claim: a global admin
+ * clears it first.
+ */
+export function recordFailureAdvice(err: unknown): string {
+  const status = err instanceof HttpException ? err.getStatus() : null;
+  if (status !== null && status >= 400 && status < 500) {
+    const answer = (err as HttpException).getResponse();
+    const code =
+      answer && typeof answer === 'object' ? (answer as { code?: unknown }).code : undefined;
+    return (
+      `social-service refused the record (${typeof code === 'string' ? code : status}), the claim ` +
+      `released - hand over again to the same member with the same number, or remove it in the ` +
+      `Lydia Pro app`
+    );
+  }
+  return (
+    'social-service did not answer, the claim KEPT - a global admin clears it first ' +
+    '(lydia-enrolment-clear), then hand over again to the same member with the same number, or ' +
+    'remove it in the Lydia Pro app'
+  );
 }
 
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
@@ -318,29 +351,40 @@ export class LydiaCashiersController {
         true
       );
     } catch (err: unknown) {
-      // Lydia holds the number (every right, or unknown rights) and NO row names it.
+      // Lydia holds the number (every right, or unknown rights) and NO row names it. The way back
+      // depends on what the record answered (payments.md, the failure table).
       this.logger.error(
         `Lydia Responsable of ${associationId}: hand-over NOT recorded after Lydia added the number ` +
           `(${added === true ? 'every right confirmed' : 'rights unconfirmed'}) - user ` +
-          `${userId.slice(0, 8)}, phone ending ${phone.slice(-2)}, holds them with no row: hand ` +
-          `over again to the same member with the same number, or remove it in the Lydia Pro app`
+          `${userId.slice(0, 8)}, phone ending ${phone.slice(-2)}, holds them with no row: ` +
+          recordFailureAdvice(err)
       );
       throw err;
     }
     const removed = record.remove
       ? await this.removeAfterHandover(associationId, record.cashierId, record.remove, actorId)
       : null;
-    if (added !== true) throw added;
-    if (record.outcome === 'target-left') {
+    // An heir refused at the record wins over Lydia's answer: their number is removed either way.
+    if (record.outcome === 'target-left' || record.outcome === 'heir-ineligible') {
+      const left = record.outcome === 'target-left';
       this.logger.warn(
-        `Lydia Responsable of ${associationId}: hand-over not made - the new holder left meanwhile ` +
-          `(their number ${removed ? 'removed' : 'NOT removed, flagged'})`
+        `Lydia Responsable of ${associationId}: hand-over not made - the new holder ` +
+          `${left ? 'left meanwhile' : 'no longer manages the payout account'} (their number ` +
+          `${removed ? 'removed' : 'NOT removed, flagged'})`
       );
-      throw new ConflictException({
-        code: LYDIA_CASHIER_NOT_A_MEMBER,
-        message: 'The new Responsable is no longer a member of the association',
-      });
+      throw new ConflictException(
+        left
+          ? {
+              code: LYDIA_CASHIER_NOT_A_MEMBER,
+              message: 'The new Responsable is no longer a member of the association',
+            }
+          : {
+              code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+              message: 'The new Responsable no longer manages the payout account',
+            }
+      );
     }
+    if (added !== true) throw added;
     this.logger.log(
       `Lydia Responsable of ${associationId}: handed over; the old number ` +
         `${removed ? 'removed (0 rights)' : 'NOT removed yet - flagged on the card'}`

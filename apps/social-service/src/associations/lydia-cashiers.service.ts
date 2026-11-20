@@ -53,6 +53,7 @@ import {
   LYDIA_RESPONSABLE_HANDOVER_DISABLED,
   LYDIA_RESPONSABLE_HANDOVER_ENABLED,
   handoverOutcome,
+  heirRefused,
   planHandover,
   type HandoverOutcome,
   type HandoverPlan,
@@ -681,6 +682,14 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
     );
   }
 
+  /** The association's name, read in `manager`'s transaction (the heir's notice carries it). */
+  private async nameIn(manager: EntityManager, id: string): Promise<string> {
+    const rows = (await manager.query(`SELECT name FROM associations WHERE id = $1`, [
+      id,
+    ])) as Array<{ name: string | null }>;
+    return rows[0]?.name ?? '';
+  }
+
   /**
    * Whether `userId` is a member of association `id`, and holds MANAGE_PAYOUT_ACCOUNT there, read
    * in `manager`'s transaction. The member bitmask IS the whole rule for that flag:
@@ -720,13 +729,16 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
    * - `unconfirmed`: nothing moves. A promoted cashier's row is marked UNCONFIRMED (its rights are
    *   unknown now, as after a role change Lydia did not confirm); any other number is tracked as the
    *   OLD Responsable's other number, so the card names it and a retry or "Retirer" ends it.
-   * - `target-left`: the same tracking, and its removal next (`remove`) - the number may hold every
-   *   right for a non-member. With no old Responsable left, the number is tracked as a departed
-   *   Responsable's (no other Responsable number remains to remove it with; a platform admin hands
-   *   the role over, which removes it).
+   * - `target-left` (no longer a member) and `heir-ineligible` (MANAGE_PAYOUT_ACCOUNT taken away since
+   *   the claim, re-read HERE): whatever Lydia answered, the same tracking and its removal next
+   *   (`remove`) - the number may hold every right for someone who must not hold it. With no old
+   *   Responsable left, the number is tracked as a departed Responsable's (no other Responsable number
+   *   remains to remove it with; a platform admin hands the role over, which removes it).
    * The claim is cleared in the same transaction, and released on every typed refusal. The heir is
-   * told by a bell row once the hand-over is made (no acceptance step, owner, 2026-11-20). Answers the
-   * row and the number core removes next, if any. The phone is never logged.
+   * told by a bell row once the hand-over is made (no acceptance step, owner, 2026-11-20); the
+   * association's name it carries is read INSIDE the transaction, so nothing after the commit can
+   * fail the answer of a hand-over that happened. Answers the row and the number core removes next,
+   * if any. The phone is never logged.
    */
   async recordHandover(
     id: string,
@@ -772,6 +784,8 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
     const sealed = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, phone);
     const phoneEnd = phone.slice(-2);
     let result: HandoverRecordResult;
+    /** The association's name for the heir's notice, read under the record's lock. */
+    let assoName = '';
     try {
       result = await this.assoRepo.manager.transaction(async (manager: EntityManager) => {
         await this.lockForRecord(manager, id, vendorToken, claimToken, 'hand-over record');
@@ -807,8 +821,9 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
           );
         }
         const old = previous[0];
-        const { isMember } = await this.membershipIn(manager, id, userId);
-        const outcome = handoverOutcome(!!old, confirmed, isMember);
+        const target = await this.membershipIn(manager, id, userId);
+        const outcome = handoverOutcome(confirmed, target);
+        const refused = heirRefused(outcome);
         const closeHeirRow = async () => {
           if (!heir) return;
           await manager.query(
@@ -850,8 +865,9 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
           this.logger.error(
             `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)}: the old Responsable row is gone - ` +
               `the new one is recorded alone` +
-              (isMember ? '' : ', and is no longer a member: a platform admin hands the role over')
+              (refused ? ` (${outcome}): a platform admin hands the role over` : '')
           );
+          if (outcome === 'handed-over') assoName = await this.nameIn(manager, id);
           await closeHeirRow();
           return done({ outcome, cashierId: await insertHeir(null), remove: null });
         }
@@ -871,8 +887,14 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
         }
         if (outcome === 'handed-over') {
           if (!old.phoneSealed) {
+            this.logger.error(
+              `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)} NOT recorded: the Responsable row ` +
+                `${sanitizeLog(old.id).slice(0, 8)} stores no number - the number ending ${phoneEnd} ` +
+                `holds every right at Lydia with no row; the claim stays until a global admin clears it`
+            );
             throw new ServiceUnavailableException("The Responsable's number is not stored");
           }
+          assoName = await this.nameIn(manager, id);
           await closeHeirRow();
           await manager.query(
             `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
@@ -884,7 +906,7 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
           const cashierId = await insertHeir({ sealed: old.phoneSealed, end: old.phoneEnd });
           return done({ outcome, cashierId, remove: 'previous' });
         }
-        const remove = outcome === 'target-left';
+        const remove = refused;
         if (heir) {
           // A promoted cashier's number: its rights are unknown now (Lydia was asked for the 13).
           await manager.query(
@@ -912,7 +934,10 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
             `it - the number ending ${phoneEnd} may be listed at Lydia with no row`
         );
         await this.release(id, claimToken);
-        throw conflict(LYDIA_CASHIER_ALREADY_SET, 'This member already is a cashier');
+        throw conflict(
+          LYDIA_CASHIER_ALREADY_SET,
+          'The cashiers changed meanwhile: a unique index refused the hand-over record'
+        );
       }
       if (err instanceof ConflictException || err instanceof NotFoundException) {
         await this.release(id, claimToken);
@@ -928,13 +953,8 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
         `[AUDIT] ${audit}` +
           (result.remove ? '; the old number is removed next' : '; no old Responsable left')
       );
-      if (confirmed) {
-        const asso: Array<{ name: string }> = await this.assoRepo.query(
-          `SELECT name FROM associations WHERE id = $1`,
-          [id]
-        );
-        await this.notifier.tellResponsable({ id, name: asso[0]?.name ?? '' }, userId);
-      }
+      // Never throws (the notifier logs its own failure): the hand-over is committed.
+      if (confirmed) await this.notifier.tellResponsable({ id, name: assoName }, userId);
     } else if (result.outcome === 'unconfirmed') {
       this.logger.error(
         `[AUDIT] ${audit}: Lydia did not confirm the rights - the Responsable is unchanged unless ` +
@@ -942,8 +962,11 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       );
     } else {
       this.logger.warn(
-        `[AUDIT] ${audit}: the new holder left meanwhile - the Responsable is unchanged; their ` +
-          `number is tracked` +
+        `[AUDIT] ${audit}: the new holder ` +
+          (result.outcome === 'target-left'
+            ? 'left meanwhile'
+            : 'no longer manages the payout account') +
+          ` - not recorded as the Responsable; their number is tracked` +
           (result.remove ? ' and removed next' : ' as a departed Responsable')
       );
     }

@@ -36,7 +36,10 @@ import {
   SESSION_ID_RE,
 } from './payment.controller';
 import { LYDIA_ENROLMENT_PENDING } from './webhook.controller';
-import { LYDIA_CASHIER_NOT_A_MEMBER } from './lydia-cashiers.controller';
+import {
+  LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+} from './lydia-cashiers.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
@@ -1203,6 +1206,9 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
         .responsableHandoverEnabled
     );
     expect(LYDIA_CASHIER_NOT_A_MEMBER).toBe(contract.social.cashierNotAMember);
+    expect(LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER).toBe(
+      (contract.social as Record<string, string>).responsableHandoverHeirNotPayoutManager
+    );
     expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
     expect(LYDIA_CASHIERS_LIVE).toBe(contract.social.cashiersLiveOnDelete);
     expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(
