@@ -141,7 +141,7 @@ describe('the builder decides "already read elsewhere" before touching the shade
     );
     expect(stepBody).toContain('if (switchesChannel) manager.cancel(notifId)');
     expect(builder.slice(step)).toContain(
-      'READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, postToShade)'
+      'READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, linesOf(style), postToShade)'
     );
     // No cancel of the conversation's banner anywhere before that step.
     expect(builder.slice(0, step)).not.toContain('manager.cancel(notifId)');
@@ -174,5 +174,33 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
     expect(covers).toBeGreaterThan(-1);
     expect(covers).toBeLessThan(fn.indexOf('GENERIC_BANNERS.realPosted('));
     expect(covers).toBeLessThan(fn.indexOf('context.fetchAvatar(senderId)'));
+  });
+});
+
+/**
+ * WHAT A READ IS WEIGHED AGAINST (round-4 review of #3912): the lines this process handed to
+ * `notify`, recorded with the post - the shade lags a `notify`, so it is asked only when this process
+ * posted nothing. `ReadElsewhereMarksTest` runs the decision on an asynchronous shade; this pins the
+ * builder's side of it.
+ */
+describe('the builder records what it posted and keeps the stamps current', () => {
+  it('hands the posted lines to the record with the post', () => {
+    expect(source).toContain('linesOf(style), postToShade)');
+  });
+
+  it('restamps a re-injected line when the second trigger knows the server instant', () => {
+    const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
+    const restamp = fn.indexOf('THE SECOND TRIGGER MAY KNOW MORE');
+    expect(restamp).toBeGreaterThan(-1);
+    expect(fn.slice(restamp, restamp + 900)).toContain(
+      'it.extras.putLong(LINE_SERVER_AT, serverAt)'
+    );
+  });
+
+  it('forgets the record when the banner is removed another way', () => {
+    const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
+    expect(fn.slice(0, fn.indexOf('READ_ELSEWHERE.recordThenCancel('))).toContain(
+      'READ_ELSEWHERE.forget(groupId)'
+    );
   });
 });

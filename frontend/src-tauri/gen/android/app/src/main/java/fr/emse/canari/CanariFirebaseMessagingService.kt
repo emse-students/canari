@@ -898,6 +898,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val cancelled = if (read == null) {
                 notifId = prefs.getInt(groupId, -1)
                 if (notifId != -1) manager.cancel(notifId)
+                READ_ELSEWHERE.forget(groupId)
                 notifId != -1
             } else {
                 // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner
@@ -943,11 +944,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * The lines of conversation notification [notifId] as this side stamped them
-         * ([LINE_SENT_AT], [LINE_SERVER_AT]), for [ReadElsewhereMarks.recordThenCancel]; null when
-         * none is posted. A line without the stamp (an own reply drawn in the shade) is not news
-         * and is left out. A shade that cannot be read is reported as nothing posted, at a level
-         * that accuses: the banner then stays, which is noise - never a lost message.
+         * The lines of conversation notification [notifId] as the SHADE holds them, for
+         * [ReadElsewhereMarks.recordThenCancel] when this process has posted nothing for it (the
+         * shade lags a post this process made; its own record answers then). Null when none is
+         * posted. A shade that cannot be read is reported as nothing posted, at a level that
+         * accuses: the banner then stays, which is noise - never a lost message.
          */
         private fun shadeLinesOf(manager: NotificationManager, notifId: Int): List<ReadElsewhereMarks.Line>? {
             val posted = try {
@@ -957,17 +958,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return null
             } ?: return null
             return NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)
-                ?.messages
-                ?.mapNotNull { line ->
-                    val stamps = line.extras
-                    if (!stamps.containsKey(LINE_SENT_AT)) {
-                        null
-                    } else {
-                        ReadElsewhereMarks.Line(stamps.getLong(LINE_SENT_AT), stamps.getLong(LINE_SERVER_AT))
-                    }
-                }
+                ?.let { linesOf(it) }
                 ?: emptyList()
         }
+
+        /**
+         * The lines [style] holds, as [ReadElsewhereMarks.Line]s: the stamps each message carries
+         * ([LINE_SENT_AT], [LINE_SERVER_AT]); none for this account's own line; an uncoverable
+         * line for a message without stamps ([ReadElsewhereMarks.Line.of]).
+         */
+        private fun linesOf(style: NotificationCompat.MessagingStyle): List<ReadElsewhereMarks.Line> =
+            style.messages.mapNotNull { line ->
+                val stamps = line.extras
+                val author = line.person
+                val fromSelf = author == null ||
+                    (author.key == style.user.key && author.name?.toString() == style.user.name?.toString())
+                ReadElsewhereMarks.Line.of(
+                    fromSelf = fromSelf,
+                    sentAt = if (stamps.containsKey(LINE_SENT_AT)) stamps.getLong(LINE_SENT_AT) else null,
+                    serverAt = if (stamps.containsKey(LINE_SERVER_AT)) stamps.getLong(LINE_SERVER_AT) else null,
+                )
+            }
 
         /**
          * Appends one entry to `fcm_message_cache.ndjson`, the cross-process file the app drains at
@@ -3127,6 +3138,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             if (alreadyPosted) {
                 Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
+                // THE SECOND TRIGGER MAY KNOW MORE: a line keeps its first trigger's stamps, and the
+                // first may not have had the server's instant. The re-injected line is restamped, so
+                // a read on the server clock can cover it ([ReadElsewhereMarks.recordThenCancel]).
+                if (serverAt > 0L) {
+                    style.messages
+                        .filter { it.timestamp == stamp && it.extras.getLong(LINE_SERVER_AT, 0L) == 0L }
+                        .forEach {
+                            it.extras.putLong(LINE_SENT_AT, sentAt)
+                            it.extras.putLong(LINE_SERVER_AT, serverAt)
+                        }
+                }
             } else {
                 style.addMessage(newMessage)
             }
@@ -3289,7 +3311,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 postToShade()
                 false
             } else {
-                !READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, postToShade)
+                !READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, linesOf(style), postToShade)
             }
             if (readElsewhere) {
                 Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")

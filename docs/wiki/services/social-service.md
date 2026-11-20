@@ -836,18 +836,30 @@ server time); a message comparable on neither is posted - a lost banner is a los
 record is in memory on purpose: the race is between a post still being built and a read this
 process was told about, and both die with the process.
 
-**THE SHADE DECIDES THE CANCEL, NOT THE WEBVIEW'S ROW.** The banner goes only when the mark covers
+**THE LINES DECIDE THE CANCEL, NOT THE WEBVIEW'S ROW.** The banner goes only when the mark covers
 EVERY line the conversation's notification holds, on the same clock rule. Each line carries its own
-instants in its extras (`LINE_SENT_AT`, `LINE_SERVER_AT`, written by `showMessageNotification` and
-re-injected with the line on every later post), and `ReadElsewhereMarks.recordThenCancel` reads them
-(`shadeLinesOf`) together with the notification id INSIDE its critical section - an id looked up
-before it would miss a first-ever banner posted in between. The row used to decide
+instants in its extras (`LINE_SENT_AT`, `LINE_SERVER_AT`, written by `showMessageNotification`,
+re-injected with the line on every later post - androidx core keeps a message's extras - and
+restamped when a second trigger of the same message knows the server instant the first did not).
+
+**WHICH LINES: WHAT THIS PROCESS POSTED, NOT WHAT THE SHADE ANSWERS.** `notify` returns before
+NotificationManagerService has enqueued the record (it posts a runnable to its handler), so the shade
+read right after a post can still show the notification from BEFORE it: a read covering M1 would see
+M1 alone while M2 was just posted, and cancel it (M2 lost); a read right after a first banner would
+see nothing and cancel nothing (a read banner left standing). So `postUnlessRead` records, under the
+lock, the exact lines it handed to `notify`, and `recordThenCancel` weighs that record; the shade
+(`shadeLinesOf`) is read only when this process has posted nothing for the conversation - a fresh
+process whose banner an earlier one left. The record goes with the banner (a cancel by a read, or
+`forget` on every other cancel). The notification id is looked up INSIDE the critical section too.
+A line from someone else without stamps (a banner from a build that did not stamp) is never covered;
+this account's own line (a reply drawn in the shade) is not news and is left out.
+
+The WebView's row used to decide
 (`unreadCount === 0`), and it can lag behind the shade: the WebView is frozen, the account reads on
 desktop at t1, a peer sends N at t2 > t1 and the push posts N; on thaw the own read t1 is drained
 before N reaches the row, which counts nothing unread - and N's banner was cancelled, its WebView
 re-post then refused as already announced (`hasAlreadyAlerted`), so N lost its banner for good
-(round-3 review of #3912). A line without the stamps (an own reply drawn in the shade) is not news
-and is left out; a line comparable on neither clock keeps the banner.
+(round-3 review of #3912). A line comparable on neither clock keeps the banner.
 
 **A COVERED POST TOUCHES NOTHING.** `showMessageNotification` asks the record twice:
 
@@ -865,9 +877,10 @@ WebView's post (`notifyMessageFromWebSocket`) asks the record before it fetches 
 a generic line from `GenericBannerLedger`, so a refused post consumes neither.
 
 What is JVM-tested (`ReadElsewhereMarksTest`, no clock - latches, and the waiting thread's state
-bounded by a spin count so a lock that stopped excluding fails instead of hanging): the comparison,
-the record's rise, that a mark older than the shade's newest line cancels nothing and one covering
-every line cancels, that a covered post runs none of its steps, and both interleavings - a read
+bounded by a spin count so a lock that stopped excluding fails instead of hanging; the shade is an
+ASYNCHRONOUS fake whose posts show only once the test drains them): the comparison, the record's rise,
+the two lag scenarios above, an unstamped foreign line never covered, that a mark older than the
+newest line cancels nothing and one covering every line cancels, that a covered post runs none of its steps, and both interleavings - a read
 arriving while a post is inside its steps waits, then weighs its line and removes it; a post arriving
 while a read is inside its steps waits and is then refused. What only a device proves (pinned as
 source by `dismissedNotificationReplay.test.ts`): that the builder hands EVERY side effect to that
