@@ -8,7 +8,7 @@ Its other half - telling a poison row from a transient write failure - shipped i
 request ([a poison row is dropped](../frontend/modules/chat.md#a-poison-row-is-dropped-not-kept-2026-11-19)).
 
 **A rate, not a log line.** The acks withheld on unstored rows are said once per episode (`[ACK] ...
-have rows shown and not stored`, then counted), and a dropped poison row says `[DB] POISON ROW` at
+have rows not stored ...`, then counted), and a dropped poison row says `[DB] POISON ROW` at
 ERROR and `logMlsMetric({ kind: 'row_write_poison' })` - but `logMlsMetric` only prints to the local
 console, behind `canari_mls_debug`. Neither reaches a place where the RATE against the population can
 be read (how many devices, how often, which `errorName`). Route both counts to the server-side metrics

@@ -4,6 +4,8 @@ target: 1.7.2
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
+_2026-11-20, sitting [S15](../device-verification.md#the-readings-of-2026-11-20-s15-171-alpha7-content-free-push-on-the-mi-9t-the-miconnect-terms-stage-the-admission-card-not-reached): **step 2's reading was NOT taken.** Three web-rig runs revoking a member's devices and enrolling a new one never raised the "X veut rejoindre la conversation" card: the new device was either added by an online member's sweep (the member still held a leaf, or a pending device row sat in the same pass) or entered by its own external commit. A SQL-made revocation with the new device's sends, commits and welcome requests refused by a CDP fault raised none either. The card needs a person with NO leaf, on a group, at the server's epoch, and the product's own revoke path does not leave that state on the rig; the reading needs a constructed state (a member whose every leaf was removed by a commit) and stays owed._
+
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md)).
 Step 1's table (#3774) ships in `1.7.0`; its reading needs two weeks of production after that
 stable, and steps 2-5 are `1.7.1` and `1.8.0` work._
