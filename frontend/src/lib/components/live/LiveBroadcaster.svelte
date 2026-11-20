@@ -12,7 +12,7 @@
    * NO KEYBOARD TRAP: every control is a native button, the layer is a labelled dialog, and Escape is
    * the history's Back like any overlay's.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import {
     BatteryWarning,
     CameraOff,
@@ -89,7 +89,7 @@
     associationName?: string | null;
     /** The screen asks to be unmounted (Close, after an end or from the preview). */
     onclose: () => void;
-    /** The machine, injectable for tests; made here otherwise. */
+    /** The machine, injectable for tests; made here otherwise. Read once, at mount. */
     broadcast?: LiveBroadcast;
     /** The battery reading, injectable for tests. */
     readBattery?: () => Promise<number | null>;
@@ -99,9 +99,20 @@
     associationId = null,
     associationName = null,
     onclose,
-    broadcast = new LiveBroadcast(new CameraSession(openLiveCamera), associationId),
+    broadcast: injected,
     readBattery = readBatteryLevel,
   }: Props = $props();
+
+  /**
+   * ONE MACHINE PER SCREEN, fixed at mount: the injected one (tests), else one made here. Never a
+   * prop fallback - a fallback is a `derived` of the props it reads (`associationId`, which the feed
+   * passes as `liveTarget.associationId`), so a parent re-targeting a mounted screen made a fresh
+   * machine under it, never loaded (stuck on "Reading the live's rules", no request), while the one it
+   * replaced was never disposed (its sound context left open). Measured on dev, 2026-11-20.
+   */
+  const broadcast: LiveBroadcast = untrack(
+    () => injected ?? new LiveBroadcast(new CameraSession(openLiveCamera), associationId)
+  );
 
   const camera = $derived(broadcast.camera);
   /** The scenes of a desktop live, or null on a phone (the camera recorded directly). */

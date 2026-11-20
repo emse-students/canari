@@ -874,6 +874,17 @@ Chat and reactions (WP-L6) and moderation (WP-L8, WP-L8b) were built after this 
 | `lib/live/liveStudio.svelte.ts` and its parts | A desktop live's scenes: the composed stream the recorder records instead of the camera's ([scenes](#scenes-on-a-desktop-live-owner-2026-11-14)). |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
+**One machine per screen, one screen per target (2026-11-20).** `LiveBroadcaster` makes its
+`LiveBroadcast` ONCE, at mount (`untrack`), never as a prop fallback: a fallback is a `derived` of the
+props it reads, and the feed passes `associationId={liveTarget.associationId}`, so a feed that assigned
+`liveTarget` a new object under a mounted screen made a fresh machine whose limits were never read (the
+pre-live sheet stuck on "Reading the live's rules", no request) while the machine it replaced was never
+disposed. Measured on dev by "Publier" then "En direct" past an ended screen (the feed's button is
+reachable past the layer by the keyboard or a script): two extra `[LIVE-BROADCAST] screen for` lines,
+no `GET /api/lives/rules`, Start greyed. The feed's `onGoLive` now refuses to re-target an open screen
+(a `[POSTS]` warning; the screen stays, closed by its own Close). Tests: `LiveBroadcaster.secondLive.svelte.test.ts`
+(the feed's getter shape re-targeted after an end: one machine) and `page.goLive.svelte.test.ts`.
+
 **The entry.** The post composer's chip row carries "En direct" when `livesAvailable(serverLivesMode())`
 holds - `LIVE_ENABLED` AND the server's runtime kill switch on ([below](#the-servers-kill-switch-hides-the-live-surfaces-2026-10-21)). The live
 goes out under the identity chosen in the composer: the member, or an association they may post as

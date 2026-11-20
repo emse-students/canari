@@ -291,10 +291,19 @@
     null
   );
 
-  /** "En direct" from the composer: it closes (by state, no history change) and the live takes over. */
+  /**
+   * "En direct" from the composer: it closes (by state, no history change) and the live takes over.
+   * A SCREEN ALREADY OPEN IS NEVER RE-TARGETED: the composer can still be reached past it (the
+   * keyboard, a script), and a new target under a mounted screen is not a new screen - the one open
+   * stays, whatever its phase, and is closed by its own Close.
+   */
   function onGoLive(target: { associationId: string | null; associationName: string | null }) {
-    Log.d('POSTS', 'going live from the composer: the composer closes, the live replaces it');
     showCreateModal = false;
+    if (liveTarget) {
+      Log.w('POSTS', 'going live while a live screen is open: that screen stays, no second one');
+      return;
+    }
+    Log.d('POSTS', 'going live from the composer: the composer closes, the live replaces it');
     liveTarget = target;
   }
 
