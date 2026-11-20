@@ -300,6 +300,9 @@ sheet either, even when a notification tap asks for one. The 2026-11-15 moderati
 needs no case for comments under a scheduled post. Charter: principle 6 (kindness) and 7 (simplicity) -
 the question disappears with its cause.
 
+**Production count (read-only, 2026-11-20, about 15:45 UTC):** 0 posts have a `publishedAt` in the future,
+so 0 comments sit under a not-yet-published post. Nothing needed repairing.
+
 #### Decided by the owner (2026-11-04)
 
 - **The place decides.** A student's comment under an institution's or another BDE's post, and a
