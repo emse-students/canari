@@ -798,3 +798,11 @@ A last fragment can be a single frame (33 ms) or less: `newMediaExtent` used the
 a segment added anything, so such a segment was never measured and stayed "not held" for ever. A segment is measured when
 it added more than float noise (`NEW_MEDIA_MIN_S`, 1 ms); the hole threshold stays about holes between segments. `take` also
 answers the segment's own start (the earliest measured), not where a re-take's new piece begins.
+
+## The replay page starts its player once (S13, 2026-11-20)
+
+S13 read every replay opened from a feed card start its player twice 0.35 s apart (the listing and segment 0
+fetched twice), at the moment the reel list answered again. NOT the same cause as the repeated last segment (that
+one is the player's fill; this is the pane's reactivity). `ReplayPane`'s effect read `post.liveId`, so a new `post`
+object for the same replay re-ran it: stop, then start. The live id is now a `$derived` (equal values do not
+re-run the effect) and the player's start runs untracked. Test: a re-keyed post, one `fetchReplay`.
