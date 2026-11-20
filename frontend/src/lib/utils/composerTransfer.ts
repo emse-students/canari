@@ -1,3 +1,5 @@
+import { webViewFetch } from '$lib/utils/fetchRouting';
+
 /**
  * The files a paste or a drop is carrying, read the one way that sees all of them.
  *
@@ -159,11 +161,17 @@ export class WebImageFetchError extends Error {
 }
 
 /**
- * Fetches a dropped web image as a `File`, as the browser's CORS rules allow.
+ * Fetches a dropped web image as a `File`.
  *
- * `unreachable` is what a cross-origin host that sends no CORS headers looks like (the fetch rejects
- * with an opaque `TypeError`, indistinguishable from being offline) - the caller says so rather than
- * attaching nothing in silence.
+ * The address was chosen by the page the picture was dragged out of, not by Canari. The caller
+ * (`composerDrop.ts`) has already refused every origin the enforced `connect-src` does not allow -
+ * which is every host but Canari's own (and Klipy's on the web) - so no request the policy refuses is
+ * ever made. What reaches here is fetched with no credentials through {@link webViewFetch} on every
+ * platform, never through the HTTP plugin the Tauri `window.fetch` replacement routes third-party
+ * hosts to.
+ *
+ * `unreachable` is a transport failure (offline, or the host did not answer): the caller says so
+ * rather than attaching nothing in silence.
  *
  * @param url - an `http(s)` image address from `webImageUrlsFromTransfer`.
  * @param fetchImpl - injectable for tests.
@@ -171,7 +179,7 @@ export class WebImageFetchError extends Error {
  */
 export async function fetchWebImageFile(
   url: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = webViewFetch
 ): Promise<File> {
   let response: Response;
   try {
