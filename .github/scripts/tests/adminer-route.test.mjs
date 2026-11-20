@@ -197,7 +197,11 @@ if (!/\[adminer\]="\.\/infrastructure\/local\/Dockerfile\.adminer"/.test(read('.
   fail('build.yml does not build Dockerfile.adminer, so no release pushes the image production runs');
 }
 // A cached `apk upgrade` layer could carry an old libpq while the scan builds fresh (review of #3442).
-if (!/^\s*no-cache:\s*\$\{\{.*\bmatrix\.name == 'adminer'.*\}\}\s*$/m.test(read('.github', 'workflows', 'build.yml'))) {
+// A plain OR of `matrix.name == '<name>'` terms, one of them adminer: `... && false` must not pass.
+const noCacheTerms = read('.github', 'workflows', 'build.yml')
+  .match(/^\s*no-cache:\s*\$\{\{\s*(matrix\.name == '[\w-]+'(?:\s*\|\|\s*matrix\.name == '[\w-]+')*)\s*\}\}\s*$/m)?.[1]
+  .split(/\s*\|\|\s*/);
+if (!noCacheTerms?.includes("matrix.name == 'adminer'")) {
   fail("build.yml may build adminer from its cache - `no-cache: ${{ matrix.name == 'adminer' }}` is missing");
 }
 
