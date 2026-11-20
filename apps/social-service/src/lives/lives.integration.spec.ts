@@ -519,7 +519,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       "publishedAt" timestamptz, "feedNotifiedAt" timestamptz,
       anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
       "allowReposts" boolean NOT NULL DEFAULT true, "hiddenByModeration" boolean NOT NULL DEFAULT false,
-      "scheduledAt" timestamptz)`);
+      "scheduledAt" timestamptz,
+      images jsonb NOT NULL DEFAULT '[]', comments jsonb NOT NULL DEFAULT '[]')`);
+    // What the retention worker deletes beside the post (`purgeReel`).
+    await q(`CREATE TABLE post_notifications (id serial PRIMARY KEY, "postId" varchar NOT NULL,
+      "recipientId" varchar(255), "commentId" varchar(255))`);
     await q(`CREATE TABLE member_reposts ("postId" uuid, "reposterId" varchar(255))`);
     await q(`CREATE TABLE post_republications ("postId" uuid, "associationId" uuid)`);
     await q(`CREATE TABLE user_moderation ("userId" varchar(255), "isMuted" boolean)`);
@@ -1396,6 +1400,41 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
       await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
       expect(await replayPosts(live.id)).toEqual([]);
+    });
+
+    it('a failing trim whose own count also fails is logged, never unhandled: trimsSettled still resolves, and a repeated switch-off queues no second drain', async () => {
+      const live = await longLive();
+      const total = LIVE_RETAINED_SEGMENTS + 3;
+      for (let i = 0; i < total; i++) {
+        await lives.ingest(ALICE, live.id, i, segment(i));
+        await lives.trimsSettled();
+      }
+      store.failTrim = true;
+      const db = (lives as unknown as { db: DataSource }).db;
+      const original = db.query.bind(db);
+      const spy = jest
+        .spyOn(db, 'query')
+        .mockImplementation(((sql: string, ...rest: unknown[]) =>
+          sql.includes('count(*) AS left')
+            ? Promise.reject(new Error('database down'))
+            : original(sql, ...(rest as []))) as typeof db.query);
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        await lives.switchReplayOff(ALICE, live.id);
+        // A second and third switch-off while the drain is queued add nothing to the chain.
+        await lives.switchReplayOff(ALICE, live.id);
+        await lives.switchReplayOff(ALICE, live.id);
+        await expect(lives.trimsSettled()).resolves.toBeUndefined();
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+        spy.mockRestore();
+        store.failTrim = false;
+      }
+      expect(unhandled).toEqual([]);
+      expect(await keeps(live.id)).toBe(false);
     });
 
     it('switched off AFTER the live but inside its drain window: publishReplay refuses, the live is purged, and no post row is ever written', async () => {

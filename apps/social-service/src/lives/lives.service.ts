@@ -440,6 +440,8 @@ export class LivesService implements OnModuleDestroy {
   private readonly announcements = new Set<Promise<void>>();
   /** The trim running for each live right now: at most ONE per live in this process. */
   private readonly trimming = new Map<string, Promise<void>>();
+  /** Lives with a switch-off drain queued or running: a repeated switch-off adds nothing to the chain. */
+  private readonly draining = new Set<string>();
 
   /**
    * The replays' total cap (decision D5), read ONCE at construction: an invalid
@@ -1274,12 +1276,25 @@ export class LivesService implements OnModuleDestroy {
    */
   private trimInBackground(liveId: string, untilDone = false): void {
     if (untilDone) {
+      // A drain is already queued or running for this live: repeated switch-offs must not grow the chain.
+      if (this.draining.has(liveId)) return;
+      this.draining.add(liveId);
       // The switch-off's drain must not be dropped as a duplicate: it runs AFTER the pass in flight.
       const previous = this.trimming.get(liveId);
       const pending: Promise<void> = (async () => {
-        await previous;
-        await this.trimUntilDone(liveId);
-      })().finally(() => this.forgetTrim(liveId, pending));
+        try {
+          await previous;
+          await this.trimUntilDone(liveId);
+        } catch (e) {
+          // Nothing awaits this chain but `trimsSettled`: a rejection here would be unhandled.
+          this.logger.error(
+            `[LIVE_REPLAY] ${liveId}: the switched-off replay's drain failed - the next segment or the end's purge takes what is left: ${causeOf(e)}`
+          );
+        }
+      })().finally(() => {
+        this.draining.delete(liveId);
+        this.forgetTrim(liveId, pending);
+      });
       this.trimming.set(liveId, pending);
       return;
     }
@@ -1313,11 +1328,19 @@ export class LivesService implements OnModuleDestroy {
       const pass = await this.trim(liveId);
       deleted += pass.deleted;
       if (pass.failed) {
-        const [{ left }]: { left: string }[] = await this.db.query(
-          `SELECT count(*) AS left FROM live_segments s JOIN lives l ON l.id = s."liveId"
-            WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2`,
-          [liveId, LIVE_RETAINED_SEGMENTS]
-        );
+        let left = 'an unknown number of';
+        try {
+          const rows: { left: string }[] = await this.db.query(
+            `SELECT count(*) AS left FROM live_segments s JOIN lives l ON l.id = s."liveId"
+              WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2`,
+            [liveId, LIVE_RETAINED_SEGMENTS]
+          );
+          left = rows[0].left;
+        } catch (e) {
+          this.logger.error(
+            `[LIVE_REPLAY] ${liveId}: counting what the failed trim left behind failed too: ${causeOf(e)}`
+          );
+        }
         this.logger.error(
           `[LIVE_REPLAY] ${liveId}: the switched-off replay's trim is INCOMPLETE (${deleted} segment(s) deleted, ${left} still behind the window) - the next segment or the end's purge takes them`
         );
@@ -2822,20 +2845,20 @@ export class LivesService implements OnModuleDestroy {
       this.trimInBackground(liveId, true);
       return { liveId, keepsReplay: false };
     }
-    if (done.replayEnded) {
-      try {
-        if (!(await this.replayRetention.purgeReplayOf(liveId))) {
-          this.logger.error(
-            `[LIVE_REPLAY] ${liveId}: switched off but the replay post was NOT deleted (a blob refused) - unreachable, and the hourly worker retries`
-          );
-        }
-      } catch (e) {
+    // Every call on an ended live retries the deletion: it is idempotent (`expiresAt <= now()`), so a
+    // repeated switch-off finishes what a failed purge left.
+    try {
+      if (!(await this.replayRetention.purgeReplayOf(liveId))) {
         this.logger.error(
-          `[LIVE_REPLAY] ${liveId}: switched off but deleting the replay post failed - unreachable, and the hourly worker retries: ${causeOf(e)}`
+          `[LIVE_REPLAY] ${liveId}: switched off but the replay post was NOT deleted (a blob of its media or comments FAILED to delete) - unreachable, and the hourly worker retries`
         );
       }
-      await this.replayFeedsChanged(liveId, 'its organiser switched it off');
+    } catch (e) {
+      this.logger.error(
+        `[LIVE_REPLAY] ${liveId}: switched off but deleting the replay post failed - unreachable, and the hourly worker retries: ${causeOf(e)}`
+      );
     }
+    if (done.replayEnded) await this.replayFeedsChanged(liveId, 'its organiser switched it off');
     await this.purgeBestEffort(liveId, 'after the replay was switched off');
     return { liveId, keepsReplay: false };
   }
