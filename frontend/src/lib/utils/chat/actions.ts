@@ -1719,7 +1719,17 @@ export async function importUserBackup(params: {
     );
   }
 
-  await reloadConversations();
+  // THE IMPORT'S OUTCOME IS THE STORE MERGE ABOVE, which has landed (review of #3887). A restore
+  // that fails now - a group list the server did not answer - is the RESTORE's failure: said as
+  // such, and caught up by the next restore, which reads the same store. Reported as the import's,
+  // it had the reader import again a file that was already in.
+  try {
+    await reloadConversations();
+  } catch (e) {
+    log(
+      `[BACKUP] the backup is imported, but the conversation list could not be restored from it now: ${String(e)} - the next restore shows it`
+    );
+  }
 
   log(
     `[OK] Backup imported: ${backup.conversations.length} conversation(s), ` +

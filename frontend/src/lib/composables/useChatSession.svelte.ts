@@ -57,7 +57,7 @@ import {
   resumeConnectionImpl,
   scheduleReconnectImpl,
 } from './session/sessionConnection';
-import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
+import { exportBackupImpl, importBackupImpl, restoreAfterImport } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
@@ -594,19 +594,7 @@ export function useChatSession() {
         (v) => {
           isImporting = v;
         },
-        // THE SESSION'S OWN RESTORE, never a clear and a reload (review of #3887): see
-        // `importUserBackup`'s `reloadConversations`. A tab with no session callbacks (a follower)
-        // shows the imported rows at its next restore.
-        async () => {
-          const cb = tabLeaderSessionCb;
-          if (!cb) {
-            log(
-              '[BACKUP] imported into the store - this tab restores its list at its next restore'
-            );
-            return;
-          }
-          await cb.loadAndRestoreConversations();
-        },
+        restoreAfterImport(() => tabLeaderSessionCb, log),
         recoveryCode
       ),
     /** Processes pending MLS invitations from our other devices (multi-device sync). */

@@ -3502,8 +3502,11 @@ behind its row.
 then asked for a reload, and the settings page passed a reload that did nothing: the list stayed
 empty until a restart, and a frame meeting that empty map was an orphan dropped as removed although
 its conversation was coming back from the store. The import now only asks the session's own restore
-(`loadAndRestoreConversations`), which prunes and re-seeds the map in one synchronous loop; a tab
-with no session callbacks shows the imported rows at its next restore.
+(`loadAndRestoreConversations`, through `restoreAfterImport`), which prunes and re-seeds the map in
+one synchronous loop; a tab with no session callbacks shows the imported rows at its next restore.
+**The import's outcome is the store merge**: a restore that then fails (a group list the server did
+not answer) is logged as the restore's failure and caught up by the next restore - reported as the
+import's, it had the reader import again a file already in.
 
 **The shape: the orphan buffer is counted in the hold, by kind.** Storing the row at buffering was
 refused: the row would belong to a conversation the store does not hold (the restore and the sidebar
@@ -3521,7 +3524,10 @@ not to store. So:
   mark settles before its dispatch) from refusing a commit's or a send's checkpoint and from spending
   the once-per-page "Rows of applied frames cannot be stored" line on something the next settle drops.
   One arriving after that second settle still refuses the hold, on its own line (`[ORPHAN] A
-  checkpoint is refused: N decrypted orphan message(s) arrived while its store ran`);
+  checkpoint is refused: N decrypted orphan message(s) arrived while its store ran`). A step that
+  THROWS is a third case, carried as a type (`StoreStepOutcome.threw`): the hold is refused on a line
+  naming the throw, neither the orphan line nor the failing-store one, and the settle reads the map
+  before it touches the buffer, so a throw there leaves every orphan where it was;
 - while it stands its frame is withheld from the ack (`framesLeftUnstored`), and the cap of 50
   waiting messages binds the unframed only: a framed orphan is a decrypted message, never refused by
   the cap, and it cannot accumulate since every store settles it;

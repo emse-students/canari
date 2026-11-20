@@ -1641,4 +1641,39 @@ describe('the orphan buffer (rows before ratchet)', () => {
     (await observer.holdRowsForCheckpoint())();
     expect(storedIds(saveMessage)).toEqual(['orphan-past-cap']);
   });
+
+  it('a store step that THROWS is named as a throw: the hold refuses with no orphan line and no failing-store line, and the orphan stays', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    await messaging.addMessageToChat(PEER, 'orphaned', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-step',
+      frameId: 'q-step',
+    });
+    const has = conversations.has.bind(conversations);
+    let armed = true;
+    vi.spyOn(conversations, 'has').mockImplementation((key: string) => {
+      if (armed && key === ORPHAN_KEY) {
+        armed = false;
+        throw new Error('unexpected');
+      }
+      return has(key);
+    });
+
+    await expect(observer.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    const errorLines = errors.mock.calls.map((call) => String(call[0]));
+    const warnLines = warn.mock.calls.map((call) => String(call[0]));
+    expect(errorLines.some((line) => line.includes('THREW'))).toBe(true);
+    expect(errorLines.some((line) => line.includes('Rows of applied frames'))).toBe(false);
+    expect(warnLines.some((line) => line.includes('[ORPHAN] A checkpoint is refused'))).toBe(false);
+    // Nothing the throw interrupted is lost: the orphan still withholds its frame, and settles next.
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-step']);
+    admit(conversations);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-step']);
+  });
 });

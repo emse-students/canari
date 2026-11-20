@@ -13,7 +13,28 @@ import {
   backupImportOutcome,
   type BackupOutcome,
 } from '$lib/utils/backupOutcome';
-import type { SessionContext } from './sessionTypes';
+import type { ChatSessionCallbacks, SessionContext } from './sessionTypes';
+
+/**
+ * The restore a backup import asks for once its rows are in the store: the session's own
+ * (`loadAndRestoreConversations`), never a clear and a reload - the inbound pipeline keeps running,
+ * and a frame meeting a conversation missing from the map in between was handled as one the reader
+ * had deleted (review of #3887). A tab with no session callbacks (a follower) restores at its next
+ * pass. It may reject; `importUserBackup` says a rejection as the restore's, not the import's.
+ */
+export function restoreAfterImport(
+  sessionCallbacks: () => Pick<ChatSessionCallbacks, 'loadAndRestoreConversations'> | null,
+  log: (msg: string) => void
+): () => Promise<void> {
+  return async () => {
+    const cb = sessionCallbacks();
+    if (!cb) {
+      log('[BACKUP] imported into the store - this tab restores its list at its next restore');
+      return;
+    }
+    await cb.loadAndRestoreConversations();
+  };
+}
 
 /**
  * Exports an encrypted backup of all conversations and MLS state for the current user

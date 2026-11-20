@@ -242,6 +242,18 @@ interface BatchRowWrite {
 }
 
 /**
+ * What one step of the store chain (`storeBufferedRows`) leaves: the rows still unstored (`left`:
+ * kept writes and kept batches), the decrypted orphans that arrived after its last settle, and
+ * whether the step THREW - a TYPE, so a throw is never read as an orphan or a failing store.
+ */
+interface StoreStepOutcome {
+  stored: boolean;
+  left: number;
+  orphans: number;
+  threw: boolean;
+}
+
+/**
  * Rows of frames already applied could not be stored before a checkpoint (rows before ratchet): the
  * checkpoint is refused while they stand, and the next one's hold retries them.
  */
@@ -807,10 +819,12 @@ export function useMessaging() {
     for (const [key, entries] of Array.from(orphanBuffer.entries())) {
       const framed = entries.filter((entry) => entry.options.frameId);
       if (framed.length === 0) continue;
+      // Read BEFORE the buffer changes: a throw here leaves every entry where it was.
+      const home = ctx.conversations.has(key);
       const unframed = entries.filter((entry) => !entry.options.frameId);
       if (unframed.length > 0) orphanBuffer.set(key, unframed);
       else orphanBuffer.delete(key);
-      if (!ctx.conversations.has(key)) {
+      if (!home) {
         dropped += framed.length;
         for (const entry of framed) droppedFrames.push(entry.options.frameId as string);
         continue;
@@ -1051,7 +1065,7 @@ export function useMessaging() {
   function storeBufferedRows(
     ctx: MessagingContext,
     origin: 'hold' | 'close'
-  ): Promise<{ stored: boolean; left: number; orphans: number }> {
+  ): Promise<StoreStepOutcome> {
     const step = bufferedRowsStored
       .then(async () => {
         // FIRST, the framed orphans: decrypted, held in memory only, and settled in one pass - a
@@ -1137,7 +1151,7 @@ export function useMessaging() {
         // The count is THIS step's, read before a store queued behind it can take the kept batches.
         const left = writesLeft + keptMessageCount();
         const orphans = framedOrphanCount();
-        return { stored: left === 0 && orphans === 0, left, orphans };
+        return { stored: left === 0 && orphans === 0, left, orphans, threw: false };
       })
       .catch((e: unknown) => {
         console.error(`[ADD_MSG] a store of the buffered messages threw (${origin}):`, e);
@@ -1145,6 +1159,7 @@ export function useMessaging() {
           stored: false,
           left: unstoredRowCount() + keptMessageCount(),
           orphans: framedOrphanCount(),
+          threw: true,
         };
       });
     bufferedRowsStored = step;
@@ -1187,15 +1202,25 @@ export function useMessaging() {
     let allStored = false;
     let left = 0;
     let orphansLeft = 0;
+    let threw = false;
     try {
       const outcome = await storeBufferedRows(ctx, 'hold');
       allStored = outcome.stored;
       left = outcome.left;
       orphansLeft = outcome.orphans;
+      threw = outcome.threw;
     } finally {
       // HANDED OVER ONLY ON SUCCESS: on any other way out the hold is given back here, so buffering
       // can never stay off for the rest of the page.
       if (!allStored) release();
+    }
+    if (threw) {
+      // THE STEP THREW, named as a throw (review of #3887): its cause is already said at ERROR by the
+      // step's own catch. Neither an orphan nor a failing store, so neither line below is spent on it.
+      console.error(
+        `[ADD_MSG] A checkpoint is refused: its store of the buffered rows THREW (${left} row(s) and ${orphansLeft} decrypted orphan(s) left) - the next hold stores them again`
+      );
+      throw new BufferedRowsNotStoredError(left + orphansLeft);
     }
     if (!allStored && left === 0) {
       // ONLY ORPHANS ARRIVED DURING THE STEP'S LAST SETTLE: refused, since their advance may be in
