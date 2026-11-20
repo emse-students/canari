@@ -84,7 +84,6 @@ earliest version, as a checklist.
 - [P2 - every service image ships its dev dependencies in the runtime stage](backlog.d/p2-service-images-ship-their-dev-dependencies.md)
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
 - [P2 - the iOS App Group root refuses the backup flag, so `mls.bin` and the push secret still go into an iPhone backup](backlog.d/p2-the-ios-app-group-root-refuses-the-backup-flag.md)
-- [P2 - the "Rediffusion" switch's label and hint are near-black and grey on the dark pre-live sheet, barely readable](backlog.d/p2-the-rediffusion-switch-label-is-unreadable-on-the-live-sheet.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
