@@ -3,10 +3,12 @@ package app.tauri.gallery
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
+import java.util.concurrent.Executors
 
 /**
  * Canari's recent conversations as DIRECT targets of Android's share sheet (sharing lot S5), the
@@ -32,6 +34,15 @@ import androidx.core.content.pm.ShortcutManagerCompat
  * A SHORTCUT THE MEMBER PINNED to the home screen cannot be removed by any app: it is DISABLED
  * instead (`disablePinnedShortcuts`), and the launcher decides whether it still shows it.
  *
+ * THE PICTURE. Each target carries an [Avatar] - an id and a kind, never a location nor bytes - and
+ * is published with its picture ([ShortcutIcons.adaptive]): the cached one when the app's file
+ * cache holds it, else the initials disc of its label. A picture NOT cached is fetched by the app's
+ * own path afterwards, on [iconThread] - a publish never waits for the network - and the target is
+ * pushed again under the SAME id, which replaces it (idempotent). That second push is guarded by
+ * [generation]: a later publish or a clear (sign-out) bumps it, and an upgrade fetched under an older
+ * one is dropped, so a slow fetch can never put a conversation back after the clear. The files are
+ * the app's avatar caches, which already exist for the notifications: this object adds none.
+ *
  * Android 10+ (API 29) shows these in the sheet. Android 9 would need `androidx.sharetarget` and
  * its chooser service, which this app does not ship: there the shortcuts are published and the
  * sheet simply does not list them.
@@ -53,8 +64,27 @@ internal object ShareTargets {
 
     private val record = ShortcutRecord("canari_share_targets", TAG)
 
+    /** Longest avatar id accepted: a user id or a media id, far below this. */
+    private const val MAX_AVATAR_ID_LENGTH = 100
+
+    /** The avatar kinds the page may name, one per route the app's fetch knows. */
+    const val AVATAR_USER = "user"
+    const val AVATAR_MEDIA = "media"
+
+    /** WHICH picture a target is drawn with: a person's photo or a public media object, by id. */
+    class Avatar(val kind: String, val id: String)
+
     /** One target as the page sends it. */
-    class Target(val id: String, val label: String, val link: String)
+    class Target(val id: String, val label: String, val link: String, val avatar: Avatar? = null)
+
+    /** Runs the avatar fetches that a publish must not wait for - one at a time, in order. */
+    private val iconThread = Executors.newSingleThreadExecutor()
+
+    /**
+     * Bumped by every publish and every clear, under the object's lock. An icon upgrade runs only
+     * under the generation it was started in, so it cannot outlive the set it belongs to.
+     */
+    private var generation = 0L
 
     /**
      * What a publish left: [present] suggestions the platform actually lists afterwards, and
@@ -75,7 +105,7 @@ internal object ShareTargets {
         if (valid.size < targets.size) {
             Log.w(TAG, "publish: ${targets.size - valid.size} malformed target(s) dropped")
         }
-        val kept = valid.take(max)
+        val kept = valid.take(max).map { dropMalformedAvatar(it) }
         if (kept.size < valid.size) {
             Log.w(TAG, "publish: capped at the platform maximum of $max")
         }
@@ -88,25 +118,29 @@ internal object ShareTargets {
         }
         val staleLeft = if (stale.isEmpty() || remove(context, stale)) emptyList() else stale
         enablePinned(context, keptIds)
+        val icons = ShortcutIcons.requireSource("publish")
+        val activityClass = activity.javaClass
+        val started = ++generation
+        // The targets whose picture is not cached (and not known to be absent): fetched afterwards.
+        val toFetch = mutableListOf<Pair<Int, Target>>()
         for ((rank, target) in kept.withIndex()) {
             // One shortcut at a time, each in its own try: one refused by the platform must not
             // take the others with it.
             try {
-                val info = ShortcutInfoCompat.Builder(context, target.id)
-                    .setShortLabel(target.label)
-                    .setLongLabel(target.label)
-                    .setCategories(setOf(CATEGORY))
-                    .setRank(rank)
-                    // A tap from the launcher's long-press menu opens the conversation, the same
-                    // deep link as a tapped notification.
-                    .setIntent(Intent(Intent.ACTION_VIEW, Uri.parse(target.link), context, activity.javaClass))
-                    .build()
-                if (!ShortcutManagerCompat.pushDynamicShortcut(context, info)) {
+                val avatar = target.avatar
+                val cached = if (icons != null && avatar != null) cachedPicture(context, icons, avatar, rank) else null
+                if (icons != null && avatar != null && cached == null) toFetch.add(rank to target)
+                val picture = cached ?: icons?.initials(target.label)
+                if (!pushOne(context, activityClass, target, rank, picture)) {
                     Log.w(TAG, "publish: the platform refused target #$rank")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "publish: target #$rank failed: ${e.javaClass.simpleName}")
             }
+        }
+        if (icons != null && toFetch.isNotEmpty()) {
+            Log.d(TAG, "publish: ${toFetch.size} picture(s) to fetch after the publish")
+            iconThread.execute { upgradeIcons(context, activityClass, icons, toFetch, started) }
         }
         record.write(context, staleLeft + keptIds)
         // WHAT THE PLATFORM LISTS, not what was pushed: a push can succeed and be evicted at once
@@ -119,6 +153,8 @@ internal object ShareTargets {
     /** Removes every target this object recorded. Returns how many; throws when the platform refused. */
     @Synchronized
     fun clear(context: Context): Int {
+        // A picture still being fetched for a target of THIS set must not push it back afterwards.
+        generation++
         val ids = record.read(context)
         if (ids.isEmpty()) {
             Log.d(TAG, "clear: nothing published")
@@ -130,6 +166,79 @@ internal object ShareTargets {
         record.write(context, emptyList())
         Log.i(TAG, "clear: ${ids.size} target(s) removed")
         return ids.size
+    }
+
+    /** An avatar the page named wrongly is dropped (logged); the target itself is still published. */
+    private fun dropMalformedAvatar(target: Target): Target {
+        val avatar = target.avatar ?: return target
+        val ok = (avatar.kind == AVATAR_USER || avatar.kind == AVATAR_MEDIA) &&
+            avatar.id.isNotBlank() && avatar.id.length <= MAX_AVATAR_ID_LENGTH
+        if (ok) return target
+        Log.w(TAG, "publish: a malformed avatar (kind length ${avatar.kind.length}) dropped, initials drawn instead")
+        return Target(target.id, target.label, target.link, null)
+    }
+
+    /** The cached picture of [avatar], or null; a read that throws is logged and counts as a miss. */
+    private fun cachedPicture(context: Context, icons: ShortcutIcons.Source, avatar: Avatar, rank: Int): Bitmap? = try {
+        icons.cached(context, avatar)
+    } catch (e: Exception) {
+        Log.w(TAG, "publish: target #$rank: the cached picture could not be read: ${e.javaClass.simpleName}")
+        null
+    }
+
+    /**
+     * Pushes ONE target with [picture] (null: no icon - only when no icon source is registered).
+     * The first publish and the later upgrade go through this one call, so they cannot drift.
+     */
+    private fun pushOne(context: Context, activityClass: Class<*>, target: Target, rank: Int, picture: Bitmap?): Boolean {
+        val builder = ShortcutInfoCompat.Builder(context, target.id)
+            .setShortLabel(target.label)
+            .setLongLabel(target.label)
+            .setCategories(setOf(CATEGORY))
+            .setRank(rank)
+            // A tap from the launcher's long-press menu opens the conversation, the same deep link
+            // as a tapped notification.
+            .setIntent(Intent(Intent.ACTION_VIEW, Uri.parse(target.link), context, activityClass))
+        if (picture != null) builder.setIcon(ShortcutIcons.adaptive(picture))
+        return ShortcutManagerCompat.pushDynamicShortcut(context, builder.build())
+    }
+
+    /**
+     * Fetches each missing picture and pushes its target again with it, under the SAME id. Runs on
+     * [iconThread]. A target with no picture (the server answered there is none) or a failed fetch
+     * keeps its initials - the app side has logged why. Each push is made under the object's lock
+     * and only while [started] is still the current generation.
+     */
+    private fun upgradeIcons(
+        context: Context,
+        activityClass: Class<*>,
+        icons: ShortcutIcons.Source,
+        pending: List<Pair<Int, Target>>,
+        started: Long
+    ) {
+        var done = 0
+        for ((rank, target) in pending) {
+            val avatar = target.avatar ?: continue
+            try {
+                val picture = icons.fetch(context, avatar) ?: continue
+                val stillCurrent = synchronized(this) {
+                    if (generation != started) {
+                        false
+                    } else {
+                        if (pushOne(context, activityClass, target, rank, picture)) done++
+                        else Log.w(TAG, "upgradeIcons: the platform refused the picture of target #$rank")
+                        true
+                    }
+                }
+                if (!stillCurrent) {
+                    Log.d(TAG, "upgradeIcons: superseded by a later publish or a clear, the rest dropped")
+                    return
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "upgradeIcons: target #$rank failed: ${e.javaClass.simpleName}")
+            }
+        }
+        Log.i(TAG, "upgradeIcons: $done of ${pending.size} picture(s) set")
     }
 
     /** Removes [ids] from the dynamic set, and disables any the member pinned. */

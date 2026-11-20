@@ -119,9 +119,49 @@ preselection, never a destination by itself.
   name, in the share-target category of `res/xml/shortcuts.xml` (the `android.app.shortcuts`
   meta-data on MainActivity, hand-maintained; its types are the SEND filter's). A tap from the
   launcher's long-press menu, where dynamic shortcuts also appear, opens the conversation's
-  `fr.emse.canari://chat/<id>` link like a notification. No icon: the avatar bitmap
-  (`avatarBitmap.ts`) rasterises a node already on screen, and the initials disc lives in the app
-  module the plugin cannot reach.
+  `fr.emse.canari://chat/<id>` link like a notification. **Each target carries a picture**
+  (the "picture of a shortcut" bullet below).
+- **The picture of a shortcut (2026-11-20).** Until then a target was published with no icon, and the
+  launcher's long-press menu drew an empty white circle where Messenger and Google Messages draw a
+  face (owner's screenshot). Now:
+  - **What the page sends** (`ShareTarget.avatar`, `shareTargets.ts`): an id and a kind, never a
+    location and never bytes - `{ kind: 'user', id }` for a DM's peer, `{ kind: 'media', id }` for a
+    group's `imageMediaId` or, for a salon, its community's logo (`channelCommunityLogos`, from
+    `WorkspaceLike.imageMediaId`): what `ConversationPickList` draws. None known -> the key is absent
+    and the native side draws the initials of the label. The picture is part of the "last told" key
+    (`keyOf`), so a changed group image is republished at the next departure.
+  - **Who fetches** (`ShortcutIcons.Source`, the plugin's seam): the avatar fetch needs the push
+    secret, the 24 h file cache and the remembered absence of a photo, which live in the APP module
+    (`CanariFirebaseMessagingService`: `fetchAvatar`, `fetchPublicMediaIcon`, `cachedRemoteIcon`,
+    `generateInitialsBitmap`) - and the plugin cannot reach the app. `CanariApplication.onCreate`
+    registers `shortcutIconSource`, so the shortcuts use THE SAME fetch, the SAME cache files and the
+    SAME initials disc as every notification. Nothing crosses the bridge but the id.
+  - **A publish never waits for the network.** `cachedRemoteIcon(networkAllowed = false)` answers from
+    the cache alone. `ShareTargets.publish` pushes each target with the cached picture, else the
+    initials disc; the targets whose picture was NOT cached (and not known to be absent) are then
+    fetched one at a time on `ShareTargets.iconThread` and pushed AGAIN under the same id, which
+    replaces the shortcut (idempotent; `pushOne` serves both pushes). No timer. A target whose photo
+    is cached costs one push, so the platform's background rate limit on shortcut updates is spent
+    only by genuine misses.
+  - **A late fetch cannot outlive a clear.** `generation` is bumped by every publish and every clear
+    (under the object's lock); an upgrade runs only under the generation it started in, and the
+    sign-out's `clear` therefore drops one still in flight - it cannot put a conversation back.
+  - **One icon helper for both kinds of shortcut** (`ShortcutIcons.adaptive`): the circular picture
+    (or disc) is centred on a 108-unit adaptive canvas at 72 units - the window every launcher mask
+    shows (`IconCompat.createWithAdaptiveBitmap`) - so a circle mask shows the whole face, uncropped,
+    and no white ring appears. `publishConversationShortcut` (the notification's `chat_<group>`)
+    uses it too, so the two paths look identical. A launcher with a squircle mask shows the circle
+    inside it.
+  - **Privacy.** No new file: the pictures are the avatar and logo caches the notifications already
+    keep (`avatar_<id>.jpg`, `assologo_<id>.jpg`, `.absent`), which the app deliberately keeps at
+    sign-out (`backup_exclusion.rs`, `AtSignOut::Kept`: refetched on a miss, and a member's directory
+    photo is the same one the whole directory shows). What identifies the account in a shortcut -
+    its name and its icon - is erased with the shortcut itself, by the same record-and-clear as
+    before. Logs carry no name: an avatar kind's length, a rank, an exception class.
+  - **Wiring is pinned** by `androidShortcutsManifest.test.ts` (both publishers use `adaptive`, the
+    app registers the source, the cached half never asks the network, a clear supersedes a late
+    upgrade) and `shareTargets.test.ts` (which picture each kind of destination names). The Kotlin is
+    compiled by CI's APK build only.
 - **When**: when the member LEAVES the app (`followShareTargets`, `sharing/shareTargetsFollow.svelte.ts`,
   on `onAppScreenChange`), and when the member moves the switch (off clears at once, on publishes
   at once) - never on a change of the conversation map. The list has one kind of reader, the
@@ -198,10 +238,16 @@ preselection, never a destination by itself.
   say so.
 
 **Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
-`androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut the
+`androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut with a
+picture NOT yet cached shows the initials until the fetch lands (seconds; the process may be frozen
+after the departure, in which case the next departure completes it). A shortcut the
 member PINNED from the launcher menu cannot be removed by any app: it is disabled at the next
 publish or clear that drops it, and the launcher decides whether its label stays. iOS: its own
-half, [below](#share-suggestions-ios---lot-s5).
+half, [below](#share-suggestions-ios---lot-s5), **which has the same gap**: a donated
+`INSendMessageIntent` carries a `speakableGroupName` and no `INImage` (see its first lines), so the
+iOS suggestions show no photo either. Not fixed here (it needs an image per donation through
+`INInteraction`/`setImage(_:forParameterNamed:)` and a cached file the extension can read); planned in
+[its backlog entry](../backlog.d/p3-ios-share-suggestions-carry-no-photo.md).
 
 ## Share suggestions, iOS - lot S5
 

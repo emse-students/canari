@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.os.Build
 import android.util.Log
 import app.tauri.gallery.ConversationShortcuts
+import app.tauri.gallery.ShortcutIcons
 import fr.emse.canari.call.IncomingRing
 import java.io.File
 
@@ -34,6 +35,10 @@ class CanariApplication : Application() {
         // Activity, no Service, nothing holding a Context. This is the one object guaranteed to
         // exist for the life of the process, and `onCreate` runs before any component of ours can.
         appContext = applicationContext
+        // The launcher shortcuts (share suggestions, conversation notifications) draw their pictures
+        // with the notifications' own fetch, cache and initials disc: the plugin that publishes them
+        // cannot reach the app module, so the app hands it that path once, here.
+        ShortcutIcons.source = CanariFirebaseMessagingService.shortcutIconSource
         try {
             System.loadLibrary("mines_app_lib")
         } catch (_: UnsatisfiedLinkError) {

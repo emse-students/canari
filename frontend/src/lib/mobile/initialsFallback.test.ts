@@ -77,7 +77,11 @@ describe('the initials disc, across the three notification implementations', () 
     // The sixth of 2026-10-08, the per-post reaction collage, went on 2026-11-14 with its client
     // ledger: a post's notification is now ONE server-collapsed social push, drawn by the social
     // path above (engagement.md, "The owner's decision of 2026-11-14").
-    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(6); // 5 calls + the definition
+    //
+    // The seventh of 2026-11-20 is the LAUNCHER SHORTCUTS' disc (`shortcutIconSource.initials`): a
+    // long-press conversation with no cached photo is drawn with the very disc a notification gets,
+    // where it used to be an empty white circle (docs/wiki/frontend/sharing.md).
+    expect(kotlin.match(/generateInitialsBitmap\(/g)).toHaveLength(7); // 6 calls + the definition
     expect(swift.match(/attachInitials\(/g)).toHaveLength(5); // 4 calls + the definition
     // The ObjC trunk is the IN-APP path and serves the message AND the salon paths, so it has two
     // call sites, not three - and no social one: a social push in the foreground is a banner the

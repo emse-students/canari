@@ -189,3 +189,69 @@ describe('the conversation shortcuts are recorded, and erased by that record', (
     expect(code).toMatch(/const val CAP = \d+/);
   });
 });
+
+/**
+ * Every launcher shortcut has a picture, drawn by ONE helper (owner's screenshot, 2026-11-20: the
+ * long-press menu listed conversations with an empty white circle). The Kotlin cannot run here, so
+ * what is held is the wiring: both publishers go through `ShortcutIcons.adaptive`, the app hands the
+ * plugin its own fetch, and an upgrade fetched late cannot outlive a clear.
+ */
+describe('the launcher shortcuts are drawn with one icon helper', () => {
+  const JAVA = resolve(
+    here,
+    '../../../src-tauri/plugins/tauri-plugin-gallery/android/src/main/java'
+  );
+  const service = codeOnly(
+    readFileSync(resolve(ANDROID, 'java/fr/emse/canari/CanariFirebaseMessagingService.kt'), 'utf8')
+  );
+  const application = codeOnly(
+    readFileSync(resolve(ANDROID, 'java/fr/emse/canari/CanariApplication.kt'), 'utf8')
+  );
+  const icons = codeOnly(readFileSync(resolve(JAVA, 'ShortcutIcons.kt'), 'utf8'));
+  const targets = codeOnly(kotlin);
+  const plugin = codeOnly(readFileSync(resolve(JAVA, 'GalleryPlugin.kt'), 'utf8'));
+
+  it('the share suggestions and the notification shortcut both go through it', () => {
+    expect(targets).toContain('ShortcutIcons.adaptive(picture)');
+    expect(service).toMatch(/\.setIcon\(ShortcutIcons\.adaptive\(icon\)\)/);
+    expect(service).not.toMatch(/IconCompat\.createWithBitmap\(icon\)/);
+    expect(icons).toContain('IconCompat.createWithAdaptiveBitmap(');
+  });
+
+  it('pads to the adaptive icon geometry: 72 visible units on a 108 canvas', () => {
+    expect(icons).toMatch(/ADAPTIVE_CANVAS = 108f/);
+    expect(icons).toMatch(/ADAPTIVE_VISIBLE = 72f/);
+  });
+
+  it('the app registers its own fetch, cache and initials disc as the source', () => {
+    expect(application).toContain(
+      'ShortcutIcons.source = CanariFirebaseMessagingService.shortcutIconSource'
+    );
+    expect(service).toMatch(
+      /override fun initials\(label: String\): Bitmap = generateInitialsBitmap\(label\)/
+    );
+    // The synchronous half never asks the network.
+    expect(service).toMatch(
+      /override fun cached\([^)]*\): Bitmap\? = load\(context, avatar, false\)/
+    );
+  });
+
+  it('a publish never waits for the network: misses are fetched on their own thread', () => {
+    expect(targets).toMatch(/iconThread\.execute \{ upgradeIcons\(/);
+    expect(targets).toMatch(/Executors\.newSingleThreadExecutor\(\)/);
+  });
+
+  it('a clear and a publish supersede an upgrade still in flight', () => {
+    expect(targets).toMatch(/val started = \+\+generation/);
+    expect(targets).toMatch(/fun clear\(context: Context\): Int \{\s*(\/\/.*\s*)*generation\+\+/);
+    expect(targets).toMatch(/if \(generation != started\)/);
+  });
+
+  it('the page names a picture by kind and id, never bytes', () => {
+    expect(plugin).toMatch(
+      /class ShareTargetAvatarArg \{\s*lateinit var kind: String\s*lateinit var id: String/
+    );
+    expect(targets).toContain('AVATAR_USER = "user"');
+    expect(targets).toContain('AVATAR_MEDIA = "media"');
+  });
+});

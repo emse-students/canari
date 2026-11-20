@@ -128,6 +128,7 @@ earliest version, as a checklist.
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
+- [ ] [the launcher's long-press conversations and the share sheet show each conversation's picture (Android, owner, 2026-11-20)](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
 ## 1.7.3
@@ -229,6 +230,7 @@ earliest version, as a checklist.
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
 - [P3 - the iPhone sign-in helper misses the terms page's button when it is below the fold](backlog.d/p3-the-iphone-sign-in-helper-misses-a-terms-button-below-the-fold.md)
 - [P3 - the Thème control's "Automatique" label spills out of its segment at a doubled font](backlog.d/p3-the-theme-control-s-automatique-label-spills-out-of-its-segment-at-a-doubled-font.md)
+- [P3 - the iOS share suggestions carry no photo (2026-11-20)](backlog.d/p3-ios-share-suggestions-carry-no-photo.md)
 
 ## 1.9.0
 

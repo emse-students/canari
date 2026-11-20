@@ -15,6 +15,8 @@ import type { Conversation } from '$lib/types';
 export interface WorkspaceLike {
   name: string;
   channels: { id: string }[];
+  /** Media-service id of the community's logo, when it has one. */
+  imageMediaId?: string | null;
 }
 
 /**
@@ -42,6 +44,19 @@ export function channelCommunities(workspaces: readonly WorkspaceLike[]): Map<st
   const map = new Map<string, string>();
   for (const ws of workspaces) {
     for (const ch of ws.channels) map.set(ch.id, ws.name);
+  }
+  return map;
+}
+
+/**
+ * Channel (salon) conversation id -> its community's logo (a media id), for the salons whose
+ * community has one: the picture a salon is drawn with outside the app (`shareTargets.ts`).
+ */
+export function channelCommunityLogos(workspaces: readonly WorkspaceLike[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const ws of workspaces) {
+    if (!ws.imageMediaId) continue;
+    for (const ch of ws.channels) map.set(ch.id, ws.imageMediaId);
   }
   return map;
 }

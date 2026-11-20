@@ -23,6 +23,8 @@ import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
 import app.tauri.gallery.ConversationShortcuts
+import app.tauri.gallery.ShareTargets
+import app.tauri.gallery.ShortcutIcons
 import androidx.core.graphics.drawable.IconCompat
 import androidx.work.BackoffPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -602,7 +604,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val info = ShortcutInfoCompat.Builder(context, id)
                     .setShortLabel(label.ifEmpty { context.getString(R.string.app_name) })
                     .setLongLived(true)
-                    .setIcon(IconCompat.createWithBitmap(icon))
+                    .setIcon(ShortcutIcons.adaptive(icon))
                     .setIntent(tapIntent)
                     .setPerson(person)
                     .setCategories(setOf("androidx.core.content.pm.SHORTCUT_CATEGORY_CONVERSATION"))
@@ -2470,14 +2472,52 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * The cache avoids the HTTP request when the app is in the background and
          * the network is slow or PushSecretKeystore.retrieve() is unstable.
          */
-        private fun Context.fetchAvatar(userId: String): Bitmap? =
-            cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId)) {
+        private fun Context.fetchAvatar(userId: String, networkAllowed: Boolean = true): Bitmap? =
+            cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId), networkAllowed) {
                 val ctx    = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
                 val secret = retrievePushSecret(this) ?: return@cachedRemoteIcon null
                 ("${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
                     "?requesterId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
                     "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}") to "PushSecret $secret"
             }
+
+        /**
+         * Downloads a PUBLIC media object - an association logo - for a notification icon.
+         *
+         * Unauthenticated on purpose: `/api/media/public/:id` is the route an `<img>` on a signed-out
+         * page already uses, so a background service has no credential to present and needs none. That
+         * is also why it is a SEPARATE function from [fetchAvatar] rather than a flag on it: which of
+         * the two routes to call is decided by the payload's own field, never guessed from a string.
+         */
+        private fun Context.fetchPublicMediaIcon(mediaId: String, networkAllowed: Boolean = true): Bitmap? {
+            val safe = mediaId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64)
+            return cachedRemoteIcon("fetchPublicMediaIcon", safe, File(filesDir, "assologo_$safe.jpg"), networkAllowed) {
+                val ctx = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
+                "${ctx.baseUrl}/api/media/public/$safe" to null
+            }
+        }
+
+        /**
+         * What the launcher shortcuts draw their pictures with (`ShortcutIcons.Source`, registered by
+         * `CanariApplication`): THE SAME fetch, cache and initials disc as every notification above,
+         * reached through the plugin the app module depends on. [cached] never touches the network.
+         */
+        internal val shortcutIconSource = object : ShortcutIcons.Source {
+            private fun load(context: Context, avatar: ShareTargets.Avatar, networkAllowed: Boolean): Bitmap? = when (avatar.kind) {
+                ShareTargets.AVATAR_USER -> context.fetchAvatar(avatar.id, networkAllowed)
+                ShareTargets.AVATAR_MEDIA -> context.fetchPublicMediaIcon(avatar.id, networkAllowed)
+                else -> {
+                    Log.e(TAG, "shortcutIconSource: unknown avatar kind (length ${avatar.kind.length}) - initials")
+                    null
+                }
+            }
+
+            override fun cached(context: Context, avatar: ShareTargets.Avatar): Bitmap? = load(context, avatar, false)
+
+            override fun fetch(context: Context, avatar: ShareTargets.Avatar): Bitmap? = load(context, avatar, true)
+
+            override fun initials(label: String): Bitmap = generateInitialsBitmap(label)
+        }
 
         /**
          * The ONE line an unnamed salon speaker gets, from either trigger (the push and the socket
@@ -2543,6 +2583,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *
          * @param label the caller's name, so a log line says which fetch it describes.
          * @param subject what is being fetched, truncated in logs - a user id or a media id.
+         * @param networkAllowed false answers from the cache alone - a hit, or null - and never asks
+         *   the network: for a caller that must stay cheap (a shortcut being published) and fetches
+         *   the misses later, on its own thread. A remembered absence answers null either way.
          * @param request the URL to fetch and the `Authorization` header to send with it, or null for a
          *   route that takes none - sending an empty one would be a header the proxy has to reason
          *   about. It is a LAMBDA rather than two parameters so that a cache HIT pays for neither: the
@@ -2553,6 +2596,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             label: String,
             subject: String,
             cacheFile: File,
+            networkAllowed: Boolean = true,
             request: () -> Pair<String, String?>?,
         ): Bitmap? {
             val target = notificationIconSizePx()
@@ -2569,6 +2613,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val absent = absentMarkerFile(cacheFile)
             if (absent.exists() && (now - absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
                 Log.d(TAG, "$label: no picture for ${subject.take(8)} (answered ${(now - absent.lastModified()) / 1_000}s ago) -> initials, no request")
+                return null
+            }
+            if (!networkAllowed) {
+                Log.d(TAG, "$label: not cached for ${subject.take(8)}, network not allowed here")
                 return null
             }
             val (url, authorization) = request() ?: return null
@@ -5582,22 +5630,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // message path does: the push said whose it was, so the notification can say so too.
         val label = data["actorName"].orEmpty().ifEmpty { getString(R.string.app_name) }
         return fetched ?: generateInitialsBitmap(label)
-    }
-
-    /**
-     * Downloads a PUBLIC media object - an association logo - for a notification icon.
-     *
-     * Unauthenticated on purpose: `/api/media/public/:id` is the route an `<img>` on a signed-out
-     * page already uses, so a background service has no credential to present and needs none. That
-     * is also why it is a SEPARATE function from [fetchAvatar] rather than a flag on it: which of
-     * the two routes to call is decided by the payload's own field, never guessed from a string.
-     */
-    private fun fetchPublicMediaIcon(mediaId: String): Bitmap? {
-        val safe = mediaId.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(64)
-        return cachedRemoteIcon("fetchPublicMediaIcon", safe, File(filesDir, "assologo_$safe.jpg")) {
-            val ctx = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
-            "${ctx.baseUrl}/api/media/public/$safe" to null
-        }
     }
 
 
