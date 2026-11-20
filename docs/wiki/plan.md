@@ -128,7 +128,9 @@ earliest version, as a checklist.
 
 ## 1.7.3
 
-_No entry planned beyond its readings._
+**P3 - hygiene**
+
+- [P3 - core-service's boot read of Sky's handoff access timed out against MiConnect, once (2026-11-20)](backlog.d/p3-the-sky-handoff-access-boot-read-times-out.md)
 
 ## 1.8.0
 

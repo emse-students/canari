@@ -4,6 +4,8 @@ target: 1.7.2
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
+_2026-11-20, production read after the `1.7.1` stable ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **WP-R3 readings 3 and 5 PASS on production** (`drained=0 leftAlone=0` at the boot, so no `live/` key in Garage's listing; the `live_segments` volume holds one live folder, 666 files, 410 MiB), and **reading 7 is half read**: the 2026-11-20 03:00Z snapshot exists and verified, the backup's mount list is `garage_data`, `garage_meta`, `media_meta` and names no `live_segments`, but `restic ls latest` is refused to a deploy account (the repository and its password are the backup account's). **Owed: the backup account lists `latest` once, and the lead reads production's first-week replay bytes (reading 9).**_
+
 **Urgent (owner, 2026-11-19):** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en
 production"*. `live_replays_mode` went `on` in production and on dev on 2026-11-19, before the texts
 (*"Prod maintenant, textes juste après"*); the texts (WP-R6) and `LIVE_RULES_VERSION` 3 followed in the

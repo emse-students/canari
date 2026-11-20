@@ -4,6 +4,8 @@ target: 1.7.2
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
+_2026-11-20, production ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **the `[PUSH_BLIND]` count by platform could not be taken.** The `1.7.0` containers' logs were recreated away by the `1.7.1` deploy and the archive a deploy keeps is the runner account's, out of this account's reach; the `1.7.1` chat-delivery log (35 minutes) holds none, which proves nothing. **Read it from the live chat-delivery container at or after 2026-11-21 04:00Z, before the next release recreates it**: `[PUSH_BLIND]` grouped by `platform`, the iOS `missing=seed refused=none` lines against the stable's adoption (`1.7.0` is on 144 iOS devices that ran in the last 24 h)._
+
 _2026-11-18, sitting [S7](../device-verification.md#the-web-and-phone-readings-of-2026-11-18-s7-170-alpha12-the-last-sitting-before-the-stable): **what is left is read in production a day after the stable (the `[PUSH_BLIND]` count by platform); it does NOT block cutting the stable.** The iPhone half was read on `alpha.8`; the fold it named is replaced by a delete since the `1.7.0` floor, and neither line has an instrument on a store build (below)._
 
 **What is built:** the P1 "blind salon banners, the failing branch is unnamed" is answered and fixed.

@@ -502,6 +502,7 @@ next forward deploy drains it.
 **The cost while it stands:** one empty prefix listing of Garage per boot.
 **Removal condition:** the release carrying WP-R3 deployed on both estates and, after it, one boot of
 each logging `drained=0`. Then delete the method, its hook, its two spec cases and this entry.
+**Read:** production logged `drained=0 leftAlone=0` at the `1.7.1` boot, 2026-11-20 ([reading](device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)); dev's boot is the other half.
 
 ### Removal at the portail's deploy + one silent week - the public carte read that names no space (2026-11-08)
 
