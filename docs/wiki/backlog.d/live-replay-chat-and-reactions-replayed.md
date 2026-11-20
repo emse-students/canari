@@ -57,15 +57,15 @@ questions are for the owner, each with a recommendation. Charter: principle 1 (y
 7. **Not in scope.** A replay is read-only: no new line, no new reaction; no push, and no mention notification
    again (a mention fired when the line was sent).
 
-### Open questions for the owner (recommended option first)
+### Questions for the owner (1, 2, 3 and 8 decided on 2026-11-20; 4-7 and 9 still open, recommended option first)
 
-1. **Consent of the viewers.** (a) **A standing line in the chat composer, on EVERY live: "Les messages peuvent
+1. **Consent of the viewers. DECIDED (owner, 2026-11-20): (a)**, the fixed line "Vos messages peuvent être conservés avec la rediffusion" under the composer on every live, plus the author deleting their own line from the replay. (a) **A standing line in the chat composer, on EVERY live: "Les messages peuvent
    être conservés avec la rediffusion"** - true of all lives, so it does not say whether this one is replayed
    (decision 1 holds), plus the author's own delete; (b) tell viewers per live (contradicts decision 1); (c) keep
    only the lines of people who ticked an opt-in (heavy, the replay chat would be nearly empty).
-2. **One switch or two.** (a) **One: "Rediffusion" off deletes the chat too, on keeps both**; (b) a separate
+2. **One switch or two. DECIDED (owner, 2026-11-20): (a)**, one switch; off deletes the chat and the reactions too. (a) **One: "Rediffusion" off deletes the chat too, on keeps both**; (b) a separate
    "replay the chat" switch beside it.
-3. **Reactions.** (a) **Replay them as sums per window, with no account**; (b) not replayed, only the chat.
+3. **Reactions. DECIDED (owner, 2026-11-20): (a)**, anonymous sums per window. (a) **Replay them as sums per window, with no account**; (b) not replayed, only the chat.
 4. **The delay.** A viewer sees the picture 5-10 s after it was sent, so a line answers a picture older than its
    arrival. (a) **Measure it on the phones first (one reading) and shift every line by one constant server
    value**; (b) show lines at their arrival time, unshifted.
@@ -77,7 +77,7 @@ questions are for the owner, each with a recommendation. Charter: principle 1 (y
 7. **A bound.** A line is at most 928 bytes and rate-limited per account (3 per 5 s). (a) **Keep every line of the
    kept window, and add a per-live bound only if the first week's measurement asks for one**; (b) cap at the last
    N lines now.
-8. **Order.** (a) **After 1.7.2 and the owner's order of 2026-11-11** (the slow-link chantier, then the oldest
+8. **Order. DECIDED (owner, 2026-11-20): (a)**, `1.7.3`, after `1.7.2`. (a) **After 1.7.2 and the owner's order of 2026-11-11** (the slow-link chantier, then the oldest
    entries): this entry says 1.7.3; (b) before them, because it was asked.
 9. **The texts.** The privacy policy "Directs" section, the register rows for the live chat (C19, C20) and the
    composer line of 1(a) change with it; `LIVE_RULES_VERSION` 4 only if the owner wants broadcasters to
