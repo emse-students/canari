@@ -640,7 +640,7 @@ gate8() {
     ok() { printf 'OK %s\n' "$1"; }
     refuse() { FAILED=1; printf 'REFUSE %s\n' "$1"; }
     hint() { printf 'HINT %s\n' "$1"; }
-    PATH="$G8/bin:$PATH" G8_DIR="$G8" REPO=o/r TARGET_SHA=target GITHUB_RUN_ID=4242 miconnect_preflight_gate
+    PATH="$G8/bin:$PATH" G8_DIR="$G8" REPO=o/r TARGET_SHA=target GITHUB_RUN_ID=4242 ALPHA_TAG="${G8_ALPHA:-}" miconnect_preflight_gate
     printf 'FAILED=%s\n' "$FAILED"
   )"
 }
@@ -697,6 +697,12 @@ done
 rm -f "$G8/check-target.json"
 checks m2 "$(cr 16 skipped 2026-11-19T07:15:00Z)"
 expect_g8 1 "run reached a verdict" "only skipped runs: no verdict, refused as such"
+G8_ALPHA=v1.7.2-alpha.3
+expect_g8 1 "HINT Ask it now for this commit: gh workflow run scheduled.yml --ref v1.7.2-alpha.3 -f job=miconnect-preflight" \
+  "the refusal's dispatch command names the latest pre-release gate 7 resolved, literally"
+grep -qF 'VERSION' <<<"$G8_OUT" && fail "  the hint still carries a placeholder: $G8_OUT"
+G8_ALPHA=''
+expect_g8 1 "once one exists (gate 7 found none)" "with no pre-release resolved, the hint says so rather than inventing a tag"
 rm -rf "$G8"
 
 printf '\n'

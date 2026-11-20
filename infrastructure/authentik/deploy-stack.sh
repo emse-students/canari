@@ -215,6 +215,7 @@ if [ "$mode" = rehearsal ]; then
   verdict="$(ak_rehearsal_verdict "$production_tag" "$test_tag" "$pin_tag")"
   case "$verdict" in
     ok) log "rehearsal: the test stack runs ${test_tag:-?}, production ${production_tag:-?}, the pin is $pin_tag - the stable's upgrade is the one rehearsed" ;;
+    expected:*) log "rehearsal: ${verdict#expected:}" ;;
     warn:*) echo "::warning title=MiConnect ($project)::${verdict#warn:}" ;;
     *) err "${verdict#fail:}. Nothing was changed."; exit 1 ;;
   esac

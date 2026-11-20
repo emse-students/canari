@@ -376,8 +376,9 @@ jobs:
   # morning - the deploy's read-only half (`deploy-stack.sh preflight --newer keep`) against `main`'s
   # pin - and `release-preflight.sh` (gate 8) reads THIS job's conclusion through its check run,
   # named "MiConnect production preflight", before anything is bumped. Its own job, never a step of
-  # `drift`: that job's conclusion mixes the image report, red for a known reason, and the gate must
-  # read this verdict alone. Dispatched by hand on a tag (`--ref <the alpha>`, `job:
+  # `drift`: that job's conclusion mixes the image report and the blueprints' dry run, each able to
+  # go red for its own reason (a known drift is only a dated `KNOWN` warning until its row expires,
+  # image-drift-known.txt), and the gate must read this verdict alone. Dispatched by hand on a tag (`--ref <the alpha>`, `job:
   # miconnect-preflight`) when a stable needs the verdict for a pin `main` no longer carries.
   # Every other run of this file posts this job SKIPPED, on main's head and newer than the morning's:
   # the gate passes over skipped runs and resolves the one it reads back to this file's job.

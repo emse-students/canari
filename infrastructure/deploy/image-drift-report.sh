@@ -43,9 +43,17 @@ drift_pins() {
 
 # drift_known <known-file> <project> <service> <running> - the exemption's `<expires> <why>` when
 # one names exactly this running image, or nothing. Blank and `#` lines are comments.
+# BOTH REFERENCES ARE NORMALISED before the comparison - a leading `docker.io/` stripped, then a
+# leading `library/` - because Docker Hub's image has two spellings: the host reported
+# `docker.io/library/postgres:16-alpine` while the row said `postgres:16-alpine`, and the exemption
+# never matched (run 44672863082, 2026-11-20). Only the registry and namespace defaults are folded:
+# the tag and the digest still have to be the very ones the row names.
 drift_known() {
   [ -n "$1" ] && [ -r "$1" ] || return 0
-  awk -v p="$2" -v s="$3" -v r="$4" '!/^[[:space:]]*(#|$)/ && $1 == p && $2 == s && $3 == r { $1 = $2 = $3 = ""; sub(/^ +/, ""); print; exit }' "$1"
+  awk -v p="$2" -v s="$3" -v r="$4" '
+    function norm(ref) { sub(/^docker\.io\//, "", ref); sub(/^library\//, "", ref); return ref }
+    !/^[[:space:]]*(#|$)/ && $1 == p && $2 == s && norm($3) == norm(r) { $1 = $2 = $3 = ""; sub(/^ +/, ""); print; exit }
+  ' "$1"
 }
 
 # drift_compare <pins-file> <running-file> [<project> <known-file> <today YYYY-MM-DD>] - both

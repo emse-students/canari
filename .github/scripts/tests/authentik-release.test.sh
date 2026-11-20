@@ -176,11 +176,29 @@ eq "the drift names running and pinned" "$(grep -c '^DRIFT postgres running=post
 eq "a pinned service not running is ABSENT" "$(grep -c '^ABSENT server' <<<"$out")" 1
 
 echo "a known drift, with a date, is a warning until that date and red after it:"
-printf '# comment\nstack postgres postgres:16-alpine 2026-12-31 backlog/x.md\n' >"$tmp/known"
-printf 'postgres postgres:16-alpine\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' >"$tmp/run-known"
+printf '# comment\nstack postgres docker.io/library/postgres:16-alpine 2026-12-31 backlog/x.md\n' >"$tmp/known"
+# The running reference as the host's `.Config.Image` reports it (run 44672863082, 2026-11-20).
+printf 'postgres docker.io/library/postgres:16-alpine\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' >"$tmp/run-known"
 out="$(drift_compare "$tmp/pins" "$tmp/run-known" stack "$tmp/known" 2026-12-31)"
 eq "  on its last day: passes" "$?" 0
-eq "  printed KNOWN with its date and its reason" "$(grep -c '^KNOWN postgres running=postgres:16-alpine pinned=postgres:18-alpine@sha256:aa until 2026-12-31 (backlog/x.md)$' <<<"$out")" 1
+eq "  printed KNOWN with its date and its reason" "$(grep -c '^KNOWN postgres running=docker.io/library/postgres:16-alpine pinned=postgres:18-alpine@sha256:aa until 2026-12-31 (backlog/x.md)$' <<<"$out")" 1
+# Docker Hub's two spellings of one image: the row and the host may each use either.
+for row_ref in postgres:16-alpine library/postgres:16-alpine docker.io/postgres:16-alpine docker.io/library/postgres:16-alpine; do
+  for run_ref in postgres:16-alpine docker.io/library/postgres:16-alpine; do
+    printf 'stack postgres %s 2026-12-31 backlog/x.md\n' "$row_ref" >"$tmp/known-spelling"
+    printf 'postgres %s\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' "$run_ref" >"$tmp/run-spelling"
+    drift_compare "$tmp/pins" "$tmp/run-spelling" stack "$tmp/known-spelling" 2026-12-01 >/dev/null
+    eq "  the row says $row_ref, the host runs $run_ref: one image, KNOWN" "$?" 0
+  done
+done
+printf 'stack postgres postgres:16-alpine 2026-12-31 backlog/x.md\n' >"$tmp/known-spelling"
+printf 'postgres docker.io/library/postgres:16\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' >"$tmp/run-spelling"
+drift_compare "$tmp/pins" "$tmp/run-spelling" stack "$tmp/known-spelling" 2026-12-01 >/dev/null
+eq "  the normalising folds the registry only, never the tag: another tag is red" "$?" 1
+printf 'stack postgres postgres:16-alpine 2026-12-31 backlog/x.md\n' >"$tmp/known-spelling"
+printf 'postgres ghcr.io/library/postgres:16-alpine\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' >"$tmp/run-spelling"
+drift_compare "$tmp/pins" "$tmp/run-spelling" stack "$tmp/known-spelling" 2026-12-01 >/dev/null
+eq "  another registry is never folded into Docker Hub: red" "$?" 1
 out="$(drift_compare "$tmp/pins" "$tmp/run-known" stack "$tmp/known" 2027-01-01)"
 eq "  the day after: red" "$?" 1
 eq "  saying the exemption expired" "$(grep -c '^DRIFT postgres .*has expired' <<<"$out")" 1
@@ -491,7 +509,11 @@ eq "the test stack on another version than production: exit 1" "$st" 1
 eq "  naming both tags" "$(grep -c 'test stack runs 2026.7.0 and production runs 2026.8.0' "$tmp/out")" 1
 fake_reset "$pin" "$pin_tag"; echo "$O" >"$S/prod"
 production=miconnect-prod run_deploy rehearsal; st=$?
-eq "the test stack already on the pin, production not: a warning, exit 0" "$st/$(grep -c '^::warning.*earlier pre-release' "$tmp/out")" 0/1
+eq "the test stack already on the pin, production on an older one (between an alpha and its stable): a plain log line, no warning, exit 0" \
+  "$st/$(grep -c '^\[miconnect-deploy:miconnect\] rehearsal: .*an earlier pre-release made the upgrade' "$tmp/out")/$(grep -c '^::warning' "$tmp/out")" 0/1/0
+fake_reset "$pin" "$pin_tag"; echo ghcr.io/goauthentik/server:2099.1.0 >"$S/prod"
+production=miconnect-prod run_deploy rehearsal; st=$?
+eq "the test stack on the pin, production NEWER: still a warning, exit 0" "$st/$(grep -c '^::warning.*earlier pre-release' "$tmp/out")" 0/1
 fake_reset "$O" 2026.8.0
 production=miconnect-prod run_deploy rehearsal; st=$?
 eq "production not running: exit 1, never a pass on a guess" "$st" 1
@@ -821,7 +843,9 @@ echo "the rehearsal verdict:"
 eq "production already on the pin: ok" "$(ak_rehearsal_verdict 2026.8.5 2026.7.0 2026.8.5)" ok
 eq "the test stack on production's version: ok" "$(ak_rehearsal_verdict 2026.8.0 2026.8.0 2026.8.5)" ok
 case "$(ak_rehearsal_verdict 2026.8.0 2026.7.0 2026.8.5)" in fail:*2026.7.0*2026.8.0*) pass "another version than production's: fail, naming both" ;; *) fail "a rehearsal from another version passes" ;; esac
-case "$(ak_rehearsal_verdict 2026.8.0 2026.8.5 2026.8.5)" in warn:*) pass "already on the pin while production is not: a warning (an earlier pre-release upgraded it)" ;; *) fail "an already-upgraded test stack is not a warning" ;; esac
+case "$(ak_rehearsal_verdict 2026.8.0 2026.8.5 2026.8.5)" in expected:*) pass "already on the pin while production runs an older one: expected (the window between an alpha and its stable), not a warning" ;; *) fail "the normal alpha-to-stable window is not 'expected'" ;; esac
+case "$(ak_rehearsal_verdict 2026.9.0 2026.8.5 2026.8.5)" in warn:*) pass "already on the pin while production runs a NEWER one: a warning" ;; *) fail "production newer than the pin is not a warning" ;; esac
+case "$(ak_rehearsal_verdict latest 2026.8.5 2026.8.5)" in warn:*) pass "already on the pin while production's tag is not a version: a warning, never 'expected'" ;; *) fail "an unparsable production tag is called expected" ;; esac
 case "$(ak_rehearsal_verdict '' 2026.8.0 2026.8.5)" in fail:*) pass "an unreadable tag: fail" ;; *) fail "an unreadable tag passes" ;; esac
 
 echo "a HELD blueprint's notice survives the redaction (it names a file, never a value):"

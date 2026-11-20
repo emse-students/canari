@@ -232,16 +232,26 @@ ak_disk_ceiling_ok() {
 #                 stack starts from production's version
 #   fail:<why>    the test stack must still upgrade, from ANOTHER version than production's: the
 #                 rehearsal would prove a path the stable never takes
-#   warn:<why>    the test stack already runs the pin and production does not: an EARLIER pre-release
-#                 made the upgrade, and from which version is not in the running state any more. Not
-#                 a failure: refusing it would refuse every later pre-release of the same version.
-#                 Its evidence is that earlier run's log, and its dump's name (`<from>-to-<pin>`).
+#   expected:<why> the test stack already runs the pin and production runs an OLDER version: the
+#                 normal state between an alpha that upgraded the test stack and the stable that
+#                 upgrades production, every morning of that window. A log line, never a warning
+#                 (review of #3486, 2026-11-20): a warning repeated daily for the normal flow is noise
+#                 that teaches its reader to skip it. Whether production's older version is the one
+#                 its stable RELEASED is not this verdict's question - the `drift` job's image report
+#                 compares it with `prod-released`'s pin every morning, and goes red when it differs.
+#                 Which version the earlier pre-release upgraded FROM is not in the running state any
+#                 more; its evidence is that run's log, and its dump's name (`<from>-to-<pin>`).
+#   warn:<why>    the test stack already runs the pin and production runs a NEWER one, or a version
+#                 that does not compare: not the normal flow, and not a failure either - refusing it
+#                 would refuse every later pre-release of the same version.
 ak_rehearsal_verdict() {
   local prod="$1" test="$2" pin="$3"
   if [ -z "$prod" ] || [ -z "$test" ] || [ -z "$pin" ]; then
     echo "fail:a running tag could not be read (production '${prod:-?}', test '${test:-?}', pin '${pin:-?}')"
   elif [ "$prod" = "$pin" ] || [ "$test" = "$prod" ]; then
     echo ok
+  elif [ "$test" = "$pin" ] && ak_is_version "$prod" && ak_is_version "$pin" && ak_version_gt "$pin" "$prod"; then
+    echo "expected:the test stack already runs $pin and production still runs $prod - an earlier pre-release made the upgrade the next stable will make to production"
   elif [ "$test" = "$pin" ]; then
     echo "warn:the test stack already runs $pin and production runs $prod: the upgrade was rehearsed by an earlier pre-release, from a version the running state no longer shows. Were production NEWER than the pin, the stable would keep it (--newer keep) and upgrade nothing, so there is nothing to rehearse"
   else

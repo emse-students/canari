@@ -525,6 +525,11 @@ miconnect_preflight_gate() {
       refuse "could not decide - ${verdict#undecidable }${url:+ (run: $url)}"
       ;;
   esac
-  hint "Ask it now for this commit: gh workflow run scheduled.yml --ref <the latest v\$VERSION-alpha.N tag> -f job=miconnect-preflight"
+  # The tag gate 7 already resolved, named literally: a placeholder here is a command nobody can paste.
+  if [ -n "${ALPHA_TAG:-}" ]; then
+    hint "Ask it now for this commit: gh workflow run scheduled.yml --ref $ALPHA_TAG -f job=miconnect-preflight"
+  else
+    hint "Ask it on this version's latest pre-release once one exists (gate 7 found none): gh workflow run scheduled.yml --ref <that tag> -f job=miconnect-preflight"
+  fi
   hint "then re-run this release's preflight once it is green: gh run rerun ${GITHUB_RUN_ID:-<this run>}"
 }
