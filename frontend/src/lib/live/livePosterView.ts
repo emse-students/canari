@@ -23,6 +23,7 @@ import { fetchLivePoster, isLiveRefusal } from './api';
 import { LivePosterOpenError, openLivePoster } from './livePosterCrypto';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
+import { LIVE_POSTER_MAX_CONCURRENT } from './constants';
 
 /** How one poster load ended - every way is a value, so the card never parses a message. */
 export type LivePosterLoad =
@@ -61,6 +62,58 @@ function remember(liveId: string, entry: { name: string; image: Blob }): void {
     opened.delete(oldest);
     console.debug(`[LIVE] card poster ${oldest}: forgotten (memo full)`);
   }
+}
+
+/**
+ * THE MOST POSTERS FETCHED AT THE SAME TIME (S14, 2026-11-20): nginx bounds the preview path per
+ * ADDRESS by CONNECTIONS (`limit_conn lives_posters_conn 4`), and a feed of thirty replay covers
+ * opened thirty fetches at once - everything past the fourth answered 429, a blank cover. The width
+ * stays UNDER that bound by one because nginx may count a request until it finishes, slightly after
+ * the client has read the body and handed the slot on: at the bound itself the next fetch would race
+ * the previous one's release. The bound is a width, never a delay: a fetch starts the moment a slot
+ * frees, so no clock is involved and any number of covers drains. The figure is
+ * `LIVE_POSTER_MAX_CONCURRENT` in `./constants`, which MIRRORS the server's constant of the same
+ * name; `live-segments-route.test.mjs` asserts it stays under nginx's `limit_conn`.
+ */
+let fetching = 0;
+const waiting: Array<() => void> = [];
+
+/** Gives a slot back: straight to the longest waiter (never to a newcomer in between), else it frees. */
+function releaseSlot(): void {
+  const next = waiting.shift();
+  if (next) next();
+  else fetching--;
+}
+
+/**
+ * Takes a fetch slot: `true` AT ONCE when one is free (the fetch starts in the same turn), else a
+ * promise of `true` when one is handed over, or `false` when `signal` aborted while waiting - or
+ * already had on entry (an aborted signal never fires `abort` again, so it would wait for ever).
+ */
+function takeSlot(signal: AbortSignal | undefined): boolean | Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (fetching < LIVE_POSTER_MAX_CONCURRENT) {
+    fetching++;
+    return true;
+  }
+  console.debug(`[LIVE] card poster: ${waiting.length + 1} waiting for a fetch slot`);
+  return new Promise<boolean>((resolve) => {
+    const turn = () => {
+      signal?.removeEventListener('abort', onAbort);
+      if (signal?.aborted) {
+        releaseSlot();
+        resolve(false);
+      } else resolve(true);
+    };
+    const onAbort = () => {
+      const at = waiting.indexOf(turn);
+      if (at < 0) return;
+      waiting.splice(at, 1);
+      resolve(false);
+    };
+    waiting.push(turn);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /** The load running for each live, by live id: the name it fetches and its outcome. */
@@ -124,14 +177,24 @@ async function fetchAndOpen(
   deps: LivePosterViewDeps
 ): Promise<LivePosterLoad> {
   console.debug(`[LIVE] card poster ${liveId}: loading ${poster.name} (${poster.ageMs} ms old)`);
+  let holding = false;
   try {
+    const slot = takeSlot(signal);
+    holding = slot === true || (await slot);
+    if (!holding) {
+      console.debug(`[LIVE] card poster ${liveId}: aborted while waiting for a fetch slot`);
+      return { kind: 'aborted' };
+    }
     const sealed = new Uint8Array(await deps.fetch(liveId, poster.name, signal));
+    releaseSlot();
+    holding = false;
     const plain = await deps.open(posterKey, liveId, sealed);
     console.debug(`[LIVE] card poster ${liveId}: opened, ${plain.byteLength} bytes`);
     const image = new Blob([plain], { type: 'image/jpeg' });
     remember(liveId, { name: poster.name, image });
     return { kind: 'shown', image };
   } catch (e) {
+    if (holding) releaseSlot();
     if (signal?.aborted) {
       console.debug(`[LIVE] card poster ${liveId}: aborted`);
       return { kind: 'aborted' };

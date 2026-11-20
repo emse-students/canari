@@ -1,6 +1,6 @@
 /** The card's list: the reader's own live left out, a lost answer kept, a refusal hidden. */
 import { describe, it, expect, vi } from 'vitest';
-import { formatLiveElapsed, livesForFeed, loadOpenLivesForFeed } from './openLives';
+import { formatLiveElapsed, livesForFeed, livesForTab, loadOpenLivesForFeed } from './openLives';
 import { LiveRefusalError } from './api';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
@@ -77,5 +77,16 @@ describe('formatLiveElapsed', () => {
     expect(formatLiveElapsed(65_400)).toBe('1:05');
     expect(formatLiveElapsed(3_600_000 + 2 * 60_000 + 3_000)).toBe('1:02:03');
     expect(formatLiveElapsed(-5)).toBe('0:00');
+  });
+});
+
+describe('livesForTab', () => {
+  const personal = item('p', 'u1');
+  const asso = { ...item('a', 'u2'), associationId: 'asso-1' };
+  it('"Organisations" lists association lives only; every other tab lists them all', () => {
+    expect(livesForTab([personal, asso], 'associations')).toEqual([asso]);
+    for (const tab of ['foryou', 'all', 'custom'] as const) {
+      expect(livesForTab([personal, asso], tab)).toEqual([personal, asso]);
+    }
   });
 });

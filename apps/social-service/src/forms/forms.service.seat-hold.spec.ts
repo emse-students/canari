@@ -71,7 +71,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     allowMultipleSubmissions?: boolean;
     /** `lydia` reaches the fake core below; `disabled` stops a paid submit after its transaction. */
     provider?: 'lydia' | 'disabled';
-    /** The organiser alert switched on (it ships off: `FORM_ORGANISER_ALERT_ENABLED`). */
+    /** The organiser alert switched on (`FORM_ORGANISER_ALERT_ENABLED` is ON since the 1.7.0 floor; a spec turns it off). */
     organiserAlert?: boolean;
     /** A public form, answered by guests (WP-P1); default false. */
     isPublic?: boolean;

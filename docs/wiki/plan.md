@@ -68,7 +68,6 @@ earliest version, as a checklist.
 - [P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)](backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
-- [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
 - [P2 - a group call answered into an empty room, and a ring that outlives an outcome-less end](backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)
 - [P2 - a group call holds one device per user: prove the second device replaces the first](backlog.d/group-calls-one-device-per-user.md)
 - [P2 - held migration 176: the videos already posted become CanaReels, waiting for its approval line](backlog.d/held-migration-176-gallery-videos-become-reels.md)
@@ -84,7 +83,6 @@ earliest version, as a checklist.
 - [P2 - a rolling replace answered two 502s once: its evidence must survive the retire first](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
-- [P2 - the organiser alert for a payment over capacity: its precondition is met, the flip is owed](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
 
@@ -108,7 +106,6 @@ earliest version, as a checklist.
 - [P3 - a lives integration spec failed once: the association's live pushed to nobody](backlog.d/p3-flaky-lives-spec-member-live-after-association-live.md)
 - [P3 - on the iPhone in landscape, the close circle looks clipped at the right edge](backlog.d/p3-iphone-landscape-close-circle-clipped.md)
 - [P3 - salon texts held by a `502` are posted in the order their backoffs end, not the order they were written](backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)
-- [P3 - the feed's live posters answer 429 at load: `Live poster <id>: 429 - -> rate-limited` (S14, 2026-11-20)](backlog.d/p3-the-feed-s-live-posters-hit-429-at-load.md)
 - [P3 - the gated `video-switch` and `video-off-on` call rows read 19.6-25 fps against a threshold of 27](backlog.d/p3-the-gated-video-switch-and-video-off-on-rig-rows-read-19-6-25-fps-threshold-27.md)
 - [P3 - the thread's render window only grows, at 0.13 MB a bubble: reopen it](backlog.d/p3-the-thread-s-render-window-only-grows-with-listeners-per-bubble.md)
 - [P3 - on the web, ending a live leaves the studio on a pre-live screen whose "Start the live" stays disabled on "Reading the live's rules..." (S13, 2026-11-20)](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)
@@ -121,6 +118,7 @@ earliest version, as a checklist.
 - [ ] [a salon invitation's notice carries ids, drawn in the reader's language (2026-11-16)](backlog.d/reading-owed-a-salon-invitation-notice-carries-ids.md)
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [the broadcaster's right-edge control column on both phones (owner, 2026-11-19)](backlog.d/reading-owed-the-broadcasters-control-column.md)
+- [ ] [the live card follows the feed tab, and the covers load without a 429 (owner, 2026-11-19; S14, 2026-11-20)](backlog.d/reading-owed-the-live-card-tab-and-poster-width.md)
 - [ ] [the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)](backlog.d/live-replay-switch-readings-owed.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
@@ -128,6 +126,9 @@ earliest version, as a checklist.
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [a media message is worded the same in the list, the quotes and the banners (owner, 2026-11-20)](backlog.d/reading-owed-media-preview-names-the-kind.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
+- [ ] [the "you were added as a Lydia cashier" notice (switched on 2026-11-20)](backlog.d/reading-owed-the-lydia-cashier-added-notice.md)
+- [ ] [the Lydia managers' notices, "payments active" and "payments paused" (switched on 2026-11-20)](backlog.d/reading-owed-the-lydia-managers-notices-active-and-paused.md)
+- [ ] [the organiser alert for a payment over capacity (switched on 2026-11-20)](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
 ## 1.7.3

@@ -26,11 +26,11 @@ describe('FormOrganiserAlertService', () => {
   }
   const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-  // The gate is a deliberate pull request, not a forgotten constant: this fails the day it flips,
-  // and that pull request must say the floor covers #1911 on both estates.
-  it('ships switched off, until minClientVersion covers the unknown-type fix (#1911)', () => {
-    expect(FORM_ORGANISER_ALERT_ENABLED).toBe(false);
-    expect(make().service.enabled()).toBe(false);
+  // The kill switch is a deliberate pull request, not a forgotten constant: it flipped on with the
+  // 1.7.0 floor (#2228 shipped in v1.4.0), and turning it off again must change this too.
+  it('ships switched on, the 1.7.0 floor covering #2228', () => {
+    expect(FORM_ORGANISER_ALERT_ENABLED).toBe(true);
+    expect(make().service.enabled()).toBe(true);
   });
 
   it("tells a personal form's owner alone, and asks no association", async () => {

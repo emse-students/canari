@@ -8,7 +8,7 @@ target: 1.10.0
 
 - the owner's own production trial of lot 3, adding himself as Vendeur of an association and removing himself ([reading](reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md));
 - the SUCCESS path of a refund, measured once: a validated sandbox Business's payment, or the first production refund read in its logs (none could be made on 2026-10-31);
-- two switches that are OFF: the managers' notices (`LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`, until both stores serve the build that renders `lydia_payments_active` / `lydia_payments_paused`) and the payer's refund notice (`LYDIA_REFUND_NOTIFICATIONS_ENABLED`); the cashier bell row waits on its floor version;
+- one switch that is OFF: the payer's refund notice (`LYDIA_REFUND_NOTIFICATIONS_ENABLED`);
 - one Business waits on the owner (decided 2026-10-31): **Le Cercle** is untouched, not even the read-only recording of its Responsable, until it is re-enrolled cleanly through Canari (it already has cashiers of its own). **Les Rootz** has no Lydia account, so nothing is re-enrolled (below).
 
 **Not in scope, decided:** payouts to people (`payment/send`); ease of payment (instalments), a question to Lydia first (still offered, instalments, fees, who bears non-payment). A total refund withdraws the membership or frees the seat, except a Cercle top-up, never reversed automatically (the manager is told); the statement is Canari's own records only, no `transaction/list`.
