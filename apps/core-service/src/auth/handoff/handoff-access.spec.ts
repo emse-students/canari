@@ -36,6 +36,8 @@ interface World {
    * bindings (pbm, stage name) and the enabled bindings on them or on the flow (target pbm, policy
    * name, negate).
    */
+  /** The whole-flow page omits the bindings the per-stage reads show: the reads disagree. */
+  disagreeing?: boolean;
   consentFlow?: {
     stages: { pbm: string; stage: string }[];
     bindings: { target: string; policy: string; negate?: boolean }[];
@@ -111,7 +113,9 @@ function fakeFetch(world: World) {
     }
     if (path === '/api/v3/policies/bindings/') {
       const wanted = query.getAll('target_in');
-      const consent = (world.consentFlow?.bindings ?? []).filter((b) => wanted.includes(b.target));
+      const consent = (world.consentFlow?.bindings ?? []).filter(
+        (b) => wanted.includes(b.target) && !(world.disagreeing && wanted.length > 1)
+      );
       const count =
         wanted.reduce(
           (n, t) => n + (t === 'app-pbm-uuid' ? world.bindings : (world.flowBindings?.[t] ?? 0)),
@@ -297,6 +301,17 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       });
       const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
       expect(e.accessClass).toBe(HandoffAccessClass.policyBound);
+    });
+
+    it('refuses when the consent bindings outnumber the bindings listed on the flow', async () => {
+      const { access } = build({
+        ...OPEN_WORLD,
+        consentFlow: consentFlow(),
+        disagreeing: true,
+        users: accepted(CONSENT_VERSION),
+      });
+      const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
+      expect(e.accessClass).toBe(HandoffAccessClass.refused);
     });
 
     it('does not read the bindings by name on a flow that is not the consent flow', async () => {

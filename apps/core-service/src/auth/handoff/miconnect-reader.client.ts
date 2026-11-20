@@ -220,6 +220,14 @@ export class MiconnectReaderClient {
         (b) => b.policy_obj?.name === CONSENT_POLICY_NAME && b.negate === false
       ).length;
     }
+    // More allowlisted bindings than bindings on the flow cannot be: the two reads disagree, and an
+    // answer that disagrees with itself is not one the mint may open on.
+    if (listed.length - consent < 0) {
+      throw new MiconnectReadError(
+        'refused',
+        `flow ${flowUuid.slice(0, 8)}: ${consent} consent bindings among ${listed.length}`
+      );
+    }
     return { bindings: listed.length - consent, consent, authentication: requirement };
   }
 
