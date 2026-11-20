@@ -5,6 +5,7 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 import {
   MAX_REFUSED_ROTATION_RELOADS,
   REFUSED_ROTATION_RELOADS_KEY,
@@ -259,6 +260,7 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
       const seams = {
         persistCheckpoint: BaseMlsService.prototype.persistCheckpoint,
         holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+        rowsOwed: new RowsOwedLedger(),
         bulkIngestObservers: [],
         changeDeviceKey: BaseMlsService.prototype.changeDeviceKey,
       };

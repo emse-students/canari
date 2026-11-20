@@ -163,10 +163,21 @@ function ensureChannel(): BroadcastChannel | null {
  * another account in the same browser can tell it is not addressed to it (see {@link TabMessageEvent}).
  */
 function post(event: TabMessageBody): void {
-  ensureChannel()?.postMessage({
-    ...event,
-    account: currentUserId() ?? '',
-  } satisfies TabMessageEvent);
+  // NEVER THROWS INTO ITS CALLER (review of #3851): an announcement is the other tabs' copy, and its
+  // callers announce a row BETWEEN showing it and storing it (`addMessageToChat`), so a throw here
+  // (`DataCloneError` for a payload the channel cannot clone, `InvalidStateError` for a closed one)
+  // skipped the row's write. The other tabs miss this event - said at ERROR - and the row is stored.
+  try {
+    ensureChannel()?.postMessage({
+      ...event,
+      account: currentUserId() ?? '',
+    } satisfies TabMessageEvent);
+  } catch (e) {
+    console.error(
+      `[TAB_SYNC] the '${event.type}' event could not be posted to the other tabs - they miss it, this tab goes on:`,
+      e
+    );
+  }
 }
 
 /** Publishes a conversation update from the leader tab to follower tabs. */

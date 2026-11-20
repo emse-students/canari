@@ -218,3 +218,25 @@ describe('tabMessageSync - the read state a leader received', () => {
     ]);
   });
 });
+
+describe('tabMessageSync - an announcement never throws into its caller (review of #3851)', () => {
+  // `addMessageToChat` announces a row BETWEEN showing it and storing it: a post that threw skipped
+  // the row's write, and the inbound handler then read the throw as a decrypt failure.
+  it('a post the channel refuses is said at ERROR and swallowed - the caller goes on to its write', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const refuse = vi
+      .spyOn(FakeBroadcastChannel.prototype, 'postMessage')
+      .mockImplementationOnce(() => {
+        throw new DOMException('cannot clone', 'DataCloneError');
+      });
+    isLeader = true;
+
+    expect(() => publishTabMessageUpdate(relayed)).not.toThrow();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("'message_added' event could not be posted"),
+      expect.anything()
+    );
+    refuse.mockRestore();
+    error.mockRestore();
+  });
+});

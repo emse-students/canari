@@ -33,6 +33,7 @@ import { closeMlsDb } from '$lib/utils/hex';
 import { hydrateStateLedgers, resetStateLedgersForTests } from '$lib/mls-client/stateLedgers';
 import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
+import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
 import {
   noteFrameEmitted,
   OwedSendBurnFailedError,
@@ -184,6 +185,7 @@ function session(model: RatchetModel, peer: Peer, disk: Disk) {
       disk.ledgers = { ...model.ledgers };
     }),
     holdRowsForExport: BaseMlsService.prototype['holdRowsForExport'],
+    rowsOwed: new RowsOwedLedger(),
     bulkIngestObservers: [],
     persistCheckpoint: vi.fn((options?: { endsDocumentOnRefusal?: boolean }): Promise<void> =>
       BaseMlsService.prototype.persistCheckpoint.call(svc as never, options)

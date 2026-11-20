@@ -123,6 +123,34 @@ describe('ReplayPane', () => {
     expect(moderator).toHaveBeenCalledWith('live-1', undefined, { moderation: true });
   });
 
+  it('S13: a re-keyed post (a new object, the same live) does not start the player again', async () => {
+    const fetchReplay = vi.fn(async () => page());
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    URL.createObjectURL = vi.fn(() => 'blob:replay');
+    URL.revokeObjectURL = vi.fn();
+    const props = $state({
+      post,
+      active: true,
+      playerSafeBottom: true,
+      onReady: vi.fn(),
+      deps: {
+        fetchReplay: fetchReplay as never,
+        mediaSource: (() => ({
+          name: 'MediaSource',
+          create: () => new FakeSource(),
+          isTypeSupported: () => true,
+        })) as never,
+      },
+    });
+    mounted.push(mount(ReplayPane, { target, props }));
+    await settle();
+    expect(fetchReplay).toHaveBeenCalledTimes(1);
+    props.post = { ...post } as PostEntity; // the reel list answered again: the same replay, a new object
+    await settle();
+    expect(fetchReplay).toHaveBeenCalledTimes(1);
+  });
+
   it('mounts no player on a page that is not on screen, and still marks itself a replay', async () => {
     const fetchReplay = vi.fn(async () => page());
     const { target } = render(false, fetchReplay);

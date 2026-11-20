@@ -255,8 +255,28 @@ async function applyDeletion(targetId: string, ctx: SystemEventContext): Promise
         deviceKey()
       );
     } catch (e) {
-      // Non-blocking: the tombstone holds in memory, a reload shows the message again.
-      log(`[DELETE] tombstone of ${targetId.slice(0, 8)} not persisted: ${String(e)}`);
+      // KEPT, NEVER ONLY LOGGED (second review of #3851): the frame is acknowledged and its
+      // generation spent, so a tombstone shown and not written came back at the next reload. Parked
+      // as a pending mutation, it is written onto its row at the next look; a store that refuses the
+      // park too says so at ERROR (`parkPendingMutation`).
+      console.error(
+        `[DELETE] tombstone of ${targetId.slice(0, 8)} not written to its row - kept as a pending mutation:`,
+        e
+      );
+      await keepPendingMutation(
+        ctx,
+        {
+          conversationId: convoKey,
+          messageId: targetId,
+          sender: senderNorm,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          ...(authorship ? { proof: authorship } : {}),
+        },
+        deliveryMeta?.queuedCreatedAt,
+        'could not be written onto its stored row'
+      );
     }
     return;
   }
@@ -467,7 +487,26 @@ async function applyEdit(
       deviceKey()
     );
   } catch (e) {
-    log(`[EDIT] edit of ${targetId.slice(0, 8)} not persisted: ${String(e)}`);
+    // KEPT, NEVER ONLY LOGGED (second review of #3851), as a tombstone is above.
+    console.error(
+      `[EDIT] edit of ${targetId.slice(0, 8)} not written to its row - kept as a pending mutation:`,
+      e
+    );
+    await keepPendingMutation(
+      ctx,
+      {
+        conversationId: convoKey,
+        messageId: targetId,
+        sender: senderNorm,
+        kind: 'edit',
+        slot: '',
+        rank: editedAtMs,
+        text: newText,
+        ...(authorship ? { proof: authorship } : {}),
+      },
+      ctx.deliveryMeta?.queuedCreatedAt,
+      'could not be written onto its stored row'
+    );
   }
 }
 

@@ -65,26 +65,43 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
   mode = 'sequence';
   timestampOffset = 0;
   base = 0;
+  /** Media time added after segment `jump[0]` (a pause the live's media carries as a hole), in seconds. */
+  jump: [number, number] | null = null;
+  /** How far a track the intersection hides (the audio, ending after the video) reaches past the ranges. */
+  hiddenEnd = 0;
   /** The length of the media one segment holds, in seconds. */
   len = 2;
+  /** A segment whose own length differs (the last one of a live is often short), by index. */
+  lenOf: ((index: number) => number) | null = null;
   appends: string[] = [];
   /** Every append's bytes, as given. */
   data: Uint8Array[] = [];
   ranges: [number, number][] = [];
   removed: [number, number][] = [];
+  /** The source this buffer belongs to: a write on an ended one reopens it, as the specification says. */
+  source: { readyState: string } | null = null;
+  // (Setting `timestampOffset` or `mode` reopens an ended source too; the player never does either after the end.)
+  private reopen() {
+    if (this.source?.readyState === 'ended') this.source.readyState = 'open';
+  }
   get buffered() {
     const r = this.ranges;
     return { length: r.length, start: (i: number) => r[i][0], end: (i: number) => r[i][1] };
   }
   appendBuffer(data: Uint8Array<ArrayBuffer>): void {
+    this.reopen();
     const type = String.fromCharCode(...data.subarray(4, 8));
     this.data.push(data.slice());
     if (type === 'ftyp') this.appends.push(`init${generationOfInit(data)}`);
     else {
       const i = indexOfMedia(data);
       this.appends.push(`m${i}`);
-      const start = i * 2 + this.base + this.timestampOffset;
-      this.add(start, start + this.len);
+      const start =
+        i * 2 +
+        this.base +
+        this.timestampOffset +
+        (this.jump && i > this.jump[0] ? this.jump[1] : 0);
+      this.add(start, start + (this.lenOf ? this.lenOf(i) : this.len));
     }
     this.settle();
   }
@@ -99,6 +116,7 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
     this.ranges = next.sort((a, b) => a[0] - b[0]);
   }
   remove(start: number, end: number): void {
+    this.reopen();
     this.removed.push([start, end]);
     this.ranges = this.ranges.flatMap(([s, e]) => {
       const out: [number, number][] = [];
@@ -119,27 +137,53 @@ class FakeBuffer extends EventTarget implements ReplaySourceBufferLike {
 
 class FakeSource extends EventTarget implements ReplayMediaSourceLike {
   readyState = 'open';
-  duration = NaN;
+  private dur = NaN;
+  get duration(): number {
+    return this.dur;
+  }
+  /** As the engine: a duration below the highest buffered frame is refused (InvalidStateError). */
+  set duration(v: number) {
+    const highest = Math.max(
+      0,
+      ...this.buffers.map((b) => Math.max(0, ...b.ranges.map((r) => r[1])) + b.hiddenEnd)
+    );
+    if (v < highest) throw new DOMException('duration below a buffered frame', 'InvalidStateError');
+    this.dur = v;
+  }
   ended = 0;
   buffers: FakeBuffer[] = [];
   addSourceBuffer(): FakeBuffer {
     const b = new FakeBuffer();
+    b.source = this;
     this.buffers.push(b);
     return b;
   }
   endOfStream() {
+    // As the engine: refused unless the source is open and no buffer is updating (declareEnd's guards).
+    if (this.readyState !== 'open' || this.buffers.some((x) => x.updating)) {
+      throw new DOMException('endOfStream refused', 'InvalidStateError');
+    }
     this.ended++;
     this.readyState = 'ended';
+    // A real engine truncates the duration to the end of what is buffered.
+    const ends = this.buffers.flatMap((b) => b.ranges.map((r) => r[1]));
+    if (ends.length > 0) this.duration = Math.max(...ends);
   }
 }
 
 /** The replay on the server: `count` segments 2 s apart, pages of `pageSize`. */
-function makePages(count: number, pageSize = 200, first = 0) {
+function makePages(
+  count: number,
+  pageSize = 200,
+  first = 0,
+  atStepMs = 2000,
+  atMsOf: (i: number) => number = (i) => i * atStepMs
+) {
   const all: LiveReplaySegment[] = Array.from({ length: count }, (_, i) => ({
     index: first + i,
     name: `seg-${first + i}`,
     bytes: 100,
-    atMs: i * 2000,
+    atMs: atMsOf(i),
   }));
   return (from?: number): LiveReplayPage => {
     const start = from ?? first;
@@ -340,6 +384,88 @@ describe('ReplayPlayer', () => {
     expect(source.ended).toBe(1);
   });
 
+  it('R15a: audio ending after the video must not stop the end of stream (no duration write below a frame)', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(10)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    buffer().hiddenEnd = 0.02;
+    for (const t of [6, 12, 16]) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+    }
+    expect(source.ended).toBe(1);
+    expect(source.readyState).toBe('ended');
+  });
+
+  it.each([0.3, 0.04, 0.012])(
+    'S13: a LAST segment of %s s is downloaded once, not again on every timeupdate near the end',
+    async (last) => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(10)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      buffer().lenOf = (i) => (i === 9 ? last : 2); // the live's last fragment is shorter than half a second
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      for (let t = 6; t <= 18.5; t += 0.25) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 6; i++) await flush();
+      }
+      const counts = new Map<string, number>();
+      for (const c of fetchSegment.mock.calls)
+        counts.set(String(c[1]), (counts.get(String(c[1])) ?? 0) + 1);
+      expect(Math.max(...counts.values())).toBe(1);
+      expect(counts.get('seg-9')).toBe(1);
+    }
+  );
+
+  it('S13 review: landing on a segment whose tail was cut and taken again lands at ITS start, not where the cut began', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(20)(from));
+    const gone = new Set<string>();
+    const ok = deps.fetchSegment;
+    deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+      if (gone.has(name))
+        throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+      return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+    }) as never;
+    const p = makePlayer();
+    p.start();
+    await flush();
+    // Segment 3 is [6, 8] and segment 4 is [8, 10]: the buffer keeps [0, 6] and the head of segment 4.
+    buffer().remove(6, 8);
+    buffer().remove(9, 100);
+    await flush();
+    gone.add('seg-3');
+    video.currentTime = 7; // inside segment 3's measured extent, outside the buffer, and the segment is gone
+    p.noteSeeking();
+    for (let i = 0; i < 10; i++) await flush();
+    // The landing walks on to segment 4, taken again for its tail only ([9, 10]): it lands at 8.
+    expect(video.currentTime).toBeCloseTo(8, 1);
+  });
+
+  it('keeps the stream ended when the trim behind the playhead reopened it (S12: a halt before the last frame)', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(24)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    for (const t of [6, 12, 18, 24, 30, 36]) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+    }
+    expect(source.ended).toBe(1); // the end is declared with everything in
+    video.currentTime = 47; // the playhead runs on: the trim drops what is far behind it
+    p.noteTime();
+    for (let i = 0; i < 10; i++) await flush();
+    // The trim removed what lies behind the playhead - on a real engine that reopens an ended source,
+    // and an open one waits for more data for ever: the end must have been declared again.
+    expect(buffer().removed.length).toBeGreaterThan(0);
+    expect(source.ended).toBeGreaterThan(1);
+    expect(source.readyState).toBe('ended');
+  });
+
   it('seeks outside the buffer to the LAST segment at or before the target and puts the playhead where it landed', async () => {
     fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
     const p = makePlayer();
@@ -353,6 +479,57 @@ describe('ReplayPlayer', () => {
     // The cursor follows the placed segment: the next segments are 51.., not 6..
     const mediaAppends = buffer().appends.filter((a) => a.startsWith('m'));
     expect(mediaAppends.slice(-1)[0]).toBe('m56');
+  });
+
+  it('S12: a replay whose media runs ahead of its live time still lands a seek inside the target segment', async () => {
+    // 1770 ms of live time per 2 s of media (61 s of media for 54 s of live): the bar's time is MEDIA time.
+    fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+      makePages(100, 200, 0, 1770)(from)
+    );
+    const p = makePlayer();
+    p.start();
+    await flush();
+    video.currentTime = 100.4; // media time: inside segment 50, which starts at 100 s of media
+    p.noteSeeking();
+    await flush();
+    expect(buffer().appends).toContain('m50');
+    expect(video.currentTime).toBeGreaterThanOrEqual(100);
+    expect(video.currentTime).toBeLessThan(102);
+  });
+
+  describe('S12 review: the lookup past the last measurement is checked against what the segment measures', () => {
+    // 2 s of media per segment, 1770 ms of arrival: the replay's media runs ahead of its live.
+    const atPause = (i: number) => i * 1770 + (i > 50 ? 120_000 : 0);
+    it('P1: a 120 s pause (a hole in media time too) after the last measurement, a seek into segment 150', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(200, 200, 0, 0, atPause)(from)
+      );
+      const p = makePlayer();
+      p.start();
+      await flush();
+      buffer().jump = [50, 120];
+      video.currentTime = 150 * 2 + 120 + 0.4;
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends).toContain('m150');
+      expect(video.currentTime).toBeGreaterThanOrEqual(420);
+      expect(video.currentTime).toBeLessThan(422);
+    });
+
+    it('P1b: the same pause, but the media does not jump (frames run on)', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) =>
+        makePages(200, 200, 0, 0, atPause)(from)
+      );
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 150 * 2 + 0.4;
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends).toContain('m150');
+      expect(video.currentTime).toBeGreaterThanOrEqual(300);
+      expect(video.currentTime).toBeLessThan(302);
+    });
   });
 
   it('a seek into buffered media moves the cursor and fetches nothing it already holds', async () => {
@@ -855,6 +1032,346 @@ describe('ReplayPlayer', () => {
       expect(calls()).toBe(before);
     });
 
+    it('paging terminates by proof: a page that adds nothing but keeps a nextFrom ends the listing', async () => {
+      let calls = 0;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => {
+        // A step bound so that the suite itself cannot hang on a runaway loop.
+        if (++calls > 50) throw new Error('runaway paging');
+        if (from === undefined) return { ...makePages(10)(0), nextFrom: 10 };
+        return { ...makePages(10)(0), segments: [], nextFrom: 10 };
+      });
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100; // beyond the 10 listed segments: the seek lists the next page
+      p.noteSeeking();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(calls).toBeLessThanOrEqual(3);
+      expect(states.some((s) => s.kind === 'unavailable')).toBe(false);
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
+    it('paging terminates by proof: a nextFrom that does not move forward ends the listing', async () => {
+      let calls = 0;
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => {
+        if (++calls > 50) throw new Error('runaway paging');
+        const all = makePages(20)(0).segments;
+        if (from === undefined)
+          return { ...makePages(20)(0), segments: all.slice(0, 10), nextFrom: 10 };
+        // The same segments again and a cursor that stays where it was.
+        return { ...makePages(20)(0), segments: all.slice(0, 10), nextFrom: 10 };
+      });
+      const p = makePlayer();
+      p.start();
+      await flush();
+      video.currentTime = 100;
+      p.noteSeeking();
+      for (let i = 0; i < 5; i++) await flush();
+      expect(calls).toBeLessThanOrEqual(3);
+      expect(states.some((s) => s.kind === 'unavailable')).toBe(false);
+    });
+
+    /** Seeks to `seconds` and answers where the playhead landed and how many requests it waited on. */
+    async function seekAndCount(p: ReplayPlayer, seconds: number) {
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const before = fetchSegment.mock.calls.length;
+      let current = seconds;
+      let requests = -1;
+      Object.defineProperty(video, 'currentTime', {
+        get: () => current,
+        set: (t: number) => {
+          current = t;
+          requests = fetchSegment.mock.calls.length - before;
+        },
+      });
+      p.noteSeeking();
+      for (let i = 0; i < 40; i++) await flush();
+      return { landed: current, requests };
+    }
+
+    it('R7b: a purge of 900 segments lands on the last existing segment before it, in O(log n) requests', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(1000)(from));
+      skip404(Array.from({ length: 900 }, (_, i) => `seg-${100 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed, requests } = await seekAndCount(p, 1000); // segment 500, in the purge
+      expect(landed).toBeCloseTo(198, 1); // segment 99, the last that exists
+      expect(requests).toBeGreaterThan(0);
+      expect(requests).toBeLessThanOrEqual(100);
+    });
+
+    it('R7d: a purge from segment 60 on lands on segment 59, never on the start of the replay', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 140 }, (_, i) => `seg-${60 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed, requests } = await seekAndCount(p, 300); // segment 150
+      expect(landed).toBeCloseTo(118, 1); // segment 59
+      expect(requests).toBeLessThanOrEqual(100);
+    });
+
+    it('R7e: a purge from segment 50 lands on segment 49', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 150 }, (_, i) => `seg-${50 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const { landed } = await seekAndCount(p, 300);
+      expect(landed).toBeCloseTo(98, 1); // segment 49
+    });
+
+    it('R9a: a replay whose first 40 segments are gone starts playing at segment 40', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 40 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+      expect(buffer().appends).toContain('m40');
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+    });
+
+    it('R9b: a purge in the middle is crossed into segment 100, and the stream is not ended inside it', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 60 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 20; i++) await flush();
+      }
+      expect(source.ended).toBe(0); // never declared inside the purge
+      video.currentTime = 80; // the end of segment 39: the hole [80, 200) is known
+      p.noteTime();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(video.currentTime).toBeCloseTo(200, 1);
+      expect(source.ended).toBe(0);
+    });
+
+    it('R9b: probing past a long purge costs O(log n) requests, not one per segment', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(1000)(from));
+      skip404(Array.from({ length: 900 }, (_, i) => `seg-${50 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      for (let t = 0; t <= 98; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const missingRequests = fetchSegment.mock.calls.filter(
+        (c) => Number(String(c[1]).slice(4)) >= 50 && Number(String(c[1]).slice(4)) < 950
+      ).length;
+      expect(missingRequests).toBeLessThanOrEqual(120); // 30 walked, then about 2 log2(900)
+    });
+
+    it('R10a: a replay whose probes find nothing but one untried survivor is gone (the sampled verdict)', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`).filter((n) => n !== 'seg-45'));
+      makePlayer().start();
+      for (let i = 0; i < 30; i++) await flush();
+      // A purge job deletes whole replays: a sample that finds nothing is the verdict, not a walk of all.
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+    });
+
+    it('R11b: a fully purged replay of 2000 segments is gone after O(log n) requests', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(2000)(from));
+      skip404(Array.from({ length: 2000 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 60; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+      expect(fetchSegment.mock.calls.length).toBeLessThanOrEqual(120);
+    });
+
+    it('R11c: a 404 answer ends the reconnecting screen of an older retry', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const ok = deps.fetchSegment;
+      let mode: 'up' | 'down' | 'gone' = 'up';
+      deps.fetchSegment = ((id: string, name: string, signal?: AbortSignal) =>
+        mode === 'up'
+          ? ok(id, name, signal)
+          : mode === 'down'
+            ? Promise.reject(new TransportFailureError(new Error('net')))
+            : name === 'seg-81'
+              ? new Promise<ArrayBuffer>(() => {}) // never answers: only the 404 below can end the screen
+              : name === 'seg-80'
+                ? Promise.reject(
+                    new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null)
+                  )
+                : ok(id, name, signal)) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      mode = 'down';
+      video.currentTime = 120.2; // A: outside the buffer, transport failure
+      p.noteSeeking();
+      await flush();
+      expect(states.at(-1)).toEqual({ kind: 'reconnecting' });
+      mode = 'gone';
+      video.currentTime = 160.2; // B: segment 80, answered 404
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(states.at(-1)).toEqual({ kind: 'playing' });
+    });
+
+    it('R10b: a purged tail is judged empty by the sampled rule: playback reaches the last media and the stream ends', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 160 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      // Declared once the media before the tail is in; the fake truncates the duration as an engine does.
+      expect(source.ended).toBeGreaterThanOrEqual(1);
+      expect(source.readyState).toBe('ended');
+      expect(source.duration).toBeLessThan(90);
+      expect(states.some((s) => s.kind === 'gone')).toBe(false);
+    });
+
+    it('R10c: the segment the probe finds is appended from the bytes it downloaded, not fetched again', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 40 }, (_, i) => `seg-${i}`));
+      makePlayer().start();
+      for (let i = 0; i < 30; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-40').length).toBe(1);
+      expect(buffer().appends).toContain('m40');
+    });
+
+    it('R10c2: the hits of the bisection are kept too, so a probed segment the fill reaches is not fetched again', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 50 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const count = (n: string) => fetchSegment.mock.calls.filter((c) => c[1] === n).length;
+      expect(count('seg-90')).toBe(1);
+      expect(count('seg-92')).toBe(1); // a hit of the bisection (p=100, then 92), appended from its bytes
+      expect(buffer().appends).toContain('m92');
+    });
+
+    it('R10e: a seek onto a segment the probe downloaded uses the kept bytes', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 50 }, (_, i) => `seg-${40 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+      }
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-100').length).toBe(1); // the probe's hit
+      video.currentTime = 200.4; // segment 100
+      p.noteSeeking();
+      for (let i = 0; i < 30; i++) await flush();
+      expect(buffer().appends).toContain('m100');
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-100').length).toBe(1);
+    });
+
+    it('R10d: a seek made during the probe does not wait for the whole probe', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 60 }, (_, i) => `seg-${40 + i}`));
+      const ok = deps.fetchSegment;
+      let release: (() => void) | null = null;
+      deps.fetchSegment = vi.fn((id: string, name: string, signal?: AbortSignal) => {
+        if (name === 'seg-100') {
+          return new Promise<ArrayBuffer>((resolve) => {
+            release = () => resolve(new TextEncoder().encode(name).buffer as ArrayBuffer);
+          });
+        }
+        return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 78; t += 6) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 30; i++) await flush();
+        if (release) break; // the probe is waiting on segment 100
+      }
+      expect(release).not.toBeNull();
+      video.currentTime = 3; // a newer seek, into buffered media
+      p.noteSeeking();
+      (release as unknown as () => void)();
+      for (let i = 0; i < 30; i++) await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      // The probe stopped at its next step: no probe point past the held one was requested.
+      expect(fetchSegment.mock.calls.filter((c) => c[1] === 'seg-190').length).toBe(0);
+      expect(video.currentTime).toBe(3);
+    });
+
+    it('R8c: a replay in which no segment gives media stops on gone, never a black picture', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      skip404(Array.from({ length: 100 }, (_, i) => `seg-${i}`));
+      const p = makePlayer();
+      p.start();
+      for (let i = 0; i < 20; i++) await flush();
+      expect(states.at(-1)).toEqual({ kind: 'gone' });
+      void p;
+    });
+
+    it('the fill stops walking a 404 tail after a bounded number of requests, and does not resume on each timeupdate', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(300)(from));
+      skip404(Array.from({ length: 290 }, (_, i) => `seg-${10 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const missingRequests = () =>
+        fetchSegment.mock.calls.filter((c) => Number(String(c[1]).slice(4)) >= 10).length;
+      for (const t of [8, 14, 18, 19, 19.5]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 20; i++) await flush();
+      }
+      // 30 walked, about 12 probed, 30 of backfill before the end: never ~290
+      expect(missingRequests()).toBeLessThanOrEqual(90);
+    });
+
+    it('a long tail of 404s is walked a bounded number of requests, then the seek lands backward', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(200)(from));
+      skip404(Array.from({ length: 190 }, (_, i) => `seg-${10 + i}`));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      const fetchSegment = deps.fetchSegment as unknown as ReturnType<typeof vi.fn>;
+      const before = fetchSegment.mock.calls.length;
+      // The seek is answered when the playhead is written: count the requests it waited on.
+      let current = 200.2;
+      let requestsAtLanding = -1;
+      Object.defineProperty(video, 'currentTime', {
+        get: () => current,
+        set: (t: number) => {
+          current = t;
+          requestsAtLanding = fetchSegment.mock.calls.length - before;
+        },
+      });
+      p.noteSeeking(); // segment 100, inside the purged run
+      for (let i = 0; i < 20; i++) await flush();
+      expect(requestsAtLanding).toBeGreaterThan(0);
+      expect(requestsAtLanding).toBeLessThanOrEqual(70); // 1 + 30 forward + 30 backward, never ~190
+      // Still answered: the nearest media held, inside a range.
+      expect(inRange(video.currentTime)).toBe(true);
+    });
+
     it("Q2/Q3: a stall before a skipped segment's gap is carried over it", async () => {
       fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(40)(from));
       skip404(['seg-3']); // media [6, 8] never arrives
@@ -894,6 +1411,54 @@ describe('ReplayPlayer', () => {
       // Never left unanswered: a position inside a range was written.
       expect(inRange(video.currentTime)).toBe(true);
       expect(video.currentTime).toBeCloseTo(98, 1); // segment 49, the last one that exists
+    });
+  });
+
+  describe('trim never drops media the walk across holes has passed', () => {
+    it('R12a: after a 100 s pause hole, no segment is downloaded more than once over 30 s of timeupdates', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const base = deps.openSegment;
+      deps.openSegment = (async (k: string, id: string, index: number, sealed: ArrayBuffer) => {
+        if (index === 8) buffer().base = 100;
+        return (base as (...a: unknown[]) => Promise<Uint8Array>)(k, id, index, sealed);
+      }) as never;
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (let t = 0; t <= 16; t += 0.5) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 10; i++) await flush();
+      }
+      const counts = new Map<string, number>();
+      for (const a of buffer().appends)
+        if (a.startsWith('m')) counts.set(a, (counts.get(a) ?? 0) + 1);
+      expect(Math.max(...counts.values())).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('a measurement never narrows', () => {
+    it('R16a: re-taking a segment the trim cut in the middle keeps its whole measured extent (no false hole)', async () => {
+      fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
+      const p = makePlayer();
+      p.start();
+      await flush();
+      for (const t of [12, 24, 36, 48, 60, 72, 84, 96, 110.8]) {
+        video.currentTime = t;
+        p.noteTime();
+        for (let i = 0; i < 10; i++) await flush();
+      }
+      // The trim cut at 100.8, in the middle of segment 50 (100-102).
+      expect(buffer().ranges[0][0]).toBeCloseTo(100.8, 1);
+      video.currentTime = 100.2; // inside segment 50, outside the buffer: it is taken again
+      p.noteSeeking();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(buffer().appends.filter((a) => a === 'm50').length).toBe(2);
+      // The re-take added only [100, 100.8]; the segment still ends at 102, so 101 is media, not a hole.
+      video.currentTime = 101;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+      expect(video.currentTime).toBeCloseTo(101, 1);
     });
   });
 

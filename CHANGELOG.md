@@ -14,6 +14,282 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-20
+
+### Fixed - a live's sound no longer drifts ahead of its picture when the camera runs under 15 fps
+
+The viewer gives each fragment's last video frame the interval the camera ran at, so MSE no longer drops audio at every fragment boundary; replays already stored are fixed too ([live](docs/wiki/frontend/modules/live.md#audio-drifts-ahead-of-the-video-under-15-fps-2026-11-19)).
+
+### Changed - a member is asked about a person whose seat stands with no leaf
+
+Such a person (a skipped key package, a revoked only device, an evicted only leaf) is now raised as the "X veut rejoindre" card on a tree confirmed at the server's epoch, and a Decline removes their seat only while the group is still at the epoch the member read - step 2 of the admission fix-forward ([who admits a new person](docs/wiki/protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23)).
+
+### Fixed - a salon reaction that arrives before its seed is notified while the app is open
+
+The first reaction of a member's new seed session was opened only by the repair's history load, which raises nothing, so nobody announced it in the foreground; its live decision is now parked under the row and taken by the reader that opens it ([mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
+
+### Fixed - a reactor's second reaction to one message replaces the first on the iPhone
+
+The notification id of a reaction (iOS, and the web tag and desktop id with it) no longer carries its instant, so changing one emoji for another leaves one entry in Notification Center, as on Android ([mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
+
+### Added - the admin queues carry a count of what waits
+
+The dashboard's Administration row, the dashboard tab and each admin queue's row now show how many items wait in the queues the reader can act on, from the server's counts, refetched when the server says a queue changed rather than on a timer ([admin](docs/wiki/frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)).
+
+### Added - the global admins are told when a profile correction or a report arrives
+
+A filed profile correction, and a report on a subject no notice still covers, now ring every global admin (a bell row and a content-free push) and leave every admin's bell once one handles the item; `GET /api/moderation/admin-queues` counts what waits in each queue the caller may act on ([admin](docs/wiki/frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)).
+
+Every item that enters or leaves an admin queue sends one empty `admin.queues.changed` frame over the chat socket to the accounts that may act on it - delivered by the gateway only to the sessions that declare `admin-queues-1`, so an older build never meets it - and the badges refetch instead of polling ([admin](docs/wiki/frontend/modules/admin.md#pending-counts-and-the-admin-notices-owner-2026-11-18)).
+
+### Changed - the audit-tree table's assertions moved to their own Canari-only test
+
+`audit-dependencies.test.sh` is one of the files the four repositories must keep byte-identical, and its second half tested a Canari-only table, so it had forked. That half is now `audit-trees.test.sh` ([cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+
+### Added - each BDE chooses the colour of its neutral "Campus" events
+
+A BDE's admins (the `EDIT_PROFILE` right, like the association colour and logo) set it in the
+association settings; until then the derived accent stays. The colour rides the event payload
+(`neutralEventColor`, migration 171) and every agenda surface and the export paint it
+([calendar](docs/wiki/frontend/modules/calendar.md#the-colour-of-neutral-events-is-the-bdes-choice-owner-2026-11-14)).
+
+### Changed - call-service on jsonwebtoken 12, and its `rsa` audit ignore retired
+
+The socket and room-token checks keep HS256 with the same expiry rules; an empty key now refuses every token. The new crate leaves `rsa` 0.9, and crypto-bigint 0.5 stays on the webrtc dtls edge alone ([cicd](docs/wiki/cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### Changed - chat-gateway on jsonwebtoken 12, and its two audit ignores retired
+
+The socket check keeps HS256 with the same expiry rules; an empty key now refuses every token. The new crate leaves `rsa` 0.9 and crypto-bigint 0.5, so chat-gateway carries no audit ignore ([cicd](docs/wiki/cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### Changed - the "server unreachable" line says what proved it
+
+A link declared unreachable by two request deadlines now prints `(2 request deadlines in a row)`, and a refused socket `(transport failure: <class of the raw rejection>)`, instead of the same sentence for both ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - "Supprimer + muter" no longer deletes the post when the mute is refused
+
+The button swallowed the mute's refusal and deleted anyway, telling the moderator nothing. It is now drawn only where the server says the author may be muted, mutes first, and a refused mute stops the delete and says why ([moderation](docs/wiki/moderation-and-blocking.md#reporting)).
+
+### Fixed - a 1:1 dropped for being absent from the server is no longer logged as a "distribution group left"
+
+`forgetDistributionGroupById` takes the reason from its caller, so the line names the real mechanism ([sessions](docs/wiki/protocols/channel-encryption.md)).
+
+### Changed - an unsealed history answer, or an ask with no key, is refused
+
+With the `1.7.0` floor every build seals: an unsealed answer to a keyed ask is refused at error, an ask without `answerKey` is answered nothing, and an answer that cannot be addressed is never sent ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
+
+### Changed - the iPhone deletes its former seed mirror instead of folding it
+
+With the `1.7.0` floor the fold of an older build's `graine_seeds.json` is replaced by a delete under the mirror lock, which takes the stale lock file too and refuses the App Group's own directory; the App Group holds the one mirror ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
+
+### Changed - the end of the register asks is said at error
+
+Every build at the `1.7.0` floor answers or declines `register`, so five unanswered asks are a defect: the bound stays, its line is raised from warn to error ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). A device withholding history from an unvouched asker now declines it as `'withheld'`, so that normal state ends at info, named ([history-answer-addressing](docs/wiki/protocols/history-answer-addressing.md)).
+
+### Changed - a salon invitation notice carries ids, never a sentence
+
+With the `1.7.0` floor every admitted build draws `{ "newUsers": [id] }`, so the inviter sends it always and the held writer switch is gone ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)).
+
+### Fixed - the reel send sheet uses reactive sets and maps, and the dead-code page no longer claims a `husky` ignore
+
+knip needs no `husky` entry because the frontend does not depend on it ([dead-code](docs/wiki/dead-code.md)).
+
+### Fixed - the image scan is green again: CVE-2026-97054 in the postgres images' gosu is allowlisted
+
+The binary links no HTTP code, and no fixed image exists upstream yet ([cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+
+### Group calls - the relay's one-device-per-user wire is written and proven in a mesh
+
+A user's second device replaces the first with one `PeerReady` per participant under the same user id, and a relayed frame is now handed on under the room's lock so the replaced device's frames never land after it ([calls](docs/wiki/frontend/modules/calls.md#one-device-per-user-the-relays-wire-wp-gc8-2026-11-16)).
+
+### Added - a group call's caller can end every ring with `room-empty` (server half)
+
+`ring-end` takes the reason `room-empty`: from the caller it ends every member's ring; from a participant it stops only their own devices, since their view of a mesh is not evidence the room is empty ([calls](docs/wiki/frontend/modules/calls.md#an-emptied-room-ends-every-ring-wp-gc7-server-half-2026-11-16)).
+
+### Added - group calls: the app's SFU leg, one connection to the relay (WP-GC4 client)
+
+`CallSfuLeg` carries a group call through call-service's relay with the per-sender E2E keys, the room's mode is read from its token, and the relay's `Joined` now states `others`; not yet wired into the call screen ([calls](docs/wiki/frontend/modules/calls.md#the-apps-sfu-leg-wp-gc4-client-2026-11-16)).
+
+### Added - group calls can go through Cloudflare Realtime (server half, off in production)
+
+`call_relay` gains `cloudflare`: chat-delivery proxies Cloudflare Realtime's sessions/tracks API behind the call gates, and a misconfigured relay refuses the call rather than falling back to the mesh ([calls](docs/wiki/frontend/modules/calls.md#the-cloudflare-relay-wp-gc3-server-half-2026-11-16)).
+
+### Changed - the iOS builds move to Xcode 27 and the iOS 27 SDK
+
+App Store Connect will refuse uploads built with an older SDK from April 2027 (ITMS-90725); both
+Apple jobs now run on the `xcode-27` runner and require Xcode 27 ([cicd](docs/wiki/cicd.md#the-ios-toolchain-is-pinned-xcode-27-since-171)).
+
+### Fixed - the iPhone's photo picker keeps every item of a multiple pick
+
+An 11-item pick gave 3 attachments: the picker plugin copied each item to a file named after its source, so two items sharing a name overwrote each other. The crate is now vendored with one directory per item, and a file that still cannot be read is counted in a notice ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - the iPhone no longer shows a white band above the header
+
+The status bar's inset could be counted twice, by UIKit and by the page, when the app started without becoming active at once, and the scroll offset left behind kept it until a relaunch. One native function now owns both halves ([parity](docs/wiki/frontend/android-ios-parity.md#11-the-two-platforms-took-opposite-decisions-about-the-system-bars---fixed-2026-08-28)).
+
+### Fixed - the Thème "Automatique" label and the feed's "Campus" tab no longer run off the screen at a doubled font
+
+Both labels now wrap or hyphenate inside their segment instead of overflowing, with the text size unchanged ([device-verification](docs/wiki/device-verification.md)).
+
+### Fixed - the live card no longer reads "Aperçu d'il y a 0 s"
+
+A preview under a second old read as a glitch; it now reads "Aperçu à l'instant" ([live](docs/wiki/frontend/modules/live.md)).
+
+### Fixed - a live that ends normally no longer makes every viewer log a warning
+
+The viewer's stop line is written by kind (`logViewerStop`): an end is one `log` next to the summary, `warn` stays for the stops that mean something went wrong ([lives](docs/wiki/services/lives.md)).
+
+### Changed - the terms, the privacy policy and the pre-live screen describe live replays
+
+Live replays are on, so the CGU, the privacy policy, the register and the broadcaster's pre-live screen now say what a replay keeps, for whom and for how long, and a broadcaster accepts the live rules once more (version 3) before their next live ([live-replays](docs/wiki/live-replays.md#wp-r6-as-built-the-texts)).
+
+### Fixed - a live viewer whose app was suspended mid-request retries instead of stopping on "Live indisponible"
+
+The lives client now reads every response body through `readApiJson`, so a body lost after the head is a transport failure the viewer retries, not WebKit's bare `TypeError: Load failed` ([read on the iPhone](docs/wiki/device-verification.md#the-phone-readings-of-2026-11-19-s10-171-alpha3), [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Changed - a live opens with sound, and its reactions lie in a row in landscape
+
+The viewer starts unmuted (a hand mute of this session holds; where the engine refuses, it plays muted and offers "Activer le son"), and the five reactions form a row beside the comment field when the screen is landscape ([live](docs/wiki/frontend/modules/live.md#the-viewer-opens-with-sound-and-the-reactions-lie-down-in-landscape-owner-2026-11-19)).
+
+### Fixed - a Lydia cashier who leaves the association loses their Lydia access
+
+When a member leaves or is removed, their Tresorier or Vendeur numbers are removed at Lydia through the verified removal path, retried when a manager opens the payments card or another cashier step ends; a Responsable who leaves keeps the Business's number and the card says a new one is needed. Deleting an association, or unlinking its Lydia Business, is refused while that Business still lists cashiers to remove or a cashier step is in flight ([payments](docs/wiki/frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).
+
+### Fixed - a Lydia cashier's number has one spelling, and a cashier who left gets no new role
+
+From the review of the cashier gate's flip: a French number typed with its trunk 0 (`+330...`) is refused by the servers and rewritten by the app, a role change re-checks that the person is still a member, and an unconfirmed cashier is worded "remove it, then add it again". What remains (an add binds the person and not the number, and does not read the number first) is planned for 1.7.1 ([entry](docs/wiki/backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)).
+
+### Added - a payout manager can add a Lydia Vendeur or Tresorier, and change a role or the Responsable's number
+
+The owner's gate on Lydia cashiers is ON (owner, 2026-11-18): it had waited for one removal observed in production, which nothing could provide while adding was off. Removal still counts only a re-read showing no right; the owner's own add-and-remove on production is the first production reading ([payments](docs/wiki/frontend/modules/payments.md#the-cashiers-enrolment-lot-3)).
+
+### Fixed - an association's Lydia payments becoming ready no longer logs a warning
+
+A Business marked ready by Lydia's webhook was logged at WARN with "before: nothing recorded at no date" and the switched-off managers' notice as if it were a fault. The designed transition is now an INFO line saying what it was before and that the notices are off by switch; the revert stays an ERROR ([payments](docs/wiki/frontend/modules/payments.md#readiness-one-writer-and-lydias-own-refusal-reverts-it-enrolment-lot-2)).
+
+### Security - MiConnect's three Canari clients accept only the redirect URIs their clients use, and dev asks for the terms
+
+Production and dev lost their `tauri.localhost` and loopback callbacks (unused since April on production; loopback is the local client's alone), and the terms-of-use flow is now bound to the dev and local clients in the blueprints, so a stable no longer resets it and the pre-release apps can read it; production stays held ([authentik](docs/wiki/infrastructure/authentik.md#the-three-canari-providers-and-what-each-one-lets-a-client-come-back-to)).
+
+### Changed - Minesweeper: anyone can replay a won game, in a full-screen viewer; "Aucune" makes a dig instant
+
+Every member now gets "Revoir cette partie" on each row of the Games ranking (a banned player's game stays hidden, as on the ranking). On a phone the viewer fills the screen and fits the whole grid to it. Digging a cell no longer fades when the animation setting is "Aucune" (a button-wide 180 ms crossfade ignored the setting). Details in [minesweeper](docs/wiki/frontend/modules/minesweeper.md#the-replay-timed-moves-and-a-moderator-who-can-watch-a-win-owner-2026-11-17).
+
+### Fixed - a neutral Campus event in the month grid no longer wears a translucent "CA"
+
+#3455 gave the day panel, the list, the event modal and the export the generic treatment, but the month grid's cell still drew its logo watermark, whose no-logo fallback is initials. A neutral event's colour is now its whole drawing in the grid too ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Fixed - every pull request and main went red when GitHub withdrew the picomatch advisory
+
+GitHub withdrew `GHSA-fc5q-39xc-vjpf` on 2026-11-18, so the audit stopped reporting it and the step that retires dead ignores failed everywhere, as designed. The ignore, its premise script and its assertions are deleted ([cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+
+### Changed - the docs, comments and examples name production `canari.emse.fr`
+
+Every page, comment, example and fixture that presented `canari-emse.fr` as where production is now names `canari.emse.fr`; the legacy name stays wherever it is still served or accepted ([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
+
+### Fixed - deleting an account no longer logs a false "push deregistration refused" error
+
+The account is gone, so the sign-out that follows skips the call that could only be refused (the erasure job removes the push token) ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - the CanaReel playback bar no longer goes back while the video loads
+
+The bar was measured against what had loaded so far, which grows with every segment, so on a slow link the position rewound. It is now fixed to the video's real total from the first frame (the publisher's declared length, including a conversation reel's, which was lost on the way) and draws what is loaded in grey under the played part, as YouTube does ([reels](docs/wiki/frontend/modules/reels.md#the-playback-bar-never-goes-back-defect-same-day)).
+
+### Changed - a tap on a CanaReel hides or shows its controls, and no longer pauses
+
+In the full-screen viewer a single tap hides the caption, the author, the actions, the tabs and the close button (only the thin playback line stays) and the next tap brings them back; a press held still pauses. Hidden controls are neither focusable nor announced, and an assistive button brings them back ([reels](docs/wiki/frontend/modules/reels.md#a-tap-hides-the-overlay-and-the-playback-bar-is-fixed-to-the-real-total-owner-2026-11-18)).
+
+### Changed - a vertical video, or any video of 90 s or less, is a CanaReel
+
+Owner, 2026-11-14: a short landscape video and a long vertical one (up to 3 min) are now CanaReels too, from the camera or the gallery; only a long landscape video stays a post. Clients apply the rule only when the server serves it. Held migration 176 turns every single-video post already published into a CanaReel expiring a year after its publication ([reels](docs/wiki/services/reels.md#the-rule-what-is-a-canareel)).
+
+### Fixed - a replay's short last segment is downloaded once, not again on every timeupdate near the end
+
+A segment counted as held only when its range ran 0.5 s past its start, so a live's short last fragment was missing for good and refetched about 46 times in the final 12 s; held now means the buffer holds its whole measured extent ([live-replays](docs/wiki/live-replays.md#a-segment-is-held-when-the-buffer-holds-its-whole-measured-extent-s13-2026-11-20)).
+
+### Fixed - a replay seek into a segment the trim had cut no longer loses 1.2 s of it
+
+Re-taking such a segment measured only the part the buffer lacked, which narrowed its end and made a false hole the playhead skipped over; a measurement now keeps the widest start and end ([live-replays](docs/wiki/live-replays.md#a-measurement-never-narrows-2026-11-20)).
+
+### Fixed - a replay's listing and a seek's walk over missing segments always end
+
+A page that adds nothing no longer makes the player request pages forever, and a long run of deleted segments is walked a bounded number of times before the seek lands ([live-replays](docs/wiki/live-replays.md#the-listing-and-the-walks-terminate-by-proof-2026-11-19)).
+
+A fully purged replay is called gone from the probes' verdict instead of walking every segment, a probed gap running to the end is judged empty like `gone`, and a 404 answer ends a stale reconnecting screen.
+
+### Fixed - opening a replay from a feed card starts its player once, not twice
+
+The page's effect read the `post` object, so the reel list answering again with a new object for the same replay stopped the player and started another (the listing and segment 0 fetched twice); it now follows the live id alone ([live-replays](docs/wiki/live-replays.md#the-replay-page-starts-its-player-once-s13-2026-11-20)).
+
+### Fixed - a replay played to its end now ends instead of halting before the last frame with a spinner
+
+The player declared the end of the stream once and remembered it, but the engine reopens an ended source on any `remove` or `append`, and the trim behind the playhead did exactly that. The end is now declared whenever the source is open at the end of the list ([live-replays](docs/wiki/live-replays.md#a-replay-reaches-its-end-the-engines-state-is-the-memory-of-ended-2026-11-19)).
+
+### Fixed - dragging a replay's bar again while it loads no longer throws the playhead back
+
+Only the latest seek may move the playhead; an older seek's download is cancelled and its result ignored ([live-replays](docs/wiki/live-replays.md#a-replay-seek-the-latest-target-alone-moves-the-playhead-owner-2026-11-19)).
+
+### Fixed - a replay no longer freezes at a camera flip or a background pause of its live
+
+The holes the live had are known from the segment list and crossed by construction, a seek into one lands after it ([live-replays](docs/wiki/live-replays.md#holes-in-the-replay-timeline-crossed-by-construction-s11-2026-11-19)).
+
+### Fixed - a seek in a replay lands in the segment of its target, not seconds later
+
+The bar reads media time but the segment lookup read arrival time, which a replay with more media than live (a camera under its nominal rate) leaves behind; the lookup is now in media time, from the measured starts ([live-replays](docs/wiki/live-replays.md#a-seek-looks-its-segment-up-in-media-time-s12-2026-11-19)).
+
+### Fixed - a replay with a long pause no longer downloads the media after it again on every tick
+
+The trim kept only the next 60 s of media time and dropped what lay just after a pause of a minute or more; it now keeps what the walk across the holes reaches ([live-replays](docs/wiki/live-replays.md#the-far-ahead-trim-follows-the-walk-not-media-time-alpha4-defect-2026-11-19)).
+
+### Fixed - a message decrypted but not yet stored can no longer be lost to a checkpoint or an early acknowledgement
+
+A checkpoint now waits for every frame between its decrypt and its row before it exports, a failed live row write (an upgrade of a notification's caption, an edit, a deletion included) is kept and retried, and an application frame is acknowledged only once ITS rows are stored - every row a decrypted frame writes carries that frame's id, so one unstorable row no longer withholds every acknowledgement; a row the store itself refuses at its request (`RowRefusedError` with `DataError`/`DataCloneError`) is dropped at ERROR instead of stalling the device, a message is written before its tone or notification can throw, a message whose dispatch throws after its decrypt is kept for the next checkpoint instead of being taken for a decrypt failure, and an edit, deletion or reaction parked against a stored row is retried at every checkpoint ([chat](docs/wiki/frontend/modules/chat.md#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)).
+
+### Fixed - a revoked device's reset no longer logs a `[seenHelps]` read failure at error level
+
+The seen-set read recognises the typed session end and stands down at info level ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - the share-sheet suggestions are sent when the member leaves the app, not at every change of the list
+
+A first sync republished them 23 times: each provisional state of the conversation list was a publish. They are now sent once when the member leaves the app (and when the switch moves), each publish logging how it differs from the one before ([sharing](docs/wiki/frontend/sharing.md), [reading owed](docs/wiki/device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3)).
+
+### Fixed - an opaque error toast, a Theme control that fits a doubled font, a chips row that holds its place, a named remove control
+
+The error and warning toasts no longer let a dialog's text read through them; the Thème segments share the row's width; the chips of "Nouvelle discussion" keep one height so the list does not move under the finger; a community member's remove control is announced with their name ([chat](docs/wiki/frontend/modules/chat.md#a-removal-names-its-member-and-no-remove-control-is-live-while-the-order-is-settling-2026-11-17)).
+
+### Fixed - the dev deploy's smoke sign-in accepts MiConnect's terms instead of failing on them
+
+The dev provider asks for the terms since #3839, and `v1.7.1-alpha.1`'s smoke sign-in died on that prompt. It now recognises that prompt alone, ticks it once per version and names any other stage it cannot answer ([cicd](docs/wiki/cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
+
+### Fixed - the smoke sign-in's terms answer was refused as a CSRF failure
+
+`v1.7.1-alpha.2`'s dev deploy reached the terms prompt and got an HTTP 500: once the session is signed in, MiConnect's CSRF check refuses a POST carrying neither `Origin` nor `Referer`. Every answer now carries the IdP as `Origin` and the flow page as `Referer`, as a browser does, and the test's fake IdP refuses them otherwise ([cicd](docs/wiki/cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
+
+### Removed - the last of Stripe in the code and the database
+
+Two held migrations drop the three dead Stripe columns; the stored `stripe` payment method stays as historic data that live readers tell apart. The shims, tests, copy strips and comments kept only for Stripe went with them. The two columns that still carry a `stripe*` name hold the live Lydia references and stay ([stripe-archive](docs/wiki/stripe-archive.md#the-last-removal-owner-2026-11-19-tu-peux-tout-supprimer-en-ce-qui-concerne-stripe)).
+
+### Fixed - the broadcaster's controls no longer wrap into a staircase on a phone
+
+On air, the six round controls are now one column on the right edge with End on top, instead of wrapping under the title button on a 390 pt screen ([live](docs/wiki/frontend/modules/live.md#the-broadcasters-controls-are-one-right-edge-column-owner-2026-11-19)).
+
+### Fixed - the Lydia contract bands no longer need typing in ascending order, and a refusal is said in words
+
+The admin editor sends the bands sorted by starting amount and says what each refused field means instead of printing its path ([lydia contract](docs/wiki/lydia-contract-flux.md)).
+
+### Fixed - the cross-client rig creates a group through the single "Nouvelle discussion" panel
+
+`createGroup` and `createDM` now drive the people-first panel by stable test ids (`new-chat-proceed`,
+`new-group-submit`) and `closeOverlays` closes a panel left open
+([cross-client-harness](tools/cross-client-harness/README.md)).
+
+### Fixed - the test rig reads the viewer's summary line again since it counts held last frames
+
+#3862 added `N last frames held` to the live viewer's summary line; the rig's line table (`liverows.mjs`) and the harness self-test still expected the earlier form, so a reading would have counted the line as dirt and `Test Harness (self-tests)` failed on any branch that ran it. Both forms are now read ([live](docs/wiki/frontend/modules/live.md#audio-drifts-ahead-of-the-video-under-15-fps-2026-11-19)).
+
+### Fixed - two messages with two plural counts showed their key in a toast
+
+Dropping eleven images on a post that already held one raised a toast reading "post_attachments_partial", and the "deleted everywhere" notice of a sent reel did the same. Their match keys separated the two selectors with a bare space, so no branch matched ([architecture](docs/wiki/frontend/architecture.md#i18n-paraglide)).
+
 ## [1.7.0] - 2026-11-18
 
 ### Fixed - a Back to the feed puts the same post back, not only the same number of pixels

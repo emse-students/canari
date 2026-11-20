@@ -449,7 +449,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one.
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one. **S13 (2026-11-20, `1.7.1-alpha.5`, desktop Chrome only):** four replays played from 0 to their end, each fired `ended`; seeks landed in their target's segment; a 53.3 s hole of a Mi 9T live was crossed by play alone with the segment after it downloaded once ([S13](device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)). **S14 (2026-11-20, `1.7.1-alpha.6`):** the Mi 9T played a four-flip live to its end across four crossed holes, and the iPhone played it to its wrap ([S14](device-verification.md#the-readings-of-2026-11-20-s14-171-alpha6-replays-on-both-phones-messages-on-the-mi-9t-the-reactions-at-two-widths)); the last segment was downloaded once on the web and on the Mi (the fix below), the iPhone's count being unreadable from its log. One defect found by S13: [the last segment re-downloaded at every `timeupdate`](#a-segment-is-held-when-the-buffer-holds-its-whole-measured-extent-s13-2026-11-20).
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -650,3 +650,159 @@ value, the server's:
 - **The confirm, asked before the end, states the rule** for a live the server keeps, never a
   promise: "s'il a duré au moins 30 secondes, sa rediffusion reste visible {days}".
 
+
+### The listing and the walks terminate by proof (2026-11-19)
+
+- **Paging.** Every loop that lists the next page (a seek's `listUntil`, the fill, the landing walk) goes
+  through ONE step, `loadPage`. A page that adds no segment, or whose `nextFrom` does not move past the
+  page's own start, ends the listing: it is logged at warn level with what the server answered, and
+  `nextFrom` becomes null. Before, such an answer was requested forever, since the loops trust a non-null
+  cursor. Pinned with a mock that answers it immediately, behind a step bound so the suite cannot hang.
+- **The landing walk.** A seek whose target is in a run of missing segments (404) used to walk it one
+  request per segment while the playhead waited (901 requests for a long tail). The walk forward and the
+  walk backward each stop after `REPLAY_MAX_MISSING_WALK` (30, about 45 s of replay at 1.5 s a segment)
+  consecutive segments that cost a request (a segment already known as skipped is free and not
+  counted). Why 30: a pause or a camera flip is a hole in TIME, which the segment list keeps and
+  `knownHoles` crosses without a request; a run of DELETED segments is a purge, and 45 s of it is already
+  more than a seek should wait for. After the forward bound the walk goes backward; after the backward
+  bound it PROBES back at a doubling stride (k - 30, k - 60, k - 120, ... down to segment 0), one
+  segment each, and the first probe that finds media is bisected against the previous missing probe: the
+  answer is the last existing segment before the PROBED gap (survivors scattered inside the run can make it land earlier), in O(log n) requests (about 75 for a purge of 900
+  segments), never arbitrary buffered media. Only a replay with no media at all is answered with
+  nothing.
+- **The fill's own walk** is bounded the same way, WITHOUT ending the stream: past the playhead,
+  `REPLAY_MAX_MISSING_WALK` consecutive requested 404s replace the walk by `probeGap` forward (the same
+  helper as the seek's backward probe, one parameter for the direction): a doubling stride, then a
+  bisection to the FIRST existing segment after the gap (existence only: the bytes are dropped, the fill
+  keeps the bytes of the found segment and appends from them). What the player keeps of it is small:
+  `skippedIdx`, the segments REALLY tried and missing (a 404, an open failure), and `gaps`, ONE range
+  `[from, to)` of segment indexes per probed purge (`to` is infinite when the probe found no media up to
+  the end of the list). The positions inside a gap were sampled, not read: they are holes of the list for
+  crossing and for the fill cursor, never an entry per index, and a seek into one still REQUESTS its target.
+  ONE RULE, the sampled verdict, decides both ends of a replay: a probe that found nothing across the whole
+  list is `gone` (nothing was ever played), and a probed gap running to the END of the list is judged empty
+  the same way - playback reaches the last placed media and the stream ends there (`endOfStream`, which sets the
+  duration to the largest buffered end itself: NO `duration` write of ours, which the engine refuses below a
+  buffered frame - the audio ending after the video - and the end would never be declared). The end is
+  deferred only while a gap is not yet probed: the fill's cursor has not reached the end of the list, so the
+  end is not declared inside a purge in the middle. The accepted cost, as for `gone`: a lone survivor deep
+  inside a purged tail, which the probe did not land on, is cut off by the end (`LivesService.purgeEnded`
+  releases segments whole, not single ones). A seek onto such a survivor still requests its target, plays it and
+  ends the stream THERE - consistent with the sampled verdict. There is no
+  backfill and no budget: the probe's verdict is the verdict. A probe is dropped, to be redone by a later
+  fill, the moment a newer seek is pending, so a seek never waits for it. An earlier version stopped the
+  fill at a limit: it called a replay whose first 40 segments are purged `gone`, and declared the end
+  inside a purge in the middle, which truncates the media source's duration and loses the content after it.
+- **No media at all - a SAMPLED verdict.** `gone`, the neutral "plus disponible" screen (as `replayFailureOutcome` reads a
+  missing replay), is reserved for: the list is complete, nothing was ever appended, and every segment was either tried and
+  missing or lies in a probed gap - the probes found nothing across the whole list. The server releases a replay's segments WHOLE (`LivesService.purgeEnded`, once the replay post is deleted),
+  so a sample that finds nothing is a sound verdict; walking all 2000 segments of a purged replay under a spinner is not
+  (the requests are O(log n) now). The accepted cost: a replay with ONE surviving segment among 99 deleted ones, which the
+  probes did not land on, is `gone` (a case the server's whole-folder release cannot produce). A purge in front of existing media is never this. Never a black picture with a spinner
+  and a seek stuck in `seeking`.
+
+## A replay reaches its end: the engine's state is the memory of "ended" (2026-11-19)
+
+**Symptom (S12, desktop Chrome):** a replay played from 0 halted about 0.12 s before its last frame
+(`readyState` 2, `ended` false, a spinner for good, `loop` never looping) although the log said
+`end of stream declared`.
+
+**Hypothesis refuted by measurement.** The reader's guess was two tracks ending 20 ms apart. It was
+measured with a real `MediaRecorder` (`video/mp4;codecs=avc1.42E01F,mp4a.40.2`, 15 fps, 2 s timeslice)
+fed to the real `ReplayPlayer` in desktop Chrome, and with ffmpeg files whose audio ends 30 ms after the
+video: audio and video ends differ by 15-30 ms in every case, and Chrome extends `buffered` to the
+`duration` once the source is ended, so a replay played to its end with the end declared plays on and
+fires `ended` in every one of them.
+
+**Cause.** `source.readyState` read `open` at the halt. The specification reopens an ended
+`MediaSource` on ANY `appendBuffer` or `remove` on its buffer; an open source waits for more data. The
+fill declares the end when the last segment is in, then the playhead moves on and `trim` removes what lies
+more than 10 s behind it: `remove(0, 10.17)` with `readyState` `ended` is the line that reopened it
+(logged in the page). The player had kept a flag `ended` to say it was done, and the flag stayed true.
+
+**Fix.** The flag is gone. The engine's `readyState` is the only memory of the end: `declareEnd` runs at
+every arrival at the end of the list (after each trim and fill) and calls `endOfStream()` whenever the
+source is `open` - idempotent through the engine's state, never through ours, so a trim or a refill of a
+gap that reopens it is followed by a new declaration in the same step. No timer, no seek to the end when
+stuck. Test: the fake buffer reopens an ended source on `remove`/`append`
+(`keeps the stream ended when the trim behind the playhead reopened it`).
+
+**The seek landing (S12's second question).** A seek lands INSIDE the segment its target falls in, never on a
+keyframe snap forward. What landed later than the target WAS a real defect, reproduced by a test on main (a
+replay with more media than live time: the lookup read arrival time, the bar is media time) and fixed in
+[a seek looks its segment up in media time](#a-seek-looks-its-segment-up-in-media-time-s12-2026-11-19).
+
+### The far-ahead trim follows the walk, not media time (alpha.4 defect, 2026-11-19)
+
+`trim` drops what lies beyond `far`, the position `REPLAY_FAR_AHEAD_S` of buffered media ahead across the
+known holes. When less than that was buffered, `positionAhead` fell back to the playhead, so `far` became
+`at + 60 s` of MEDIA time and ignored the hole: the media right after a pause longer than about 48 s was
+"far", was removed, and the fill downloaded it again on every `timeupdate` (one segment 24 times in 12 s on
+a live with a 100 s pause, no 404 at all). The walk's own stopping position is now the bound: whatever the
+walk passed is reachable and kept. Pinned by a 100 s hole and a per-segment append count.
+
+**What a real live can leave (S13, 2026-11-20).** A hole longer than 60 s cannot be read from a live: a broadcaster away more than 60 s has the live stopped by the server ("Le live s'est arrete pendant que la camera etait en pause"), and on the web the "Je reviens" scene and a camera-and-microphone-off keep producing slate segments (about 35 KB each, no hole). The reachable range of the defect above is therefore a background pause of 48 to 60 s on a phone: one of 52 s left a hole of 53.3 s that the fixed player crossed with the segment after it requested once.
+
+## A seek looks its segment up in media time (S12, 2026-11-19)
+
+**Symptom:** a seek landed up to 4 s after its target (S12). **Test first** (`S12: a replay whose media runs
+ahead of its live time...`): 100 segments at 1770 ms of arrival time per 2 s of media (61 s of media for 54 s
+of live), a seek to 100.4 s of media time. On main it requested segment 56 (starts at 112 s), never the target's
+segment 50: the defect was real.
+
+**Cause.** The bar and `currentTime` are media time; `segmentPositionAt` read each segment's `atMs`, its
+ARRIVAL time on the server (`durationMs` is arrival time too, until `endOfStream` sets the media's own).
+**Fix.** `mediaStartsMs` gives every segment's media start: the measured `placed` where known;
+BETWEEN two measured segments a piecewise-linear interpolation on arrival time (exact at both ends, so a
+stall or a pause between them is inside it); before the first and past the last measured segment an
+extrapolation from the nearest one at the measured media-per-arrival rate of the whole measured stretch (1
+with fewer than two, clamped to [0.25, 4]). The result is made monotonic by a running maximum, so the
+binary search cannot misread it whatever order the measurements came in. Before anything is measured it
+is the arrival time, the only statement there is. The extrapolation is only an estimate (a 120 s pause
+after the last measurement is carried at the wrong rate): once the seek has taken the estimated segment,
+its MEASURED extent says whether the target is inside; if not it looks up again with the new measurement, at
+most `REPLAY_SEEK_RELOOKUPS` (3) times and never on a segment already visited (no A -> B -> A) - a count, never a clock.
+The running maximum only flattens a run when measurements arrive out of order (a later segment measured EARLIER
+in media time): the estimate then picks the run's last member. So the lookup asks the MEASUREMENTS first -
+`measuredPositionAt` returns the segment whose measured extent holds the target, exact in any order - and only
+falls back to the estimate when no segment measured so far holds it.
+`segmentPositionAt` (the seek, the paging bound `listUntil`, the cursor and `firstGapAhead`) uses it, and the landing
+is the target's media time held inside the segment (never before its start, never past
+`REPLAY_SEGMENT_LENGTH_S`). A segment's own start is by design the earliest a seek can land in it (a fragment
+starts on a keyframe): landing there when the estimate was a little late stays inside the right segment.
+
+## A measurement never narrows (2026-11-20)
+
+`take` recorded the extent a segment ADDED to the buffer. A segment the trim cut in the middle (cut at 100.8 s in
+segment 50, 100-102 s) re-adds only `[100, 100.8]` when a seek re-takes it, so its measured end went from 102
+to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s of content (R16a, since #3860).
+A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
+new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
+which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).
+
+## A segment is held when the buffer holds its whole measured extent (S13, 2026-11-20)
+
+**Symptom (S13, alpha.5):** on two of four replays the LAST segment was downloaded again at every `timeupdate` for
+the final 12 s (46 times), each with a fresh `end of stream declared`; `ended` still fired.
+
+**Cause, measured on the fake engine, 49 downloads of one segment on main.** `isBuffered` and `firstGapAhead` called a
+segment held only when a range ran more than 0.5 s past its start (`start + 0.5 < end`). A live's last fragment is
+often shorter than that: it was never held, `firstGapAhead` rewound the cursor to it on every tick, and the fill took
+it again. Not the end-of-stream declaration (idempotent through the engine's state) nor trim's `far` bound.
+
+**Fix.** ONE predicate, `heldIn`: a range holds the segment's whole MEASURED extent `[placed, placedEnd]` (within
+`EDGE_TOL_S`). It is exact for a short segment, and still false for one the trim cut at either end. Test: a 0.3 s
+last segment, the playhead walked to the end, at most one download per segment.
+
+A last fragment can be a single frame (33 ms) or less: `newMediaExtent` used the HOLE threshold (0.05 s) to decide whether
+a segment added anything, so such a segment was never measured and stayed "not held" for ever. A segment is measured when
+it added more than float noise (`NEW_MEDIA_MIN_S`, 1 ms); the hole threshold stays about holes between segments. `take` also
+answers the segment's own start (the earliest measured), not where a re-take's new piece begins.
+
+## The replay page starts its player once (S13, 2026-11-20)
+
+S13 read every replay opened from a feed card start its player twice 0.35 s apart (the listing and segment 0
+fetched twice), at the moment the reel list answered again. NOT the same cause as the repeated last segment (that
+one is the player's fill; this is the pane's reactivity). `ReplayPane`'s effect read `post.liveId`, so a new `post`
+object for the same replay re-ran it: stop, then start. The live id is now a `$derived` (equal values do not
+re-run the effect) and the player's start runs untracked. Test: a re-keyed post, one `fetchReplay`.
