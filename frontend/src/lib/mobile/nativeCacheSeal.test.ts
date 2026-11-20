@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -180,7 +180,8 @@ describe('the push key-group join ledger is sealed by Rust alone', () => {
 describe('iOS keeps every local store out of backups: directories in Rust, the caches per file natively', () => {
   it('the launch pass excludes the directories, before the WebView exists', () => {
     // Since 1.7.2 nothing local may travel to another phone (mobile.md, "Nothing local travels to
-    // another phone"): the data directory, WebKit's stores and the App Group root are flagged whole.
+    // another phone"): the data directory, WebKit's stores and the App Group's store are flagged
+    // whole - never the App Group root, which refuses the flag (1.7.2-alpha.1).
     for (const dir of ['Library/Application Support', 'Library/WebKit', 'Library/Preferences']) {
       expect(backupExclusionRs).toContain(`"${dir}",`);
     }
@@ -210,7 +211,7 @@ describe('iOS keeps every local store out of backups: directories in Rust, the c
     }
     const pass = between(iosMm, /static void CanariExcludeNativeCachesFromBackup\(/, /\n}\n/);
     expect(pass).toContain('CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir())');
-    expect(pass).toContain('containerURLForSecurityApplicationGroupIdentifier');
+    expect(pass).toContain('CanariExcludeNativeCacheFilesFromBackup(CanariAppGroupPath())');
     expect(iosMm).not.toContain('NSURLIsExcludedFromBackupKey');
   });
 
@@ -243,5 +244,64 @@ describe('iOS keeps every local store out of backups: directories in Rust, the c
       expect(body).toContain('CanariEnsureNativeCacheKey();');
       expect(body).toContain('CanariExcludeNativeCachesFromBackup();');
     }
+  });
+});
+
+describe('iOS: every App Group resolver answers the store, never the container root', () => {
+  // The App Group root refuses the backup flag (1.7.2-alpha.1, the bench iPhone): whatever is
+  // written there travels in a backup. So every process resolves the App Group to ONE directory of
+  // ours inside it, flagged at creation, and moves an older build's root entries into it before
+  // its first use (backup_exclusion.rs, module doc). A resolver that asks Foundation for the
+  // container and writes there compiles and works - and puts mls.bin back into the backup.
+  const RUST_SRC = resolve(here, '../../../src-tauri/src');
+  const shareSwift = read('../../../src-tauri/gen/apple/canari_Share/ShareCapture.swift');
+  const appGroupRs = read('../../../src-tauri/src/app_group.rs');
+  const iosFfiRs = read('../../../src-tauri/src/mobile/ios_ffi.rs');
+
+  it('names the store once per language, the same name', () => {
+    const rust = /pub\(crate\) const APP_GROUP_STORE: &str = "([^"]+)";/.exec(backupExclusionRs);
+    const swiftName = /static let storeDirName = "([^"]+)"/.exec(shareSwift);
+    expect(rust?.[1]).toBeTruthy();
+    expect(swiftName?.[1]).toBe(rust?.[1]);
+  });
+
+  it('asks Foundation for the container in exactly one function per process kind', () => {
+    // Rust (the app, and the notification extension through the FFI): `app_group_container`, read
+    // only by the store's opener and the launch verdict.
+    const rustFiles = readdirSync(RUST_SRC, { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith('.rs'));
+    const asking = rustFiles.filter((f) =>
+      read(resolve(RUST_SRC, f)).includes('containerURLForSecurityApplicationGroupIdentifier')
+    );
+    expect(asking).toEqual(['app_group.rs']);
+    const containerCallers = rustFiles.filter((f) =>
+      read(resolve(RUST_SRC, f)).includes('app_group_container()')
+    );
+    expect(containerCallers.sort()).toEqual(['app_group.rs', 'backup_exclusion.rs']);
+    const resolver = between(appGroupRs, /pub\(crate\) fn app_group_dir\(\)/, /\n}\n/);
+    expect(resolver).toContain('crate::backup_exclusion::open_store(&root,');
+    expect(iosFfiRs).toMatch(
+      /pub extern "C" fn canari_app_group_store_dir\(\)[^{]*\{\s*match crate::app_group::app_group_dir\(\)/
+    );
+    // The app's Objective-C and the notification extension reach Rust's resolver.
+    for (const source of [iosMm, pushMm]) {
+      expect(source).not.toContain('containerURLForSecurityApplicationGroupIdentifier');
+    }
+    expect(
+      between(pushMm, /NSString \*_Nullable CanariAppGroupPath\(void\) \{/, /\n}\n/)
+    ).toContain('canari_app_group_store_dir()');
+    expect(swift).not.toContain('containerURL(forSecurityApplicationGroupIdentifier');
+    expect(
+      between(swift, /private static func appGroupDir\(\) -> URL\? \{/, /\n {2}}\n/)
+    ).toContain('canari_app_group_store_dir()');
+    // The share extension links no Rust: its one resolver opens the store as Rust does.
+    expect(shareSwift.match(/containerURL\(/g)?.length).toBe(1);
+    const storeDir = between(shareSwift, /private func storeDir\(\) -> URL\? \{/, /\n {4}}\n/);
+    expect(storeDir).toContain('containerURL(');
+    expect(storeDir).toMatch(/mkdir\(store\.path[^\n]*\n[^\n]*\n\s*excludeFromBackup\(store\)/);
+    expect(storeDir).toContain('renamex_np(from, to, UInt32(RENAME_EXCL))');
+    expect(storeDir).toContain('name != "Library" && !name.hasPrefix(".com.apple.")');
+    expect(backupExclusionRs).toContain('name == "Library" || name.starts_with(".com.apple.")');
   });
 });

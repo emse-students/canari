@@ -5,7 +5,9 @@ target: 1.7.2
 **What is built.** At every launch, before the WebView, `backup_exclusion.rs` sets and reads back
 `NSURLIsExcludedFromBackupKey` on `Library/Application Support` (the SQLite stores, `mls.bin`, the
 at-rest markers), `Library/WebKit` (IndexedDB, LocalStorage), `Library/Preferences`,
-`Library/Cookies`, `Library/HTTPStorages` and the App Group container's root. Reported 2026-11-20:
+`Library/Cookies`, `Library/HTTPStorages` and the App Group's `store/` directory (not the container's
+root, which refuses the flag: [its own reading](reading-owed-ios-app-group-store-out-of-backups.md)).
+Reported 2026-11-20:
 a member's new iPhone arrived holding the stores without the `ThisDeviceOnly` key. The inventory
 before the change, the mechanism and what stays unproven:
 [mobile](../frontend/mobile.md#nothing-local-travels-to-another-phone-2026-11-20).

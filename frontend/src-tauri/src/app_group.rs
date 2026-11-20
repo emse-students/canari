@@ -3,19 +3,29 @@
 //! a data container of its own and can read neither the app's `app_data_dir` nor its app-only
 //! Keychain items.
 //!
+//! **Everything shared lives in the container's STORE directory, never at its root** (1.7.2): the
+//! root refuses the backup flag, a directory of ours takes it (`backup_exclusion`, module doc).
+//! [`app_group_dir`] answers the store, and is the one resolver of this crate; the app's
+//! Objective-C and the notification extension reach it through `canari_app_group_store_dir`
+//! (`mobile/ios_ffi.rs`), the share extension, which links no Rust, mirrors it
+//! (`ShareCapture.storeDir`).
+//!
 //! iOS only. Its callers: `store_push_secret`, which writes the NSE's copy of the push secret at the
-//! moment the server rotates it; the bench command (`commands::bench`); and the share import
+//! moment the server rotates it; the bench command (`commands::bench`); the share import
 //! (`commands::app_group_share`, and `advance_share_epoch` for the group's copy of the epoch), which
-//! carries what the Share Extension left there into the app's own directories.
+//! carries what the Share Extension left there into the app's own directories; and every mirror the
+//! extension reads.
 
 use std::path::PathBuf;
 
-/// The App Group container's path, asked of Foundation - the only API that knows it.
+/// The App Group container's ROOT, asked of Foundation - the only API that knows it. Nothing of ours
+/// is written there: [`app_group_dir`] is the directory to use; this is for the launch verdict,
+/// which reads what the root still holds (`backup_exclusion::ours_at_root`).
 ///
 /// Through the Objective-C runtime rather than a function of ours in `canari_push.mm`: `libapp.a`
 /// is linked into the notification extension too, and a Rust reference to an app-only symbol would
 /// leave the extension's link with an undefined one. Foundation is linked into both.
-pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
+pub(crate) fn app_group_container() -> Result<PathBuf, String> {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
     use std::ffi::{c_char, CStr};
@@ -47,6 +57,25 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
     })
 }
 
+/// The App Group directory every file shared with the extensions lives in: the container's store
+/// (`backup_exclusion::APP_GROUP_STORE`), excluded from backups. The FIRST call of a process opens
+/// it (`backup_exclusion::open_store`: created and flagged when absent, the root's entries of ours
+/// moved into it) - before that call returns, so nothing of this process ever writes where an older
+/// build wrote; later calls answer the remembered path. An unavailable container is not
+/// remembered: the next call asks again.
+pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
+    static STORE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(store) = STORE.get() {
+        return Ok(store.clone());
+    }
+    let root = app_group_container()?;
+    let store = crate::backup_exclusion::open_store(&root, |store| {
+        crate::native_cache::ios_exclude_from_backup(store)
+    })
+    .map_err(|e| format!("the App Group store did not open: {e}"))?;
+    Ok(STORE.get_or_init(|| store).clone())
+}
+
 /// Background time the app holds while it edits a file of the App Group under a lock - ended when
 /// dropped.
 ///
@@ -57,7 +86,7 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
 /// time to finish; the edit holds the lock for milliseconds, so its expiry is never the expected
 /// path - if it comes, it is said at ERROR and the assertion ended, as the API requires.
 ///
-/// Through the Objective-C runtime like [`app_group_dir`], for the same reason: `libapp.a` is
+/// Through the Objective-C runtime like [`app_group_container`], for the same reason: `libapp.a` is
 /// linked into the notification extension, which has no `UIApplication` to ask - and never runs
 /// the foreground commands that take this, so a missing application is said and nothing is held.
 pub(crate) struct BackgroundTime {

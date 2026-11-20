@@ -10,6 +10,12 @@ extern "C" {
 
 void canari_free_string(char *ptr);
 
+/// The App Group STORE directory every shared file lives in (never the container root, which refuses
+/// the backup flag): opened on the process's first call - created, excluded from backups, an older
+/// build's root entries moved in (`backup_exclusion.rs`). NULL when the container is unavailable.
+/// Free with canari_free_string. Reached through `CanariAppGroupPath` only.
+char *canari_app_group_store_dir(void);
+
 char *canari_native_decrypt_message(
     const unsigned char *state_ptr,
     size_t state_len,

@@ -441,7 +441,7 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    `pending_share.json` with Android's replace-by-epoch semantics. When it imported, `canari_ios.mm`
    removes the banner and dispatches `canari:incoming-share`. The once-per-process orphan sweep
    covers BOTH inboxes (the App Group one only when the lock is free), and settles the leftover claim
-   and staging files of the app data directory and - with the lock held - of the App Group root (an
+   and staging files of the app data directory and - with the lock held - of the App Group store (an
    allowlist: `pending_share.json.draining`, `.importing`, `.replacing`, `.tmp`, `share_epoch.tmp` -
    the NSE's files sit beside them; a claim is put back or deleted as lost, item 5). **The launch import
    and sweep run before the Rust logger exists**, so they answer CODES that `canari_ios.mm` NSLogs
@@ -462,14 +462,16 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    The factory wipe (`clear_app_data`) also removes the group's `pending_share.json` and
    `shared_inbox/`, under the lock - an allowlist of those two paths.
 5. **At rest: out of backups, NOT sealed.** The App Group and the app data directory were backed up
-   on iOS until 1.7.2, which excludes both whole at every launch
+   on iOS until 1.7.2, which excludes both whole at every launch - the App Group through its `store/`
+   directory, where every path above lives, since its container root refuses the flag
+   ([mobile](mobile.md#the-app-group-a-store-directory-never-the-root-172))
    ([mobile](mobile.md#nothing-local-travels-to-another-phone-2026-11-20)); a waiting share holds what the member shared - the manifest
    carries the shared TEXT in the clear. So each manifest is excluded from backups per file, after
    every write (a rename is a new inode, and the flag does not travel): the extension's
    `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
    caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
    The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
-   holds share copies and nothing else, unlike the App Group root.
+   holds share copies and nothing else, unlike the App Group store.
    **At rest, a waiting share is LOCKED WITH THE DEVICE (2026-10-27).** The extension writes its
    folder, every copy and the manifest under Data Protection's `CompleteUnlessOpen` class
    (`ShareCapture.lockedAtRest`, `.completeFileProtectionUnlessOpen`): a CLOSED file cannot be opened

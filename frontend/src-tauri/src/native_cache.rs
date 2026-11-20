@@ -430,8 +430,9 @@ unsafe fn with_backup_flag_url<T>(
     body: impl FnOnce(
         *mut objc2::runtime::AnyObject,
         *const objc2::runtime::AnyObject,
-    ) -> Result<T, String>,
-) -> Result<T, String> {
+    ) -> Result<T, crate::backup_exclusion::FlagError>,
+) -> Result<T, crate::backup_exclusion::FlagError> {
+    use crate::backup_exclusion::FlagError;
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject};
 
@@ -441,10 +442,11 @@ unsafe fn with_backup_flag_url<T>(
     }
 
     let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
-        .map_err(|e| format!("path has a NUL byte: {e}"))?;
+        .map_err(|_| FlagError::Unavailable("path has a NUL byte".to_string()))?;
+    let missing = |class: &str| FlagError::Unavailable(format!("{class} is not loaded"));
     objc2::rc::autoreleasepool(|_| {
-        let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
-        let url_class = AnyClass::get(c"NSURL").ok_or("NSURL is not loaded")?;
+        let str_class = AnyClass::get(c"NSString").ok_or_else(|| missing("NSString"))?;
+        let url_class = AnyClass::get(c"NSURL").ok_or_else(|| missing("NSURL"))?;
         // SAFETY: plain Foundation messages with the argument and return types their headers
         // declare; every object returned is autoreleased into the pool around this block, and the
         // key is a Foundation constant that lives as long as the process.
@@ -452,7 +454,7 @@ unsafe fn with_backup_flag_url<T>(
             let ns_path: *mut AnyObject =
                 msg_send![str_class, stringWithUTF8String: c_path.as_ptr()];
             if ns_path.is_null() {
-                return Err("path is not UTF-8".to_string());
+                return Err(FlagError::Unavailable("path is not UTF-8".to_string()));
             }
             let url: *mut AnyObject = msg_send![url_class, fileURLWithPath: ns_path];
             body(url, NSURLIsExcludedFromBackupKey)
@@ -460,24 +462,36 @@ unsafe fn with_backup_flag_url<T>(
     })
 }
 
-/// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`.
+/// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`. A
+/// refusal KEEPS the `NSError` Foundation gave - domain, code, description and the underlying
+/// error - classified where it is read ([`crate::backup_exclusion::NsErrorParts::refusal`]): the
+/// App Group root refused while `error: NULL` was passed, and the cause was lost (1.7.2-alpha.1).
 #[cfg(target_os = "ios")]
-pub(crate) fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn ios_exclude_from_backup(
+    path: &std::path::Path,
+) -> Result<(), crate::backup_exclusion::FlagError> {
+    use crate::backup_exclusion::FlagError;
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject, Bool};
 
-    let num_class = AnyClass::get(c"NSNumber").ok_or("NSNumber is not loaded")?;
+    let num_class = AnyClass::get(c"NSNumber")
+        .ok_or_else(|| FlagError::Unavailable("NSNumber is not loaded".to_string()))?;
     // SAFETY: `setResourceValue:forKey:error:` and `numberWithBool:` with their declared types; the
-    // number is autoreleased into the helper's pool and used inside it.
+    // number and the NSError out-parameter are autoreleased into the helper's pool and read inside
+    // it.
     unsafe {
         with_backup_flag_url(path, |url, key| {
             let yes: *mut AnyObject = msg_send![num_class, numberWithBool: Bool::YES];
-            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
-            let ok: Bool = msg_send![url, setResourceValue: yes, forKey: key, error: no_error];
+            let mut error: *mut AnyObject = std::ptr::null_mut();
+            let error_out: *mut *mut AnyObject = &mut error;
+            let ok: Bool = msg_send![url, setResourceValue: yes, forKey: key, error: error_out];
             if ok.as_bool() {
                 Ok(())
             } else {
-                Err("setResourceValue refused".to_string())
+                Err(FlagError::Refused {
+                    call: "setResourceValue",
+                    error: ns_error_parts(error),
+                })
             }
         })
     }
@@ -486,23 +500,30 @@ pub(crate) fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), Stri
 /// `[[NSURL fileURLWithPath:path] getResourceValue:&v forKey:NSURLIsExcludedFromBackupKey]`: the
 /// flag as the file system holds it NOW, read back after [`ios_exclude_from_backup`] so the launch
 /// log states what is set, not what was asked (`backup_exclusion`). `Ok(false)` for a path whose
-/// value is unset.
+/// value is unset; a refusal keeps its `NSError` as the setter's does.
 #[cfg(target_os = "ios")]
-pub(crate) fn ios_is_excluded_from_backup(path: &std::path::Path) -> Result<bool, String> {
+pub(crate) fn ios_is_excluded_from_backup(
+    path: &std::path::Path,
+) -> Result<bool, crate::backup_exclusion::FlagError> {
+    use crate::backup_exclusion::FlagError;
     use objc2::msg_send;
     use objc2::runtime::{AnyObject, Bool};
 
     // SAFETY: `getResourceValue:forKey:error:` and `boolValue` with their declared types; the value
-    // out-parameter is autoreleased into the helper's pool and read inside it.
+    // and NSError out-parameters are autoreleased into the helper's pool and read inside it.
     unsafe {
         with_backup_flag_url(path, |url, key| {
             let mut value: *mut AnyObject = std::ptr::null_mut();
             let value_out: *mut *mut AnyObject = &mut value;
-            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            let mut error: *mut AnyObject = std::ptr::null_mut();
+            let error_out: *mut *mut AnyObject = &mut error;
             let ok: Bool =
-                msg_send![url, getResourceValue: value_out, forKey: key, error: no_error];
+                msg_send![url, getResourceValue: value_out, forKey: key, error: error_out];
             if !ok.as_bool() {
-                return Err("getResourceValue refused".to_string());
+                return Err(FlagError::Refused {
+                    call: "getResourceValue",
+                    error: ns_error_parts(error),
+                });
             }
             if value.is_null() {
                 return Ok(false);
@@ -632,6 +653,66 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> std::io::Re
     })
 }
 
+/// The parts of one `NSError` a log may carry: its domain, code and `localizedDescription`, and the
+/// domain and code of the error under `NSUnderlyingErrorKey` (how Foundation wraps a refused POSIX
+/// call). `None` for a null `error` - a Foundation call that answered NO and gave nothing.
+///
+/// # Safety
+/// `error` is null or a live `NSError`, read inside the autorelease pool that holds it.
+#[cfg(target_os = "ios")]
+unsafe fn ns_error_parts(
+    error: *mut objc2::runtime::AnyObject,
+) -> Option<crate::backup_exclusion::NsErrorParts> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {
+        static NSUnderlyingErrorKey: *const AnyObject;
+    }
+
+    /// An `NSString`'s UTF-8 copy, or `fallback` for a null string.
+    unsafe fn text(string: *mut AnyObject, fallback: &str) -> String {
+        if string.is_null() {
+            return fallback.to_string();
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![string, UTF8String];
+        if utf8.is_null() {
+            return fallback.to_string();
+        }
+        std::ffi::CStr::from_ptr(utf8)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// `(domain, code)` of one live `NSError`.
+    unsafe fn domain_code(error: *mut AnyObject) -> (String, i64) {
+        let domain: *mut AnyObject = msg_send![error, domain];
+        let code: isize = msg_send![error, code];
+        (text(domain, "no domain"), code as i64)
+    }
+
+    if error.is_null() {
+        return None;
+    }
+    let (domain, code) = domain_code(error);
+    let description: *mut AnyObject = msg_send![error, localizedDescription];
+    let user_info: *mut AnyObject = msg_send![error, userInfo];
+    let mut underlying = None;
+    if !user_info.is_null() {
+        let inner: *mut AnyObject = msg_send![user_info, objectForKey: NSUnderlyingErrorKey];
+        if !inner.is_null() {
+            underlying = Some(domain_code(inner));
+        }
+    }
+    Some(crate::backup_exclusion::NsErrorParts {
+        domain,
+        code,
+        description: text(description, "no description"),
+        underlying,
+    })
+}
+
 /// An `NSError` from a Foundation file call, as an `io::Error` that KEEPS ITS CODE: the POSIX code
 /// when the error is in `NSPOSIXErrorDomain`, or carries one under `NSUnderlyingErrorKey` (how
 /// Foundation wraps a refused `open` or `chmod`) - `from_raw_os_error`, so `EPERM` classifies by
@@ -641,56 +722,13 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> std::io::Re
 /// `error` is null or a live `NSError`, read inside the autorelease pool that holds it.
 #[cfg(target_os = "ios")]
 unsafe fn ios_error_to_io(error: *mut objc2::runtime::AnyObject, call: &str) -> std::io::Error {
-    use objc2::msg_send;
-    use objc2::runtime::{AnyObject, Bool};
-
-    #[link(name = "Foundation", kind = "framework")]
-    extern "C" {
-        static NSPOSIXErrorDomain: *const AnyObject;
-        static NSUnderlyingErrorKey: *const AnyObject;
-    }
-
-    /// `(is POSIX, code, domain)` of one `NSError`.
-    unsafe fn parts(error: *mut AnyObject) -> (bool, isize, String) {
-        let domain: *mut AnyObject = msg_send![error, domain];
-        let code: isize = msg_send![error, code];
-        if domain.is_null() {
-            return (false, code, "no domain".to_string());
-        }
-        let posix: Bool = msg_send![domain, isEqualToString: NSPOSIXErrorDomain];
-        let utf8: *const std::os::raw::c_char = msg_send![domain, UTF8String];
-        let name = if utf8.is_null() {
-            "unnamed domain".to_string()
-        } else {
-            std::ffi::CStr::from_ptr(utf8)
-                .to_string_lossy()
-                .into_owned()
-        };
-        (posix.as_bool(), code, name)
-    }
-
-    if error.is_null() {
+    let Some(parts) = ns_error_parts(error) else {
         return std::io::Error::other(format!("{call} refused, with no NSError"));
+    };
+    if let Some(raw) = parts.posix_code() {
+        return std::io::Error::from_raw_os_error(raw);
     }
-    let (posix, code, domain) = parts(error);
-    if posix {
-        if let Ok(raw) = i32::try_from(code) {
-            return std::io::Error::from_raw_os_error(raw);
-        }
-    }
-    let user_info: *mut AnyObject = msg_send![error, userInfo];
-    if !user_info.is_null() {
-        let underlying: *mut AnyObject = msg_send![user_info, objectForKey: NSUnderlyingErrorKey];
-        if !underlying.is_null() {
-            let (posix, raw, _) = parts(underlying);
-            if posix {
-                if let Ok(raw) = i32::try_from(raw) {
-                    return std::io::Error::from_raw_os_error(raw);
-                }
-            }
-        }
-    }
-    std::io::Error::other(format!("{call} refused: {domain} {code}"))
+    std::io::Error::other(format!("{call} refused: {} {}", parts.domain, parts.code))
 }
 
 /// Removes `channel_keys.json`, the epoch-key mirror an older build wrote in the clear. Nothing has

@@ -18,11 +18,13 @@ enum ShareCaptureOutcome {
 /// the manifest the app carries over - the iOS twin of Android's `IncomingShare.kt`.
 ///
 /// WHY THE APP GROUP. An extension has a container of its own and can write neither the app's data
-/// directory nor its cache. So the copies go to `<group>/shared_inbox/<share id>/` and the manifest to
-/// `<group>/pending_share.json`, with Android's schema (`id, epoch, text, files[{path,name,mime,size}],
-/// refused`). Each `path` is the copy's App Group path: the app MOVES the directory under its own
-/// cache and REWRITES every path to the moved file (`commands/app_group_share.rs`), so the page reads
-/// exactly what it reads on Android.
+/// directory nor its cache. `<group>` below is the App Group's STORE directory (`storeDir`), never
+/// the container root, which refuses the backup flag. So the copies go to
+/// `<group>/shared_inbox/<share id>/` and the manifest to `<group>/pending_share.json`, with
+/// Android's schema (`id, epoch, text, files[{path,name,mime,size}], refused`). Each `path` is the
+/// copy's App Group path: the app MOVES the directory under its own cache and REWRITES every path to
+/// the moved file (`commands/app_group_share.rs`), so the page reads exactly what it reads on
+/// Android.
 ///
 /// WHY A COPY, AT ONCE, STREAMED. The file a provider hands over lives only as long as its completion
 /// handler, and the page reads much later, after the PIN. Each item is copied by file representation
@@ -38,6 +40,9 @@ enum ShareCaptureOutcome {
 /// Nothing is SENT from here. The page asks the member where it goes, and the composer sends.
 final class ShareCapture {
     static let appGroupId = "group.fr.emse.canari"
+    /// The directory inside the App Group every shared file lives in - Rust's `APP_GROUP_STORE`
+    /// (`backup_exclusion.rs`), the same name: a source test holds the two equal.
+    static let storeDirName = "store"
     static let pendingFile = "pending_share.json"
     static let inboxDir = "shared_inbox"
     static let epochFile = "share_epoch"
@@ -151,10 +156,8 @@ final class ShareCapture {
     private func captureLocked(items: [NSExtensionItem], target: String?) -> ShareCaptureOutcome {
         let providers = items.flatMap { $0.attachments ?? [] }
         log.notice("[CanariShare] share received: \(items.count) item(s), \(providers.count) attachment(s)")
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: ShareCapture.appGroupId)
-        else {
-            log.error("[CanariShare] the App Group container is unavailable (entitlement missing?)")
+        // `container` is the App Group's STORE from here on: every path below is under it.
+        guard let container = storeDir() else {
             return .failed
         }
         let lockPath = container.appendingPathComponent(ShareCapture.lockFile).path
@@ -662,10 +665,10 @@ final class ShareCapture {
     }
 
     /// Keeps a share file or the inbox out of iCloud and computer backups - the NSE's
-    /// `excludeFromBackup`, the same three calls. The App Group container itself is the app's to
-    /// exclude, at every launch (`backup_exclusion.rs`, since 1.7.2) - one writer of the root's flag,
-    /// so not here. A failure is said with its error's domain and code, never its text, and changes
-    /// nothing else.
+    /// `excludeFromBackup`, the same three calls - and the App Group store when this extension is
+    /// the one that creates it (`storeDir`); the app reads that flag back at every launch
+    /// (`backup_exclusion.rs`, since 1.7.2). A failure is said with its error's domain and code,
+    /// never its text, and changes nothing else.
     private func excludeFromBackup(_ url: URL) {
         var target = url
         var values = URLResourceValues()
@@ -676,6 +679,59 @@ final class ShareCapture {
             let failure = error as NSError
             log.error("[CanariShare] \(url.lastPathComponent, privacy: .private) not excluded from backups: \(failure.domain, privacy: .public) \(failure.code)")
         }
+    }
+
+    /// The App Group's STORE, opened as Rust's `backup_exclusion::open_store` opens it - this
+    /// extension links no Rust, so the rule is mirrored here, and only here: created and excluded
+    /// from backups when absent, then every entry of ours an older build left at the container root
+    /// (anything but the store, `Library` and the system's `.com.apple.*` metadata) moved in with an
+    /// EXCLUSIVE rename, never over a name the store holds. Called before the capture writes a byte,
+    /// so its writes land under the flagged directory and never at the root, which refuses the flag.
+    /// nil (said) when the container is unavailable or the store cannot be made.
+    private func storeDir() -> URL? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: ShareCapture.appGroupId)
+        else {
+            log.error("[CanariShare] the App Group container is unavailable (entitlement missing?)")
+            return nil
+        }
+        let store = container.appendingPathComponent(ShareCapture.storeDirName, isDirectory: true)
+        if mkdir(store.path, 0o755) == 0 {
+            log.notice("[CanariShare] the App Group store created")
+            excludeFromBackup(store)
+        } else {
+            let code = errno
+            if code != EEXIST {
+                log.error("[CanariShare] the App Group store could not be created: errno \(code)")
+                return nil
+            }
+        }
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(atPath: container.path)
+        } catch {
+            let failure = error as NSError
+            log.error("[CanariShare] the App Group root is unreadable: \(failure.domain, privacy: .public) \(failure.code)")
+            return store
+        }
+        var moved = 0
+        var left = 0
+        for name in names where name != ShareCapture.storeDirName && name != "Library" && !name.hasPrefix(".com.apple.") {
+            let from = container.appendingPathComponent(name).path
+            let to = store.appendingPathComponent(name).path
+            if renamex_np(from, to, UInt32(RENAME_EXCL)) == 0 {
+                moved += 1
+            } else if errno != ENOENT {
+                left += 1
+            }
+        }
+        if moved > 0 {
+            log.notice("[CanariShare] App Group root moved into the store: \(moved) entries")
+        }
+        if left > 0 {
+            log.error("[CanariShare] App Group root entries left outside the store: \(left)")
+        }
+        return store
     }
 
     /// Tells a RUNNING app that a share waits (it imports at its next activation otherwise).

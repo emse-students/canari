@@ -2561,8 +2561,18 @@ class NotificationService: UNNotificationServiceExtension {
     let locale: String
   }
 
+  /// The App Group directory every shared file lives in: the container's STORE, excluded from
+  /// backups, never its root (which refuses the flag). Rust answers it
+  /// (`canari_app_group_store_dir`), and its first call in this process creates and flags the store
+  /// and moves an older build's root entries into it - before this extension reads or writes a
+  /// byte there, so its writes never land where no flag reaches (`backup_exclusion.rs`).
   private static func appGroupDir() -> URL? {
-    FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
+    guard let raw = canari_app_group_store_dir() else {
+      NseLog.log.error("[CanariNSE] the App Group store is unavailable")
+      return nil
+    }
+    defer { canari_free_string(raw) }
+    return URL(fileURLWithPath: String(cString: raw), isDirectory: true)
   }
 
   private func loadMlsState() -> Data? {

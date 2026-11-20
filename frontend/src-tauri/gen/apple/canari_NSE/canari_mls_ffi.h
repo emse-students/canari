@@ -97,6 +97,12 @@ void canari_free_bytes(unsigned char *ptr, size_t len);
 /// Frees a string returned by any of the canari_native_* functions above.
 void canari_free_string(char *ptr);
 
+/// The App Group STORE directory every shared file lives in (never the container root, which refuses
+/// the backup flag): opened on the process's first call - created, excluded from backups, an older
+/// build's root entries moved in (`backup_exclusion.rs`). NULL when the container is unavailable.
+/// Free with canari_free_string. The extension's `appGroupDir()` is its only caller.
+char *canari_app_group_store_dir(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -73,9 +73,7 @@ static void CanariEnsureNativeCacheKey(void) {
 /// wrote. Android excludes its data domain (`data_extraction_rules.xml`).
 static void CanariExcludeNativeCachesFromBackup(void) {
   CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
-  CanariExcludeNativeCacheFilesFromBackup([[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
-                                              .path);
+  CanariExcludeNativeCacheFilesFromBackup(CanariAppGroupPath());
 }
 
 static void CanariProcessPendingPushSecret(void) {
@@ -1575,8 +1573,8 @@ static void CanariHideKeyboardAccessoryBar(void) {
 /// reads (`appInForegroundFile`): in the foreground the app tells a new device on the account in
 /// its own alert, and the extension posts nothing. A separate process cannot read the static.
 static void CanariSetAppGroupForegroundFlag(BOOL inForeground) {
-  NSURL *container = [[NSFileManager defaultManager]
-      containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"];
+  NSString *groupPath = CanariAppGroupPath();
+  NSURL *container = groupPath == nil ? nil : [NSURL fileURLWithPath:groupPath isDirectory:YES];
   if (!container) {
     NSLog(@"[CanariIOS] App Group unavailable - foreground flag not written");
     return;
@@ -1610,13 +1608,6 @@ static BOOL CanariShareManifestWaits(NSString *dir) {
   }
   NSString *manifest = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:CANARI_SHARE_PENDING_FILE]];
   return [[NSFileManager defaultManager] fileExistsAtPath:manifest];
-}
-
-/// The App Group container's path, or nil when it is unavailable.
-static NSString *CanariShareAppGroupDir(void) {
-  return [[NSFileManager defaultManager]
-             containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
-      .path;
 }
 
 /// Tells a live page a share waits in the app data directory - `canari:incoming-share`, the event
@@ -1700,7 +1691,7 @@ static BOOL CanariImportAppGroupShare(NSString *why) {
 /// phone that has none logs nothing.
 static void CanariImportAppGroupShareIfUnlocked(NSString *why) {
   if (![UIApplication sharedApplication].isProtectedDataAvailable) {
-    if (CanariShareManifestWaits(CanariShareAppGroupDir())) {
+    if (CanariShareManifestWaits(CanariAppGroupPath())) {
       NSLog(@"[CanariShare] import (%@) deferred: the device is locked - imported once it is unlocked", why);
     }
     return;
