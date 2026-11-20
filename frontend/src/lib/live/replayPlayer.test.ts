@@ -421,6 +421,30 @@ describe('ReplayPlayer', () => {
     }
   );
 
+  it('S13 review: landing on a segment whose tail was cut and taken again lands at ITS start, not where the cut began', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(20)(from));
+    const gone = new Set<string>();
+    const ok = deps.fetchSegment;
+    deps.fetchSegment = vi.fn(async (id: string, name: string, signal?: AbortSignal) => {
+      if (gone.has(name))
+        throw new LiveRefusalError(404, 'LIVE_NOT_FOUND', 'x', 'not-found', null, null, null);
+      return (ok as (...a: unknown[]) => Promise<ArrayBuffer>)(id, name, signal);
+    }) as never;
+    const p = makePlayer();
+    p.start();
+    await flush();
+    // Segment 3 is [6, 8] and segment 4 is [8, 10]: the buffer keeps [0, 6] and the head of segment 4.
+    buffer().remove(6, 8);
+    buffer().remove(9, 100);
+    await flush();
+    gone.add('seg-3');
+    video.currentTime = 7; // inside segment 3's measured extent, outside the buffer, and the segment is gone
+    p.noteSeeking();
+    for (let i = 0; i < 10; i++) await flush();
+    // The landing walks on to segment 4, taken again for its tail only ([9, 10]): it lands at 8.
+    expect(video.currentTime).toBeCloseTo(8, 1);
+  });
+
   it('keeps the stream ended when the trim behind the playhead reopened it (S12: a halt before the last frame)', async () => {
     fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(24)(from));
     const p = makePlayer();

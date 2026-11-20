@@ -114,17 +114,17 @@ export function newMediaStart(
 }
 
 /**
- * The span the buffer just took: where it begins ({@link newMediaStart}) and where that new stretch
- * ends - at the next range the buffer already held, or at the end of the range it grew. Measured, so
- * the hole after a segment is known from the list whatever the buffer later forgets.
- */
-/**
  * The least stretch of new media that counts as one: far below a frame (a live's last fragment can be a
  * single frame, 33 ms, or less), and only above float noise. NOT {@link HOLE_MIN_S}: that is about holes between
  * segments, never about whether a segment was measured - an unmeasured one is "not held" and refetched on every fill.
  */
 const NEW_MEDIA_MIN_S = 0.001;
 
+/**
+ * The span the buffer just took: where it begins ({@link newMediaStart}) and where that new stretch
+ * ends - at the next range the buffer already held, or at the end of the range it grew. Measured, so
+ * the hole after a segment is known from the list whatever the buffer later forgets.
+ */
 function newMediaExtent(
   before: readonly MediaSpan[],
   after: readonly MediaSpan[]
