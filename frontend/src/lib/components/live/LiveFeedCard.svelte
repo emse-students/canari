@@ -26,7 +26,8 @@
   import LivePosterImage from './LivePosterImage.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
   import { fetchLiveLimits } from '$lib/live/api';
-  import { loadOpenLivesForFeed } from '$lib/live/openLives';
+  import { livesForTab, loadOpenLivesForFeed } from '$lib/live/openLives';
+  import type { PostFeed } from '$lib/posts/api';
   import { forgetLivePostersExcept, type loadLivePoster } from '$lib/live/livePosterView';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
@@ -34,6 +35,8 @@
   interface Props {
     /** Bumped by the feed each time it asks for its first page. */
     refreshKey: number;
+    /** The feed tab the card sits under: "associations" lists association lives only (owner, 2026-11-19). */
+    feed?: PostFeed;
     /** The reader, whose own live is not listed. */
     viewerId: string | null;
     /** Opens the viewer on that live. */
@@ -50,6 +53,7 @@
 
   let {
     refreshKey,
+    feed,
     viewerId,
     onOpen,
     load = loadOpenLivesForFeed,
@@ -59,6 +63,8 @@
   }: Props = $props();
 
   let lives = $state<LiveListItem[]>([]);
+  /** What the tab shows of {@link lives}; the read and the kept stills follow the whole list. */
+  const shown = $derived(livesForTab(lives, feed));
   const names: Record<string, string> = $state({});
   let section = $state<HTMLElement | null>(null);
   let onScreen = $state(false);
@@ -235,12 +241,12 @@
 
 <!-- The ANCHOR is always there, empty or not: it is what is watched, so a first live can appear. -->
 <div bind:this={section} data-live-feed-anchor>
-  {#if lives.length > 0}
+  {#if shown.length > 0}
     <section
       class="mb-5"
       aria-labelledby="live-feed-card-title"
       data-live-feed-card
-      data-live-feed-layout={lives.length === 1 ? 'large' : 'carousel'}
+      data-live-feed-layout={shown.length === 1 ? 'large' : 'carousel'}
     >
       <h2
         id="live-feed-card-title"
@@ -249,15 +255,15 @@
         <Radio size={16} class="text-red-err" aria-hidden="true" />
         {m.live_card_title()}
       </h2>
-      {#if lives.length === 1}
-        {@render card(lives[0], true)}
+      {#if shown.length === 1}
+        {@render card(shown[0], true)}
       {:else}
         <ul
           class="-mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1"
           aria-label={m.live_card_carousel_label()}
           data-live-carousel
         >
-          {#each lives as live (live.id)}
+          {#each shown as live (live.id)}
             <li class="w-40 shrink-0 snap-start">
               {@render card(live, false)}
             </li>
