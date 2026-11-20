@@ -12,6 +12,7 @@
 import { isLiveRefusal, listOpenLives } from './api';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
+import type { PostFeed } from '$lib/posts/api';
 
 /** What one refresh of the card decided. */
 export type OpenLivesOutcome =
@@ -25,6 +26,15 @@ export type OpenLivesOutcome =
 /** The lives a reader's card lists: the server's order (newest first), the reader's own left out. */
 export function livesForFeed(lives: LiveListItem[], viewerId: string | null): LiveListItem[] {
   return viewerId ? lives.filter((l) => l.broadcasterId !== viewerId) : lives;
+}
+
+/**
+ * What the card shows under a feed tab (owner, 2026-11-19): "Organisations" lists association lives
+ * only, every other tab every live the reader may watch. ONE predicate on `associationId`, applied to
+ * the list the server already filtered - the watch rule stays the server's alone.
+ */
+export function livesForTab(lives: LiveListItem[], feed: PostFeed | undefined): LiveListItem[] {
+  return feed === 'associations' ? lives.filter((l) => l.associationId != null) : lives;
 }
 
 /** Asks the server for the open lives and decides what the card does with the answer. */
