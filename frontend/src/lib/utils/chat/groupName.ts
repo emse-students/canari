@@ -600,7 +600,7 @@ export type AnswerFrame = { name: string; renameAt: number; messageId: string; s
  *   a later rename. `to` stays, so a re-delivery of that statement is not answered again.
  * Settled by the drain that follows the statement, else by the next connection's sweep.
  */
-export type OwedAnswer = { to: string; frame?: AnswerFrame; done?: true };
+type OwedAnswer = { to: string; frame?: AnswerFrame; done?: true };
 
 /**
  * A silent `groupNamed` statement THIS device minted for a row no frame had dated - at creation, or

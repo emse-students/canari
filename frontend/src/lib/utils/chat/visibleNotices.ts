@@ -236,6 +236,27 @@ export async function sendVisibleNotice(
   return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
 }
 
+/**
+ * The user whose RENAME this device holds a notice of: the actor of a stored `groupRenamed` notice
+ * naming `name`, dated by the server at exactly `at` - the instant the rename's frame dated the row
+ * by, carried by the notice row it drew. `null` when no stored notice says so (a rename read before
+ * notices carried their actor, or a row collected since). What backfills `nameRenamedBy` on a row
+ * dated before the author was stored beside the name (sealed-names.md, "the answer").
+ */
+export function renameAuthorFromNotices(
+  rows: ReadonlyArray<{ content: string; serverTimestamp?: number }>,
+  name: string,
+  at: number
+): string | null {
+  for (const row of rows) {
+    if (row.serverTimestamp !== at) continue;
+    const envelope = parseEnvelope(row.content);
+    if (envelope.kind !== 'system' || envelope.notice?.event !== 'groupRenamed') continue;
+    if (envelope.notice.name === name && envelope.notice.actor) return envelope.notice.actor;
+  }
+  return null;
+}
+
 /** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */
 export function renamedToOf(content: string): string | undefined {
   const envelope = parseEnvelope(content);

@@ -663,15 +663,19 @@ export class SqliteStorage implements IStorage {
 
     if (currentVersion < 22) {
       // v21->v22: the dated name keeps its RANK (`name_from_statement`, `name_rename_at`,
-      // `name_renamed_by`; `groupName.ts`): a silent `groupNamed` statement never beats a rename, an
-      // answer is ordered by the rename it restates, and only a rename's author answers. Additive and
-      // NULL on arrival, a rename's rank with no author - every name dated before this build.
-      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
-      for (const add of conversationNameRankStatements(cols.map((c) => String(c.name)))) {
-        await this.db.execute(add);
-      }
+      // `name_renamed_by`; `groupName.ts`). The columns themselves are added on EVERY OPEN, below.
       // Stamped at 22, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 22');
+    }
+
+    // EVERY OPEN, not only under v22: the rank columns are guarded by name, so this is a no-op once
+    // they are there. A store an earlier head of #3888 already stamped 22 with fewer of them skipped
+    // the branch above and failed every `saveConversation`, which names all three. Additive and NULL
+    // on arrival: a rename's rank with no author - every name dated before this build.
+    const rankColumns: any[] = await this.db.select('PRAGMA table_info(conversations)');
+    for (const add of conversationNameRankStatements(rankColumns.map((c) => String(c.name)))) {
+      console.info(`[SQLite] conversations rank column added: ${add.split(' ').slice(-2)[0]}`);
+      await this.db.execute(add);
     }
 
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its

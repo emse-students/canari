@@ -261,8 +261,17 @@ read it deterministically. Step 3 is the first one a person can see.
 Step 3 takes the server's copy away, and a group whose name no frame ever dated would then have no
 name the members agree on. So every group gets one, by a **silent `groupNamed` statement**: `{ name }`
 in a system frame carrying a `messageId` and a signed `sentAt`, sent `DELIVERY.mutation` (no push,
-no notice, kept in the group's log for the replay). An older build acknowledges the unknown event and
-ignores it.
+kept in the group's log for the replay). An older build acknowledges the unknown event and ignores
+it.
+
+- **Silent while it only dates; a notice as soon as it CHANGES the name shown** (#3888 re-review,
+  decision taken). Any member can send a statement or an answer - an answer with a `renameAt` just
+  under its own server time - and every statement-dated device takes it. Silent, that was a forged
+  rename nobody could see, and the answer's rank (A3) made it stick. So a statement or an answer that
+  changes the name a device DISPLAYS draws the rename notice, naming the frame's MLS sender, live and
+  replayed alike (`visibleNoticeContent('groupRenamed')`, under the frame's id). Honest changes are
+  rare - a crossing, a heal - so the notice costs little; one that only dates the name shown draws
+  nothing.
 
 - **A statement ranks below every rename** (`groupNameSupersedes`). Ordered by date alone, a member
   restating the name it holds put the old name back over a rename accepted a second before its own
@@ -301,8 +310,23 @@ ignores it.
     sender, stored beside the name (`nameRenamedBy`), so the answers are bounded by ONE user's
     devices. A device that reads an answer saying exactly what it owes (same name, same `renameAt`)
     settles its own unsent (`answerReadSettlesOwn`, live and replayed). An author no longer in the
-    group, or a rename dated before this build (no author stored), answers nothing: that residual is
-    counted at INFO (`reportOutrankedStatement`) and accepted.
+    group answers nothing: that residual is counted at INFO (`reportOutrankedStatement`) and accepted.
+  - **A rename dated before the author was stored learns it from its notice** (#3888 re-review,
+    decision taken; `backfillRenameAuthor`). Every group step 1 dated is such a row - the very case
+    the answer exists for. Before an outranked statement is weighed, a rename-dated row with no
+    `nameRenamedBy` reads this device's own stored notice of that rename: a `groupRenamed` notice
+    naming the row's name, dated by the server at exactly `nameAt`, whose `actor` is the author
+    (`renameAuthorFromNotices`), decrypted from the window that can hold it (`sentAt` lies within the
+    24 h bound of the server time). It runs there, not in the store migration, because notice rows
+    are sealed under the device key the migration does not hold; once found it is stored. **What
+    stays uncovered**, logged at INFO and left empty: a rename whose notice this device never wrote
+    (it joined after the rename and was handed the name by a step-1 push), whose notice was collected
+    by the retention window, or whose notice predates the notice's `actor`. Those rows answer nothing
+    until the next rename.
+  - **The `by` a join push relays is the inviter's word, unverified.** A newcomer stores it as its
+    row's author. The worst case is bounded: a newcomer told that ITS user made the rename answers
+    when it should not - a redundant answer, of the name it holds, which the read-side dedupe and the
+    answer's own rank make harmless; one told another user's id answers nothing it would have.
   - **Owed, never scheduled** (#3888 re-review, A1). The debt is written on the row
     (`nameSync.answer = {to}`) and saved before anything is sent; the frame minted for it is written
     too, before its send. Only a send settles it (`ownAnswerOutcome`): no answer or a send not made
@@ -364,13 +388,19 @@ ignores it.
   is the measured residual (`reportOutrankedStatement`).
 - **A downgrade to 1.7.1** keeps the store (SQLite at v22: 1.7.1 runs no branch above 21) and
   writes rows without the three rank columns (its `INSERT OR REPLACE` names none of them, so they go
-  NULL on every save). Every statement- or answer-dated name it saves comes back RENAME-ranked with
-  no author on the next update, with the effect above; a rename's author is lost the same way, so
-  that device no longer answers for it. The `nameSync.statement` and `nameSync.answer` records are
-  dropped by 1.7.1's parser on its next write: an unanswered statement is minted afresh, and an owed
-  answer is lost - the one residual of A1, and only across a downgrade.
+  NULL on every save). On the next update:
+  - every statement- or answer-dated name it saved comes back RENAME-ranked with NO AUTHOR, with the
+    effect above; a rename's author is lost the same way. Such a row tries the notice backfill again
+    the next time a statement is outranked, so an author whose notice is still stored comes back;
+  - the `nameSync.statement` and `nameSync.answer` records are dropped by 1.7.1's parser on its next
+    write: an unanswered statement is minted afresh, and an OWED ANSWER IS LOST - the one residual of
+    A1, and only across a downgrade.
+- **The rank columns are added on every open, not only under v22** (`conversationNameRankStatements`,
+  guarded by column name). An earlier head of #3888 stamped a store 22 with only `name_from_statement`;
+  that store skipped the v22 branch and every `saveConversation`, which names all three, failed.
+  Guarded by `sqliteConversationColumns.test.ts`.
 
-Readings owed: none on a phone. A statement is silent, and its order is read deterministically by the
+Readings owed: none on a phone. A statement that only dates is silent, and its order is read deterministically by the
 unit tests (`groupName.test.ts`, `systemMessageHandler.groupName.test.ts`,
 `serverGroupConversation.nameSync.test.ts`, where the restart goes through the real SQLite store,
 `historySystemEvents.bundleAuthorship.test.ts`, `groupCreation.unnamed.test.ts`).

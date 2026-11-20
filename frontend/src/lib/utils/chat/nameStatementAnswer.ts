@@ -1,5 +1,9 @@
+import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { Conversation } from '$lib/types';
+import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
+import { renameAuthorFromNotices } from './visibleNotices';
 import { answerReadSettlesOwn, statementAnswerDue, withOwedAnswer } from './groupName';
 import { newSweepClock, settleOwedAnswer, type AnswerSender } from './serverGroupConversation';
 
@@ -87,5 +91,65 @@ export async function settleOwedAnswerByRead(params: {
   params.log(
     `[GROUP_NAME] owed answer in ${convo.id.slice(0, 8)}… settled unsent - answer ${(answer.id ?? '').slice(0, 8)} read from another device says the same`
   );
+  return true;
+}
+
+/**
+ * BACKFILLS THE RENAME'S AUTHOR on a row dated before it was stored beside the name (#3888
+ * re-review): without it, nobody answers for that rename - and every group dated by step 1 is such a
+ * row, which is the very split the answer exists to heal. Read from this device's own notice of that
+ * rename (`renameAuthorFromNotices`: the same name, dated at the same server time), decrypted from
+ * the window that can hold it - a notice row is dated by its frame's `sentAt`, which lies within
+ * {@link BUNDLE_SERVER_TIME_SKEW_MS} of the server time. Run where it matters, before an outranked
+ * statement is weighed: the notice rows are sealed under the device key, which a store migration
+ * does not hold. Once found it is stored, so it is read once. Where no notice says it, the field stays
+ * empty and the line says so: that rename's split stays until the next rename.
+ *
+ * @returns whether the row now names its rename's author.
+ */
+export async function backfillRenameAuthor(params: {
+  storage: IStorage;
+  deviceKeyB64: string;
+  conversations: Map<string, Conversation>;
+  convoKey: string;
+  save: (key: string) => Promise<void>;
+  log: (msg: string) => void;
+}): Promise<boolean> {
+  const { conversations, convoKey } = params;
+  const convo = conversations.get(convoKey);
+  if (!convo || convo.nameAt === undefined || convo.nameFromStatement) return false;
+  if (convo.nameRenamedBy !== undefined) return true;
+  const short = `${convo.id.slice(0, 8)}…`;
+  const at = convo.nameAt;
+  let rows: Awaited<ReturnType<IStorage['getMessagesSince']>>;
+  try {
+    rows = await params.storage.getMessagesSince(
+      convo.id,
+      at - BUNDLE_SERVER_TIME_SKEW_MS,
+      params.deviceKeyB64
+    );
+  } catch (e) {
+    console.warn(
+      `[GROUP_NAME] rename author of ${short} not backfilled - its notices could not be read: ${String(e).slice(0, 120)}`
+    );
+    return false;
+  }
+  const author = renameAuthorFromNotices(rows, convo.name, at);
+  if (!author) {
+    console.info(
+      `[GROUP_NAME] rename author of ${short} unknown - no stored notice names the rename that dated it (${convo.name.length} chars at ${new Date(at).toISOString()}); nobody here answers for it`
+    );
+    return false;
+  }
+  // Re-read after the decrypt: only the row still holding that very rename takes its author.
+  const now = conversations.get(convoKey);
+  if (!now || now.name !== convo.name || now.nameAt !== at || now.nameFromStatement) return false;
+  conversations.set(convoKey, { ...now, nameRenamedBy: canonicalUserId(author) });
+  await params.save(convoKey).catch((e: unknown) => {
+    console.error(
+      `[GROUP_NAME] rename author of ${short} backfilled but not saved - read again next time: ${String(e).slice(0, 120)}`
+    );
+  });
+  params.log(`[GROUP_NAME] rename author of ${short} backfilled from its stored notice`);
   return true;
 }

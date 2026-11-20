@@ -7,6 +7,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
 
 import { handleSystemEvent } from './systemMessageHandler';
 import { decodeAppMessage } from '$lib/proto/codec';
+import { noticeContent } from '$lib/utils/chat/visibleNotices';
+import { BUNDLE_SERVER_TIME_SKEW_MS } from '$lib/utils/chat/messageTime';
 
 /**
  * A GROUP'S NAME IS THE NEWEST ONE ITS MEMBERS STATED, NOT THE LAST ONE THIS DEVICE READ.
@@ -210,6 +212,22 @@ describe('a received groupNamed statement', () => {
     }
   });
 
+  it('a statement that CHANGES the name shown draws a notice naming its MLS sender; one that only dates it draws none', async () => {
+    const p = phone();
+    await p.state('Groupe', T);
+    expect(p.addMessageToChat).not.toHaveBeenCalled();
+    await p.state('Pirate', T + 1_000);
+    expect(p.conversations.get('g1').name).toBe('Pirate');
+    expect(p.addMessageToChat).toHaveBeenCalledTimes(1);
+    const [sender, content] = p.addMessageToChat.mock.calls[0];
+    expect(sender).toBe('system');
+    expect(JSON.parse(content).notice).toEqual({
+      event: 'groupRenamed',
+      actor: 'bob',
+      name: 'Pirate',
+    });
+  });
+
   it("an older build's rename frame (no signed sentAt) is refused and does not move a stated name", async () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     const p = phone();
@@ -234,7 +252,8 @@ describe('a statement outranked by a rename-dated name of another text is answer
   /** One member device of `userId` holding `held`; `sent` collects the answers it sends. */
   function member(
     held: { name: string; nameAt?: number; nameFromStatement?: true; nameRenamedBy?: string },
-    userId = 'me'
+    userId = 'me',
+    storage: object = {}
   ) {
     const conversations = new Map<string, any>([
       [
@@ -274,7 +293,7 @@ describe('a statement outranked by a rename-dated name of another text is answer
       drained = false;
       return handleSystemEvent('groupNamed', frame, {
         mlsService,
-        storage: {},
+        storage,
         userId,
         deviceKey: () => 'device-key',
         conversations,
@@ -382,6 +401,45 @@ describe('a statement outranked by a rename-dated name of another text is answer
     expect(x.sent).toHaveLength(1);
     expect(z.sent).toHaveLength(1);
     expect([y1.sent, y2.sent]).toEqual([[], []]);
+  });
+
+  it("a rename dated before its author was stored learns it from this device's own notice, then answers", async () => {
+    quiet();
+    const notice = {
+      content: noticeContent({ event: 'groupRenamed', actor: 'me', name: 'Nouveau' }, (id) => id),
+      serverTimestamp: T,
+    };
+    const getMessagesSince = vi.fn().mockResolvedValue([
+      {
+        content: noticeContent(
+          { event: 'groupRenamed', actor: 'other', name: 'Vieux' },
+          (id) => id
+        ),
+        serverTimestamp: T - 9,
+      },
+      notice,
+    ]);
+    const old = member({ name: 'Nouveau', nameAt: T }, 'me', { getMessagesSince });
+    await old.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    expect(getMessagesSince).toHaveBeenCalledWith(
+      'g1',
+      T - BUNDLE_SERVER_TIME_SKEW_MS,
+      'device-key'
+    );
+    expect(old.row().nameRenamedBy).toBe('me');
+    expect(old.sent).toEqual([{ name: 'Nouveau', answers: 's-1', renameAt: T }]);
+    // No notice of that rename on this device: the field stays empty, nobody answers, and it is said.
+    const none = member({ name: 'Nouveau', nameAt: T }, 'me', {
+      getMessagesSince: vi.fn().mockResolvedValue([]),
+    });
+    await none.read({ name: 'Ancien' }, 's-2', T + 1_000);
+    await settle();
+    expect(none.row().nameRenamedBy).toBeUndefined();
+    expect(none.sent).toEqual([]);
+    expect(
+      (console.info as any).mock.calls.map((c: unknown[]) => String(c[0])).join('\n')
+    ).toContain('rename author of g1');
   });
 
   it('an answer whose rename date lies after its own server time is refused', async () => {

@@ -318,7 +318,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
     } else if (parsed.system.event === 'groupNamed') {
       // The live handler's rule for a silent name statement (`applyNameStatement`), dated by the
-      // archive row's server time: no notice, and a rename outranks it whatever the order read.
+      // archive row's server time: a rename outranks it whatever the order read, and a notice is drawn
+      // exactly when it CHANGES the name shown, as live.
       const convo = getConversation(contactName);
       const outcome = convo
         ? applyNameStatement(
@@ -335,6 +336,13 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           : null;
       if (outcome && 'row' in outcome) {
         setConversation(contactName, outcome.row);
+        if (convo && outcome.row.name !== convo.name) {
+          systemContent = await visibleNoticeContent(
+            'groupRenamed',
+            { newName: outcome.row.name },
+            senderNorm
+          );
+        }
       } else if (outcome && 'refused' in outcome) {
         reportRenameRefusal(conversationId, outcome.refused, 'replayed name statement');
       } else if (outcome?.skipped === 'not-a-group') {
