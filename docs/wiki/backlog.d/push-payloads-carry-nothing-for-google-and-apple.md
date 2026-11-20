@@ -266,6 +266,8 @@ windows counted in days of production.
 
 ### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
 
+_2026-11-20, sitting [S15](../device-verification.md#the-readings-of-2026-11-20-s15-171-alpha7-content-free-push-on-the-mi-9t-the-miconnect-terms-stage-the-admission-card-not-reached): **readings 1 and 3 PASSED on the Mi 9T** (`1.7.0` build `100700106`, dev `1.7.1-alpha.7`): the 1:1 and group banners with text, `[PUSH_WAKE] fetched` before the decrypt, `mode=wake` sends each with one `served`, the salon `mode=full`; and with airplane mode right after a send, `fetch FAILED stage=transport` and the not-loaded notification (id 9995). The Mi row reads `wakeVersion = 1` and `push_envelope` holds 0 rows. Readings 2 (iPhone) and 4 (a production week) stay owed._
+
 1. Dev estate, `push_mode = wake`, Mi 9T on a build carrying the client half: three texts (1:1,
    group, salon - the salon stays `full`, step 2), app backgrounded then killed. Each 1:1 and group
    banner shows the text; `adb logcat -s CanariFCM` shows `[PUSH_WAKE] fetched` before the decrypt;
