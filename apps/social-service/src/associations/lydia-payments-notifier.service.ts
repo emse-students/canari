@@ -11,22 +11,22 @@ import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import type { NotificationType } from '../push/notification-client-floor';
 
 /**
- * THE GATE: the Lydia payments notices ship SWITCHED OFF, and only a pull request turns them on.
+ * THE KILL SWITCH: the Lydia payments notices are SWITCHED ON since the 1.7.0 floor (owner, 2026-11-18;
+ * Lydia enrolment lot 2 shipped in `v1.5.3`, the floor reads `1.7.0` on both estates). The constant
+ * stays as the way to stop them in one pull request; only a pull request changes it.
  *
  * Their notification types (`lydia_payments_active`, `lydia_payments_paused`) are new, and a client
  * older than the release CARRYING Lydia enrolment lot 2 (PR to be numbered) draws an unknown type
  * as the neutral unknown-type row - a wrong sentence no server change can take back
  * (legacy-compatibility.md, "a NEW notification type").
  *
- * WHAT FLIPS IT: `minClientVersion` at or above the first release carrying this pull request (the
- * release carrying Lydia enrolment lot 2), on BOTH estates (production and dev each hold their own
- * row), once BOTH Play AND the App Store serve it - THEN a one-line follow-up pull request setting
- * this to `true` and changing the spec that pins it.
+ * WHAT FLIPPED IT: `minClientVersion` at or above the first release carrying lot 2 (`v1.5.3`) on BOTH
+ * estates, once both stores served it - the floor of `1.7.0`.
  *
  * While it is off nothing is written: the caller's ERROR/WARN line and the payments screen state
  * carry the fact.
  */
-export const LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false;
+export const LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = true;
 
 /** The bell row's type for "payments became active"; equals `libs/contracts/lydia-refusal-codes.json`. */
 export const LYDIA_PAYMENTS_ACTIVE_TYPE = 'lydia_payments_active';
@@ -179,17 +179,15 @@ export class LydiaPaymentsNotifier {
 }
 
 /**
- * THE GATE OF THE CASHIER NOTICE (lot 3): ships SWITCHED OFF, and only a pull request turns it on.
+ * THE KILL SWITCH OF THE CASHIER NOTICE (lot 3): SWITCHED ON since the 1.7.0 floor (owner, 2026-11-18),
+ * and only a pull request changes it.
  *
  * Its type, `lydia_cashier_added`, is new: a client older than the release CARRYING Lydia enrolment
- * lot 3 draws it as the neutral unknown-type row, a wrong sentence no server change can take back
- * (legacy-compatibility.md, "a NEW notification type").
- *
- * WHAT FLIPS IT: `minClientVersion` at or above the first release carrying Lydia enrolment lot 3,
- * on BOTH estates, once BOTH Play AND the App Store serve it - THEN a one-line pull request setting
- * this to `true` and changing the spec that pins it. Lydia's own SMS reaches the person meanwhile.
+ * lot 3 (`v1.6.0`) draws it as the neutral unknown-type row (legacy-compatibility.md, "a NEW
+ * notification type"); the floor of `1.7.0` is above it on both estates. Lydia's own SMS reaches the
+ * person as well.
  */
-export const LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false;
+export const LYDIA_CASHIER_NOTIFICATIONS_ENABLED = true;
 
 /** The bell row's type for "you were added as a cashier"; equals `libs/contracts/lydia-refusal-codes.json`. */
 export const LYDIA_CASHIER_ADDED_TYPE = 'lydia_cashier_added';
