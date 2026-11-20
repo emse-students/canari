@@ -427,7 +427,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     'a sink that forwards a line some other call assembled: its callers are scanned, so the content is judged where it is built',
     [
       '2x CanariFirebaseMessagingService.kt|it',
-      '7x NativePushLog.kt|msg',
+      '8x NativePushLog.kt|msg',
       '2x NativePushLog.kt|tr',
     ],
   ],

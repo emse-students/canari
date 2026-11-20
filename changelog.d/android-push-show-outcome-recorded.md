@@ -1,0 +1,3 @@
+### Fixed - Android: every notification decision is now in the exported log, with the OS state that hides it
+
+A cached push that drew nothing used to leave no trace a member could export: each reason (app in the foreground, already read or dismissed, already in the shade, silent under a call) was logcat-only, and the OS dropping a post was invisible. One `[PUSH_SHOW]` line per decision now carries the outcome, notifications on/off, the channel importance, Do Not Disturb, the standby bucket and battery saver - a WARN when the OS drops what the app posted ([mobile](docs/wiki/frontend/mobile.md#the-push-services-lines-in-the-in-app-log-2026-11-04)).

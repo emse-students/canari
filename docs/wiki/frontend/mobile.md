@@ -651,6 +651,28 @@ lines (`nseOutcomes.ts`):
 | Privacy | Through `appendLog`, so through the console wrapper and `redactLogLine` like every other line: the lines leave the device under the in-app log's rules (8-character id prefixes, no secrets, no prose values). The service never logs message text; the file itself is app-private and plain, like logcat. |
 | Failure | A writer that cannot write says so ONCE to logcat (`NativePushLog`: `the push service's lines are NOT reaching the in-app log`), never through `FcmLog`, so it cannot recurse. A take that cannot read or remove a generation says so and leaves it for the next take. |
 
+**One INFO line is recorded on purpose: what each show decision did (2026-11-20).** A full-mode,
+high-priority push reached a Pixel, was cached (the reopen's `FCM_CACHE` pre-inject listed it), and
+no notification was seen - and nothing in the export could say why, because every way
+`showMessageNotification` ends without a visible banner was a logcat `Log.d`: the app in the
+foreground, the conversation already read from the shade, the message already announced and
+dismissed, already in the shade, or posted silent under a call. Nor does `manager.notify` check the
+app's switch or the channel's importance, so "posted" and "posted, then dropped by the OS" looked the
+same. Now every return of the show decision records exactly ONE line, whichever trigger reached it
+(push, salon push, WebSocket frame, reaction):
+
+```
+I CanariFCM: [PUSH_SHOW] outcome=<token> groupId=<8 chars> channel=<channel id> os: enabled=<bool> importance=<none|min|low|default|high> dnd=<all|priority|none|alarms> bucket=<active|working_set|frequent|rare|restricted> powerSave=<bool>
+```
+
+| Part | Decision |
+| --- | --- |
+| Outcomes | `posted`, `posted-silent-call`, `already-in-shade`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`, `suppressed-already-alerted` - `PushShowOutcome.kt`, pure, pinned by `PushShowOutcomeTest` in `android-tests`. |
+| OS state | Read at the decision (`recordShowOutcome`): `areNotificationsEnabled`, the posting channel's importance, the DND interruption filter, `UsageStatsManager.appStandbyBucket` (a `rare` or `restricted` bucket defers high-priority FCM) and `PowerManager.isPowerSaveMode`. A field the platform would not answer is `?`, never guessed. |
+| Level | **INFO by design, through `FcmLog.iRecorded`**, the one deliberate path past the W/E gate (`NativePushLog.recordInfo`): a plain `Log.i` still stays in logcat, and no WARN is spent on a decision that accuses nothing. **WARN** - with ` -> the OS drops it` - exactly when the decision posted and the app's notifications are off or the channel is blocked (`NONE`). A `LOW` channel still shows it, quietly: the member's choice, reported in `importance=` and not accused. |
+| Wiring | `pushShowOutcome.test.ts` reads the function's body and fails when a `return` is not preceded by its own `recordShowOutcome`, or when a post's outcome is recorded before `manager.notify`. A builder that throws records nothing - its caller's WARN says so. |
+| Content | An outcome token, an 8-character id prefix, a channel id and platform constants by name; never message text, never a name. `drainNativePushLog`'s count line counts `info=` beside `errors=` and `warnings=`. |
+
 ## The app owns which URLs its own WebView may load
 
 **A URL `http::Uri` cannot parse used to abort the whole process, and nothing on either side of the

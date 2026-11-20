@@ -53,6 +53,7 @@ import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.PushShowOutcome
 import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
@@ -2769,6 +2770,37 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * Records what one show decision did, with the OS state that decides whether a post is seen,
+         * as ONE line in the in-app log ([PushShowOutcome], 2026-11-20). Every return of
+         * [showMessageNotification] calls it exactly once (`pushShowOutcome.test.ts`).
+         * A WARN only when the app posted what the OS drops; an INFO line, recorded on purpose
+         * ([FcmLog.iRecorded]), for every decision by design.
+         */
+        private fun Context.recordShowOutcome(
+            outcome: PushShowOutcome.Outcome,
+            groupId: String,
+            channel: String,
+            known: NotificationManager? = null,
+        ) {
+            val os = try {
+                val manager = known ?: getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                PushShowOutcome.OsState(
+                    notificationsEnabled = manager.areNotificationsEnabled(),
+                    channelImportance = manager.getNotificationChannel(channel)?.importance,
+                    interruptionFilter = manager.currentInterruptionFilter,
+                    standbyBucket = (getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager)?.appStandbyBucket,
+                    powerSave = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isPowerSaveMode,
+                )
+            } catch (e: Exception) {
+                // The decision is still recorded, its OS state as unread (`?`).
+                Log.w(TAG, "recordShowOutcome: OS notification state unreadable: ${e.javaClass.simpleName}")
+                PushShowOutcome.OsState(null, null, null, null, null)
+            }
+            val line = PushShowOutcome.line(outcome, groupId, channel, os)
+            if (PushShowOutcome.level(outcome, os) == 'W') Log.w(TAG, line) else Log.iRecorded(TAG, line) // log-safe: PushShowOutcome.line - an outcome token, an 8-character id prefix, a channel id and OS constants by name
+        }
+
+        /**
          * Shows (or updates) a notification for an MLS message (DM or group).
          * A single stable ID per conversation: each new message overwrites the previous
          * notification instead of stacking a new one.
@@ -2872,6 +2904,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND, groupId, channel)
                 return 0L
             }
             // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
@@ -2882,6 +2915,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val readUpTo = shadeReadWatermark(this, groupId)
                 if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
                     Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                    recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SHADE_MARK, groupId, channel)
                     return 0L
                 }
             }
@@ -2996,6 +3030,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
             if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
                 Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_ALREADY_ALERTED, groupId, channel)
                 return 0L
             }
 
@@ -3137,6 +3172,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // this very notification with it. A reaction passes nothing: it is not in the bundle.
             refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
 
+            recordShowOutcome(
+                PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds), groupId, channel, manager,
+            )
             // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
             // has on the line it must replace - see [supersedes].
             return stamp

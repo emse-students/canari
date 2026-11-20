@@ -4,8 +4,9 @@
  * The FCM service (`CanariFirebaseMessagingService`, tag `CanariFCM`) logs to logcat, which no
  * member can export, so a tester's log said nothing about WHY a salon banner went up blind
  * ("Quelqu'un" / "Nouveau message dans #salon"). Its WARN and ERROR lines now also go to a bounded
- * file (`NativePushLog.kt`, `commands/native_push_log.rs`); `take_native_push_log` hands them over
- * and this writes each one as `[NATIVE_PUSH] <the service's own stamp> <W|E> <tag>: ...`. The
+ * file, with the INFO lines it records on purpose (`FcmLog.iRecorded`: one `[PUSH_SHOW]` line per
+ * notification decision, 2026-11-20) (`NativePushLog.kt`, `commands/native_push_log.rs`); `take_native_push_log` hands them over
+ * and this writes each one as `[NATIVE_PUSH] <the service's own stamp> <W|E|I> <tag>: ...`. The
  * Android counterpart of `nseOutcomes.ts`.
  *
  * THROUGH THE CONSOLE, SO THROUGH THE SAME REDACTION: each line is written with `log`
@@ -28,15 +29,17 @@ export function formatNativePushLines(lines: readonly string[]): string[] {
   if (lines.length === 0) return [];
   let warnings = 0;
   let errors = 0;
+  let info = 0;
   for (const line of lines) {
-    // `<yyyy-MM-dd> <HH:mm:ss.SSS> <W|E> <tag>: ...` (`NativePushLogLine`).
+    // `<yyyy-MM-dd> <HH:mm:ss.SSS> <W|E|I> <tag>: ...` (`NativePushLogLine`).
     const level = line.split(' ', 3)[2];
     if (level === 'E') errors++;
     else if (level === 'W') warnings++;
+    else if (level === 'I') info++;
   }
   return [
     ...lines.map((line) => `${NATIVE_PUSH_TAG} ${line}`),
-    `${NATIVE_PUSH_TAG} ${lines.length} push-service line(s) since the last read: errors=${errors} warnings=${warnings}`,
+    `${NATIVE_PUSH_TAG} ${lines.length} push-service line(s) since the last read: errors=${errors} warnings=${warnings} info=${info}`,
   ];
 }
 
