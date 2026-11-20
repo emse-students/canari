@@ -134,7 +134,6 @@ earliest version, as a checklist.
 **P3 - hygiene**
 
 - [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
-- [P3 - opening a replay in the CanaReels viewer starts its player twice: the listing and segment 0 are fetched twice (S13, 2026-11-20)](backlog.d/p3-opening-a-replay-starts-its-player-twice-and-lists-and-downloads-segment-0-twice.md)
 - [P3 - on the web, ending a live leaves the studio on a pre-live screen whose "Start the live" stays disabled on "Reading the live's rules..." (S13, 2026-11-20)](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)
 
 ## 1.7.3

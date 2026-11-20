@@ -779,3 +779,11 @@ to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s o
 A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
 new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
 which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).
+
+## The replay page starts its player once (S13, 2026-11-20)
+
+S13 read every replay opened from a feed card start its player twice 0.35 s apart (the listing and segment 0
+fetched twice), at the moment the reel list answered again. NOT the same cause as the repeated last segment (that
+one is the player's fill; this is the pane's reactivity). `ReplayPane`'s effect read `post.liveId`, so a new `post`
+object for the same replay re-ran it: stop, then start. The live id is now a `$derived` (equal values do not
+re-run the effect) and the player's start runs untracked. Test: a re-keyed post, one `fetchReplay`.
