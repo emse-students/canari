@@ -13,6 +13,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
   ownRenameSettledByRelay,
+  nameChangeNoticeDue,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -67,6 +68,7 @@ import {
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
+  nameAnswerSender,
   sendHistoryDigest,
 } from '$lib/utils/chat/groupActions';
 import {
@@ -102,13 +104,20 @@ import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import {
+  applyNameStatement,
   applyRenameFrame,
   boundedRestatedGroupName,
+  reportOutrankedStatement,
   GROUP_NAME_REFUSAL_TEXT,
   GROUP_NAME_SKIP_TEXT,
   reportRenameRefusal,
   withRestatedGroupName,
 } from '$lib/utils/chat/groupName';
+import {
+  answerOutrankedStatement,
+  backfillRenameAuthor,
+  settleOwedAnswerByRead,
+} from '$lib/utils/chat/nameStatementAnswer';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -1220,7 +1229,13 @@ export async function handleSystemEvent(
     // no longer puts the older name back. The notice is history and is drawn either way.
     // The server time is BOUNDED by the frame's signed sentAt, so a hostile server cannot lock a name
     // in by stamping it far in the future.
-    const outcome = applyRenameFrame(convo, data.newName, deliveryMeta?.queuedCreatedAt, sentAt);
+    const outcome = applyRenameFrame(
+      convo,
+      data.newName,
+      deliveryMeta?.queuedCreatedAt,
+      sentAt,
+      senderNorm
+    );
     if ('row' in outcome) {
       conversations.set(convoKey, outcome.row);
       if (storage) await saveConversation(convoKey);
@@ -1238,6 +1253,85 @@ export async function handleSystemEvent(
     }
     const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
+    return true;
+  }
+
+  if (event === 'groupNamed') {
+    // A SILENT STATEMENT OF THE NAME (sealed-names.md, step 2): a creation, or the one-time
+    // restatement of a group that existed before names were dated. The rename's rule at a
+    // statement's rank (`applyNameStatement`): a rename beats it whatever the dates, so a member's
+    // restatement crossing a real rename never puts the old name back. Silent while it only DATES the
+    // name shown; a NOTICE naming its MLS sender as soon as it CHANGES that name (#3888 re-review):
+    // any member can send one, and a name changed with no trace is a forgery nobody can see.
+    const isAnswer = typeof data.answers === 'string';
+    const outcome = applyNameStatement(
+      convo,
+      data.name,
+      deliveryMeta?.queuedCreatedAt,
+      sentAt,
+      isAnswer ? { renameAt: data.renameAt } : undefined
+    );
+    const where = `name ${isAnswer ? 'answer' : 'statement'} by ${senderNorm.slice(0, 8)}`;
+    const save = (key: string) => (storage ? saveConversation(key) : Promise.resolve());
+    if ('row' in outcome) {
+      conversations.set(convoKey, outcome.row);
+      if (storage) await saveConversation(convoKey);
+      // A newly invited member's placeholder replaced is no change anyone made (`nameChangeNoticeDue`).
+      const changed = nameChangeNoticeDue(convo, outcome.row);
+      log(
+        `[GROUP_NAME] ${where} ${changed ? 'CHANGED' : 'dated'} the name of ${convoKey.slice(0, 8)}…${changed ? ' - noticed' : ''}`
+      );
+      if (changed) {
+        const text = await visibleNoticeContent(
+          'groupRenamed',
+          { newName: outcome.row.name },
+          senderNorm
+        );
+        if (text) await writeNotice(text, messageId);
+      }
+    } else if ('refused' in outcome) {
+      reportRenameRefusal(convo.id, outcome.refused, where);
+    } else if (outcome.skipped === 'not-a-group') {
+      console.warn(
+        `[GROUP_NAME] ${where} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    } else if (
+      isAnswer &&
+      (await settleOwedAnswerByRead({
+        conversations,
+        convoKey,
+        answer: { id: messageId, name: data.name, renameAt: data.renameAt },
+        save,
+        log,
+      }))
+    ) {
+      // Another device of this user answered first, with what this one owed: nothing to send.
+    } else if (reportOutrankedStatement(convo, data.name, where)) {
+      // A SPLIT THIS DEVICE CAN HEAL, when the rename it holds is its user's: the stating device
+      // shows a name the group was renamed away from. Owed once, never to an answer
+      // (`answerOutrankedStatement`). A rename dated before its author was stored learns it first.
+      if (storage) {
+        await backfillRenameAuthor({
+          storage,
+          deviceKeyB64: deviceKey(),
+          conversations,
+          convoKey,
+          save,
+          log,
+        });
+      }
+      await answerOutrankedStatement({
+        mlsService,
+        userId,
+        send: nameAnswerSender(mlsService, userId, deviceKey()),
+        conversations,
+        convoKey,
+        statedName: data.name,
+        statement: { id: messageId, isAnswer },
+        save,
+        log,
+      });
+    }
     return true;
   }
 
@@ -1993,7 +2087,8 @@ export async function handleSystemEvent(
                     : {}),
                 })),
                 senderNorm,
-                log
+                log,
+                userId
               )
             : null;
           if (healed) {

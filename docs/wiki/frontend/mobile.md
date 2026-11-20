@@ -3472,6 +3472,81 @@ The web has no bridge to cross: the bytes go from IndexedDB to WASM in one proce
 `hasMlsState` still loads them there. That split is not a fallback, it is the same question asked
 the way each store can answer it.
 
+### Nothing local travels to another phone (2026-11-20)
+
+**The defect.** A member moved to a new iPhone through an iCloud backup or Quick Start. The new
+phone arrived holding Canari's local stores - IndexedDB, LocalStorage, the SQLite stores, `mls.bin` -
+but not the at-rest key, a `ThisDeviceOnly` Keychain item that never migrates (Apple, on
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: "Items with this attribute do not migrate to a
+new device"). The PIN screen then said the data was unreadable. **None of it may travel**: without
+the key it is ciphertext nothing opens, and with the key it would be a second holder of one MLS
+device identity. A new phone enrols as a new device ([backup](backup.md)). **The decision, and its
+cost** ([owner, 2026-11-20](../backlog.d/owner-decisions-of-2026-11-20.md), item 5): an encrypted
+backup restored onto the SAME iPhone also brings back no data and no at-rest marker, and the phone
+enrols as a new device, its history from the account's other devices, from peers or from a
+`.canari` backup. Charter principle 1 (no second holder) wins over principle 2 for that restore;
+principle 2 is still served by the peers and the `.canari` file ([principes](../../principes.md)).
+Android refuses both channels since 2026-08-26 (`data_extraction_rules.xml` with
+`allowBackup=false`, [below](#plays-q3-2026-quality-requirements-measured-against-this-app)).
+
+**What the iOS app stores, measured** on the bench iPhone 12's full backup of 2026-11-20
+(`pymobiledevice3 backup2 backup --full`, its `Manifest.db` read, the backup deleted), before this
+change. Everything below was IN the backup except the two native caches:
+
+| Where | What | In the backup before 1.7.2 | After |
+| --- | --- | --- | --- |
+| `Library/Application Support/fr.emse.canari/` (Tauri's `app_data_dir`, and `app_config_dir`, where `tauri-plugin-sql` opens `canari_<user>.db`) | the SQLite stores (`canari_<user>.db`, `mls_pending.db`), `mls.bin` (3.5 MB), `mls_accounts/`, the `at_rest_keys/` markers, the session and push credentials, `push_context.json`, `display_names.json`, `conversation_nicknames.json`, `logs/` | yes (only `graine_seeds.json` excluded, per file) | excluded: the flag is on `Library/Application Support` |
+| `Library/Application Support/Google/`, `google-heartbeat-storage/` | Firebase Messaging's store | yes | excluded (same directory) |
+| `Library/WebKit/WebsiteData/` (the default persistent `WKWebsiteDataStore`) | `Default/<salt>/<salt>/IndexedDB`, `LocalStorage`, `CacheStorage` (254 MB in 159 files), `ResourceLoadStatistics`, `DeviceIdHashSalts`, `MediaKeys` | yes | excluded: the flag is on `Library/WebKit` |
+| `Library/Preferences/` | `fr.emse.canari.plist`, `canari_notif_ids.plist` (conversation ids to notification ids), Firebase's plist | yes | excluded |
+| `Library/Cookies/`, `Library/HTTPStorages/` | absent on that phone | - | excluded (the pass creates them) |
+| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, the extension's copy of the push credential, `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files | yes (only `graine_seeds.json` and the push cache excluded, per file) | excluded: the flag is on the container root |
+| `Documents/` | log exports and an agenda image the member saved there himself | yes | **kept**: the member's own files, which Apple says never to exclude |
+| `Library/Caches/`, `tmp/` | the HTTP cache, the picker's copies | never (Apple: purged, so not backed up) | unchanged |
+| the NSE's and the Share Extension's own containers | nothing in the manifest | - | unchanged |
+
+**The mechanism** (`src-tauri/src/backup_exclusion.rs`, the only copy). In `setup`, at every launch
+and before the WebView is built: each directory is created when absent (WebKit creates
+`Library/WebKit` lazily, on the page's first storage access, which comes after the pass), gets
+`NSURLIsExcludedFromBackupKey`, and the flag is READ BACK (`native_cache::ios_is_excluded_from_backup`).
+One line per launch says what holds, at INFO:
+
+```
+[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: Library/Application Support, Library/WebKit, Library/Preferences, Library/Cookies, Library/HTTPStorages, AppGroup(group.fr.emse.canari)
+```
+
+or, at ERROR, each failure with its reason, then the count and the labels that did not hold. A
+directory flag covers its contents (Apple, *Optimizing your app's data for iCloud backup*: "move
+those files into a directory and update the directory's isExcludedFromBackup resource value"), and
+unlike a per-file flag it survives an atomic rewrite of what is inside. It sits on parents nothing of
+ours deletes: `clear_app_data` removes `fr.emse.canari/`, never `Application Support`. The pass also
+checks that Tauri's data directory lies inside an excluded directory, so a home that is not the one
+Tauri derived the path from is said at ERROR.
+
+**The Keychain stays `ThisDeviceOnly`**, checked 2026-11-20 on the four `SecItemAdd` of the app and
+its plugin: the keystore plugin's background copy (`AfterFirstUnlockThisDeviceOnly`) and its primary
+item (`WhenUnlockedThisDeviceOnly` with `.userPresence`), the native cache key (`canari_ios.mm`) and
+the push secret (`canari_push.mm`), both `AfterFirstUnlockThisDeviceOnly`. The background item is
+updated in place, which keeps the class it was added with. Firebase's own Keychain items are its own.
+
+**What is NOT proven, and cannot be from here.**
+- **Quick Start.** Apple documents the flag for backups only. Nothing in its documentation says
+  whether a device-to-device transfer honours it, and two Apple developer-forum threads asking it
+  (749467, 853078) carry no Apple answer. Only two iPhones and a transfer would settle it; the bench
+  has one.
+- **The flag is guidance, not a guarantee** - Apple's own words: "it's not a mechanism to guarantee
+  those items never appear in a backup or on a restored device". And a backup taken BEFORE 1.7.2
+  still carries everything. The session and push credentials in it expire: a refresh token at its
+  next use or at the session's idle expiry, the push credential at the next registration
+  ([sessions](../sessions.md)). So the app must still recognise a copied install by itself, from the
+  at-rest key proven absent ([auth](modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)).
+  This pass stops new backups from carrying the data; it does not make that detection unnecessary.
+- **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a
+  restored data set without its key read as a typed state. Excluded together with the data they
+  describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
+- **The device reading** is owed on the iPhone 12
+  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md)).
+
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
 Two files exist so a phone can act with the app shut, and each holds what the app's own stores
@@ -3513,12 +3588,14 @@ only its own: [auth](modules/auth.md#the-seed-mirror-labels-each-entry-with-its-
   and hands it down. `take_fcm_cache` runs on a poll, so `app_cache_key` logs a missing key when it
   goes missing and again when it comes back, never once per poll.
 - **Backups**: Android already excludes its whole data domain (`data_extraction_rules.xml`, see
-  below). iOS sets `NSURLIsExcludedFromBackupKey` on the two CACHE FILES only, in the data
-  directory and in the App Group container - **never on a directory**. Those directories also hold
-  `mls.bin`, `push_context.json` and the identity files. The device key that opens `mls.bin` is
-  derived from the PIN, so a restored `mls.bin` can be opened, and a restore that brought back
-  WebKit's IndexedDB without it would look like a damaged MLS state. The flag is per file, and an
-  atomic write is a new inode that does not carry it, so EVERY writer re-applies it after its write:
+  below). **Since 1.7.2 iOS excludes the DIRECTORIES whole at every launch**, the data directory,
+  WebKit's stores and the App Group root included ([below](#nothing-local-travels-to-another-phone-2026-11-20)),
+  which reverses this bullet's older "never on a directory" (a restored `mls.bin` opened under a
+  PIN-derived key; with the at-rest key hardware-held and `ThisDeviceOnly` it no longer opens, and a
+  copied install would clone the MLS device anyway). The per-file pass below predates it and is now
+  redundant: it is deleted once the iPhone reading proves the directory flag holds. The flag is per
+  file, and an atomic write is a new inode that does not carry it, so EVERY writer re-applies it
+  after its write:
   - Rust `with_graine_mirror_inner` (`native_cache::exclude_from_backup`, through the Objective-C
     runtime because `libapp.a` is linked into the NSE too);
   - `CanariAppendFcmCacheEntry`, `CanariDrainAppGroupFcmCache` and `CanariMirrorPushStateToAppGroup`

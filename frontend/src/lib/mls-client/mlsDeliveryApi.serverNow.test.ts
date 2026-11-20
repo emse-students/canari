@@ -117,7 +117,7 @@ describe('the group list read notes the server clock', () => {
       nameSync: { pending },
     } as unknown as Conversation;
     // The frame that set "Old" replays afterwards, stamped before the list answered.
-    const outcome = applyRenameFrame(held, 'Old', D - 400, D - 500);
+    const outcome = applyRenameFrame(held, 'Old', D - 400, D - 500, 'bob');
     expect('row' in outcome).toBe(true);
     const row = (outcome as { row: Conversation }).row;
     expect(row.nameSync?.pending?.over).toEqual({ name: 'Old', at: D - 400 });

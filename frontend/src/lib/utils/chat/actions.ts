@@ -23,6 +23,8 @@ import {
   purgeLocalConversationRecord,
   isGroupActiveOnServer,
   resendPendingRename,
+  nameAnswerSender,
+  sendNameStatement,
 } from '$lib/utils/chat/groupActions';
 import {
   awaitProbe,
@@ -39,6 +41,7 @@ import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import {
   ensureConversationForServerGroup,
+  newSweepClock,
   type NameSyncSettler,
 } from '$lib/utils/chat/serverGroupConversation';
 import type { NoticeWriter } from '$lib/utils/chat/visibleNotices';
@@ -1562,6 +1565,13 @@ export async function discoverMissingGroups(params: {
         deviceKeyB64,
         ownNotice: { contactName, addMessageToChat: params.addMessageToChat },
       }),
+    // The one-time silent restatement of a group's undated name (sealed-names.md, step 2), against
+    // the server's clock read once for this whole sweep.
+    clock: newSweepClock(),
+    state: (statement, groupId) =>
+      sendNameStatement({ mlsService, groupId, userId, deviceKeyB64, minted: statement }),
+    // An answer this device owes to a statement that named the group otherwise (`settleOwedAnswer`).
+    answer: nameAnswerSender(mlsService, userId, deviceKeyB64),
   };
   for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {

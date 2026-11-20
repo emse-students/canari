@@ -52,8 +52,9 @@ import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldCause } from './historyWithheld';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
-import { isFrameFateUnknown } from '$lib/mls-client/frameFromAnyTab';
+import { isFrameFateUnknown, sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
+import type { AnswerSender } from './serverGroupConversation';
 import {
   GROUP_NAME_REFUSAL_TEXT,
   GroupRenameRefusedError,
@@ -61,6 +62,8 @@ import {
   type PendingRename,
   restatedGroupName,
   type DatedGroupName,
+  type NameStatementOutcome,
+  type OwnNameStatement,
 } from './groupName';
 
 /**
@@ -343,7 +346,9 @@ async function sendRenameFrame(params: {
     throw e;
   } finally {
     // Whatever the send did to the ratchet is checkpointed, delivered or not.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (line) =>
+      console.error(`[GROUP_NAME] rename frame in ${groupId.slice(0, 8)}…: ${line}`)
+    );
   }
   if (sent.receivedAt !== null) {
     const own = readRenameFrame(newName, sent.receivedAt, sent.sentAt);
@@ -466,6 +471,112 @@ export async function resendPendingRename(params: {
     );
     return { kept: 'not-sent' };
   }
+}
+
+/**
+ * Sends one SILENT `groupNamed` statement - "this group is called `minted.name`" - and runs the
+ * receivers' check on its answer (sealed-names.md, step 2). The one send path of a statement: the
+ * creation's, the sweep's one-time restatement and its re-send of an unanswered one.
+ *
+ * SILENT AND DURABLE (`DELIVERY.mutation`): it notifies nobody and draws no notice on any device - a
+ * group that is merely being dated was not renamed - while the group's log still hands it to a
+ * device that was offline and to the archive replay. It carries a signed `sentAt` like a rename, so
+ * every receiver bounds the server's stamp by it ({@link readRenameFrame}), and the sender checks its
+ * own answer by the same bound: a statement every member refuses dates nothing here either.
+ *
+ * Every outcome is a TYPE ({@link NameStatementOutcome}), decided at the throw: no answer
+ * (`isFrameFateUnknown`), a refusal that ends it (`classifyOutgoingSendError`: `evicted`,
+ * `group-deleted`), the receivers' bound (`clock`), or a send that was not made. An older build
+ * acknowledges the unknown event and ignores it, so it keeps reading the server's list.
+ */
+export async function sendNameStatement(params: {
+  mlsService: IMlsService;
+  groupId: string;
+  userId: string;
+  deviceKeyB64: string;
+  minted: Omit<OwnNameStatement, 'answered'>;
+  /**
+   * Set when this statement ANSWERS another (`statementAnswerDue`): the statement's id (`answers` on
+   * the wire - an answer is never answered) and the date of the rename whose name it restates
+   * (`renameAt`, which orders answers among themselves).
+   */
+  answer?: { to: string; renameAt: number };
+}): Promise<NameStatementOutcome> {
+  const { mlsService, groupId, userId, deviceKeyB64, minted, answer } = params;
+  const id = `${minted.messageId.slice(0, 8)} in ${groupId.slice(0, 8)}…`;
+  console.debug(`[GROUP_NAME] stating the group's name silently: ${id}`);
+  const frame = {
+    ...mkSystem(
+      'groupNamed',
+      JSON.stringify({
+        name: minted.name,
+        ...(answer ? { answers: answer.to, renameAt: answer.renameAt } : {}),
+      })
+    ),
+    messageId: minted.messageId,
+    sentAt: minted.sentAt,
+  };
+  let receivedAt: number | null;
+  try {
+    ({ receivedAt } = await sendFrameFromThisTab(mlsService, groupId, encodeAppMessage(frame), {
+      delivery: 'mutation',
+    }));
+  } catch (e) {
+    if (isFrameFateUnknown(e)) {
+      console.warn(
+        `[GROUP_NAME] name statement ${id} got no answer - its fate is unknown: kept, re-sent as the same frame at the next connection: ${String(e).slice(0, 120)}`
+      );
+      return { kept: 'unanswered' };
+    }
+    const kind = classifyOutgoingSendError(e);
+    if (kind === 'evicted' || kind === 'group-deleted') {
+      console.warn(`[GROUP_NAME] name statement ${id} refused (${kind}) - not stated`);
+      return { refused: kind };
+    }
+    console.warn(
+      `[GROUP_NAME] name statement ${id} not made (${kind}) - stated at a later connection: ${String(e).slice(0, 120)}`
+    );
+    return { kept: 'not-sent' };
+  } finally {
+    // Whatever the send did to the ratchet is checkpointed, delivered or not.
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (line) =>
+      console.error(`[GROUP_NAME] name statement in ${groupId.slice(0, 8)}…: ${line}`)
+    );
+  }
+  if (receivedAt !== null) {
+    const own = readRenameFrame(minted.name, receivedAt, minted.sentAt);
+    if ('refused' in own) {
+      console.error(
+        `[GROUP_NAME] own name statement ${id} refused by the receivers' own check - ${GROUP_NAME_REFUSAL_TEXT[own.refused]} (sentAt ${minted.sentAt}, server ${receivedAt}): no member dates the name by it, so neither does this device`
+      );
+      return { refused: 'clock' };
+    }
+  } else {
+    console.error(
+      `[GROUP_NAME] name statement ${id} delivered, but the server answered no receive time - the members date the name by it, this device cannot and keeps it undated (never stated again from here)`
+    );
+  }
+  return { sent: { receivedAt } };
+}
+
+/**
+ * {@link sendNameStatement} as an ANSWER, bound to this device: what the connection sweep and the
+ * drain after a statement both send an owed answer through (`settleOwedAnswer`).
+ */
+export function nameAnswerSender(
+  mlsService: IMlsService,
+  userId: string,
+  deviceKeyB64: string
+): AnswerSender {
+  return (frame, to, groupId) =>
+    sendNameStatement({
+      mlsService,
+      groupId,
+      userId,
+      deviceKeyB64,
+      minted: { name: frame.name, messageId: frame.messageId, sentAt: frame.sentAt },
+      answer: { to, renameAt: frame.renameAt },
+    });
 }
 
 /**

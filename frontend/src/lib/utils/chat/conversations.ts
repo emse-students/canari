@@ -26,12 +26,13 @@ import type { Conversation, ConversationLifecycle } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { foldForSearch } from '$lib/utils/textFold';
 import { unnamedGroupLabelOf } from './groupTreeMembers';
+import { nameRankFields, type NameRank } from './groupName';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
-import { isUuidLike } from '$lib/utils/uuidShape';
+import { isRawId } from './rawId';
 import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { PENDING_MUTATION_LIMITS } from './pendingMutations';
 import { settlePendingFor } from './pendingMutationStore';
@@ -44,17 +45,8 @@ class LinkDroppedMidPassError extends Error {
   }
 }
 
-const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
-
-/**
- * True when `value` looks like a raw technical ID that must never be shown in the UI -
- * a UUID, an MLS group ID (64-char lowercase hex hash), or a `channel_<uuid>` conversation ID
- * that has not been replaced yet by the community's synced channel name.
- */
-export function isRawId(value: string): boolean {
-  const trimmed = value.trim();
-  return isUuidLike(trimmed) || HEX_ID_RE.test(trimmed) || isChannelConversationId(trimmed);
-}
+/** Re-exported: callers read the raw-id test from here; it lives low in the graph (`rawId.ts`). */
+export { isRawId };
 
 /** True when `value` is the persisted direct-conversation key (`userId::peerId`). */
 export function isCanonicalDirectKey(value: string): boolean {
@@ -111,6 +103,7 @@ export function toConversationMeta(
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
+    ...nameRankFields(convo),
     ...(convo.nameSync !== undefined ? { nameSync: convo.nameSync } : {}),
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
     // the row holds", never as 0: the store migration wrote it, and only it.
@@ -496,6 +489,8 @@ export interface ConversationRowSpec {
   startedAt?: Conversation['startedAt'];
   /** See {@link Conversation.nameAt}; absent keeps `existing`'s. */
   nameAt?: Conversation['nameAt'];
+  /** The rank of the spec's `nameAt` (`NameRank`); read only beside it, whose rank it is. */
+  nameRank?: NameRank;
   /** See {@link Conversation.nameSync}; absent keeps `existing`'s. */
   nameSync?: Conversation['nameSync'];
   /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
@@ -548,6 +543,12 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const keepsDatedName =
     conversationType === 'group' && spec.nameAt === undefined && existing?.nameAt !== undefined;
   const nameAt = conversationType === 'group' ? (spec.nameAt ?? existing?.nameAt) : undefined;
+  // The RANK goes with the date it qualifies: from the spec when the spec dates the name, from
+  // `existing` when its date is kept.
+  const nameRank: NameRank =
+    nameAt === undefined
+      ? {}
+      : nameRankFields({ nameAt, ...(spec.nameAt !== undefined ? spec.nameRank : existing) });
   const name = keepsDatedName && existing ? existing.name : identity.displayName;
   const nameSync = conversationType === 'group' ? (spec.nameSync ?? existing?.nameSync) : undefined;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
@@ -574,6 +575,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(nameAt !== undefined ? { nameAt } : {}),
+    ...nameRank,
     ...(nameSync !== undefined ? { nameSync } : {}),
     ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
@@ -1062,6 +1064,7 @@ export function restoredConversationRow(
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
     nameAt: meta.nameAt,
+    nameRank: nameRankFields(meta),
     nameSync: meta.nameSync,
     localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,

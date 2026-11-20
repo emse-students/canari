@@ -696,9 +696,14 @@ new PIN.
 
 **A lost keystore entry loses the local data.** A keystore wipe, or an iOS restore onto a new phone
 (`ThisDeviceOnly` items do not migrate), leaves rows nothing can open: `hardware_key_unavailable`,
-the automatic restart as a new device, and history from peers. Markers stay IN the backup on purpose: a restored
-`hardware` marker without its key reads as that typed state (never a silent reset of good data), and
-a restored `migrating` marker without its key is reverted (nothing moved). The reset forgets the
+the automatic restart as a new device, and history from peers. Until 1.7.2 the markers stayed IN the
+backup on purpose: a restored `hardware` marker without its key read as that typed state (never a
+silent reset of good data), and a restored `migrating` marker without its key was reverted (nothing
+moved). Since 1.7.2 a NEW iOS backup carries neither the markers nor the data they describe: both are
+excluded at every launch ([mobile](../mobile.md#nothing-local-travels-to-another-phone-2026-11-20)).
+So an encrypted backup restored onto the SAME iPhone brings back no data and no marker either: the
+phone enrols as a new device. An older backup still carries both, and Apple calls the flag guidance,
+not a guarantee, so the typed states above still answer such a restore. The reset forgets the
 marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the entry.
 
 #### Decisions taken on 2026-10-22, and what each costs
@@ -716,7 +721,7 @@ Four questions were settled the same day as lead decisions:
 |---|---|
 | 1. One backup recovery code per device (`crypto/deviceRecoveryCode.ts`) | Losing that code loses every backup the device made; knowing it opens all of them. |
 | 2. The key is not bound to the device credential (passcode, enrolled biometrics) | Nothing is lost when a fingerprint or a Face ID is enrolled, and locked-phone pushes and "stay signed in" keep working - which is also why those read the key without the user. |
-| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the phone restarts as a new device once the PIN is accepted (`hardware_key_unavailable`, 2026-11-20). History can come back from the account's other devices and from other members. |
+| 3. A lost keystore entry loses the local data | A keystore wipe, or an iOS restore onto a new phone, leaves rows nothing can open; the phone restarts as a new device once the PIN is accepted (`hardware_key_unavailable`, 2026-11-20). History can come back from the account's other devices and from other members. Since 1.7.2 an iOS backup carries none of the local data, so even a restore onto the SAME iPhone starts as a new device, its history from peers or a `.canari` backup ([decision](../../backlog.d/owner-decisions-of-2026-11-20.md)). |
 | 4. A backup made before a phone's move to the hardware key stops opening on that phone | Those older backups cannot be imported there, so once the move re-sealed existing data the phone asks for a new backup: a toast at once, and a notice in the backup panel until an export is saved (`noteBackupOwedAfterKeyMove`). A fresh install, which takes the same path with no data, is not asked. |
 
 #### Backups get their own recovery secret

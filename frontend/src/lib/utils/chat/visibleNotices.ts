@@ -25,6 +25,7 @@ import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { GROUP_NAME_REFUSAL_TEXT, ownRenameFromRelay } from './groupName';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
+import { isRawId } from './rawId';
 
 /** The visible events whose notice every member's device draws, the actor's included. */
 export type VisibleNoticeEvent =
@@ -236,6 +237,48 @@ export async function sendVisibleNotice(
   return { receivedAt: sent.receivedAt, sentAt: frame.sentAt };
 }
 
+/**
+ * The user whose RENAME this device holds a notice of: the actor of a stored `groupRenamed` notice
+ * naming `name`, dated by the server at exactly `at` - the instant the rename's frame dated the row
+ * by, carried by the notice row it drew. `null` when no stored notice says so (a rename read before
+ * notices carried their actor, or a row collected since). What backfills `nameRenamedBy` on a row
+ * dated before the author was stored beside the name (sealed-names.md, "the answer").
+ */
+export function renameAuthorFromNotices(
+  rows: ReadonlyArray<{ content: string; serverTimestamp?: number }>,
+  name: string,
+  at: number
+): string | null {
+  for (const row of rows) {
+    if (row.serverTimestamp !== at) continue;
+    const envelope = parseEnvelope(row.content);
+    if (envelope.kind !== 'system' || envelope.notice?.event !== 'groupRenamed') continue;
+    if (envelope.notice.name === name && envelope.notice.actor) return envelope.notice.actor;
+  }
+  return null;
+}
+
+/**
+ * Whether a `groupNamed` statement or answer that turned `before` into `after` draws the rename
+ * notice naming its sender (sealed-names.md): whenever it CHANGES the name shown - any member can
+ * send one, and a change with no trace is a forgery nobody sees - EXCEPT over a newly invited
+ * member's PLACEHOLDER (owner, 2026-11-20): an undated, non-empty name that is a raw id (`isRawId`)
+ * or the group's own id, which the Welcome and the push write. No member chose it; that device is
+ * learning the name. An undated list name or an empty one is NOT exempt: a statement changing it
+ * during the rollout, or naming an unnamed group, is exactly the change a forger would make. An
+ * honest restatement draws nothing anyway - it does not change the name.
+ */
+export function nameChangeNoticeDue(
+  before: Pick<Conversation, 'id' | 'name' | 'nameAt'>,
+  after: Pick<Conversation, 'name'>
+): boolean {
+  if (after.name === before.name) return false;
+  const shown = before.name.trim();
+  const placeholder =
+    before.nameAt === undefined && shown !== '' && (isRawId(shown) || shown === before.id);
+  return !placeholder;
+}
+
 /** The name a stored rename notice says the group was renamed to, or `undefined` for any other row. */
 export function renamedToOf(content: string): string | undefined {
   const envelope = parseEnvelope(content);
@@ -253,7 +296,8 @@ export function ownRenameSettledByRelay(
   convo: Conversation,
   rows: ReadonlyArray<{ id: string; content: string; serverTimestamp?: number }>,
   relayer: string,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  userId: string
 ): Conversation | null {
   const settled = ownRenameFromRelay(
     convo,
@@ -261,7 +305,8 @@ export function ownRenameSettledByRelay(
       id: r.id,
       ...(typeof r.serverTimestamp === 'number' ? { serverTimestamp: r.serverTimestamp } : {}),
       renamedTo: renamedToOf(r.content),
-    }))
+    })),
+    userId
   );
   if (!settled) return null;
   const what = `own rename ${settled.frame.messageId.slice(0, 8)} in ${convo.id.slice(0, 8)}…`;

@@ -2,6 +2,8 @@
 
 #[cfg(target_os = "ios")]
 mod app_group;
+#[cfg(any(target_os = "ios", test))]
+mod backup_exclusion;
 mod commands;
 mod concurrency;
 mod happy_eyeballs;
@@ -1505,6 +1507,16 @@ pub fn run() {
             let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
             log::info!("[Path] app_data_dir = {}", data_dir.display());
             std::fs::create_dir_all(&data_dir)?;
+            // Nothing this install stores may reach another phone: excluded from backups at EVERY
+            // launch and BEFORE the WebView exists, so WebKit's stores carry the flag from their
+            // first byte (`backup_exclusion`).
+            #[cfg(target_os = "ios")]
+            match app.path().home_dir() {
+                Ok(home) => backup_exclusion::exclude_install_from_backup(&home, &data_dir),
+                Err(e) => log::error!(
+                    "[BACKUP_EXCLUSION] the app container's home is unknown - nothing excluded: {e}"
+                ),
+            }
             // Before the WebView can resolve a device identity, which rewrites the push context the
             // seed reads (`mls_account_state.rs`, round 8 of the review of #2919).
             commands::mls_account_state::seed_opened_markers(&data_dir);

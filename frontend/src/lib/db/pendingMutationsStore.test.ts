@@ -724,6 +724,9 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
       ['as-text', 5_000],
       ['new', 9_000],
     ]);
+    // BOUNDED on both sides when asked (`backfillRenameAuthor`): the same rule, an upper bound added.
+    const bounded = await storage.getMessagesSince('conv', 2_000, KEY, 6_000);
+    expect(bounded.map((m) => [m.id, m.timestamp])).toEqual([['as-text', 5_000]]);
   });
 });
 
@@ -792,8 +795,8 @@ describe('the upgrade of a database the previous build left', () => {
 
     const upgraded = await sqliteOver(db);
 
-    expect(SCHEMA_VERSION).toBe(21);
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 21 });
+    expect(SCHEMA_VERSION).toBe(22);
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 22 });
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 0 });
     expect(await upgraded.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
     expect((await upgraded.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
