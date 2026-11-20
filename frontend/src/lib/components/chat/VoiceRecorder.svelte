@@ -34,6 +34,8 @@
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+  import { describeVoiceNoteCapture } from '$lib/utils/audio/voiceNoteCaptureReport';
   import {
     tapRecordingLoudness,
     type RecordingLoudnessTap,
@@ -191,6 +193,8 @@
       const recorder = mimeType
         ? new MediaRecorder(opened, { mimeType })
         : new MediaRecorder(opened);
+      // One line per recording: what the engine granted, not what was asked.
+      Log.i('VoiceRecorder', describeVoiceNoteCapture(opened.getAudioTracks()[0], recorder));
       const started: Session = {
         recorder,
         stream: opened,

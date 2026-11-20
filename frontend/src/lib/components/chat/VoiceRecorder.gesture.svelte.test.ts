@@ -46,6 +46,12 @@ const MIN_RECORDING_MS = 700;
 
 const mounted: (() => void)[] = [];
 
+/** A stream as the engine hands one over: one audio track, whose settings the capture report reads. */
+function fakeStream() {
+  const track = { stop: trackStop, label: '', getSettings: () => ({}) };
+  return { getTracks: () => [track], getAudioTracks: () => [track] };
+}
+
 /**
  * Enough of a `MediaRecorder` to be driven: `stop()` emits one chunk, then `onstop`.
  *
@@ -101,7 +107,7 @@ beforeEach(() => {
   (globalThis as Record<string, unknown>).MediaRecorder = FakeMediaRecorder;
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
-    value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: trackStop }] }) },
+    value: { getUserMedia: vi.fn().mockResolvedValue(fakeStream()) },
   });
   // happy-dom has no pointer capture; the component asks before releasing, so a truthful stub is
   // enough and a throwing one would hide a real mis-sequence behind an exception.
@@ -324,7 +330,7 @@ describe('VoiceRecorder - the microphone opens slower than a finger lifts', () =
 
     // Finger up BEFORE the permission prompt resolves - the ordinary first-use case.
     releaseAt(300);
-    openMicrophone({ getTracks: () => [{ stop: trackStop }] });
+    openMicrophone(fakeStream());
     await vi.advanceTimersByTimeAsync(0);
     flushSync();
 

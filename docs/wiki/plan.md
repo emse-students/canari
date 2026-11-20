@@ -137,6 +137,10 @@ earliest version, as a checklist.
 
 - [The chat and the reactions of a live replayed in sync with the video, as on Twitch (owner wish, 2026-11-20; designed, not built)](backlog.d/live-replay-chat-and-reactions-replayed.md)
 
+**P2 - correctness**
+
+- [P2 - Voice notes are captured as a phone call (asked by the owner, 2026-11-20)](backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)
+
 **P3 - hygiene**
 
 - [P3 - core-service's boot read of Sky's handoff access timed out against MiConnect, once (2026-11-20)](backlog.d/p3-the-sky-handoff-access-boot-read-times-out.md)
