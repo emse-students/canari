@@ -861,7 +861,7 @@
   report dialog and the draft all stay the card's - and `PostComments` is its body. Mounted only
   while open, so the box takes its draft back on every opening.
 -->
-{#if canSeeComments}
+{#if canSeeComments && !scheduled}
   <PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
     <PostComments
       {postId}

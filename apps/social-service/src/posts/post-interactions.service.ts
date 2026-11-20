@@ -32,6 +32,7 @@ import {
   refuseRemovedByModeration,
   rowsReleasedBy,
 } from './comment-removal';
+import { assertPostAcceptsComments } from './comment-publication';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceCampusTrend } from './campus-trend';
 import { authorNoticeKind } from './post-activity-notice';
@@ -199,6 +200,8 @@ export class PostInteractionsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
+    // A scheduled post takes no comment, its own author's included (owner, 2026-11-19).
+    assertPostAcceptsComments(post, new Date());
 
     // The picture must be the writer's own upload: deleting this comment releases the blob it names.
     if (data.media?.mediaId) {

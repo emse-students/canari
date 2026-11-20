@@ -288,6 +288,18 @@ unchanged (~1.16 ms before and after). That figure is a published post's, which 
 open-report sub-select; for a post scheduled later it runs, and the same seed measured ~0.30 ms with
 `content_reports` (500 rows) scanned sequentially. Not measured on dev or production.
 
+#### A post that is not published yet takes no comment (owner, 2026-11-19)
+
+*"On ne devrait pas pouvoir commenter un post programme."* `PostInteractionsService.addComment` refuses a
+post whose `publishedAt` (the instant it becomes visible, `publication-time.ts`) is in the future, for
+EVERY writer including the post's own author: a typed `409 Conflict` carrying
+`code: COMMENT_POST_NOT_PUBLISHED` (`comment-publication.ts`), never a message to parse. Only the add is
+refused (a like, edit or delete needs an existing comment, and none can exist under such a post). On the
+client a scheduled card draws no comment control or preview, and since this change it opens no comment
+sheet either, even when a notification tap asks for one. The 2026-11-15 moderation read therefore
+needs no case for comments under a scheduled post. Charter: principle 6 (kindness) and 7 (simplicity) -
+the question disappears with its cause.
+
 #### Decided by the owner (2026-11-04)
 
 - **The place decides.** A student's comment under an institution's or another BDE's post, and a

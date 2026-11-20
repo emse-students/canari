@@ -89,3 +89,19 @@ it('leaves a published post untouched: no ring, no line, the comment button', ()
   expect(t.querySelector('[data-scheduled-post]')).toBeNull();
   expect(commentButton(t)).not.toBeNull();
 });
+
+it('opens no comment sheet on a scheduled post, even asked to (a notification tap)', () => {
+  const target = document.body.appendChild(document.createElement('div'));
+  const instance = mount(PostCard, {
+    target,
+    props: {
+      post: row({ commentCount: 1 }),
+      currentUserId: 'editor',
+      scheduled: true,
+      commentsOpen: true,
+    },
+  });
+  mounted.push(() => unmount(instance));
+  flushSync();
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+});

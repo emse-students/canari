@@ -207,4 +207,27 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
     const row = (await client.query(`SELECT reactions FROM posts WHERE id = $1`, [postId])).rows[0];
     expect(row.reactions).toEqual({ u9: 'like' });
   });
+
+  it('a post not published yet takes no comment, its own author included; a published one does', async () => {
+    const postId = '40000000-0000-4000-8000-000000000006';
+    await seed(postId, []);
+    await client.query(`UPDATE posts SET "publishedAt" = now() + interval '1 day' WHERE id = $1`, [
+      postId,
+    ]);
+    await expect(
+      interactions.addComment(postId, { userId: 'author', text: 'early' })
+    ).rejects.toMatchObject({ response: { code: 'COMMENT_POST_NOT_PUBLISHED' } });
+    await expect(
+      interactions.addComment(postId, { userId: 'u5', text: 'early' })
+    ).rejects.toMatchObject({
+      response: { code: 'COMMENT_POST_NOT_PUBLISHED' },
+    });
+    expect(await stored(postId)).toEqual([]);
+    await client.query(
+      `UPDATE posts SET "publishedAt" = now() - interval '1 minute' WHERE id = $1`,
+      [postId]
+    );
+    await interactions.addComment(postId, { userId: 'u5', text: 'on time' });
+    expect((await stored(postId)).map((c) => c.text)).toEqual(['on time']);
+  });
 });
