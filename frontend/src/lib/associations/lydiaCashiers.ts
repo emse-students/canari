@@ -147,3 +147,43 @@ export function handoverDoneText(heirName: string, previousNumberRemoved: boolea
     ? m.asso_lydia_handover_done({ name: heirName })
     : m.asso_lydia_handover_done_old_kept({ name: heirName });
 }
+
+/** One roster row as the cashier pickers read it: who, and nothing else. */
+interface PickableMember {
+  userId: string;
+}
+
+/**
+ * Who the ADD form offers: the members who are not cashiers yet (the Responsable included - they
+ * are a cashier), each once, in roster order.
+ */
+export function addableMembers<T extends PickableMember>(
+  rows: T[],
+  account: Pick<AssociationPayoutAccount, 'cashiers'>
+): T[] {
+  const taken = new Set((account.cashiers ?? []).map((c) => c.userId));
+  return rows.filter(
+    (row, index) =>
+      !taken.has(row.userId) && rows.findIndex((other) => other.userId === row.userId) === index
+  );
+}
+
+/**
+ * Who the HAND-OVER offers (owner, 2026-11-20): the members holding MANAGE_PAYOUT_ACCOUNT
+ * (`payoutManagerIds`) - an heir without it could never reach these screens to hand over in turn,
+ * nor leave - other than the Responsable, each once. A Tresorier or Vendeur among them is offered
+ * too: the hand-over PROMOTES them, with their own number.
+ */
+export function handoverHeirs<T extends PickableMember>(
+  rows: T[],
+  account: Pick<AssociationPayoutAccount, 'payoutManagerIds'>,
+  responsableUserId: string
+): T[] {
+  const allowed = new Set(account.payoutManagerIds ?? []);
+  return rows.filter(
+    (row, index) =>
+      allowed.has(row.userId) &&
+      row.userId !== responsableUserId &&
+      rows.findIndex((other) => other.userId === row.userId) === index
+  );
+}

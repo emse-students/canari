@@ -33,7 +33,13 @@ import {
   LYDIA_CASHIER_PHONE_PURPOSE,
   LYDIA_RESPONSABLE_PHONE_LOCKED,
 } from './associations.service';
-import { LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN } from './lydia-responsable-handover';
+import {
+  LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+  LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+  LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+  LYDIA_RESPONSABLE_MUST_HAND_OVER,
+} from './lydia-responsable-handover';
 import { LYDIA_CASHIER_IN_FLIGHT, LydiaCashiersService } from './lydia-cashiers.service';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
@@ -59,6 +65,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
   let associations: AssociationsService;
   let cashiers: LydiaCashiersService;
   const tellAdded = jest.fn(async () => 1);
+  const tellResponsable = jest.fn(async () => 1);
   let savedSecret: string | undefined;
 
   const options = (synchronize: boolean, entities: Function[]) => ({
@@ -129,7 +136,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     cashiers = new LydiaCashiersService(
       assoRepo,
       associations,
-      { tellAdded } as never,
+      { tellAdded, tellResponsable } as never,
       {} as never
     );
   });
@@ -434,7 +441,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         service: new LydiaCashiersService(
           ds.getRepository(Association),
           associations,
-          { tellAdded } as never,
+          { tellAdded, tellResponsable } as never,
           { post } as never
         ),
       };
@@ -497,15 +504,26 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
 
   describe('handing the Responsable over (owner, 2026-11-19) - the real SQL', () => {
     const HEIR = '+33611112222';
+    /** MANAGE_PAYOUT_ACCOUNT: the only heirs the hand-over accepts (owner, 2026-11-20). */
+    const PAYOUT = 1 << 9;
+    /** The roster: every one a payout manager, as an heir must be. */
     const members = async (...userIds: string[]) => {
       await ds.query(`DELETE FROM association_members`);
       for (const userId of userIds) {
         await ds.query(
-          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, $2, 0)`,
-          [ASSO, userId]
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, $2, $3)`,
+          [ASSO, userId, PAYOUT]
         );
       }
     };
+    // The hand-over ships OFF; these specs run the path a flip opens. The departure rule reads its
+    // own switch on AssociationsService.
+    beforeEach(() => {
+      jest.spyOn(cashiers, 'handoverEnabled').mockReturnValue(true);
+      jest.spyOn(associations, 'responsableHandoverEnabled').mockReturnValue(true);
+      tellResponsable.mockClear();
+    });
+    afterEach(() => jest.restoreAllMocks());
     const claim = (actorId = 'holder', phone = HEIR) =>
       cashiers.claimHandover(ASSO, { actorId, globalAdmin: false, userId: 'member-2', phone });
     /** The record core sends once Lydia answered the add (`confirmed`: the 13 read back). */
@@ -536,7 +554,10 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       const pre = await claim();
       expect(await claimHeld()).toBe(true);
       const done = await recordAfter(pre, true);
-      expect(done).toMatchObject({ outcome: 'handed-over', removeOther: true });
+      expect(done).toMatchObject({ outcome: 'handed-over', remove: 'previous' });
+      // The heir alone is told, by a bell row (no acceptance step, owner, 2026-11-20).
+      expect(tellResponsable).toHaveBeenCalledTimes(1);
+      expect(tellResponsable).toHaveBeenCalledWith({ id: ASSO, name: 'Asso cashiers' }, 'member-2');
       expect(await claimHeld()).toBe(false);
       expect(await liveRows()).toEqual([
         { id: done.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
@@ -587,7 +608,8 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       await reset();
       await members('holder', 'member-2');
       const first = await recordAfter(await claim(), false);
-      expect(first).toMatchObject({ outcome: 'unconfirmed', removeOther: false });
+      expect(first).toMatchObject({ outcome: 'unconfirmed', remove: null });
+      expect(tellResponsable).not.toHaveBeenCalled();
       expect(await claimHeld()).toBe(false);
       expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: HEIR });
       expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
@@ -612,7 +634,8 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       const pre = await claim();
       await ds.query(`DELETE FROM association_members WHERE "userId" = 'member-2'`);
       const out = await recordAfter(pre, true);
-      expect(out).toMatchObject({ outcome: 'target-left', removeOther: true });
+      expect(out).toMatchObject({ outcome: 'target-left', remove: 'previous' });
+      expect(tellResponsable).not.toHaveBeenCalled();
       const numbers = await responsableNumbers();
       expect(numbers).toMatchObject({ current: HOLDER_PHONE, other: HEIR });
       expect(out.cashierId).toBe(numbers.id);
@@ -631,7 +654,7 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       await expect(claim()).resolves.toMatchObject({ retry: false });
     });
 
-    it('a record under a cleared claim writes nothing (CLAIM_LOST): the Responsable is unchanged', async () => {
+    it('a record REFUSED after Lydia added (CLAIM_LOST) writes nothing; the same hand-over again, same number, completes it', async () => {
       await reset();
       await members('holder', 'member-2');
       const pre = await claim();
@@ -640,6 +663,147 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         response: { code: LYDIA_CASHIER_CLAIM_LOST },
       });
       expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+      expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
+      // The recovery core's ERROR names: no row holds the number, so it is free to ask again.
+      const again = await claim();
+      expect(again.retry).toBe(false);
+      expect(await recordAfter(again, true)).toMatchObject({ outcome: 'handed-over' });
+      expect(await responsableNumbers()).toMatchObject({ current: HEIR, other: HOLDER_PHONE });
+    });
+
+    it('switched off: social refuses the claim itself (defence in depth), nothing claimed', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      jest.spyOn(cashiers, 'handoverEnabled').mockReturnValue(false);
+      await expect(claim()).rejects.toMatchObject({
+        response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED },
+      });
+      expect(await claimHeld()).toBe(false);
+    });
+
+    it('an heir without MANAGE_PAYOUT_ACCOUNT is refused, nothing claimed (owner, 2026-11-20)', async () => {
+      await reset();
+      await members('holder');
+      await ds.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'member-2', 0)`,
+        [ASSO]
+      );
+      await expect(claim()).rejects.toMatchObject({
+        response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER },
+      });
+      expect(await claimHeld()).toBe(false);
+    });
+
+    it('a cashier is PROMOTED in one step: their own row closed and the Responsable row theirs, in ONE transaction', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const vendeur = await record('member-2', HEIR);
+      const pre = await claim();
+      expect(pre.heirCashierId).toBe(vendeur.id);
+      const done = await recordAfter(pre, true);
+      expect(done).toMatchObject({ outcome: 'handed-over', remove: 'previous' });
+      expect(await liveRows()).toEqual([
+        { id: done.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
+      ]);
+      expect(await responsableNumbers()).toMatchObject({ current: HEIR, other: HOLDER_PHONE });
+    });
+
+    it('a cashier heir asked with ANOTHER number is refused (CASHIER_NUMBER), nothing claimed', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      await record('member-2', '+33600000002');
+      await expect(claim()).rejects.toMatchObject({
+        response: { code: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER },
+      });
+      expect(await claimHeld()).toBe(false);
+    });
+
+    it('a promotion Lydia did not confirm: the Responsable unchanged, the cashier row marked unconfirmed, nothing tracked', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const vendeur = await record('member-2', HEIR);
+      const out = await recordAfter(await claim(), false);
+      expect(out).toMatchObject({ outcome: 'unconfirmed', cashierId: vendeur.id, remove: null });
+      expect(await liveRows()).toEqual([
+        { id: expect.any(String), userId: 'holder', role: 'responsable', confirmed: true },
+        { id: vendeur.id, userId: 'member-2', role: 'vendeur', confirmed: false },
+      ]);
+      expect(await responsableNumbers()).toMatchObject({ other: null });
+      expect(await claimHeld()).toBe(false);
+    });
+
+    it('a promoted cashier who left meanwhile: their own number is the one removed next', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const vendeur = await record('member-2', HEIR);
+      const pre = await claim();
+      await ds.query(`DELETE FROM association_members WHERE "userId" = 'member-2'`);
+      const out = await recordAfter(pre, true);
+      expect(out).toMatchObject({
+        outcome: 'target-left',
+        cashierId: vendeur.id,
+        remove: 'current',
+      });
+      await revoke(vendeur.id, 'current', true);
+      expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+    });
+
+    it('no old Responsable left AND the heir left (M4): target-left, the number tracked as a departed Responsable', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const pre = await claim();
+      await ds.query(`UPDATE lydia_cashiers SET "removedAt" = now() WHERE role = 'responsable'`);
+      await ds.query(`DELETE FROM association_members WHERE "userId" = 'member-2'`);
+      const out = await recordAfter(pre, true);
+      expect(out).toMatchObject({ outcome: 'target-left', remove: null });
+      expect(await liveRows()).toEqual([
+        { id: out.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
+      ]);
+      expect(tellResponsable).not.toHaveBeenCalled();
+    });
+
+    describe('the departure rule, on the real SQL', () => {
+      type Guarded = {
+        assertNotLydiaResponsable: (
+          manager: unknown,
+          id: string,
+          userId: string,
+          how: { leaving: boolean; adminAcknowledged: boolean }
+        ) => Promise<void>;
+      };
+      const guard = (userId: string, how = { leaving: true, adminAcknowledged: false }) =>
+        (associations as unknown as Guarded).assertNotLydiaResponsable(
+          ds.manager,
+          ASSO,
+          userId,
+          how
+        );
+
+      it('the confirmed Responsable of the managed Business may not leave', async () => {
+        await reset();
+        await expect(guard('holder')).rejects.toMatchObject({
+          response: { code: LYDIA_RESPONSABLE_MUST_HAND_OVER },
+        });
+      });
+
+      it('an UNCONFIRMED Responsable leaves freely: the hand-over could not take the role from them', async () => {
+        await reset();
+        await ds.query(`UPDATE lydia_cashiers SET "confirmedAt" = NULL WHERE role = 'responsable'`);
+        await expect(guard('holder')).resolves.toBeUndefined();
+      });
+
+      it('a Responsable row of another Business than the managed one holds nobody', async () => {
+        await reset();
+        await ds.query(`UPDATE lydia_cashiers SET "vendorToken" = 'another-business'`);
+        await expect(guard('holder')).resolves.toBeUndefined();
+      });
+
+      it("a platform admin's typed confirmation lets the removal through", async () => {
+        await reset();
+        await expect(
+          guard('holder', { leaving: false, adminAcknowledged: true })
+        ).resolves.toBeUndefined();
+      });
     });
 
     it('a payout manager who is not the Responsable is refused, nothing claimed', async () => {

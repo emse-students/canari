@@ -83,11 +83,15 @@ describe('Lydia codes follow the shared contract', () => {
       LIVE_ON_DELETE: CONTRACT.social.cashiersLiveOnDelete,
       RESPONSABLE_HANDOVER_FORBIDDEN: CONTRACT.social.responsableHandoverForbidden,
       RESPONSABLE_HANDOVER_SAME_PERSON: CONTRACT.social.responsableHandoverSamePerson,
+      RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER:
+        CONTRACT.social.responsableHandoverHeirNotPayoutManager,
+      RESPONSABLE_HANDOVER_CASHIER_NUMBER: CONTRACT.social.responsableHandoverCashierNumber,
     });
     expect(LEAVE_REFUSAL.RESPONSABLE_MUST_HAND_OVER).toBe(CONTRACT.social.responsableMustHandOver);
   });
-  it('the bell knows the new cashier notice by its contract type', () => {
+  it('the bell knows the cashier and the Responsable notices by their contract types', () => {
     expect(isKnownNotificationType(CONTRACT.notificationTypes.cashierAdded)).toBe(true);
+    expect(isKnownNotificationType(CONTRACT.notificationTypes.responsableHandedOver)).toBe(true);
   });
   it('the add gate is the one the servers read', () => {
     expect(LYDIA_CASHIER_ADD_ENABLED).toBe(CONTRACT.switches.cashierAddEnabled);

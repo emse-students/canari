@@ -1051,8 +1051,8 @@ that met the claim busy (INFO) is paid when the holder lets go. **A Responsable 
 their current number (the Business needs a manager): the departure says so at ERROR, once, for the
 person who left, and the card reads "a new Responsable is needed, contact a platform administrator" -
 who hands the role over for them ([below](#handing-the-responsable-over-owner-2026-11-19)). Once the
-hand-over is switched on, that state is no longer reachable from a membership removal: the departure
-of a live Responsable is REFUSED. core bounds each of the removal's three
+hand-over is switched on, that state is reached from a membership removal only by a platform admin
+who confirmed it by typing: the departure of the confirmed Responsable is otherwise REFUSED. core bounds each of the removal's three
 Lydia calls (`LYDIA_REMOVAL_STEP_TIMEOUT_MS`) so their sum answers within social-service's wait
 (`timeouts.cashierRemovalWaitMs` in `libs/contracts/lydia-refusal-codes.json`, asserted on both
 sides): a core still talking to Lydia after social released the claim would act outside it. The other
@@ -1139,6 +1139,26 @@ claim locks (not by core on a read made earlier). A Responsable without `MANAGE_
 reach the screen: a manager grants it, or a platform admin hands over for them. The admin path is also
 the way out for a Responsable who already left (the departed-Responsable card).
 
+**To whom: a member holding `MANAGE_PAYOUT_ACCOUNT`** (owner, 2026-11-20), typed 400
+`LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER` otherwise: an heir without it could never reach
+these screens to hand over in turn, so could never leave. The member bitmask is the whole rule for that
+flag (`mayAct` grants it to no BDE super-admin, and the kinds that exclude it hold no Business), so
+social reads it in the claim's own transaction. The picker offers exactly those members
+(`handoverHeirs`, from `payoutManagerIds` on the payout read, sent while the switch is on).
+
+**An heir who already is a cashier is PROMOTED in one step** (owner, 2026-11-20): typically the
+Tresorier. The hand-over replaces their rights with the 13, with THEIR OWN number - another number is
+the typed 409 `LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER` (the first number would keep rights no row could
+remove). Their cashier row is closed in the record's transaction, before the Responsable row is inserted,
+so no statement sees two live rows for them nor a moment without their rights recorded.
+
+**No acceptance step** (owner, 2026-11-20): the heir is told, and that is enough. A confirmed hand-over
+writes ONE bell row to the heir alone, `lydia_responsable_handed_over` ("Vous êtes désormais Responsable
+de X sur Lydia Pro", opening the Lydia Pro help page), built like the cashier notice
+(`LydiaCashierNotifier.tellResponsable`, behind `LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, no push - Lydia's
+SMS reaches them too). Its client floor is `1.7.3` (`notification-client-floor.ts`): the `1.7.2`
+pre-releases already out cannot draw it, and a floor compares the version core only.
+
 **The step order never leaves the Business without a confirmed Responsable - add first, remove second:**
 
 1. **Claim** (`lydia-responsable-handover-claim`, social `LydiaCashiersService.claimHandover`): the ONE
@@ -1147,12 +1167,13 @@ the way out for a Responsable who already left (the departed-Responsable card).
    order: a CONFIRMED Responsable (`LYDIA_CASHIER_NO_RESPONSABLE` - an unconfirmed one resends first),
    the asker (`..._HANDOVER_FORBIDDEN`), a target who is someone else
    (`LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON`), a member (`LYDIA_CASHIER_NOT_A_MEMBER`, read in the same
-   transaction) and not already a live cashier (`LYDIA_CASHIER_ALREADY_SET`: one live row per member -
-   remove their cashier role first, a reversible choice kept narrow for this first version), a number
-   that is not the Responsable's nor another live row's (`LYDIA_CASHIER_PHONE_IN_USE`), and the
-   Responsable's OTHER number slot free or holding exactly this number (`LYDIA_RESPONSABLE_PHONE_LOCKED`:
-   a number change, or an earlier hand-over's leftover, is removed first). Then `LYDIA_CASHIER_IN_FLIGHT`
-   while another operation holds the claim; an integration spec races two hand-overs.
+   transaction) holding `MANAGE_PAYOUT_ACCOUNT` (`..._HEIR_NOT_PAYOUT_MANAGER`), a cashier heir's own
+   number (`..._CASHIER_NUMBER`), a number that is not the Responsable's nor another live row's
+   (`LYDIA_CASHIER_PHONE_IN_USE`), and the Responsable's OTHER number slot free or holding exactly this
+   number (`LYDIA_RESPONSABLE_PHONE_LOCKED`: a number change, or an earlier hand-over's leftover, is
+   removed first). Then `LYDIA_CASHIER_IN_FLIGHT` while another operation holds the claim; an integration
+   spec races two hand-overs. Social refuses its own two routes while ITS switch is off (409
+   `LYDIA_RESPONSABLE_HANDOVER_DISABLED`, defence in depth behind core's).
 2. **Add** the heir's number with the 13 rights (`addLydiaBusinessHolder`, the Responsable's own add:
    `business/addcashier`, Lydia's SMS on, then the `getpermission` READ-BACK of all 13). A typed refusal
    (signature, rights format, Business token) releases the claim - nothing changed at Lydia. No usable
@@ -1163,22 +1184,30 @@ the way out for a Responsable who already left (the departed-Responsable card).
    could never be confirmed.
 3. **Record** (`lydia-responsable-handover`, `recordHandover`), ONE transaction under the claim token
    (`LYDIA_CASHIER_CLAIM_LOST` otherwise, nothing written), the Business re-read
-   (`LYDIA_BUSINESS_CHANGED`) and the heir's membership re-read. `handoverOutcome` decides:
-   - **confirmed** - the old row is CLOSED (as a removal closes one), then the heir INSERTED as the live,
-     confirmed Responsable, the old number moved to the new row's OTHER number (`previousPhoneSealed`,
-     the slot every removal path, the departure debt and the delete/unlink guard already read). Close
-     first, insert second: the partial unique index keeps one live Responsable at every statement. The
-     old holder has no live row any more.
+   (`LYDIA_BUSINESS_CHANGED`), the heir's membership and own cashier row re-read. `handoverOutcome`
+   decides, and the record answers the number core removes next (`remove`: `previous`, `current` or none):
+   - **confirmed** - a promoted heir's cashier row and the old Responsable row are CLOSED (as a removal
+     closes one), then the heir INSERTED as the live, confirmed Responsable, the old number moved to the
+     new row's OTHER number (`previousPhoneSealed`, the slot every removal path, the departure debt and
+     the delete/unlink guard already read; `remove: previous`). Close first, insert second: the partial
+     unique indexes keep one live Responsable and one live row per member at every statement. The old
+     holder has no live row any more. The heir is told (above).
    - **not confirmed** (the read-back short of the 13, or unreadable) - nothing moves: the old
-     Responsable stays, and the asked number is TRACKED as their other number (Lydia holds it, rights
-     unknown). The card shows it; a retry with the SAME number is planned as one (`retry`) and, confirmed,
-     hands over; "Retirer cet autre numéro" removes it instead.
+     Responsable stays. A new number is TRACKED as their other number (Lydia holds it, rights unknown):
+     the card shows it; a retry with the SAME number is planned as one (`retry`) and, confirmed, hands
+     over; "Retirer cet autre numéro" removes it instead. A promoted cashier's row is marked UNCONFIRMED
+     instead (its rights are unknown now, as after a role change Lydia did not confirm), and the hand-over
+     may be asked again.
    - **the heir left meanwhile** (confirmed) - the same tracking, and its removal next: a number with
-     every right for a non-member. Answered as the typed 409 `LYDIA_CASHIER_NOT_A_MEMBER`.
-   - **no old row left** (an account erasure deleted it while the step ran) - the heir is recorded as
-     the Responsable, confirmed or not, as lot 2 records one.
-4. **Remove** the other number through the existing verified path (`LydiaCashierOps.revoke`,
-   `previous`: its own claim, `revokeTarget`'s checks with the HEIR's number as the confirmed context,
+     every right for a non-member (`previous` on the old Responsable, or `current` on a promoted cashier's
+     own row). Answered as the typed 409 `LYDIA_CASHIER_NOT_A_MEMBER`.
+   - **no old row left** (an account erasure took it while the step ran) - the heir is recorded as the
+     Responsable, confirmed or not, as lot 2 records one. If the heir left too, the outcome is
+     `target-left` and the number is tracked as a DEPARTED Responsable's: no other Responsable number
+     remains to remove it with (a removal needs one as its context, and the Business needs a manager),
+     so the departed-Responsable card asks a platform admin to hand over, which removes it.
+4. **Remove** the number the record names through the existing verified path (`LydiaCashierOps.revoke`:
+   its own claim, `revokeTarget`'s checks with the live Responsable's number as the confirmed context,
    Lydia's removal, the re-read at 0 rights, `recordRevoke`). Only 0 rights clears it.
 5. The claim is released by the record itself (step 3), and the removal's by its own record (step 4).
 
@@ -1190,8 +1219,9 @@ half-hand-over:
 | the claim refused | nothing claimed | the typed refusal on the screen |
 | the add refused, typed | claim released, nothing at Lydia | retry |
 | the add unanswered | claim KEPT | `IN_FLIGHT` for everyone until a global admin clears it |
-| the read-back short of the 13 | old Responsable stays; the number tracked as their other number | the card names it; retry the same number, or remove it |
-| the record failed (no answer from social) | claim KEPT, logged at ERROR | as the unanswered add |
+| the read-back short of the 13 | old Responsable stays; the number tracked as their other number (a promoted cashier's row marked unconfirmed) | the card names it; retry the same number, or remove it |
+| the record failed (no answer from social) | claim KEPT; core's ERROR names the heir (8 characters) and the number's last two digits, and Lydia holds that number with every right (or unknown rights) | a global admin clears the claim, then the SAME hand-over again with the same number, or the number removed in the Lydia Pro app |
+| the record REFUSED, typed, after Lydia added (`CLAIM_LOST`, `BUSINESS_CHANGED`, a lock or a unique index) | nothing recorded, claim released; Lydia holds the number with no row; core's ERROR names the heir and the last two digits | the SAME hand-over again with the same number (re-adding is safe, the read-back decides), or the number removed in the Lydia Pro app |
 | core stopped after the record, before the removal | the heir is Responsable; the old number is their other number, untried | the card names it; "Retirer cet autre numéro"; a new hand-over is `PHONE_LOCKED` until it is gone |
 | the removal not confirmed (rights still read) | the old number flagged NOT confirmed on the heir's row | the card shows the flag; "Retirer cet autre numéro" asks again |
 | another operation took the claim before the removal | the old number untried on the heir's row | the card names it (WARN, not ERROR) |
@@ -1207,21 +1237,38 @@ cashier with any role afterwards. Keeping them as Tresorier would mean a second 
 rights to prove) inside the same step, for a case a manager covers with "Ajouter" in one more gesture.
 
 **After the hand-over, the departure rule applies to the heir**: while the switch is on, removing the
-membership of the person holding a live Responsable row - leaving, or being removed by anyone, a
-platform admin included - is the typed 409 `LYDIA_RESPONSABLE_MUST_HAND_OVER`
+membership of the person holding the live, CONFIRMED Responsable row of the association's MANAGED
+Business - the hand-over's own predicate, so the rule never holds someone the hand-over could not take
+the role from (an unconfirmed Responsable leaves freely) - is the typed 409
+`LYDIA_RESPONSABLE_MUST_HAND_OVER`: leaving, or being removed by a member or a manager
 (`AssociationsService.assertNotLydiaResponsable`, read under the association lock that both the removal
 and the hand-over's record take, so a removal cannot slip between the hand-over's checks and its
 record). The old holder, no longer Responsable, leaves freely. The "Quitter" button and the roster
-editor word the code. Applying it to a removal by another manager too is the lead's reversible choice: a
-Responsable expelled without a hand-over is exactly the state this decision closes, and a platform admin
-can hand over for an unreachable Responsable first.
+editor word the code. **A platform admin may remove a live Responsable without a hand-over** (owner,
+2026-11-20): the roster editor answers the refusal with a confirmation the admin must TYPE (the
+association's name) under *"La retirer sans passation laisse à son numéro tous ses droits Lydia, jusqu'à
+ce qu'il soit retiré"*, then sends the removal again with `?lydiaResponsableAcknowledged=true`
+(`removeRosterMember`, `lydiaResponsableRemoval.ts`); the server honours it for a platform admin only and
+says it at ERROR. The departure then keeps the current number, said at ERROR, and the card asks for a new
+Responsable, as before the switch.
+
+**What the departure rule never blocks**: an **account erasure** (a GDPR right, Art. 17) and the
+**deletion of the association** do not go through `removeMember`, so the rule never reaches them. The
+association's deletion has its own typed refusal while a number other than the Responsable's current one
+is live (`LYDIA_CASHIERS_LIVE`, above). An erasure of the Responsable removes their OTHER number if any
+(`revokeBeforeErasure`), but their CURRENT number stays live at Lydia - the Business needs a manager, and
+no other Responsable number exists to remove it with: Lydia keeps listing it with every right, under no
+row, until a platform admin enrols a new Responsable and removes it in the Lydia Pro app. That is the
+p2 entry's items 4 and 6 ([p2](../../backlog.d/p2-a-lydia-cashier-add-binds-the-person-not-the-number-and-overwrites-a-number-lydia-knows.md)),
+and the hand-over does not change it.
 
 **The screen** (`LydiaCashiersSection.svelte`): "Transférer le rôle" on the Responsable's row
 (`canHandOver` in `lydiaCashiersView`: gate on, the row confirmed, the reader the Responsable or a
-platform admin) opens a member picker - the members who are not cashiers yet, as the add form lists them
-- and a number field; then a confirmation states the consequence, *"X deviendra Responsable ; votre
-numéro perdra ses droits Lydia"* (a platform admin reads which number, by its last two digits). Every
-string is Paraglide; the refusals are worded from their codes (`lydiaHandoverErrorText`).
+platform admin) opens a member picker - the payout managers other than the Responsable, a cashier among
+them included (`handoverHeirs`) - and a number field; then a confirmation states the consequence, *"X
+deviendra Responsable ; votre numéro perdra ses droits Lydia"* (a platform admin reads which number, by
+its last two digits). Every string is Paraglide; the refusals are worded from their codes
+(`lydiaHandoverErrorText`).
 
 **One claim for every cashier operation of an association**: `associations."lydiaResponsableStartedAt"`
 (migration 118) plus a random token, `"lydiaCashierClaimToken"` (migration 119;

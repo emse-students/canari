@@ -1505,12 +1505,19 @@ export async function updateMemberRole(
   return member;
 }
 
+/**
+ * Removes a member. `lydiaResponsableAcknowledged` is a PLATFORM ADMIN's typed confirmation that
+ * removing the association's Lydia Responsable leaves their number's rights at Lydia until it is
+ * removed (owner, 2026-11-20); the server ignores it for anyone else.
+ */
 export async function removeMember(
   associationId: string,
-  userId: string
+  userId: string,
+  opts: { lydiaResponsableAcknowledged?: boolean } = {}
 ): Promise<{ ok: boolean }> {
+  const query = opts.lydiaResponsableAcknowledged ? '?lydiaResponsableAcknowledged=true' : '';
   const result = await request<{ ok: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}`,
+    `/api/associations/${encodeURIComponent(associationId)}/members/${encodeURIComponent(userId)}${query}`,
     { method: 'DELETE' }
   );
   invalidateMyAssociations();
@@ -2914,6 +2921,11 @@ export interface AssociationPayoutAccount {
    * server older than lot 3: read as none.
    */
   cashiers?: LydiaCashier[];
+  /**
+   * The members holding MANAGE_PAYOUT_ACCOUNT, the only heirs a Responsable hand-over accepts (owner,
+   * 2026-11-20). Sent while the hand-over is switched on; absent otherwise.
+   */
+  payoutManagerIds?: string[];
   /**
    * A GLOBAL ADMIN's read only, on an association whose historical Lydia account collects until the
    * enrolled Business is validated (the bridge, owner 2026-11-13). The managers never receive it:

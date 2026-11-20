@@ -3,8 +3,10 @@ import type { AssociationPayoutAccount, LydiaCashier } from './api';
 import {
   LYDIA_CASHIER_ADD_ENABLED,
   LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  addableMembers,
   handoverConfirmText,
   handoverDoneText,
+  handoverHeirs,
   lydiaCashiersView,
   responsableResendText,
 } from './lydiaCashiers';
@@ -221,5 +223,32 @@ describe('the hand-over texts', () => {
     expect(handoverDoneText('Bob', false)).toBe(
       m.asso_lydia_handover_done_old_kept({ name: 'Bob' })
     );
+  });
+});
+
+describe('who each cashier form offers', () => {
+  const rows = [
+    { userId: 'resp' },
+    { userId: 'treasurer' },
+    { userId: 'plain' },
+    { userId: 'manager' },
+    { userId: 'manager' },
+  ];
+  const cashiers = [{ userId: 'resp' }, { userId: 'treasurer' }] as LydiaCashier[];
+
+  it('the add: members who are not cashiers yet, each once', () => {
+    expect(addableMembers(rows, { cashiers }).map((r) => r.userId)).toEqual(['plain', 'manager']);
+  });
+
+  it('the hand-over: payout managers other than the Responsable, a cashier PROMOTED included (owner, 2026-11-20)', () => {
+    const account = { payoutManagerIds: ['resp', 'treasurer', 'manager'] };
+    expect(handoverHeirs(rows, account, 'resp').map((r) => r.userId)).toEqual([
+      'treasurer',
+      'manager',
+    ]);
+  });
+
+  it('the hand-over offers nobody when the server sent no payout managers', () => {
+    expect(handoverHeirs(rows, {}, 'resp')).toEqual([]);
   });
 });

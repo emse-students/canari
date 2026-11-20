@@ -107,6 +107,15 @@ describe('lydiaHandoverErrorText - the hand-over words its own outcomes', () => 
     );
   });
 
+  it('an heir without the payout right, and a cashier heir asked with another number (owner, 2026-11-20)', () => {
+    expect(
+      text(LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER, 400)
+    ).toBe(m.asso_lydia_handover_err_not_payout_manager());
+    expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_CASHIER_NUMBER)).toBe(
+      m.asso_lydia_handover_err_cashier_number()
+    );
+  });
+
   it('every other code reads as the cashier screen words it', () => {
     expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT)).toBe(
       lydiaCashierErrorText(new SocialApiError('x', LYDIA_CASHIER_SOCIAL_REFUSAL.IN_FLIGHT, 409))

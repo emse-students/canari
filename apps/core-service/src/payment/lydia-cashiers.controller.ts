@@ -42,7 +42,8 @@ const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
 interface HandoverRecord {
   outcome: 'handed-over' | 'unconfirmed' | 'target-left';
   cashierId: string;
-  removeOther: boolean;
+  /** The number of row `cashierId` to remove next through the verified path, or none. */
+  remove: LydiaCashierNumber | null;
 }
 
 /** The two roles a manager adds or switches between; the Responsable is lot 2's own step. */
@@ -232,14 +233,18 @@ export class LydiaCashiersController {
    * 2. Lydia adds the number with the 13 rights and its SMS, and `getpermission` reads them back
    *    (`addLydiaBusinessHolder`, the Responsable's own add);
    * 3. social-service RECORDS (`lydia-responsable-handover`): confirmed, the target becomes the live
-   *    Responsable and the old number the new row's other number; not confirmed, the old Responsable
-   *    stays and the asked number is tracked as their other number - the claim released either way;
-   * 4. the other number is REMOVED through the verified path (`LydiaCashierOps.revoke`, `previous`:
+   *    Responsable (a cashier heir's own row closed - promoted, owner 2026-11-20) and the old number
+   *    the new row's other number; not confirmed, the old Responsable stays and the asked number is
+   *    tracked - the claim released either way; a confirmed heir is told by a bell row;
+   * 4. the number the record names is REMOVED through the verified path (`LydiaCashierOps.revoke`:
    *    its own claim, the removal, the re-read at 0 rights).
    *
    * A typed refusal before the add answered releases the claim (nothing changed at Lydia); no usable
    * answer to the add keeps it until a global admin clears it (the add may have happened); a record
-   * that fails after the add keeps it too (`socialStep` says so at ERROR). Answers
+   * that fails after the add keeps it when social did not answer (`socialStep` says so at ERROR),
+   * and a TYPED refusal of the record after Lydia added the number leaves a holder no row names -
+   * said at ERROR with the heir and the number's last two digits, and the way back (the same
+   * hand-over again, same number; or the number removed in the Lydia app). Answers
    * `{ outcome: 'handed-over', previousNumberRemoved }` - a removal that did not confirm leaves the
    * old number flagged on the card for "Retirer cet autre numero", never a failed hand-over. Lydia's
    * unconfirmed rights are the add's typed error; a target who left meanwhile is the 409
@@ -296,22 +301,34 @@ export class LydiaCashiersController {
       );
       added = err;
     }
-    const record = await this.ops.socialStep<HandoverRecord>(
-      associationId,
-      'lydia-responsable-handover',
-      {
-        vendorToken: pre.vendorToken,
-        userId,
-        phone,
-        previousResponsableId: pre.previousResponsableId,
-        actorId,
-        confirmed: added === true,
-        claimToken: pre.claimToken,
-      },
-      true
-    );
-    const removed = record.removeOther
-      ? await this.removeAfterHandover(associationId, record.cashierId, actorId)
+    let record: HandoverRecord;
+    try {
+      record = await this.ops.socialStep<HandoverRecord>(
+        associationId,
+        'lydia-responsable-handover',
+        {
+          vendorToken: pre.vendorToken,
+          userId,
+          phone,
+          previousResponsableId: pre.previousResponsableId,
+          actorId,
+          confirmed: added === true,
+          claimToken: pre.claimToken,
+        },
+        true
+      );
+    } catch (err: unknown) {
+      // Lydia holds the number (every right, or unknown rights) and NO row names it.
+      this.logger.error(
+        `Lydia Responsable of ${associationId}: hand-over NOT recorded after Lydia added the number ` +
+          `(${added === true ? 'every right confirmed' : 'rights unconfirmed'}) - user ` +
+          `${userId.slice(0, 8)}, phone ending ${phone.slice(-2)}, holds them with no row: hand ` +
+          `over again to the same member with the same number, or remove it in the Lydia Pro app`
+      );
+      throw err;
+    }
+    const removed = record.remove
+      ? await this.removeAfterHandover(associationId, record.cashierId, record.remove, actorId)
       : null;
     if (added !== true) throw added;
     if (record.outcome === 'target-left') {
@@ -356,8 +373,9 @@ export class LydiaCashiersController {
   }
 
   /**
-   * Removes the other number of row `cashierId` right after a hand-over's record - the old
-   * Responsable's number, or a target's who left - through the verified path. Answers whether
+   * Removes number `number` of row `cashierId` right after a hand-over's record - the old
+   * Responsable's number (`previous`), or a target's who left (`previous` when it was tracked on
+   * the old Responsable, `current` on a promoted cashier's own row) - through the verified path. Answers whether
    * Lydia's re-read showed 0 rights. Never throws: the hand-over's own outcome is already recorded,
    * and every way this fails leaves the number on the card (flagged, or untried while another
    * operation held the claim - WARN), for "Retirer cet autre numero".
@@ -365,10 +383,11 @@ export class LydiaCashiersController {
   private async removeAfterHandover(
     associationId: string,
     cashierId: string,
+    number: LydiaCashierNumber,
     actorId: string
   ): Promise<boolean> {
     try {
-      await this.ops.revoke(associationId, cashierId, 'previous', actorId);
+      await this.ops.revoke(associationId, cashierId, number, actorId);
       return true;
     } catch (err: unknown) {
       const answer = err instanceof HttpException ? err.getResponse() : undefined;

@@ -45,6 +45,10 @@ function lydiaCashierCodeText(code: string | null | undefined): string | null {
       return m.asso_lydia_handover_err_forbidden();
     case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_SAME_PERSON:
       return m.asso_lydia_handover_err_same_person();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER:
+      return m.asso_lydia_handover_err_not_payout_manager();
+    case LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_CASHIER_NUMBER:
+      return m.asso_lydia_handover_err_cashier_number();
   }
   return null;
 }

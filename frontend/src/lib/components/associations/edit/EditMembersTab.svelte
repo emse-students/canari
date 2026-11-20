@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import {
     addMember,
-    removeMember,
     updateMemberRole,
     reorderMembers,
     ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY,
@@ -25,6 +24,8 @@
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
   import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
+  import { isGlobalAdmin } from '$lib/stores/user';
+  import { removeRosterMember } from '$lib/associations/lydiaResponsableRemoval';
 
   interface Props {
     asso: Association;
@@ -151,7 +152,11 @@
       return;
     }
     try {
-      await removeMember(asso.id, targetId);
+      // A platform admin removing the Lydia Responsable confirms by typing (owner, 2026-11-20).
+      if ((await removeRosterMember(asso, targetId, isGlobalAdmin())) === 'declined') {
+        Log.d('editMembersTab.handleRemoveMember: the Lydia Responsable kept', { targetId });
+        return;
+      }
       members = members.filter((m) => m.userId !== targetId);
     } catch (err) {
       memberError = memberWriteError(err, m.common_delete_error());

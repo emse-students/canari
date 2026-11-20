@@ -61,8 +61,10 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    owed if the screens cannot do it yet), and only then may leave ([decisions](owner-decisions-of-2026-11-19.md)).
    **Built 2026-11-20, behind its own switch, OFF**: "Transférer le rôle", the hand-over (add the heir
    with the 13 rights, record, remove the old number through the verified removal) and the departure
-   refusal `LYDIA_RESPONSABLE_MUST_HAND_OVER`
-   ([payments](../frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)); it flips
+   refusal `LYDIA_RESPONSABLE_MUST_HAND_OVER` (a platform admin may remove a Responsable anyway after a
+   typed confirmation; heirs hold `MANAGE_PAYOUT_ACCOUNT`; a cashier is promoted in one step - owner,
+   2026-11-20) ([payments](../frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)).
+   Items 4 and 6 stand: an erased Responsable's current number stays live at Lydia under no row. It flips
    after [homologation](reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md) and
    [the owner's trial](reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md).
 8. **The claim fence is a clock.** social waits 30 s for core's removal and then records it NOT

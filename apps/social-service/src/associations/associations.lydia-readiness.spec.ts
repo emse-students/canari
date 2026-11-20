@@ -9,8 +9,11 @@ import {
   LYDIA_BUSINESS_PENDING_VALIDATION,
 } from './lydia-account-bridge';
 import {
+  LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+  LYDIA_RESPONSABLE_HANDOVER_DISABLED,
   LYDIA_RESPONSABLE_HANDOVER_ENABLED,
   LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
   LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
   LYDIA_RESPONSABLE_MUST_HAND_OVER,
 } from './lydia-responsable-handover';
@@ -1241,6 +1244,9 @@ describe('the Responsable codes social-service answers follow the shared contrac
       responsableHandoverForbidden: LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
       responsableHandoverSamePerson: LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
       responsableMustHandOver: LYDIA_RESPONSABLE_MUST_HAND_OVER,
+      responsableHandoverHeirNotPayoutManager: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+      responsableHandoverCashierNumber: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+      responsableHandoverDisabled: LYDIA_RESPONSABLE_HANDOVER_DISABLED,
       responsableHandoverEnabled: LYDIA_RESPONSABLE_HANDOVER_ENABLED,
     }).toEqual({
       responsableAlreadySet: contract.social.responsableAlreadySet,
@@ -1256,6 +1262,10 @@ describe('the Responsable codes social-service answers follow the shared contrac
       responsableHandoverForbidden: contract.social.responsableHandoverForbidden,
       responsableHandoverSamePerson: contract.social.responsableHandoverSamePerson,
       responsableMustHandOver: contract.social.responsableMustHandOver,
+      responsableHandoverHeirNotPayoutManager:
+        contract.social.responsableHandoverHeirNotPayoutManager,
+      responsableHandoverCashierNumber: contract.social.responsableHandoverCashierNumber,
+      responsableHandoverDisabled: contract.social.responsableHandoverDisabled,
       responsableHandoverEnabled: contract.switches.responsableHandoverEnabled,
     });
   });

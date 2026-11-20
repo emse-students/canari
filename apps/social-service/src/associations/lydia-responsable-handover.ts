@@ -24,6 +24,11 @@ import { LYDIA_CASHIER_PHONE_IN_USE, numberHeldBy } from './lydia-cashier-claim'
  */
 export const LYDIA_RESPONSABLE_HANDOVER_ENABLED = false;
 
+/**
+ * The `code` (409) of a hand-over step reaching this service while its switch is off - core's own
+ * code, the same string, answered here too as defence in depth.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_DISABLED = 'LYDIA_RESPONSABLE_HANDOVER_DISABLED';
 /** The `code` (403) of a hand-over asked by someone who is neither the Responsable nor a platform admin. */
 export const LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN = 'LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN';
 /** The `code` (400) of a hand-over to the person who already is the Responsable. */
@@ -33,6 +38,20 @@ export const LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON = 'LYDIA_RESPONSABLE_HANDOVE
  * while the hand-over is on: the role is handed over first (owner, 2026-11-19).
  */
 export const LYDIA_RESPONSABLE_MUST_HAND_OVER = 'LYDIA_RESPONSABLE_MUST_HAND_OVER';
+/**
+ * The `code` (400) of a hand-over to a member who does not hold MANAGE_PAYOUT_ACCOUNT (owner,
+ * 2026-11-20): such an heir could never reach the cashier screens to hand over in turn, so could
+ * never leave.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER =
+  'LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER';
+/**
+ * The `code` (409) of a hand-over to a member who already is a cashier, asked with ANOTHER number
+ * than theirs: the promotion replaces that number's rights, and a second number would leave the
+ * first one holding rights no row could remove.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER =
+  'LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER';
 
 /** What the hand-over's checks read of one live cashier row (the claim's locked rows). */
 export interface HandoverRow {
@@ -61,6 +80,11 @@ export interface HandoverPlan {
    * (Lydia did not confirm it): this attempt retries it.
    */
   retry: boolean;
+  /**
+   * The heir's own live cashier row (a Tresorier or a Vendeur promoted in one step, owner,
+   * 2026-11-20), or null: the record closes it in the transaction that makes them Responsable.
+   */
+  heirCashierId: string | null;
 }
 
 /** The typed refusals of the plan, in the order they are checked. */
@@ -78,9 +102,10 @@ function refuse({ status, code, message }: Refusal): never {
  * a CONFIRMED Responsable exists (`LYDIA_CASHIER_NO_RESPONSABLE` - the removal of the old number
  * needs a confirmed context, and an unconfirmed one is confirmed by its own resend first); the asker
  * IS that Responsable or a platform admin (403 `LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN`); the target is
- * someone else (`LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON`), a member (`LYDIA_CASHIER_NOT_A_MEMBER`) and
- * not already a live cashier (`LYDIA_CASHIER_ALREADY_SET`: remove that role first - one live row per
- * member); the number is not the Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`), the Responsable's other
+ * someone else (`LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON`), a member (`LYDIA_CASHIER_NOT_A_MEMBER`)
+ * holding MANAGE_PAYOUT_ACCOUNT (`LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER`); an heir who
+ * already is a cashier is PROMOTED (owner, 2026-11-20) with their own number only
+ * (`LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER`); the number is not the Responsable's (`LYDIA_CASHIER_PHONE_IN_USE`), the Responsable's other
  * number slot is free or holds exactly this number (`LYDIA_RESPONSABLE_PHONE_LOCKED` otherwise: a
  * number change is not finished), and no other live row holds it (`LYDIA_CASHIER_PHONE_IN_USE`). A seal
  * that does not open is a 503 for the Responsable's own numbers and counts as holding the number for
@@ -89,12 +114,11 @@ function refuse({ status, code, message }: Refusal): never {
 export function planHandover(
   rows: HandoverRow[],
   ask: HandoverAsk,
-  targetIsMember: boolean,
+  target: { isMember: boolean; managesPayout: boolean },
   open: (sealed: string) => string | null,
   codes: {
     noResponsable: string;
     notAMember: string;
-    alreadySet: string;
     phoneLocked: string;
   }
 ): HandoverPlan {
@@ -120,19 +144,31 @@ export function planHandover(
       message: 'This member already is the Responsable',
     });
   }
-  if (!targetIsMember) {
+  if (!target.isMember) {
     refuse({
       status: 400,
       code: codes.notAMember,
       message: 'The new Responsable must be a member of the association',
     });
   }
-  if (rows.some((row) => row.userId === ask.userId)) {
+  if (!target.managesPayout) {
     refuse({
-      status: 409,
-      code: codes.alreadySet,
-      message: 'This member already is a cashier: remove that role first',
+      status: 400,
+      code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+      message: 'The new Responsable must be allowed to manage the payout account',
     });
+  }
+  const heirRow = rows.find((row) => row.userId === ask.userId) ?? null;
+  if (heirRow) {
+    const theirs = heirRow.phoneSealed ? open(heirRow.phoneSealed) : null;
+    if (!theirs) throw new ServiceUnavailableException("The heir's cashier number cannot be read");
+    if (theirs !== ask.phone) {
+      refuse({
+        status: 409,
+        code: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+        message: 'This member already is a cashier: hand over to the number they are cashier with',
+      });
+    }
   }
   const current = responsable.phoneSealed ? open(responsable.phoneSealed) : null;
   if (!current) throw new ServiceUnavailableException("The Responsable's number cannot be read");
@@ -159,7 +195,7 @@ export function planHandover(
   }
   const held = numberHeldBy(
     rows
-      .filter((row) => row.id !== responsable.id)
+      .filter((row) => row.id !== responsable.id && row.id !== heirRow?.id)
       .flatMap((row) => [row.phoneSealed, row.previousPhoneSealed]),
     ask.phone,
     open
@@ -171,17 +207,20 @@ export function planHandover(
       message: 'This number already is a cashier number',
     });
   }
-  return { previousResponsableId: responsable.id, retry };
+  return { previousResponsableId: responsable.id, retry, heirCashierId: heirRow?.id ?? null };
 }
 
 /**
  * What a hand-over's record did, once Lydia answered the add:
  * - `handed-over`: the target is the live Responsable; the old number is the new row's OTHER number,
- *   to remove next (`removeOther`) - or there was no old Responsable left to replace;
+ *   to remove next - or there was no old Responsable left to replace;
  * - `unconfirmed`: Lydia did not confirm the 13 rights - the old Responsable stays, the asked number
- *   is TRACKED as their other number (Lydia may list it), for a retry or a removal;
- * - `target-left`: Lydia confirmed, but the target is no longer a member - the old Responsable stays,
- *   the asked number is tracked as their other number and removed next (`removeOther`).
+ *   is TRACKED (as the Responsable's other number, or on the heir's own cashier row, unconfirmed),
+ *   for a retry or a removal;
+ * - `target-left`: the target is no longer a member - the old Responsable stays, the asked number is
+ *   tracked and removed next. With NO old Responsable left (an erasure took it meanwhile), the number
+ *   is tracked as a departed Responsable's: no other Responsable number remains to remove it with,
+ *   so a platform admin hands the role over and that removes it.
  */
 export type HandoverOutcome = 'handed-over' | 'unconfirmed' | 'target-left';
 
@@ -195,7 +234,7 @@ export function handoverOutcome(
   confirmed: boolean,
   targetIsMember: boolean
 ): HandoverOutcome {
+  if (!targetIsMember && (confirmed || !previousLive)) return 'target-left';
   if (!confirmed) return 'unconfirmed';
-  if (!previousLive) return 'handed-over';
-  return targetIsMember ? 'handed-over' : 'target-left';
+  return 'handed-over';
 }

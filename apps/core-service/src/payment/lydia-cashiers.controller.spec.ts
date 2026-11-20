@@ -355,7 +355,7 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
       '/lydia-responsable-handover': {
         outcome,
         cashierId: handed ? NEW_ROW : OLD_ROW,
-        removeOther: outcome !== 'unconfirmed',
+        remove: outcome !== 'unconfirmed' ? 'previous' : null,
       },
       '/lydia-cashier-revoke-claim': {
         vendorToken: 'vendor-1',
@@ -546,7 +546,7 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
       '/lydia-responsable-handover': {
         outcome: 'handed-over',
         cashierId: NEW_ROW,
-        removeOther: true,
+        remove: 'previous',
       },
       '/lydia-cashier-revoke-claim': {
         status: 409,
@@ -590,5 +590,61 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     ).rejects.toMatchObject({ status: 503 });
     expect(steps()).toEqual(['lydia-responsable-handover-claim', 'lydia-responsable-handover']);
     expect(removeLydiaCashier).not.toHaveBeenCalled();
+  });
+
+  it('the record REFUSED (typed) after Lydia added the 13 rights: said at ERROR - the heir, the last two digits, the way back', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    social({
+      '/lydia-responsable-handover-claim': CLAIMED,
+      '/lydia-responsable-handover': {
+        status: 409,
+        refusal: { code: 'LYDIA_CASHIER_CLAIM_LOST' },
+      },
+    });
+    const removeLydiaCashier = jest.fn();
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, { userId: 'heir-user-0001', phone: HEIR }, selfReq)
+    ).rejects.toMatchObject({ status: 409, response: { code: 'LYDIA_CASHIER_CLAIM_LOST' } });
+    const said = String(error.mock.calls);
+    expect(said).toContain('hand-over NOT recorded after Lydia added the number');
+    expect(said).toContain('every right confirmed');
+    expect(said).toContain('user heir-use');
+    expect(said).toContain('phone ending 22');
+    expect(said).toContain('hand over again to the same member with the same number');
+    expect(said).not.toContain(HEIR);
+    expect(removeLydiaCashier).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("a promoted cashier who left meanwhile: THEIR OWN row's current number removed", async () => {
+    social({
+      '/lydia-responsable-handover-claim': { ...CLAIMED, heirCashierId: NEW_ROW },
+      '/lydia-responsable-handover': {
+        outcome: 'target-left',
+        cashierId: NEW_ROW,
+        remove: 'current',
+      },
+      '/lydia-cashier-revoke-claim': {
+        vendorToken: 'vendor-1',
+        cashierPhone: HEIR,
+        contextPhone: CONTEXT_PHONE,
+        claimToken: REVOKE_TOKEN,
+      },
+      '/lydia-cashier-revoke': { ok: true },
+    });
+    const removeLydiaCashier = jest.fn().mockResolvedValue({ verified: true, held: 0 });
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({ status: 409, response: { code: LYDIA_CASHIER_NOT_A_MEMBER } });
+    expect(postsTo('/lydia-cashier-revoke-claim')[0][1]).toEqual({
+      cashierId: NEW_ROW,
+      number: 'current',
+    });
   });
 });

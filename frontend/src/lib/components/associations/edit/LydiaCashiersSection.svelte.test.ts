@@ -30,6 +30,7 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
   listMembers: vi.fn(() =>
     Promise.resolve([
       { userId: 'u-resp', displayName: 'Rita' },
+      { userId: 'u-plain', displayName: 'Paul' },
       { userId: 'u-heir', displayName: 'Hugo' },
     ])
   ),
@@ -80,6 +81,8 @@ const account: AssociationPayoutAccount = {
   lydiaOnboardingComplete: true,
   responsable: { userId: 'u-resp', name: 'Rita', phoneEnd: '32', confirmed: true },
   cashiers: [responsable],
+  // Paul is a member without MANAGE_PAYOUT_ACCOUNT: never offered as the heir (owner, 2026-11-20).
+  payoutManagerIds: ['u-resp', 'u-heir'],
 };
 
 const mounted: (() => void)[] = [];
@@ -121,7 +124,7 @@ async function handOverTo(target: HTMLElement, phone: string) {
   expect(picker.textContent?.trim()).toBe('Hugo');
   picker.click();
   flushSync();
-  // The Responsable (a cashier already) is not offered: the heir is the only member listed.
+  // Neither the Responsable nor a member without the payout right is offered: the heir alone.
   const offered = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')];
   expect(offered.map((o) => o.textContent?.trim())).toEqual(['Hugo']);
   offered[0].click();

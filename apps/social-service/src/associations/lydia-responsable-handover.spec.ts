@@ -1,7 +1,9 @@
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
 import {
+  LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
   LYDIA_RESPONSABLE_HANDOVER_ENABLED,
   LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
   LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
   handoverOutcome,
   planHandover,
@@ -18,11 +20,12 @@ import { LYDIA_CASHIER_PHONE_IN_USE } from './lydia-cashier-claim';
 const CODES = {
   noResponsable: 'NO_RESPONSABLE',
   notAMember: 'NOT_A_MEMBER',
-  alreadySet: 'ALREADY_SET',
   phoneLocked: 'PHONE_LOCKED',
 };
 const OLD = '+33611111111';
 const NEW = '+33622222222';
+/** A member holding MANAGE_PAYOUT_ACCOUNT: the only heir the hand-over accepts. */
+const PAYOUT_MANAGER = { isMember: true, managesPayout: true };
 const open = (sealed: string): string | null =>
   sealed === 'broken' ? null : sealed.replace(/^sealed:/, '');
 
@@ -44,9 +47,9 @@ const ask = (over: Partial<HandoverAsk> = {}): HandoverAsk => ({
 });
 
 /** The typed code (and status) a plan refuses with, or 'planned'. */
-function outcomeOf(rows: HandoverRow[], a: HandoverAsk, member = true): unknown {
+function outcomeOf(rows: HandoverRow[], a: HandoverAsk, target = PAYOUT_MANAGER): unknown {
   try {
-    planHandover(rows, a, member, open, CODES);
+    planHandover(rows, a, target, open, CODES);
     return 'planned';
   } catch (err: unknown) {
     if (err instanceof HttpException) {
@@ -58,9 +61,10 @@ function outcomeOf(rows: HandoverRow[], a: HandoverAsk, member = true): unknown 
 
 describe('planHandover - who may hand the Responsable over, to whom, with which number', () => {
   it('the Responsable themselves, to another member with a free number: planned, not a retry', () => {
-    expect(planHandover([responsable()], ask(), true, open, CODES)).toEqual({
+    expect(planHandover([responsable()], ask(), PAYOUT_MANAGER, open, CODES)).toEqual({
       previousResponsableId: 'row-resp',
       retry: false,
+      heirCashierId: null,
     });
   });
 
@@ -71,9 +75,12 @@ describe('planHandover - who may hand the Responsable over, to whom, with which 
   });
 
   it('a payout manager who is not the Responsable is refused (403), before any other check', () => {
-    expect(outcomeOf([responsable()], ask({ actorId: 'treasurer' }), false)).toBe(
-      `403 ${LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN}`
-    );
+    expect(
+      outcomeOf([responsable()], ask({ actorId: 'treasurer' }), {
+        isMember: false,
+        managesPayout: false,
+      })
+    ).toBe(`403 ${LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN}`);
   });
 
   it('no Responsable, or one Lydia has not confirmed: NO_RESPONSABLE (its resend confirms it first)', () => {
@@ -88,10 +95,35 @@ describe('planHandover - who may hand the Responsable over, to whom, with which 
   });
 
   it('to someone who is not a member: NOT_A_MEMBER', () => {
-    expect(outcomeOf([responsable()], ask(), false)).toBe('400 NOT_A_MEMBER');
+    expect(outcomeOf([responsable()], ask(), { isMember: false, managesPayout: false })).toBe(
+      '400 NOT_A_MEMBER'
+    );
   });
 
-  it('to a member who already is a cashier: ALREADY_SET (one live row per member; remove that role first)', () => {
+  it('to a member without MANAGE_PAYOUT_ACCOUNT: refused - they could never hand over in turn, nor leave', () => {
+    expect(outcomeOf([responsable()], ask(), { isMember: true, managesPayout: false })).toBe(
+      `400 ${LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER}`
+    );
+  });
+
+  it('a member who already is a cashier is PROMOTED with their own number (owner, 2026-11-20)', () => {
+    const tresorier: HandoverRow = {
+      id: 'row-t',
+      userId: 'heir',
+      role: 'tresorier',
+      phoneSealed: `sealed:${NEW}`,
+      previousPhoneSealed: null,
+      confirmedAt: new Date(0),
+    };
+    // Their own number is not "in use" by someone else: it is the number promoted.
+    expect(planHandover([responsable(), tresorier], ask(), PAYOUT_MANAGER, open, CODES)).toEqual({
+      previousResponsableId: 'row-resp',
+      retry: false,
+      heirCashierId: 'row-t',
+    });
+  });
+
+  it('a cashier heir asked with ANOTHER number: CASHIER_NUMBER (the first would keep rights no row removes)', () => {
     const vendeur: HandoverRow = {
       id: 'row-v',
       userId: 'heir',
@@ -100,7 +132,23 @@ describe('planHandover - who may hand the Responsable over, to whom, with which 
       previousPhoneSealed: null,
       confirmedAt: new Date(0),
     };
-    expect(outcomeOf([responsable(), vendeur], ask())).toBe('409 ALREADY_SET');
+    expect(outcomeOf([responsable(), vendeur], ask())).toBe(
+      `409 ${LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER}`
+    );
+  });
+
+  it('a cashier heir whose own seal does not open: a 503, nothing claimed', () => {
+    const broken: HandoverRow = {
+      id: 'row-v',
+      userId: 'heir',
+      role: 'vendeur',
+      phoneSealed: 'broken',
+      previousPhoneSealed: null,
+      confirmedAt: new Date(0),
+    };
+    expect(() => planHandover([responsable(), broken], ask(), PAYOUT_MANAGER, open, CODES)).toThrow(
+      ServiceUnavailableException
+    );
   });
 
   it("the Responsable's own number, or another cashier's: PHONE_IN_USE", () => {
@@ -141,16 +189,16 @@ describe('planHandover - who may hand the Responsable over, to whom, with which 
       planHandover(
         [responsable({ previousPhoneSealed: `sealed:${NEW}` })],
         ask(),
-        true,
+        PAYOUT_MANAGER,
         open,
         CODES
       )
-    ).toEqual({ previousResponsableId: 'row-resp', retry: true });
+    ).toEqual({ previousResponsableId: 'row-resp', retry: true, heirCashierId: null });
   });
 
   it("the Responsable's own seal that does not open: a 503, nothing claimed", () => {
     expect(() =>
-      planHandover([responsable({ phoneSealed: 'broken' })], ask(), true, open, CODES)
+      planHandover([responsable({ phoneSealed: 'broken' })], ask(), PAYOUT_MANAGER, open, CODES)
     ).toThrow(ServiceUnavailableException);
   });
 });
@@ -159,7 +207,7 @@ describe('handoverOutcome - what a record does with Lydia answer', () => {
   it('confirmed, the old Responsable live, the target a member: handed over', () => {
     expect(handoverOutcome(true, true, true)).toBe('handed-over');
   });
-  it('not confirmed: the old Responsable stays (unconfirmed), whatever else', () => {
+  it('not confirmed: the old Responsable stays (unconfirmed)', () => {
     expect(handoverOutcome(true, false, true)).toBe('unconfirmed');
     expect(handoverOutcome(true, false, false)).toBe('unconfirmed');
     expect(handoverOutcome(false, false, true)).toBe('unconfirmed');
@@ -168,7 +216,11 @@ describe('handoverOutcome - what a record does with Lydia answer', () => {
     expect(handoverOutcome(true, true, false)).toBe('target-left');
   });
   it('confirmed with no old Responsable left (an erasure took it): handed over to the only holder', () => {
-    expect(handoverOutcome(false, true, false)).toBe('handed-over');
+    expect(handoverOutcome(false, true, true)).toBe('handed-over');
+  });
+  it('no old Responsable left AND the target left too: target-left, confirmed or not (M4)', () => {
+    expect(handoverOutcome(false, true, false)).toBe('target-left');
+    expect(handoverOutcome(false, false, false)).toBe('target-left');
   });
 });
 

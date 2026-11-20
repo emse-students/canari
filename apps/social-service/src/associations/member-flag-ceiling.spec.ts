@@ -822,7 +822,7 @@ describe('removeMember - a Lydia Responsable hands the role over before leaving 
     expect(departures.settleDepartures).not.toHaveBeenCalled();
   });
 
-  it('gate on: removed by another manager or by the platform admin - refused the same way', async () => {
+  it('gate on: removed by another manager, or by the platform admin without the typed confirmation - refused', async () => {
     const { service, remove } = withResponsable(true);
     expect(
       await settle(
@@ -832,6 +832,46 @@ describe('removeMember - a Lydia Responsable hands the role over before leaving 
     expect(await settle(service.removeMember(ASSO, 'pres', { granter: PLATFORM }))).toBe(
       LYDIA_RESPONSABLE_MUST_HAND_OVER
     );
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("gate on: the predicate is the hand-over's - a CONFIRMED row of the MANAGED Business only", async () => {
+    const { service, query } = withResponsable(true);
+    await settle(service.leaveAssociation(ASSO, 'pres'));
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('"confirmedAt" IS NOT NULL');
+    expect(sql).toContain('"enrolledVendorToken"');
+    expect(sql).toContain('"lydiaAccountId"');
+  });
+
+  it('gate on: a platform admin who confirmed by typing removes the Responsable, said at ERROR (owner, 2026-11-20)', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, remove, departures } = withResponsable(true);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'pres', {
+          granter: PLATFORM,
+          lydiaResponsableAcknowledged: true,
+        })
+      )
+    ).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls)).toContain('keeps every right at Lydia');
+    // The departure still settles what it owes (the other number), and says the current one stays.
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'pres');
+    error.mockRestore();
+  });
+
+  it('gate on: the acknowledgement counts for a platform admin only - a manager sending it is refused', async () => {
+    const { service, remove } = withResponsable(true);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'pres', {
+          granter: { userId: 'sec', isGlobalAdmin: false },
+          lydiaResponsableAcknowledged: true,
+        })
+      )
+    ).toBe(LYDIA_RESPONSABLE_MUST_HAND_OVER);
     expect(remove).not.toHaveBeenCalled();
   });
 

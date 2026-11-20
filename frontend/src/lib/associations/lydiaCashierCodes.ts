@@ -39,4 +39,9 @@ export const LYDIA_CASHIER_SOCIAL_REFUSAL = {
   RESPONSABLE_HANDOVER_FORBIDDEN: 'LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN',
   /** The member picked already is the Responsable. */
   RESPONSABLE_HANDOVER_SAME_PERSON: 'LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON',
+  /** The heir does not hold MANAGE_PAYOUT_ACCOUNT: they could never hand over in turn. */
+  RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER:
+    'LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER',
+  /** A cashier heir is promoted with the number they are cashier with, never another one. */
+  RESPONSABLE_HANDOVER_CASHIER_NUMBER: 'LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER',
 } as const;

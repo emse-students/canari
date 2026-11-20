@@ -773,6 +773,14 @@ Play and the App Store serve it - then a one-line pull request sets the constant
 spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
 row only, no push (so no push key, category or native string is owed); the client row, the type in
 `KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+
+**Built 2026-11-20, floor `1.7.3`: `lydia_responsable_handed_over`**, the bell row telling the heir of a
+Lydia Responsable hand-over that they are the Responsable now (no acceptance step, owner, 2026-11-20;
+[payments](frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)). Same shape and
+switch as `lydia_cashier_added` (bell row only, no push, the Lydia Pro help page), and written only while
+the hand-over itself is switched on. Its floor is `1.7.3`, not `1.7.2`: the `1.7.2` pre-releases already
+out do not draw it, and a floor compares the version core only, so a `1.7.2` floor would serve them the
+neutral unknown-type row. `notification-client-floor.ts` keeps it from every older build.
 The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
 
 **What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**

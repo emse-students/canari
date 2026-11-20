@@ -11,6 +11,7 @@ import {
 import { isUUID } from 'class-validator';
 import {
   LydiaCashiersService,
+  type HandoverRecordResult,
   type LydiaCashierRevokeTarget,
 } from '../associations/lydia-cashiers.service';
 import type { LydiaCashierNumber, LydiaCashierView } from '../associations/lydia-cashiers-list';
@@ -164,6 +165,7 @@ export class InternalLydiaCashiersController {
     claimToken: string;
     previousResponsableId: string;
     retry: boolean;
+    heirCashierId: string | null;
   }> {
     assertInternalSecret(headerSecret);
     return this.cashiers.claimHandover(id, {
@@ -191,7 +193,7 @@ export class InternalLydiaCashiersController {
       confirmed?: unknown;
       claimToken?: unknown;
     }
-  ): Promise<{ outcome: string; cashierId: string; removeOther: boolean }> {
+  ): Promise<HandoverRecordResult> {
     assertInternalSecret(headerSecret);
     try {
       return await this.cashiers.recordHandover(id, {

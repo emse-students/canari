@@ -18,10 +18,12 @@ import {
 } from './lydia-cashiers.service';
 import {
   LYDIA_CASHIER_ADDED_TYPE,
+  LYDIA_RESPONSABLE_HANDED_OVER_TYPE,
   LYDIA_CASHIER_NOTIFICATIONS_ENABLED,
   LydiaCashierNotifier,
 } from './lydia-payments-notifier.service';
 import { LYDIA_CASHIER_PHONE_PURPOSE } from './associations.service';
+import { LYDIA_RESPONSABLE_HANDOVER_DISABLED } from './lydia-responsable-handover';
 import { SECRET_BOX_ENV, sealSecret } from '../common/secret-box';
 import {
   LYDIA_CASHIER_CLAIM_LOST,
@@ -68,6 +70,9 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
     );
     expect(LYDIA_NO_BUSINESS).toBe(CONTRACT.core.noBusiness);
     expect(LYDIA_CASHIER_ADDED_TYPE).toBe(CONTRACT.notificationTypes.cashierAdded);
+    expect(LYDIA_RESPONSABLE_HANDED_OVER_TYPE).toBe(
+      CONTRACT.notificationTypes.responsableHandedOver
+    );
   });
 
   it('waits for core exactly as long as core bounds a removal under (its three calls answer first)', () => {
@@ -793,5 +798,56 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       Record<string, string>,
     ];
     expect(body).toMatchObject({ contextPhone: HOLDER_PHONE, cashierPhone: OLD });
+  });
+});
+
+describe('LydiaCashiersService - the hand-over switch, social side (defence in depth)', () => {
+  /** A service whose database must never be read: the switch refuses before. */
+  function shut() {
+    const query = jest.fn();
+    const service = new LydiaCashiersService(
+      { query, manager: { transaction: jest.fn() } } as never,
+      {} as never,
+      { tellAdded: jest.fn(), tellResponsable: jest.fn() } as never,
+      {} as never
+    );
+    return { service, query };
+  }
+
+  it('ships OFF: the claim is the typed 409 DISABLED, nothing read or claimed', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, query } = shut();
+    expect(service.handoverEnabled()).toBe(false);
+    await expect(
+      service.claimHandover('asso-1', {
+        actorId: 'holder',
+        globalAdmin: false,
+        userId: 'heir',
+        phone: '+33611112222',
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED } });
+    expect(query).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a record reaching it while off is refused the same way, its claim released', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service } = shut();
+    const release = jest
+      .spyOn(service as unknown as { release: () => Promise<void> }, 'release')
+      .mockResolvedValue(undefined);
+    await expect(
+      service.recordHandover('asso-1', {
+        vendorToken: 'vendor-1',
+        userId: 'heir',
+        phone: '+33611112222',
+        previousResponsableId: 'row-1',
+        actorId: 'holder',
+        confirmed: true,
+        claimToken: '3e1c8d7b-4a5f-4e6d-8c9b-0a1f2e3d4c5b',
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED } });
+    expect(release).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

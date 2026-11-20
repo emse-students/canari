@@ -207,6 +207,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   follow_accepted: 'reader',
   lydia_refund_issued: 'reader',
   lydia_cashier_added: 'reader',
+  lydia_responsable_handed_over: 'reader',
   live_cut: 'reader',
   live_suspended: 'reader',
   live_withdrawn: 'reader',

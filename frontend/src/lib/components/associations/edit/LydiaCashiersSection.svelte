@@ -15,8 +15,10 @@
   } from '$lib/associations/api';
   import {
     LYDIA_ADDABLE_CASHIER_ROLES,
+    addableMembers,
     handoverConfirmText,
     handoverDoneText,
+    handoverHeirs,
     lydiaCashiersView,
   } from '$lib/associations/lydiaCashiers';
   import {
@@ -108,19 +110,17 @@
   }
 
   /**
-   * Reads the roster once: the members who are not cashiers yet (the Responsable included), each
-   * once. The add form and the hand-over pick from it; `pick` receives the first one.
+   * Reads the roster once and keeps whom the form offers (`addableMembers` for the add,
+   * `handoverHeirs` for the hand-over); `pick` receives the first one.
    */
-  function loadPickableMembers(pick: (userId: string) => void) {
+  function loadPickableMembers(
+    offered: (rows: AssociationMember[]) => AssociationMember[],
+    pick: (userId: string) => void
+  ) {
     membersFailed = false;
     void listMembers(associationId)
       .then((rows) => {
-        const taken = new Set((account.cashiers ?? []).map((c) => c.userId));
-        members = rows.filter(
-          (row, index) =>
-            !taken.has(row.userId) &&
-            rows.findIndex((other) => other.userId === row.userId) === index
-        );
+        members = offered(rows);
         pick(members[0]?.userId ?? '');
       })
       .catch((err) => {
@@ -135,7 +135,10 @@
     handoverFor = null;
     error = '';
     notice = '';
-    loadPickableMembers((userId) => (addUserId = userId));
+    loadPickableMembers(
+      (rows) => addableMembers(rows, account),
+      (userId) => (addUserId = userId)
+    );
   }
 
   /** Opens the hand-over form under the Responsable's row. */
@@ -148,7 +151,10 @@
     handoverPhoneError = '';
     error = '';
     notice = '';
-    loadPickableMembers((userId) => (handoverUserId = userId));
+    loadPickableMembers(
+      (rows) => handoverHeirs(rows, account, cashier.userId),
+      (userId) => (handoverUserId = userId)
+    );
   }
 
   /**
@@ -321,7 +327,7 @@
               {#if membersFailed}
                 <p class="text-red-err text-sm" role="alert">{m.asso_lydia_resp_members_error()}</p>
               {:else if members.length === 0}
-                <p class="text-text-muted text-sm">{m.asso_lydia_resp_members_empty()}</p>
+                <p class="text-text-muted text-sm">{m.asso_lydia_handover_members_empty()}</p>
               {:else}
                 <Select
                   id="lydia-handover-member"
