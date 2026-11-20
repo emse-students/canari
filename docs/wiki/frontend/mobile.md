@@ -3552,22 +3552,43 @@ nothing of ours there.
 - **The move of an older build's files** (`backup_exclusion::open_store`, `migrate_root`). A
   process's FIRST resolution moves the root's entries of ours into the store with an EXCLUSIVE rename
   (`renamex_np`, `RENAME_EXCL`), under an exclusive `flock` on the store directory (the Swift twin
-  takes the same lock), before it returns: no process of this build reads or writes a name the root
+  takes the same lock), before it returns. In the app, the move runs inside a `BackgroundTime` task,
+  as the seed edit does: an app suspended while it holds a lock in the shared container is killed
+  (`0xdead10cc`). The notification extension has no application to ask and is never suspended
+  mid-call. So: no process of this build reads or writes a name the root
   still holds, and the seed mirror, the undrained push cache and the device notices arrive whole.
   An unreadable root or a refused rename is COUNTED and the store is still answered - the
   notification extension decrypts from it either way; only a store that cannot be created is an
   error for the caller.
 - **The move touches an ALLOWLIST** (`OURS_STEMS`, `OURS_PREFIXES`, mirrored by
-  `ShareCapture.rootStems` / `rootPrefixes`): the names our builds write - a stem covers the name and
-  what continues it after a dot (`mls.bin.tmp`), a prefix the extension's avatar and logo caches. The
+  `ShareCapture.rootStems` / `rootPrefixes`): the names our builds write. A stem covers the name and
+  what continues it after a dot (`mls.bin.tmp`); a prefix covers the extension's avatar and logo
+  caches. It includes `channel_keys`, an older build's plaintext epoch keys: once moved in,
+  `native_cache::remove_legacy_channel_keys`, which looks in the store only, deletes them. Each
+  entry of that ONE table also says what the name HOLDS (`Holding`):
+  - a **mirror** the app rewrites from a source of truth that lives elsewhere (`mls`, the push
+    context and secret, the display names and nicknames, the share epoch, the foreground mark,
+    `channel_keys`, the avatar and logo caches);
+  - a **sole copy**, data held nowhere else (the seed mirror, the push cache, the device notices,
+    the extension's outcome records, the share inbox and its manifest).
+
+  The source test compares the holdings too. The
   system's entries (`Library`, the `.com.apple.*` metadata) are never moved; any other name is
   counted, left where it is, and fails the verdict: either a writer the list missed, or not ours.
 - **A downgrade, then this build again: the ROOT copy wins.** An older build (`1.7.1`) writes
   `mls.bin`, the push credential and the rest at the root again; the next upgrade finds the same name
   in the store. Under the lock no two processes of this build race one name, so a conflict has that
-  one cause, and the root copy is the NEWER one. The store's copy goes to ONE quarantine generation,
-  `store/.superseded/<name>` (flagged with the store; a previous quarantined copy of the name is
-  replaced, so it never grows; nothing current is deleted), and the root copy moves in. The launch
+  one cause, and the root copy is the NEWER one. What happens to the store's copy depends on what
+  the name holds:
+  - a **mirror's** store copy is REMOVED, since the next mirror rewrites it anyway;
+  - a **sole copy's** goes to ONE quarantine generation, `store/.superseded/<name>`. It is flagged
+    with the store, and a previous quarantined copy of the name is replaced, so the quarantine
+    never grows.
+
+  Then the root copy moves in. **A sign-out** (`end_push_registration_files`), **an account's
+  deletion** (`remove_user_push_files`) and **the factory wipe** (`wipe_app_group`) all remove
+  `.superseded` (`storage::remove_superseded`), so nothing of a signed-out account stays on the
+  phone. The launch
   verdict says it once, at WARN ("n entries came back from an older build"); the next launch is
   back to INFO. (The real MLS state lives in `Application Support`, so a downgrade does not hinge on
   the App Group copy.) A pending share keeps working through all of it: its import takes the file

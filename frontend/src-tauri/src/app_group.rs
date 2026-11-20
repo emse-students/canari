@@ -73,6 +73,10 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
         return Ok(opening.path.clone());
     }
     let root = app_group_container()?;
+    // The move holds a `flock` on the store in the shared container: an app suspended holding it is
+    // killed (`0xdead10cc`), so the move asks for background time as the seed edit does. `None` in
+    // the notification extension, which has no application and is never suspended mid-call.
+    let _background = BackgroundTime::begin(c"canari-app-group-move");
     let opening = crate::backup_exclusion::open_store(&root, |store| {
         crate::native_cache::ios_exclude_from_backup(store)
     })

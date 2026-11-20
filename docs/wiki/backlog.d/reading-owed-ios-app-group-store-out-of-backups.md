@@ -8,7 +8,7 @@ container root is no longer flagged: everything the app and its two extensions s
 `store/` inside it, flagged by whichever process creates it, and an older build's root files are
 moved in at each process's first resolution (`backup_exclusion::open_store`, an allowlist of our
 names; a name an older build wrote back after a downgrade wins over the store's copy, which is
-superseded once). A refusal now keeps its `NSError` (domain, code, underlying error, class) in the
+removed for a mirror and quarantined once for a sole copy). A refusal now keeps its `NSError` (domain, code, underlying error, class) in the
 one verdict line. Mechanism:
 [mobile](../frontend/mobile.md#the-app-group-a-store-directory-never-the-root-172).
 
@@ -22,7 +22,15 @@ a `1.7.2-alpha.1` signed in with data (so the move has something to move):
    **Expected:** `[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: ...,
    AppGroup(group.fr.emse.canari)/store` and no `[BACKUP_EXCLUSION]` line at ERROR - the verdict
    also fails when an entry of ours or an unknown name is still at the root, or a move was refused.
-   Should an ERROR appear, it names the `NSError`'s domain and code - copy it into the entry. The
+   Should an ERROR appear, it names the `NSError`'s domain and code - copy it into the entry.
+   **An `unknown` count on this first reading** most likely comes from Foundation's atomic writes.
+   `write(to:options: .atomic)` and `NSData writeToFile:atomically:` first write a hidden
+   temporary name next to the target (`.dat.nosync...` and the like), then rename it over the
+   target. An older build interrupted mid-write leaves such a file at the root. It is not on the
+   allowlist, so it is counted as unknown and never moved. Step 3's `Manifest.db` names it: an
+   unknown entry sits at the root, outside the flagged store, so the backup carries it. Read that
+   name before reading anything else into the count. The code is deliberately
+   left alone: no name of this shape is added to the allowlist until a reading shows one. The
    notification extension's own opening line (`[CanariNSE] [BACKUP_EXCLUSION] ...`) IS in
    `syslog live`, when a push woke it first.
 2. Receive a push with the app killed (the extension decrypts it: the store answers from the

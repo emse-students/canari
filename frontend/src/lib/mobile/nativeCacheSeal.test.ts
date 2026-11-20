@@ -310,26 +310,37 @@ describe('iOS: every App Group resolver answers the store, never the container r
     const move = between(shareSwift, /private func moveRootIntoStore\(/, /\n {4}}\n/);
     expect(move).toContain('flock(fd, LOCK_EX)');
     expect(move).toContain('renamex_np(from, to, UInt32(RENAME_EXCL))');
-    expect(move).toContain('guard ShareCapture.isOurs(name) else {');
+    expect(move).toContain('guard let holding = ShareCapture.holding(name) else {');
+    expect(move).toContain('supersede(name: name, holding: holding,');
     expect(move).toContain('name != "Library" && !name.hasPrefix(".com.apple.")');
     expect(backupExclusionRs).toContain('name == "Library" || name.starts_with(".com.apple.")');
     expect(backupExclusionRs).toContain('libc::flock(dir.as_raw_fd(), libc::LOCK_EX)');
   });
 
-  it('moves only an allowlist, the same in Rust and in Swift', () => {
-    const list = (source: string, re: RegExp) =>
-      [...(re.exec(source)?.[1] ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
-    const rustStems = list(
+  it('moves only an allowlist, the same in Rust and in Swift, each name with what it holds', () => {
+    // `("mls", Holding::Mirror)` in Rust, `("mls", .mirror)` in Swift: compared as `mls=mirror`.
+    const table = (source: string, re: RegExp) =>
+      [...(re.exec(source)?.[1] ?? '').matchAll(/\("([^"]+)",\s*(?:Holding::|\.)(\w+)\)/g)]
+        .map((m) => `${m[1]}=${m[2].toLowerCase()}`)
+        .sort();
+    const rustStems = table(
       backupExclusionRs,
-      /pub\(crate\) const OURS_STEMS: \[&str; \d+\] = \[([^\]]+)\]/
+      /pub\(crate\) const OURS_STEMS: \[\(&str, Holding\); \d+\] = \[([^\]]+)\]/
     );
-    const rustPrefixes = list(
+    const rustPrefixes = table(
       backupExclusionRs,
-      /pub\(crate\) const OURS_PREFIXES: \[&str; \d+\] = \[([^\]]+)\]/
+      /pub\(crate\) const OURS_PREFIXES: \[\(&str, Holding\); \d+\] =\s*\[([^\]]+)\]/
     );
     expect(rustStems.length).toBeGreaterThan(10);
-    expect(list(shareSwift, /static let rootStems = \[([^\]]+)\]/)).toEqual(rustStems);
-    expect(list(shareSwift, /static let rootPrefixes = \[([^\]]+)\]/)).toEqual(rustPrefixes);
+    expect(rustStems).toContain('channel_keys=mirror');
+    expect(rustStems).toContain('graine_seeds=solecopy');
+    expect(rustPrefixes).toEqual(['assologo_=mirror', 'avatar_=mirror']);
+    expect(
+      table(shareSwift, /static let rootStems: \[\(String, RootHolding\)\] = \[([^\]]+)\]/)
+    ).toEqual(rustStems);
+    expect(
+      table(shareSwift, /static let rootPrefixes: \[\(String, RootHolding\)\] = \[([^\]]+)\]/)
+    ).toEqual(rustPrefixes);
     expect(shareSwift).toContain(
       /pub\(crate\) const SUPERSEDED_DIR: &str = "([^"]+)";/.exec(backupExclusionRs)?.[1] ??
         'missing'

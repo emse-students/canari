@@ -43,14 +43,38 @@ final class ShareCapture {
     /// The directory inside the App Group every shared file lives in - Rust's `APP_GROUP_STORE`
     /// (`backup_exclusion.rs`), the same name: a source test holds the two equal.
     static let storeDirName = "store"
-    /// The root names our builds write, as stems and prefixes - Rust's `OURS_STEMS` and
-    /// `OURS_PREFIXES` (`backup_exclusion.rs`), the same lists: a source test holds them equal.
-    static let rootStems = [
-        "mls", "push_context", "push_secret", "display_names", "conversation_nicknames",
-        "graine_seeds", "device_notices", "fcm_message_cache", "nse_outcomes", "nse_inflight",
-        "nse_done", "shared_inbox", "pending_share", "share_epoch", "app_in_foreground",
+    /// What a root name of ours holds - Rust's `Holding`: a conflict REMOVES a mirror's store copy
+    /// (the app rewrites it from its own source) and quarantines a sole copy's.
+    enum RootHolding {
+        case mirror
+        case soleCopy
+    }
+
+    /// The root names our builds write, as stems and prefixes, each with what it holds - Rust's
+    /// `OURS_STEMS` and `OURS_PREFIXES` (`backup_exclusion.rs`), the same table: a source test holds
+    /// them equal, holdings included.
+    static let rootStems: [(String, RootHolding)] = [
+        ("mls", .mirror),
+        ("push_context", .mirror),
+        ("push_secret", .mirror),
+        ("display_names", .mirror),
+        ("conversation_nicknames", .mirror),
+        ("share_epoch", .mirror),
+        ("app_in_foreground", .mirror),
+        ("channel_keys", .mirror),
+        ("graine_seeds", .soleCopy),
+        ("device_notices", .soleCopy),
+        ("fcm_message_cache", .soleCopy),
+        ("nse_outcomes", .soleCopy),
+        ("nse_inflight", .soleCopy),
+        ("nse_done", .soleCopy),
+        ("shared_inbox", .soleCopy),
+        ("pending_share", .soleCopy),
     ]
-    static let rootPrefixes = ["avatar_", "assologo_"]
+    static let rootPrefixes: [(String, RootHolding)] = [
+        ("avatar_", .mirror),
+        ("assologo_", .mirror),
+    ]
     /// The store's one quarantine generation - Rust's `SUPERSEDED_DIR`.
     static let supersededDirName = ".superseded"
     static let pendingFile = "pending_share.json"
@@ -723,11 +747,13 @@ final class ShareCapture {
         return store
     }
 
-    /// Whether a root name is one our builds write - Rust's `classify_root_entry` allowlist: a stem is
-    /// the whole name or the name continued after a dot, a prefix starts it.
-    static func isOurs(_ name: String) -> Bool {
-        rootStems.contains { name == $0 || name.hasPrefix($0 + ".") }
-            || rootPrefixes.contains { name.hasPrefix($0) }
+    /// What a root name of ours holds, nil when it is not ours - Rust's `classify_root_entry`
+    /// allowlist: a stem is the whole name or the name continued after a dot, a prefix starts it.
+    static func holding(_ name: String) -> RootHolding? {
+        if let stem = rootStems.first(where: { name == $0.0 || name.hasPrefix($0.0 + ".") }) {
+            return stem.1
+        }
+        return rootPrefixes.first(where: { name.hasPrefix($0.0) })?.1
     }
 
     /// The move itself, under the store's lock (released when the descriptor closes). Counts only in
@@ -758,7 +784,7 @@ final class ShareCapture {
         var failures = 0
         var unknown = 0
         for name in names where name != ShareCapture.storeDirName && name != "Library" && !name.hasPrefix(".com.apple.") {
-            guard ShareCapture.isOurs(name) else {
+            guard let holding = ShareCapture.holding(name) else {
                 unknown += 1
                 continue
             }
@@ -772,7 +798,7 @@ final class ShareCapture {
             if code == ENOENT {
                 continue
             }
-            guard code == EEXIST, supersede(name: name, from: from, to: to, store: store) else {
+            guard code == EEXIST, supersede(name: name, holding: holding, from: from, to: to, store: store) else {
                 failures += 1
                 continue
             }
@@ -789,9 +815,22 @@ final class ShareCapture {
         }
     }
 
-    /// A conflict (`moveRootIntoStore`): the store's copy replaces the previous quarantined one in
-    /// `.superseded/`, then the root copy moves in. True when the root copy is in the store.
-    private func supersede(name: String, from: String, to: String, store: URL) -> Bool {
+    /// A conflict (`moveRootIntoStore`): the store's copy goes - removed for a mirror, put in
+    /// `.superseded/` (replacing the previous quarantined one) for a sole copy - then the root copy
+    /// moves in. True when the root copy is in the store.
+    private func supersede(name: String, holding: RootHolding, from: String, to: String, store: URL) -> Bool {
+        if holding == .mirror {
+            do {
+                try FileManager.default.removeItem(atPath: to)
+            } catch let failure as NSError where failure.domain == NSCocoaErrorDomain && failure.code == NSFileNoSuchFileError {
+                // The store copy was gone meanwhile.
+            } catch {
+                let failure = error as NSError
+                log.error("[CanariShare] a mirror's store copy could not be replaced: \(failure.domain, privacy: .public) \(failure.code)")
+                return false
+            }
+            return renamex_np(from, to, UInt32(RENAME_EXCL)) == 0
+        }
         let quarantine = store.appendingPathComponent(ShareCapture.supersededDirName, isDirectory: true)
         if mkdir(quarantine.path, 0o755) != 0 {
             let code = errno

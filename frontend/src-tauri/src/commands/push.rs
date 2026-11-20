@@ -3222,6 +3222,9 @@ fn remove_user_push_files_proved(
             crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
         }
         remove_device_notices_of(dir, user_id, &mut removed, &mut failures);
+        // What a conflict after a downgrade displaced: this account's too.
+        #[cfg(any(target_os = "ios", test))]
+        crate::commands::storage::remove_superseded(dir, &mut removed, &mut failures);
         log::info!(
             "[DEL-LOCAL] push files: {} removed from the extension's container",
             removed - before
@@ -4248,6 +4251,22 @@ mod delete_user_push_files_tests {
             assert!(group.join(kept).exists(), "{kept}");
         }
         assert!(!dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The store's quarantine (what a conflict after a downgrade displaced: the seed mirror, the
+    /// push cache, the device notices) belongs to the account that was signed in, so its deletion
+    /// takes it with the rest - nothing of a removed account stays on the phone.
+    #[test]
+    fn the_deletion_takes_the_stores_quarantine_too() {
+        let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
+        let dir = dir_with("group_quarantine", Some(ctx));
+        let group = extension_container(&dir, ctx);
+        let quarantine = group.join(crate::backup_exclusion::SUPERSEDED_DIR);
+        std::fs::create_dir_all(quarantine.join("device_notices")).unwrap();
+        std::fs::write(quarantine.join("graine_seeds.json"), b"v1").unwrap();
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 10);
+        assert!(!quarantine.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

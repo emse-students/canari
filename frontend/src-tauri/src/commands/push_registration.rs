@@ -110,6 +110,10 @@ fn end_push_registration_files_then(
             &mut removed,
             &mut failures,
         );
+        // What a conflict after a downgrade displaced (the store's quarantine): the account that
+        // signed out held it, and nothing of a signed-out account stays on the phone.
+        #[cfg(any(target_os = "ios", test))]
+        crate::commands::storage::remove_superseded(dir, &mut removed, &mut failures);
     }
     if failures > 0 {
         note(
@@ -502,6 +506,21 @@ mod tests {
         assert!(app.join(SIGNED_OUT_FILE).exists());
         assert!(app.join(DELETION_OWED_FILE).exists());
         assert!(!app.join(PUSH_CONTEXT_FILE).exists());
+    }
+
+    /// The sign-out takes the store's quarantine (what a conflict after a downgrade displaced) with
+    /// the rest of the account's App Group files: nothing of a signed-out account stays.
+    #[test]
+    fn a_sign_out_removes_the_stores_quarantine() {
+        let app = dir("quarantine");
+        let group = dir("quarantine-group");
+        let quarantine = group.join(crate::backup_exclusion::SUPERSEDED_DIR);
+        std::fs::create_dir_all(&quarantine).unwrap();
+        std::fs::write(quarantine.join("fcm_message_cache.ndjson"), b"{}").unwrap();
+        end_push_registration_files(&app, Some(&group)).unwrap();
+        assert!(!quarantine.exists());
+        // Nothing to remove is not an error.
+        end_push_registration_files(&app, Some(&group)).unwrap();
     }
 
     /// A context that is not an object proves nothing about which keys it holds, so it goes.

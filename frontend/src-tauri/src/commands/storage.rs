@@ -1058,6 +1058,12 @@ pub(crate) fn wipe_app_group(group: &std::path::Path) -> Result<(), String> {
             failures.push(e);
         }
     }
+    let (mut removed, mut kept) = (0usize, 0usize);
+    remove_superseded(group, &mut removed, &mut kept);
+    log::info!("[RESET] App Group quarantine: {removed} removed, {kept} kept by a failure");
+    if kept > 0 {
+        failures.push("the App Group quarantine was not removed".to_string());
+    }
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1273,6 +1279,23 @@ pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures
             *failures += 1;
         }
     }
+}
+
+/// Removes the App Group store's quarantine (`backup_exclusion::SUPERSEDED_DIR`): the copies a
+/// conflict after a downgrade displaced belong to the account that was signed in, so a sign-out
+/// and the factory wipe take them with the rest of the App Group's files. `store` is the App Group
+/// store (`app_group::app_group_dir`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn remove_superseded(
+    store: &std::path::Path,
+    removed: &mut usize,
+    failures: &mut usize,
+) {
+    remove_entry(
+        &store.join(crate::backup_exclusion::SUPERSEDED_DIR),
+        removed,
+        failures,
+    );
 }
 
 /// Stores a boolean flag in {app_data_dir}/native_flags.json.
@@ -2191,6 +2214,22 @@ mod tests {
         assert!(group.join("graine_seeds.lock").exists());
         assert!(group.join("push_context.json").exists());
         // Nothing to remove is a success, not a failure.
+        wipe_app_group(&group).unwrap();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// The factory wipe takes the store's quarantine too: what a conflict after a downgrade
+    /// displaced is the wiped install's data like the rest.
+    #[test]
+    fn the_wipe_removes_the_stores_quarantine() {
+        let group = temp_dir("group-quarantine");
+        let quarantine = group.join(crate::backup_exclusion::SUPERSEDED_DIR);
+        std::fs::create_dir_all(quarantine.join("shared_inbox")).unwrap();
+        std::fs::write(quarantine.join("graine_seeds.json"), b"v1").unwrap();
+
+        wipe_app_group(&group).unwrap();
+
+        assert!(!quarantine.exists());
         wipe_app_group(&group).unwrap();
         std::fs::remove_dir_all(&group).ok();
     }

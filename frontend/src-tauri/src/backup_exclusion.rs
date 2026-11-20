@@ -41,7 +41,10 @@
 //! store therefore means an OLDER build wrote the root AFTER a move - a downgrade, then this build
 //! again - and the root copy is the newer one. The store's copy goes to ONE quarantine generation,
 //! [`SUPERSEDED_DIR`] inside the flagged store (a previous quarantined copy of that name is replaced,
-//! so it never grows, and nothing is deleted outright that was current), and the root copy moves in.
+//! so it never grows), and the root copy moves in - when the name holds data held nowhere else
+//! ([`Holding::SoleCopy`]). A MIRROR the app rewrites from its own source ([`Holding::Mirror`]) is
+//! simply replaced: its store copy is removed. A sign-out and the factory wipe remove the
+//! quarantine with the rest of the account's App Group files.
 //! The launch verdict says it once, at WARN.
 //!
 //! **WHAT IT COVERS**, measured on the bench iPhone's backup manifest of 2026-11-20 (mobile wiki,
@@ -230,34 +233,53 @@ pub(crate) enum Severity {
     Error = 2,
 }
 
-/// The names our builds write at the App Group root, as STEMS: a stem covers the name itself and
-/// every name that continues it after a dot (`mls` covers `mls.bin` and `mls.bin.tmp`,
-/// `nse_outcomes` its `.ndjson`, `.1.ndjson` and `.lock`). Mirrored by the share extension
-/// (`ShareCapture.rootStems`); a source test holds the two equal.
-pub(crate) const OURS_STEMS: [&str; 15] = [
-    "mls",
-    "push_context",
-    "push_secret",
-    "display_names",
-    "conversation_nicknames",
-    "graine_seeds",
-    "device_notices",
-    "fcm_message_cache",
-    "nse_outcomes",
-    "nse_inflight",
-    "nse_done",
-    "shared_inbox",
-    "pending_share",
-    "share_epoch",
-    "app_in_foreground",
+/// What a root name of ours holds, which decides a conflict ([`supersede`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Holding {
+    /// A copy the app rewrites from a source of truth that lives elsewhere (the data directory,
+    /// the Keychain, the server): on a conflict the store's copy is REMOVED - the next mirror
+    /// rewrites it anyway, and keeping it would keep an account's data for nothing.
+    Mirror,
+    /// Data held nowhere else (the seed mirror, the push cache, the device notices, the share
+    /// inbox, the extension's outcome records): on a conflict the store's copy goes to ONE
+    /// quarantine generation, [`SUPERSEDED_DIR`], which a sign-out and the factory wipe remove.
+    SoleCopy,
+}
+
+/// The names our builds write at the App Group root, as STEMS, each with what it holds - the ONE
+/// table of what the move may touch. A stem covers the name itself and every name that continues
+/// it after a dot (`mls` covers `mls.bin` and `mls.bin.tmp`, `nse_outcomes` its `.ndjson`,
+/// `.1.ndjson` and `.lock`). Mirrored by the share extension (`ShareCapture.rootStems`); a source
+/// test holds the two equal, holdings included.
+pub(crate) const OURS_STEMS: [(&str, Holding); 16] = [
+    ("mls", Holding::Mirror),
+    ("push_context", Holding::Mirror),
+    ("push_secret", Holding::Mirror),
+    ("display_names", Holding::Mirror),
+    ("conversation_nicknames", Holding::Mirror),
+    ("share_epoch", Holding::Mirror),
+    ("app_in_foreground", Holding::Mirror),
+    // An older build's plaintext epoch keys: moved in, then deleted by
+    // `native_cache::remove_legacy_channel_keys`, which looks in the store only.
+    ("channel_keys", Holding::Mirror),
+    ("graine_seeds", Holding::SoleCopy),
+    ("device_notices", Holding::SoleCopy),
+    ("fcm_message_cache", Holding::SoleCopy),
+    ("nse_outcomes", Holding::SoleCopy),
+    ("nse_inflight", Holding::SoleCopy),
+    ("nse_done", Holding::SoleCopy),
+    ("shared_inbox", Holding::SoleCopy),
+    ("pending_share", Holding::SoleCopy),
 ];
 
 /// The names our builds write at the App Group root by PREFIX: the extension's avatar and logo
-/// caches (`avatar_<sanitised id>.jpg`, `assologo_<id>.jpg`). Mirrored by
+/// caches (`avatar_<sanitised id>.jpg`, `assologo_<id>.jpg`), fetched again on a miss. Mirrored by
 /// `ShareCapture.rootPrefixes`.
-pub(crate) const OURS_PREFIXES: [&str; 2] = ["avatar_", "assologo_"];
+pub(crate) const OURS_PREFIXES: [(&str, Holding); 2] =
+    [("avatar_", Holding::Mirror), ("assologo_", Holding::Mirror)];
 
-/// The one quarantine generation inside the store: what a conflict displaced (module doc).
+/// The one quarantine generation inside the store: what a conflict displaced from a
+/// [`Holding::SoleCopy`] name (module doc).
 pub(crate) const SUPERSEDED_DIR: &str = ".superseded";
 
 /// What an entry at the App Group container's root is.
@@ -269,7 +291,7 @@ pub(crate) enum RootEntry {
     /// iOS creates in every container. Never moved.
     System,
     /// A name our builds write ([`OURS_STEMS`], [`OURS_PREFIXES`]) - moved into the store.
-    Ours,
+    Ours(Holding),
     /// Anything else: never moved, counted, and the verdict fails on it.
     Unknown,
 }
@@ -284,16 +306,16 @@ pub(crate) fn classify_root_entry(name: &std::ffi::OsStr) -> RootEntry {
                 .is_some_and(|rest| rest.starts_with('.'))
     };
     if name == APP_GROUP_STORE {
-        RootEntry::Store
-    } else if name == "Library" || name.starts_with(".com.apple.") {
-        RootEntry::System
-    } else if OURS_STEMS.iter().any(|s| stem_of(s))
-        || OURS_PREFIXES.iter().any(|p| name.starts_with(p))
-    {
-        RootEntry::Ours
-    } else {
-        RootEntry::Unknown
+        return RootEntry::Store;
     }
+    if name == "Library" || name.starts_with(".com.apple.") {
+        return RootEntry::System;
+    }
+    OURS_STEMS
+        .iter()
+        .find(|(s, _)| stem_of(s))
+        .or_else(|| OURS_PREFIXES.iter().find(|(p, _)| name.starts_with(p)))
+        .map_or(RootEntry::Unknown, |(_, holding)| RootEntry::Ours(*holding))
 }
 
 /// What one pass of [`migrate_root`] did - counts only: the log names no file.
@@ -387,22 +409,29 @@ fn remove_any(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// The conflict of `name` (module doc): the store's copy replaces the previous quarantined one in
-/// [`SUPERSEDED_DIR`], then the root's moves in with `rename`. `Ok(true)` when the root copy moved
-/// in, `Ok(false)` when it was gone meanwhile.
+/// The conflict of `name` (module doc): the store's copy goes - removed for a
+/// [`Holding::Mirror`], put in [`SUPERSEDED_DIR`] (replacing the previous quarantined one) for a
+/// [`Holding::SoleCopy`] - then the root's moves in with `rename`. `Ok(true)` when the root copy
+/// moved in, `Ok(false)` when it was gone meanwhile.
 fn supersede(
     root: &Path,
     store: &Path,
     name: &std::ffi::OsStr,
+    holding: Holding,
     rename: &impl Fn(&Path, &Path) -> std::io::Result<()>,
 ) -> std::io::Result<bool> {
-    let quarantine = store.join(SUPERSEDED_DIR);
-    std::fs::create_dir_all(&quarantine)?;
-    let previous = quarantine.join(name);
-    remove_any(&previous)?;
-    match std::fs::rename(store.join(name), &previous) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-        _ => {}
+    match holding {
+        Holding::Mirror => remove_any(&store.join(name))?,
+        Holding::SoleCopy => {
+            let quarantine = store.join(SUPERSEDED_DIR);
+            std::fs::create_dir_all(&quarantine)?;
+            let previous = quarantine.join(name);
+            remove_any(&previous)?;
+            match std::fs::rename(store.join(name), &previous) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
     }
     match rename(&root.join(name), &store.join(name)) {
         Ok(()) => Ok(true),
@@ -411,7 +440,7 @@ fn supersede(
     }
 }
 
-/// Moves every [`RootEntry::Ours`] entry of the App Group `root` into `store`, each with `rename`
+/// Moves every `RootEntry::Ours` entry of the App Group `root` into `store`, each with `rename`
 /// ([`rename_exclusive`] on a device), a conflict settled by [`supersede`]. Never fails: an
 /// unreadable root, a refused rename and an unknown name are COUNTED (and said at ERROR, for the
 /// processes that have a logger) - the store stays usable, and the verdict reads the root back.
@@ -439,19 +468,19 @@ pub(crate) fn migrate_root(
                 continue;
             }
         };
-        match classify_root_entry(&name) {
+        let holding = match classify_root_entry(&name) {
             RootEntry::Store | RootEntry::System => continue,
             RootEntry::Unknown => {
                 migration.unknown += 1;
                 continue;
             }
-            RootEntry::Ours => {}
-        }
+            RootEntry::Ours(holding) => holding,
+        };
         match rename(&root.join(&name), &store.join(&name)) {
             Ok(()) => migration.moved += 1,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => migration.absent += 1,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                match supersede(root, store, &name, &rename) {
+                match supersede(root, store, &name, holding, &rename) {
                     Ok(true) => migration.superseded += 1,
                     Ok(false) => migration.absent += 1,
                     Err(e) => {
@@ -487,7 +516,7 @@ pub(crate) fn root_state(root: &Path) -> std::io::Result<RootState> {
     let mut state = RootState::default();
     for entry in std::fs::read_dir(root)? {
         match classify_root_entry(&entry?.file_name()) {
-            RootEntry::Ours => state.ours += 1,
+            RootEntry::Ours(_) => state.ours += 1,
             RootEntry::Unknown => state.unknown += 1,
             RootEntry::Store | RootEntry::System => {}
         }
@@ -836,6 +865,7 @@ mod tests {
         for ours in [
             "mls.bin",
             "mls.bin.tmp",
+            "channel_keys.json",
             "push_secret.txt",
             "push_context.json",
             "display_names.json",
@@ -855,7 +885,7 @@ mod tests {
             "avatar_abc.jpg",
             "assologo_42.jpg",
         ] {
-            assert_eq!(class(ours), RootEntry::Ours, "{ours}");
+            assert!(matches!(class(ours), RootEntry::Ours(_)), "{ours}");
         }
         // A stem is a whole name or a name continued after a dot - never a longer word.
         for unknown in ["mlsx", "push_contexts.json", "notes.txt", "storehouse"] {
@@ -934,15 +964,15 @@ mod tests {
     }
 
     #[test]
-    fn an_older_build_writing_the_root_again_wins_and_the_store_copy_is_superseded_once() {
+    fn an_older_build_writing_the_root_again_wins_and_a_sole_copy_is_superseded_once() {
         let root = TempDir::new("downgrade");
-        std::fs::write(root.0.join("mls.bin"), b"v1").expect("write");
+        std::fs::write(root.0.join("graine_seeds.json"), b"v1").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/a"), b"v1").expect("write");
         let store = open_store(&root.0, flagged).expect("first").path;
 
         // A downgrade: the older build writes at the root again, after the move.
-        std::fs::write(root.0.join("mls.bin"), b"v2").expect("write");
+        std::fs::write(root.0.join("graine_seeds.json"), b"v2").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/b"), b"v2").expect("write");
         let opening = open_store(&root.0, flagged).expect("upgrade again");
@@ -955,13 +985,13 @@ mod tests {
         );
         assert_eq!(opening.report().0, Severity::Warn);
         assert_eq!(
-            std::fs::read(store.join("mls.bin")).expect("root won"),
+            std::fs::read(store.join("graine_seeds.json")).expect("root won"),
             b"v2"
         );
         assert_eq!(names(&store.join("device_notices")), vec!["b"]);
         let quarantine = store.join(SUPERSEDED_DIR);
         assert_eq!(
-            std::fs::read(quarantine.join("mls.bin")).expect("kept"),
+            std::fs::read(quarantine.join("graine_seeds.json")).expect("kept"),
             b"v1"
         );
         assert_eq!(names(&quarantine.join("device_notices")), vec!["a"]);
@@ -971,22 +1001,95 @@ mod tests {
         let again = open_store(&root.0, flagged).expect("reopen");
         assert_eq!(again.migration, Migration::default());
         assert_eq!(
-            std::fs::read(quarantine.join("mls.bin")).expect("kept"),
+            std::fs::read(quarantine.join("graine_seeds.json")).expect("kept"),
             b"v1"
         );
 
         // A second downgrade replaces the quarantined generation: it never grows.
-        std::fs::write(root.0.join("mls.bin"), b"v3").expect("write");
+        std::fs::write(root.0.join("graine_seeds.json"), b"v3").expect("write");
         open_store(&root.0, flagged).expect("third upgrade");
         assert_eq!(
-            std::fs::read(store.join("mls.bin")).expect("root won"),
+            std::fs::read(store.join("graine_seeds.json")).expect("root won"),
             b"v3"
         );
         assert_eq!(
-            std::fs::read(quarantine.join("mls.bin")).expect("one"),
+            std::fs::read(quarantine.join("graine_seeds.json")).expect("one"),
             b"v2"
         );
-        assert_eq!(names(&quarantine), vec!["device_notices", "mls.bin"]);
+        assert_eq!(
+            names(&quarantine),
+            vec!["device_notices", "graine_seeds.json"]
+        );
+    }
+
+    #[test]
+    fn a_mirror_conflict_replaces_the_store_copy_and_quarantines_nothing() {
+        let root = TempDir::new("mirror");
+        std::fs::write(root.0.join("mls.bin"), b"v1").expect("write");
+        std::fs::write(root.0.join("avatar_x.jpg"), b"v1").expect("write");
+        let store = open_store(&root.0, flagged).expect("first").path;
+        std::fs::write(root.0.join("mls.bin"), b"v2").expect("write");
+        std::fs::write(root.0.join("avatar_x.jpg"), b"v2").expect("write");
+        let opening = open_store(&root.0, flagged).expect("upgrade again");
+        assert_eq!(opening.migration.superseded, 2);
+        assert_eq!(
+            std::fs::read(store.join("mls.bin")).expect("root won"),
+            b"v2"
+        );
+        assert_eq!(
+            std::fs::read(store.join("avatar_x.jpg")).expect("root won"),
+            b"v2"
+        );
+        assert!(!store.join(SUPERSEDED_DIR).exists());
+        assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
+    }
+
+    #[test]
+    fn every_stem_names_what_it_holds() {
+        let holding = |n: &str| match classify_root_entry(OsStr::new(n)) {
+            RootEntry::Ours(h) => h,
+            other => panic!("{n}: {other:?}"),
+        };
+        for mirror in [
+            "mls.bin",
+            "push_context.json",
+            "push_secret.txt",
+            "display_names.json",
+            "conversation_nicknames.json",
+            "share_epoch",
+            "app_in_foreground",
+            "channel_keys.json",
+            "avatar_x.jpg",
+            "assologo_1.jpg",
+        ] {
+            assert_eq!(holding(mirror), Holding::Mirror, "{mirror}");
+        }
+        for sole in [
+            "graine_seeds.json",
+            "device_notices",
+            "fcm_message_cache.ndjson",
+            "nse_outcomes.ndjson",
+            "nse_inflight.1.2.json",
+            "nse_done.1.2.json",
+            "shared_inbox",
+            "pending_share.json",
+        ] {
+            assert_eq!(holding(sole), Holding::SoleCopy, "{sole}");
+        }
+    }
+
+    #[test]
+    fn an_older_builds_plaintext_channel_keys_are_moved_then_cleaned() {
+        let root = TempDir::new("channel-keys");
+        std::fs::write(root.0.join("channel_keys.json"), b"{\"k\":1}").expect("write");
+        let opening = open_store(&root.0, flagged).expect("opened");
+        assert_eq!(opening.migration.moved, 1);
+        assert!(!root.0.join("channel_keys.json").exists());
+        assert!(crate::native_cache::remove_legacy_channel_keys(
+            &opening.path
+        ));
+        assert!(!opening.path.join("channel_keys.json").exists());
+        assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
     }
 
     #[test]
