@@ -139,11 +139,20 @@ earliest version, as a checklist.
 
 **P2 - correctness**
 
+- [P2 - to verify: iOS, opening the app through the share notice re-showed a banner for an already delivered message (S17, 2026-11-20)](backlog.d/p2-ios-opening-the-app-through-the-share-notice-reshowed-a-banner-for-a-delivered-message.md)
 - [P2 - Voice notes are captured as a phone call (asked by the owner, 2026-11-20)](backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)
 
 **P3 - hygiene**
 
+- [P3 - Android `E/AppOps: attributionTag not declared in manifest of fr.emse.canari`, about 20 times an hour (S17, 2026-11-20)](backlog.d/p3-android-appops-attribution-tag-not-declared-about-twenty-lines-an-hour.md)
+- [P3 - Android logs `checkKeystoreHealth: Keystore lost - background push disabled` at ERROR during an ordinary sign-out and sign-in (S17, 2026-11-20)](backlog.d/p3-android-keystore-lost-error-logged-at-an-ordinary-sign-out.md)
+- [P3 - UI: Android, with Rediffusion OFF the switch track is invisible on the dark pre-live sheet (S17, 2026-11-20)](backlog.d/p3-android-the-rediffusion-switch-track-is-invisible-when-off-on-the-dark-pre-live-sheet.md)
+- [P3 - iOS: the notification extension takes an `EXC_GUARD` and about 47 sandbox denies at every wake (S17, 2026-11-20)](backlog.d/p3-ios-notification-extension-exc-guard-and-sandbox-denies-at-every-wake.md)
+- [P3 - perf: iOS opening a salon loads the history page 4 times within 50 ms (S17, 2026-11-20)](backlog.d/p3-ios-opening-a-salon-loads-the-history-page-four-times-within-50-ms.md)
+- [P3 - i18n: the English chat list shows a French system preview ("...a ajouté ... au groupe") (S17, 2026-11-20)](backlog.d/p3-the-english-chat-list-shows-a-french-system-preview-for-a-group-addition.md)
+- [P3 - noise: `lives_mode relayed to media-service: on` is logged on every live segment (S17, 2026-11-20)](backlog.d/p3-the-server-logs-lives-mode-relayed-to-media-service-on-every-live-segment.md)
 - [P3 - core-service's boot read of Sky's handoff access timed out against MiConnect, once (2026-11-20)](backlog.d/p3-the-sky-handoff-access-boot-read-times-out.md)
+- [P3 - harness: the web hidden-tab reaction reading cannot be taken, no rig seat can get `Notification.permission` granted (S17, 2026-11-20)](backlog.d/p3-the-web-hidden-tab-reaction-reading-cannot-be-taken-no-rig-seat-gets-notification-permission.md)
 
 ## 1.8.0
 
@@ -235,6 +244,7 @@ earliest version, as a checklist.
 - [P3 - on Android the live sheet says "another app is using the camera" when the camera permission is OFF](backlog.d/p3-the-live-sheet-says-another-app-uses-the-camera-when-the-permission-is-off.md)
 - [P3 - the iPhone sign-in helper misses the terms page's button when it is below the fold](backlog.d/p3-the-iphone-sign-in-helper-misses-a-terms-button-below-the-fold.md)
 - [P3 - the Thème control's "Automatique" label spills out of its segment at a doubled font](backlog.d/p3-the-theme-control-s-automatique-label-spills-out-of-its-segment-at-a-doubled-font.md)
+- [P3 - accessibility: iOS quick-reaction emojis in the long-press menu are absent from the accessibility tree, and the feed's "Add reaction" buttons are 1 pt wide (S17, 2026-11-20)](backlog.d/p3-ios-quick-reaction-emojis-and-the-feeds-add-reaction-buttons-are-not-accessible.md)
 - [P3 - the iOS share suggestions carry no photo (2026-11-20)](backlog.d/p3-ios-share-suggestions-carry-no-photo.md)
 
 ## 1.9.0

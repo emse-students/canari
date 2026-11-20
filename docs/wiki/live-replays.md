@@ -103,6 +103,14 @@ which block belongs to which key is only in `garage_meta`'s database). A snapsho
 worth of replay: **~26 GB at S0, ~85-130 GB at S1** - more than the headroom, and a replay promised
 "deleted after 3 days" would survive up to six months in a backup. Hence D2 and WP-R3.
 
+**Confirmed by the owner, 2026-11-20: replays are deliberately NOT in the restic backup**, and that is
+the intended state, not a gap to close. **The reading of the same day**: the latest snapshot, taken at
+03:00 UTC, holds media objects and no replay (the `live_segments` volume is not in the backup's
+allowlist, posters included); the database is backed up separately by the 03:30 dump, whose rows
+(the replay post's title, author, length, comments) stay 14 days at most; and the old August
+snapshots, which pre-date the replay volume, expire under the 6-month policy. The register states the
+same wording ([register](compliance/register-of-processing.md), C19).
+
 **Egress.** A replay viewer pulls what a live viewer pulls (~2-3 Mb/s) through the same nginx
 segment location (per-address limits, the `live_segments` cache) but takes NO seat: replays are
 uncapped like reels. Owed a reading once replays exist.
