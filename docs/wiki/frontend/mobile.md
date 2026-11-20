@@ -3599,16 +3599,21 @@ nothing of ours there.
   the App Group copy.) A pending share keeps working through all of it: its import takes the file
   NAMES from its manifest, not its paths (`app_group_share::files_in_moved_dir`).
 - **A sign-out an older build made is carried into the store** (`backup_exclusion::carry_sign_out`).
-  The case: a downgrade, a sign-out in `1.7.1`, then this build again. That sign-out stripped
-  `1.7.1`'s push context at the root, but never saw the store, where the account's push credential
-  and the quarantine stayed. So the APP's opening, under the store lock and after the move, reads
-  the store's push context:
-  - **No session** (absent, or no `userId` and `baseUrl` - a sign-out keeps `userId`, so the server
-    is the session): every entry this build's sign-out removes (`AtSignOut::Removed`, a third column
-    of the same table, mirrored in Swift: `push_secret` alone) and `.superseded` are removed.
-  - **A session:** nothing is touched.
-  - **An unreadable or unparsable context:** nothing is touched, said at WARN. A destructive control
-    acts on a KNOWN state.
+  The case: a downgrade, a sign-out in `1.7.1`, then this build again. That sign-out never saw the
+  store, where the account's push credential and the quarantine stayed. So the APP's opening, under
+  the store lock and after the move, reads THE FACT: the sign-out mark `push_signed_out`
+  (`push_registration::SIGNED_OUT_FILE`) in the app's data directory. The mark is written at every
+  sign-out, removed when a registration is answered, and the same in `1.7.1`. The opening resolves
+  the directory as `CanariTauriDataDir` does: `app_group::app_data_dir`,
+  `Library/Application Support/fr.emse.canari`.
+  - **The mark is there:** every entry this build's sign-out removes (`AtSignOut::Removed`, a third
+    column of the same table, mirrored in Swift: `push_secret` alone) and `.superseded` are removed.
+  - **No mark:** nothing is touched.
+  - **The directory unknown, or the mark unreadable:** nothing is touched, said at WARN. A
+    destructive control acts on a KNOWN state.
+
+  The store's `push_context.json` plays no part. It is a MIRROR, and it can lag its source: a failed
+  copy (`follow_push_context_in_extension`) is only logged.
 
   It removes exactly what `end_push_registration_files` removes, never more. The seed mirror (the
   iPhone's ONLY copy of the seeds), the device notices and the push cache are kept by a sign-out

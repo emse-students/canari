@@ -95,6 +95,44 @@ pub(crate) fn process_kind() -> crate::backup_exclusion::ProcessKind {
     })
 }
 
+/// The app's data directory, resolved as `CanariTauriDataDir` (`canari_push.mm`) resolves it:
+/// `Library/Application Support/fr.emse.canari` - Tauri's `app_data_dir` on iOS, which holds the
+/// sign-out mark the opening reads (`backup_exclusion::carry_sign_out`). `None` when Foundation
+/// answers no Application Support directory. Never created here: an absent directory holds no mark.
+fn app_data_dir() -> Option<PathBuf> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use std::ffi::{c_char, CStr};
+    /// `NSApplicationSupportDirectory` and `NSUserDomainMask` (Foundation's `NSPathUtilities.h`).
+    const APPLICATION_SUPPORT: usize = 14;
+    const USER_DOMAIN: usize = 1;
+    let fm_class = AnyClass::get(c"NSFileManager")?;
+    objc2::rc::autoreleasepool(|_| {
+        // SAFETY: plain Foundation messages with the argument and return types their headers
+        // declare; every object returned is autoreleased into this pool, and the C string is
+        // copied before the pool drains.
+        unsafe {
+            let fm: *mut AnyObject = msg_send![fm_class, defaultManager];
+            let urls: *mut AnyObject =
+                msg_send![fm, URLsForDirectory: APPLICATION_SUPPORT, inDomains: USER_DOMAIN];
+            if urls.is_null() {
+                return None;
+            }
+            let url: *mut AnyObject = msg_send![urls, firstObject];
+            if url.is_null() {
+                return None;
+            }
+            let path: *mut AnyObject = msg_send![url, path];
+            let utf8: *const c_char = msg_send![path, UTF8String];
+            if utf8.is_null() {
+                return None;
+            }
+            let base = PathBuf::from(CStr::from_ptr(utf8).to_string_lossy().into_owned());
+            Some(base.join("fr.emse.canari"))
+        }
+    })
+}
+
 /// How this process opened the store, once it has (`backup_exclusion::StoreOpening`).
 static OPENING: std::sync::OnceLock<crate::backup_exclusion::StoreOpening> =
     std::sync::OnceLock::new();
@@ -125,7 +163,16 @@ pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
     // killed (`0xdead10cc`), so the move asks for background time as the seed edit does - which
     // `begin` itself skips in an extension.
     let _background = BackgroundTime::begin(c"canari-app-group-move");
-    let opening = crate::backup_exclusion::open_store(&root, process_kind(), |store| {
+    let sign_out = match process_kind() {
+        crate::backup_exclusion::ProcessKind::App => {
+            crate::backup_exclusion::SignOutSource::DataDir(app_data_dir())
+        }
+        crate::backup_exclusion::ProcessKind::Extension
+        | crate::backup_exclusion::ProcessKind::Unknown => {
+            crate::backup_exclusion::SignOutSource::NotTheApp
+        }
+    };
+    let opening = crate::backup_exclusion::open_store(&root, sign_out, |store| {
         crate::native_cache::ios_exclude_from_backup(store)
     })
     .map_err(|e| format!("the App Group store could not be created: {e}"))?;

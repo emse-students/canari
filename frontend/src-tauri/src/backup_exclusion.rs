@@ -254,7 +254,7 @@ pub(crate) enum Severity {
 
 /// Which kind of process this is, read from the main bundle's path extension: the app (`.app`) or
 /// one of its extensions (`.appex`) - which have no `UIApplication` to ask for background time and
-/// never carry a sign-out ([`carry_sign_out`]: only the app writes the session's files).
+/// never carry a sign-out ([`SignOutSource::NotTheApp`]: only the app writes the session's files).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProcessKind {
     App,
@@ -593,71 +593,61 @@ pub(crate) fn root_state(root: &Path) -> std::io::Result<RootState> {
     Ok(state)
 }
 
+/// Where the opening learns whether this device signed out ([`carry_sign_out`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SignOutSource {
+    /// An extension, or a process of unknown kind: it writes no session file and never carries a
+    /// sign-out.
+    NotTheApp,
+    /// The app: its data directory, which holds the sign-out mark - `None` when it could not be
+    /// resolved.
+    DataDir(Option<PathBuf>),
+}
+
 /// What the app's opening did about a sign-out an older build made ([`carry_sign_out`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SignOutCarry {
     /// Not this process's to do: an extension, which writes no session file, or a store that was
     /// not locked.
     NotChecked,
-    /// The store's push context carries a session: nothing to carry.
-    SignedIn,
-    /// No session in the store (no push context, or one without a user and a server): what this
-    /// build's sign-out removes was removed, the quarantine with it - `removed` entries, `failures`
-    /// left in place.
+    /// No sign-out mark: an account owns this device's pushes, nothing to carry.
+    NotSignedOut,
+    /// The sign-out mark is there: what this build's sign-out removes was removed, the quarantine
+    /// with it - `removed` entries, `failures` left in place.
     Carried { removed: usize, failures: usize },
-    /// The push context could not be read or parsed: whether an account is signed in is NOT KNOWN,
-    /// so nothing was touched.
+    /// The data directory is unknown or the mark could not be read: whether this device signed out
+    /// is NOT KNOWN, so nothing was touched.
     Unknown,
 }
 
-/// Whether a push context's bytes name a signed-in session: a non-empty `userId` AND `baseUrl`.
-/// `Some(false)` for an object without them - a sign-out strips the context to its device keys
-/// (`userId`, `deviceId`, `locale`; `push_registration::DEVICE_CONTEXT_KEYS`), so `userId` alone
-/// proves nothing and `baseUrl`, which every background reader requires, is the session. `None`
-/// when the bytes are not a JSON object: nothing is known.
-pub(crate) fn names_a_session(context: &[u8]) -> Option<bool> {
-    let value: serde_json::Value = serde_json::from_slice(context).ok()?;
-    let object = value.as_object()?;
-    let filled = |key: &str| {
-        object
-            .get(key)
-            .and_then(|v| v.as_str())
-            .is_some_and(|v| !v.is_empty())
-    };
-    Some(filled("userId") && filled("baseUrl"))
-}
-
 /// Carries into the store a sign-out an OLDER build made (a downgrade, a sign-out there, this build
-/// again): that build stripped ITS push context at the root - which the move has just carried in -
-/// but never saw the store, where the account's push credential and the quarantine stayed. So, run
-/// by the app only, under the store lock and after the move: when the store's push context names
-/// no session ([`names_a_session`]; absent is no session), every entry this build's sign-out removes
-/// ([`AtSignOut::Removed`]) and [`SUPERSEDED_DIR`] are removed - exactly what
-/// `end_push_registration_files` does, never more. A context that cannot be read or parsed is NOT a
-/// sign-out: nothing is touched, and it is said (a destructive control acts on a KNOWN state).
-pub(crate) fn carry_sign_out(store: &Path) -> SignOutCarry {
-    let context = store.join("push_context.json");
-    let session = match std::fs::read(&context) {
-        Ok(bytes) => match names_a_session(&bytes) {
-            Some(session) => session,
-            None => {
-                log::warn!(
-                    "[BACKUP_EXCLUSION] the store's push context is not a JSON object - whether an account is signed in is unknown, nothing removed"
-                );
-                return SignOutCarry::Unknown;
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+/// again): that build never saw the store, where the account's push credential and the quarantine
+/// stayed. So, run by the app only, under the store lock and after the move, it reads THE FACT -
+/// the sign-out mark in the app's data directory (`push_registration::SIGNED_OUT_FILE`, written at
+/// every sign-out, removed when a registration is answered, the same in `1.7.1`) - and never the
+/// store's push context, a mirror that can lag its source (a failed copy is only logged). Mark
+/// present: every entry this build's sign-out removes ([`AtSignOut::Removed`]) and
+/// [`SUPERSEDED_DIR`] are removed - exactly what `end_push_registration_files` does, never more.
+/// Mark absent: nothing. The data directory unknown, or the mark unreadable: nothing, said at WARN
+/// (a destructive control acts on a KNOWN state).
+pub(crate) fn carry_sign_out(store: &Path, data_dir: Option<&Path>) -> SignOutCarry {
+    let Some(data_dir) = data_dir else {
+        log::warn!(
+            "[BACKUP_EXCLUSION] the app data directory is unknown - whether this device signed out is unknown, nothing removed"
+        );
+        return SignOutCarry::Unknown;
+    };
+    let mark = data_dir.join(crate::commands::push_registration::SIGNED_OUT_FILE);
+    match std::fs::symlink_metadata(&mark) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return SignOutCarry::NotSignedOut,
         Err(e) => {
             log::warn!(
-                "[BACKUP_EXCLUSION] the store's push context is unreadable ({:?}) - whether an account is signed in is unknown, nothing removed",
+                "[BACKUP_EXCLUSION] the sign-out mark is unreadable ({:?}) - whether this device signed out is unknown, nothing removed",
                 e.kind()
             );
             return SignOutCarry::Unknown;
         }
-    };
-    if session {
-        return SignOutCarry::SignedIn;
     }
     let mut targets = vec![store.join(SUPERSEDED_DIR)];
     let mut failures = 0usize;
@@ -731,7 +721,7 @@ impl StoreOpening {
             line.push_str(", the root unreadable or the store not locked");
         }
         let carried = match self.sign_out {
-            SignOutCarry::NotChecked | SignOutCarry::SignedIn => Severity::Info,
+            SignOutCarry::NotChecked | SignOutCarry::NotSignedOut => Severity::Info,
             SignOutCarry::Carried { removed, failures } => {
                 if removed + failures > 0 {
                     line.push_str(&format!(
@@ -745,7 +735,7 @@ impl StoreOpening {
                 }
             }
             SignOutCarry::Unknown => {
-                line.push_str("; the push context unreadable, no sign-out carried");
+                line.push_str("; the sign-out mark unknown, no sign-out carried");
                 Severity::Warn
             }
         };
@@ -766,7 +756,7 @@ impl StoreOpening {
 /// store is still returned - the notification extension decrypts from it either way.
 pub(crate) fn open_store(
     root: &Path,
-    kind: ProcessKind,
+    sign_out: SignOutSource,
     flag: impl FnOnce(&Path) -> Result<(), FlagError>,
 ) -> std::io::Result<StoreOpening> {
     let path = root.join(APP_GROUP_STORE);
@@ -779,9 +769,9 @@ pub(crate) fn open_store(
     let (migration, sign_out) = match lock_store(&path) {
         Ok(_held) => {
             let migration = migrate_root(root, &path, rename_exclusive);
-            let sign_out = match kind {
-                ProcessKind::App => carry_sign_out(&path),
-                ProcessKind::Extension | ProcessKind::Unknown => SignOutCarry::NotChecked,
+            let sign_out = match sign_out {
+                SignOutSource::DataDir(data_dir) => carry_sign_out(&path, data_dir.as_deref()),
+                SignOutSource::NotTheApp => SignOutCarry::NotChecked,
             };
             (migration, sign_out)
         }
@@ -1109,7 +1099,7 @@ mod tests {
         )
         .expect("write");
         let seen = std::cell::RefCell::new(Vec::new());
-        let opening = open_store(&root.0, ProcessKind::Extension, |p| {
+        let opening = open_store(&root.0, SignOutSource::NotTheApp, |p| {
             // Flagged while still empty: nothing of ours was in it yet.
             assert!(names(p).is_empty());
             seen.borrow_mut().push(p.to_path_buf());
@@ -1147,14 +1137,14 @@ mod tests {
     #[test]
     fn an_existing_store_is_flagged_again_and_a_second_open_moves_nothing() {
         let root = TempDir::new("reopen");
-        open_store(&root.0, ProcessKind::Extension, flagged).expect("first");
+        open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("first");
         std::fs::write(
             root.0.join(APP_GROUP_STORE).join("push_context.json"),
             b"{}",
         )
         .expect("write");
         let calls = std::cell::Cell::new(0);
-        let opening = open_store(&root.0, ProcessKind::Extension, |_| {
+        let opening = open_store(&root.0, SignOutSource::NotTheApp, |_| {
             calls.set(calls.get() + 1);
             Ok(())
         })
@@ -1171,7 +1161,7 @@ mod tests {
         std::fs::write(root.0.join("graine_seeds.json"), b"v1").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/a"), b"v1").expect("write");
-        let store = open_store(&root.0, ProcessKind::Extension, flagged)
+        let store = open_store(&root.0, SignOutSource::NotTheApp, flagged)
             .expect("first")
             .path;
 
@@ -1179,7 +1169,8 @@ mod tests {
         std::fs::write(root.0.join("graine_seeds.json"), b"v2").expect("write");
         std::fs::create_dir(root.0.join("device_notices")).expect("dir");
         std::fs::write(root.0.join("device_notices/b"), b"v2").expect("write");
-        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("upgrade again");
+        let opening =
+            open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("upgrade again");
         assert_eq!(
             opening.migration,
             Migration {
@@ -1202,7 +1193,7 @@ mod tests {
         assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
 
         // Settled: a second reopen moves nothing and the quarantine is unchanged.
-        let again = open_store(&root.0, ProcessKind::Extension, flagged).expect("reopen");
+        let again = open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("reopen");
         assert_eq!(again.migration, Migration::default());
         assert_eq!(
             std::fs::read(quarantine.join("graine_seeds.json")).expect("kept"),
@@ -1211,7 +1202,7 @@ mod tests {
 
         // A second downgrade replaces the quarantined generation: it never grows.
         std::fs::write(root.0.join("graine_seeds.json"), b"v3").expect("write");
-        open_store(&root.0, ProcessKind::Extension, flagged).expect("third upgrade");
+        open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("third upgrade");
         assert_eq!(
             std::fs::read(store.join("graine_seeds.json")).expect("root won"),
             b"v3"
@@ -1231,12 +1222,13 @@ mod tests {
         let root = TempDir::new("mirror");
         std::fs::write(root.0.join("mls.bin"), b"v1").expect("write");
         std::fs::write(root.0.join("avatar_x.jpg"), b"v1").expect("write");
-        let store = open_store(&root.0, ProcessKind::Extension, flagged)
+        let store = open_store(&root.0, SignOutSource::NotTheApp, flagged)
             .expect("first")
             .path;
         std::fs::write(root.0.join("mls.bin"), b"v2").expect("write");
         std::fs::write(root.0.join("avatar_x.jpg"), b"v2").expect("write");
-        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("upgrade again");
+        let opening =
+            open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("upgrade again");
         assert_eq!(opening.migration.superseded, 2);
         assert_eq!(
             std::fs::read(store.join("mls.bin")).expect("root won"),
@@ -1288,7 +1280,7 @@ mod tests {
     fn an_older_builds_plaintext_channel_keys_are_moved_then_cleaned() {
         let root = TempDir::new("channel-keys");
         std::fs::write(root.0.join("channel_keys.json"), b"{\"k\":1}").expect("write");
-        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
+        let opening = open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("opened");
         assert_eq!(opening.migration.moved, 1);
         assert!(!root.0.join("channel_keys.json").exists());
         assert!(crate::native_cache::remove_legacy_channel_keys(
@@ -1302,7 +1294,7 @@ mod tests {
     fn an_unknown_root_name_is_counted_and_never_moved() {
         let root = TempDir::new("unknown");
         std::fs::write(root.0.join("notes.txt"), b"x").expect("write");
-        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
+        let opening = open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("opened");
         assert_eq!(opening.migration.unknown, 1);
         assert!(root.0.join("notes.txt").exists());
         assert_eq!(opening.report().0, Severity::Error);
@@ -1552,8 +1544,9 @@ mod tests {
 
     /// The store a 1.7.2 install left before a downgrade: the account's push credential, its
     /// seeds and notices, and a quarantined generation. Then the root an older build wrote after
-    /// it, holding `context` as its push context.
-    fn downgraded(tag: &str, context: Option<&[u8]>) -> (TempDir, PathBuf) {
+    /// it, holding `context` as its push context, and the app's data directory, holding the
+    /// sign-out mark when `signed_out`.
+    fn downgraded(tag: &str, context: &[u8], signed_out: bool) -> (TempDir, PathBuf, TempDir) {
         let root = TempDir::new(tag);
         let store = root.0.join(APP_GROUP_STORE);
         std::fs::create_dir_all(store.join(SUPERSEDED_DIR)).expect("store");
@@ -1561,19 +1554,31 @@ mod tests {
         std::fs::write(store.join("graine_seeds.json"), b"seeds").expect("write");
         std::fs::create_dir(store.join("device_notices")).expect("dir");
         std::fs::write(store.join(SUPERSEDED_DIR).join("graine_seeds.json"), b"v0").expect("write");
-        if let Some(context) = context {
-            std::fs::write(root.0.join("push_context.json"), context).expect("write");
+        std::fs::write(root.0.join("push_context.json"), context).expect("write");
+        // Outside the container, as on the phone: the app's own container.
+        let data = TempDir::new(&format!("{tag}-data"));
+        if signed_out {
+            let mark = crate::commands::push_registration::SIGNED_OUT_FILE;
+            std::fs::write(data.0.join(mark), b"1").expect("mark");
         }
-        (root, store)
+        (root, store, data)
     }
 
-    /// A sign-out in the older build (its context stripped to the device keys, carried in by the
-    /// move): the app's opening removes what this build's sign-out removes, and nothing else.
+    const SESSION: &[u8] =
+        br#"{"userId":"u-1","deviceId":"d-1","baseUrl":"https://x","pushToken":"t"}"#;
+    const STRIPPED: &[u8] = br#"{"userId":"u-1","deviceId":"d-1","locale":"fr"}"#;
+
+    /// The mark decides, not the store's push context: a mirror that still names a session (its
+    /// copy lagged) does not stop the carry of a sign-out the mark proves.
     #[test]
-    fn an_older_builds_sign_out_is_carried_into_the_store() {
-        let stripped = br#"{"userId":"u-1","deviceId":"d-1","locale":"fr"}"#;
-        let (root, store) = downgraded("carry-signed-out", Some(stripped));
-        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+    fn an_older_builds_sign_out_is_carried_on_the_mark_whatever_the_store_context_says() {
+        let (root, store, data) = downgraded("carry-mark", SESSION, true);
+        let opening = open_store(
+            &root.0,
+            SignOutSource::DataDir(Some(data.0.clone())),
+            flagged,
+        )
+        .expect("opened");
         assert_eq!(
             opening.sign_out,
             SignOutCarry::Carried {
@@ -1590,29 +1595,24 @@ mod tests {
         assert_eq!(opening.report().0, Severity::Info);
         assert!(opening.report().1.contains("sign-out carried: 2 removed"));
 
-        // No push context at all is no session either.
-        let (root, store) = downgraded("carry-absent", None);
-        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
-        assert!(matches!(
-            opening.sign_out,
-            SignOutCarry::Carried { removed: 2, .. }
-        ));
-        assert!(!store.join("push_secret.txt").exists());
-
         // The extensions never carry it: only the app writes the session's files.
-        let (root, store) = downgraded("carry-extension", Some(stripped));
-        let opening = open_store(&root.0, ProcessKind::Extension, flagged).expect("opened");
+        let (root, store, _) = downgraded("carry-extension", STRIPPED, true);
+        let opening = open_store(&root.0, SignOutSource::NotTheApp, flagged).expect("opened");
         assert_eq!(opening.sign_out, SignOutCarry::NotChecked);
         assert!(store.join("push_secret.txt").exists());
     }
 
-    /// A signed-in session in the store: nothing is touched.
+    /// No mark: an account owns the pushes, whatever a stripped store context suggests.
     #[test]
-    fn a_signed_in_store_carries_no_sign_out() {
-        let session = br#"{"userId":"u-1","deviceId":"d-1","baseUrl":"https://x","pushToken":"t"}"#;
-        let (root, store) = downgraded("carry-signed-in", Some(session));
-        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
-        assert_eq!(opening.sign_out, SignOutCarry::SignedIn);
+    fn no_mark_carries_nothing_even_beside_a_stripped_context() {
+        let (root, store, data) = downgraded("carry-no-mark", STRIPPED, false);
+        let opening = open_store(
+            &root.0,
+            SignOutSource::DataDir(Some(data.0.clone())),
+            flagged,
+        )
+        .expect("opened");
+        assert_eq!(opening.sign_out, SignOutCarry::NotSignedOut);
         assert!(store.join("push_secret.txt").exists());
         assert!(store
             .join(SUPERSEDED_DIR)
@@ -1621,50 +1621,16 @@ mod tests {
         assert_eq!(opening.report().0, Severity::Info);
     }
 
-    /// A push context that cannot be read or parsed proves nothing: everything stays, said at WARN.
+    /// The data directory unknown: nothing is known, nothing is touched, and it is said at WARN.
     #[test]
-    fn an_unreadable_push_context_carries_nothing() {
-        for (tag, context) in [
-            ("carry-garbage", &b"not json"[..]),
-            ("carry-array", &b"[1]"[..]),
-        ] {
-            let (root, store) = downgraded(tag, Some(context));
-            let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
-            assert_eq!(opening.sign_out, SignOutCarry::Unknown, "{tag}");
-            assert!(store.join("push_secret.txt").exists(), "{tag}");
-            assert!(store.join(SUPERSEDED_DIR).exists(), "{tag}");
-            assert_eq!(opening.report().0, Severity::Warn, "{tag}");
-        }
-        // Unreadable (a directory where the file should be): the same.
-        let (root, store) = downgraded("carry-unreadable", None);
-        std::fs::create_dir(store.join("push_context.json")).expect("dir");
-        let opening = open_store(&root.0, ProcessKind::App, flagged).expect("opened");
+    fn an_unknown_data_directory_carries_nothing() {
+        let (root, store, _) = downgraded("carry-no-data-dir", STRIPPED, true);
+        let opening = open_store(&root.0, SignOutSource::DataDir(None), flagged).expect("opened");
         assert_eq!(opening.sign_out, SignOutCarry::Unknown);
         assert!(store.join("push_secret.txt").exists());
-    }
-
-    #[test]
-    fn a_session_is_a_user_and_a_server() {
-        assert_eq!(
-            names_a_session(br#"{"userId":"u","baseUrl":"https://x"}"#),
-            Some(true)
-        );
-        // What a sign-out leaves: the device's identity, no server.
-        assert_eq!(
-            names_a_session(br#"{"userId":"u","deviceId":"d"}"#),
-            Some(false)
-        );
-        assert_eq!(
-            names_a_session(br#"{"userId":"","baseUrl":"https://x"}"#),
-            Some(false)
-        );
-        assert_eq!(
-            names_a_session(br#"{"userId":"u","baseUrl":""}"#),
-            Some(false)
-        );
-        assert_eq!(names_a_session(br#"{}"#), Some(false));
-        assert_eq!(names_a_session(b"null"), None);
-        assert_eq!(names_a_session(b"{"), None);
+        assert!(store.join(SUPERSEDED_DIR).exists());
+        assert_eq!(opening.report().0, Severity::Warn);
+        assert!(opening.report().1.contains("the sign-out mark unknown"));
     }
 
     #[test]
