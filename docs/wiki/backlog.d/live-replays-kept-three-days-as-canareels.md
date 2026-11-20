@@ -1,8 +1,10 @@
 ## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09; built, on since 2026-11-19, the readings owed)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-20, production read after the `1.7.1` stable ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **WP-R3 readings 3 and 5 PASS on production** (`drained=0 leftAlone=0` at the boot, so no `live/` key in Garage's listing; the `live_segments` volume holds one live folder, 666 files, 410 MiB), and **reading 7 is half read**: the 2026-11-20 03:00Z snapshot exists and verified, the backup's mount list is `garage_data`, `garage_meta`, `media_meta` and names no `live_segments`, but `restic ls latest` is refused to a deploy account (the repository and its password are the backup account's). **Owed: the backup account lists `latest` once, and the lead reads production's first-week replay bytes (reading 9).**_
 

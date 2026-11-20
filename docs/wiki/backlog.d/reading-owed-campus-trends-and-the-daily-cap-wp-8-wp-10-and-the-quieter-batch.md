@@ -1,8 +1,10 @@
 ## Campus trends and the daily cap, WP-8, WP-10 and the quieter batch: the iPhone's last rows, owed on the phone (a reading moved to 1.7.1)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _Moved 2026-11-18 - owner, 2026-11-18: read after the `1.7.0` stable ([owner-decisions-of-2026-11-18.md](owner-decisions-of-2026-11-18.md#the-morning)). The feature predates `v1.6.12` (#3246, #3285 in `v1.6.9`, #3316 in `v1.6.10`); `git log v1.6.12..origin/main -- apps/social-service/src/posts/campus-trend.ts` lists only #3749 (the threshold becomes a setting, default 10 = production) and #3763 (a log line), and the crossing push was read on that code on both phones (Mi `alpha.2`, iPhone `alpha.7`). The rows left need `gamma`'s weekly slot, which reopens 2026-11-23._
 
