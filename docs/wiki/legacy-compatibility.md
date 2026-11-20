@@ -716,13 +716,13 @@ The unknown-type row above is a SIGNAL that this rule failed, never the path.
   ends with the update. Every category from `suggestions` on is covered, by the header.
 **SWITCHED ON at the `1.7.0` floor (2026-11-20, owner decision of 2026-11-18): `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused` and `lydia_cashier_added`.** `FORM_ORGANISER_ALERT_ENABLED` (#2228, `v1.4.0`), `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED` (lot 2, `v1.5.3`) and `LYDIA_CASHIER_NOTIFICATIONS_ENABLED` (lot 3, `v1.6.0`) are `true`; each flip condition below is met, since every one of those builds is below the floor, and each constant stays as the kill switch (nothing to remove). The three owe a phone reading on the next alpha. The paragraphs that follow keep the rule each was held under. Still OFF: `LYDIA_REFUND_NOTIFICATIONS_ENABLED`.
 
-**Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
+**Built 2026-10-22, ON since the 1.7.0 floor (2026-11-20): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
 owner's explicit decision, read back from the public version endpoint as `1.2.9`; both stores serve `1.5.0`,
 far above the floor, so the raise cannot lock out a shipped client (compare the v0.14.0 incident above). A new
 notification type, bookings included, may now ship once its own flag flips. Dev's floor is a separate row
-([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which ships behind `FORM_ORGANISER_ALERT_ENABLED = false` (`apps/social-service/src/forms/organiser-alert.service.ts`).
+([backlog](backlog.md)). Steps 2-4 are done for `form_paid_over_capacity`, which is behind `FORM_ORGANISER_ALERT_ENABLED`, now `true` (`apps/social-service/src/forms/organiser-alert.service.ts`).
 **The exact precondition to set it to `true` (user, 2026-10-22):** `minClientVersion` at or above the
 version that CARRIES #2228 (`v1.4.0`, not merely `1.2.9`: that build also declares the `form-responses` host and
 knows the type), on BOTH estates, by [the floor rule](#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24). The switch stays
@@ -740,9 +740,9 @@ the version CARRYING this pull request draws all of it. That degraded display be
 the release carrying #2692 was ACCEPTED (2026-10-29); the floor passed that release: both estates read `minClientVersion` 1.6.6 (2026-11-13).
 The flip is a one-line pull request of its own, merged once the floor read-back showed `1.2.9`.
 
-**Built and waiting on their floor (2026-10-31): `lydia_payments_active` and `lydia_payments_paused`**, the
+**Built 2026-10-31, ON since the 1.7.0 floor (2026-11-20): `lydia_payments_active` and `lydia_payments_paused`**, the
 notices telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active or were
-paused (Lydia enrolment lot 2). They ship behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED = false`
+paused (Lydia enrolment lot 2). They are behind `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED`, now `true`
 (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`); while it is off nothing is
 written and the caller's ERROR/WARN line plus the payments screen state carry the fact. **Flip condition:**
 `minClientVersion` at or above the first release carrying Lydia enrolment lot 2 (PR to be numbered), on BOTH
@@ -764,9 +764,9 @@ client older than the release carrying them draws the neutral unknown-type row a
 legacy sentence - the same degraded display accepted for the bookings' four
 ([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
 
-**Built and waiting on its floor (2026-10-31): `lydia_cashier_added`**, the bell row telling a member
-they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It ships behind
-`LYDIA_CASHIER_NOTIFICATIONS_ENABLED = false` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
+**Built 2026-10-31, ON since the 1.7.0 floor (2026-11-20): `lydia_cashier_added`**, the bell row telling a member
+they were added as a cashier of an association's Lydia Business (Lydia enrolment lot 3). It is behind
+`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`, now `true` (`apps/social-service/src/associations/lydia-payments-notifier.service.ts`);
 while it is off nothing is written and Lydia's own SMS reaches the person. **Flip condition:**
 `minClientVersion` at or above the first release carrying Lydia enrolment lot 3, on BOTH estates, once
 Play and the App Store serve it - then a one-line pull request sets the constant to `true` and changes the
