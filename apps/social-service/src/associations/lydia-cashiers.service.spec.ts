@@ -76,10 +76,12 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
 });
 
 describe('LydiaCashierNotifier - the gate', () => {
-  it('ships OFF until the floor version serves the new type: nothing written', async () => {
-    expect(LYDIA_CASHIER_NOTIFICATIONS_ENABLED).toBe(false);
+  it('ships ON since the 1.7.0 floor; the kill switch off writes nothing', async () => {
+    expect(LYDIA_CASHIER_NOTIFICATIONS_ENABLED).toBe(true);
+    expect(new LydiaCashierNotifier({} as never).enabled()).toBe(true);
     const notifications = { createNotifications: jest.fn() };
     const notifier = new LydiaCashierNotifier(notifications as never);
+    jest.spyOn(notifier, 'enabled').mockReturnValue(false);
     await expect(notifier.tellAdded({ id: ASSO, name: 'BDE' }, 'u2')).resolves.toBe(0);
     expect(notifications.createNotifications).not.toHaveBeenCalled();
   });
@@ -420,23 +422,25 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
     claimToken,
   });
 
-  it('a confirmed add with the cashier notice switched off (until its floor) logs nothing at WARN or ERROR', async () => {
+  it('a confirmed add with the cashier kill switch off logs nothing at WARN or ERROR', async () => {
     // The beforeEach spies, read back (spyOn on a spied method answers the same spy).
     const warn = jest.spyOn(Logger.prototype, 'warn');
     const error = jest.spyOn(Logger.prototype, 'error');
     const log = jest.spyOn(Logger.prototype, 'log');
     const rows = [responsable()];
     const notifications = { createNotifications: jest.fn() };
+    const notifier = new LydiaCashierNotifier(notifications as never);
+    jest.spyOn(notifier, 'enabled').mockReturnValue(false);
     const { service, asso } = make(rows, {
       asso: { claimed: true, token: TOKEN },
-      notifier: new LydiaCashierNotifier(notifications as never),
+      notifier,
     });
     await expect(
       service.record(ASSO, { ...roleRecord(PHONE), role: 'vendeur', cashierId: undefined })
     ).resolves.toMatchObject({ id: 'n1', role: 'vendeur', state: 'confirmed' });
     expect(notifications.createNotifications).not.toHaveBeenCalled();
     expect(asso).toMatchObject({ claimed: false, token: null });
-    // The switched-off notice is a designed state, said at debug: no line at WARN or ERROR.
+    // A switched-off notice is a designed state, said at debug: no line at WARN or ERROR.
     expect(warn).not.toHaveBeenCalled();
     expect(error).not.toHaveBeenCalled();
     expect(String(log.mock.calls)).toContain('[AUDIT] Lydia cashier added');

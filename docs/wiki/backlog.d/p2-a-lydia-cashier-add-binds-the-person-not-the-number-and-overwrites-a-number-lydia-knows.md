@@ -13,10 +13,10 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
 ([payments](../frontend/modules/payments.md#the-cashiers-enrolment-lot-3), "A membership that ends").
 
 1. **The member check names the person, not the number.** A payout manager picks a member and
-   types any number; the cashier notice (`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`) is off until its floor,
-   so the member whose name is used is not told - Lydia's SMS goes to the number. The audit line names
-   the member and the manager. Flipping the notice (its floor, [legacy-compatibility](../legacy-compatibility.md))
-   closes it; until then membership is a label on the row.
+   types any number; the cashier notice (`LYDIA_CASHIER_NOTIFICATIONS_ENABLED`) is ON since 2026-11-20 (floor `1.7.0`),
+   so the member whose name is used is told in the app (its reading is owed) as well as by Lydia's SMS to the number. The audit line names
+   the member and the manager. The notice flip
+   closes it once read.
 2. **An add never reads the number first.** `business/addcashier` REPLACES the rights of a number Lydia
    already lists (a co-manager added in the Lydia console, unknown to Canari): adding it as Vendeur
    would leave it `access_collect` only, recorded CONFIRMED. The fix is a `getpermission` read before

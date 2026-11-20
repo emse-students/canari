@@ -3312,10 +3312,10 @@ tree's three attempts plus one per other tree, not three each (up to 80 minutes)
 **What else the production audit reads (2026-11-17):** a LOW `fast-xml-parser` advisory
 (GHSA-474x-hrwr-fgx4, via minio and firebase-admin) is below the services' `moderate` level.
 
-**What the service images really contain is a separate defect.** Each service Dockerfile installs
-without `--production` and copies the whole `node_modules`, dev tools included, into the runtime
-stage ([backlog](backlog.d/p2-service-images-ship-their-dev-dependencies.md)). Those tools are
-never loaded, so the closure above is what RUNS. They are still on the image's disk.
+**What the service images contain (fixed 2026-11-20):** each NestJS Dockerfile has a `prod-deps`
+stage running `bun install --production --frozen-lockfile`, and the runtime stage copies
+`node_modules` from it, never from `builder`; `image-prod-deps.test.mjs` keeps it so. The image now
+holds the closure that RUNS, not jest and the Nest CLI beside it.
 
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are

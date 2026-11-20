@@ -6115,8 +6115,9 @@ ${rejectionReason}`
     const before = holder.cause
       ? `was marked by ${holder.cause} at ${previousAt ? previousAt.toISOString() : 'an unrecorded date'}`
       : 'no earlier marking on record';
-    // The managers' notice is OFF by design until its floor version (legacy-compatibility.md): a
-    // stated fact on the line, never a reason to raise its level.
+    // The managers' notice is ON since the 1.7.0 floor (legacy-compatibility.md); the constant stays
+    // as a kill switch, and when it is off that is a stated fact on the line, never a reason to
+    // raise its level.
     // Written BEFORE the notice is attempted, so it says what is next, never that it was sent; a
     // bridge switch tells the managers only at the first request Lydia issues (below).
     const notices = !this.lydiaNotifier.enabled()

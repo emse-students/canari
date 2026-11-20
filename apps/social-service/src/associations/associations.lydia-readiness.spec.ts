@@ -368,12 +368,12 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(logs.warn.join('|')).toContain('no association holds the vendor token');
   });
 
-  it('with the switch OFF, a transition writes no Lydia notice and says so; the delegate is still told', async () => {
+  it('with the kill switch OFF, a transition writes no Lydia notice and says so; the delegate is still told', async () => {
     const logs = captureLogs();
     const notifications = { createNotifications: jest.fn() };
     const push = { notifyContent: jest.fn() };
     const real = new LydiaPaymentsNotifier(notifications as never, push as never);
-    expect(real.enabled()).toBe(false);
+    jest.spyOn(real, 'enabled').mockReturnValue(false);
     const { service } = makeReadiness({ id: HOLDER, ready: false, cause: null }, real as never, {
       withheld: [],
     });
