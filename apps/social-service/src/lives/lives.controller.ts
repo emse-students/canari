@@ -19,7 +19,7 @@ import {
 import type { Request } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsService } from '../associations/associations.service';
-import { LiveEnabledGuard } from './live-enabled.guard';
+import { LiveDeletionRight, LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_POSTER_MAX_BYTES, LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
 import {
@@ -199,7 +199,9 @@ export class LivesController {
   }
 
   /**
-   * Starts a live: `{ key: <64 hex>, associationId?: <uuid>, acceptedRulesVersion?: <int> }`. 409 if
+   * Starts a live: `{ key: <64 hex>, associationId?: <uuid>, acceptedRulesVersion?: <int>, title?,
+   * replay?: boolean }` (`replay` is the organiser's "Rediffusion" switch, absent = on; 400
+   * `LIVE_REPLAY_INVALID`). 409 if
    * the caller has one open; 403 `LIVE_RULES_NOT_ACCEPTED` while the first-live rules are not
    * accepted (send `acceptedRulesVersion` when the member tapped Start on them). `no-store`: the
    * answer echoes the live key, and a key never sits in any cache (review G7, 2026-11-17).
@@ -214,6 +216,7 @@ export class LivesController {
       associationId?: unknown;
       acceptedRulesVersion?: unknown;
       title?: unknown;
+      replay?: unknown;
     }
   ) {
     return this.lives.start(callerOf(userId), body ?? {});
@@ -293,6 +296,20 @@ export class LivesController {
       from === undefined ? 0 : indexOf(from, 'REPLAY_FROM'),
       { moderate: moderation === 'true', isGlobalAdmin: globalAdmin === 'true' }
     );
+  }
+
+  /**
+   * The organiser switches the replay OFF, on air or after the live (owner, 2026-11-20): what was
+   * kept is deleted, and it can never be switched back on. Broadcaster only, idempotent; 404
+   * `LIVE_NOT_FOUND` for another member's live and once the live is purged. Answers
+   * `{ liveId, keepsReplay: false }`.
+   */
+  @Delete(':id/replay')
+  @LiveDeletionRight()
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  switchReplayOff(@Param('id') id: string, @Headers('x-user-id') userId: string) {
+    return this.lives.switchReplayOff(callerOf(userId), id.toLowerCase());
   }
 
   @Get(':id/manifest')

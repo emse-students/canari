@@ -25,6 +25,7 @@
     Pencil,
     Radio,
     RefreshCcw,
+    RotateCcw,
     ShieldAlert,
     ShieldCheck,
     Share2,
@@ -59,6 +60,7 @@
   import { grabPosterFrame } from '$lib/live/livePoster';
   import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
   import Button from '$lib/components/ui/Button.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
@@ -179,6 +181,25 @@
     return durationLabel(retentionInForce(serverRetention()).days.liveReplayDays);
   }
 
+  /**
+   * The organiser's "Rediffusion" switch, OFF, on air or on the end screen (owner, 2026-11-20): asked
+   * first because it deletes what was kept and can never be switched back on.
+   */
+  async function confirmReplayOff(): Promise<void> {
+    console.debug(`[LIVE-SCREEN] replay switch-off asked in ${broadcast.phase}`);
+    const ok = await showConfirm(m.live_replay_off_confirm(), {
+      danger: true,
+      confirmLabel: m.live_replay_off_confirm_button(),
+      cancelLabel: m.live_replay_off_keep(),
+    });
+    if (!ok) {
+      console.debug('[LIVE-SCREEN] replay switch-off declined - the replay stays');
+      return;
+    }
+    const taken = await broadcast.switchReplayOff();
+    console.debug(`[LIVE-SCREEN] replay switch-off ${taken ? 'taken' : 'not taken'}`);
+  }
+
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
     console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
@@ -224,6 +245,10 @@
     if (!video || video.videoWidth === 0 || frameReady) return;
     frameReady = true;
   }
+  // The switch is part of the start only while it is shown (see LiveBroadcast.replayOffered).
+  $effect(() => {
+    broadcast.replayOffered = replaysAvailable(serverLiveReplaysMode());
+  });
 
   // The element follows the shown stream; `muted` as a PROPERTY (CameraScreen: a cloned element
   // does not take its muted state from the attribute, and the microphone played back as an echo).
@@ -360,6 +385,11 @@
     disabled: m.live_limits_disabled,
     offline: m.live_limits_offline,
     failed: m.live_limits_failed,
+  };
+
+  const REPLAY_OFF_TEXT: Record<'offline' | 'failed', () => string> = {
+    offline: m.live_replay_off_offline,
+    failed: m.live_replay_off_failed,
   };
 
   /**
@@ -538,6 +568,24 @@
               >
             {/if}
           {/if}
+          {#if broadcast.keepsReplay}
+            <!-- The replay can only be switched OFF once the live started (owner, 2026-11-20). -->
+            <Button
+              variant="secondary"
+              size="compact"
+              onclick={() => void confirmReplayOff()}
+              disabled={broadcast.replayOffSaving}
+              data-live-replay-off
+            >
+              <RotateCcw size={12} strokeWidth={2.5} aria-hidden="true" />
+              {m.live_replay_off_button()}
+            </Button>
+          {/if}
+          {#if broadcast.replayOffProblem}
+            <span class="max-w-full text-xs text-white/80 sm:max-w-72" data-live-replay-off-problem
+              >{REPLAY_OFF_TEXT[broadcast.replayOffProblem]()}</span
+            >
+          {/if}
         {/if}
         {#if onAir && broadcast.health === 'retrying'}
           <span
@@ -675,6 +723,17 @@
             data-live-title-input
           />
         </label>
+      {/if}
+      {#if replaysAvailable(serverLiveReplaysMode())}
+        <!-- "Rediffusion": ON by default, offered only here (owner, 2026-11-20); after the start it can only go off. -->
+        <div data-live-replay-switch>
+          <Toggle
+            bind:checked={broadcast.replayChoice}
+            label={m.live_replay_switch_label()}
+            hint={m.live_replay_switch_hint({ days: replayDaysLabel() })}
+            disabled={broadcast.phase !== 'preview'}
+          />
+        </div>
       {/if}
       {#if studio}
         <LiveSceneBar {studio} showHint />
@@ -979,6 +1038,22 @@
       {:else}
         <h2 class="text-lg font-bold">{m.live_ended_title()}</h2>
         <p class="text-sm text-white/80">{END_TEXT[broadcast.endCause]()}</p>
+        {#if broadcast.keepsReplay && broadcast.replayVerdict !== false}
+          <Button
+            variant="secondary"
+            size="compact"
+            onclick={() => void confirmReplayOff()}
+            disabled={broadcast.replayOffSaving}
+            data-live-replay-off
+          >
+            {m.live_replay_off_button()}
+          </Button>
+          {#if broadcast.replayOffProblem}
+            <span class="text-xs text-white/80" data-live-replay-off-problem
+              >{REPLAY_OFF_TEXT[broadcast.replayOffProblem]()}</span
+            >
+          {/if}
+        {/if}
       {/if}
       <button type="button" class="{pill} mt-2 bg-white/15 hover:bg-white/25" onclick={close}>
         {m.common_close_label()}

@@ -43,6 +43,12 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/appVersion')>()),
   isAndroidTauriRuntime: () => runtime.android,
 }));
+// The platform's replay switch, as `/api/version` last said it: a test turns it on.
+const replays = vi.hoisted(() => ({ mode: 'off' as 'off' | 'on' }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverLiveReplaysMode: () => replays.mode,
+}));
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/live/shareLive', () => ({ shareLiveLink: vi.fn() }));
@@ -110,6 +116,7 @@ afterEach(() => {
   // The visibility test overrides it on the document itself.
   delete (document as unknown as Record<string, unknown>).visibilityState;
   vi.restoreAllMocks();
+  replays.mode = 'off';
   vi.mocked(showConfirm).mockReset().mockResolvedValue(true);
 });
 
@@ -137,6 +144,43 @@ function screen(battery: number | null = null, associationId: string | null = nu
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel);
 
 describe('LiveBroadcaster', () => {
+  it('the Rediffusion switch is shown only while the platform serves replays, ON by default, and Start sends exactly what it says', async () => {
+    // Platform off: no switch, and the start asks for NO replay.
+    const hidden = screen();
+    await settle();
+    expect(q('[data-live-replay-switch]')).toBeNull();
+    expect(hidden.broadcast.replayOffered).toBe(false);
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(hidden.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
+    while (mounted.length) unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+
+    // Platform on: the switch is there, the effect marks it offered, and the default start keeps it.
+    replays.mode = 'on';
+    const on = screen();
+    await settle();
+    const box = q<HTMLInputElement>('[data-live-replay-switch] input[type="checkbox"]')!;
+    expect(box).not.toBeNull();
+    expect(box.checked).toBe(true);
+    expect(on.broadcast.replayOffered).toBe(true);
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(on.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, true);
+    while (mounted.length) unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+
+    // Switched off before the start: the start carries false.
+    const off = screen();
+    await settle();
+    q<HTMLInputElement>('[data-live-replay-switch] input[type="checkbox"]')!.click();
+    await settle();
+    expect(off.broadcast.replayChoice).toBe(false);
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(off.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
+  });
+
   it("the preview states the rules with the server's numbers, and Start opens the live", async () => {
     const { deps, broadcast } = screen();
     await settle();
@@ -267,7 +311,7 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-rules]')).toBeNull();
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
-    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null);
+    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null, false);
   });
 
   it('a suspended member reads it BEFORE Start, with its date; Start is disabled until a re-read clears it', async () => {

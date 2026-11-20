@@ -95,6 +95,29 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
     );
   });
 
+  it("serves the organiser's replay deletion (a deletion right) even while lives_mode is off, and nothing else", async () => {
+    const handlerOf = (name: string) =>
+      (LivesController.prototype as unknown as Record<string, unknown>)[name];
+    const withHandler = (handler: unknown) =>
+      ({
+        ...guardContext(),
+        getHandler: () => handler,
+      }) as unknown as ReturnType<typeof guardContext>;
+    const { db, query } = platformDb([{ lives_mode: 'off' }]);
+    const guard = new LiveEnabledGuard(db);
+    await expect(guard.canActivate(withHandler(handlerOf('switchReplayOff')))).resolves.toBe(true);
+    // The kill switch is not even read for it, and every other route still answers 404.
+    expect(query).not.toHaveBeenCalled();
+    expect(await statusOf(() => guard.canActivate(withHandler(handlerOf('start'))))).toBe(
+      HttpStatus.NOT_FOUND
+    );
+    // The deploy lock still applies.
+    process.env.LIVE_ENABLED = 'false';
+    expect(await statusOf(() => guard.canActivate(withHandler(handlerOf('switchReplayOff'))))).toBe(
+      HttpStatus.NOT_FOUND
+    );
+  });
+
   it('reads the database on EVERY request, so a flip holds from the next one', async () => {
     const answers = [[{ lives_mode: 'on' }], [{ lives_mode: 'off' }]];
     const query = jest.fn(async () => answers.shift());

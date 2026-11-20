@@ -4,7 +4,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  SetMetadata,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { LIVE_CLIENT_VERSION_HEADER, liveClientVersionAllowed } from './live-client-version';
@@ -24,6 +26,18 @@ import { readLivesMode } from './lives-mode';
 export function isLiveEnabled(): boolean {
   return process.env.LIVE_ENABLED === 'true';
 }
+
+/** Metadata key of {@link LiveDeletionRight}. */
+export const LIVE_DELETION_RIGHT = 'canari:live-deletion-right';
+
+/**
+ * Marks a route as A MEMBER'S RIGHT TO DELETE WHAT THEY PUBLISHED: it stays reachable while the
+ * runtime kill switch `lives_mode` is off (owner, 2026-11-20, charter principle 1 - your messages
+ * are yours). An operations switch must never decide whether the organiser can withdraw a replay.
+ * The deploy lock and the client floor still apply: where lives were never opened there is nothing
+ * to withdraw, and a build below the floor has no such control.
+ */
+export const LiveDeletionRight = () => SetMetadata(LIVE_DELETION_RIGHT, true);
 
 /**
  * Answers 404 on every `/api/lives` route unless BOTH switches are open - the deploy lock
@@ -59,6 +73,11 @@ export class LiveEnabledGuard implements CanActivate {
         `[LIVE] a /lives route was called by a client below the lives floor (version header: ${String(header ?? 'absent')}) - 404`
       );
       throw new NotFoundException();
+    }
+    const handler = context.getHandler?.();
+    if (handler && new Reflector().get<boolean>(LIVE_DELETION_RIGHT, handler) === true) {
+      this.logger.debug('[LIVE] a deletion-right route is served whatever lives_mode says');
+      return true;
     }
     const mode = await readLivesMode(this.db.manager, this.logger);
     if (mode === 'on') return true;

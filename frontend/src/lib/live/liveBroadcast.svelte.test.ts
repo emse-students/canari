@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveRefusalError } from './api';
 import { LiveBroadcast, startProblemOf } from './liveBroadcast.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
-import { fakeCamera, fakeDeps, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
+import { fakeCamera, fakeDeps, liveView, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
 import { FakeMediaStream, studioOn } from './liveStudio.test-helper';
 import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
@@ -93,7 +93,7 @@ describe('LiveBroadcast - preview and start', () => {
   it('goes on air: the generated key and the association reach the server, a recorder runs on the open camera, the screen is held', async () => {
     const { b, deps, recorders, cam } = await ready('asso-1');
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null, false);
     expect(b.phase).toBe('live');
     expect(b.liveId).toBe(LIVE_ID);
     expect(recorders).toHaveLength(1);
@@ -170,7 +170,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     expect(b.rulesPending).toBe(false);
     expect(b.canStart).toBe(true);
     await b.start();
-    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null);
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null, false);
     expect(b.phase).toBe('live');
   });
 
@@ -178,7 +178,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     const { b, deps } = await ready();
     expect(b.rulesPending).toBe(false);
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
 
   it('the rules changed since (accepted v1, now v2): shown again', async () => {
@@ -201,7 +201,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     b.acceptRules();
     expect(b.startProblem).toBeNull();
     await b.start();
-    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null);
+    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null, false);
   });
 
   it('LIVE_RULES_NOT_ACCEPTED with the re-read failing: the limits Retry, Start waits', async () => {
@@ -775,7 +775,6 @@ describe('LiveBroadcast - leaving the screen', () => {
     const started = b.start();
     await vi.waitFor(() => expect(deps.startLive).toHaveBeenCalled());
     b.dispose();
-    const { liveView } = await import('./liveBroadcast.test-helper');
     answer(liveView());
     await started;
     expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
@@ -1034,13 +1033,13 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     const first = await ready();
     first.b.title = '  Soirée  ';
     await first.b.start();
-    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée');
+    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée', false);
     expect(first.b.title).toBe('Soirée');
 
     const second = await ready();
     second.b.title = '   ';
     await second.b.start();
-    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
+    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
 
   it('edits the title on air, keeps the old one on a refusal and says why', async () => {
@@ -1061,6 +1060,49 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     deps.setLiveTitle.mockRejectedValueOnce(new TransportFailureError(new TypeError('offline')));
     await expect(b.saveTitle('Encore')).resolves.toBe(false);
     expect(b.titleProblem).toBe('offline');
+  });
+
+  it('the Rediffusion switch is ON by default and travels with the start; once started it only goes OFF, on the server answer', async () => {
+    const f = await ready();
+    f.deps.startLive.mockResolvedValueOnce({ ...liveView(), keepsReplay: true });
+    expect(f.b.replayChoice).toBe(true);
+    f.b.replayOffered = true;
+    await f.b.start();
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, true);
+    expect(f.b.keepsReplay).toBe(true);
+
+    // A refusal keeps the replay and says why; a transport failure is told apart.
+    f.deps.switchLiveReplayOff.mockRejectedValueOnce(
+      new TransportFailureError(new TypeError('offline'))
+    );
+    await expect(f.b.switchReplayOff()).resolves.toBe(false);
+    expect(f.b.keepsReplay).toBe(true);
+    expect(f.b.replayOffProblem).toBe('offline');
+
+    await expect(f.b.switchReplayOff()).resolves.toBe(true);
+    expect(f.deps.switchLiveReplayOff).toHaveBeenLastCalledWith(LIVE_ID);
+    expect(f.b.keepsReplay).toBe(false);
+    expect(f.b.replayVerdict).toBe(false);
+    expect(f.b.replayOffProblem).toBeNull();
+    // Nothing to switch off any more: no second call is made.
+    await expect(f.b.switchReplayOff()).resolves.toBe(false);
+    expect(f.deps.switchLiveReplayOff).toHaveBeenCalledTimes(2);
+  });
+
+  it('a start with the switch OFF carries false', async () => {
+    const f = await ready();
+    f.b.replayOffered = true;
+    f.b.replayChoice = false;
+    await f.b.start();
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
+  });
+
+  it('a switch the organiser was never shown asks for NO replay, whatever its default', async () => {
+    const f = await ready();
+    expect(f.b.replayChoice).toBe(true);
+    expect(f.b.replayOffered).toBe(false);
+    await f.b.start();
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
 
   it('sends a preview on the SEGMENT cadence - index 0, then once per period - sealed under the POSTER key', async () => {

@@ -86,6 +86,11 @@ import { ModerationModule } from '../moderation/moderation.module';
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview
   // routes live on the `/api/public/` surface, but the rule deciding what a post may disclose
   // belongs beside the posts it reasons about, not in the controller that happens to serve it.
-  exports: [PostNotificationsService, PostPreviewService, PostMediaRetentionService],
+  exports: [
+    PostNotificationsService,
+    PostPreviewService,
+    PostMediaRetentionService,
+    ReelRetentionScheduler,
+  ],
 })
 export class PostsModule {}
