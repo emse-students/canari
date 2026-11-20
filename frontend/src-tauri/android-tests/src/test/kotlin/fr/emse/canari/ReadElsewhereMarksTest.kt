@@ -2,6 +2,7 @@ package fr.emse.canari
 
 import fr.emse.canari.push.ReadElsewhereMarks
 import fr.emse.canari.push.ReadElsewhereMarks.Banner
+import fr.emse.canari.push.ReadElsewhereMarks.Delivery
 import fr.emse.canari.push.ReadElsewhereMarks.Line
 import fr.emse.canari.push.ReadElsewhereMarks.Read
 import fr.emse.canari.push.ReadElsewhereMarks.Withdrawal
@@ -28,9 +29,9 @@ import java.util.concurrent.CountDownLatch
 class ReadElsewhereMarksTest {
 
     /** A message line as the builder stamps it: the sender's and server's instants, or none; a pending reply or not. */
-    private data class Msg(val sentAt: Long?, val serverAt: Long?, val pendingReply: Boolean = false)
+    private data class Msg(val sentAt: Long?, val serverAt: Long?, val pendingReply: Boolean = false, val replyId: String? = null)
 
-    private fun marks() = ReadElsewhereMarks<Msg> { Line.of(it.pendingReply, it.sentAt, it.serverAt) }
+    private fun marks() = ReadElsewhereMarks<Msg> { Line.of(it.pendingReply, it.sentAt, it.serverAt, it.replyId) }
 
     /**
      * The system's notification list for one conversation: a `notify` or a `cancel` only QUEUES, as
@@ -187,7 +188,7 @@ class ReadElsewhereMarksTest {
         assertEquals(listOf(m2), shade.read()?.messages)
 
         marks.post(shade, "g2", 1002, m1)
-        marks.forgetAll()
+        marks.forgetAll {}
         assertNull(marks.bannerOf("g2") { null })
     }
 
@@ -381,8 +382,8 @@ class ReadElsewhereMarksTest {
     }
 
     /** A cancel with no mark, as `cancelConversationNotification` runs it. */
-    private fun ReadElsewhereMarks<Msg>.withdrawOn(shade: AsyncShade, id: String, keepPendingReply: Boolean): Withdrawal =
-        withdraw(id, keepPendingReply, shade = { shade.read() }, cancel = { shade.cancel(it) })
+    private fun ReadElsewhereMarks<Msg>.withdrawOn(shade: AsyncShade, id: String, keepPendingReply: Boolean, stableId: Int? = null): Withdrawal =
+        withdraw(id, keepPendingReply, stableId, shade = { shade.read() }, cancel = { shade.cancel(it) })
 
     // Device reading of #3912 (item 2): the push's silent-from-self cancel removed a banner whose
     // reply was still queued. It cannot weigh peer lines (the mark is in the ciphertext), but it
@@ -400,9 +401,9 @@ class ReadElsewhereMarksTest {
 
         val fresh = marks()
         val pendingInShade = Banner(77, "messages", listOf(Msg(null, null, pendingReply = true)))
-        assertEquals(Withdrawal.KEPT_PENDING_REPLY, fresh.withdraw("g2", true, shade = { pendingInShade }) { fail("kept") })
+        assertEquals(Withdrawal.KEPT_PENDING_REPLY, fresh.withdraw("g2", true, 77, shade = { pendingInShade }) { fail("kept") })
         // A banner with no pending reply goes, whatever its lines.
-        assertEquals(Withdrawal.CANCELLED, fresh.withdraw("g3", true, shade = { Banner(78, "messages", listOf(m2)) }) {})
+        assertEquals(Withdrawal.CANCELLED, fresh.withdraw("g3", true, 78, shade = { Banner(78, "messages", listOf(m2)) }) {})
     }
 
     // Device reading of #3912 (item 3): the salon's `channel.read` removed the banner, then its
@@ -416,8 +417,9 @@ class ReadElsewhereMarksTest {
         assertTrue(marks.readOn(shade, "ch1", Read(1_000L, serverClock = true)))
         // The cancel is queued, not applied: the shade still shows the banner.
         assertEquals(1002, shade.read()?.notifId)
-        assertEquals(Withdrawal.NONE, marks.withdrawOn(shade, "ch1", keepPendingReply = false))
-        assertEquals(1, shade.events.count { it == "cancel 1002" })
+        // Nothing to weigh, nothing to report: the only effect is the silent cancel by id, which
+        // the system orders after any `notify` (round-7 review, S1).
+        assertEquals(Withdrawal.NONE, marks.withdrawOn(shade, "ch1", keepPendingReply = false, stableId = 1002))
         // ...nor does a post rebuild on the stale copy: it starts a new thread.
         marks.post(shade, "ch1", 1002, m2)
         assertEquals(listOf(m2), marks.bannerOf("ch1") { shade.read() }?.messages)
@@ -427,10 +429,79 @@ class ReadElsewhereMarksTest {
     fun `after every banner was removed at once the shade is never asked again`() {
         val marks = marks()
         val shade = AsyncShade()
-        marks.forgetAll()
+        marks.forgetAll {}
         assertNull(marks.bannerOf("g1") { fail("the shade is stale"); null })
-        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, shade = { fail("the shade is stale"); null }) {})
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, null, shade = { fail("the shade is stale"); null }) {})
         marks.post(shade, "g1", 1001, m1)
         assertEquals(listOf(m1), marks.bannerOf("g1") { null }?.messages)
+    }
+
+    // Round-7 review (S1): `forgetAll` after a sweep of a shade that lagged a post left that banner
+    // standing, and invisible to every later dismissal. It cancels what it recorded, by id.
+    @Test
+    fun `forgetAll cancels every recorded banner by id, one the shade has not shown included`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "g1", 1001, m1)
+        shade.drain()
+        marks.post(shade, "g2", 1002, m2) // not drained: the shade has not shown it yet
+        val cancelled = mutableListOf<Int>()
+        assertEquals(listOf(1001, 1002), marks.forgetAll { shade.cancel(it); cancelled += it }.sorted())
+        assertEquals(listOf(1001, 1002), cancelled.sorted())
+        shade.drain()
+        assertNull(shade.read())
+    }
+
+    @Test
+    fun `a cancel with no banner known cancels the stable id, unless it must keep a pending reply`() {
+        val marks = marks()
+        marks.forgetAll {}
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, 1001, shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", true, 1001, shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, null, shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+    }
+
+    // Round-7 review (B1): a reply delivered LATER (the retry worker, a push-woken drain) left the
+    // "not sent yet" line for good - and no read elsewhere removes a pending line. Its delivery
+    // clears it: the banner goes when it was the last line...
+    @Test
+    fun `a delivered pending reply no longer keeps the banner`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "g1", 1001, m1)
+        val pending = Msg(null, null, pendingReply = true, replyId = "r1")
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, pending)))
+        assertFalse(marks.readOn(shade, "g1", Read(Long.MAX_VALUE, serverClock = true)))
+
+        assertEquals(Delivery.NONE, marks.replyDelivered("g1", "other", shade = { null }, cancel = { fail("not this reply") }) { _, _ -> throw AssertionError("not this reply") })
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r1", shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("last line") })
+        assertEquals(listOf(1001), cancelled)
+        assertNull(marks.bannerOf("g1") { fail("removed by this process"); null })
+    }
+
+    // ...and when a peer wrote after it, the banner keeps only the newer lines - which a read then weighs.
+    @Test
+    fun `a delivered pending reply followed by a peer line leaves only the newer lines`() {
+        val marks = marks()
+        val pending = Msg(null, null, pendingReply = true, replyId = "r1")
+        val after = Msg(sentAt = 2_900L, serverAt = 3_000L)
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, pending, after)))
+        var rebuilt: List<Msg>? = null
+        val outcome = marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("a newer line stays") }) { held, kept ->
+            rebuilt = kept
+            held.copy(messages = kept)
+        }
+        assertEquals(Delivery.REPOSTED, outcome)
+        assertEquals(listOf(after), rebuilt)
+        assertEquals(listOf(after), marks.bannerOf("g1") { null }?.messages)
+        // No pending line left: a read covering the newer line removes the banner.
+        val cancelled = mutableListOf<Int>()
+        assertTrue(marks.recordThenCancel("g1", Read(3_000L, serverClock = true), shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
     }
 }

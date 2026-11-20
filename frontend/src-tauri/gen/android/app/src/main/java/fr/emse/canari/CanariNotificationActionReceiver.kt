@@ -117,10 +117,17 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         // The server's receive time of THIS reply, as its POST answered it: the cache row is dated
         // by it, so the reply sits where the server placed it (chat.md, server order).
         var receivedAt = 0L
+        // Whether THIS reply went out - not whether the whole outbox drained: a reply delivered
+        // beside an older entry still queued is delivered, and must not be re-posted as pending.
+        var delivered = false
         val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
-            if (sent.id == messageId) receivedAt = sent.receivedAt
+            if (sent.id == messageId) {
+                receivedAt = sent.receivedAt
+                delivered = true
+            }
         }
-        if (remaining == 0) {
+        if (remaining > 0) OutboxRetryWorker.enqueueIfHealthy(context)
+        if (delivered) {
             // Delivered: record it locally BEFORE clearing the notification, so the one visible
             // trace of the reply is never dropped before the durable one exists.
             CanariFirebaseMessagingService.writeSentMessageToCache(
@@ -146,8 +153,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    failed waited for the next LOGIN, where the FCM drain's own failure path has had
             //    a 30s/60s/120s backoff all along.
             Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
-            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text, notifiedAt, notifiedServerAt)
-            OutboxRetryWorker.enqueueIfHealthy(context)
+            CanariFirebaseMessagingService.repostReplyPending(context, groupId, messageId, text, notifiedAt, notifiedServerAt)
         }
     }
 

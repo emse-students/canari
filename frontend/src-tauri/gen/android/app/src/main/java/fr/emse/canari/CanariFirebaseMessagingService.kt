@@ -311,6 +311,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         const val LINE_PENDING_REPLY = "canari.line.pendingReply"
 
+        /**
+         * The message id of the pending reply a [LINE_PENDING_REPLY] line stands for: its delivery,
+         * by whichever drain sends it, clears that line ([replyDelivered]).
+         */
+        const val LINE_PENDING_REPLY_ID = "canari.line.pendingReplyId"
+
         /** The user swiped a conversation notification away ([bannerDismissedIntent]). */
         const val ACTION_BANNER_DISMISSED = "fr.emse.canari.ACTION_BANNER_DISMISSED"
 
@@ -529,7 +535,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             manager.cancel(sbn.id)
                         }
                     }
-                    READ_ELSEWHERE.forgetAll()
+                    // What the record holds is cancelled BY ID too: the sweep above reads a shade that
+                    // lags a `notify`, and after this the shade is never asked again.
+                    READ_ELSEWHERE.forgetAll { manager.cancel(it) }
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
                 // and so does each ring's call screen, which must never outlive its ring. Under the
@@ -728,6 +736,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         internal fun repostReplyPending(
             context: Context,
             groupId: String,
+            messageId: String,
             replyText: String,
             sentAt: Long,
             serverAt: Long,
@@ -735,77 +744,125 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 val notifId = getStableNotifId(context, groupId)
-                val existing = manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
-                if (existing == null) {
-                    Log.w(TAG, "repostReplyPending: no active notification for group=${ConversationRef.of(groupId)} - spinner cannot be cleared")
-                    return
-                }
-                val previous = NotificationCompat.MessagingStyle
-                    .extractMessagingStyleFromNotification(existing)
-                if (previous == null) {
-                    Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${ConversationRef.of(groupId)}")
-                    return
-                }
                 val res = appLocaleContext(context)
-                val style = NotificationCompat.MessagingStyle(previous.user)
-                previous.conversationTitle?.let {
-                    style.conversationTitle = it
-                    style.isGroupConversation = previous.isGroupConversation
-                }
-                // Attributed to US, like the in-flight reply Android was drawing, so the thread
-                // reads as the user's own pending message and not as a new incoming one - and
-                // marked so ([LINE_PENDING_REPLY]): no read elsewhere covers it, so the banner that
-                // says "not sent yet" stays.
-                val pending = NotificationCompat.MessagingStyle.Message(
-                    res.getString(R.string.notif_reply_pending, replyText),
-                    System.currentTimeMillis(),
-                    previous.user
-                ).apply { extras.putBoolean(LINE_PENDING_REPLY, true) }
-                val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
-                    existing.channelId ?: CHANNEL_MESSAGES
-                } else {
-                    CHANNEL_MESSAGES
-                }
-                val builder = NotificationCompat.Builder(context, channel)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setStyle(style)
-                    .setAutoCancel(true)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setContentIntent(existing.contentIntent)
-                    .setGroup(GROUP_KEY_MESSAGES)
-                    .setOnlyAlertOnce(true)
-                    // The SAME conversation shortcut: without it the re-post drops to the legacy layout,
-                    // losing the header face and - for a DM - the one-name shape ([ConversationShape]).
-                    .apply { if (android.os.Build.VERSION.SDK_INT >= 26) existing.shortcutId?.let { setShortcutId(it) } }
-                if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
-                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
-                }
-                // THE SAME RECORD AS A MESSAGE POST ([ReadElsewhereMarks]): the lines it builds on
-                // are what this process last posted (the shade only when it posted nothing), and
-                // what it posts is recorded under the same lock - so a read weighs this re-post,
-                // the line its bound dropped included, exactly as the shade will show it.
-                // A banner this process already removed is not brought back: the shade read above may
-                // still show it (it lags a `cancel`), the record does not.
-                val reposted = synchronized(READ_ELSEWHERE.lock) {
+                // THE SAME RECORD AS A MESSAGE POST ([ReadElsewhereMarks]), asked FIRST and under its
+                // lock: the banner it builds on - lines and template - is what this process last
+                // posted, the shade only when it posted nothing (the shade lags a `notify`, and
+                // still shows a banner this process removed). What it posts is recorded under the
+                // same lock, so a read weighs this re-post exactly as the shade will show it.
+                synchronized(READ_ELSEWHERE.lock) {
                     val held = READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
-                        ?: return@synchronized false
+                    val existing = held?.posted as? android.app.Notification
+                    if (held == null || existing == null) {
+                        Log.d(TAG, "repostReplyPending: no banner for group=${ConversationRef.of(groupId)} (removed, or never posted) - nothing to correct")
+                        return
+                    }
+                    val previous = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(existing)
+                    if (previous == null) {
+                        Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${ConversationRef.of(groupId)}")
+                        return
+                    }
+                    val style = NotificationCompat.MessagingStyle(previous.user)
+                    previous.conversationTitle?.let {
+                        style.conversationTitle = it
+                        style.isGroupConversation = previous.isGroupConversation
+                    }
+                    // Attributed to US, like the in-flight reply Android was drawing, so the thread
+                    // reads as the user's own pending message and not as a new incoming one - and
+                    // marked so ([LINE_PENDING_REPLY]): no read elsewhere covers it, so the banner
+                    // that says "not sent yet" stays, until THIS message is delivered
+                    // ([LINE_PENDING_REPLY_ID], [replyDelivered]).
+                    val pending = NotificationCompat.MessagingStyle.Message(
+                        res.getString(R.string.notif_reply_pending, replyText),
+                        System.currentTimeMillis(),
+                        previous.user
+                    ).apply {
+                        extras.putBoolean(LINE_PENDING_REPLY, true)
+                        extras.putString(LINE_PENDING_REPLY_ID, messageId)
+                    }
+                    val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                        existing.channelId ?: CHANNEL_MESSAGES
+                    } else {
+                        CHANNEL_MESSAGES
+                    }
                     held.messages
                         .takeLast(MAX_NOTIF_MESSAGES - 1)
                         .forEach { style.addMessage(it) }
                     style.addMessage(pending)
-                    builder.setStyle(style)
-                    manager.notify(notifId, conversationBanner(context, builder, groupId, notifId))
-                    READ_ELSEWHERE.remember(groupId, ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList()))
-                    true
-                }
-                if (!reposted) {
-                    Log.d(TAG, "repostReplyPending: banner already removed by this process - group=${ConversationRef.of(groupId)} - nothing to correct")
-                    return
+                    val builder = NotificationCompat.Builder(context, channel)
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setStyle(style)
+                        .setAutoCancel(true)
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setContentIntent(existing.contentIntent)
+                        .setGroup(GROUP_KEY_MESSAGES)
+                        .setOnlyAlertOnce(true)
+                        // The SAME conversation shortcut: without it the re-post drops to the legacy
+                        // layout, losing the header face and - for a DM - the one-name shape
+                        // ([ConversationShape]).
+                        .apply { if (android.os.Build.VERSION.SDK_INT >= 26) existing.shortcutId?.let { setShortcutId(it) } }
+                    if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+                        builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
+                        builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
+                    }
+                    val notif = conversationBanner(context, builder, groupId, notifId)
+                    manager.notify(notifId, notif)
+                    READ_ELSEWHERE.remember(groupId, ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif))
                 }
                 Log.i(TAG, "repostReplyPending: re-posted group=${ConversationRef.of(groupId)} - spinner cleared, actions restored")
             } catch (e: Exception) {
                 Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
+            }
+        }
+
+        /**
+         * A reply this device queued was DELIVERED: the banner showing it as "not sent yet" stops
+         * saying so ([ReadElsewhereMarks.replyDelivered]) - the line and every line before it go,
+         * since answering is reading; the banner is cancelled when nothing came after it, else
+         * rebuilt from its own template with only the newer lines.
+         *
+         * Called by [drainOutboxBackground] for every entry it delivered - the ONE drain every
+         * native send goes through (the quick reply's first try, [OutboxRetryWorker], a push-woken
+         * drain, the boot drain), so no delivery path can leave the notice behind. Device reading of
+         * #3912 (round-7 review): a reply delivered later by the retry worker kept "not sent yet" for
+         * good, and no read elsewhere removes a pending line.
+         */
+        private fun replyDelivered(context: Context, groupId: String, messageId: String) {
+            if (groupId.isEmpty()) return
+            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+            val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 } ?: return
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val outcome = READ_ELSEWHERE.replyDelivered(
+                groupId,
+                messageId,
+                shade = { shadeBannerOf(manager, stableId) },
+                cancel = { id -> manager.cancel(id) },
+                repost = { held, kept ->
+                    val template = held.posted as android.app.Notification
+                    val previous = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(template)
+                    val style = NotificationCompat.MessagingStyle(previous?.user ?: Person.Builder().setName(" ").build())
+                    previous?.conversationTitle?.let {
+                        style.conversationTitle = it
+                        style.isGroupConversation = previous.isGroupConversation
+                    }
+                    kept.forEach { style.addMessage(it) }
+                    val builder = NotificationCompat.Builder(context, template)
+                        .setStyle(style)
+                        .setOnlyAlertOnce(true)
+                    val notif = conversationBanner(context, builder, groupId, held.notifId)
+                    manager.notify(held.notifId, notif)
+                    ReadElsewhereMarks.Banner(held.notifId, held.channelId, style.messages.toList(), notif)
+                },
+            )
+            when (outcome) {
+                ReadElsewhereMarks.Delivery.NONE -> Unit
+                ReadElsewhereMarks.Delivery.CANCELLED -> {
+                    synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
+                    Log.d(TAG, "replyDelivered: reply delivered - banner removed group=${ConversationRef.of(groupId)} id=$stableId")
+                    refreshBadgeSummary(context, justCancelled = stableId)
+                }
+                ReadElsewhereMarks.Delivery.REPOSTED ->
+                    Log.d(TAG, "replyDelivered: reply delivered - banner rebuilt with the newer lines group=${ConversationRef.of(groupId)}")
             }
         }
 
@@ -955,7 +1012,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     return
                 }
             } else {
-                when (READ_ELSEWHERE.withdraw(groupId, keepPendingReply, shade, cancelById)) {
+                // With no banner known and nothing to keep, the stable id is still cancelled -
+                // silently: ordered after its `notify`, it reaches a banner the record lost sight of.
+                val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
+                when (READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, cancelById)) {
                     ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> {
                         Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - it holds a reply not sent yet")
                         return
@@ -1013,6 +1073,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 notifId,
                 if (android.os.Build.VERSION.SDK_INT >= 26) shown.channelId else null,
                 NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(shown)?.messages.orEmpty(),
+                shown,
             )
         }
 
@@ -1026,6 +1087,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val stamps = line.extras
             return ReadElsewhereMarks.Line.of(
                 pendingReply = stamps.getBoolean(LINE_PENDING_REPLY, false),
+                pendingReplyId = stamps.getString(LINE_PENDING_REPLY_ID),
                 sentAt = if (stamps.containsKey(LINE_SENT_AT)) stamps.getLong(LINE_SENT_AT) else null,
                 serverAt = if (stamps.containsKey(LINE_SERVER_AT)) stamps.getLong(LINE_SERVER_AT) else null,
             )
@@ -1804,7 +1866,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * answered - how a quick reply learns the `receivedAt` its cache row is dated by.
              */
             onSent: (SentOutboxId) -> Unit = {},
-        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent) }
+        ): Int {
+            val delivered = mutableListOf<OutboxMirrorEntry>()
+            val remaining = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent, delivered) }
+            // EVERY DELIVERY CLEARS ITS "NOT SENT YET" NOTICE, whichever caller drained: after the
+            // outbox lock is released (no lock order to keep with the banner record), and after the
+            // delivered ids are durable (`appendOutboxSent`) - the visible trace never goes first.
+            for (entry in delivered) {
+                try {
+                    replyDelivered(context, entry.groupId, entry.id)
+                } catch (e: Exception) {
+                    Log.e(TAG, "drainOutboxBackground: clearing the pending notice failed id=${entry.id.take(8)}: ${throwableSite(e)}")
+                }
+            }
+            return remaining
+        }
 
         /**
          * Serialises every read-modify-write of `outbox_pending.ndjson` in this process: the drain,
@@ -1875,6 +1951,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
             onSent: (SentOutboxId) -> Unit,
+            delivered: MutableList<OutboxMirrorEntry>,
         ): Int {
             val entries = readOutboxMirror(context)
             if (entries.isEmpty()) return 0
@@ -1916,6 +1993,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (receivedAt != null) {
                     val sent = SentOutboxId(entry.id, receivedAt)
                     sentIds.add(sent)
+                    delivered.add(entry)
                     onSent(sent)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
@@ -3414,7 +3492,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } else {
                     !READ_ELSEWHERE.postUnlessRead(
                         groupId, sentAt, serverAt,
-                        ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList()),
+                        ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif),
                         postToShade,
                     )
                 }

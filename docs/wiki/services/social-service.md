@@ -883,9 +883,24 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   copy is stale. A second dismissal of the same banner - a salon's `channel.read` on the socket, then
   its `channel_read` push - finds nothing and says so at debug only (`no notif`), where it used to
   log a second `notif removed`; a post rebuilds on nothing, and the pending reply's re-post does not
-  bring the banner back.
-- **The pending reply** (`repostReplyPending`) builds on the same record and records what it posts,
-  so its bound (`takeLast`) is the record's too. No dismissal that cannot weigh lines removes it when
+  bring the banner back. Two cancels BY ID close what that blind spot could hide (round-7 review):
+  `forgetAll` cancels every banner it recorded by id under the lock (the sweep of the shade before
+  it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
+  cancels the conversation's stable id, silently - the system orders a cancel by id after its
+  `notify`, where a shade read is not ordered at all.
+- **The pending reply** (`repostReplyPending`) asks the record FIRST, under the lock, for both its
+  lines and its template (`Banner.posted`, the notification as handed to `notify`; the shade's only
+  in a fresh process), records what it posts, so its bound (`takeLast`) is the record's too.
+- **A delivered reply clears its notice, whichever path sends it.** The pending line carries its
+  message id (`LINE_PENDING_REPLY_ID`), and `drainOutboxBackground` - the one drain every native
+  send goes through: the quick reply, `OutboxRetryWorker`, a push-woken drain, the boot drain -
+  calls `replyDelivered` for each entry it delivered, after the outbox lock and after the ids are
+  durable. Answering is reading: the line and every line before it go
+  (`ReadElsewhereMarks.replyDelivered`), the banner is cancelled when nothing came after it, else
+  rebuilt from its own template with the newer lines. Only the quick reply's first try used to
+  clear it, so a reply the retry worker delivered said "not sent yet" for good, and no read
+  elsewhere removes a pending line (round-7 review of #3912). The quick reply now decides on THIS
+  reply's delivery, not on an empty outbox, so it never re-posts a delivered reply as pending. No dismissal that cannot weigh lines removes it when
   the dismissal only announces a read elsewhere: the push's silent-from-self cancel passes
   `keepPendingReply`, and `ReadElsewhereMarks.withdraw` keeps a banner whose record (or, in a fresh
   process, shade) holds a `LINE_PENDING_REPLY` line - it removed one while the reply was still queued

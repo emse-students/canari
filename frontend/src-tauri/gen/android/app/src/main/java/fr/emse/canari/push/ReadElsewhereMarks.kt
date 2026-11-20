@@ -46,7 +46,9 @@ package fr.emse.canari.push
  * push), that shortcut record's commit, and building the notification from bitmaps loaded BEFORE
  * the lock - no fetch or decode of a picture runs under it. The WebSocket post enters it holding
  * the generic-banner lock; nothing under it takes that lock, and no path takes them the other way
- * round. A read or a cancel does only the shade read and the `cancel` under it.
+ * round. A read or a cancel does only the shade read and the `cancel` under it; a delivered reply
+ * ([replyDelivered]) the shade read and a `cancel` or one rebuilt `notify`, entered from the drain
+ * AFTER it released the outbox lock, so no lock order is shared with the outbox.
  *
  * IN MEMORY, ON PURPOSE. The races it closes are between a post still being built, a read this
  * process was told about, and the system's own queue; all of them die with the process.
@@ -71,9 +73,15 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * One line of a conversation's notification, as this side stamped it when it posted it: the
      * sender's instant and the server's (0 when unknown, and both 0 for a line that carries no
      * stamp - never covered), and whether it is this account's PENDING REPLY - which no read covers
-     * and no cancel that cannot weigh lines removes ([withdraw]).
+     * and no cancel that cannot weigh lines removes ([withdraw]) - with the id of the message it
+     * stands for, so its delivery, whenever and by whichever path, clears it ([replyDelivered]).
      */
-    data class Line(val sentAt: Long, val serverAt: Long, val pendingReply: Boolean = false) {
+    data class Line(
+        val sentAt: Long,
+        val serverAt: Long,
+        val pendingReply: Boolean = false,
+        val pendingReplyId: String? = null,
+    ) {
         companion object {
             /**
              * The line a message of the notification counts as: its stamps when it carries them, and
@@ -82,16 +90,20 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
              * only place that says "not sent yet"), and for a banner from a build that did not stamp
              * its lines (not proven read by any mark, so it is kept).
              */
-            fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?): Line = when {
-                pendingReply -> Line(0L, 0L, pendingReply = true)
+            fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?, pendingReplyId: String? = null): Line = when {
+                pendingReply -> Line(0L, 0L, pendingReply = true, pendingReplyId = pendingReplyId)
                 sentAt == null -> Line(0L, 0L)
                 else -> Line(sentAt, serverAt ?: 0L)
             }
         }
     }
 
-    /** A conversation notification as posted: its id, its channel (null below API 26), its messages. */
-    data class Banner<M>(val notifId: Int, val channelId: String?, val messages: List<M>)
+    /**
+     * A conversation notification as posted: its id, its channel (null below API 26), its messages,
+     * and the notification itself ([posted], opaque here - Android's type), the template a rebuild
+     * of the banner starts from without asking the shade.
+     */
+    data class Banner<M>(val notifId: Int, val channelId: String?, val messages: List<M>, val posted: Any? = null)
 
     /** What a [withdraw] did. */
     enum class Withdrawal {
@@ -103,6 +115,18 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
         /** The banner was cancelled. */
         CANCELLED,
+    }
+
+    /** What a [replyDelivered] did. */
+    enum class Delivery {
+        /** No banner holds that pending reply: nothing to clear. */
+        NONE,
+
+        /** The pending reply was the banner's last line: answering is reading, the banner went. */
+        CANCELLED,
+
+        /** Peer lines came after it: the banner was rebuilt with only those. */
+        REPOSTED,
     }
 
     /** The one lock - see the class comment. */
@@ -147,16 +171,26 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * mark: a push whose mark is in the ciphertext, a "mark as read" action, a delivered reply), all
      * in ONE critical section, so no post falls between the cancel and the record's removal. A banner
      * holding a pending reply stays when [keepPendingReply] - a read on another device says nothing
-     * about a send that has not gone out. A banner this process already removed is not cancelled
-     * twice: the shade's lagging copy of it is not asked.
+     * about a send that has not gone out. A banner this process already removed is not weighed
+     * again: the shade's lagging copy of it is not asked.
+     *
+     * With no banner known ([Withdrawal.NONE]) and nothing to keep, [stableId] is still cancelled -
+     * a cancel by id is ordered after its `notify` by the system, so a banner the record lost sight
+     * of (posted just before a [forgetAll]) cannot outlive a dismissal. A dismissal that must keep a
+     * pending reply cannot cancel what it cannot see.
      */
     fun withdraw(
         conversationId: String,
         keepPendingReply: Boolean,
+        stableId: Int?,
         shade: () -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
     ): Withdrawal = synchronized(lock) {
-        val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Withdrawal.NONE
+        val banner = bannerOfLocked(conversationId, shade)
+        if (banner == null) {
+            if (!keepPendingReply && stableId != null) cancel(stableId)
+            return@synchronized Withdrawal.NONE
+        }
         if (keepPendingReply && banner.messages.any { lineOf(it).pendingReply }) {
             return@synchronized Withdrawal.KEPT_PENDING_REPLY
         }
@@ -189,6 +223,34 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
             true
         } else {
             false
+        }
+    }
+
+    /**
+     * The pending reply [messageId] was DELIVERED - by whichever path, whenever ([replyDelivered] is
+     * called by the one drain every native send goes through). The banner holding it stops saying
+     * "not sent yet": answering is reading, so the line and every line before it go - the banner is
+     * cancelled when it was the last line, else [repost] rebuilds it with only the lines after it
+     * and returns what it posted. All in one critical section with the record.
+     */
+    fun replyDelivered(
+        conversationId: String,
+        messageId: String,
+        shade: () -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
+        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>,
+    ): Delivery = synchronized(lock) {
+        val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Delivery.NONE
+        val at = banner.messages.indexOfFirst { lineOf(it).pendingReplyId == messageId }
+        if (at < 0) return@synchronized Delivery.NONE
+        val kept = banner.messages.drop(at + 1)
+        if (kept.isEmpty()) {
+            cancel(banner.notifId)
+            withdrawnLocked(conversationId)
+            Delivery.CANCELLED
+        } else {
+            postedLocked(conversationId, repost(banner, kept))
+            Delivery.REPOSTED
         }
     }
 
@@ -236,13 +298,22 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         true
     }
 
-    /** Drops every record: every message banner was removed at once (the app came to the front). */
-    fun forgetAll() {
-        synchronized(lock) {
-            posted.clear()
-            withdrawn.clear()
-            allWithdrawn = true
-        }
+    /**
+     * Drops every record: every message banner is removed at once (the app came to the front). Each
+     * RECORDED banner is [cancel]led by its id here, under the lock: the caller's sweep of the shade
+     * misses a banner posted just before it (the shade lags a `notify`), and once this returns the
+     * shade is never asked again - so that banner would stand for good. The system orders a cancel
+     * by id after its `notify`.
+     *
+     * @return the ids cancelled.
+     */
+    fun forgetAll(cancel: (notifId: Int) -> Unit): List<Int> = synchronized(lock) {
+        val ids = posted.values.map { it.notifId }
+        ids.forEach(cancel)
+        posted.clear()
+        withdrawn.clear()
+        allWithdrawn = true
+        ids
     }
 
     /** The mark held for [conversationId], or null. */

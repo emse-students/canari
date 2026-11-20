@@ -168,7 +168,9 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
       'val shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } }'
     );
     expect(body).toContain('READ_ELSEWHERE.recordThenCancel(groupId, read, shade, cancelById)');
-    expect(body).toContain('READ_ELSEWHERE.withdraw(groupId, keepPendingReply, shade, cancelById)');
+    expect(body).toContain(
+      'READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, cancelById)'
+    );
     expect(body).toContain('manager.cancel(id)');
     expect(body).not.toContain('manager.cancel(notifId)');
     expect(body).not.toContain('READ_ELSEWHERE.forget(');
@@ -211,7 +213,9 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(held).toBeGreaterThan(lock);
     // ...and nothing before the lock reads the shade.
     expect(fn.slice(0, lock)).not.toContain('activeNotifications');
-    expect(fn).toContain('ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList())');
+    expect(fn).toContain(
+      'ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif)'
+    );
   });
 
   it('marks the pending reply explicitly, never by its name, so no read covers it', () => {
@@ -233,12 +237,40 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(show).toContain(
       'val notif = if (isReactionNotif) notifBuilder.build() else conversationBanner(this, notifBuilder, groupId, notifId)'
     );
-    const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
-    const record = repost.indexOf('READ_ELSEWHERE.remember(');
-    expect(repost.slice(0, record)).toContain(
-      'manager.notify(notifId, conversationBanner(context, builder, groupId, notifId))'
-    );
-    expect(repost.slice(0, record)).not.toContain('builder.build()');
+    // EVERY post on a conversation's stable id goes through it (round-7 review): a `notify` in a
+    // function not listed below as posting something else must hand over `conversationBanner(...)`
+    // or a `notif` that function built with it. A new poster fails here until it is classified.
+    const notConversation = new Set([
+      'showIncomingCallNotification',
+      'refreshBadgeSummary',
+      'showPendingSyncNotification',
+      'showNewDeviceNotification',
+      'showWakeUnavailableNotification',
+      'showSimpleNotification',
+    ]);
+    const posters: string[] = [];
+    for (const m of source.matchAll(/manager\.notify\(([^)]*?)(\)|$)/gm)) {
+      const before = source.slice(0, m.index);
+      const fns = [...before.matchAll(/fun (?:\w+\.)?(\w+)\(/g)];
+      const name = fns[fns.length - 1][1];
+      if (notConversation.has(name)) continue;
+      posters.push(name);
+      const fn = source.slice(fns[fns.length - 1].index);
+      const call = source.slice(m.index, source.indexOf('\n', m.index));
+      if (call.includes('conversationBanner(')) continue;
+      expect(call).toMatch(/manager\.notify\([\w.]+, notif\)/);
+      const built = fn.slice(
+        fn.indexOf('val notif = '),
+        fn.indexOf('\n', fn.indexOf('val notif = '))
+      );
+      expect(built).toContain('conversationBanner(');
+      expect(fn.indexOf('val notif = ')).toBeLessThan(m.index - fns[fns.length - 1].index);
+    }
+    expect(posters.sort()).toEqual([
+      'replyDelivered',
+      'repostReplyPending',
+      'showMessageNotification',
+    ]);
     expect(source).toContain('putExtra(EXTRA_BANNER_NOTIF_ID, notifId)');
     expect(source).toContain('if (READ_ELSEWHERE.forget(groupId, notifId)) {');
     // The cancels and the forget are one step under the lock a post holds.
@@ -246,7 +278,9 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const lock = all.indexOf('synchronized(READ_ELSEWHERE.lock) {');
     expect(lock).toBeGreaterThan(-1);
     expect(lock).toBeLessThan(all.indexOf('manager.cancel(sbn.id)'));
-    expect(all.indexOf('READ_ELSEWHERE.forgetAll()')).toBeLessThan(
+    // ...and what the record holds is cancelled by id there too (round-7 review, S1).
+    expect(all).toContain('READ_ELSEWHERE.forgetAll { manager.cancel(it) }');
+    expect(all.indexOf('READ_ELSEWHERE.forgetAll {')).toBeLessThan(
       all.indexOf('CallRingPlayer.rings')
     );
   });
@@ -268,6 +302,27 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(branch).toContain('return');
     expect(branch).not.toContain('Log.i(');
     expect(branch).not.toContain('Log.w(');
+  });
+
+  // Round-7 review (B1): only the quick reply's first try cleared the "not sent yet" line; a reply
+  // delivered later by the retry worker or a push-woken drain kept it for good.
+  it('every drain clears the pending notice of what it delivered', () => {
+    // ONE drain body, reached only through `drainOutboxBackground` - which every caller uses.
+    expect(source.split('drainOutboxLocked(').length - 1).toBe(2);
+    const drain = source.slice(source.indexOf('internal fun drainOutboxBackground('));
+    const body = drain.slice(0, drain.indexOf('private val OUTBOX_LOCK'));
+    expect(body).toContain('replyDelivered(context, entry.groupId, entry.id)');
+    const locked = source.slice(source.indexOf('private fun drainOutboxLocked('));
+    expect(locked.slice(0, locked.indexOf('private fun encryptQueuedMessages('))).toContain(
+      'delivered.add(entry)'
+    );
+    // The retry worker and the push-woken drains go through it.
+    const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
+    expect(worker).toContain('CanariFirebaseMessagingService.drainOutboxBackground(');
+    expect(source).toContain('drainOutboxBackground(this, this, drainCtx)');
+    // The pending line names its message.
+    expect(source).toContain('extras.putString(LINE_PENDING_REPLY_ID, messageId)');
+    expect(source).toContain('pendingReplyId = stamps.getString(LINE_PENDING_REPLY_ID)');
   });
 
   it('commits the announced-message record and rebuilds the summary after the lock', () => {
