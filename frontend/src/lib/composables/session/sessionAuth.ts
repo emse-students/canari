@@ -192,6 +192,7 @@ import {
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
+import { throwIfPinThrottled } from './pinThrottle';
 import {
   revokedWipeScope,
   wipeAccountOfRevokedDevice,
@@ -1733,6 +1734,7 @@ export async function loginImpl(
               },
               m.auth_pin_check_unreachable()
             );
+            throwIfPinThrottled(res, cb.log);
             if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
             return (await res.json()) as PinCheckAnswer;
           },
@@ -3247,6 +3249,7 @@ async function fetchPinSalt(
     { headers: { Authorization: `Bearer ${token}` }, signal },
     m.auth_pin_salt_unreachable()
   );
+  throwIfPinThrottled(res, (msg) => console.info(msg));
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
   return salt;
@@ -3484,16 +3487,22 @@ async function recoverPinSteps(
     const token = await getToken();
     salt = await fetchPinSalt(ctx, userId, token, stop.signal);
     const newVerifier = await computePinVerifier(userId, newPin, salt);
-    res = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ userId, verifier: newVerifier }),
-      signal: stop.signal,
-    });
+    // Under the request deadline, as the login's own check (`fetchOrUnreachable`, row 11).
+    res = await fetchOrUnreachable(
+      `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId, verifier: newVerifier }),
+        signal: stop.signal,
+      },
+      m.auth_pin_verify_new_unreachable()
+    );
   } catch (e) {
     stillWanted('the new PIN check');
     throw e;
   }
+  throwIfPinThrottled(res, cb.log);
   if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {
