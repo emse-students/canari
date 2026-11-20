@@ -32,6 +32,12 @@
     layout?: 'inline' | 'row';
     /** The icon tile of a `row` layout; omit it where the neighbouring rows draw none. */
     icon?: Component<{ size?: number; strokeWidth?: number }>;
+    /**
+     * `default`: the theme's text tokens. `on-media`: white label and hint, for a switch drawn over
+     * a camera or video that is dark in BOTH themes (the live pre-live sheet), where the theme
+     * tokens would be near-black in the light theme.
+     */
+    tone?: 'default' | 'on-media';
   }
 
   let {
@@ -43,8 +49,11 @@
     onchange,
     layout = 'inline',
     icon,
+    tone = 'default',
   }: Props = $props();
   const Icon = $derived(icon);
+  const labelTone = $derived(tone === 'on-media' ? 'text-white' : 'text-text-main');
+  const hintTone = $derived(tone === 'on-media' ? 'text-white/70' : 'text-text-muted');
 </script>
 
 <label
@@ -64,9 +73,9 @@
         </div>
       {/if}
       <div class="min-w-0">
-        <p class="text-text-main text-sm font-bold">{label}</p>
+        <p class="{labelTone} text-sm font-bold">{label}</p>
         {#if hint}
-          <p class="text-text-muted mt-0.5 text-xs font-medium">{hint}</p>
+          <p class="{hintTone} mt-0.5 text-xs font-medium">{hint}</p>
         {/if}
       </div>
     </div>
@@ -92,9 +101,9 @@
   </div>
   {#if layout !== 'row'}
     <div class="min-w-0">
-      <span class="text-text-main text-sm font-semibold">{label}</span>
+      <span class="{labelTone} text-sm font-semibold">{label}</span>
       {#if hint}
-        <p class="text-text-muted text-xs">{hint}</p>
+        <p class="{hintTone} text-xs">{hint}</p>
       {/if}
     </div>
   {/if}
