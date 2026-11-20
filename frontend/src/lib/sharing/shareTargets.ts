@@ -25,6 +25,7 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import type { Conversation } from '$lib/types';
 import {
   channelCommunities,
+  channelCommunityLogos,
   shareDestinationPresentation,
   type WorkspaceLike,
 } from './shareDestinations';
@@ -33,6 +34,7 @@ import {
   publishShareTargets,
   shareTargetId,
   type ShareTarget,
+  type ShareTargetAvatar,
 } from './shareTargetsNative';
 
 /**
@@ -51,6 +53,25 @@ function chatLink(conversationId: string): string {
 }
 
 /**
+ * The picture the app itself draws for this destination (`ConversationPickList`): the peer's photo
+ * for a DM, the group's image, the community's logo for a salon. Absent when none is known - the
+ * native side then draws the initials of the label, as the app does.
+ */
+function shareTargetAvatar(
+  c: Conversation,
+  contactId: string,
+  isDirect: boolean,
+  logoOf: Map<string, string>
+): ShareTargetAvatar | undefined {
+  if (isDirect) return contactId ? { kind: 'user', id: contactId } : undefined;
+  if (isChannelConversationId(c.id)) {
+    const logo = logoOf.get(c.id);
+    return logo ? { kind: 'media', id: logo } : undefined;
+  }
+  return c.imageMediaId ? { kind: 'media', id: c.imageMediaId } : undefined;
+}
+
+/**
  * The `limit` most recent destinations of the share picker, most recent first, as suggestions.
  * A salon's name carries its community, since several salons share a name.
  */
@@ -61,6 +82,7 @@ export function selectShareTargets(
   limit = MAX_SHARE_TARGETS
 ): ShareTarget[] {
   const communityOf = channelCommunities(workspaces);
+  const logoOf = channelCommunityLogos(workspaces);
   const targets: ShareTarget[] = [];
   const ordered = [...conversations]
     .map(([, c]) => c)
@@ -74,7 +96,13 @@ export function selectShareTargets(
     if (!pres.displayNameResolved || !pres.displayName.trim()) continue;
     const community = isChannelConversationId(c.id) ? communityOf.get(c.id) : undefined;
     const name = community ? `${pres.displayName} (${community})` : pres.displayName;
-    targets.push({ id, label: name.trim().slice(0, MAX_LABEL_LENGTH), link: chatLink(c.id) });
+    const avatar = shareTargetAvatar(c, pres.contactId, pres.conversationType === 'direct', logoOf);
+    targets.push({
+      id,
+      label: name.trim().slice(0, MAX_LABEL_LENGTH),
+      link: chatLink(c.id),
+      ...(avatar ? { avatar } : {}),
+    });
   }
   return targets;
 }
