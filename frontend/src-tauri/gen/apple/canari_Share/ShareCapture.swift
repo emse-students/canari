@@ -43,6 +43,16 @@ final class ShareCapture {
     /// The directory inside the App Group every shared file lives in - Rust's `APP_GROUP_STORE`
     /// (`backup_exclusion.rs`), the same name: a source test holds the two equal.
     static let storeDirName = "store"
+    /// The root names our builds write, as stems and prefixes - Rust's `OURS_STEMS` and
+    /// `OURS_PREFIXES` (`backup_exclusion.rs`), the same lists: a source test holds them equal.
+    static let rootStems = [
+        "mls", "push_context", "push_secret", "display_names", "conversation_nicknames",
+        "graine_seeds", "device_notices", "fcm_message_cache", "nse_outcomes", "nse_inflight",
+        "nse_done", "shared_inbox", "pending_share", "share_epoch", "app_in_foreground",
+    ]
+    static let rootPrefixes = ["avatar_", "assologo_"]
+    /// The store's one quarantine generation - Rust's `SUPERSEDED_DIR`.
+    static let supersededDirName = ".superseded"
     static let pendingFile = "pending_share.json"
     static let inboxDir = "shared_inbox"
     static let epochFile = "share_epoch"
@@ -682,11 +692,14 @@ final class ShareCapture {
     }
 
     /// The App Group's STORE, opened as Rust's `backup_exclusion::open_store` opens it - this
-    /// extension links no Rust, so the rule is mirrored here, and only here: created and excluded
-    /// from backups when absent, then every entry of ours an older build left at the container root
-    /// (anything but the store, `Library` and the system's `.com.apple.*` metadata) moved in with an
-    /// EXCLUSIVE rename, never over a name the store holds. Called before the capture writes a byte,
-    /// so its writes land under the flagged directory and never at the root, which refuses the flag.
+    /// extension links no Rust, so the rule is mirrored here, and only here: created when absent,
+    /// excluded from backups (created or found: once per capture), then, under an exclusive `flock`
+    /// on the store, every root entry our builds write (`rootStems`, `rootPrefixes`, the allowlist
+    /// Rust holds too) moved in with an EXCLUSIVE rename. A name the store already holds came back
+    /// from an OLDER build writing after a move: the root copy is the newer one, the store's copy
+    /// goes to `.superseded/` (replacing a previous one of that name), and the root copy moves in.
+    /// Unknown root names are counted and never moved. Called before the capture writes a byte, so
+    /// its writes land under the flagged directory and never at the root, which refuses the flag.
     /// nil (said) when the container is unavailable or the store cannot be made.
     private func storeDir() -> URL? {
         guard let container = FileManager.default.containerURL(
@@ -698,7 +711,6 @@ final class ShareCapture {
         let store = container.appendingPathComponent(ShareCapture.storeDirName, isDirectory: true)
         if mkdir(store.path, 0o755) == 0 {
             log.notice("[CanariShare] the App Group store created")
-            excludeFromBackup(store)
         } else {
             let code = errno
             if code != EEXIST {
@@ -706,32 +718,106 @@ final class ShareCapture {
                 return nil
             }
         }
+        excludeFromBackup(store)
+        moveRootIntoStore(container: container, store: store)
+        return store
+    }
+
+    /// Whether a root name is one our builds write - Rust's `classify_root_entry` allowlist: a stem is
+    /// the whole name or the name continued after a dot, a prefix starts it.
+    static func isOurs(_ name: String) -> Bool {
+        rootStems.contains { name == $0 || name.hasPrefix($0 + ".") }
+            || rootPrefixes.contains { name.hasPrefix($0) }
+    }
+
+    /// The move itself, under the store's lock (released when the descriptor closes). Counts only in
+    /// the log: no file name.
+    private func moveRootIntoStore(container: URL, store: URL) {
+        let fd = open(store.path, O_RDONLY)
+        if fd < 0 {
+            let code = errno
+            log.error("[CanariShare] the App Group store could not be opened for the move: errno \(code)")
+            return
+        }
+        defer { close(fd) }
+        if flock(fd, LOCK_EX) != 0 {
+            let code = errno
+            log.error("[CanariShare] the App Group store could not be locked for the move: errno \(code)")
+            return
+        }
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(atPath: container.path)
         } catch {
             let failure = error as NSError
             log.error("[CanariShare] the App Group root is unreadable: \(failure.domain, privacy: .public) \(failure.code)")
-            return store
+            return
         }
         var moved = 0
-        var left = 0
+        var superseded = 0
+        var failures = 0
+        var unknown = 0
         for name in names where name != ShareCapture.storeDirName && name != "Library" && !name.hasPrefix(".com.apple.") {
+            guard ShareCapture.isOurs(name) else {
+                unknown += 1
+                continue
+            }
             let from = container.appendingPathComponent(name).path
             let to = store.appendingPathComponent(name).path
             if renamex_np(from, to, UInt32(RENAME_EXCL)) == 0 {
                 moved += 1
-            } else if errno != ENOENT {
-                left += 1
+                continue
             }
+            let code = errno
+            if code == ENOENT {
+                continue
+            }
+            guard code == EEXIST, supersede(name: name, from: from, to: to, store: store) else {
+                failures += 1
+                continue
+            }
+            superseded += 1
         }
         if moved > 0 {
             log.notice("[CanariShare] App Group root moved into the store: \(moved) entries")
         }
-        if left > 0 {
-            log.error("[CanariShare] App Group root entries left outside the store: \(left)")
+        if superseded > 0 {
+            log.warning("[CanariShare] \(superseded) App Group entries came back from an older build: the root copies moved in, the previous ones superseded")
         }
-        return store
+        if failures > 0 || unknown > 0 {
+            log.error("[CanariShare] App Group root entries left outside the store: \(failures) refused, \(unknown) unknown")
+        }
+    }
+
+    /// A conflict (`moveRootIntoStore`): the store's copy replaces the previous quarantined one in
+    /// `.superseded/`, then the root copy moves in. True when the root copy is in the store.
+    private func supersede(name: String, from: String, to: String, store: URL) -> Bool {
+        let quarantine = store.appendingPathComponent(ShareCapture.supersededDirName, isDirectory: true)
+        if mkdir(quarantine.path, 0o755) != 0 {
+            let code = errno
+            if code != EEXIST {
+                log.error("[CanariShare] the store's quarantine could not be created: errno \(code)")
+                return false
+            }
+        }
+        let previous = quarantine.appendingPathComponent(name)
+        do {
+            try FileManager.default.removeItem(at: previous)
+        } catch let failure as NSError where failure.domain == NSCocoaErrorDomain && failure.code == NSFileNoSuchFileError {
+            // No previous quarantined copy of that name.
+        } catch {
+            let failure = error as NSError
+            log.error("[CanariShare] a superseded copy could not be replaced: \(failure.domain, privacy: .public) \(failure.code)")
+            return false
+        }
+        if rename(to, previous.path) != 0 {
+            let code = errno
+            if code != ENOENT {
+                log.error("[CanariShare] a store copy could not be superseded: errno \(code)")
+                return false
+            }
+        }
+        return renamex_np(from, to, UInt32(RENAME_EXCL)) == 0
     }
 
     /// Tells a RUNNING app that a share waits (it imports at its next activation otherwise).

@@ -103,6 +103,11 @@ void canari_free_string(char *ptr);
 /// Free with canari_free_string. The extension's `appGroupDir()` is its only caller.
 char *canari_app_group_store_dir(void);
 
+/// How this process opened the App Group store: one line (the flag's outcome and the move's counts,
+/// no file name), its severity written to `severity` (0 info, 1 warning, 2 error). NULL before the
+/// store was opened. Free with canari_free_string.
+char *canari_app_group_store_report(int32_t *severity);
+
 #ifdef __cplusplus
 }
 #endif

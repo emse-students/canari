@@ -20,7 +20,7 @@ use std::path::PathBuf;
 
 /// The App Group container's ROOT, asked of Foundation - the only API that knows it. Nothing of ours
 /// is written there: [`app_group_dir`] is the directory to use; this is for the launch verdict,
-/// which reads what the root still holds (`backup_exclusion::ours_at_root`).
+/// which reads what the root still holds (`backup_exclusion::root_state`).
 ///
 /// Through the Objective-C runtime rather than a function of ours in `canari_push.mm`: `libapp.a`
 /// is linked into the notification extension too, and a Rust reference to an app-only symbol would
@@ -57,23 +57,34 @@ pub(crate) fn app_group_container() -> Result<PathBuf, String> {
     })
 }
 
+/// How this process opened the store, once it has (`backup_exclusion::StoreOpening`).
+static OPENING: std::sync::OnceLock<crate::backup_exclusion::StoreOpening> =
+    std::sync::OnceLock::new();
+
 /// The App Group directory every file shared with the extensions lives in: the container's store
 /// (`backup_exclusion::APP_GROUP_STORE`), excluded from backups. The FIRST call of a process opens
-/// it (`backup_exclusion::open_store`: created and flagged when absent, the root's entries of ours
+/// it (`backup_exclusion::open_store`: created when absent, flagged, the root's entries of ours
 /// moved into it) - before that call returns, so nothing of this process ever writes where an older
-/// build wrote; later calls answer the remembered path. An unavailable container is not
-/// remembered: the next call asks again.
+/// build wrote; later calls answer the remembered path. An unavailable container, or a store that
+/// cannot be created, is not remembered: the next call asks again. A refused flag or move is NOT
+/// an error here - the store is answered, and the opening keeps what went wrong ([`store_opening`]).
 pub(crate) fn app_group_dir() -> Result<PathBuf, String> {
-    static STORE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    if let Some(store) = STORE.get() {
-        return Ok(store.clone());
+    if let Some(opening) = OPENING.get() {
+        return Ok(opening.path.clone());
     }
     let root = app_group_container()?;
-    let store = crate::backup_exclusion::open_store(&root, |store| {
+    let opening = crate::backup_exclusion::open_store(&root, |store| {
         crate::native_cache::ios_exclude_from_backup(store)
     })
-    .map_err(|e| format!("the App Group store did not open: {e}"))?;
-    Ok(STORE.get_or_init(|| store).clone())
+    .map_err(|e| format!("the App Group store could not be created: {e}"))?;
+    Ok(OPENING.get_or_init(|| opening).path.clone())
+}
+
+/// How this process's first [`app_group_dir`] went - the flag and the move - or `None` before it.
+/// Read by the launch verdict and by `canari_app_group_store_report`, because the move may have run
+/// before any logger existed (the native bootstrap, the notification extension).
+pub(crate) fn store_opening() -> Option<&'static crate::backup_exclusion::StoreOpening> {
+    OPENING.get()
 }
 
 /// Background time the app holds while it edits a file of the App Group under a lock - ended when

@@ -3516,9 +3516,10 @@ One line per launch says what holds, at INFO:
 ```
 
 or, at ERROR and still ONE line, the count, each label that did not hold WITH ITS REASON - for a
-Foundation refusal the `NSError`'s domain, code, `localizedDescription` and underlying error, and its
-class (`no permission` or `other`, read from the domain and code, never from the text:
-`backup_exclusion::FlagError`) - then how many entries of ours the App Group root still holds. A
+Foundation refusal the `NSError`'s domain and code and its underlying error's, and its class
+(`no permission` or `other`, read from the domain and code: `backup_exclusion::FlagError`; never the
+`localizedDescription`, which can quote a path) - then what the App Group root still holds and what
+the move refused (WARN, still one line, when the only news is entries an older build wrote back). A
 directory flag covers its contents (Apple, *Optimizing your app's data for iCloud backup*: "move
 those files into a directory and update the directory's isExcludedFromBackup resource value"), and
 unlike a per-file flag it survives an atomic rewrite of what is inside. It sits on parents nothing of
@@ -3540,24 +3541,46 @@ nothing of ours there.
   `CanariAppGroupPath` and the notification extension through its `appGroupDir()` - both by the FFI
   `canari_app_group_store_dir`, so the two processes that link `libapp.a` share one implementation -
   and the share extension's `ShareCapture.storeDir`, which links no Rust and mirrors the rule (a
-  source test, `nativeCacheSeal.test.ts`, holds the name and the classification equal, and fails on
-  any other `containerURL` call).
-- **Flagged at creation, by whoever creates it.** A store created by the app, by the extension
-  woken by a push before the app ever ran after the update, or by the share extension, is flagged
-  before anything is written into it; the app's launch pass sets and reads it back at every launch.
-  A file the extension writes later lands under a flagged parent from its first byte: no sweep, no
-  window between sweeps.
+  source test, `nativeCacheSeal.test.ts`, holds the name, the allowlist and the classification equal,
+  and fails on any other `containerURL` call).
+- **Flagged by every process that opens it, created or found.** A store created by the app, by the
+  extension woken by a push before the app ever ran after the update, or by the share extension, is
+  flagged before anything is written into it, and each process flags it again at its first
+  resolution (one call); the app's launch pass sets and reads it back at every launch. A file the
+  extension writes later lands under a flagged parent from its first byte: no sweep, no window
+  between sweeps.
 - **The move of an older build's files** (`backup_exclusion::open_store`, `migrate_root`). A
-  process's FIRST resolution moves every root entry of ours into the store with an EXCLUSIVE rename
-  (`renamex_np`, `RENAME_EXCL`) before it returns, so no process of this build reads or writes a name
-  the root still holds: the store can never hold a newer copy of a name the root also holds, and the
-  seed mirror, the undrained push cache and the device notices arrive whole. Two processes moving at
-  once is harmless - a rename the other already made answers "gone". The root's system entries
-  (`Library`, the `.com.apple.*` metadata) are never moved. A conflict, impossible by construction,
-  leaves the root entry where it is and is reported. A pending share keeps working: its import takes
-  the file NAMES from its manifest, not its paths (`app_group_share::files_in_moved_dir`).
-- **What the verdict reads back:** the store's flag, and the number of our entries still at the
-  root (`ours_at_root`) - anything above 0 is outside every excluded directory and fails the launch.
+  process's FIRST resolution moves the root's entries of ours into the store with an EXCLUSIVE rename
+  (`renamex_np`, `RENAME_EXCL`), under an exclusive `flock` on the store directory (the Swift twin
+  takes the same lock), before it returns: no process of this build reads or writes a name the root
+  still holds, and the seed mirror, the undrained push cache and the device notices arrive whole.
+  An unreadable root or a refused rename is COUNTED and the store is still answered - the
+  notification extension decrypts from it either way; only a store that cannot be created is an
+  error for the caller.
+- **The move touches an ALLOWLIST** (`OURS_STEMS`, `OURS_PREFIXES`, mirrored by
+  `ShareCapture.rootStems` / `rootPrefixes`): the names our builds write - a stem covers the name and
+  what continues it after a dot (`mls.bin.tmp`), a prefix the extension's avatar and logo caches. The
+  system's entries (`Library`, the `.com.apple.*` metadata) are never moved; any other name is
+  counted, left where it is, and fails the verdict: either a writer the list missed, or not ours.
+- **A downgrade, then this build again: the ROOT copy wins.** An older build (`1.7.1`) writes
+  `mls.bin`, the push credential and the rest at the root again; the next upgrade finds the same name
+  in the store. Under the lock no two processes of this build race one name, so a conflict has that
+  one cause, and the root copy is the NEWER one. The store's copy goes to ONE quarantine generation,
+  `store/.superseded/<name>` (flagged with the store; a previous quarantined copy of the name is
+  replaced, so it never grows; nothing current is deleted), and the root copy moves in. The launch
+  verdict says it once, at WARN ("n entries came back from an older build"); the next launch is
+  back to INFO. (The real MLS state lives in `Application Support`, so a downgrade does not hinge on
+  the App Group copy.) A pending share keeps working through all of it: its import takes the file
+  NAMES from its manifest, not its paths (`app_group_share::files_in_moved_dir`).
+- **What the move did is kept, not only logged** (`StoreOpening`, `app_group::store_opening`). The
+  native bootstrap can open the store before the Rust logger exists, and the notification extension
+  has no Rust logger at all: the extension says the opening once per process through its own
+  `Logger` (`canari_app_group_store_report` carries the line and its severity), and the app's launch
+  verdict reads what its own opening did.
+- **What the verdict reads back:** the store's flag, the root (`root_state`: entries of ours still
+  there, unknown names) and this process's move (moves refused, entries that came back). Entries of
+  ours or unknown names at the root, or a refused move, fail the launch at ERROR; entries that came
+  back from an older build are one WARN.
 
 **The Keychain stays `ThisDeviceOnly`**, checked 2026-11-20 on the four `SecItemAdd` of the app and
 its plugin: the keystore plugin's background copy (`AfterFirstUnlockThisDeviceOnly`) and its primary

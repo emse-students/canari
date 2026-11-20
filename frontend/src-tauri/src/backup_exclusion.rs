@@ -26,14 +26,23 @@
 //! process resolves the App Group to that directory and to nothing else (Rust's
 //! `app_group::app_group_dir`, which the app's Objective-C and the notification extension reach
 //! through `canari_app_group_store_dir`; the share extension's `ShareCapture.storeDir`, which links
-//! no Rust). Each resolver, at its process's first use, creates the directory when absent and FLAGS
-//! IT AT ONCE ([`open_store`]), then moves into it every entry of ours an older build left at the
-//! root ([`migrate_root`]). Why no write can land unflagged: a file written into the store is under
-//! a flagged parent from its first byte, whoever writes it and whenever; and no process of this
-//! build writes at the root at all. Why no data is lost by the move: every process moves the root
-//! BEFORE its first use of the store, with an exclusive rename, so the store cannot hold a name the
-//! root still holds - a conflict is impossible by construction, and if one is ever met the root
-//! entry is left and the launch verdict fails ([`ours_at_root`]).
+//! no Rust). Each resolver, at its process's first use, creates the directory when absent, FLAGS IT
+//! (created or found: one call per process), then moves into it every entry of ours an older build
+//! left at the root ([`open_store`], [`migrate_root`]). Why no write of this build lands unflagged:
+//! a file written into the store is under a flagged parent from its first byte, whoever writes it
+//! and whenever, and no process of this build writes at the root.
+//!
+//! **What the move may touch is an ALLOWLIST** ([`OURS_STEMS`], [`OURS_PREFIXES`]): the names our
+//! builds write. A name nobody listed is counted, left where it is, and fails the verdict - it is
+//! either a writer this list missed (fix the list) or not ours (never move it).
+//!
+//! **A CONFLICT HAS ONE CAUSE, AND THE ROOT COPY WINS.** The moves run under an exclusive lock on the
+//! store, so two processes of this build never race one name. A name both at the root and in the
+//! store therefore means an OLDER build wrote the root AFTER a move - a downgrade, then this build
+//! again - and the root copy is the newer one. The store's copy goes to ONE quarantine generation,
+//! [`SUPERSEDED_DIR`] inside the flagged store (a previous quarantined copy of that name is replaced,
+//! so it never grows, and nothing is deleted outright that was current), and the root copy moves in.
+//! The launch verdict says it once, at WARN.
 //!
 //! **WHAT IT COVERS**, measured on the bench iPhone's backup manifest of 2026-11-20 (mobile wiki,
 //! "Nothing local travels to another phone"): `Library/Application Support` (Tauri's data dir - the
@@ -110,15 +119,14 @@ pub(crate) fn covers(dirs: &[ExcludedDir], data_dir: &Path) -> bool {
     dirs.iter().any(|d| data_dir.starts_with(&d.path))
 }
 
-/// The parts of a Foundation `NSError` the verdict carries: its domain, code and
-/// `localizedDescription`, and the domain and code of its `NSUnderlyingErrorKey` error. Read where
-/// the call answers (`native_cache::ns_error_parts`) and classified from the domain and code alone
-/// ([`NsErrorParts::refusal`]) - never from the description, which is for the reader.
+/// The parts of a Foundation `NSError` the verdict carries: its domain and code, and those of its
+/// `NSUnderlyingErrorKey` error. Read where the call answers (`native_cache::ns_error_parts`) and
+/// classified from them alone ([`NsErrorParts::refusal`]). NEVER the `localizedDescription`: it can
+/// quote a path (the rule `CanariErrorReason` keeps on the Objective-C side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NsErrorParts {
     pub(crate) domain: String,
     pub(crate) code: i64,
-    pub(crate) description: String,
     pub(crate) underlying: Option<(String, i64)>,
 }
 
@@ -201,11 +209,7 @@ impl std::fmt::Display for FlagError {
                     Refusal::NoPermission => "no permission",
                     Refusal::Other => "other",
                 };
-                write!(
-                    f,
-                    "{call} refused ({kind}): {} {} \"{}\"",
-                    e.domain, e.code, e.description
-                )?;
+                write!(f, "{call} refused ({kind}): {} {}", e.domain, e.code)?;
                 if let Some((domain, code)) = &e.underlying {
                     write!(f, ", underlying {domain} {code}")?;
                 }
@@ -216,6 +220,46 @@ impl std::fmt::Display for FlagError {
     }
 }
 
+/// How loud a line is: the launch verdict and the store's opening report
+/// ([`StoreOpening::report`]) are logged at this level - and the notification extension, which
+/// has no Rust logger, receives it as an integer (`canari_app_group_store_report`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Severity {
+    Info = 0,
+    Warn = 1,
+    Error = 2,
+}
+
+/// The names our builds write at the App Group root, as STEMS: a stem covers the name itself and
+/// every name that continues it after a dot (`mls` covers `mls.bin` and `mls.bin.tmp`,
+/// `nse_outcomes` its `.ndjson`, `.1.ndjson` and `.lock`). Mirrored by the share extension
+/// (`ShareCapture.rootStems`); a source test holds the two equal.
+pub(crate) const OURS_STEMS: [&str; 15] = [
+    "mls",
+    "push_context",
+    "push_secret",
+    "display_names",
+    "conversation_nicknames",
+    "graine_seeds",
+    "device_notices",
+    "fcm_message_cache",
+    "nse_outcomes",
+    "nse_inflight",
+    "nse_done",
+    "shared_inbox",
+    "pending_share",
+    "share_epoch",
+    "app_in_foreground",
+];
+
+/// The names our builds write at the App Group root by PREFIX: the extension's avatar and logo
+/// caches (`avatar_<sanitised id>.jpg`, `assologo_<id>.jpg`). Mirrored by
+/// `ShareCapture.rootPrefixes`.
+pub(crate) const OURS_PREFIXES: [&str; 2] = ["avatar_", "assologo_"];
+
+/// The one quarantine generation inside the store: what a conflict displaced (module doc).
+pub(crate) const SUPERSEDED_DIR: &str = ".superseded";
+
 /// What an entry at the App Group container's root is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RootEntry {
@@ -224,37 +268,63 @@ pub(crate) enum RootEntry {
     /// The system's: the container manager's `.com.apple.*` metadata, and the `Library` directory
     /// iOS creates in every container. Never moved.
     System,
-    /// Ours, written there by a build before the store - moved into it.
+    /// A name our builds write ([`OURS_STEMS`], [`OURS_PREFIXES`]) - moved into the store.
     Ours,
+    /// Anything else: never moved, counted, and the verdict fails on it.
+    Unknown,
 }
 
-/// Classifies one name at the App Group root. `Ours` is the default on purpose: the root holds the
-/// system's two kinds of entry and what our own builds wrote, and the move is a rename within one
-/// directory tree - nothing is deleted.
+/// Classifies one name at the App Group root.
 pub(crate) fn classify_root_entry(name: &std::ffi::OsStr) -> RootEntry {
     let name = name.to_string_lossy();
+    let stem_of = |stem: &str| {
+        name == stem
+            || name
+                .strip_prefix(stem)
+                .is_some_and(|rest| rest.starts_with('.'))
+    };
     if name == APP_GROUP_STORE {
         RootEntry::Store
     } else if name == "Library" || name.starts_with(".com.apple.") {
         RootEntry::System
-    } else {
+    } else if OURS_STEMS.iter().any(|s| stem_of(s))
+        || OURS_PREFIXES.iter().any(|p| name.starts_with(p))
+    {
         RootEntry::Ours
+    } else {
+        RootEntry::Unknown
     }
 }
 
-/// What one pass of [`migrate_root`] did - counts only: a root entry's name is ours, but the log
-/// names no file.
+/// What one pass of [`migrate_root`] did - counts only: the log names no file.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Migration {
     /// Entries moved into the store.
     pub(crate) moved: usize,
-    /// Entries another process of this build moved first (the rename found nothing).
+    /// Entries gone between the listing and the rename.
     pub(crate) absent: usize,
-    /// Entries the store already holds under the same name - impossible by construction (module
-    /// doc), left at the root and reported.
-    pub(crate) kept: usize,
-    /// Entries a rename refused for another reason, left at the root and reported.
+    /// Entries an older build wrote after a move: the root copy moved in, the store's copy put in
+    /// [`SUPERSEDED_DIR`].
+    pub(crate) superseded: usize,
+    /// Entries a rename refused, left at the root.
     pub(crate) failures: usize,
+    /// Root names on no allowlist, left at the root.
+    pub(crate) unknown: usize,
+    /// The root could not be listed, or the store not locked: nothing was moved.
+    pub(crate) unreadable: bool,
+}
+
+impl Migration {
+    /// The severity this pass alone deserves.
+    pub(crate) fn severity(&self) -> Severity {
+        if self.failures > 0 || self.unknown > 0 || self.unreadable {
+            Severity::Error
+        } else if self.superseded > 0 {
+            Severity::Warn
+        } else {
+            Severity::Info
+        }
+    }
 }
 
 /// Renames `from` to `to` unless `to` exists - atomically on Apple platforms (`renamex_np` with
@@ -284,136 +354,313 @@ pub(crate) fn rename_exclusive(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::rename(from, to)
 }
 
-/// Moves every [`RootEntry::Ours`] entry of the App Group `root` into `store`, each with
-/// `rename` ([`rename_exclusive`] on a device): moved, absent (another process moved it first),
-/// kept (the store holds the name: a conflict) or a failure. Idempotent from the file system
-/// itself: a root holding nothing of ours moves nothing. An unreadable root is an error.
+/// The exclusive lock the moves run under: a `flock` on the store directory itself, so no file is
+/// created for it. Released when the handle drops. Held for the milliseconds of the move only - a
+/// process suspended while it holds a lock in a shared container is killed (`0xdead10cc`).
+#[cfg(unix)]
+fn lock_store(store: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::io::AsRawFd;
+    let dir = std::fs::File::open(store)?;
+    // SAFETY: a live descriptor, owned by `dir` for the whole call.
+    match unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX) } {
+        0 => Ok(dir),
+        _ => Err(std::io::Error::last_os_error()),
+    }
+}
+
+/// The host-test stand-in: off unix this module compiles only under `cfg(test)`, single-process.
+#[cfg(not(unix))]
+fn lock_store(_store: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+/// Removes `path` whatever it is (a file, or a directory with its contents); absent is fine.
+fn remove_any(path: &Path) -> std::io::Result<()> {
+    let result = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(e) => Err(e),
+    };
+    match result {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// The conflict of `name` (module doc): the store's copy replaces the previous quarantined one in
+/// [`SUPERSEDED_DIR`], then the root's moves in with `rename`. `Ok(true)` when the root copy moved
+/// in, `Ok(false)` when it was gone meanwhile.
+fn supersede(
+    root: &Path,
+    store: &Path,
+    name: &std::ffi::OsStr,
+    rename: &impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<bool> {
+    let quarantine = store.join(SUPERSEDED_DIR);
+    std::fs::create_dir_all(&quarantine)?;
+    let previous = quarantine.join(name);
+    remove_any(&previous)?;
+    match std::fs::rename(store.join(name), &previous) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    match rename(&root.join(name), &store.join(name)) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Moves every [`RootEntry::Ours`] entry of the App Group `root` into `store`, each with `rename`
+/// ([`rename_exclusive`] on a device), a conflict settled by [`supersede`]. Never fails: an
+/// unreadable root, a refused rename and an unknown name are COUNTED (and said at ERROR, for the
+/// processes that have a logger) - the store stays usable, and the verdict reads the root back.
+/// Idempotent from the file system itself: a root holding nothing of ours moves nothing.
 pub(crate) fn migrate_root(
     root: &Path,
     store: &Path,
     rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
-) -> std::io::Result<Migration> {
+) -> Migration {
     let mut migration = Migration::default();
-    for entry in std::fs::read_dir(root)? {
-        let name = entry?.file_name();
-        if classify_root_entry(&name) != RootEntry::Ours {
-            continue;
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::error!("[BACKUP_EXCLUSION] the App Group root is unreadable - nothing moved: {e}");
+            migration.unreadable = true;
+            return migration;
+        }
+    };
+    for entry in entries {
+        let name = match entry {
+            Ok(entry) => entry.file_name(),
+            Err(e) => {
+                log::error!("[BACKUP_EXCLUSION] an App Group root entry is unreadable: {e}");
+                migration.failures += 1;
+                continue;
+            }
+        };
+        match classify_root_entry(&name) {
+            RootEntry::Store | RootEntry::System => continue,
+            RootEntry::Unknown => {
+                migration.unknown += 1;
+                continue;
+            }
+            RootEntry::Ours => {}
         }
         match rename(&root.join(&name), &store.join(&name)) {
             Ok(()) => migration.moved += 1,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => migration.absent += 1,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                migration.kept += 1;
+                match supersede(root, store, &name, &rename) {
+                    Ok(true) => migration.superseded += 1,
+                    Ok(false) => migration.absent += 1,
+                    Err(e) => {
+                        log::error!(
+                            "[BACKUP_EXCLUSION] an App Group root entry that came back was not moved in: {e}"
+                        );
+                        migration.failures += 1;
+                    }
+                }
             }
             Err(e) => {
                 log::error!(
-                    "[BACKUP_EXCLUSION] an App Group root entry was not moved into the store: {:?}",
-                    e.kind()
+                    "[BACKUP_EXCLUSION] an App Group root entry was not moved into the store: {e}"
                 );
                 migration.failures += 1;
             }
         }
     }
-    Ok(migration)
+    migration
 }
 
-/// How many [`RootEntry::Ours`] entries the App Group `root` holds NOW - read by the launch verdict
-/// after the move, so the line says what the file system holds. Anything but 0 is outside every
-/// excluded directory.
-pub(crate) fn ours_at_root(root: &Path) -> std::io::Result<usize> {
-    let mut count = 0;
+/// What the App Group root holds NOW, read back by the launch verdict after the move.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RootState {
+    /// Entries of ours still there: outside every excluded directory.
+    pub(crate) ours: usize,
+    /// Entries on no allowlist.
+    pub(crate) unknown: usize,
+}
+
+/// Reads the App Group `root` back ([`RootState`]).
+pub(crate) fn root_state(root: &Path) -> std::io::Result<RootState> {
+    let mut state = RootState::default();
     for entry in std::fs::read_dir(root)? {
-        if classify_root_entry(&entry?.file_name()) == RootEntry::Ours {
-            count += 1;
+        match classify_root_entry(&entry?.file_name()) {
+            RootEntry::Ours => state.ours += 1,
+            RootEntry::Unknown => state.unknown += 1,
+            RootEntry::Store | RootEntry::System => {}
         }
     }
-    Ok(count)
+    Ok(state)
 }
 
-/// Opens the App Group's store under `root`: creates it when absent and FLAGS it at once with
-/// `flag`, before anything is written into it, then moves the root's entries of ours into it
-/// ([`migrate_root`]). Every process runs it before its first use of the store
-/// (`app_group::app_group_dir`). The flag the launch pass reads back is the verdict; a failure here
-/// is said at ERROR and does not stop the store from opening - a store that is not flagged still
-/// keeps the extension's writes where the launch pass flags them.
+/// How a process's first resolution of the App Group went ([`open_store`]): kept for the life of
+/// the process (`app_group::store_opening`), so the launch verdict - and the notification
+/// extension, through `canari_app_group_store_report` - can say what the move did even when it ran
+/// before any logger existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoreOpening {
+    pub(crate) path: PathBuf,
+    /// Whether this process created the store.
+    pub(crate) created: bool,
+    /// The flag this process set on it.
+    pub(crate) flag: Result<(), FlagError>,
+    pub(crate) migration: Migration,
+}
+
+impl StoreOpening {
+    /// One line and its severity: the flag's outcome and the move's counts.
+    pub(crate) fn report(&self) -> (Severity, String) {
+        let m = &self.migration;
+        let mut line = format!(
+            "{APP_GROUP_LABEL} {}, flag ",
+            if self.created { "created" } else { "opened" }
+        );
+        match &self.flag {
+            Ok(()) => line.push_str("set"),
+            Err(e) => line.push_str(&format!("NOT set ({e})")),
+        }
+        line.push_str(&format!(
+            "; root: {} moved, {} absent, {} came back from an older build, {} refused, {} unknown",
+            m.moved, m.absent, m.superseded, m.failures, m.unknown
+        ));
+        if m.unreadable {
+            line.push_str(", the root unreadable or the store not locked");
+        }
+        let severity = if self.flag.is_err() {
+            Severity::Error
+        } else {
+            m.severity()
+        };
+        (severity, line)
+    }
+}
+
+/// Opens the App Group's store under `root`: creates it when absent, FLAGS it with `flag` (created
+/// or found - every process, once), then, under [`lock_store`], moves the root's entries of ours
+/// into it ([`migrate_root`]). Every process runs it before its first use of the store
+/// (`app_group::app_group_dir`). Fails only when the store cannot be created: a refused flag, an
+/// unreadable root or a refused move is in the answer and its [`StoreOpening::report`], and the
+/// store is still returned - the notification extension decrypts from it either way.
 pub(crate) fn open_store(
     root: &Path,
     flag: impl FnOnce(&Path) -> Result<(), FlagError>,
-) -> std::io::Result<PathBuf> {
-    let store = root.join(APP_GROUP_STORE);
-    match std::fs::create_dir(&store) {
-        Ok(()) => {
-            log::info!("[BACKUP_EXCLUSION] {APP_GROUP_LABEL} created");
-            if let Err(e) = flag(&store) {
-                log::error!(
-                    "[BACKUP_EXCLUSION] {APP_GROUP_LABEL} created but not excluded from backups: {e}"
-                );
+) -> std::io::Result<StoreOpening> {
+    let path = root.join(APP_GROUP_STORE);
+    let created = match std::fs::create_dir(&path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(e) => return Err(e),
+    };
+    let flag = flag(&path);
+    let migration = match lock_store(&path) {
+        Ok(_held) => migrate_root(root, &path, rename_exclusive),
+        Err(e) => {
+            log::error!(
+                "[BACKUP_EXCLUSION] the App Group store could not be locked - nothing moved: {e}"
+            );
+            Migration {
+                unreadable: true,
+                ..Migration::default()
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(e) => return Err(e),
+    };
+    let opening = StoreOpening {
+        path,
+        created,
+        flag,
+        migration,
+    };
+    let (severity, verdict) = opening.report();
+    match severity {
+        Severity::Info => log::info!("[BACKUP_EXCLUSION] {verdict}"),
+        Severity::Warn => log::warn!("[BACKUP_EXCLUSION] {verdict}"),
+        Severity::Error => log::error!("[BACKUP_EXCLUSION] {verdict}"),
     }
-    let migration = migrate_root(root, &store, rename_exclusive)?;
-    if migration.moved > 0 || migration.absent > 0 {
-        log::info!(
-            "[BACKUP_EXCLUSION] App Group root moved into the store: {} moved, {} already moved by another process",
-            migration.moved,
-            migration.absent
-        );
-    }
-    if migration.kept > 0 || migration.failures > 0 {
-        log::error!(
-            "[BACKUP_EXCLUSION] App Group root entries left outside the store: {} already in the store, {} refused",
-            migration.kept,
-            migration.failures
-        );
-    }
-    Ok(store)
+    Ok(opening)
 }
 
-/// The one line a launch logs, and whether it is a success: every label when all held, the data
-/// directory is covered ([`covers`]) and the App Group root holds nothing of ours
-/// (`root_left`: `None` when the container is unknown - its store already fails in `outcomes`);
-/// else the count, each label that did not hold WITH ITS REASON, what the root still holds, and,
-/// when it is so, that the data directory is outside them all. One verdict per launch, never an
+/// The one line a launch logs, and its severity. INFO when every label held, the data directory is
+/// covered ([`covers`]) and the App Group root holds nothing of ours and nothing unknown (`root`:
+/// `None` when the container is unknown - its store already fails in `outcomes`); WARN when, on top
+/// of that, this process's move ([`Migration`], `None` when this process opened no store) took back
+/// entries an older build wrote; else ERROR, with the count, each label that did not hold WITH ITS
+/// REASON, what the root still holds and what the move refused. One verdict per launch, never an
 /// ERROR followed by "6/6".
 pub(crate) fn summary(
     outcomes: &[(&'static str, Result<(), FlagError>)],
     data_dir_covered: bool,
-    root_left: Option<Result<usize, String>>,
-) -> (bool, String) {
+    root: Option<Result<RootState, String>>,
+    migration: Option<&Migration>,
+) -> (Severity, String) {
     let failed: Vec<String> = outcomes
         .iter()
         .filter_map(|(l, r)| r.as_ref().err().map(|e| format!("{l} ({e})")))
         .collect();
     let total = outcomes.len();
-    let root_clean = matches!(root_left, None | Some(Ok(0)));
-    if failed.is_empty() && data_dir_covered && root_clean {
+    let root_clean = matches!(
+        root,
+        None | Some(Ok(RootState {
+            ours: 0,
+            unknown: 0
+        }))
+    );
+    let moved_cleanly = migration.is_none_or(|m| m.severity() != Severity::Error);
+    let came_back = migration.map_or(0, |m| m.superseded);
+    if failed.is_empty() && data_dir_covered && root_clean && moved_cleanly {
         let labels: Vec<&str> = outcomes.iter().map(|(l, _)| *l).collect();
-        (
-            true,
-            format!(
-                "{total}/{total} directories excluded from backups, flag read back: {}",
-                labels.join(", ")
-            ),
-        )
-    } else {
-        let mut line = format!("{}/{total} directories excluded", total - failed.len());
-        if !failed.is_empty() {
-            line.push_str(&format!(" - NOT excluded: {}", failed.join("; ")));
+        let mut line = format!(
+            "{total}/{total} directories excluded from backups, flag read back: {}",
+            labels.join(", ")
+        );
+        if came_back == 0 {
+            return (Severity::Info, line);
         }
-        match root_left {
-            Some(Ok(0)) | None => {}
-            Some(Ok(n)) => line.push_str(&format!(
-                " - {n} entries of ours left at the App Group root"
-            )),
-            Some(Err(e)) => line.push_str(&format!(" - the App Group root is unreadable: {e}")),
-        }
-        if !data_dir_covered {
-            line.push_str(" - the app data directory lies outside every excluded directory");
-        }
-        (false, line)
+        line.push_str(&format!(
+            " - {came_back} entries came back from an older build: the root copies moved in, the previous ones superseded"
+        ));
+        return (Severity::Warn, line);
     }
+    let mut line = format!("{}/{total} directories excluded", total - failed.len());
+    if !failed.is_empty() {
+        line.push_str(&format!(" - NOT excluded: {}", failed.join("; ")));
+    }
+    match root {
+        None => {}
+        Some(Ok(state)) => {
+            if state.ours > 0 {
+                line.push_str(&format!(
+                    " - {} entries of ours left at the App Group root",
+                    state.ours
+                ));
+            }
+            if state.unknown > 0 {
+                line.push_str(&format!(
+                    " - {} unknown entries at the App Group root, not moved",
+                    state.unknown
+                ));
+            }
+        }
+        Some(Err(e)) => line.push_str(&format!(" - the App Group root is unreadable: {e}")),
+    }
+    if let Some(m) = migration {
+        if m.failures > 0 {
+            line.push_str(&format!(" - {} moves refused", m.failures));
+        }
+        if m.unreadable {
+            line.push_str(" - the move did not run (root unreadable or store not locked)");
+        }
+        if came_back > 0 {
+            line.push_str(&format!(
+                " - {came_back} entries came back from an older build"
+            ));
+        }
+    }
+    if !data_dir_covered {
+        line.push_str(" - the app data directory lies outside every excluded directory");
+    }
+    (Severity::Error, line)
 }
 
 /// Creates the directory when absent, sets the flag, and reads it back.
@@ -427,18 +674,18 @@ fn exclude_one(path: &Path) -> Result<(), FlagError> {
     }
 }
 
-/// The launch pass: every directory of [`excluded_dirs`] and the App Group root's state, said in
-/// ONE line - at INFO when all held, at ERROR with each reason when one did not, as the native
-/// caches' per-file pass does (`native_cache::exclude_from_backup`). Runs in `setup`, before the
-/// WebView is built.
+/// The launch pass: every directory of [`excluded_dirs`], the App Group root read back and what
+/// this process's move did, said in ONE line at the [`summary`]'s severity. Runs in `setup`, before
+/// the WebView is built - possibly AFTER the native bootstrap opened the store, which is why the
+/// move's result is read from where the opening kept it rather than from a log line.
 #[cfg(target_os = "ios")]
 pub(crate) fn exclude_install_from_backup(home: &Path, data_dir: &Path) {
     log::debug!("[BACKUP_EXCLUSION] launch pass");
     // The store first: resolving it moves the root's entries of ours into it.
     let store = crate::app_group::app_group_dir();
-    let root_left = crate::app_group::app_group_container()
+    let root = crate::app_group::app_group_container()
         .ok()
-        .map(|root| ours_at_root(&root).map_err(|e| e.to_string()));
+        .map(|root| root_state(&root).map_err(|e| e.to_string()));
     let dirs = excluded_dirs(home, store.as_deref().ok());
     let mut outcomes: Vec<(&'static str, Result<(), FlagError>)> = dirs
         .iter()
@@ -447,9 +694,11 @@ pub(crate) fn exclude_install_from_backup(home: &Path, data_dir: &Path) {
     if let Err(e) = store {
         outcomes.push((APP_GROUP_LABEL, Err(FlagError::Unavailable(e))));
     }
-    match summary(&outcomes, covers(&dirs, data_dir), root_left) {
-        (true, verdict) => log::info!("[BACKUP_EXCLUSION] {verdict}"),
-        (false, verdict) => log::error!("[BACKUP_EXCLUSION] {verdict}"),
+    let migration = crate::app_group::store_opening().map(|o| &o.migration);
+    match summary(&outcomes, covers(&dirs, data_dir), root, migration) {
+        (Severity::Info, verdict) => log::info!("[BACKUP_EXCLUSION] {verdict}"),
+        (Severity::Warn, verdict) => log::warn!("[BACKUP_EXCLUSION] {verdict}"),
+        (Severity::Error, verdict) => log::error!("[BACKUP_EXCLUSION] {verdict}"),
     }
 }
 
@@ -501,9 +750,12 @@ mod tests {
         NsErrorParts {
             domain: domain.to_string(),
             code,
-            description: "described".to_string(),
             underlying: underlying.map(|(d, c)| (d.to_string(), c)),
         }
+    }
+
+    fn flagged(_: &Path) -> Result<(), FlagError> {
+        Ok(())
     }
 
     #[test]
@@ -572,37 +824,42 @@ mod tests {
     }
 
     #[test]
-    fn the_root_entries_are_classified_by_name() {
-        assert_eq!(classify_root_entry(OsStr::new("store")), RootEntry::Store);
+    fn the_root_entries_are_classified_against_the_allowlist() {
+        let class = |n: &str| classify_root_entry(OsStr::new(n));
+        assert_eq!(class("store"), RootEntry::Store);
+        assert_eq!(class("Library"), RootEntry::System);
         assert_eq!(
-            classify_root_entry(OsStr::new("Library")),
+            class(".com.apple.mobile_container_manager.metadata.plist"),
             RootEntry::System
         );
-        assert_eq!(
-            classify_root_entry(OsStr::new(
-                ".com.apple.mobile_container_manager.metadata.plist"
-            )),
-            RootEntry::System
-        );
-        // What the bench iPhone's backup of 2026-11-20 held at the root.
+        // What the bench iPhone's backup of 2026-11-20 held at the root, and the writers' own names.
         for ours in [
             "mls.bin",
+            "mls.bin.tmp",
             "push_secret.txt",
             "push_context.json",
             "display_names.json",
-            "conversation_nicknames.json",
+            "conversation_nicknames.json.tmp",
             "device_notices",
             "graine_seeds.json",
             "graine_seeds.lock",
+            "fcm_message_cache.ndjson",
+            "nse_outcomes.1.ndjson",
+            "nse_inflight.123.4.json",
+            "nse_done.123.4.json",
             "shared_inbox",
-            "pending_share.json",
+            "shared_inbox.lock",
+            "pending_share.json.replacing",
+            "share_epoch",
             "app_in_foreground",
+            "avatar_abc.jpg",
+            "assologo_42.jpg",
         ] {
-            assert_eq!(
-                classify_root_entry(OsStr::new(ours)),
-                RootEntry::Ours,
-                "{ours}"
-            );
+            assert_eq!(class(ours), RootEntry::Ours, "{ours}");
+        }
+        // A stem is a whole name or a name continued after a dot - never a longer word.
+        for unknown in ["mlsx", "push_contexts.json", "notes.txt", "storehouse"] {
+            assert_eq!(class(unknown), RootEntry::Unknown, "{unknown}");
         }
     }
 
@@ -619,16 +876,25 @@ mod tests {
             b"",
         )
         .expect("write");
-        let flagged = std::cell::RefCell::new(Vec::new());
-        let store = open_store(&root.0, |p| {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let opening = open_store(&root.0, |p| {
             // Flagged while still empty: nothing of ours was in it yet.
             assert!(names(p).is_empty());
-            flagged.borrow_mut().push(p.to_path_buf());
+            seen.borrow_mut().push(p.to_path_buf());
             Ok(())
         })
         .expect("opened");
+        let store = opening.path.clone();
         assert_eq!(store, root.0.join(APP_GROUP_STORE));
-        assert_eq!(flagged.into_inner(), vec![store.clone()]);
+        assert!(opening.created);
+        assert_eq!(seen.into_inner(), vec![store.clone()]);
+        assert_eq!(
+            opening.migration,
+            Migration {
+                moved: 2,
+                ..Migration::default()
+            }
+        );
         assert_eq!(names(&store), vec!["device_notices", "mls.bin"]);
         assert_eq!(
             std::fs::read(store.join("device_notices/k")).expect("moved"),
@@ -642,52 +908,122 @@ mod tests {
                 "store"
             ]
         );
-        assert_eq!(ours_at_root(&root.0).expect("readable"), 0);
+        assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
+        assert_eq!(opening.report().0, Severity::Info);
     }
 
     #[test]
-    fn an_existing_store_is_not_flagged_again_and_a_second_open_moves_nothing() {
+    fn an_existing_store_is_flagged_again_and_a_second_open_moves_nothing() {
         let root = TempDir::new("reopen");
-        open_store(&root.0, |_| Ok(())).expect("first");
+        open_store(&root.0, flagged).expect("first");
         std::fs::write(
             root.0.join(APP_GROUP_STORE).join("push_context.json"),
             b"{}",
         )
         .expect("write");
-        let store = open_store(&root.0, |_| {
-            panic!("an existing store is not re-flagged here")
+        let calls = std::cell::Cell::new(0);
+        let opening = open_store(&root.0, |_| {
+            calls.set(calls.get() + 1);
+            Ok(())
         })
         .expect("second");
-        assert_eq!(names(&store), vec!["push_context.json"]);
+        assert_eq!(calls.get(), 1, "every process flags the store it finds");
+        assert!(!opening.created);
+        assert_eq!(opening.migration, Migration::default());
+        assert_eq!(names(&opening.path), vec!["push_context.json"]);
+    }
+
+    #[test]
+    fn an_older_build_writing_the_root_again_wins_and_the_store_copy_is_superseded_once() {
+        let root = TempDir::new("downgrade");
+        std::fs::write(root.0.join("mls.bin"), b"v1").expect("write");
+        std::fs::create_dir(root.0.join("device_notices")).expect("dir");
+        std::fs::write(root.0.join("device_notices/a"), b"v1").expect("write");
+        let store = open_store(&root.0, flagged).expect("first").path;
+
+        // A downgrade: the older build writes at the root again, after the move.
+        std::fs::write(root.0.join("mls.bin"), b"v2").expect("write");
+        std::fs::create_dir(root.0.join("device_notices")).expect("dir");
+        std::fs::write(root.0.join("device_notices/b"), b"v2").expect("write");
+        let opening = open_store(&root.0, flagged).expect("upgrade again");
         assert_eq!(
-            migrate_root(&root.0, &store, rename_exclusive).expect("readable"),
-            Migration::default()
+            opening.migration,
+            Migration {
+                superseded: 2,
+                ..Migration::default()
+            }
+        );
+        assert_eq!(opening.report().0, Severity::Warn);
+        assert_eq!(
+            std::fs::read(store.join("mls.bin")).expect("root won"),
+            b"v2"
+        );
+        assert_eq!(names(&store.join("device_notices")), vec!["b"]);
+        let quarantine = store.join(SUPERSEDED_DIR);
+        assert_eq!(
+            std::fs::read(quarantine.join("mls.bin")).expect("kept"),
+            b"v1"
+        );
+        assert_eq!(names(&quarantine.join("device_notices")), vec!["a"]);
+        assert_eq!(root_state(&root.0).expect("readable"), RootState::default());
+
+        // Settled: a second reopen moves nothing and the quarantine is unchanged.
+        let again = open_store(&root.0, flagged).expect("reopen");
+        assert_eq!(again.migration, Migration::default());
+        assert_eq!(
+            std::fs::read(quarantine.join("mls.bin")).expect("kept"),
+            b"v1"
+        );
+
+        // A second downgrade replaces the quarantined generation: it never grows.
+        std::fs::write(root.0.join("mls.bin"), b"v3").expect("write");
+        open_store(&root.0, flagged).expect("third upgrade");
+        assert_eq!(
+            std::fs::read(store.join("mls.bin")).expect("root won"),
+            b"v3"
+        );
+        assert_eq!(
+            std::fs::read(quarantine.join("mls.bin")).expect("one"),
+            b"v2"
+        );
+        assert_eq!(names(&quarantine), vec!["device_notices", "mls.bin"]);
+    }
+
+    #[test]
+    fn an_unknown_root_name_is_counted_and_never_moved() {
+        let root = TempDir::new("unknown");
+        std::fs::write(root.0.join("notes.txt"), b"x").expect("write");
+        let opening = open_store(&root.0, flagged).expect("opened");
+        assert_eq!(opening.migration.unknown, 1);
+        assert!(root.0.join("notes.txt").exists());
+        assert_eq!(opening.report().0, Severity::Error);
+        assert_eq!(
+            root_state(&root.0).expect("readable"),
+            RootState {
+                ours: 0,
+                unknown: 1
+            }
         );
     }
 
     #[test]
-    fn a_name_the_store_already_holds_stays_at_the_root_and_is_counted() {
-        let root = TempDir::new("conflict");
-        let store = root.0.join(APP_GROUP_STORE);
-        std::fs::create_dir(&store).expect("dir");
-        std::fs::write(store.join("mls.bin"), b"new").expect("write");
-        std::fs::write(root.0.join("mls.bin"), b"old").expect("write");
-        let migration = migrate_root(&root.0, &store, rename_exclusive).expect("readable");
-        assert_eq!(migration.kept, 1);
-        assert_eq!(std::fs::read(store.join("mls.bin")).expect("kept"), b"new");
-        assert_eq!(ours_at_root(&root.0).expect("readable"), 1);
+    fn an_unreadable_root_is_counted_and_the_store_still_opens() {
+        let root = TempDir::new("unreadable");
+        let missing = root.0.join("missing");
+        let migration = migrate_root(&missing, &root.0, rename_exclusive);
+        assert!(migration.unreadable);
+        assert_eq!(migration.severity(), Severity::Error);
     }
 
     #[test]
-    fn an_entry_another_process_moved_first_is_gone_not_failed() {
+    fn an_entry_gone_before_its_rename_is_absent_not_failed() {
         let root = TempDir::new("gone");
         let store = root.0.join(APP_GROUP_STORE);
         std::fs::create_dir(&store).expect("dir");
         std::fs::write(root.0.join("push_secret.txt"), b"s").expect("write");
         let migration = migrate_root(&root.0, &store, |_, _| {
             Err(std::io::ErrorKind::NotFound.into())
-        })
-        .expect("readable");
+        });
         assert_eq!(
             migration,
             Migration {
@@ -698,7 +1034,26 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_is_classified_from_its_domain_and_code_never_its_text() {
+    fn a_refused_rename_is_counted_and_left_at_the_root() {
+        let root = TempDir::new("refused");
+        let store = root.0.join(APP_GROUP_STORE);
+        std::fs::create_dir(&store).expect("dir");
+        std::fs::write(root.0.join("push_secret.txt"), b"s").expect("write");
+        let migration = migrate_root(&root.0, &store, |_, _| {
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        });
+        assert_eq!(migration.failures, 1);
+        assert_eq!(
+            root_state(&root.0).expect("readable"),
+            RootState {
+                ours: 1,
+                unknown: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_classified_from_its_domain_and_code() {
         assert_eq!(
             refused("NSCocoaErrorDomain", 513, None).refusal(),
             Refusal::NoPermission
@@ -719,9 +1074,10 @@ mod tests {
             refused("NSCocoaErrorDomain", 512, Some(("NSPOSIXErrorDomain", 28))).refusal(),
             Refusal::Other
         );
-        let mut same_text = refused("NSCocoaErrorDomain", 4, None);
-        same_text.description = "You don't have permission".to_string();
-        assert_eq!(same_text.refusal(), Refusal::Other);
+        assert_eq!(
+            refused("NSCocoaErrorDomain", 4, None).refusal(),
+            Refusal::Other
+        );
     }
 
     #[test]
@@ -736,12 +1092,13 @@ mod tests {
 
     #[test]
     fn the_summary_lists_every_label_when_all_held() {
-        let (ok, line) = summary(
+        let (severity, line) = summary(
             &[("Library/WebKit", Ok(())), (APP_GROUP_LABEL, Ok(()))],
             true,
-            Some(Ok(0)),
+            Some(Ok(RootState::default())),
+            Some(&Migration::default()),
         );
-        assert!(ok);
+        assert_eq!(severity, Severity::Info);
         assert_eq!(
             line,
             "2/2 directories excluded from backups, flag read back: \
@@ -750,8 +1107,28 @@ mod tests {
     }
 
     #[test]
-    fn the_summary_names_what_did_not_hold_with_the_nserror() {
-        let (ok, line) = summary(
+    fn entries_that_came_back_are_one_warning_not_an_error() {
+        let (severity, line) = summary(
+            &[(APP_GROUP_LABEL, Ok(()))],
+            true,
+            Some(Ok(RootState::default())),
+            Some(&Migration {
+                superseded: 3,
+                ..Migration::default()
+            }),
+        );
+        assert_eq!(severity, Severity::Warn);
+        assert_eq!(
+            line,
+            "1/1 directories excluded from backups, flag read back: \
+             AppGroup(group.fr.emse.canari)/store - 3 entries came back from an older build: \
+             the root copies moved in, the previous ones superseded"
+        );
+    }
+
+    #[test]
+    fn the_summary_names_what_did_not_hold_with_the_nserror_and_never_its_text() {
+        let (severity, line) = summary(
             &[
                 ("Library/WebKit", Ok(())),
                 (
@@ -767,13 +1144,14 @@ mod tests {
                 ),
             ],
             true,
-            Some(Ok(0)),
+            Some(Ok(RootState::default())),
+            None,
         );
-        assert!(!ok);
+        assert_eq!(severity, Severity::Error);
         assert_eq!(
             line,
             "1/2 directories excluded - NOT excluded: AppGroup(group.fr.emse.canari)/store \
-             (setResourceValue refused (no permission): NSCocoaErrorDomain 513 \"described\", \
+             (setResourceValue refused (no permission): NSCocoaErrorDomain 513, \
              underlying NSPOSIXErrorDomain 1)"
         );
     }
@@ -803,19 +1181,33 @@ mod tests {
     }
 
     #[test]
-    fn entries_left_at_the_root_fail_the_launch_even_when_every_flag_held() {
-        let (ok, line) = summary(&[(APP_GROUP_LABEL, Ok(()))], true, Some(Ok(2)));
-        assert!(!ok);
+    fn what_the_root_still_holds_and_what_the_move_refused_fail_the_launch() {
+        let (severity, line) = summary(
+            &[(APP_GROUP_LABEL, Ok(()))],
+            true,
+            Some(Ok(RootState {
+                ours: 2,
+                unknown: 1,
+            })),
+            Some(&Migration {
+                failures: 2,
+                unknown: 1,
+                ..Migration::default()
+            }),
+        );
+        assert_eq!(severity, Severity::Error);
         assert_eq!(
             line,
-            "1/1 directories excluded - 2 entries of ours left at the App Group root"
+            "1/1 directories excluded - 2 entries of ours left at the App Group root - \
+             1 unknown entries at the App Group root, not moved - 2 moves refused"
         );
-        let (ok, line) = summary(
+        let (severity, line) = summary(
             &[(APP_GROUP_LABEL, Ok(()))],
             true,
             Some(Err("denied".into())),
+            None,
         );
-        assert!(!ok);
+        assert_eq!(severity, Severity::Error);
         assert_eq!(
             line,
             "1/1 directories excluded - the App Group root is unreadable: denied"
@@ -823,9 +1215,35 @@ mod tests {
     }
 
     #[test]
+    fn the_opening_report_carries_a_refused_flag_at_error() {
+        let opening = StoreOpening {
+            path: group().join(APP_GROUP_STORE),
+            created: true,
+            flag: Err(FlagError::Refused {
+                call: "setResourceValue",
+                error: None,
+            }),
+            migration: Migration {
+                moved: 4,
+                ..Migration::default()
+            },
+        };
+        assert_eq!(
+            opening.report(),
+            (
+                Severity::Error,
+                "AppGroup(group.fr.emse.canari)/store created, flag NOT set (setResourceValue \
+                 refused, with no NSError); root: 4 moved, 0 absent, 0 came back from an older \
+                 build, 0 refused, 0 unknown"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
     fn an_uncovered_data_directory_fails_the_launch_even_when_every_flag_held() {
-        let (ok, line) = summary(&[("Library/WebKit", Ok(()))], false, None);
-        assert!(!ok);
+        let (severity, line) = summary(&[("Library/WebKit", Ok(()))], false, None, None);
+        assert_eq!(severity, Severity::Error);
         assert_eq!(
             line,
             "1/1 directories excluded - the app data directory lies outside every excluded directory"

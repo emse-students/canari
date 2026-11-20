@@ -299,9 +299,54 @@ describe('iOS: every App Group resolver answers the store, never the container r
     expect(shareSwift.match(/containerURL\(/g)?.length).toBe(1);
     const storeDir = between(shareSwift, /private func storeDir\(\) -> URL\? \{/, /\n {4}}\n/);
     expect(storeDir).toContain('containerURL(');
-    expect(storeDir).toMatch(/mkdir\(store\.path[^\n]*\n[^\n]*\n\s*excludeFromBackup\(store\)/);
-    expect(storeDir).toContain('renamex_np(from, to, UInt32(RENAME_EXCL))');
-    expect(storeDir).toContain('name != "Library" && !name.hasPrefix(".com.apple.")');
+    // Flagged created or found, then the move - in that order, as `open_store` does.
+    expect(storeDir.indexOf('excludeFromBackup(store)')).toBeGreaterThan(
+      storeDir.indexOf('mkdir(store.path')
+    );
+    expect(
+      storeDir.indexOf('moveRootIntoStore(container: container, store: store)')
+    ).toBeGreaterThan(storeDir.indexOf('excludeFromBackup(store)'));
+    expect(storeDir).not.toMatch(/if mkdir\(store\.path[^\n]*\n[^\n]*\n\s*excludeFromBackup/);
+    const move = between(shareSwift, /private func moveRootIntoStore\(/, /\n {4}}\n/);
+    expect(move).toContain('flock(fd, LOCK_EX)');
+    expect(move).toContain('renamex_np(from, to, UInt32(RENAME_EXCL))');
+    expect(move).toContain('guard ShareCapture.isOurs(name) else {');
+    expect(move).toContain('name != "Library" && !name.hasPrefix(".com.apple.")');
     expect(backupExclusionRs).toContain('name == "Library" || name.starts_with(".com.apple.")');
+    expect(backupExclusionRs).toContain('libc::flock(dir.as_raw_fd(), libc::LOCK_EX)');
+  });
+
+  it('moves only an allowlist, the same in Rust and in Swift', () => {
+    const list = (source: string, re: RegExp) =>
+      [...(re.exec(source)?.[1] ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
+    const rustStems = list(
+      backupExclusionRs,
+      /pub\(crate\) const OURS_STEMS: \[&str; \d+\] = \[([^\]]+)\]/
+    );
+    const rustPrefixes = list(
+      backupExclusionRs,
+      /pub\(crate\) const OURS_PREFIXES: \[&str; \d+\] = \[([^\]]+)\]/
+    );
+    expect(rustStems.length).toBeGreaterThan(10);
+    expect(list(shareSwift, /static let rootStems = \[([^\]]+)\]/)).toEqual(rustStems);
+    expect(list(shareSwift, /static let rootPrefixes = \[([^\]]+)\]/)).toEqual(rustPrefixes);
+    expect(shareSwift).toContain(
+      /pub\(crate\) const SUPERSEDED_DIR: &str = "([^"]+)";/.exec(backupExclusionRs)?.[1] ??
+        'missing'
+    );
+  });
+
+  it('says the opening once in the notification extension, which has no Rust logger', () => {
+    const resolver = between(swift, /private static func appGroupDir\(\) -> URL\? \{/, /\n {2}}\n/);
+    expect(resolver).toContain('_ = storeOpeningLogged');
+    const once = between(
+      swift,
+      /private static let storeOpeningLogged: Void = \{/,
+      /\n {2}}\(\)\n/
+    );
+    expect(once).toContain('canari_app_group_store_report(&severity)');
+    expect(iosFfiRs).toContain(
+      'pub unsafe extern "C" fn canari_app_group_store_report(severity: *mut i32)'
+    );
   });
 });

@@ -2572,8 +2572,28 @@ class NotificationService: UNNotificationServiceExtension {
       return nil
     }
     defer { canari_free_string(raw) }
+    _ = storeOpeningLogged
     return URL(fileURLWithPath: String(cString: raw), isDirectory: true)
   }
+
+  /// Says ONCE per process how Rust opened the App Group store - the flag and the move of an older
+  /// build's root files - at the severity Rust gives: this extension has no Rust logger, so the
+  /// line `canari_app_group_store_report` keeps is the only trace of the move when the extension
+  /// ran it. A `static let` initialiser runs once, thread-safely.
+  private static let storeOpeningLogged: Void = {
+    var severity: Int32 = 0
+    guard let raw = canari_app_group_store_report(&severity) else { return }
+    defer { canari_free_string(raw) }
+    let report = String(cString: raw)
+    switch severity {
+    case 2:
+      NseLog.log.error("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    case 1:
+      NseLog.log.warning("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    default:
+      NseLog.log.notice("[CanariNSE] [BACKUP_EXCLUSION] \(report, privacy: .public)")  // log-safe: counts and a fixed label, built by backup_exclusion::StoreOpening::report, no file name
+    }
+  }()
 
   private func loadMlsState() -> Data? {
     guard let dir = Self.appGroupDir() else { return nil }

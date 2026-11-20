@@ -6,19 +6,25 @@ target: 1.7.2
 and the push secret still go into an iPhone backup"* (read on `1.7.2-alpha.1`, sitting S16). The
 container root is no longer flagged: everything the app and its two extensions share lives in
 `store/` inside it, flagged by whichever process creates it, and an older build's root files are
-moved in at each process's first resolution (`backup_exclusion::open_store`). A refusal now keeps its
-`NSError` (domain, code, description, underlying error, class) in the one verdict line. Mechanism:
+moved in at each process's first resolution (`backup_exclusion::open_store`, an allowlist of our
+names; a name an older build wrote back after a downgrade wins over the store's copy, which is
+superseded once). A refusal now keeps its `NSError` (domain, code, underlying error, class) in the
+one verdict line. Mechanism:
 [mobile](../frontend/mobile.md#the-app-group-a-store-directory-never-the-root-172).
 
 **The reading that closes it**, on the bench iPhone 12, a build carrying the store, installed OVER
 a `1.7.2-alpha.1` signed in with data (so the move has something to move):
 
-1. Launch, then read the log (`python -m pymobiledevice3 syslog live`):
-   `[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: ...,
-   AppGroup(group.fr.emse.canari)/store`, and no `[BACKUP_EXCLUSION]` line at ERROR - the verdict
-   also fails when an entry of ours is still at the root. (The move's own line may be missing: the
-   native bootstrap can resolve the store before the Rust logger exists; the verdict reads the root
-   back either way.) Should an ERROR appear, it now names the `NSError` - copy it into the entry.
+1. Launch, and catch the launch verdict the way S16 did: `syslog live` does not carry the Rust
+   log, so poll the Rust log file (`Library/Application Support/fr.emse.canari/logs/Canari.log`,
+   pulled over `house_arrest` with `pymobiledevice3 apps pull`) DURING the launch - the log plugin
+   rotates it away within seconds ([S16](../device-verification.md#the-readings-of-2026-11-20-s16-172-alpha1-the-birthday-ring-the-composer-gap-the-pin-gate-the-ios-backup-pass-the-rediffusion-switch-the-web-image-drop-miconnect)).
+   **Expected:** `[BACKUP_EXCLUSION] 6/6 directories excluded from backups, flag read back: ...,
+   AppGroup(group.fr.emse.canari)/store` and no `[BACKUP_EXCLUSION]` line at ERROR - the verdict
+   also fails when an entry of ours or an unknown name is still at the root, or a move was refused.
+   Should an ERROR appear, it names the `NSError`'s domain and code - copy it into the entry. The
+   notification extension's own opening line (`[CanariNSE] [BACKUP_EXCLUSION] ...`) IS in
+   `syslog live`, when a push woke it first.
 2. Receive a push with the app killed (the extension decrypts it: the store answers from the
    extension too), then open a share from Photos (the share extension's path), and check both reach
    the app as before.
@@ -26,7 +32,10 @@ a `1.7.2-alpha.1` signed in with data (so the move has something to move):
    `select domain, relativePath from Files where domain like 'AppDomainGroup-group.fr.emse.canari'`.
    **PASS** when it lists no file at all (directory rows only, if any) - against 35 files on
    `1.7.2-alpha.1`. Delete the backup after reading.
-4. Relaunch once: still 6/6, no move line, nothing at ERROR.
+4. Relaunch once: still 6/6, nothing at ERROR.
+5. Optional, the downgrade path: install `1.7.1` over it, open it once, reinstall this build, and
+   read one WARN `... entries came back from an older build`, then INFO at the next launch; the
+   App Group still holds no file in a new `backup2`.
 
 When it passes, record it in [device-verification](../device-verification.md) and delete this file
 together with [the launch pass's own reading](reading-owed-ios-local-data-out-of-backups.md) if that

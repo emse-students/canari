@@ -463,8 +463,8 @@ unsafe fn with_backup_flag_url<T>(
 }
 
 /// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`. A
-/// refusal KEEPS the `NSError` Foundation gave - domain, code, description and the underlying
-/// error - classified where it is read ([`crate::backup_exclusion::NsErrorParts::refusal`]): the
+/// refusal KEEPS the `NSError` Foundation gave - domain, code and the underlying error's -
+/// classified where it is read ([`crate::backup_exclusion::NsErrorParts::refusal`]): the
 /// App Group root refused while `error: NULL` was passed, and the cause was lost (1.7.2-alpha.1).
 #[cfg(target_os = "ios")]
 pub(crate) fn ios_exclude_from_backup(
@@ -653,9 +653,10 @@ fn ios_file_protection(path: &std::path::Path, op: IosProtection) -> std::io::Re
     })
 }
 
-/// The parts of one `NSError` a log may carry: its domain, code and `localizedDescription`, and the
-/// domain and code of the error under `NSUnderlyingErrorKey` (how Foundation wraps a refused POSIX
-/// call). `None` for a null `error` - a Foundation call that answered NO and gave nothing.
+/// The parts of one `NSError` a log may carry: its domain and code, and the domain and code of the
+/// error under `NSUnderlyingErrorKey` (how Foundation wraps a refused POSIX call) - never its
+/// `localizedDescription`, which can quote a path. `None` for a null `error` - a Foundation call
+/// that answered NO and gave nothing.
 ///
 /// # Safety
 /// `error` is null or a live `NSError`, read inside the autorelease pool that holds it.
@@ -696,7 +697,6 @@ unsafe fn ns_error_parts(
         return None;
     }
     let (domain, code) = domain_code(error);
-    let description: *mut AnyObject = msg_send![error, localizedDescription];
     let user_info: *mut AnyObject = msg_send![error, userInfo];
     let mut underlying = None;
     if !user_info.is_null() {
@@ -708,7 +708,6 @@ unsafe fn ns_error_parts(
     Some(crate::backup_exclusion::NsErrorParts {
         domain,
         code,
-        description: text(description, "no description"),
         underlying,
     })
 }
