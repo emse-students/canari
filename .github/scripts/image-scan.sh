@@ -94,12 +94,21 @@ fi
 # of ours: the packages the scan reads come from the base and the `RUN` lines, and that output's code
 # is what the lockfile audits read. A missing source git does NOT ignore is a typo the release would
 # meet too, so it fails the staging and the run (exit 1), like a build that fails.
+# ONLY THE PLAIN FORM `COPY [--flag...] <src>... <dest>` IS READ. The JSON form (`COPY ["a", "b"]`),
+# a heredoc (`COPY <<EOF`), a glob (`*`, `?`, `[`) and a remote `ADD <url>` are REFUSED by name, so the
+# run fails with "could not be staged" (exit 1) instead of building from a context that silently lacks
+# a source. None is used today; the first file that needs one extends this reader, and
+# `image-scan-targets.test.sh` holds each refusal.
 # Usage: stage_context <Dockerfile> <directory to create>
 stage_context() {
   local dockerfile="$1" dir="$2" src
   mkdir -p "$dir" || return 1
   while read -r src; do
     [ -n "$src" ] || continue
+    if [ "${src%% *}" = 'REFUSED' ]; then
+      echo "    ${dockerfile##*/}: ${src#REFUSED } is a COPY/ADD form this reader does not stage" >&2
+      return 1
+    fi
     mkdir -p "$dir/$(dirname "$src")" || return 1
     if [ -e "$root/$src" ]; then
       cp -R "$root/$src" "$dir/$src" || return 1
@@ -114,10 +123,40 @@ stage_context() {
     toupper($1) == "COPY" || toupper($1) == "ADD" {
       n = 0; from = 0
       for (i = 2; i <= NF; i++) { if ($i ~ /^--from=/) from = 1; else if ($i !~ /^--/) args[++n] = $i }
-      if (!from) for (i = 1; i < n; i++) print args[i]
+      if (from) next
+      if (args[1] ~ /^\[/) { print "REFUSED the JSON form"; next }
+      for (i = 1; i < n; i++) {
+        if (args[i] ~ /^<</) print "REFUSED a heredoc"
+        else if (args[i] ~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//) print "REFUSED a remote source (" args[i] ")"
+        else if (args[i] ~ /[*?[]/) print "REFUSED a glob (" args[i] ")"
+        else print args[i]
+      }
     }
   ' "$dockerfile")
   printf '%s\n' "$dir"
+}
+
+# THE PACKAGES A `dockerfile:` TARGET UPGRADES PAST ITS BASE, one per line: the words after `upgrade`
+# in each `apk`/`apt-get` upgrade of the shipped stage (the last `FROM`), up to the end of that command
+# (`&&`, `||`, `;`, a line continuation), its options left out. An upgrade naming no package
+# (`apk upgrade` alone) prints nothing: it moves everything, and no single package can be called a
+# no-op. Read so the scan can say when the base itself carries the fix and a line can go.
+# Usage: upgraded_packages <Dockerfile>
+upgraded_packages() {
+  awk '
+    toupper($1) == "FROM" { delete pkgs; next }
+    $1 !~ /^#/ {
+      for (i = 1; i < NF; i++) {
+        if (($i == "apk" || $i == "apt-get" || $i == "apt") && $(i + 1) == "upgrade") {
+          for (j = i + 2; j <= NF; j++) {
+            if ($j == "&&" || $j == "||" || $j == ";" || $j == "\\" || $j ~ /;$/) break
+            if ($j !~ /^-/) pkgs[$j] = 1
+          }
+        }
+      }
+    }
+    END { for (p in pkgs) print p }
+  ' "$1" | sort -u
 }
 
 common=(--quiet --skip-db-update --scanners vuln --severity 'HIGH,CRITICAL' --ignore-unfixed)
@@ -129,7 +168,7 @@ while IFS= read -r target; do
   echo "--- $target"
   # `dockerfile:<path>` is an image whose shipped stage upgrades its base's packages, so its base is
   # not what an estate runs (`image-scan-targets.sh`): it is BUILT here, from the same file and the
-  # same context `build.yml` uses, and the local result is scanned. Every other target is a reference
+  # context `stage_context` builds from its COPY lines, and the local result is scanned. Every other target is a reference
   # Trivy reads from its registry. A build that fails is a FINDING (exit 1), never an outage: the file
   # is ours, and an image we cannot build is one the release cannot ship (review of #3442) - exit 2
   # stays for the registry and the database alone.
@@ -166,6 +205,30 @@ while IFS= read -r target; do
   # The same image WITHOUT the allowlist, for the retirement check below.
   trivy image "${common[@]}" "${src[@]}" --exit-code 0 --format json --output "$work/raw-$(printf '%s' "$target" | tr -c 'A-Za-z0-9.-' '_').json" "$image" ||
     unread="$unread $target"
+  # AN UPGRADE THE BASE NO LONGER NEEDS IS REPORTED (review of #3915). The built image is clean either
+  # way, so nothing else would ever say that upstream shipped the fix and the line can go: the BARE
+  # base is scanned without the allowlist, and a package the file upgrades on which the base reports
+  # no fixable HIGH/CRITICAL advisory any more is a no-op, named in a warning. It does not fail the
+  # run - the image is right, only the file is longer than it needs to be.
+  case "$target" in
+    dockerfile:*)
+      base="$(awk 'toupper($1) == "FROM" { for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break } } END { print ref }' "$root/$path")"
+      packages="$(upgraded_packages "$root/$path")"
+      if [ -z "$packages" ]; then
+        echo "    $path upgrades no named package, so no line of it can be called a no-op"
+      elif trivy image "${common[@]}" --image-src remote --exit-code 0 --format json --output "$work/base-$name.json" "$base"; then
+        while read -r package; do
+          if jq -e --arg p "$package" '[.Results[]?.Vulnerabilities[]? | select(.PkgName == $p)] | length > 0' "$work/base-$name.json" >/dev/null; then
+            echo "    $package: its base $base still needs the upgrade"
+          else
+            echo "::warning title=Image scan, an upgrade is a no-op::$path upgrades $package, and its base $base reports no fixable HIGH or CRITICAL advisory on $package any more - upstream shipped the fix, so delete $package from that upgrade (and the file, if it was the last)."
+          fi
+        done <<< "$packages"
+      else
+        unread="$unread $base(base of $path)"
+      fi
+      ;;
+  esac
 done <<< "$targets"
 
 retired=0
