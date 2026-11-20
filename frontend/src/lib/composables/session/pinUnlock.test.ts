@@ -1,4 +1,5 @@
-import { LoginFailure } from './loginErrors';
+import { LoginFailure, type LoginErrorCode } from './loginErrors';
+import { decideAutomaticRestart } from './pinReset';
 import { unlockWithPin, type PinCheckAnswer, type PinUnlockDeps } from './pinUnlock';
 import type { PinSaltAhead } from './pinSaltAhead';
 
@@ -156,5 +157,46 @@ describe('unlockWithPin', () => {
       '[PIN] The salt asked ahead had failed (prefetch offline) - asking it at submit.'
     );
     expect(d.installDeviceKey).not.toHaveBeenCalled();
+  });
+});
+
+const NO_FACT = { otherAccountState: false, alreadyRestarted: false };
+
+/**
+ * A HARDWARE-HELD KEY GONE DECIDES NOTHING UNTIL THE SERVER ACCEPTED THE PIN (2026-11-20). The key
+ * is read during the check; the phone restarts as a new device only on `hardware_key_unavailable`,
+ * and that code may surface only for an accepted PIN - a wrong PIN, or a revoked device, over a lost
+ * key is still that refusal, never a restart.
+ */
+describe('unlockWithPin - a lost hardware-held key behind a refused PIN', () => {
+  beforeEach(() => {
+    order = [];
+  });
+
+  const lostKey = () =>
+    vi.fn(async () => {
+      throw new LoginFailure('hardware_key_unavailable', 'gone', 'absent');
+    });
+
+  it('a mismatch stays a mismatch - never a restart', async () => {
+    const d = deps([{ status: 'mismatch' }], { deriveDeviceKey: lostKey() });
+    const code = await failureCode(unlockWithPin(d));
+    expect(code).toBe('pin_mismatch');
+    expect(decideAutomaticRestart(code as LoginErrorCode, NO_FACT)).toBe('none');
+  });
+
+  it('a revoked device stays revoked - never a restart', async () => {
+    const d = deps([{ status: 'ok', resetRequired: true }], { deriveDeviceKey: lostKey() });
+    const code = await failureCode(unlockWithPin(d));
+    expect(code).toBe('device_revoked');
+    expect(decideAutomaticRestart(code as LoginErrorCode, NO_FACT)).toBe('none');
+  });
+
+  it('an ACCEPTED PIN surfaces the lost key, which restarts', async () => {
+    const d = deps([{ status: 'ok' }], { deriveDeviceKey: lostKey() });
+    const code = await failureCode(unlockWithPin(d));
+    expect(code).toBe('hardware_key_unavailable');
+    expect(d.installDeviceKey).not.toHaveBeenCalled();
+    expect(decideAutomaticRestart(code as LoginErrorCode, NO_FACT)).toBe('automatic');
   });
 });

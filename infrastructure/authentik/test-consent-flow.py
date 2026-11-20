@@ -24,9 +24,9 @@ What it proves, in order:
   5. a user whose `cgu_version` is an older text is asked again, and FORGED hidden values in the
      POST are ignored for the server's; an IMPERSONATED session is neither shown nor written;
   6. every provider authorizing through this flow ends on a code once the terms are accepted;
-  7. THE HOLD: exactly the providers in BOUND name this flow (50-providers.yaml declares it), and a
-     provider outside it - production's - signs in a person who never accepted, without the page and
-     without writing anything.
+  7. PRODUCTION: exactly the providers in BOUND name this flow (50-providers.yaml declares it, all
+     eight since the hold was lifted on 2026-11-20), and production's provider shows the page to a
+     person who never accepted, writing nothing until the tick.
 """
 import copy
 import json
@@ -40,15 +40,14 @@ from authentik.providers.oauth2.models import OAuth2Provider, RedirectURIType
 from authentik.tenants.models import Tenant
 
 SLUG = "miconnect-authorization"
-VERSION = "2026-10-16"
+VERSION = "2026-11-20"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
-# The providers that ask for the terms while the hold of 2026-10-17 stands (50-providers.yaml): dev,
-# where the pre-release apps sign in, and local, where the harness does. Lifting the hold for
-# production is adding it here and in that file, in the same pull request.
-BOUND = {"miconnect-canari-dev", "miconnect-canari-local"}
-HELD = "miconnect-canari"
+# The providers that ask for the terms (50-providers.yaml): all eight since the hold of 2026-10-17 was
+# lifted on 2026-11-20. Holding one again is removing it here and in that file, in one pull request.
+BOUND = {"miconnect-archives", "miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-sky"}
+PRODUCTION = "miconnect-canari"
 # What enrolment leaves on an account; the consent write must keep every key of it unchanged.
 PROFILE = {"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": []}, "school_status": "Elève", "promo": 2024, "formation": "ICM"}
 PROMPT_KEYS =["cgu_notice", "cgu_accept", "attributes.cgu_version", "attributes.cgu_accepted_at"]
@@ -220,14 +219,14 @@ with Tenant.objects.get(ready=True):
             target, result, _ = authorize(client, provider)
             check(ended_on_code(result, target), f"{provider.name} ends on a code for an accepted user ({result.get('external') or result.get('component')})")
 
-        # 7 - the hold: production's provider never shows the page, and writes nothing.
-        held = OAuth2Provider.objects.get(name=HELD)
-        check(held.authorization_flow.slug != SLUG, f"{HELD} does not name {SLUG} ({held.authorization_flow.slug})")
+        # 7 - production: its provider shows the page to a person who never accepted, and writes nothing yet.
+        production = OAuth2Provider.objects.get(name=PRODUCTION)
+        check(production.authorization_flow.slug == SLUG, f"{PRODUCTION} names {SLUG} ({production.authorization_flow.slug})")
         fresh, fresh_client = signed_in(PREFIX + "d")
-        held_redirect, passed, _ = authorize(fresh_client, held)
-        check(ended_on_code(passed, held_redirect), f"{HELD} signs in a person who never accepted, without the page ({passed.get('external') or passed.get('component')})")
+        _, shown_page, _ = authorize(fresh_client, production)
+        check(shown_page.get("component") == "ak-stage-prompt", f"{PRODUCTION} stops a person who never accepted on the prompt ({shown_page.get('component') or shown_page})")
         fresh.refresh_from_db()
-        check("cgu_version" not in fresh.attributes, f"and writes nothing on the account ({sorted(fresh.attributes)})")
+        check("cgu_version" not in fresh.attributes, f"and writes nothing before the tick ({sorted(fresh.attributes)})")
     finally:
         User.objects.filter(username__startswith=PREFIX).delete()
     print("CONSENT-OK")

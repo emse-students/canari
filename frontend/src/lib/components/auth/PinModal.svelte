@@ -72,6 +72,13 @@
      */
     onRecoverPin?: () => void;
     /**
+     * Called when the user confirms "start fresh on this device": the PIN was accepted and this
+     * device's saved messages open under no key it holds. Shown DIRECTLY, beside the error, never
+     * behind "forgot PIN" - the PIN is right, so that is not where anyone would look (a real user,
+     * 2026-11-20). The same two-tap guard as the forgot-PIN reset. Omit to hide it.
+     */
+    onRestartDevice?: () => void;
+    /**
      * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
      * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
      * 12, 2026-10-16, an offline attempt left six dots, six more were typed once back online, and the
@@ -97,6 +104,7 @@
     onForgotPinReset,
     resetWithheldNotice = '',
     onRecoverPin,
+    onRestartDevice,
     pin = $bindable(''),
   }: Props = $props();
 
@@ -134,6 +142,8 @@
   let signingOut = $state(false);
   // Two-step guard so a single tap never triggers the destructive PIN reset.
   let confirmReset = $state(false);
+  // The same guard for the "start fresh on this device" restart.
+  let confirmRestart = $state(false);
   // Default to numpad on touch devices, keyboard input on desktop.
   let useNumpad = $state(true);
   onMount(() => {
@@ -208,6 +218,33 @@
     }
   }
 </script>
+
+<!--
+  A DESTRUCTIVE ACTION TAKES TWO TAPS: the first only arms it, the second, relabelled to say what it
+  erases, runs it. One implementation for the forgot-PIN reset and the device restart.
+-->
+{#snippet twoTapDestructive(
+  armed: boolean,
+  arm: () => void,
+  fire: () => void,
+  label: string,
+  confirmLabel: string
+)}
+  {#if armed}
+    <Button variant="danger" class="w-full" disabled={isLoading} onclick={fire}>
+      {confirmLabel}
+    </Button>
+  {:else}
+    <button
+      type="button"
+      disabled={isLoading}
+      onclick={arm}
+      class="block w-full rounded-xl border border-red-500/30 py-2 text-center text-xs font-semibold text-red-500 transition-colors hover:border-red-400/40 hover:bg-red-500/5 hover:text-red-400 disabled:opacity-50"
+    >
+      {label}
+    </button>
+  {/if}
+{/snippet}
 
 <!--
   NOT DISMISSIBLE, AND THAT IS THE WHOLE OF THE FIX.
@@ -484,6 +521,24 @@
         </button>
       {/if}
 
+      <!-- THE PIN IS RIGHT AND THIS DEVICE'S MESSAGES OPEN UNDER NO KEY IT HOLDS: the control that
+           fixes it is here, beside the error that names it, never behind "forgot PIN". -->
+      {#if !isFirstSetup && onRestartDevice}
+        <div data-pin-restart class="w-full space-y-2">
+          {@render twoTapDestructive(
+            confirmRestart,
+            () => (confirmRestart = true),
+            () => {
+              confirmRestart = false;
+              onRestartDevice?.();
+            },
+            m.auth_device_restart_button(),
+            m.auth_device_restart_confirm()
+          )}
+          <p class="text-text-muted text-center text-xs">{m.auth_device_restart_what()}</p>
+        </div>
+      {/if}
+
       {#if !isFirstSetup && showForgotPin}
         <div
           bind:this={forgotBox}
@@ -505,28 +560,16 @@
                 >{m.auth_pin_reset_strong2()}</strong
               >{m.auth_pin_reset_end()}
             </p>
-            {#if confirmReset}
-              <Button
-                variant="danger"
-                class="w-full"
-                disabled={isLoading}
-                onclick={() => {
-                  confirmReset = false;
-                  onForgotPinReset?.();
-                }}
-              >
-                {m.auth_pin_reset_confirm()}
-              </Button>
-            {:else}
-              <button
-                type="button"
-                disabled={isLoading}
-                onclick={() => (confirmReset = true)}
-                class="block w-full rounded-xl border border-red-500/30 py-2 text-center text-xs font-semibold text-red-500 transition-colors hover:border-red-400/40 hover:bg-red-500/5 hover:text-red-400 disabled:opacity-50"
-              >
-                {m.auth_pin_reset_button()}
-              </button>
-            {/if}
+            {@render twoTapDestructive(
+              confirmReset,
+              () => (confirmReset = true),
+              () => {
+                confirmReset = false;
+                onForgotPinReset?.();
+              },
+              m.auth_pin_reset_button(),
+              m.auth_pin_reset_confirm()
+            )}
           {/if}
 
           <a

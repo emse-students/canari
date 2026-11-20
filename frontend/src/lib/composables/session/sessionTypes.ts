@@ -12,6 +12,7 @@ import type { BulkIngestObserver } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
 import type { MessageHandlerDeps } from '$lib/mls-client/messagePipeline/deps';
 import type { LoginErrorCode } from './loginErrors';
+import type { HardwareKeyRefusal } from '$lib/crypto/hardwareHeldKey';
 import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 
 /**
@@ -126,8 +127,9 @@ export interface ChatSessionCallbacks extends Pick<
    * When provided, the redirect to /login is suppressed - the caller handles the error.
    * When absent, the default redirect to /login takes place.
    * `code` is the machine-readable reason: branch on it, never on `error`, which is a
-   * localized string (see `loginErrors.ts`). */
-  onLoginFailed?: (error: string, code?: LoginErrorCode) => void;
+   * localized string (see `loginErrors.ts`). `refusal` is the keystore's refusal behind a
+   * hardware-key code (`LoginFailure.refusal`), for the line that accuses it. */
+  onLoginFailed?: (error: string, code?: LoginErrorCode, refusal?: HardwareKeyRefusal) => void;
   /** Called when the session is definitively dead (refresh cookie expired/revoked, a
    * SessionExpiredError). Distinct from onLoginFailed: this is not a retryable error
    * shown in the PIN modal but an authentication loss - the caller should log the user

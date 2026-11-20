@@ -665,7 +665,7 @@ being different from the other two, and nothing outside Authentik's own database
 
 | Provider | `client_id` | Which client uses it | Authorized redirect URIs (all STRICT) | Authorization flow |
 |---|---|---|---|---|
-| `miconnect-canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari.emse.fr/auth/callback`, `https://canari-emse.fr/auth/callback` (the old origin, below), `fr.emse.canari://callback` | implicit consent (the terms are HELD) |
+| `miconnect-canari` (pk 1) | `KyTy6F1C...` | production - web and both stores' STABLE builds | `https://canari.emse.fr/auth/callback`, `https://canari-emse.fr/auth/callback` (the old origin, below), `fr.emse.canari://callback` | `miconnect-authorization` (asks for the terms) |
 | `miconnect-canari-dev` (pk 10) | `6cNHJotT...` | `dev.canari-emse.fr` - and every PRE-RELEASE build, TestFlight and the Play tester tracks | `https://dev.canari-emse.fr/auth/callback`, `fr.emse.canari://callback` | `miconnect-authorization` (asks for the terms) |
 | `miconnect-canari-local` (pk 11) | `qqzuUBQp...` | the LOCAL estate on a workstation, and the harness APK | `http://localhost:8081/auth/callback`, `http://localhost:1420/auth/callback`, `http://127.0.0.1:1420/auth/callback`, `fr.emse.canari://callback` | `miconnect-authorization` (asks for the terms) |
 
@@ -687,7 +687,7 @@ there starts its sign-in from that origin, and one did on 2026-11-13; it goes wh
 uses a regex: every client comes back to a fixed URI. The rule is in
 [durable-rules](../durable-rules.md#object-storage-and-deleting-infrastructure---docker).
 
-**The three differ in the web origin(s) and, while the terms are held out of production, in the
+**The three differ in the web origin(s) and, formerly while the terms were held out of production, in the
 authorization flow - and must not differ in any other.** `fr.emse.canari://callback` is on all three because the SAME packaged app talks to all
 three: a build selects its estate with `VITE_AUTHENTIK_CLIENT_ID` and an API URL, never with an
 identifier. `Canari` (pk 1) carries TWO web origins since 2026-09-25, additively: `canari-emse.fr`
@@ -1174,24 +1174,52 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 **Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
 collection of name and first name, as one required tick, for new AND existing accounts.
 
-> **HELD OUT OF PRODUCTION (user, 2026-10-17), AND SINCE 2026-11-18 THE HOLD IS DECLARED PER PROVIDER.**
-> `blueprints/45-consent.yaml` builds the flow on every instance (a flow no provider names is
-> inert), and `50-providers.yaml` says which providers name it: **`miconnect-canari-dev` and
-> `miconnect-canari-local` ask for the terms; production's `miconnect-canari` and the six other
-> services keep `default-provider-authorization-implicit-consent`.** Dev is where every pre-release
-> build signs in, so the terms are read there on a phone, in the app, before production asks anybody.
-> From 2026-10-17 to 2026-11-18 the whole file waited in `blueprints/held/`, so a binding made by hand
-> for a reading was reset by the next stable's `apply-blueprints.sh` - the `1.7.0` stable did, at
-> 09:08 UTC on 2026-11-18, and the phone readings could not be taken; and the binding had been made on
-> the local provider, which no pre-release build uses. A declared binding survives every apply.
-> **The hold is asserted three times:** `.github/scripts/tests/held-blueprints.test.sh` reads the
-> providers naming the flow out of the blueprint (no Docker); `test-blueprints.sh` runs
-> `test-consent-flow.py` on a built instance (fresh AND upgraded from main), which asserts the exact
-> set (`BOUND`) and that production's provider signs in a person who never accepted without the page
-> and without a write. **Lifting the hold for production** is `miconnect-canari` (and the other
-> services, if the owner wants them) set to `miconnect-authorization` in `50-providers.yaml`, added
-> to `BOUND` in both tests, in one pull request, after the conditions in
-> [backlog](../backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md).
+> **THE HOLD ON PRODUCTION WAS LIFTED ON 2026-11-20** (it was held 2026-10-17 to 2026-11-20, and per
+> provider since 2026-11-18). `blueprints/45-consent.yaml` builds the flow on every instance, and
+> `50-providers.yaml` names it as the authorization flow of **all eight providers**
+> (`miconnect-archives`, `-canari`, `-canari-dev`, `-canari-local`, `-cercle`, `-migallery`,
+> `-mino-wiki`, `-sky`), so the next stable's `apply-blueprints.sh apply` makes production ask: **a
+> person sees the terms page ONCE, at their next MiConnect authorization, whichever service starts
+> it, and never again for that version.** The lift came after the web reading (2026-11-17), the
+> iPhone half (S9) and the Mi 9T half (S15), in the app, signed in. **The notice names every service
+> and the version moved to `2026-11-20`** when the wiki Mino was added to it (it was missing from the
+> list), so the six accounts that accepted `2026-10-16` are asked once more.
+> **Rollback, and who may take it:** merge a revert of the pull request - the next stable's apply
+> then writes the implicit-consent flow back. A hand rollback in an `ak shell` (set a provider's
+> `authorization_flow` to `default-provider-authorization-implicit-consent`) is an identity-provider
+> WRITE, so during the owner's absence it needs the owner's explicit yes (the standing authority covers
+> restarting production or rolling it back to the last good release, not this write), **and the next
+> stable's apply overwrites it unless the revert is merged first.** The flow and stages may stay, inert.
+> **Which failure is open and which is closed.** OPEN: if the policy `miconnect-consent-needed`
+> ERRORS, authentik skips the stage and the person is let through without the page; the only trace is
+> a `policy_exception` event (execution logging is OFF on both consent policies since 2026-11-20, which
+> keeps errors and drops the per-evaluation noise), so a broken policy is found in those events, not by a
+> user. CLOSED: if `miconnect-consent-validate-accept` or the user-write stage fails, the person is stuck
+> on the page and no code is issued; that shows as the user's failed sign-in and, for the write, in the
+> flow's `error` events. An impersonated session skips both stages by design.
+> **The handoff mint follows the same text** (decided 2026-11-20 by the lead, reversible): core-service's
+> gate recognises, by an ALLOWLIST, exactly the two bindings of `miconnect-consent-needed` on the
+> consent flow's stage bindings (`miconnect-consent-ask`, `miconnect-consent-write`), and for those
+> mints only a person whose `attributes.cgu_version` is the current version (`CONSENT_VERSION`, the
+> fifth place `check-consent-version.sh` pins); anything else bound still refuses `policy_bound`, and a
+> person on an older text is refused `terms_not_accepted` (403 `HANDOFF_TERMS_NOT_ACCEPTED`) until they
+> authorize once through MiConnect. **That refusal is EXPECTED and population-wide:** right after a stable
+> that ships a terms version, almost every account is in it for weeks (until its next MiConnect
+> sign-in), so it is logged at INFO on the server (`[HANDOFF] refused class=terms_not_accepted`) and at
+> info, once per open, in the app - never at warn - and the site opens plainly. **The allowlist trusts
+> NAMES, not content:** the reader account cannot read a policy's expression, so "this is the consent
+> policy" means a policy of that name (names are unique) on stage bindings of those names; whoever can
+> rewrite the policy can rewrite what it asks, which is already an administrator. The binding is matched
+> by asking each consent stage binding alone (`target_in`), because a binding's own `target` field is not
+> the id the filter takes (it never matched on a real authentik, CI 2026-11-20).
+> Without it, binding migallery, sky and cercle to the flow refused every handoff mint
+> ([sign-in handoff](../backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md)).
+> **The set is asserted twice:** `.github/scripts/tests/held-blueprints.test.sh` reads the providers
+> naming the flow out of the blueprint (no Docker); `test-blueprints.sh` runs `test-consent-flow.py`
+> on a built instance (fresh AND upgraded from main), which asserts the exact set (`BOUND`) and that
+> production's provider stops a person who never accepted on the prompt without writing anything
+> before the tick. **Holding a provider again** is removing it from `BOUND` in both tests and from
+> the flow in `50-providers.yaml`, in one pull request.
 > A dev account that ticks the box has accepted the same text production will show, so it is not
 > asked again there. **The automated dev sign-ins answer it too**: `serve-dev.yml`'s smoke account
 > ticks it once per version ([cicd](../cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)),
@@ -1207,8 +1235,9 @@ collection of name and first name, as one required tick, for new AND existing ac
   the stored version differs from the current one - so each version is asked once, for all services.
 - **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
   `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
-  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py`.
-  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the four
+  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py` and
+  `CONSENT_VERSION` in core-service's `miconnect-reader.client.ts`.
+  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the five
   disagree.
 - **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
   password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and

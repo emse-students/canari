@@ -93,8 +93,9 @@ describe('PinModal - the reset withheld for another account', () => {
   });
 
   it('is wired by the shell: the reset is withheld while the state is proven foreign, or its key unread', () => {
-    expect(shell).toContain(
-      'onForgotPinReset={deviceHoldsOtherAccount || keyReadRefused ? undefined : handlePinReset}'
+    // The decision is `offersForgotPinReset` (tested in `deviceRestart.test.ts`); this reads its wiring.
+    expect(shell).toMatch(
+      /onForgotPinReset=\{offersForgotPinReset\(\{\s+otherAccountState: deviceHoldsOtherAccount,\s+keyReadRefused,\s+restartOffered,\s+\}\)\s+\? handlePinReset\s+: undefined\}/
     );
     expect(shell).toMatch(
       /resetWithheldNotice=\{deviceHoldsOtherAccount\s+\? m\.auth_pin_reset_blocked_other_account\(\)\s+: keyReadRefused\s+\? m\.auth_pin_reset_withheld_key_unreadable\(\)\s+: ''\}/
@@ -112,5 +113,36 @@ describe('PinModal - the reset withheld for another account', () => {
     expect(document.body.textContent).toContain(notice);
     walkTheResetRoute();
     expect(buttonLabelled(m.auth_pin_reset_confirm()), 'a reset is reachable').toBeUndefined();
+  });
+});
+
+describe('PinModal - "start fresh on this device", shown directly (2026-11-20)', () => {
+  it('is on the screen without opening "forgot PIN", and takes two taps', () => {
+    const onRestartDevice = vi.fn();
+    raiseGate({ externalError: m.auth_local_state_unopenable(), onRestartDevice });
+
+    // Not behind the disclosure: the PIN is right, so nobody would look there.
+    expect(buttonLabelled(m.auth_pin_forgot())?.getAttribute('aria-expanded')).toBe('false');
+    buttonLabelled(m.auth_device_restart_button())!.click();
+    flushSync();
+    expect(onRestartDevice, 'one tap only arms it').not.toHaveBeenCalled();
+    buttonLabelled(m.auth_device_restart_confirm())!.click();
+    flushSync();
+    expect(onRestartDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('is absent when the shell does not offer it - an unreadable key above all', () => {
+    raiseGate({
+      externalError: m.auth_hardware_key_unreadable(),
+      onForgotPinReset: undefined,
+      resetWithheldNotice: m.auth_pin_reset_withheld_key_unreadable(),
+    });
+    expect(buttonLabelled(m.auth_device_restart_button())).toBeUndefined();
+    expect(buttonLabelled(m.auth_device_restart_confirm())).toBeUndefined();
+  });
+
+  it('is never drawn on a first setup', () => {
+    raiseGate({ isFirstSetup: true, onRestartDevice: vi.fn() });
+    expect(buttonLabelled(m.auth_device_restart_button())).toBeUndefined();
   });
 });
