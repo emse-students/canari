@@ -751,6 +751,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // still shows a banner this process removed). What it posts is recorded under the
                 // same lock, so a read weighs this re-post exactly as the shade will show it.
                 synchronized(READ_ELSEWHERE.lock) {
+                    // DECIDED FROM WHAT THE RECORD KNOWS, UNDER ITS LOCK: a second drain may have
+                    // delivered this reply between the quick reply's failed drain and here. Its
+                    // [replyDelivered] took this lock after the outbox lock was released, so either
+                    // it ran first and this sees it, or it runs after and clears the line posted here.
+                    if (READ_ELSEWHERE.wasDelivered(messageId)) {
+                        Log.d(TAG, "repostReplyPending: reply id=${messageId.take(8)} already delivered - nothing to re-post group=${ConversationRef.of(groupId)}")
+                        return
+                    }
                     val held = READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
                     val existing = held?.posted as? android.app.Notification
                     if (held == null || existing == null) {
@@ -816,36 +824,46 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * A reply this device queued was DELIVERED: the banner showing it as "not sent yet" stops
-         * saying so ([ReadElsewhereMarks.replyDelivered]) - the line and every line before it go,
-         * since answering is reading; the banner is cancelled when nothing came after it, else
-         * rebuilt from its own template with only the newer lines.
+         * A reply this device queued was DELIVERED: the banner stops showing it as "not sent yet"
+         * ([ReadElsewhereMarks.replyDelivered]). A LATE DELIVERY IS NOT A READ: only that line goes;
+         * every peer line and every reply still queued stays. With no line left the banner goes
+         * (its reaction with it, as on the quick reply's first try), else it is rebuilt silently
+         * from its own template.
          *
          * Called by [drainOutboxBackground] for every entry it delivered - the ONE drain every
          * native send goes through (the quick reply's first try, [OutboxRetryWorker], a push-woken
-         * drain, the boot drain), so no delivery path can leave the notice behind. Device reading of
-         * #3912 (round-7 review): a reply delivered later by the retry worker kept "not sent yet" for
-         * good, and no read elsewhere removes a pending line.
+         * drain, the boot drain), so no delivery path can leave the notice behind. Only the quick
+         * reply's FIRST-TRY success treats answering as reading, with its watermark
+         * ([CanariNotificationActionReceiver]).
          */
         private fun replyDelivered(context: Context, groupId: String, messageId: String) {
             if (groupId.isEmpty()) return
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-            val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 } ?: return
+            val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            var cancelledId = 0
             val outcome = READ_ELSEWHERE.replyDelivered(
                 groupId,
                 messageId,
-                shade = { shadeBannerOf(manager, stableId) },
-                cancel = { id -> manager.cancel(id) },
-                repost = { held, kept ->
-                    val template = held.posted as android.app.Notification
-                    val previous = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(template)
-                    val style = NotificationCompat.MessagingStyle(previous?.user ?: Person.Builder().setName(" ").build())
-                    previous?.conversationTitle?.let {
+                shade = { stableId?.let { shadeBannerOf(manager, it) } },
+                cancel = { id ->
+                    cancelledId = id
+                    manager.cancel(id)
+                },
+                repost = repost@{ held, kept ->
+                    val template = held.posted as? android.app.Notification
+                    val previous = template?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+                    if (template == null || previous == null) {
+                        Log.w(TAG, "replyDelivered: no template or MessagingStyle for group=${ConversationRef.of(groupId)} template=${template != null} - banner left as it was")
+                        return@repost null
+                    }
+                    val style = NotificationCompat.MessagingStyle(previous.user)
+                    previous.conversationTitle?.let {
                         style.conversationTitle = it
                         style.isGroupConversation = previous.isGroupConversation
                     }
                     kept.forEach { style.addMessage(it) }
+                    // SILENT: nothing new arrived, one of our own sends went out.
                     val builder = NotificationCompat.Builder(context, template)
                         .setStyle(style)
                         .setOnlyAlertOnce(true)
@@ -855,14 +873,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 },
             )
             when (outcome) {
-                ReadElsewhereMarks.Delivery.NONE -> Unit
+                ReadElsewhereMarks.Delivery.NONE, ReadElsewhereMarks.Delivery.NOT_REBUILT -> Unit
                 ReadElsewhereMarks.Delivery.CANCELLED -> {
+                    prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }
                     synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
-                    Log.d(TAG, "replyDelivered: reply delivered - banner removed group=${ConversationRef.of(groupId)} id=$stableId")
-                    refreshBadgeSummary(context, justCancelled = stableId)
+                    Log.d(TAG, "replyDelivered: reply delivered - its banner held nothing else, removed group=${ConversationRef.of(groupId)}")
+                    refreshBadgeSummary(context, justCancelled = cancelledId)
                 }
+                // The summary counts conversations, not lines: a rebuild changes nothing it shows.
                 ReadElsewhereMarks.Delivery.REPOSTED ->
-                    Log.d(TAG, "replyDelivered: reply delivered - banner rebuilt with the newer lines group=${ConversationRef.of(groupId)}")
+                    Log.d(TAG, "replyDelivered: reply delivered - its line removed, the others stay group=${ConversationRef.of(groupId)}")
             }
         }
 

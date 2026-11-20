@@ -466,8 +466,8 @@ class ReadElsewhereMarksTest {
     }
 
     // Round-7 review (B1): a reply delivered LATER (the retry worker, a push-woken drain) left the
-    // "not sent yet" line for good - and no read elsewhere removes a pending line. Its delivery
-    // clears it: the banner goes when it was the last line...
+    // "not sent yet" line for good - and no read elsewhere removes a pending line. Round-8 design: a
+    // late delivery is NOT a read - only that line goes, and the read that follows weighs the rest.
     @Test
     fun `a delivered pending reply no longer keeps the banner`() {
         val marks = marks()
@@ -478,30 +478,57 @@ class ReadElsewhereMarksTest {
         assertFalse(marks.readOn(shade, "g1", Read(Long.MAX_VALUE, serverClock = true)))
 
         assertEquals(Delivery.NONE, marks.replyDelivered("g1", "other", shade = { null }, cancel = { fail("not this reply") }) { _, _ -> throw AssertionError("not this reply") })
-        val cancelled = mutableListOf<Int>()
-        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r1", shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("last line") })
-        assertEquals(listOf(1001), cancelled)
-        assertNull(marks.bannerOf("g1") { fail("removed by this process"); null })
-    }
-
-    // ...and when a peer wrote after it, the banner keeps only the newer lines - which a read then weighs.
-    @Test
-    fun `a delivered pending reply followed by a peer line leaves only the newer lines`() {
-        val marks = marks()
-        val pending = Msg(null, null, pendingReply = true, replyId = "r1")
-        val after = Msg(sentAt = 2_900L, serverAt = 3_000L)
-        marks.remember("g1", Banner(1001, "messages", listOf(m1, pending, after)))
         var rebuilt: List<Msg>? = null
-        val outcome = marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("a newer line stays") }) { held, kept ->
+        val outcome = marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("the peer line stays") }) { held, kept ->
             rebuilt = kept
             held.copy(messages = kept)
         }
         assertEquals(Delivery.REPOSTED, outcome)
-        assertEquals(listOf(after), rebuilt)
-        assertEquals(listOf(after), marks.bannerOf("g1") { null }?.messages)
-        // No pending line left: a read covering the newer line removes the banner.
+        assertEquals(listOf(m1), rebuilt)
+        // Nothing holds the banner any more: the read covering the peer line removes it.
         val cancelled = mutableListOf<Int>()
-        assertTrue(marks.recordThenCancel("g1", Read(3_000L, serverClock = true), shade = { null }) { cancelled += it })
+        assertTrue(marks.recordThenCancel("g1", Read(1_000L, serverClock = true), shade = { null }) { cancelled += it })
         assertEquals(listOf(1001), cancelled)
+    }
+
+    @Test
+    fun `a late delivery drops only its own line - every peer line and every reply still queued stays`() {
+        val marks = marks()
+        val r1 = Msg(null, null, pendingReply = true, replyId = "r1")
+        val r2 = Msg(null, null, pendingReply = true, replyId = "r2")
+        val after = Msg(sentAt = 2_900L, serverAt = 3_000L)
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, r1, after, r2)))
+        marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("lines stay") }) { held, kept -> held.copy(messages = kept) }
+        assertEquals(listOf(m1, after, r2), marks.bannerOf("g1") { null }?.messages)
+        // r2 is still queued: a read covering every peer line keeps the banner.
+        assertFalse(marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { null }) { fail("r2 is not sent") })
+    }
+
+    @Test
+    fun `a banner left with no line goes, and one that cannot be rebuilt is left as it was`() {
+        val marks = marks()
+        val r1 = Msg(null, null, pendingReply = true, replyId = "r1")
+        marks.remember("g1", Banner(1001, "messages", listOf(r1)))
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r1", shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("no line left") })
+        assertEquals(listOf(1001), cancelled)
+        assertNull(marks.bannerOf("g1") { fail("removed by this process"); null })
+
+        val held = Banner(1002, "messages", listOf(m1, Msg(null, null, pendingReply = true, replyId = "r2")))
+        marks.remember("g2", held)
+        assertEquals(Delivery.NOT_REBUILT, marks.replyDelivered("g2", "r2", shade = { null }, cancel = { fail("m1 stays") }) { _, _ -> null })
+        assertEquals(held, marks.bannerOf("g2") { null })
+    }
+
+    // Round-8 review (B1'): a second drain delivers r1 BEFORE the quick reply re-posts it as pending.
+    // The re-post asks the record under its lock and posts nothing.
+    @Test
+    fun `a delivery that comes before the re-post refuses the re-post`() {
+        val marks = marks()
+        assertFalse(marks.wasDelivered("r1"))
+        // The drain delivers r1 while no banner holds it yet.
+        assertEquals(Delivery.NONE, marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("nothing posted") }) { _, _ -> null })
+        assertTrue(marks.wasDelivered("r1"))
+        assertFalse(marks.wasDelivered("r2"))
     }
 }

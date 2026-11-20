@@ -325,6 +325,24 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(source).toContain('pendingReplyId = stamps.getString(LINE_PENDING_REPLY_ID)');
   });
 
+  // Round-8 review: the rebuild after a late delivery is silent, has no fallback sender, and
+  // casts its template with a check; a re-post racing a delivery is refused under the record lock.
+  it('rebuilds silently after a delivery and refuses a re-post the delivery came before', () => {
+    const fn = source.slice(source.indexOf('private fun replyDelivered('));
+    const body = fn.slice(0, fn.indexOf('internal fun reactionNotifKey('));
+    expect(body).toContain('.setOnlyAlertOnce(true)');
+    expect(body).toContain('held.posted as? android.app.Notification');
+    expect(body).not.toContain(' as android.app.Notification');
+    expect(body).not.toContain('Person.Builder()');
+    expect(body).toContain('return@repost null');
+    const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
+    const lock = repost.indexOf('synchronized(READ_ELSEWHERE.lock) {');
+    const asked = repost.indexOf('if (READ_ELSEWHERE.wasDelivered(messageId)) {');
+    expect(lock).toBeGreaterThan(-1);
+    expect(asked).toBeGreaterThan(lock);
+    expect(asked).toBeLessThan(repost.indexOf('manager.notify('));
+  });
+
   it('commits the announced-message record and rebuilds the summary after the lock', () => {
     const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
     const end = fn.indexOf('stamp to alertedKey');

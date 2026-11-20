@@ -868,8 +868,9 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
 - **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
   between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
   `withdraw`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
-  user's swipe does too, through the delete intent of a conversation banner (`ACTION_BANNER_DISMISSED`
-  -> `forgetPostedBanner`) - otherwise the next post would bring back the lines the user dismissed.
+  user's swipe does too, through the delete intent of a conversation banner
+  (`ACTION_BANNER_DISMISSED`, then `forgetPostedBanner`) - otherwise the next post would bring back
+  the lines the user dismissed.
   BOTH builders of a conversation banner - the message post and the pending reply's re-post - build
   it through ONE helper, `conversationBanner`, which sets that intent: the re-post once had none, and
   the next message rebuilt on swiped lines, a reply already delivered still marked `non envoyé`
@@ -895,12 +896,17 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   message id (`LINE_PENDING_REPLY_ID`), and `drainOutboxBackground` - the one drain every native
   send goes through: the quick reply, `OutboxRetryWorker`, a push-woken drain, the boot drain -
   calls `replyDelivered` for each entry it delivered, after the outbox lock and after the ids are
-  durable. Answering is reading: the line and every line before it go
-  (`ReadElsewhereMarks.replyDelivered`), the banner is cancelled when nothing came after it, else
-  rebuilt from its own template with the newer lines. Only the quick reply's first try used to
-  clear it, so a reply the retry worker delivered said "not sent yet" for good, and no read
-  elsewhere removes a pending line (round-7 review of #3912). The quick reply now decides on THIS
-  reply's delivery, not on an empty outbox, so it never re-posts a delivered reply as pending. No dismissal that cannot weigh lines removes it when
+  durable. A LATE DELIVERY IS NOT A READ (round-8 decision, principle 2): only the line carrying that
+  id goes - every peer line stays for a later read to weigh, and every other reply still queued
+  stays pending. With no line left the banner goes, with its reaction; otherwise it is rebuilt
+  silently (`setOnlyAlertOnce`) from its own template, and left as it was - logged at WARN - when it
+  has none. Only the quick reply's FIRST-TRY success treats answering as reading, with its
+  watermark. The quick reply decides on THIS reply's delivery, not on an empty outbox, and its
+  re-post as pending is refused under the record's lock when a drain already delivered it
+  (`ReadElsewhereMarks.wasDelivered`: the drain enters the record after releasing the outbox lock,
+  so either it ran first and the re-post sees it, or it runs after and clears the re-posted line).
+  The in-memory record decides rather than the outbox files: both are rewritten whole, not
+  atomically, and `outbox_sent` is emptied by the app at login. No dismissal that cannot weigh lines removes it when
   the dismissal only announces a read elsewhere: the push's silent-from-self cancel passes
   `keepPendingReply`, and `ReadElsewhereMarks.withdraw` keeps a banner whose record (or, in a fresh
   process, shade) holds a `LINE_PENDING_REPLY` line - it removed one while the reply was still queued

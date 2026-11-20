@@ -122,11 +122,14 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         /** No banner holds that pending reply: nothing to clear. */
         NONE,
 
-        /** The pending reply was the banner's last line: answering is reading, the banner went. */
+        /** It was the banner's only line left: the banner went. */
         CANCELLED,
 
-        /** Peer lines came after it: the banner was rebuilt with only those. */
+        /** Other lines stay: the banner was rebuilt without it. */
         REPOSTED,
+
+        /** Other lines stay, but the banner could not be rebuilt: it is left as it was. */
+        NOT_REBUILT,
     }
 
     /** The one lock - see the class comment. */
@@ -149,6 +152,13 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * process did not post and record, so it is never asked again. Guarded by [lock].
      */
     private var allWithdrawn = false
+
+    /**
+     * The replies this process has seen DELIVERED ([replyDelivered]), newest last and bounded: a
+     * re-post of a reply as pending ([wasDelivered]) is decided against it under [lock], so a drain
+     * that delivered the reply before the re-post leaves no "not sent yet" behind. Guarded by [lock].
+     */
+    private val delivered = LinkedHashSet<String>()
 
     /**
      * Raises [conversationId]'s mark to [read]'s instant, on its clock. A lower or non-positive
@@ -228,31 +238,44 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
     /**
      * The pending reply [messageId] was DELIVERED - by whichever path, whenever ([replyDelivered] is
-     * called by the one drain every native send goes through). The banner holding it stops saying
-     * "not sent yet": answering is reading, so the line and every line before it go - the banner is
-     * cancelled when it was the last line, else [repost] rebuilds it with only the lines after it
-     * and returns what it posted. All in one critical section with the record.
+     * called by the one drain every native send goes through). A LATE DELIVERY IS NOT A READ: only
+     * the line carrying that id goes. Every peer line stays, to be weighed by a later read as usual,
+     * and so does every other pending reply still queued - nothing unseen is ever dropped (principle
+     * 2). The banner is cancelled when no line is left, else [repost] rebuilds it with the lines that
+     * stay and returns what it posted (null: it could not, and the banner is left as it was). The
+     * delivery is remembered, so a re-post racing it is refused ([wasDelivered]). All in one critical
+     * section with the record.
      */
     fun replyDelivered(
         conversationId: String,
         messageId: String,
         shade: () -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
-        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>,
+        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
     ): Delivery = synchronized(lock) {
+        delivered.remove(messageId)
+        delivered.add(messageId)
+        while (delivered.size > MAX_DELIVERED) delivered.remove(delivered.first())
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Delivery.NONE
         val at = banner.messages.indexOfFirst { lineOf(it).pendingReplyId == messageId }
         if (at < 0) return@synchronized Delivery.NONE
-        val kept = banner.messages.drop(at + 1)
+        val kept = banner.messages.filterIndexed { i, _ -> i != at }
         if (kept.isEmpty()) {
             cancel(banner.notifId)
             withdrawnLocked(conversationId)
-            Delivery.CANCELLED
-        } else {
-            postedLocked(conversationId, repost(banner, kept))
-            Delivery.REPOSTED
+            return@synchronized Delivery.CANCELLED
         }
+        val rebuilt = repost(banner, kept) ?: return@synchronized Delivery.NOT_REBUILT
+        postedLocked(conversationId, rebuilt)
+        Delivery.REPOSTED
     }
+
+    /**
+     * Whether reply [messageId] has been seen delivered by this process. Asked under [lock] by the
+     * re-post of a failed reply as pending: a second drain may have delivered it between the quick
+     * reply's own failed drain and that re-post.
+     */
+    fun wasDelivered(messageId: String): Boolean = synchronized(lock) { messageId in delivered }
 
     /**
      * Runs [post] - EVERY side effect a post has on the shade, the removal of the previous banner
@@ -329,6 +352,11 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      */
     fun covers(conversationId: String, sentAt: Long, serverAt: Long): Boolean =
         synchronized(lock) { coversLocked(conversationId, sentAt, serverAt) }
+
+    private companion object {
+        /** How many delivered replies [delivered] keeps: far more than a re-post can race with. */
+        const val MAX_DELIVERED = 64
+    }
 
     private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()
