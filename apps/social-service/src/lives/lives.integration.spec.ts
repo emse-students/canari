@@ -49,6 +49,7 @@ import {
   LIVE_RULES_VERSION,
   LIVE_SEAT_LEASE_MS,
   LIVE_STARTS_PER_HOUR,
+  LIVE_TRIM_BATCH,
 } from './live.constants';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
@@ -59,6 +60,9 @@ import type { UserModeration } from '../moderation/entities/user-moderation.enti
 import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 import type { RedisService } from '../common/redis';
+import { ReelRetentionScheduler } from '../posts/reel-retention.scheduler';
+import type { PostMediaRetentionService } from '../posts/post-media-retention.service';
+import type { Post } from '../posts/entities/post.entity';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   DELETED_ACCOUNT,
@@ -367,6 +371,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     incr: async () => (feedGenerations += 1),
     deleteByPattern: async () => 0,
   } as unknown as RedisService;
+  /** The REAL retention worker on this database: what deletes a replay post by its own per-row path. */
+  const replayRetentionFor = (source: DataSource) =>
+    new ReelRetentionScheduler(
+      { manager: source.manager } as unknown as Repository<Post>,
+      { purgeReelBlobs: async () => ({}) } as unknown as PostMediaRetentionService,
+      feedCache
+    );
   let lives: LivesService;
   let sweeper: LiveRetentionScheduler;
   let announcer: LiveAnnouncer;
@@ -575,7 +586,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       seats as unknown as LiveSeats,
       announcer,
       notifications,
-      feedCache
+      feedCache,
+      replayRetentionFor(ds)
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
@@ -1351,9 +1363,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(live.keepsReplay).toBe(false);
     });
 
-    it('switched off ON AIR: what was kept is deleted at once, the live goes on, and nothing ever turns it back on', async () => {
+    it('switched off ON AIR: the answer does not wait for the trim, which then removes the whole backlog in the background; nothing ever turns it back on', async () => {
       const live = await longLive();
-      const total = LIVE_RETAINED_SEGMENTS + 30;
+      // More than two trim batches behind the window, so one pass could never clear it.
+      const total = LIVE_RETAINED_SEGMENTS + 2 * LIVE_TRIM_BATCH + 1;
       for (let i = 0; i < total; i++) {
         await lives.ingest(ALICE, live.id, i, segment(i));
         await lives.trimsSettled();
@@ -1366,7 +1379,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         keepsReplay: false,
       });
       expect(await keeps(live.id)).toBe(false);
-      // The whole backlog went in this call (a loop, not one batch per segment).
+      // The drain is registered with every other trim of the live: settled means finished.
+      await lives.trimsSettled();
       expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
       expect(
         await q(`SELECT count(*)::int AS n FROM live_segments WHERE "liveId" = $1`, [live.id])
@@ -1378,12 +1392,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.switchReplayOff(ALICE, live.id)).resolves.toMatchObject({
         keepsReplay: false,
       });
+      await lives.trimsSettled();
       expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
       await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
       expect(await replayPosts(live.id)).toEqual([]);
     });
 
-    it('switched off AFTER the live but before publication: the live is purged, no replay is ever published', async () => {
+    it('switched off AFTER the live but inside its drain window: publishReplay refuses, the live is purged, and no post row is ever written', async () => {
       const live = await longLive();
       await lives.ingest(ALICE, live.id, 0, segment(0));
       await lives.ingest(ALICE, live.id, 1, segment(1));
@@ -1392,19 +1407,42 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           WHERE "liveId" = $1 AND "index" = 0`,
         [live.id]
       );
-      store.failPurge = true; // the row outlives its end, so the switch meets an ended, unpublished live
+      // A viewer holds a seat: the end drains instead of purging, so no replay is published yet.
+      await lives.get(BOB, live.id);
       await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
+      expect(await replayPosts(live.id)).toEqual([]);
+      expect(
+        await q(`SELECT "replayPostedAt" IS NULL AS unpublished FROM lives WHERE id = $1`, [
+          live.id,
+        ])
+      ).toEqual([{ unpublished: true }]);
+
       await lives.switchReplayOff(ALICE, live.id);
-      store.failPurge = false;
       expect(await keeps(live.id)).toBe(false);
-      await sweeper.sweepOnce();
-      await sweeper.sweepOnce();
+      // Still in the drain window: the purge waits for the seat, and nothing was published.
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toHaveLength(1);
+      expect(await replayPosts(live.id)).toEqual([]);
+      // The publication itself refuses a live that no longer keeps a replay.
+      await expect(
+        (lives as unknown as { publishReplay: (id: string) => Promise<boolean> }).publishReplay(
+          live.id
+        )
+      ).resolves.toBe(false);
+      expect(await replayPosts(live.id)).toEqual([]);
+
+      // Past the seat lease the purge runs: it deletes, it does not publish.
+      await q(
+        `UPDATE lives SET "endedAt" = now() - $2 * interval '1 millisecond' - interval '1 second'
+          WHERE id = $1`,
+        [live.id, LIVE_SEAT_LEASE_MS]
+      );
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('deleted');
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
       expect(store.countFor(live.id)).toBe(0);
-      expect(await replayPosts(live.id)).toEqual([]);
+      expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
     });
 
-    it('switched off once the replay is PUBLISHED: every read refuses it, the post goes, the segments follow; a repeat and a purged live change nothing', async () => {
+    it('switched off once the replay is PUBLISHED: the real retention path deletes the post and the purge the segments in the same call; a stranger and a purged live are 404', async () => {
       const live = await longLive();
       await lives.ingest(ALICE, live.id, 0, segment(0));
       await lives.ingest(ALICE, live.id, 1, segment(1));
@@ -1415,6 +1453,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       );
       await lives.end(ALICE, live.id);
       expect(await replayPosts(live.id)).toEqual([{ ended: false }]);
+      const generation = feedGenerations;
 
       // Another member cannot switch it off: the same 404 as a live that is not theirs.
       expect(await refusal(lives.switchReplayOff(BOB, live.id))).toMatchObject({
@@ -1424,15 +1463,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await replayPosts(live.id)).toEqual([{ ended: false }]);
 
       await lives.switchReplayOff(ALICE, live.id);
-      expect(await replayPosts(live.id)).toEqual([{ ended: true }]);
-      await expect(lives.switchReplayOff(ALICE, live.id)).resolves.toMatchObject({
-        keepsReplay: false,
-      });
-      // The retention worker's own predicate deletes the post; the sweep then purges the segments.
-      await q(`DELETE FROM posts WHERE kind IN ('reel', 'replay') AND "expiresAt" <= now()`);
-      await sweeper.sweepOnce();
+      // No wait for an hourly worker or a sweep: the post, the segments and the live are gone.
+      expect(await replayPosts(live.id)).toEqual([]);
+      expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
       expect(store.countFor(live.id)).toBe(0);
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(feedGenerations).toBeGreaterThan(generation);
       // The live is gone: nothing is kept, and the answer is the one for an unknown live.
       expect(await refusal(lives.switchReplayOff(ALICE, live.id))).toMatchObject({
         status: HttpStatus.NOT_FOUND,
@@ -2675,7 +2711,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           },
         } as unknown as PostNotificationsService),
         notifications,
-        feedCache
+        feedCache,
+        replayRetentionFor(ds)
       );
       const live = await broken.start(ALICE, { key: KEY });
       await expect(broken.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
@@ -2709,7 +2746,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           },
         } as unknown as PostNotificationsService),
         notifications,
-        feedCache
+        feedCache,
+        replayRetentionFor(ds)
       );
       const live = await held.start(ALICE, { key: KEY });
       // Answered with the push still held inside `pushNotice`: nothing here waits for it.
@@ -2771,7 +2809,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           seats as unknown as LiveSeats,
           new LiveAnnouncer(one, notifications),
           notifications,
-          feedCache
+          feedCache,
+          replayRetentionFor(one)
         );
         const live = await onOne.start(ALICE, { key: KEY });
         const hold = store.holdNextStore();

@@ -145,6 +145,38 @@ export class ReelRetentionScheduler {
   }
 
   /**
+   * Deletes the replay post of ONE live NOW, by the worker's own per-row path (`purgeReel`): its
+   * comments' media, its notifications, then the row, under the same allowlist and the same
+   * `expiresAt <= NOW()` predicate - the organiser's "Rediffusion" switch ends the replay by its own
+   * column first (owner, 2026-11-20). Returns true when no such post is left, false when a blob
+   * refused (the hourly run retries). Throws on a transport failure.
+   */
+  async purgeReplayOf(liveId: string): Promise<boolean> {
+    const rows: DueReel[] = await this.postRepo.manager.query(
+      `SELECT id, "authorId", images, comments
+         FROM posts
+        WHERE kind = 'replay' AND "liveId" = $1 AND "expiresAt" <= NOW()`,
+      [liveId]
+    );
+    if (rows.length === 0) return true;
+    const report: ReelPurgeReport = {
+      due: 1,
+      deleted: 0,
+      failed: 0,
+      blobs: { deleted: 0, released: 0, absent: 0, refused: 0, failed: 0 },
+    };
+    const gone = await this.purgeReel(rows[0], report);
+    if (gone) {
+      try {
+        await invalidatePostListCache(this.redis);
+      } catch (e) {
+        this.logger.warn('[REEL_GC] feed cache sweep failed - pages stay stale for up to 30 s', e);
+      }
+    }
+    return gone;
+  }
+
+  /**
    * One reel: blobs, then row. Returns true when the row went, false when it must wait.
    * Throws on a transport failure, which the caller records as the same "wait".
    */

@@ -27,6 +27,7 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { isBlockedBetween } from '../common/user-blocks';
 import { ModerationService } from '../moderation/moderation.service';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { ReelRetentionScheduler } from '../posts/reel-retention.scheduler';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
 import {
@@ -346,6 +347,12 @@ type ConfirmOutcome =
   | { kind: 'ended'; endedAt: Date | null; endReason: LiveEndReason | null };
 
 /** The columns every access decision reads, and the stored key, opened only by `openLiveKey`. */
+/** What one trim pass did: `failed` tells a store that refused (or a thrown pass) from a pass that simply had nothing left. */
+interface TrimPass {
+  deleted: number;
+  failed: boolean;
+}
+
 interface LiveRow extends StoredLiveKey {
   id: string;
   broadcasterId: string;
@@ -432,7 +439,7 @@ export class LivesService implements OnModuleDestroy {
   /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
   private readonly announcements = new Set<Promise<void>>();
   /** The trim running for each live right now: at most ONE per live in this process. */
-  private readonly trimming = new Map<string, Promise<number>>();
+  private readonly trimming = new Map<string, Promise<void>>();
 
   /**
    * The replays' total cap (decision D5), read ONCE at construction: an invalid
@@ -463,7 +470,8 @@ export class LivesService implements OnModuleDestroy {
     private readonly seats: LiveSeats,
     private readonly announcer: LiveAnnouncer,
     private readonly notifications: PostNotificationsService,
-    private readonly redis: RedisService
+    private readonly redis: RedisService,
+    private readonly replayRetention: ReelRetentionScheduler
   ) {}
 
   /**
@@ -1264,15 +1272,62 @@ export class LivesService implements OnModuleDestroy {
    * state, so the very next segment (or the running pass's own next batch) finds whatever is left.
    * Two passes over the same rows would only race to delete the same objects.
    */
-  private trimInBackground(liveId: string): void {
+  private trimInBackground(liveId: string, untilDone = false): void {
+    if (untilDone) {
+      // The switch-off's drain must not be dropped as a duplicate: it runs AFTER the pass in flight.
+      const previous = this.trimming.get(liveId);
+      const pending: Promise<void> = (async () => {
+        await previous;
+        await this.trimUntilDone(liveId);
+      })().finally(() => this.forgetTrim(liveId, pending));
+      this.trimming.set(liveId, pending);
+      return;
+    }
     if (this.trimming.has(liveId)) {
       this.logger.debug(
         `[LIVE_TRIM] ${liveId}: a trim is already running, the next segment asks again`
       );
       return;
     }
-    const pending = this.trim(liveId).finally(() => this.trimming.delete(liveId));
+    const pending: Promise<void> = this.trim(liveId)
+      .then(() => undefined)
+      .finally(() => this.forgetTrim(liveId, pending));
     this.trimming.set(liveId, pending);
+  }
+
+  /** Forgets a finished trim, only if it is still the one registered (a chained one may have replaced it). */
+  private forgetTrim(liveId: string, finished: Promise<void>): void {
+    if (this.trimming.get(liveId) === finished) this.trimming.delete(liveId);
+  }
+
+  /**
+   * Trims a live whose replay was switched off until nothing is left behind its window, or until the
+   * store refuses. Each pass deletes at least one row or ends the loop; segments still arriving are
+   * one per `LIVE_SEGMENT_MIN_DURATION_MS`, far slower than a pass of `LIVE_TRIM_BATCH`. A refusal is
+   * logged at ERROR with what is left: the next segment's trim and the end's purge take it, but until
+   * then the organiser's withdrawn video is still stored.
+   */
+  private async trimUntilDone(liveId: string): Promise<void> {
+    let deleted = 0;
+    for (;;) {
+      const pass = await this.trim(liveId);
+      deleted += pass.deleted;
+      if (pass.failed) {
+        const [{ left }]: { left: string }[] = await this.db.query(
+          `SELECT count(*) AS left FROM live_segments s JOIN lives l ON l.id = s."liveId"
+            WHERE s."liveId" = $1 AND s."index" < l."nextIndex" - $2`,
+          [liveId, LIVE_RETAINED_SEGMENTS]
+        );
+        this.logger.error(
+          `[LIVE_REPLAY] ${liveId}: the switched-off replay's trim is INCOMPLETE (${deleted} segment(s) deleted, ${left} still behind the window) - the next segment or the end's purge takes them`
+        );
+        return;
+      }
+      if (pass.deleted === 0) break;
+    }
+    this.logger.log(
+      `[LIVE_REPLAY] ${liveId}: the switched-off replay's trim is done (${deleted} segment(s) deleted)`
+    );
   }
 
   /** Resolves once every trim started so far has settled - a PROOF of completion for tests and shutdown. */
@@ -1302,7 +1357,7 @@ export class LivesService implements OnModuleDestroy {
    * `createdAt` (the database clock), so what such a live stores is bounded by three hours, never by
    * how long it lasts.
    */
-  private async trim(liveId: string): Promise<number> {
+  private async trim(liveId: string): Promise<TrimPass> {
     try {
       // A live that keeps a replay keeps its last LIVE_REPLAY_MAX_MS too (D1): a segment goes only
       // when it is BOTH behind the window and older than three hours before the newest segment, by
@@ -1317,7 +1372,7 @@ export class LivesService implements OnModuleDestroy {
           ORDER BY s."index" ASC LIMIT $3`,
         [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH, LIVE_REPLAY_MAX_MS]
       );
-      if (rows.length === 0) return 0;
+      if (rows.length === 0) return { deleted: 0, failed: false };
       const answer = await this.store.deleteSegments(
         liveId,
         rows.map((r) => r.name)
@@ -1329,7 +1384,7 @@ export class LivesService implements OnModuleDestroy {
           `[LIVE_TRIM] ${liveId}: the store refused ${answer.failed.length} of ${rows.length} segment(s) - asked again by the next segment`
         );
       }
-      if (indexes.length === 0) return 0;
+      if (indexes.length === 0) return { deleted: 0, failed: true };
       const freed = await this.db.transaction(async (tx): Promise<number> => {
         const [deleted] = (await tx.query(
           `DELETE FROM live_segments WHERE "liveId" = $1 AND "index" = ANY($2::int[]) RETURNING bytes`,
@@ -1347,12 +1402,12 @@ export class LivesService implements OnModuleDestroy {
       this.logger.log(
         `[LIVE_TRIM] ${liveId}: trimmed ${indexes.length} segment(s) behind the window (${indexes[0]}..${indexes[indexes.length - 1]}), ${freed} B`
       );
-      return indexes.length;
+      return { deleted: indexes.length, failed: answer.failed.length > 0 };
     } catch (e) {
       this.logger.warn(
         `[LIVE_TRIM] ${liveId}: the trim failed, asked again by the next segment: ${causeOf(e)}`
       );
-      return 0;
+      return { deleted: 0, failed: true };
     }
   }
 
@@ -2712,13 +2767,20 @@ export class LivesService implements OnModuleDestroy {
    * IDEMPOTENT FROM DURABLE STATE, NO CLOCK: one transaction under the live's row lock (the lock a
    * cut and a publication take) writes `keepsReplay = false` and, for a replay already published,
    * ends it by its own column ({@link expireReplay}); a second call finds the column false and the
-   * post already ended and changes nothing. What follows is the ordinary machinery, each step
-   * re-asked from rows until none is left:
-   * - an OPEN live: the trim, now on the 20-segment rule, deletes the segments behind the window in
-   *   a loop (not one batch per segment) - the live goes on, only what it kept is gone;
-   * - an ENDED live not yet published: `replayDue` is false, so the sweep purges it as any live;
-   * - a PUBLISHED replay: every read refuses it from this commit on, the retention worker deletes
-   *   the post (comments, their media, notifications) and the next sweep purges the segments.
+   * post already gone and changes nothing. THE ANSWER COMES AS SOON AS THAT COMMIT IS DONE (for an
+   * ended live, after the post's deletion) - never after a trim of thousands of segments, which
+   * could outlast the proxy's read timeout and tell the organiser "failed" about a switch that had
+   * already held:
+   * - an OPEN live: the trim, now on the 20-segment rule, runs in the BACKGROUND until nothing is
+   *   left behind the window ({@link trimUntilDone}, registered in `trimming` like every trim: one
+   *   pass per live, and shutdown waits for it) - the live goes on, only what it kept is gone;
+   * - an ENDED live not yet published: `replayDue` is false, so nothing is ever published and the
+   *   purge is asked at once;
+   * - a PUBLISHED replay: the post is deleted NOW by the retention worker's own per-row path
+   *   (comments, their media, notifications: `ReelRetentionScheduler.purgeReplayOf`), then the purge
+   *   is asked at once, so the segments leave the store in this call. What can still be reachable: a
+   *   purge that waits (a viewer still seated in the live's drain window, a store that refuses) is
+   *   retried by the 30 s sweep, and nginx's segment cache serves a copy for up to two minutes.
    *
    * 404 `LIVE_NOT_FOUND` for another member's live and for a live already purged (nothing is kept).
    * Returns the server's verdict, which is always `false`.
@@ -2747,7 +2809,6 @@ export class LivesService implements OnModuleDestroy {
       const replayEnded = row.endedAt ? await this.expireReplay(liveId, 'switched-off', tx) : false;
       return { wasOn: row.keepsReplay, isEnded: row.endedAt !== null, replayEnded };
     });
-    if (done.replayEnded) await this.replayFeedsChanged(liveId, 'its organiser switched it off');
     if (done.wasOn) {
       this.logger.log(
         `[LIVE_REPLAY] ${liveId}: switched OFF by its organiser (${done.isEnded ? 'after the live' : 'on air'}, replay post ${done.replayEnded ? 'ended' : 'not published'})`
@@ -2755,19 +2816,28 @@ export class LivesService implements OnModuleDestroy {
     } else {
       this.logger.debug(`[LIVE_REPLAY] ${liveId}: already off`);
     }
-    // On air, what was kept goes NOW rather than one batch per segment: each pass re-selects from
-    // the rows and ends when a pass deletes nothing (rows only shrink here - a proof, not a timer).
-    // An ended live is the sweep's.
-    if (!done.isEnded) await this.trimAll(liveId);
-    return { liveId, keepsReplay: false };
-  }
-
-  /** Trims until a pass deletes nothing, behind any pass already running for the live. */
-  private async trimAll(liveId: string): Promise<void> {
-    for (;;) {
-      await this.trimming.get(liveId);
-      if ((await this.trim(liveId)) === 0) return;
+    if (!done.isEnded) {
+      // The answer does not wait for the trim: the drain runs in the background, registered with
+      // every other trim of the live.
+      this.trimInBackground(liveId, true);
+      return { liveId, keepsReplay: false };
     }
+    if (done.replayEnded) {
+      try {
+        if (!(await this.replayRetention.purgeReplayOf(liveId))) {
+          this.logger.error(
+            `[LIVE_REPLAY] ${liveId}: switched off but the replay post was NOT deleted (a blob refused) - unreachable, and the hourly worker retries`
+          );
+        }
+      } catch (e) {
+        this.logger.error(
+          `[LIVE_REPLAY] ${liveId}: switched off but deleting the replay post failed - unreachable, and the hourly worker retries: ${causeOf(e)}`
+        );
+      }
+      await this.replayFeedsChanged(liveId, 'its organiser switched it off');
+    }
+    await this.purgeBestEffort(liveId, 'after the replay was switched off');
+    return { liveId, keepsReplay: false };
   }
 
   /**

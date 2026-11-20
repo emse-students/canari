@@ -828,15 +828,23 @@ take) writes `keepsReplay = false` and, if the live has ended, ends a published 
 (`expireReplay`, `posts."expiresAt" = now()`, the one early end the cut and the cap already use). Then, each step
 re-selecting from rows, none from a clock:
 
-- **On air**: the trim, now on the 20-segment rule, runs in a loop (`trimAll`) until a pass deletes nothing, so the
-  whole kept backlog goes in the call, not one batch of 50 per segment; the live goes on.
+- **On air**: the trim (the 20-segment rule) is started in the background, REGISTERED with every other trim of
+  the live (`trimming`), and loops until a pass deletes nothing; the answer does not wait for it. A pass that
+  fails is typed (`TrimPass.failed`) and the loop ends with one ERROR line naming how many segments are still
+  behind the window. The live goes on.
 - **Ended, replay not yet published** (the drain window): `replayDue` is false and `publishReplay` re-reads
-  `keepsReplay` under the same lock, so nothing is ever published; the sweep purges the live.
-- **Ended, replay published**: every read refuses the replay from the commit on; the hourly retention worker deletes
-  the post (comments, their media, notifications) and the next 30 s sweep purges the segments. **The segments
-  therefore leave the disk within 1 hour + 30 s of the switch**, the same bound as a cut or the cap; what is
-  immediate is that nobody can reach them. Nothing is added to a clock: the worker's predicate is the existing
-  `expiresAt <= now()` on the database.
+  `keepsReplay` under the same lock, so nothing is ever published; the sweep purges the live once the seats drain.
+- **Ended, replay published**: the same call deletes it. `ReelRetentionScheduler.purgeReplayOf` runs the
+  retention worker's OWN per-row path on the live's replay post (comments, their media, notifications, feed cache),
+  then `purgeEnded` removes the segments and the live. Nothing waits for the hourly worker or the 30 s sweep.
+- **What can still be reached, honestly.** The segment route serves ciphertext without a token (the key is in the
+  link, never on the server), behind a 2-minute nginx cache: a viewer who holds the link, or a cached segment,
+  may still be served for up to 2 minutes after the deletion, and while a seat is held (the drain window, at most
+  the seat lease) the purge waits for it. If the store refuses a deletion, the failure is logged at ERROR and the
+  sweep and the retention worker retry: the deletion is re-derived from the rows, never from a clock.
+- **The route is exempt from `lives_mode`** (`@LiveDeletionRight`, `LiveEnabledGuard`): withdrawing a video is a
+  right, so a platform that stopped live broadcasts still lets the organiser delete what it kept. The deploy lock
+  and the client floor still apply.
 - **Idempotent from durable state**: a second call finds the column false and the post already ended and changes
   nothing; a call after the live is purged is `404 LIVE_NOT_FOUND` (nothing is kept), which the client reads as
   "already off". A viewer, the retention job and a retry can run in any order.
@@ -844,7 +852,7 @@ re-selecting from rows, none from a clock:
   `POST_AS_ASSO` holder or staff still deletes a replay by deleting its POST (D7), unchanged.
 
 **Client.** The switch lives in `LiveBroadcast.replayChoice` (default `true`, sent as `replay: false` only when
-off), `keepsReplay` stays the server's verdict, and `switchReplayOff()` flips `keepsReplay` and the end verdict to
+off, and ALWAYS off when the switch was not shown: `replayOffered`, set from `replaysAvailable`), `keepsReplay` stays the server's verdict, and `switchReplayOff()` flips `keepsReplay` and the end verdict to
 false only on the server's answer (or its 404). The button "Désactiver la rediffusion" shows on air and on the
 broadcaster's end screen while the server says it keeps a replay, behind a confirm (`live_replay_off_confirm`: it
 deletes and cannot be undone). `Toggle` is disabled once the live has started. Tests:

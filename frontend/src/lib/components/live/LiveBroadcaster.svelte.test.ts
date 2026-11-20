@@ -267,7 +267,7 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-rules]')).toBeNull();
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
-    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null, true);
+    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null, false);
   });
 
   it('a suspended member reads it BEFORE Start, with its date; Start is disabled until a re-read clears it', async () => {

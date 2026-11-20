@@ -19,7 +19,7 @@ import {
 import type { Request } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsService } from '../associations/associations.service';
-import { LiveEnabledGuard } from './live-enabled.guard';
+import { LiveDeletionRight, LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_POSTER_MAX_BYTES, LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
 import {
@@ -305,6 +305,7 @@ export class LivesController {
    * `{ liveId, keepsReplay: false }`.
    */
   @Delete(':id/replay')
+  @LiveDeletionRight()
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   switchReplayOff(@Param('id') id: string, @Headers('x-user-id') userId: string) {

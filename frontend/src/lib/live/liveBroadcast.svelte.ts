@@ -297,6 +297,12 @@ export class LiveBroadcast {
    * ({@link keepsReplay}); it can then only be switched off ({@link switchReplayOff}).
    */
   replayChoice = $state(true);
+  /**
+   * True when the switch is SHOWN (the platform serves replays). A switch the organiser never saw is
+   * not a choice: when it is hidden the start asks for NO replay, so a live is never kept behind the
+   * back of an organiser who was not offered the choice.
+   */
+  replayOffered = $state(false);
   /** True while the switch-off is with the server. */
   replayOffSaving = $state(false);
   /** Why the last switch-off was not taken, or null. */
@@ -603,7 +609,7 @@ export class LiveBroadcast {
         this.associationId ?? undefined,
         this.rulesAcceptedHere ? this.rules?.version : undefined,
         liveTitleToSend(this.title),
-        this.replayChoice
+        this.replayOffered ? this.replayChoice : false
       );
     } catch (e) {
       if (this.#disposed) return;

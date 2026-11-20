@@ -245,6 +245,10 @@
     if (!video || video.videoWidth === 0 || frameReady) return;
     frameReady = true;
   }
+  // The switch is part of the start only while it is shown (see LiveBroadcast.replayOffered).
+  $effect(() => {
+    broadcast.replayOffered = replaysAvailable(serverLiveReplaysMode());
+  });
 
   // The element follows the shown stream; `muted` as a PROPERTY (CameraScreen: a cloned element
   // does not take its muted state from the attribute, and the microphone played back as an echo).

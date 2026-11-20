@@ -93,7 +93,7 @@ describe('LiveBroadcast - preview and start', () => {
   it('goes on air: the generated key and the association reach the server, a recorder runs on the open camera, the screen is held', async () => {
     const { b, deps, recorders, cam } = await ready('asso-1');
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null, true);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null, false);
     expect(b.phase).toBe('live');
     expect(b.liveId).toBe(LIVE_ID);
     expect(recorders).toHaveLength(1);
@@ -170,7 +170,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     expect(b.rulesPending).toBe(false);
     expect(b.canStart).toBe(true);
     await b.start();
-    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null, true);
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null, false);
     expect(b.phase).toBe('live');
   });
 
@@ -178,7 +178,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     const { b, deps } = await ready();
     expect(b.rulesPending).toBe(false);
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, true);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
 
   it('the rules changed since (accepted v1, now v2): shown again', async () => {
@@ -201,7 +201,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     b.acceptRules();
     expect(b.startProblem).toBeNull();
     await b.start();
-    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null, true);
+    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null, false);
   });
 
   it('LIVE_RULES_NOT_ACCEPTED with the re-read failing: the limits Retry, Start waits', async () => {
@@ -1033,13 +1033,13 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     const first = await ready();
     first.b.title = '  Soirée  ';
     await first.b.start();
-    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée', true);
+    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée', false);
     expect(first.b.title).toBe('Soirée');
 
     const second = await ready();
     second.b.title = '   ';
     await second.b.start();
-    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, true);
+    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
 
   it('edits the title on air, keeps the old one on a refusal and says why', async () => {
@@ -1066,6 +1066,7 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     const f = await ready();
     f.deps.startLive.mockResolvedValueOnce({ ...liveView(), keepsReplay: true });
     expect(f.b.replayChoice).toBe(true);
+    f.b.replayOffered = true;
     await f.b.start();
     expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, true);
     expect(f.b.keepsReplay).toBe(true);
@@ -1090,7 +1091,16 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
 
   it('a start with the switch OFF carries false', async () => {
     const f = await ready();
+    f.b.replayOffered = true;
     f.b.replayChoice = false;
+    await f.b.start();
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
+  });
+
+  it('a switch the organiser was never shown asks for NO replay, whatever its default', async () => {
+    const f = await ready();
+    expect(f.b.replayChoice).toBe(true);
+    expect(f.b.replayOffered).toBe(false);
     await f.b.start();
     expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null, false);
   });
