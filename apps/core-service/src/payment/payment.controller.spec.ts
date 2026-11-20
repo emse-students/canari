@@ -36,6 +36,12 @@ import {
   SESSION_ID_RE,
 } from './payment.controller';
 import { LYDIA_ENROLMENT_PENDING } from './webhook.controller';
+import {
+  LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+} from './lydia-cashiers.controller';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import type { PaymentService } from './payment.service';
@@ -1195,7 +1201,18 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       cashierReadbackInvalid: provider.LYDIA_CASHIER_READBACK_INVALID,
       cashierRemovalPrecondition: provider.LYDIA_CASHIER_REMOVAL_PRECONDITION,
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
+      responsableHandoverDisabled: provider.LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+      responsableHandoverHeirCashierRemoved: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
+      responsableHandoverHeirCashierOnCard: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
     }).toEqual(contract.core);
+    expect(provider.LYDIA_RESPONSABLE_HANDOVER_ENABLED).toBe(
+      (contract as unknown as { switches: { responsableHandoverEnabled: boolean } }).switches
+        .responsableHandoverEnabled
+    );
+    expect(LYDIA_CASHIER_NOT_A_MEMBER).toBe(contract.social.cashierNotAMember);
+    expect(LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER).toBe(
+      (contract.social as Record<string, string>).responsableHandoverHeirNotPayoutManager
+    );
     expect(LYDIA_CASHIER_IN_FLIGHT).toBe(contract.social.cashierInFlight);
     expect(LYDIA_CASHIERS_LIVE).toBe(contract.social.cashiersLiveOnDelete);
     expect(provider.LYDIA_CASHIER_ADD_ENABLED).toBe(
