@@ -108,7 +108,7 @@ describe('who is asked ahead', () => {
     expect(retry.indexOf('if (isFirstPinSetup) return;')).toBeGreaterThan(-1);
     // A removed device asks no salt: its branch of `applyPinFailure` returns before the retry.
     const apply = service.slice(service.indexOf('function applyPinFailure'));
-    expect(apply.indexOf("if (code === 'device_revoked'")).toBeLessThan(
+    expect(apply.indexOf('if (removedNotice) {')).toBeLessThan(
       apply.indexOf('askSaltForNextTry();')
     );
   });

@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { fetchOrUnreachable, isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { SessionExpiredError } from '$lib/stores/auth';
 import { LoginFailure } from './loginErrors';
 import { throwIfPinThrottled } from './pinThrottle';
 
@@ -15,7 +16,9 @@ import { throwIfPinThrottled } from './pinThrottle';
 export type PinStatus =
   | { kind: 'first-setup' }
   | { kind: 'returning' }
-  | { kind: 'unanswered'; message: string };
+  | { kind: 'unanswered'; message: string }
+  /** A 401/403, or a refresh credential proven dead: an answer about the SESSION, never "retry". */
+  | { kind: 'session-ended' };
 
 export interface PinStatusDeps {
   /** `.../api/mls/security/pin-status/<userId>`. */
@@ -36,7 +39,11 @@ export async function askPinStatus(deps: PinStatusDeps): Promise<PinStatus> {
       { headers: { Authorization: `Bearer ${token}` } },
       m.auth_server_unreachable()
     );
-    throwIfPinThrottled(res, deps.log);
+    await throwIfPinThrottled(res, deps.log);
+    if (res.status === 401 || res.status === 403) {
+      deps.log(`[PIN] pin-status answered ${res.status} - the session is over, not a retry.`);
+      return { kind: 'session-ended' };
+    }
     if (!res.ok) {
       console.warn(`[PIN] pin-status answered ${res.status} - the gate asks to retry.`);
       return { kind: 'unanswered', message: m.auth_pin_status_failed() };
@@ -50,6 +57,10 @@ export async function askPinStatus(deps: PinStatusDeps): Promise<PinStatus> {
     }
     return { kind: body.registered ? 'returning' : 'first-setup' };
   } catch (e: unknown) {
+    if (e instanceof SessionExpiredError) {
+      deps.log('[PIN] pin-status: the refresh credential is dead - the session is over.');
+      return { kind: 'session-ended' };
+    }
     if (isServerUnreachable(e)) {
       deps.log('[PIN] pin-status could not be reached - the gate asks to retry.');
       return { kind: 'unanswered', message: (e as Error).message };

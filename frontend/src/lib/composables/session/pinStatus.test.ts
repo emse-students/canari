@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { m } from '$lib/paraglide/messages';
+import { SessionExpiredError } from '$lib/stores/auth';
 import { askPinStatus } from './pinStatus';
 
 afterEach(() => {
@@ -46,10 +47,43 @@ describe('askPinStatus', () => {
     expect(await ask()).toEqual({ kind: 'unanswered', message: m.auth_pin_attempts_throttled() });
   });
 
+  it('a 401 or 403 is the SESSION ending, never a retry', async () => {
+    for (const status of [401, 403]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({}, status)));
+      expect(await ask()).toEqual({ kind: 'session-ended' });
+    }
+  });
+
+  it('a refresh credential proven dead is the session ending too', async () => {
+    const out = await askPinStatus({
+      url: 'https://x/api/mls/security/pin-status/u',
+      getToken: async () => {
+        throw new SessionExpiredError();
+      },
+      log: () => {},
+    });
+    expect(out).toEqual({ kind: 'session-ended' });
+  });
+
   it('a body without a boolean is "unanswered", accused', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ registered: 'yes' })));
     expect(await ask()).toEqual({ kind: 'unanswered', message: m.auth_pin_status_failed() });
     expect(error).toHaveBeenCalledOnce();
+  });
+});
+
+describe('noKeypadNoticeFor - which failures draw the gate without a keypad (row 18)', () => {
+  it('a removed device, wiped now or with its wipe owed', async () => {
+    const { noKeypadNoticeFor } = await import('./loginErrors');
+    expect(noKeypadNoticeFor('device_revoked')).toBe(m.auth_device_revoked_here());
+    expect(noKeypadNoticeFor('revoked_device_wipe_owed')).toBe(m.auth_device_revoked_here());
+  });
+
+  it('never a failure the keypad can answer', async () => {
+    const { noKeypadNoticeFor } = await import('./loginErrors');
+    for (const code of ['pin_mismatch', 'pin_not_set', 'server_unreachable', 'other'] as const) {
+      expect(noKeypadNoticeFor(code)).toBeNull();
+    }
   });
 });

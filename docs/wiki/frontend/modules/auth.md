@@ -916,7 +916,26 @@ with "Reessayer", never "returning" (`askPinStatus`, row 16): defaulting to "ret
 keypad whose PIN `pin-check` would then REGISTER, unconfirmed. A removed device (`device_revoked` after
 its wipe, `revoked_device_wipe_owed`) shows "Cet appareil a ete retire de votre compte" with no keypad,
 the gate's sign-out as the way on (row 18); before, the keypad stayed and the next PIN met the ended
-session and went to `/login` unexplained. Both no-keypad states are one prop, `PinModal`'s `gateNotice`.
+session and went to `/login` unexplained. Both no-keypad states are one prop, `PinModal`'s `gateNotice`,
+and under it no PIN exit is drawn (recover, restart, forgot-PIN, the withheld-reset notice). A
+`pin-status` 401/403 is the session ending (`handleSessionExpired`), never "retry"; "Reessayer" is
+disabled while its question is in flight.
+
+**A PIN is REGISTERED only on a confirmed creation (review of #3909).** Two things drew the gate
+"returning" for an account with no PIN, so its first PIN was registered unconfirmed: the stored MLS
+device id (written by `resolveDeviceId` BEFORE `pin-check`) and the placeholder row `GET pin-salt`
+writes (read as "registered" by `pin-status`). Three changes close it at the cause:
+- `pin-check` takes `intent`: `create` (sent only by a first setup that asked the PIN twice,
+  `globalSession.pinIntent`) registers; `unlock` on an account with no PIN answers `not-set`, which
+  the client types `pin_not_set` and turns into the first-setup gate. A body with no intent (an older
+  app) still registers - a dated shim ([legacy-compatibility](../../legacy-compatibility.md#a-pin-check-with-no-intent-still-registers-unconfirmed-2026-11-20)).
+  The registration is one conditional write (`UPDATE ... WHERE verifier = ''`, or an
+  `INSERT ... ON CONFLICT DO NOTHING` that returned a row): two devices creating at once get one `registered`, the other is
+  compared (`pin-registration.integration.spec.ts`).
+- `pin-status` answers `registered` only for a NON-EMPTY verifier.
+- The gate's local shortcut reads `canari_pin_proven:v1:<user>` (`pinFirstSetup.ts`), written only
+  once `pin-check` answered `ok` or `registered` - never the device id. A `mismatch` on a first setup
+  turns the gate to "returning" (the account has a PIN).
 
 The French and English texts are in `messages/{fr,en}.json` under the `auth_` keys each throw names
 (`loginErrors.ts`, `sessionAuth.ts`, `pinUnlock.ts`); a text names a control by its exact label.

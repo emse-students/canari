@@ -95,10 +95,7 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     // account that exists nowhere) and `evaluateRecoverable`. Both are skipped, as the salt already
     // was for `device_revoked`, by a branch that returns BEFORE either call.
     const body = applyPinFailureBody()!;
-    for (const guard of [
-      "if (code === 'account_deleted')",
-      "if (code === 'device_revoked' || code === 'revoked_device_wipe_owed')",
-    ]) {
+    for (const guard of ["if (code === 'account_deleted')", 'if (removedNotice) {']) {
       const branch = body.indexOf(guard);
       expect(branch, guard).toBeGreaterThan(-1);
       const end = body.indexOf('return;', branch);
@@ -111,18 +108,17 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
 
   it('shows a removed device the gate without a keypad, never the keypad then /login (row 18)', () => {
     const body = applyPinFailureBody()!;
-    const branch = body.indexOf(
-      "if (code === 'device_revoked' || code === 'revoked_device_wipe_owed')"
-    );
+    expect(body).toContain('const removedNotice = noKeypadNoticeFor(code);');
+    const branch = body.indexOf('if (removedNotice) {');
     const end = body.indexOf('return;', branch);
-    expect(body.slice(branch, end)).toContain('pinGateNotice = m.auth_device_revoked_here()');
+    expect(body.slice(branch, end)).toContain('pinGateNotice = removedNotice');
     expect(body.slice(branch, end)).toContain('pinGateRetry = null');
   });
 
   it('still gates both exits on the flag, which is why clearing it is the fix', () => {
     // If `PinModal` stopped hiding them, this guard would be pinning a statement that no longer
     // matters - and would say so here rather than quietly passing for ever.
-    expect(modal).toContain('{#if !isFirstSetup && onRecoverPin && displayError}');
+    expect(modal).toContain('{#if !gateNotice && !isFirstSetup && onRecoverPin && displayError}');
     expect(modal).toContain('{#if !isFirstSetup}');
   });
 });

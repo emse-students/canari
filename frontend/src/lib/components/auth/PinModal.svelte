@@ -549,37 +549,39 @@
       {/if}
 
       <!-- Quiet secondary actions: two short text links, never a block of prose. -->
-      <div class="flex flex-wrap items-center justify-center gap-x-1 {gateNotice ? 'hidden' : ''}">
-        <button
-          type="button"
-          onclick={() => switchInputMode(!useNumpad)}
-          class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
-        >
-          {useNumpad ? m.auth_pin_manual_entry() : m.auth_pin_numeric_keypad()}
-        </button>
-        {#if confirming}
-          <Button
-            variant="bare"
-            data-pin-choose-another
-            onclick={chooseAnotherPin}
-            class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
-          >
-            {m.auth_pin_confirm_restart()}
-          </Button>
-        {/if}
-        {#if !isFirstSetup}
+      {#if !gateNotice}
+        <div class="flex flex-wrap items-center justify-center gap-x-1">
           <button
             type="button"
-            aria-expanded={showForgotPin}
-            onclick={() => (showForgotPin = !showForgotPin)}
+            onclick={() => switchInputMode(!useNumpad)}
             class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
           >
-            {m.auth_pin_forgot()}
+            {useNumpad ? m.auth_pin_manual_entry() : m.auth_pin_numeric_keypad()}
           </button>
-        {/if}
-      </div>
+          {#if confirming}
+            <Button
+              variant="bare"
+              data-pin-choose-another
+              onclick={chooseAnotherPin}
+              class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
+            >
+              {m.auth_pin_confirm_restart()}
+            </Button>
+          {/if}
+          {#if !isFirstSetup}
+            <button
+              type="button"
+              aria-expanded={showForgotPin}
+              onclick={() => (showForgotPin = !showForgotPin)}
+              class="text-text-muted hover:text-text-main tap-target rounded-full px-3 py-2 text-xs font-medium transition-colors"
+            >
+              {m.auth_pin_forgot()}
+            </button>
+          {/if}
+        </div>
+      {/if}
 
-      {#if resetWithheldNotice}
+      {#if resetWithheldNotice && !gateNotice}
         <div class="w-full rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3" role="note">
           <div class="flex items-start gap-2">
             <TriangleAlert size={16} class="mt-0.5 shrink-0 text-red-500" />
@@ -589,7 +591,7 @@
       {/if}
 
       <!-- PIN changed on another device → recover messages (shown only when applicable) -->
-      {#if !isFirstSetup && onRecoverPin && displayError}
+      {#if !gateNotice && !isFirstSetup && onRecoverPin && displayError}
         <button
           type="button"
           disabled={isLoading}
@@ -602,7 +604,7 @@
 
       <!-- THE PIN IS RIGHT AND THIS DEVICE'S MESSAGES OPEN UNDER NO KEY IT HOLDS: the control that
            fixes it is here, beside the error that names it, never behind "forgot PIN". -->
-      {#if !isFirstSetup && onRestartDevice}
+      {#if !gateNotice && !isFirstSetup && onRestartDevice}
         <div data-pin-restart class="w-full space-y-2">
           {@render twoTapDestructive(
             confirmRestart,
@@ -618,7 +620,7 @@
         </div>
       {/if}
 
-      {#if !isFirstSetup && showForgotPin}
+      {#if !gateNotice && !isFirstSetup && showForgotPin}
         <div
           bind:this={forgotBox}
           class="w-full scroll-mb-2 space-y-3 rounded-2xl border border-red-500/20 bg-red-500/5 px-4 py-3"

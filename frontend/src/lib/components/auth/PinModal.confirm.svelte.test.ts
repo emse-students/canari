@@ -9,6 +9,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import PinModal from './PinModal.svelte';
+import { noKeypadNoticeFor } from '$lib/composables/session/loginErrors';
 
 let stop: () => void;
 let app: ReturnType<typeof mount> | null = null;
@@ -138,6 +139,42 @@ describe('PinModal - a gate that cannot use a PIN (rows 16 and 18)', () => {
     expect(document.querySelector('button[type="submit"]')).toBeNull();
     // The way on is the gate's own sign-out, still there.
     expect(document.querySelector('[data-pin-signout]')).not.toBeNull();
+  });
+
+  it('a removed device sees none of the PIN exits, even when the parent still hands them', () => {
+    // The revoked outcome reaches the gate with whatever an earlier failure left: a recover link,
+    // the restart, the forgot-PIN reset, a withheld-reset notice, an error. None may be drawn under
+    // the notice - each offers a PIN action a removed device cannot take (review of #3909).
+    const { props } = raise({
+      isFirstSetup: false,
+      gateNotice: noKeypadNoticeFor('device_revoked')!,
+      externalError: 'stale error',
+      onRecoverPin: vi.fn(),
+      onRestartDevice: vi.fn(),
+      onForgotPinReset: vi.fn(),
+      resetWithheldNotice: 'withheld',
+      showStaySignedIn: true,
+    });
+
+    expect(document.querySelector('[data-pin-gate-notice]')?.textContent?.trim()).toBe(
+      m.auth_device_revoked_here()
+    );
+    const text = document.querySelector('[role="dialog"]')!.textContent ?? '';
+    expect(text).not.toContain(m.auth_pin_recover_link());
+    expect(text).not.toContain(m.auth_device_restart_button());
+    expect(text).not.toContain(m.auth_pin_forgot());
+    expect(text).not.toContain('withheld');
+    expect(text).not.toContain('stale error');
+    expect(document.querySelector('[data-pin-restart]')).toBeNull();
+    expect(document.querySelector('[data-stay-signed-in]')).toBeNull();
+    expect(document.querySelector('[data-pin-footer] button')).toBeNull();
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('the retry button is disabled while its question is in flight', () => {
+    raise({ isFirstSetup: false, gateNotice: 'x', onGateRetry: vi.fn(), isLoading: true });
+    const retry = document.querySelector<HTMLButtonElement>('[data-pin-footer] button')!;
+    expect(retry.disabled).toBe(true);
   });
 
   it('offers "Reessayer" when a retry is given, and calls it', () => {

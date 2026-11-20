@@ -80,6 +80,8 @@ export function useChatSession() {
   // ── Identity ──────────────────────────────────────────────────────────────
   let userId = $state('');
   let pin = $state('');
+  /** What `pin` is for: `create` only from a confirmed first setup (`PinIntent`). */
+  let pinIntent = $state<'create' | 'unlock'>('unlock');
   let deviceKeyB64 = $state('');
   let authToken = $state('');
   let myDeviceId = $state('');
@@ -184,6 +186,7 @@ export function useChatSession() {
       userId = v;
     },
     getPin: () => pin,
+    getPinIntent: () => pinIntent,
     setPin: (v) => {
       pin = v;
     },
@@ -397,6 +400,13 @@ export function useChatSession() {
     },
     set pin(v: string) {
       pin = v;
+    },
+    /** What the next PIN submit is for: the gate sets `create` for a confirmed first setup. */
+    get pinIntent() {
+      return pinIntent;
+    },
+    set pinIntent(v: 'create' | 'unlock') {
+      pinIntent = v;
     },
     /** Device key (base64, 44 chars) derived from the PIN — used for MLS + local encryption. */
     get deviceKeyB64() {

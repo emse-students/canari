@@ -1,4 +1,4 @@
-## P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, four adjacent hazards are (2026-11-20)
+## P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, two adjacent races remain (2026-11-20)
 
 target: 1.8.0
 
@@ -14,24 +14,14 @@ either. No fix was guessed. What the reading found instead, each owed a decision
    and `@Unique(['userId'])` refuses the second - a 500 the client shows as "unreachable". An
    idempotent mint (`INSERT ... ON CONFLICT (userId) DO NOTHING`, then read the row back) answers both
    with the same salt, from durable state.
-2. **Two first `pin-check` at once on a placeholder row are a silent lost update.** The check reads
-   the row, sees the empty verifier, and saves its own unconditionally
-   (`security.controller.ts`, `checkPinVerifier`): two devices of an account with no PIN yet each
-   choose one, BOTH are answered `registered`, and the row keeps whichever save landed last - the
-   other device's PIN is refused at its next unlock, for a PIN the server told it was registered. The
-   fix is a conditional update, `UPDATE pin_verifier SET verifier = :v WHERE userId = :u AND verifier
-   = ''`, with the affected-row count deciding the answer: 1 is `registered`, 0 re-reads the row and
-   compares (`ok` / `mismatch`).
-3. **A settle that reads "another salt" commits as if its own reset had landed**: device A's reset
+2. **A settle that reads "another salt" commits as if its own reset had landed**: device A's reset
    unanswered, device B resetting meanwhile, and A's settle discards A's local state for a reset that
    was B's. Telling the two apart needs the server to say which reset minted the salt (a reset id
    returned by `pin-reset` and kept beside the salt).
 
-4. **`pin-status` reads the placeholder as a PIN.** It answers `registered: !!doc`, and `GET
-   pin-salt` writes a row with an EMPTY verifier for an account without one - so after any salt
-   request (an abandoned first setup, a prefetch) the account reads "registered" while no PIN was
-   ever chosen, and the gate draws an unlock keypad whose first PIN `pin-check` registers. Registered
-   must mean a NON-EMPTY verifier.
+Two further hazards the same reading found were fixed in #3909: two first `pin-check` at once were a
+silent lost update (now one conditional write, the loser compared), and `pin-status` read the
+placeholder row as a PIN (now a non-empty verifier only).
 
 If the audit's observation came from a measurement, the run that showed it decides which of these it
 was ([auth](../frontend/modules/auth.md#pin-and-device-key)).

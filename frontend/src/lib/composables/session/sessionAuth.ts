@@ -193,6 +193,7 @@ import {
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { throwIfPinThrottled } from './pinThrottle';
+import { notePinProven } from '$lib/utils/pinFirstSetup';
 import {
   revokedWipeScope,
   wipeAccountOfRevokedDevice,
@@ -1701,6 +1702,7 @@ export async function loginImpl(
       const userIdForPin = ctx.getUserId();
       deviceKeyB64 = await untilSignedOut(
         unlockWithPin({
+          intent: ctx.getPinIntent?.() ?? 'unlock',
           saltAhead: takePinSaltAhead(userIdForPin),
           fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
           computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
@@ -1720,7 +1722,7 @@ export async function loginImpl(
             }
           },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
-          checkPin: async ({ verifier, deviceId, salt }) => {
+          checkPin: async ({ verifier, deviceId, salt, intent }) => {
             const res = await fetchOrUnreachable(
               `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
               {
@@ -1729,7 +1731,7 @@ export async function loginImpl(
                   'Content-Type': 'application/json',
                   Authorization: `Bearer ${accessToken}`,
                 },
-                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
+                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
                 signal: loginAbort.signal,
               },
               m.auth_pin_check_unreachable()
@@ -1748,6 +1750,9 @@ export async function loginImpl(
           // A key proven after a sign-out belongs to nobody signed in.
           installDeviceKey: (key) => {
             stopIfSignedOut('pin-check-install');
+            // The server accepted or registered the PIN: the one proof that may draw this account's
+            // next gate as "returning" without asking (`pinFirstSetup.ts`).
+            notePinProven(localStorage, userIdForPin);
             ctx.setDeviceKey(key);
           },
           log: cb.log,
@@ -3498,7 +3503,8 @@ async function recoverPinSteps(
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userId, verifier: newVerifier }),
+        // `unlock`: the new PIN must already be the account's; never registered from a recovery.
+        body: JSON.stringify({ userId, verifier: newVerifier, intent: 'unlock' }),
         signal: stop.signal,
       },
       m.auth_pin_verify_new_unreachable()

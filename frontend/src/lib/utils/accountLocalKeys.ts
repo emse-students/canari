@@ -32,6 +32,11 @@ export const ACCOUNT_KEY = {
    */
   deviceId: (userId: string) => `mls_device_id_${userId}`,
   /**
+   * `pinFirstSetup.ts`: the server has ACCEPTED or REGISTERED this account's PIN on this device - the
+   * one local fact that may draw the gate as "returning" without asking `pin-status`.
+   */
+  pinProven: (userId: string) => `canari_pin_proven:v1:${userId}`,
+  /**
    * `BaseMlsService.retireAbandonedDevices`: this install's OWN previous device ids, abandoned by a
    * rotation and not yet confirmed deleted on the server - a JSON array, emptied as each delete lands.
    */

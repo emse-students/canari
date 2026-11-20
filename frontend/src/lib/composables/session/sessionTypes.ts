@@ -153,6 +153,11 @@ export interface SessionContext {
   setUserId(v: string): void;
   getPin(): string;
   setPin(v: string): void;
+  /**
+   * What the PIN set by `setPin` is for (`pinUnlock.ts`, `PinIntent`): `create` only from a first
+   * setup that asked it twice. Absent (a test double), the login sends `unlock`.
+   */
+  getPinIntent?(): 'create' | 'unlock';
   getDeviceKey(): string;
   setDeviceKey(v: string): void;
   getAuthToken(): string;

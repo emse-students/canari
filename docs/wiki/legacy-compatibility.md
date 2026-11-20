@@ -91,6 +91,21 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
 
+### A PIN check with no intent still registers, unconfirmed (2026-11-20)
+
+- **What.** `POST /api/mls/security/pin-check` registers an account's first PIN only on
+  `intent: 'create'` (a first setup that asked the PIN twice) and answers `intent: 'unlock'` with
+  `not-set` ([auth](frontend/modules/auth.md#pin-and-device-key)). An app older than #3909 sends no
+  intent, so a body with none is answered as before: it REGISTERS on an account with no PIN, through
+  the same conditional write (`checkPinVerifier`, `security.controller.ts`). That branch is the
+  unconfirmed registration the PIN audit closed, kept open for those builds only.
+- **Measured by.** The line the service writes for each one:
+  `[PIN_VERIFIER] legacy client (no intent) registering for <user> - unconfirmed`.
+- **Removal condition.** The client floor passes the first stable carrying #3909 (`1.7.2` at the
+  earliest), AND a week of that line's silence on production.
+- **Then delete.** The `intent === undefined` branch: a body with no intent is then `400 intent
+  invalid`, and the spec case `LEGACY: a client sending no intent still registers` goes with it.
+
 ### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
 
 "Carried by" is read as for `1.6.6` below (`git tag --contains` on the squash commit found by its

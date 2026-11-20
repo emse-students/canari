@@ -4610,6 +4610,7 @@
   "auth_pin_confirm_mismatch": "The two PINs differ. Confirm again.",
   "auth_pin_confirm_restart": "Choose another PIN",
   "auth_pin_status_failed": "The server could not check your account. Try again.",
+  "auth_pin_not_set": "No PIN has been chosen for this account yet. Choose one.",
   "auth_pin_salt_rotated": "Your PIN was just reset. Enter your current PIN.",
   "auth_pin_check_unexpected": "The server could not check your PIN. Try again in a moment.",
   "auth_pin_mismatch": "Wrong PIN. Try again, or tap \"Forgot your PIN?\".",
