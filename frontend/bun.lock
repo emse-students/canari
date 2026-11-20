@@ -16,7 +16,7 @@
         "@humanspeak/svelte-markdown": "^2.3.0",
         "@lucide/svelte": "^1.73.0",
         "@sosweetham/tauri-plugin-system-components-api": "0.1.8",
-        "@tauri-apps/api": "^2.12.4",
+        "@tauri-apps/api": "^2.12.5",
         "@tauri-apps/plugin-biometric": "^2.5.0",
         "@tauri-apps/plugin-deep-link": "^2.6.3",
         "@tauri-apps/plugin-dialog": "^2.8.4",
@@ -28,7 +28,7 @@
         "@tauri-apps/plugin-sql": "^2.6.0",
         "@tauri-apps/plugin-store": "^2.5.1",
         "@tauri-apps/plugin-websocket": "^2.5.0",
-        "@zumer/snapdom": "^3.7.5",
+        "@zumer/snapdom": "^3.7.6",
         "highlight.js": "^11.12.0",
         "jspdf": "^4.2.1",
         "jsqr": "^1.4.0",
@@ -524,7 +524,7 @@
 
     "@tailwindcss/vite": ["@tailwindcss/vite@4.3.5", "", { "dependencies": { "@tailwindcss/node": "4.3.5", "@tailwindcss/oxide": "4.3.5", "tailwindcss": "4.3.5" }, "peerDependencies": { "vite": "^5.2.0 || ^6 || ^7 || ^8" } }, "sha512-BCNiY0a1ZjdOHVqw7kyb7U72BwfMF3dfUuN+tQsLWky/J5JOI/r7abibglXfygrZhVO/3u3V+E25kkKTeMkXaQ=="],
 
-    "@tauri-apps/api": ["@tauri-apps/api@2.12.4", "", {}, "sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg=="],
+    "@tauri-apps/api": ["@tauri-apps/api@2.12.5", "", {}, "sha512-G9QIMt5fzED+aS4QhVK3w1HWLKpLIwH/MnpCr9z1ugGEHnS2ORmqrLkc0uALOjRK4qXJy+4Yiw8LDl/KicC1Hg=="],
 
     "@tauri-apps/cli": ["@tauri-apps/cli@2.12.5", "", { "optionalDependencies": { "@tauri-apps/cli-darwin-arm64": "2.12.5", "@tauri-apps/cli-darwin-x64": "2.12.5", "@tauri-apps/cli-linux-arm-gnueabihf": "2.12.5", "@tauri-apps/cli-linux-arm64-gnu": "2.12.5", "@tauri-apps/cli-linux-arm64-musl": "2.12.5", "@tauri-apps/cli-linux-riscv64-gnu": "2.12.5", "@tauri-apps/cli-linux-x64-gnu": "2.12.5", "@tauri-apps/cli-linux-x64-musl": "2.12.5", "@tauri-apps/cli-win32-arm64-msvc": "2.12.5", "@tauri-apps/cli-win32-ia32-msvc": "2.12.5", "@tauri-apps/cli-win32-x64-msvc": "2.12.5" }, "bin": { "tauri": "tauri.js" } }, "sha512-Dm8s/4aiE52HsBh+Gz3uSrh+fEykRICA1VoAnQA80IqHoTRncPg+q4rGvuhmyNsHUPg3QrPjUrTUSfWmXLVVEw=="],
 
@@ -614,7 +614,7 @@
 
     "@vitest/spy": ["@vitest/spy@5.1.0", "", {}, "sha512-2DPO5OMHWKrBngC+fCmTQqemNF0gidRhp3lxbBmRhW+M1XJrfgPpqNqWVevXtn2f2ufD5ZaR1B6B641aAlcX5A=="],
 
-    "@zumer/snapdom": ["@zumer/snapdom@3.7.5", "", {}, "sha512-KXf6tQc286F8ece8ENKwQgZA6mHx0os2iW5GyktXCx6Eu+xf7WJuwJspItuGoOFKydh/ojP92LapmCIiGumHbg=="],
+    "@zumer/snapdom": ["@zumer/snapdom@3.7.6", "", {}, "sha512-w1q0HwSM1BF/vT2aF1tvgsYbktosFtfpjGIVrZkI1vUkKL7TLmLfBSIhCNp04c4DLfafHUXusz0UXsJC1bm03g=="],
 
     "acorn": ["acorn@8.19.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw=="],
 
