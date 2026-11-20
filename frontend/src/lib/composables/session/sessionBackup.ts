@@ -60,7 +60,6 @@ export async function importBackupImpl(
   log: (msg: string) => void,
   file: File,
   setIsImporting: (v: boolean) => void,
-  clearConversations: () => void,
   reloadConversations: () => Promise<void>,
   recoveryCode?: string
 ): Promise<BackupOutcome | null> {
@@ -75,7 +74,6 @@ export async function importBackupImpl(
       myDeviceId: ctx.getMyDeviceId(),
       userId: ctx.getUserId(),
       log,
-      clearConversations,
       reloadConversations,
     });
     return backupImportOutcome(result);

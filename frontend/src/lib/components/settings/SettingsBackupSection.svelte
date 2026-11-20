@@ -1,11 +1,7 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
   import { Upload, Download } from '@lucide/svelte';
-  import {
-    globalSession as session,
-    globalConvs as convs,
-    appendLog,
-  } from '$lib/stores/globalChatSingleton.svelte';
+  import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
   import type { BackupOutcome } from '$lib/utils/backupOutcome';
   import { backupFileVersion } from '$lib/backup';
@@ -41,13 +37,7 @@
   }
 
   async function runImport(file: File, code?: string) {
-    outcome = await session.handleImport(
-      file,
-      appendLog,
-      () => convs.conversations.clear(),
-      async () => {},
-      code
-    );
+    outcome = await session.handleImport(file, appendLog, code);
   }
 
   async function handleFileChange(e: Event) {

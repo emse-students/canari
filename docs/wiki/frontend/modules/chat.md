@@ -3410,7 +3410,7 @@ then reads WHICH FRAMES the observers left with rows shown and not stored
 batches' rows). **Per frame** (review of #3851): each row carries the queued id of the frame it was
 decrypted from (`AddMessageToChatOptions.frameId`, set by `handleKnownGroup`, kept in
 `BatchRowWrite.framesByRow` and in a kept batch's messages), and only the ids in that set are withheld
-(`[ACK] N id(s) not acknowledged: M frame(s) have rows shown and not stored`, said ONCE per episode;
+(`[ACK] N id(s) not acknowledged: M frame(s) have rows not stored (shown and not stored, decrypted orphans, or a write in flight)`, said ONCE per episode;
 the acks withheld after it are counted, and the first read that finds no such frame ends the episode
 with one line carrying the count - a repeat re-listed by every pull used to print a line per frame per
 pull): they stay on the server, and the repeat a later pull brings is re-acknowledged under the same
@@ -3490,37 +3490,63 @@ times; only the unit tests write the line. Statically, a DECRYPTED message reach
 only: `handleKnownGroup` refuses an absent conversation BEFORE it decrypts (`absent-conversation`,
 not acknowledged), the Welcome's re-key moves a 1:1 under the MLS lock the frame's handler holds, a
 restore's prune and re-seed are one synchronous loop, and the Welcome's replay inserts its
-conversation before it replays - so the conversation LEFT the map while the handler ran: the reader
-deleted it ("Supprimer localement", `purgeConversation`), or it was purged because the server no longer lists this account (`purgeLocalConversationRecord`). Every other writer that can meet an absent
+conversation before it replays - so the conversation LEFT the map while the handler ran. What takes
+one out while the pipeline runs is a closed list (`ORPHAN_REMOVERS`, named in the drop line): the
+reader's local deletion or a group deleted by its admin (`purgeConversation`), a removal or a leave
+the server states (`purgeLocalConversationRecord`), a creation rolled back (`groupCreation`), and a
+restore pruning a row the store no longer holds. Every other writer that can meet an absent
 conversation (an own send, an own or local notice, a call notice, a salon event) has no MLS advance
 behind its row.
 
+**A backup import no longer clears the map** (review of #3887). `importUserBackup` cleared it and
+then asked for a reload, and the settings page passed a reload that did nothing: the list stayed
+empty until a restart, and a frame meeting that empty map was an orphan dropped as removed although
+its conversation was coming back from the store. The import now only asks the session's own restore
+(`loadAndRestoreConversations`), which prunes and re-seeds the map in one synchronous loop; a tab
+with no session callbacks shows the imported rows at its next restore.
+
 **The shape: the orphan buffer is counted in the hold, by kind.** Storing the row at buffering was
 refused: the row would belong to a conversation the store does not hold (the restore and the sidebar
-would have to learn to skip it), and the evidence says the conversation is one the reader REMOVED -
-a row to drop, not to store. So:
+would have to learn to skip it), and the evidence says the conversation was REMOVED - a row to drop,
+not to store. So:
 
-- a FRAMED orphan (it carries a `frameId`) is settled by the next store of either kind - a hold or a
-  window's close - in ONE pass, before anything else of that store (`settleFramedOrphans`): its
-  conversation in the map again, it is stored through the batch path (a failed write kept, a throw
-  kept as a batch, both refusing the hold like any other row); not in the map, it is DROPPED, said at
-  WARN with its frames (`[ORPHAN] N decrypted orphan message(s) dropped ... (deleted or purged)`), and
-  never blocks the hold - writing it back would resurrect what the reader removed. No wait for a
-  Welcome that may never come, so the hold terminates without a clock;
-- while it stands, its frame is withheld from the ack (`framesLeftUnstored`), and a store that ran
-  while one was added (a history bundle's row, whose mark settles before its dispatch) counts it, so
-  that hold refuses and the next settles it;
+- a FRAMED orphan (it carries a `frameId`) is settled by every store - a hold, a window's close, a
+  drain - in ONE pass first, and AGAIN at the end of the store's step before it counts
+  (`settleFramedOrphans`): its conversation in the map again, it is stored through the batch path (a
+  failed write kept, a throw kept as a batch, both refusing the hold like any other row); not in the
+  map, it is DROPPED, said at WARN with its frames and the removers (`[ORPHAN] N decrypted orphan
+  message(s) dropped (<origin>) ...`), and never blocks the hold - writing it back would resurrect
+  what was removed. No wait for a Welcome that may never come, so the hold terminates without a clock;
+- the second settle is what keeps an orphan ARRIVING during the step (a history bundle's row, whose
+  mark settles before its dispatch) from refusing a commit's or a send's checkpoint and from spending
+  the once-per-page "Rows of applied frames cannot be stored" line on something the next settle drops.
+  One arriving after that second settle still refuses the hold, on its own line (`[ORPHAN] A
+  checkpoint is refused: N decrypted orphan message(s) arrived while its store ran`);
+- while it stands its frame is withheld from the ack (`framesLeftUnstored`), and the cap of 50
+  waiting messages binds the unframed only: a framed orphan is a decrypted message, never refused by
+  the cap, and it cannot accumulate since every store settles it;
 - an UNFRAMED orphan keeps waiting for its Welcome: nothing a checkpoint exports stands behind it.
-  **The drain is now a step of the store chain** (`bufferedRowsStored`): the Welcome's own
-  `persistNow` follows the drain at once, and its hold resolves only once the replayed adds returned
-  (stored by the live path, or buffered into the window the hold's step stores next). The own-send
-  status re-read runs after that step, outside it - a queue read is nothing a checkpoint waits for.
+  **The drain is a step of the store chain** (`bufferedRowsStored`), and takes its entries IN the
+  step, not at the call: the Welcome's own `persistNow` follows the drain at once, and its hold
+  resolves only once the replayed adds returned. The framed entries of the drained key go through the
+  settle; the own-send status re-read runs after the step, outside it.
+
+**A row is counted until its write has landed** (review of #3887, the same mechanism in three more
+places). A store took its rows out of the ledger the ack reads BEFORE writing them - the drain at its
+call, the retry of a kept write (`unstoredRowWrites.splice`), the rerun of a kept batch, the flush of
+the bulk buffer - so for the length of the write the frame was in no ledger, and a re-ack read then
+(it does not wait for a store) acknowledged a frame whose row then failed again. Each of them now
+counts its rows' frames as being stored (`framesBeingStored`, read by `framesLeftUnstored`) from the
+take to the outcome: landed, kept again, or dropped.
 
 **Pinned by** `useMessaging.rowsBeforeRatchet.svelte.test.ts`, "the orphan buffer": a checkpoint
-does not export past a still-buffered decrypted orphan (the hold stores it, its frame withheld
-until then); one for a deleted or purged conversation is dropped and said, and never refuses a hold;
-`drainOrphanMessages` stores its row before a hold taken right after it resolves. All three fail
-on the code before this section.
+does not export past a still-buffered decrypted orphan; one for a removed conversation is dropped
+and said, and never refuses a hold; `drainOrphanMessages` stores its row before a hold taken right
+after it resolves; the drain's frame stays withheld while its write is in flight; so do a retried
+write's (during the retry, and after it fails again) and a kept batch's rerun's; an orphan added
+while a hold's step runs is settled by that step without spending the failing-store line; a drop at
+a window's close; one key holding both kinds; a settle whose write fails or that throws keeps the row
+and refuses the hold; the cap does not refuse a framed orphan.
 
 #### A poison row is dropped, not kept (2026-11-19)
 

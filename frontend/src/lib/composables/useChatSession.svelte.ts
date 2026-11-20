@@ -586,13 +586,7 @@ export function useChatSession() {
         isExporting = v;
       }),
     /** Imports a previously exported backup file and reloads conversations. */
-    handleImport: (
-      file: File,
-      log: (msg: string) => void,
-      clearConversations: () => void,
-      reloadConversations: () => Promise<void>,
-      recoveryCode?: string
-    ) =>
+    handleImport: (file: File, log: (msg: string) => void, recoveryCode?: string) =>
       importBackupImpl(
         ctx,
         log,
@@ -600,8 +594,19 @@ export function useChatSession() {
         (v) => {
           isImporting = v;
         },
-        clearConversations,
-        reloadConversations,
+        // THE SESSION'S OWN RESTORE, never a clear and a reload (review of #3887): see
+        // `importUserBackup`'s `reloadConversations`. A tab with no session callbacks (a follower)
+        // shows the imported rows at its next restore.
+        async () => {
+          const cb = tabLeaderSessionCb;
+          if (!cb) {
+            log(
+              '[BACKUP] imported into the store - this tab restores its list at its next restore'
+            );
+            return;
+          }
+          await cb.loadAndRestoreConversations();
+        },
         recoveryCode
       ),
     /** Processes pending MLS invitations from our other devices (multi-device sync). */

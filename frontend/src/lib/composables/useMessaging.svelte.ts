@@ -643,6 +643,44 @@ export function useMessaging() {
   const unstoredBatches: KeptBatch[] = [];
 
   /**
+   * THE FRAMES WHOSE ROWS A STORE HAS TAKEN AND NOT LANDED YET - a retried write, a kept batch's
+   * rerun, a framed orphan being settled, the bulk buffer being flushed - counted per frame (a frame
+   * may have several rows in flight). Each of those stores takes its rows out of the ledger it
+   * reads BEFORE it writes, so without this the frame was in no ledger for the length of the write:
+   * a re-ack read in that gap (it does not wait for a store) acknowledged a frame whose row then
+   * failed again (review of #3887). A row is counted until its write has landed or it is kept again.
+   */
+  const framesBeingStored = new SvelteMap<string, number>();
+
+  /**
+   * Counts `frameIds` as being stored until the returned release - which the caller runs only once
+   * each row is on disk, kept again, or deliberately dropped. Idempotent.
+   */
+  function storingFrames(frameIds: Iterable<string | undefined>): () => void {
+    const taken: string[] = [];
+    for (const id of frameIds) {
+      if (!id) continue;
+      framesBeingStored.set(id, (framesBeingStored.get(id) ?? 0) + 1);
+      taken.push(id);
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const id of taken) {
+        const left = (framesBeingStored.get(id) ?? 1) - 1;
+        if (left > 0) framesBeingStored.set(id, left);
+        else framesBeingStored.delete(id);
+      }
+    };
+  }
+
+  /** The frames a kept write's rows were decrypted from. */
+  function framesOfWrite(write: BatchRowWrite): string[] {
+    return [...write.framesByRow.values()].flat();
+  }
+
+  /**
    * Where a kept batch's thread lives NOW: its own key while it is in the map; else the conversation
    * that shows one of the messages its thread showed when it was kept (`anchors`) - a 1:1 re-keyed
    * onto the group it joined carries them under the new key; else nowhere (deleted or purged).
@@ -662,7 +700,7 @@ export function useMessaging() {
     ctx: MessagingContext,
     contactName: string,
     messages: KeptBatch['messages'],
-    origin: 'hold' | 'close' | 'dispatch',
+    origin: 'hold' | 'close' | 'drain' | 'dispatch',
     e: unknown,
     already?: KeptBatch
   ): void {
@@ -702,9 +740,11 @@ export function useMessaging() {
   }
 
   /**
-   * THE FRAMES WHOSE ROWS STAND SHOWN AND NOT STORED - the kept writes' and the kept batches'. What
-   * an application frame's ack must not run ahead of, PER FRAME (review of #3851): counted across
-   * the page, one row that could not be written withheld every ack of every conversation.
+   * THE FRAMES WHOSE ROWS ARE NOT STORED - the kept writes' and the kept batches' (shown, not
+   * stored), the framed orphans' (held in memory, shown nowhere) and those of every row a store has
+   * taken and not landed yet ({@link framesBeingStored}). What an application frame's ack must not
+   * run ahead of, PER FRAME (review of #3851): counted across the page, one row that could not be
+   * written withheld every ack of every conversation.
    */
   function framesLeftUnstored(): ReadonlySet<string> {
     const frames = new SvelteSet<string>();
@@ -718,8 +758,19 @@ export function useMessaging() {
     for (const entries of orphanBuffer.values()) {
       for (const entry of entries) if (entry.options.frameId) frames.add(entry.options.frameId);
     }
+    for (const id of framesBeingStored.keys()) frames.add(id);
     return frames;
   }
+
+  /**
+   * WHAT TAKES A CONVERSATION OUT OF THE MAP WHILE THE PIPELINE RUNS - the only causes of a framed
+   * orphan, named in its drop line: the reader's local deletion and a group deleted by its admin
+   * (`purgeConversation`), a removal or a leave the server states (`purgeLocalConversationRecord`),
+   * a creation rolled back (`groupCreation`), and a restore pruning a row the store no longer holds.
+   * A backup import no longer clears the map (`importUserBackup`, review of #3887).
+   */
+  const ORPHAN_REMOVERS =
+    'deleted locally or by its admin, purged after a removal or a leave, a failed creation rolled back, or pruned by a restore that no longer finds its row';
 
   /** How many framed orphans {@link orphanBuffer} holds - what a checkpoint's hold must settle. */
   function framedOrphanCount(): number {
@@ -739,15 +790,16 @@ export function useMessaging() {
    *   kept ({@link unstoredRowWrites}), a throw kept as a batch, and either refuses the hold;
    * - it is not: the conversation LEFT the map while the frame's handler ran (`handleKnownGroup`
    *   refuses an absent conversation before it decrypts, and the Welcome's re-key runs under the MLS
-   *   lock the handler holds), so the reader deleted it or it was purged. Dropped, said with its
-   *   frames, and never blocking: writing it would resurrect what the reader removed.
+   *   lock the handler holds). What removes one is {@link ORPHAN_REMOVERS}. Dropped, said with its
+   *   frames, and never blocking: writing it would resurrect what was removed.
    *
-   * An unframed orphan has no advance behind it and stays for `drainOrphanMessages`. Never throws
-   * past its own line: called inside {@link storeBufferedRows}' step.
+   * Its frames are counted as being stored ({@link storingFrames}) from the moment it leaves the
+   * buffer until its write landed or was kept. An unframed orphan has no advance behind it and stays
+   * for `drainOrphanMessages`. Never throws past its own line: called inside {@link storeBufferedRows}.
    */
   async function settleFramedOrphans(
     ctx: MessagingContext,
-    origin: 'hold' | 'close'
+    origin: 'hold' | 'close' | 'drain'
   ): Promise<void> {
     if (framedOrphanCount() === 0) return;
     const droppedFrames: string[] = [];
@@ -771,15 +823,18 @@ export function useMessaging() {
       console.log(
         `[ORPHAN] storing ${messages.length} decrypted orphan message(s) of "${key}" (${origin}): their conversation is in the map again`
       );
+      const release = storingFrames(messages.map((message) => message.frameId));
       try {
         await batchAddMessages(messages, key, ctx, 'arrival');
       } catch (e) {
         keepThrownBatch(ctx, key, messages, origin, e);
+      } finally {
+        release();
       }
     }
     if (dropped > 0) {
       console.warn(
-        `[ORPHAN] ${dropped} decrypted orphan message(s) dropped (${origin}): their conversation left the map before their row was written (deleted or purged) - nothing written back, frame(s) ${droppedFrames.join(',')}`
+        `[ORPHAN] ${dropped} decrypted orphan message(s) dropped (${origin}): their conversation left the map before their row was written (${ORPHAN_REMOVERS}) - nothing written back, frame(s) ${droppedFrames.join(',')}`
       );
     }
   }
@@ -910,10 +965,13 @@ export function useMessaging() {
   async function retryUnstoredRowWrites(ctx: MessagingContext): Promise<number> {
     if (unstoredRowWrites.length === 0) return 0;
     const pending = unstoredRowWrites.splice(0);
+    // Taken out of the ledger, and COUNTED AS BEING STORED in the same turn, each until its own
+    // outcome: a re-ack read during the write must still find its frames (review of #3887).
+    const releases = pending.map((kept) => storingFrames(framesOfWrite(kept)));
     let firstCause: unknown = null;
     let stored = 0;
     let dropped = 0;
-    for (const kept of pending) {
+    for (const [index, kept] of pending.entries()) {
       let write = kept;
       try {
         const home = homeOfWrite(ctx, kept);
@@ -942,6 +1000,9 @@ export function useMessaging() {
         firstCause ??= e;
         unstoredRowWrites.push(write);
         continue;
+      } finally {
+        // Landed, kept again or dropped by now: its frames leave the in-flight count.
+        releases[index]();
       }
       const ids = [...write.upgradeRows, ...write.newRows].map((row) => row.id);
       try {
@@ -990,7 +1051,7 @@ export function useMessaging() {
   function storeBufferedRows(
     ctx: MessagingContext,
     origin: 'hold' | 'close'
-  ): Promise<{ stored: boolean; left: number }> {
+  ): Promise<{ stored: boolean; left: number; orphans: number }> {
     const step = bufferedRowsStored
       .then(async () => {
         // FIRST, the framed orphans: decrypted, held in memory only, and settled in one pass - a
@@ -999,8 +1060,10 @@ export function useMessaging() {
         // The batches an earlier store kept run first, each on its own, under the key that shows
         // their thread now - at a close too, so their messages show without waiting for a hold.
         const kept = unstoredBatches.splice(0);
+        // Counted as being stored from the splice to each batch's outcome (review of #3887).
+        const releases = kept.map((batch) => storingFrames(batch.messages.map((m) => m.frameId)));
         let dropped = 0;
-        for (const batch of kept) {
+        for (const [index, batch] of kept.entries()) {
           let home: string | null = null;
           try {
             home = homeOfBatch(ctx, batch);
@@ -1013,6 +1076,8 @@ export function useMessaging() {
             });
           } catch (e) {
             keepThrownBatch(ctx, home ?? batch.contactName, batch.messages, origin, e, batch);
+          } finally {
+            releases[index]();
           }
         }
         if (dropped > 0) {
@@ -1027,10 +1092,13 @@ export function useMessaging() {
             return seqA - seqB;
           });
           bulkIngestBuffer.clear();
+          // Counted as being stored from the clear to each conversation's outcome: a re-ack does
+          // not wait for this store (review of #3887).
+          const releases = entries.map(([, msgs]) => storingFrames(msgs.map((m) => m.frameId)));
           const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
           beginBulkUiFlushBench(entries.length, benchMessageCount);
           try {
-            for (const [contactName, messages] of entries) {
+            for (const [index, [contactName, messages]] of entries.entries()) {
               if (messages.length === 0) continue;
               try {
                 // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
@@ -1040,12 +1108,17 @@ export function useMessaging() {
                 await batchAddMessages(messages, contactName, ctx, 'arrival');
               } catch (e) {
                 keepThrownBatch(ctx, contactName, messages, origin, e);
+              } finally {
+                releases[index]();
               }
               await yieldToMainThread().catch((e: unknown) => {
                 console.error('[ADD_MSG] yielding between buffered batches failed:', e);
               });
             }
           } finally {
+            // A step that threw between two batches gives back what it had not reached: those
+            // rows are gone with the buffer, and the throw is said by the step's own catch.
+            for (const release of releases) release();
             finishBulkUiFlushBench();
           }
         }
@@ -1056,17 +1129,22 @@ export function useMessaging() {
         // session writes it onto its row (`retryParkedMutations`). NOT counted below: the entry is
         // durable in the pending store before it is noted, so a refusal would protect no copy.
         if (origin === 'hold') await retryParkedMutations(pendingDeps(ctx));
+        // A FRAMED ORPHAN ADDED WHILE THIS STEP RAN (a history bundle's row, whose mark settles
+        // before its dispatch) is settled AGAIN here, before counting (review of #3887): left for the
+        // next store, it refused this hold - a commit's or a send's - for what the next settle simply
+        // drops or stores. What one more arrival leaves after this is counted apart (`orphans`).
+        await settleFramedOrphans(ctx, origin);
         // The count is THIS step's, read before a store queued behind it can take the kept batches.
-        // A framed orphan added while this step ran (a history bundle's row, whose mark settles
-        // before its dispatch) is not settled yet: counted, so a hold refuses and the next settles it.
-        const left = writesLeft + keptMessageCount() + framedOrphanCount();
-        return { stored: left === 0, left };
+        const left = writesLeft + keptMessageCount();
+        const orphans = framedOrphanCount();
+        return { stored: left === 0 && orphans === 0, left, orphans };
       })
       .catch((e: unknown) => {
         console.error(`[ADD_MSG] a store of the buffered messages threw (${origin}):`, e);
         return {
           stored: false,
-          left: unstoredRowCount() + keptMessageCount() + framedOrphanCount(),
+          left: unstoredRowCount() + keptMessageCount(),
+          orphans: framedOrphanCount(),
         };
       });
     bufferedRowsStored = step;
@@ -1108,14 +1186,25 @@ export function useMessaging() {
     }
     let allStored = false;
     let left = 0;
+    let orphansLeft = 0;
     try {
       const outcome = await storeBufferedRows(ctx, 'hold');
       allStored = outcome.stored;
       left = outcome.left;
+      orphansLeft = outcome.orphans;
     } finally {
       // HANDED OVER ONLY ON SUCCESS: on any other way out the hold is given back here, so buffering
       // can never stay off for the rest of the page.
       if (!allStored) release();
+    }
+    if (!allStored && left === 0) {
+      // ONLY ORPHANS ARRIVED DURING THE STEP'S LAST SETTLE: refused, since their advance may be in
+      // the export, but said on their own line - never as the failing store below, whose
+      // once-per-page line must stay for a real failure (review of #3887). The next store settles them.
+      console.warn(
+        `[ORPHAN] A checkpoint is refused: ${orphansLeft} decrypted orphan message(s) arrived while its store ran - the next store settles them`
+      );
+      throw new BufferedRowsNotStoredError(orphansLeft);
     }
     if (!allStored) {
       if (!rowStoreBlockingSaid) {
@@ -1129,7 +1218,7 @@ export function useMessaging() {
           '[ADD_MSG] Rows of applied frames cannot be stored (a transient failure) - every checkpoint is refused until they are (a commit, a join, a send). Said once per page.'
         );
       }
-      throw new BufferedRowsNotStoredError(left);
+      throw new BufferedRowsNotStoredError(left + orphansLeft);
     }
     return release;
   }
@@ -1727,28 +1816,40 @@ export function useMessaging() {
    * taken meanwhile - the Welcome's own `persistNow` is the next thing it does - resolves only once
    * these adds returned: each stored by the live path (a hold is taken), or buffered into the window
    * the hold's own step stores next. It used to run beside the chain, so that export could claim a
-   * framed orphan's advance while its row was still being written. The step never rejects: each
-   * add's failure is its own (`addMessageToChat` keeps a framed one that threw) and is said here.
+   * framed orphan's advance while its row was still being written.
+   *
+   * THE ENTRIES ARE TAKEN IN THE STEP, NOT AT THE CALL (review of #3887): taken at the call, a framed
+   * one was in no ledger until its turn came - a re-ack read in between acknowledged its frame. Its
+   * framed entries go through the one settle every store runs ({@link settleFramedOrphans}, which
+   * counts their frames until the write landed); the step replays only the unframed ones. Never
+   * rejects: each add's failure is its own (`addMessageToChat` keeps a framed one that threw) and is
+   * said here.
    */
   function drainOrphanMessages(convoKey: string, ctx: MessagingContext): void {
     const normalized = convoKey.toLowerCase();
-    const messages = orphanBuffer.get(normalized);
-    if (!messages || messages.length === 0) return;
-    orphanBuffer.delete(normalized);
-    console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
-    const step = bufferedRowsStored.then(async () => {
+    const waiting = orphanBuffer.get(normalized)?.length ?? 0;
+    if (waiting === 0) return;
+    console.log(`[ORPHAN] Draining ${waiting} buffered message(s) for "${normalized}"`);
+    const step = bufferedRowsStored.then(async (): Promise<boolean> => {
+      await settleFramedOrphans(ctx, 'drain');
+      const entries = orphanBuffer.get(normalized) ?? [];
+      const unframed = entries.filter((entry) => !entry.options.frameId);
+      const framed = entries.filter((entry) => entry.options.frameId);
+      if (framed.length > 0) orphanBuffer.set(normalized, framed);
+      else orphanBuffer.delete(normalized);
       const replays = await Promise.allSettled(
-        messages.map((msg) =>
+        unframed.map((msg) =>
           addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
         )
       );
       const failed = replays.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
       if (failed.length > 0) {
         console.error(
-          `[ORPHAN] ${failed.length} of ${messages.length} replayed message(s) of "${normalized}" failed; first cause:`,
+          `[ORPHAN] ${failed.length} of ${unframed.length} replayed message(s) of "${normalized}" failed; first cause:`,
           failed[0].reason
         );
       }
+      return unframed.some((msg) => msg.ownSend);
     });
     bufferedRowsStored = step.catch((e: unknown) => {
       console.error(`[ORPHAN] the replay of "${normalized}" threw:`, e);
@@ -1757,13 +1858,11 @@ export function useMessaging() {
     // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
     // dropped at the buffering, so it can no longer outlive the send (re-review of #2874). OUTSIDE
     // the chain: a queue read is nothing a checkpoint waits for.
-    if (messages.some((msg) => msg.ownSend)) {
-      void bufferedRowsStored
-        .then(() => applyOutboxPendingStatuses())
-        .catch((e: unknown) =>
-          console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
-        );
-    }
+    void step
+      .then((ownSends) => (ownSends ? applyOutboxPendingStatuses() : undefined))
+      .catch((e: unknown) =>
+        console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
+      );
   }
 
   /**
@@ -1811,9 +1910,14 @@ export function useMessaging() {
       );
     }
     const buffer = orphanBuffer.get(normalized) ?? [];
-    if (buffer.length >= MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+    // THE CAP BINDS THE UNFRAMED ONLY (review of #3887). A FRAMED orphan is a decrypted message whose
+    // generation is spent: refused here, it would be lost with nothing to say it but this line
+    // (principle 2). It cannot accumulate either - every store settles it, and every drain window
+    // closes with one - so it is always kept.
+    const unframedHeld = buffer.filter((entry) => !entry.options.frameId).length;
+    if (!options.frameId && unframedHeld >= MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
       console.warn(
-        `[ADD_MSG] orphan buffer of "${normalized}" full (${MAX_ORPHAN_MESSAGES_PER_CONVERSATION}) - message not kept`
+        `[ADD_MSG] orphan buffer of "${normalized}" full (${MAX_ORPHAN_MESSAGES_PER_CONVERSATION} unframed) - message not kept`
       );
       return;
     }

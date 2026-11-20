@@ -1387,4 +1387,258 @@ describe('the orphan buffer (rows before ratchet)', () => {
     (await hold)();
     expect(storedIds(saveMessage)).toEqual(['orphan-2']);
   });
+
+  /** Holds the NEXT row write open until the returned function is called. */
+  function holdNextWrite(saveMessage: ReturnType<typeof vi.fn>): () => void {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    saveMessage.mockImplementationOnce(async () => {
+      await gate;
+    });
+    return () => open();
+  }
+
+  /** Lets every pending microtask and timer turn run. */
+  async function settleTurns(): Promise<void> {
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  }
+
+  const saveMessagesIfAbsentOf = (ctx: MessagingContext) =>
+    (ctx.storage as unknown as { saveMessagesIfAbsent: ReturnType<typeof vi.fn> })
+      .saveMessagesIfAbsent;
+
+  it("THE DRAIN'S ACK GAP: a decrypted orphan being drained keeps its frame withheld until its row landed", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'orphaned', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-gap',
+      frameId: 'q-gap',
+    });
+    const openTheWrite = holdNextWrite(saveMessage);
+    admit(conversations);
+    messaging.drainOrphanMessages(ORPHAN_KEY, ctx);
+    await settleTurns();
+
+    // The write is in flight: a re-ack read now must still find the frame.
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-gap']);
+    openTheWrite();
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-gap']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('A RETRIED WRITE keeps its frame withheld while the retry writes, and after it fails again', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    saveMessagesIfAbsentOf(ctx).mockRejectedValueOnce(
+      new DOMException('full', 'QuotaExceededError')
+    );
+    await messaging.addMessageToChat(PEER, 'kept', CONVO, ctx, {
+      messageId: 'in-retry',
+      frameId: 'q-retry',
+    });
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-retry']);
+
+    // The hold's retry: its write held open, then refused again.
+    let refuse: (e: unknown) => void = () => {};
+    saveMessagesIfAbsentOf(ctx).mockImplementationOnce(
+      () => new Promise((_, reject) => (refuse = reject))
+    );
+    const hold = observer.holdRowsForCheckpoint().catch((e: unknown) => e);
+    await settleTurns();
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-retry']);
+    refuse(new DOMException('full', 'QuotaExceededError'));
+    expect(await hold).toBeInstanceOf(BufferedRowsNotStoredError);
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-retry']);
+    expect(storedIds(saveMessage)).toEqual([]);
+  });
+
+  it("A KEPT BATCH'S RERUN keeps its frame withheld while the rerun writes", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    const realGet = conversations.get.bind(conversations);
+    let armed = true;
+    vi.spyOn(conversations, 'get').mockImplementation((key: string) => {
+      if (armed) {
+        armed = false;
+        throw new Error('map torn down');
+      }
+      return realGet(key);
+    });
+    await expect(
+      messaging.addMessageToChat(PEER, 'thrown', CONVO, ctx, {
+        messageId: 'in-rerun',
+        frameId: 'q-rerun',
+      })
+    ).rejects.toThrow('map torn down');
+
+    const openTheWrite = holdNextWrite(saveMessage);
+    const hold = observer.holdRowsForCheckpoint();
+    await settleTurns();
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-rerun']);
+    openTheWrite();
+    (await hold)();
+    expect(storedIds(saveMessage)).toEqual(['in-rerun']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it("AN ORPHAN ADDED WHILE A HOLD'S STEP RUNS is settled by that step - the hold is not refused, and the failing-store line is not spent", async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'buffered', CONVO, ctx, {
+      messageId: 'in-held',
+      frameId: 'q-held',
+    });
+    const openTheWrite = holdNextWrite(saveMessage);
+    const hold = observer.holdRowsForCheckpoint().catch((e: unknown) => e);
+    await settleTurns();
+
+    // Mid-step: a decrypted message meets a conversation the reader just deleted.
+    await messaging.addMessageToChat(PEER, 'late orphan', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-late',
+      frameId: 'q-late',
+    });
+    openTheWrite();
+
+    const outcome = await hold;
+    expect(outcome).toBeTypeOf('function');
+    (outcome as () => void)();
+    expect(storedIds(saveMessage)).toEqual(['in-held']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    const lines = errors.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes('Rows of applied frames cannot be stored'))).toBe(
+      false
+    );
+  });
+
+  it("a decrypted orphan met by a WINDOW'S CLOSE whose conversation is gone is dropped there and said", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    observer.onBulkIngestStart(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'bulk orphan', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-bulk',
+      frameId: 'q-bulk',
+    });
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-bulk']);
+    await observer.onBulkIngestEnd(LIVE_DRAIN);
+
+    expect(observer.framesLeftUnstored().size).toBe(0);
+    expect(storedIds(saveMessage)).toEqual([]);
+    const dropped = warn.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith('[ORPHAN]') && line.includes('dropped (close)'));
+    expect(dropped).toHaveLength(1);
+  });
+
+  it('ONE KEY, BOTH KINDS: the hold drops the framed orphan of a gone conversation, the unframed one waits for its Welcome', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+
+    await messaging.addMessageToChat(PEER, 'decrypted', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-framed',
+      frameId: 'q-framed',
+    });
+    await messaging.addMessageToChat('system', 'a local notice', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-unframed',
+      isSystem: true,
+    });
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual([]);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+
+    admit(conversations);
+    messaging.drainOrphanMessages(ORPHAN_KEY, ctx);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-unframed']);
+  });
+
+  it("a settle whose WRITE FAILS keeps the orphan's row: the hold refuses, the frame is withheld, and the next hold stores it", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    await messaging.addMessageToChat(PEER, 'orphaned', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-fail',
+      frameId: 'q-fail',
+    });
+    admit(conversations);
+    // The settle's write and the same hold's one retry of it both fail.
+    saveMessagesIfAbsentOf(ctx)
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'))
+      .mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
+
+    await expect(observer.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-fail']);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-fail']);
+    expect(observer.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('a settle that THROWS keeps the orphan as a batch: the hold refuses, the frame is withheld, and the next hold stores it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    await messaging.addMessageToChat(PEER, 'orphaned', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-throw',
+      frameId: 'q-throw',
+    });
+    admit(conversations);
+    // The settle's batch, its anchor read, and the same hold's rerun all throw.
+    const realGet = conversations.get.bind(conversations);
+    let throws = 3;
+    vi.spyOn(conversations, 'get').mockImplementation((key: string) => {
+      if (key === ORPHAN_KEY && throws > 0) {
+        throws -= 1;
+        throw new Error('map torn down');
+      }
+      return realGet(key);
+    });
+
+    await expect(observer.holdRowsForCheckpoint()).rejects.toBeInstanceOf(
+      BufferedRowsNotStoredError
+    );
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-throw']);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-throw']);
+  });
+
+  it('THE CAP binds the unframed only: a decrypted orphan past 50 waiting messages is kept, and stored', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const observer = messaging.bulkIngestObserver(() => ctx);
+    for (let i = 0; i < 50; i++) {
+      await messaging.addMessageToChat('system', `notice ${i}`, ORPHAN_KEY, ctx, {
+        messageId: `orphan-notice-${i}`,
+        isSystem: true,
+      });
+    }
+    await messaging.addMessageToChat(PEER, 'past the cap', ORPHAN_KEY, ctx, {
+      messageId: 'orphan-past-cap',
+      frameId: 'q-cap',
+    });
+    expect([...observer.framesLeftUnstored()]).toEqual(['q-cap']);
+    expect(warn.mock.calls.some((call) => String(call[0]).includes('full'))).toBe(false);
+
+    admit(conversations);
+    (await observer.holdRowsForCheckpoint())();
+    expect(storedIds(saveMessage)).toEqual(['orphan-past-cap']);
+  });
 });

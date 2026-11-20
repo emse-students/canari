@@ -1669,8 +1669,14 @@ export async function importUserBackup(params: {
   myDeviceId: string;
   userId: string;
   log: (msg: string) => void;
+  /**
+   * Rebuilds the conversation map from the store the import just merged into. NEVER preceded by a
+   * clear (rows before ratchet, review of #3887): the inbound pipeline keeps running during an
+   * import, and a frame whose conversation was missing from the map in between was handled as one
+   * the reader had deleted. The restore prunes and re-seeds the map in one synchronous loop, so no
+   * conversation is ever absent from it.
+   */
   reloadConversations: () => Promise<void>;
-  clearConversations: () => void;
 }): Promise<{ conversations: number; messages: number; isSameDevice: boolean }> {
   const {
     file,
@@ -1681,7 +1687,6 @@ export async function importUserBackup(params: {
     userId,
     log,
     reloadConversations,
-    clearConversations,
   } = params;
 
   const arrayBuffer = await file.arrayBuffer();
@@ -1714,7 +1719,6 @@ export async function importUserBackup(params: {
     );
   }
 
-  clearConversations();
   await reloadConversations();
 
   log(
