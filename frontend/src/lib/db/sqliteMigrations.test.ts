@@ -2,7 +2,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationNameAtStatement,
-  conversationNameFromStatementStatement,
+  conversationNameRankStatements,
   conversationNameSyncStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
@@ -292,13 +292,15 @@ describe('conversationNameAtStatement (v21)', () => {
     engine.exec(sync!);
     expect(conversationNameSyncStatement(columnsOf())).toBeNull();
     // v22: the dated name's rank, NULL on arrival - a rename's, which every older dated name has.
-    const rank = conversationNameFromStatementStatement(columnsOf());
-    expect(rank).not.toBeNull();
-    engine.exec(rank!);
-    expect(engine.prepare('SELECT name_from_statement FROM conversations').get()).toEqual({
-      name_from_statement: null,
-    });
-    expect(conversationNameFromStatementStatement(columnsOf())).toBeNull();
+    const rank = conversationNameRankStatements(columnsOf());
+    expect(rank).toHaveLength(3);
+    for (const add of rank) engine.exec(add);
+    expect(
+      engine
+        .prepare('SELECT name_from_statement, name_rename_at, name_renamed_by FROM conversations')
+        .get()
+    ).toEqual({ name_from_statement: null, name_rename_at: null, name_renamed_by: null });
+    expect(conversationNameRankStatements(columnsOf())).toEqual([]);
     expect(SCHEMA_VERSION).toBe(22);
   });
 });

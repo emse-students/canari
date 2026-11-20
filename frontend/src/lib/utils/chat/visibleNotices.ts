@@ -253,7 +253,8 @@ export function ownRenameSettledByRelay(
   convo: Conversation,
   rows: ReadonlyArray<{ id: string; content: string; serverTimestamp?: number }>,
   relayer: string,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  userId: string
 ): Conversation | null {
   const settled = ownRenameFromRelay(
     convo,
@@ -261,7 +262,8 @@ export function ownRenameSettledByRelay(
       id: r.id,
       ...(typeof r.serverTimestamp === 'number' ? { serverTimestamp: r.serverTimestamp } : {}),
       renamedTo: renamedToOf(r.content),
-    }))
+    })),
+    userId
   );
   if (!settled) return null;
   const what = `own rename ${settled.frame.messageId.slice(0, 8)} in ${convo.id.slice(0, 8)}…`;

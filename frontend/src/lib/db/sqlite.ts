@@ -1,4 +1,4 @@
-import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
+import { nameRankFields, nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -83,7 +83,7 @@ import {
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   conversationNameAtStatement,
-  conversationNameFromStatementStatement,
+  conversationNameRankStatements,
   conversationNameSyncStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
@@ -277,7 +277,9 @@ export class SqliteStorage implements IStorage {
                 local_read_seed  INTEGER,
                 name_at          INTEGER,
                 name_sync        TEXT,
-                name_from_statement INTEGER
+                name_from_statement INTEGER,
+                name_rename_at   INTEGER,
+                name_renamed_by  TEXT
             )
         `);
 
@@ -660,12 +662,14 @@ export class SqliteStorage implements IStorage {
     }
 
     if (currentVersion < 22) {
-      // v21->v22: the dated name keeps its RANK (`name_from_statement`, `groupName.ts`): a silent
-      // `groupNamed` statement never beats a rename. Additive and NULL on arrival, a rename's rank -
-      // every name dated before this build was dated by a rename.
+      // v21->v22: the dated name keeps its RANK (`name_from_statement`, `name_rename_at`,
+      // `name_renamed_by`; `groupName.ts`): a silent `groupNamed` statement never beats a rename, an
+      // answer is ordered by the rename it restates, and only a rename's author answers. Additive and
+      // NULL on arrival, a rename's rank with no author - every name dated before this build.
       const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
-      const add = conversationNameFromStatementStatement(cols.map((c) => String(c.name)));
-      if (add) await this.db.execute(add);
+      for (const add of conversationNameRankStatements(cols.map((c) => String(c.name)))) {
+        await this.db.execute(add);
+      }
       // Stamped at 22, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 22');
     }
@@ -684,9 +688,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
         CONVERSATION_LOCAL_READ_SEED_VALUE +
-        ', $12, $13, $14)',
+        ', $12, $13, $14, $15, $16)',
       [
         conv.id,
         conv.name,
@@ -702,6 +706,8 @@ export class SqliteStorage implements IStorage {
         conv.nameAt ?? null,
         conv.nameSync ? JSON.stringify(conv.nameSync) : null,
         conv.nameFromStatement === true ? 1 : null,
+        conv.nameRenameAt ?? null,
+        conv.nameRenamedBy ?? null,
       ]
     );
   }
@@ -728,10 +734,14 @@ export class SqliteStorage implements IStorage {
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
       // INTEGER too; NULL (never stated) and an unusable value both read as absent.
       ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
-      // INTEGER (a string on Android); only 1 is a statement's rank, and only beside a date.
-      ...(Number(r.name_at) > 0 && Number(r.name_from_statement) === 1
-        ? { nameFromStatement: true as const }
-        : {}),
+      // The rank, read by the one rule every store applies (`nameRankFields`): INTEGER columns are
+      // strings on Android; only 1 is a statement's rank, and none of it holds without a date.
+      ...nameRankFields({
+        ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
+        ...(Number(r.name_from_statement) === 1 ? { nameFromStatement: true as const } : {}),
+        ...(Number(r.name_rename_at) > 0 ? { nameRenameAt: Number(r.name_rename_at) } : {}),
+        ...(typeof r.name_renamed_by === 'string' ? { nameRenamedBy: r.name_renamed_by } : {}),
+      }),
       // JSON TEXT, validated on the way out: an unreadable value reads as nothing owed.
       ...nameSyncField(parseNameSync(r.name_sync)),
       // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
@@ -1551,7 +1561,7 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
       // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)',
       [
         conv.id,
         conv.name,
@@ -1567,6 +1577,8 @@ export class SqliteStorage implements IStorage {
         conv.nameAt ?? null,
         conv.nameSync ? JSON.stringify(conv.nameSync) : null,
         conv.nameFromStatement === true ? 1 : null,
+        conv.nameRenameAt ?? null,
+        conv.nameRenamedBy ?? null,
       ]
     );
   }

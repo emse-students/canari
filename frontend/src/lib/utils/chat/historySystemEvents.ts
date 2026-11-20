@@ -18,6 +18,7 @@ import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
+  answerReadSettlesOwn,
   applyNameStatement,
   applyRenameFrame,
   GROUP_NAME_SKIP_TEXT,
@@ -301,7 +302,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             convo,
             data.newName,
             parseServerTimestampMs(msg.timestamp),
-            appMessageSentAtMs(parsed.sentAt)
+            appMessageSentAtMs(parsed.sentAt),
+            senderNorm
           )
         : null;
       if (outcome && 'row' in outcome) {
@@ -323,9 +325,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             convo,
             data.name,
             parseServerTimestampMs(msg.timestamp),
-            appMessageSentAtMs(parsed.sentAt)
+            appMessageSentAtMs(parsed.sentAt),
+            typeof data.answers === 'string' ? { renameAt: data.renameAt } : undefined
           )
         : null;
+      const settledByRead =
+        convo && typeof data.answers === 'string'
+          ? answerReadSettlesOwn(convo, { name: data.name, renameAt: data.renameAt })
+          : null;
       if (outcome && 'row' in outcome) {
         setConversation(contactName, outcome.row);
       } else if (outcome && 'refused' in outcome) {
@@ -333,6 +340,13 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       } else if (outcome?.skipped === 'not-a-group') {
         console.warn(
           `[GROUP_NAME] replayed name statement in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+        );
+      } else if (settledByRead) {
+        // The live path's read-side dedupe: an answer of this user's name and rename, replayed, settles
+        // the one this device owes - the members took it.
+        setConversation(contactName, settledByRead);
+        console.info(
+          `[GROUP_NAME] owed answer in ${conversationId.slice(0, 8)}… settled unsent - a replayed answer says the same`
         );
       } else if (convo && outcome) {
         // Counted at the live path's level; never ANSWERED from the archive - a replayed statement
@@ -893,7 +907,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
                   : {}),
               })),
               senderNorm,
-              (line) => console.info(line)
+              (line) => console.info(line),
+              userId
             )
           : null;
         if (healed) setConversation(contactName, healed);

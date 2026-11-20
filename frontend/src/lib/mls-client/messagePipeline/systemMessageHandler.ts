@@ -67,6 +67,7 @@ import {
   historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
+  nameAnswerSender,
   sendHistoryDigest,
 } from '$lib/utils/chat/groupActions';
 import {
@@ -111,7 +112,10 @@ import {
   reportRenameRefusal,
   withRestatedGroupName,
 } from '$lib/utils/chat/groupName';
-import { answerOutrankedStatement } from '$lib/utils/chat/nameStatementAnswer';
+import {
+  answerOutrankedStatement,
+  settleOwedAnswerByRead,
+} from '$lib/utils/chat/nameStatementAnswer';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -1223,7 +1227,13 @@ export async function handleSystemEvent(
     // no longer puts the older name back. The notice is history and is drawn either way.
     // The server time is BOUNDED by the frame's signed sentAt, so a hostile server cannot lock a name
     // in by stamping it far in the future.
-    const outcome = applyRenameFrame(convo, data.newName, deliveryMeta?.queuedCreatedAt, sentAt);
+    const outcome = applyRenameFrame(
+      convo,
+      data.newName,
+      deliveryMeta?.queuedCreatedAt,
+      sentAt,
+      senderNorm
+    );
     if ('row' in outcome) {
       conversations.set(convoKey, outcome.row);
       if (storage) await saveConversation(convoKey);
@@ -1249,8 +1259,16 @@ export async function handleSystemEvent(
     // restatement of a group that existed before names were dated. The rename's rule at a
     // statement's rank (`applyNameStatement`): a rename beats it whatever the dates, so a member's
     // restatement crossing a real rename never puts the old name back. No notice: nothing was renamed.
-    const outcome = applyNameStatement(convo, data.name, deliveryMeta?.queuedCreatedAt, sentAt);
-    const where = `name statement by ${senderNorm.slice(0, 8)}`;
+    const isAnswer = typeof data.answers === 'string';
+    const outcome = applyNameStatement(
+      convo,
+      data.name,
+      deliveryMeta?.queuedCreatedAt,
+      sentAt,
+      isAnswer ? { renameAt: data.renameAt } : undefined
+    );
+    const where = `name ${isAnswer ? 'answer' : 'statement'} by ${senderNorm.slice(0, 8)}`;
+    const save = (key: string) => (storage ? saveConversation(key) : Promise.resolve());
     if ('row' in outcome) {
       conversations.set(convoKey, outcome.row);
       if (storage) await saveConversation(convoKey);
@@ -1261,18 +1279,30 @@ export async function handleSystemEvent(
       console.warn(
         `[GROUP_NAME] ${where} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
       );
+    } else if (
+      isAnswer &&
+      (await settleOwedAnswerByRead({
+        conversations,
+        convoKey,
+        answer: { id: messageId, name: data.name, renameAt: data.renameAt },
+        save,
+        log,
+      }))
+    ) {
+      // Another device of this user answered first, with what this one owed: nothing to send.
     } else if (reportOutrankedStatement(convo, data.name, where)) {
-      // A SPLIT THIS DEVICE CAN HEAL: the stating device shows a name the group was renamed away
-      // from. Answered once per statement, never an answer (`answerOutrankedStatement`).
+      // A SPLIT THIS DEVICE CAN HEAL, when the rename it holds is its user's: the stating device
+      // shows a name the group was renamed away from. Owed once, never to an answer
+      // (`answerOutrankedStatement`).
       await answerOutrankedStatement({
         mlsService,
         userId,
-        deviceKeyB64: deviceKey(),
+        send: nameAnswerSender(mlsService, userId, deviceKey()),
         conversations,
         convoKey,
         statedName: data.name,
-        statement: { id: messageId, isAnswer: typeof data.answers === 'string' },
-        save: (key) => (storage ? saveConversation(key) : Promise.resolve()),
+        statement: { id: messageId, isAnswer },
+        save,
         log,
       });
     }
@@ -2031,7 +2061,8 @@ export async function handleSystemEvent(
                     : {}),
                 })),
                 senderNorm,
-                log
+                log,
+                userId
               )
             : null;
           if (healed) {

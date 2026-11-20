@@ -52,6 +52,10 @@ export interface ConversationMeta {
   nameAt?: number;
   /** `Conversation.nameFromStatement`: the dated name's rank, persisted with it. Absent: a rename's. */
   nameFromStatement?: true;
+  /** `Conversation.nameRenameAt`: an answer's rename date, beside a statement's rank only. */
+  nameRenameAt?: number;
+  /** `Conversation.nameRenamedBy`: the renaming user, beside a rename's rank only. */
+  nameRenamedBy?: string;
   /** `Conversation.nameSync`: what this device still owes about a rename it made. Absent: none. */
   nameSync?: NameSync;
   /**

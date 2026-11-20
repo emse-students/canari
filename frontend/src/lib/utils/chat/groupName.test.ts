@@ -4,6 +4,10 @@ import {
   applyRenameFrame,
   nameStatementDue,
   statementAnswerDue,
+  answerReadSettlesOwn,
+  owedAnswerDue,
+  ownAnswerOutcome,
+  withOwedAnswer,
   ownNameStatementOutcome,
   boundedRestatedGroupName,
   groupNameSupersedes,
@@ -110,11 +114,14 @@ describe('what is read off the wire, refused by its real cause', () => {
   });
 
   it('applyRenameFrame is the read, the bound and the order in one', () => {
-    expect(applyRenameFrame(group(), '', T, T)).toEqual({ refused: 'empty-name' });
-    expect(applyRenameFrame(group({ conversationType: 'direct' }), 'A', T, T)).toEqual({
+    expect(applyRenameFrame(group(), '', T, T, 'bob')).toEqual({ refused: 'empty-name' });
+    expect(applyRenameFrame(group({ conversationType: 'direct' }), 'A', T, T, 'bob')).toEqual({
       skipped: 'not-a-group',
     });
-    expect(rowOf(applyRenameFrame(group(), 'A', T, T))).toMatchObject({ name: 'A', nameAt: T });
+    expect(rowOf(applyRenameFrame(group(), 'A', T, T, 'bob'))).toMatchObject({
+      name: 'A',
+      nameAt: T,
+    });
   });
 
   it('a join push restates only a name a frame dated', () => {
@@ -152,24 +159,32 @@ describe("the acting device's own rename, written over the row as it is AFTER th
 
   it("a peer's later rename applied during the send stays", () => {
     const meanwhile = group({ name: 'B', nameAt: T + 5_000 });
-    expect(ownRenameOutcome(meanwhile, 'A', T, false, OVER)).toEqual({ skipped: 'not-newer' });
+    expect(ownRenameOutcome(meanwhile, 'A', T, false, OVER, 'me')).toEqual({
+      skipped: 'not-newer',
+    });
   });
 
   it('dated by the answer when newer', () => {
-    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, false, OVER))).toMatchObject({
+    expect(
+      rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, false, OVER, 'me'))
+    ).toMatchObject({
       name: 'A',
       nameAt: T + 1,
     });
   });
 
   it('with no server time in the answer the row is written undated, never under an older date', () => {
-    const row = rowOf(ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, false, OVER));
+    const row = rowOf(
+      ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, false, OVER, 'me')
+    );
     expect(row.name).toBe('A');
     expect('nameAt' in row).toBe(false);
   });
 
   it('an owed server copy is recorded by NAME and the server name it goes over', () => {
-    expect(rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, true, OVER))).toMatchObject({
+    expect(
+      rowOf(ownRenameOutcome(group({ nameAt: T }), 'A', T + 1, true, OVER, 'me'))
+    ).toMatchObject({
       name: 'A',
       nameAt: T + 1,
       nameSync: { serverCopy: { name: 'A', from: 'Old' } },
@@ -177,7 +192,9 @@ describe("the acting device's own rename, written over the row as it is AFTER th
   });
 
   it('an UNDATED rename owes its copy too - the marker is not lost with the date', () => {
-    const row = rowOf(ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, true, OVER));
+    const row = rowOf(
+      ownRenameOutcome(group({ name: 'Old', nameAt: T }), 'A', null, true, OVER, 'me')
+    );
     expect('nameAt' in row).toBe(false);
     expect(row.nameSync).toEqual({ serverCopy: { name: 'A', from: 'Old' } });
   });
@@ -190,7 +207,7 @@ describe("the acting device's own rename, written over the row as it is AFTER th
         pending: { name: 'P', messageId: 'm1', sentAt: T, over: { name: 'Older' } },
       },
     });
-    const row = rowOf(ownRenameOutcome(owing, 'A', T + 1, false, OVER));
+    const row = rowOf(ownRenameOutcome(owing, 'A', T + 1, false, OVER, 'me'));
     expect('nameSync' in row).toBe(false);
   });
 });
@@ -244,7 +261,8 @@ describe('a rename whose frame got no answer', () => {
         group({ name: 'Old', nameSync: { pending: undated } }),
         'Old',
         T - 500,
-        T - 600
+        T - 600,
+        'bob'
       )
     );
     expect(row).toMatchObject({ name: 'Old', nameAt: T - 500 });
@@ -322,7 +340,11 @@ describe('the heal of an own rename whose fate was never learnt: a relayed copy 
 
   it('a relayed row under its id applies (A, t1) at the time the members dated it, and owes the copy', () => {
     const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
-    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    const out = ownRenameFromRelay(
+      s,
+      [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }],
+      'me'
+    );
     expect(out).toMatchObject({ outcome: 'applied' });
     const healed = (out as { row: Conversation }).row;
     expect(healed).toMatchObject({ name: 'A', nameAt: T + 5 });
@@ -331,7 +353,11 @@ describe('the heal of an own rename whose fate was never learnt: a relayed copy 
 
   it('A landed BEFORE the later B this device holds: B stands, as it does for every member', () => {
     const s = group({ name: 'B', nameAt: T + 10, nameSync: { unconfirmed: FRAME } });
-    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    const out = ownRenameFromRelay(
+      s,
+      [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }],
+      'me'
+    );
     expect(out).toMatchObject({ outcome: 'older' });
     const kept = (out as { row: Conversation }).row;
     expect(kept).toMatchObject({ name: 'B', nameAt: T + 10 });
@@ -340,13 +366,21 @@ describe('the heal of an own rename whose fate was never learnt: a relayed copy 
 
   it('A landed AFTER B: the members hold A, and so does this device now', () => {
     const s = group({ name: 'B', nameAt: T + 3, nameSync: { unconfirmed: FRAME } });
-    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    const out = ownRenameFromRelay(
+      s,
+      [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }],
+      'me'
+    );
     expect((out as { row: Conversation }).row).toMatchObject({ name: 'A', nameAt: T + 5 });
   });
 
   it('settles a frame still pending too: it landed, nothing is re-sent', () => {
     const s = group({ name: 'Old', nameAt: T - 1, nameSync: { pending: FRAME } });
-    const out = ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }]);
+    const out = ownRenameFromRelay(
+      s,
+      [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'A' }],
+      'me'
+    );
     expect((out as { row: Conversation }).row.nameSync).toEqual({
       serverCopy: { name: 'A', from: 'Old' },
     });
@@ -356,9 +390,9 @@ describe('the heal of an own rename whose fate was never learnt: a relayed copy 
     const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
     const far = T + BUNDLE_SERVER_TIME_SKEW_MS + 1;
     expect(
-      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: far, renamedTo: 'A' }])
+      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: far, renamedTo: 'A' }], 'me')
     ).toMatchObject({ refused: 'server-time-out-of-bound' });
-    expect(ownRenameFromRelay(s, [{ id: 'own-1', renamedTo: 'A' }])).toMatchObject({
+    expect(ownRenameFromRelay(s, [{ id: 'own-1', renamedTo: 'A' }], 'me')).toMatchObject({
       refused: 'no-server-time',
     });
   });
@@ -366,13 +400,13 @@ describe('the heal of an own rename whose fate was never learnt: a relayed copy 
   it('a row under its id naming another name is refused; rows under other ids are not its business', () => {
     const s = group({ name: 'Old', nameAt: T - 1, nameSync: { unconfirmed: FRAME } });
     expect(
-      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'Z' }])
+      ownRenameFromRelay(s, [{ id: 'own-1', serverTimestamp: T + 5, renamedTo: 'Z' }], 'me')
     ).toMatchObject({ refused: 'other-name' });
     expect(
-      ownRenameFromRelay(s, [{ id: 'other', serverTimestamp: T + 5, renamedTo: 'A' }])
+      ownRenameFromRelay(s, [{ id: 'other', serverTimestamp: T + 5, renamedTo: 'A' }], 'me')
     ).toBeNull();
     expect(
-      ownRenameFromRelay(group({ name: 'Old' }), [{ id: 'own-1', renamedTo: 'A' }])
+      ownRenameFromRelay(group({ name: 'Old' }), [{ id: 'own-1', renamedTo: 'A' }], 'me')
     ).toBeNull();
   });
 
@@ -463,7 +497,7 @@ describe('a silent name statement is ranked below every rename', () => {
   it('the row carries the rank with the date, and a rename removes it', () => {
     const stated = rowOf(withDatedGroupName(group(), { name: 'Groupe', at: T, statement: true }));
     expect(stated).toMatchObject({ name: 'Groupe', nameAt: T, nameFromStatement: true });
-    const renamed = rowOf(applyRenameFrame(stated, 'Nouveau', T - 1_000, T - 1_000));
+    const renamed = rowOf(applyRenameFrame(stated, 'Nouveau', T - 1_000, T - 1_000, 'bob'));
     expect(renamed.nameFromStatement).toBeUndefined();
     expect(renamed).toMatchObject({ name: 'Nouveau', nameAt: T - 1_000 });
   });
@@ -479,7 +513,9 @@ describe('a silent name statement is ranked below every rename', () => {
 
   it("an own rename answered with no server time drops the statement's rank with its date", () => {
     const stated = group({ name: 'Groupe', nameAt: T, nameFromStatement: true });
-    const out = rowOf(ownRenameOutcome(stated, 'Nouveau', null, false, { name: 'Groupe', at: T }));
+    const out = rowOf(
+      ownRenameOutcome(stated, 'Nouveau', null, false, { name: 'Groupe', at: T }, 'me')
+    );
     expect(out.nameAt).toBeUndefined();
     expect(out.nameFromStatement).toBeUndefined();
   });
@@ -604,23 +640,132 @@ describe('#3888 review: statements and the rest of the rule', () => {
     expect(pendingRenameVerdict({ name: 'Old', nameAt: T + 5 }, PENDING)).toBe('superseded');
   });
 
-  it('S1: a rename-dated row answers a statement of ANOTHER name, once per id, never an answer', () => {
-    const renamed = group({ name: 'Nouveau', nameAt: T });
+  it('S1/A2: only the AUTHOR of the rename held answers a statement of ANOTHER name, never an answer', () => {
+    const renamed = group({ name: 'Nouveau', nameAt: T, nameRenamedBy: 'alice' });
     const s1 = { id: 's-1', isAnswer: false };
-    expect(statementAnswerDue(renamed, 'Ancien', s1)).toBe(true);
-    expect(statementAnswerDue(renamed, 'Nouveau', s1)).toBe(false);
-    expect(statementAnswerDue(renamed, 'Ancien', { id: 's-2', isAnswer: true })).toBe(false);
-    expect(statementAnswerDue({ ...renamed, nameSync: { answered: 's-1' } }, 'Ancien', s1)).toBe(
+    expect(statementAnswerDue(renamed, 'Ancien', s1, 'alice')).toBe(true);
+    expect(statementAnswerDue(renamed, 'Ancien', s1, 'ALICE')).toBe(true);
+    // Another member's device holds the same rename: it does not answer (A2).
+    expect(statementAnswerDue(renamed, 'Ancien', s1, 'bob')).toBe(false);
+    // A rename whose author is not known (dated before this build): nobody answers.
+    expect(statementAnswerDue(group({ name: 'Nouveau', nameAt: T }), 'Ancien', s1, 'alice')).toBe(
       false
     );
-    // A statement-dated row, or an undated one, never answers: that is what terminates it.
-    expect(statementAnswerDue(group({ nameAt: T, nameFromStatement: true }), 'Ancien', s1)).toBe(
+    expect(statementAnswerDue(renamed, 'Nouveau', s1, 'alice')).toBe(false);
+    expect(statementAnswerDue(renamed, 'Ancien', { id: 's-2', isAnswer: true }, 'alice')).toBe(
       false
     );
-    expect(statementAnswerDue(group(), 'Ancien', s1)).toBe(false);
+    // A statement-dated row never answers: that is what terminates it.
+    expect(
+      statementAnswerDue(group({ nameAt: T, nameFromStatement: true }), 'Ancien', s1, 'alice')
+    ).toBe(false);
   });
 
-  it('the answered id survives the store', () => {
-    expect(parseNameSync(JSON.stringify({ answered: 's-1' }))).toEqual({ answered: 's-1' });
+  it('A1: the answer is OWED until a send settles it; one owed answer at a time', () => {
+    const renamed = group({ name: 'Nouveau', nameAt: T, nameRenamedBy: 'alice' });
+    const owed = withOwedAnswer(renamed, 's-1');
+    expect(owed.nameSync).toEqual({ answer: { to: 's-1' } });
+    // Owed: no second answer is due, to this statement or another (one answer heals them all).
+    expect(statementAnswerDue(owed, 'Ancien', { id: 's-1', isAnswer: false }, 'alice')).toBe(false);
+    expect(statementAnswerDue(owed, 'Autre', { id: 's-2', isAnswer: false }, 'alice')).toBe(false);
+    expect(owedAnswerDue(owed, 'alice')).toEqual({ due: 'mint', to: 's-1' });
+    const frame = { name: 'Nouveau', renameAt: T, messageId: 'a-1', sentAt: T + 50 };
+    // No answer: the SAME frame is re-sent.
+    const kept = ownAnswerOutcome(owed, 's-1', frame, { kept: 'unanswered' });
+    expect(owedAnswerDue(kept, 'alice')).toEqual({ due: 'resend', frame, to: 's-1' });
+    // A frame minted for another name is not re-sent: the row moved on, a fresh one goes out.
+    expect(owedAnswerDue({ ...kept, name: 'Troisieme', nameAt: T + 9 }, 'alice')).toEqual({
+      due: 'mint',
+      to: 's-1',
+    });
+    // Sent: settled, and the statement's re-delivery is not answered again - a new one is.
+    const sent = ownAnswerOutcome(kept, 's-1', frame, { sent: { receivedAt: T + 60 } });
+    expect(sent.nameSync).toEqual({ answer: { to: 's-1', done: true } });
+    expect(owedAnswerDue(sent, 'alice')).toBe('none');
+    expect(statementAnswerDue(sent, 'Ancien', { id: 's-1', isAnswer: false }, 'alice')).toBe(false);
+    expect(statementAnswerDue(sent, 'Ancien', { id: 's-3', isAnswer: false }, 'alice')).toBe(true);
+    // The clock refused: the frame dropped, the debt kept.
+    expect(ownAnswerOutcome(kept, 's-1', frame, { refused: 'clock' }).nameSync).toEqual({
+      answer: { to: 's-1' },
+    });
+    // A later rename by someone else voids it.
+    expect(owedAnswerDue({ ...owed, nameRenamedBy: 'bob', nameAt: T + 9 }, 'alice')).toBe('void');
+  });
+
+  it('A2: an answer read that says what this device owes settles it unsent', () => {
+    const owed = withOwedAnswer(
+      group({ name: 'Nouveau', nameAt: T, nameRenamedBy: 'alice' }),
+      's-1'
+    );
+    expect(answerReadSettlesOwn(owed, { name: 'Nouveau', renameAt: T })!.nameSync).toEqual({
+      answer: { to: 's-1', done: true },
+    });
+    expect(answerReadSettlesOwn(owed, { name: 'Nouveau', renameAt: T - 1 })).toBeNull();
+    expect(answerReadSettlesOwn(owed, { name: 'Autre', renameAt: T })).toBeNull();
+  });
+
+  it('the owed answer survives the store, frame included', () => {
+    const answer = {
+      to: 's-1',
+      frame: { name: 'Nouveau', renameAt: T, messageId: 'a-1', sentAt: T + 50 },
+    };
+    expect(parseNameSync(JSON.stringify({ answer }))).toEqual({ answer });
+    expect(parseNameSync(JSON.stringify({ answer: { to: 's-1', done: true } }))).toEqual({
+      answer: { to: 's-1', done: true },
+    });
+  });
+});
+
+describe('#3888 re-review A3: answers are ordered by the rename they restate', () => {
+  const plain = (name: string, at: number) =>
+    rowOf(applyNameStatement(group({ name: 'Groupe' }), name, at, at));
+
+  it('an answer beats a plain statement whatever the dates', () => {
+    const stated = plain('Ancien', T + 100);
+    const answered = applyNameStatement(stated, 'Nouveau', T + 50, T + 50, { renameAt: T });
+    expect(rowOf(answered)).toMatchObject({ name: 'Nouveau', nameAt: T + 50, nameRenameAt: T });
+    // ...and a later plain statement never takes it back.
+    expect(applyNameStatement(rowOf(answered), 'Ancien', T + 200, T + 200)).toEqual({
+      skipped: 'not-newer',
+    });
+  });
+
+  it('two answers converge on the NEWER rename, in both reading orders', () => {
+    const base = plain('Ancien', T + 100);
+    // The older rename's answer was SENT later: ordered by its rename, it still loses.
+    const older = { name: 'Vieux', at: T + 300, renameAt: T + 10 };
+    const newer = { name: 'Neuf', at: T + 200, renameAt: T + 20 };
+    const read = (first: typeof older, second: typeof older) => {
+      const a = rowOf(applyNameStatement(base, first.name, first.at, first.at, first));
+      const b = applyNameStatement(a, second.name, second.at, second.at, second);
+      return 'row' in b ? b.row : a;
+    };
+    expect(read(older, newer).name).toBe('Neuf');
+    expect(read(newer, older).name).toBe('Neuf');
+  });
+
+  it("an answer's rename date is bounded by its own server time, and a rename still beats it", () => {
+    expect(applyNameStatement(group(), 'Nouveau', T, T, { renameAt: T + 1 })).toEqual({
+      refused: 'unbounded-rename-time',
+    });
+    expect(applyNameStatement(group(), 'Nouveau', T, T, { renameAt: undefined })).toEqual({
+      refused: 'unbounded-rename-time',
+    });
+    const answered = rowOf(applyNameStatement(group(), 'Nouveau', T, T, { renameAt: T - 5 }));
+    expect(rowOf(applyRenameFrame(answered, 'Rename', T - 100, T - 100, 'bob'))).toMatchObject({
+      name: 'Rename',
+      nameRenamedBy: 'bob',
+    });
+  });
+
+  it("the join push carries the answer's rename date and the rename's author", () => {
+    const answered = group({ name: 'N', nameAt: T, nameFromStatement: true, nameRenameAt: T - 5 });
+    const pushed = restatedGroupName(answered)!;
+    expect(pushed).toEqual({ name: 'N', at: T, statement: true, renameAt: T - 5 });
+    expect(boundedRestatedGroupName(pushed, T + 1)).toEqual({ kept: pushed });
+    const renamed = restatedGroupName(group({ name: 'N', nameAt: T, nameRenamedBy: 'alice' }))!;
+    expect(boundedRestatedGroupName(renamed, T + 1)).toEqual({
+      kept: { name: 'N', at: T, by: 'alice' },
+    });
   });
 });

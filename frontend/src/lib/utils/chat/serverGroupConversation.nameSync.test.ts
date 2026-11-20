@@ -15,6 +15,7 @@ import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { applyNameStatement, type NameStatementOutcome, type PendingRename } from './groupName';
 import { restoredConversationRow, toConversationMeta } from './conversations';
+import { answerOutrankedStatement } from './nameStatementAnswer';
 import { SqliteStorage } from '$lib/db/sqlite';
 import type { RenameResendOutcome } from './groupActions';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
@@ -52,6 +53,7 @@ function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
   return {
     resend: vi.fn().mockResolvedValue(DELIVERED),
     state: vi.fn().mockResolvedValue({ sent: { receivedAt: T + 60_000 } }),
+    answer: vi.fn().mockResolvedValue({ sent: { receivedAt: T + 60_000 } }),
     clock: newSweepClock(),
     ...over,
   };
@@ -473,9 +475,12 @@ describe('the one-time name statement of an undated group', () => {
       whenDrained?: Promise<void>;
       serverNow?: number;
       resend?: NameSyncSettler['resend'];
+      /** What an owed answer's send comes to. */
+      answer?: NameStatementOutcome;
     } = {}
   ) {
     const state = vi.fn().mockResolvedValue(opts.state ?? STATED);
+    const answer = vi.fn().mockResolvedValue(opts.answer ?? STATED);
     const resend = opts.resend ?? vi.fn().mockResolvedValue({ kept: 'unanswered' });
     const meta = {
       groupId: GROUP_ID,
@@ -501,9 +506,9 @@ describe('the one-time name statement of an undated group', () => {
       },
       owedExits: new Set<string>(),
       log,
-      nameSync: { resend, state, clock: newSweepClock() },
+      nameSync: { resend, state, answer, clock: newSweepClock() },
     });
-    return { state, log, resend };
+    return { state, log, resend, answer };
   }
 
   /** What a restart reads back: the row rebuilt from the store alone. */
@@ -568,6 +573,81 @@ describe('the one-time name statement of an undated group', () => {
     expect(reopened.get(GROUP_ID)!.nameSync).toBeUndefined();
   });
 
+  it('A1: an answer owed when the app stopped - drain never reached - is sent by the next connection, once', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const storage = await sqliteStore();
+    const held = row({ name: 'Nouveau', nameAt: T - 5_000, nameRenamedBy: 'u1' });
+    const phone = new Map([[GROUP_ID, held]]);
+    await storage.saveConversation(toConversationMeta(GROUP_ID, held, 'u1'));
+    // The statement is read live; the drain that would send the answer never comes (the app stops).
+    const owed = await answerOutrankedStatement({
+      mlsService: {
+        isGroupDrained: () => false,
+        whenGroupDrained: () => new Promise<void>(() => {}),
+      } as unknown as IMlsService,
+      userId: 'u1',
+      send: vi.fn(),
+      conversations: phone,
+      convoKey: GROUP_ID,
+      statedName: 'Ancien',
+      statement: { id: 's-1', isAnswer: false },
+      save: async (key) => {
+        await storage.saveConversation(toConversationMeta(key, phone.get(key)!, 'u1'));
+      },
+      log: vi.fn(),
+    });
+    expect(owed).toBe(true);
+
+    // RESTART: the debt is read back from the store alone, and the sweep sends it.
+    const reopened = await restart(storage);
+    expect(reopened.get(GROUP_ID)).toMatchObject({
+      nameRenamedBy: 'u1',
+      nameSync: { answer: { to: 's-1' } },
+    });
+    const first = await connect(reopened, storage, 'Nouveau');
+    expect(first.answer).toHaveBeenCalledTimes(1);
+    expect(first.answer.mock.calls[0][0]).toMatchObject({ name: 'Nouveau', renameAt: T - 5_000 });
+    expect(first.answer.mock.calls[0][1]).toBe('s-1');
+    expect(first.state).not.toHaveBeenCalled();
+    // Settled - and once settled, never again, restart included.
+    const second = await connect(await restart(storage), storage, 'Nouveau');
+    expect(second.answer).not.toHaveBeenCalled();
+  });
+
+  it('A1: an answer whose send got no answer is re-sent by the next connection as the SAME frame', async () => {
+    const storage = await sqliteStore();
+    const held = row({
+      name: 'Nouveau',
+      nameAt: T - 5_000,
+      nameRenamedBy: 'u1',
+      nameSync: { answer: { to: 's-1' } },
+    });
+    const first = await connect(new Map([[GROUP_ID, held]]), storage, 'Nouveau', {
+      answer: { kept: 'unanswered' },
+    });
+    const frame = first.answer.mock.calls[0][0];
+    vi.setSystemTime(T + 3_600_000);
+    const second = await connect(await restart(storage), storage, 'Nouveau', {
+      serverNow: T + 3_600_000,
+    });
+    expect(second.answer).toHaveBeenCalledTimes(1);
+    expect(second.answer.mock.calls[0][0]).toEqual(frame);
+  });
+
+  it('A1: a later rename by someone else makes an owed answer void - settled unsent', async () => {
+    const storage = await sqliteStore();
+    const held = row({
+      name: 'Autre',
+      nameAt: T,
+      nameRenamedBy: 'someone-else',
+      nameSync: { answer: { to: 's-1' } },
+    });
+    const phone = new Map([[GROUP_ID, held]]);
+    const sweep1 = await connect(phone, storage, 'Autre');
+    expect(sweep1.answer).not.toHaveBeenCalled();
+    expect(phone.get(GROUP_ID)!.nameSync).toEqual({ answer: { to: 's-1', done: true } });
+  });
+
   it('an undrained group is CHAINED on its first drain - never skipped to the next sweep, one chain at a time', async () => {
     const storage = await sqliteStore();
     const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
@@ -619,7 +699,7 @@ describe('the one-time name statement of an undated group', () => {
       serverNow: T + 2 * BUNDLE_SERVER_TIME_SKEW_MS,
     });
     expect(state).not.toHaveBeenCalled();
-    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('NOT stated');
+    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('NOT sent this sweep');
   });
 
   it("an older build's undated rename (the server's list only) still loses to the stated name", async () => {
@@ -647,7 +727,7 @@ describe('the one-time name statement of an undated group', () => {
       serverNow: T + 2 * BUNDLE_SERVER_TIME_SKEW_MS,
     };
     const getGroupServerStatus = vi.fn().mockResolvedValue(meta);
-    const settler = { resend: vi.fn(), state: vi.fn(), clock: newSweepClock() };
+    const settler = { resend: vi.fn(), state: vi.fn(), answer: vi.fn(), clock: newSweepClock() };
     for (const [id, name] of [
       [GROUP_ID, 'A'],
       [other, 'B'],
@@ -669,6 +749,8 @@ describe('the one-time name statement of an undated group', () => {
     }
     expect(getGroupServerStatus).toHaveBeenCalledTimes(1);
     expect(settler.state).not.toHaveBeenCalled();
-    expect(error.mock.calls.filter((c) => String(c[0]).includes('NOT stated'))).toHaveLength(1);
+    expect(
+      error.mock.calls.filter((c) => String(c[0]).includes('NOT sent this sweep'))
+    ).toHaveLength(1);
   });
 });

@@ -227,17 +227,26 @@ export function conversationNameSyncStatement(columns: readonly string[]): strin
 }
 
 /**
- * The v21 -> v22 step: `name_from_statement` (`ConversationMeta.nameFromStatement`), the RANK of the
- * dated name - 1 when a silent `groupNamed` statement dated it, which any rename beats
- * (`groupNameSupersedes`). NULL on arrival: a rename's rank, which every name dated before this
- * column existed has. Returns `null` when the column is there.
+ * The v21 -> v22 step: the RANK of the dated name (`NameRank`, `groupNameSupersedes`), three columns:
+ * - `name_from_statement` (`ConversationMeta.nameFromStatement`): 1 when a silent `groupNamed`
+ *   statement dated it, which any rename beats;
+ * - `name_rename_at` (`nameRenameAt`): beside it, the rename date an ANSWER restated;
+ * - `name_renamed_by` (`nameRenamedBy`): beside a rename's rank, the user who made it.
+ * All NULL on arrival: a rename's rank with no author known, which every name dated before these
+ * columns existed has. Returns the statements still owed - none when every column is there.
  *
  * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
  */
-export function conversationNameFromStatementStatement(columns: readonly string[]): string | null {
-  return columns.includes('name_from_statement')
-    ? null
-    : 'ALTER TABLE conversations ADD COLUMN name_from_statement INTEGER';
+export function conversationNameRankStatements(columns: readonly string[]): string[] {
+  return (
+    [
+      ['name_from_statement', 'INTEGER'],
+      ['name_rename_at', 'INTEGER'],
+      ['name_renamed_by', 'TEXT'],
+    ] as const
+  )
+    .filter(([column]) => !columns.includes(column))
+    .map(([column, type]) => `ALTER TABLE conversations ADD COLUMN ${column} ${type}`);
 }
 
 /**

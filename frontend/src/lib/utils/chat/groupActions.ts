@@ -54,6 +54,7 @@ import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 import { isFrameFateUnknown, sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
+import type { AnswerSender } from './serverGroupConversation';
 import {
   GROUP_NAME_REFUSAL_TEXT,
   GroupRenameRefusedError,
@@ -494,16 +495,23 @@ export async function sendNameStatement(params: {
   userId: string;
   deviceKeyB64: string;
   minted: Omit<OwnNameStatement, 'answered'>;
-  /** The id of the statement this one ANSWERS (`statementAnswerDue`): an answer is never answered. */
-  answers?: string;
+  /**
+   * Set when this statement ANSWERS another (`statementAnswerDue`): the statement's id (`answers` on
+   * the wire - an answer is never answered) and the date of the rename whose name it restates
+   * (`renameAt`, which orders answers among themselves).
+   */
+  answer?: { to: string; renameAt: number };
 }): Promise<NameStatementOutcome> {
-  const { mlsService, groupId, userId, deviceKeyB64, minted, answers } = params;
+  const { mlsService, groupId, userId, deviceKeyB64, minted, answer } = params;
   const id = `${minted.messageId.slice(0, 8)} in ${groupId.slice(0, 8)}…`;
   console.debug(`[GROUP_NAME] stating the group's name silently: ${id}`);
   const frame = {
     ...mkSystem(
       'groupNamed',
-      JSON.stringify({ name: minted.name, ...(answers ? { answers } : {}) })
+      JSON.stringify({
+        name: minted.name,
+        ...(answer ? { answers: answer.to, renameAt: answer.renameAt } : {}),
+      })
     ),
     messageId: minted.messageId,
     sentAt: minted.sentAt,
@@ -549,6 +557,26 @@ export async function sendNameStatement(params: {
     );
   }
   return { sent: { receivedAt } };
+}
+
+/**
+ * {@link sendNameStatement} as an ANSWER, bound to this device: what the connection sweep and the
+ * drain after a statement both send an owed answer through (`settleOwedAnswer`).
+ */
+export function nameAnswerSender(
+  mlsService: IMlsService,
+  userId: string,
+  deviceKeyB64: string
+): AnswerSender {
+  return (frame, to, groupId) =>
+    sendNameStatement({
+      mlsService,
+      groupId,
+      userId,
+      deviceKeyB64,
+      minted: { name: frame.name, messageId: frame.messageId, sentAt: frame.sentAt },
+      answer: { to, renameAt: frame.renameAt },
+    });
 }
 
 /**

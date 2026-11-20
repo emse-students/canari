@@ -18,6 +18,7 @@
  * the server's list still corrects it.
  */
 
+import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { Conversation } from '$lib/types';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 
@@ -27,7 +28,37 @@ import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
  * names were dated) as opposed to a `groupRenamed` frame - see {@link groupNameSupersedes} for why
  * the two are ranked.
  */
-export type DatedGroupName = { name: string; at: number; statement?: true };
+export type DatedGroupName = {
+  name: string;
+  at: number;
+  statement?: true;
+  /**
+   * A statement that ANSWERS another (sealed-names.md, "the answer"): the date of the rename whose
+   * name it restates, never after the answer's own server time. Ranks it above plain statements.
+   */
+  renameAt?: number;
+  /** A rename's: the user who made it, kept beside the name (`Conversation.nameRenamedBy`). */
+  by?: string;
+};
+
+/** The fields that qualify a dated name's rank on a row, persisted with `nameAt`. */
+export type NameRank = Pick<Conversation, 'nameFromStatement' | 'nameRenameAt' | 'nameRenamedBy'>;
+
+/**
+ * The rank fields of `src` that hold beside its date - the ONE reading every store and row builder
+ * applies, so a field persisted in one shape is read back in the same one: none without a date; a
+ * statement's rank with its answer's rename date when it has one; a rename's author otherwise.
+ */
+export function nameRankFields(src: NameRank & { nameAt?: number }): NameRank {
+  if (src.nameAt === undefined) return {};
+  if (src.nameFromStatement === true) {
+    return {
+      nameFromStatement: true,
+      ...(positiveNumber(src.nameRenameAt) ? { nameRenameAt: src.nameRenameAt } : {}),
+    };
+  }
+  return nonEmptyString(src.nameRenamedBy) ? { nameRenamedBy: src.nameRenamedBy } : {};
+}
 
 /**
  * Why a name statement read off the wire is not taken - one value per cause, so the line that
@@ -39,7 +70,8 @@ export type GroupNameRefusal =
   | 'no-server-time'
   | 'no-signed-time'
   | 'server-time-out-of-bound'
-  | 'after-the-push';
+  | 'after-the-push'
+  | 'unbounded-rename-time';
 
 /** The words a log line uses for each {@link GroupNameRefusal}. Dev-facing, never shown. */
 export const GROUP_NAME_REFUSAL_TEXT: Record<GroupNameRefusal, string> = {
@@ -49,6 +81,8 @@ export const GROUP_NAME_REFUSAL_TEXT: Record<GroupNameRefusal, string> = {
   'no-signed-time': 'the frame carries no signed sentAt to bound the server time by',
   'server-time-out-of-bound': `its server time lies more than ${BUNDLE_SERVER_TIME_SKEW_MS / 3_600_000} h from the frame's signed sentAt`,
   'after-the-push': "its date lies after the push's own server time",
+  'unbounded-rename-time':
+    "it answers a statement but carries no rename date, or one after the answer's own server time",
 };
 
 /** A statement read off the wire: taken, or refused for one named cause. */
@@ -58,7 +92,21 @@ export type GroupNameRead = { kept: DatedGroupName } | { refused: GroupNameRefus
 export type GroupNameSkip = 'not-a-group' | 'not-newer' | 'already-dated';
 
 /** The part of a conversation row a name statement is compared with. */
-type HeldGroupName = Pick<Conversation, 'name' | 'nameAt' | 'nameFromStatement'>;
+type HeldGroupName = Pick<Conversation, 'name' | 'nameAt' | 'nameFromStatement' | 'nameRenameAt'>;
+
+/**
+ * Where a dated name stands, as {@link groupNameSupersedes} orders it: its RANK (2 a rename, 1 an
+ * answer restating one, 0 a plain statement) and the date it is ordered by within that rank - an
+ * answer's is the rename's it restates, every other one's is its own server time.
+ */
+function nameStanding(
+  at: number,
+  statement: boolean,
+  renameAt: number | undefined
+): { rank: number; at: number } {
+  if (!statement) return { rank: 2, at };
+  return renameAt === undefined ? { rank: 0, at } : { rank: 1, at: renameAt };
+}
 
 /**
  * Does `next` supersede the name `held` carries?
@@ -71,28 +119,41 @@ type HeldGroupName = Pick<Conversation, 'name' | 'nameAt' | 'nameFromStatement'>
  * server time wins, and a TIE is settled by the larger name, so two devices holding the same pair
  * reach the same answer whatever the order they read it in - "keep what I had" depends on arrival
  * order and is no rule. The rank makes it a total order still, so the answer stays order-independent.
+ *
+ * AN ANSWER RANKS BETWEEN THE TWO (#3888 re-review, A3): a statement restating a RENAME, sent by that
+ * rename's author to heal a member who stated another name ({@link statementAnswerDue}). It beats
+ * every plain statement whatever the dates - a plain statement only states what its device held,
+ * the answer states a rename it read - and among answers the later RENAME wins, then the larger
+ * name: ordered by sending time, an answer reflecting an older rename sent late put a stale name
+ * back on every member a statement dated. It carries no more trust than a rename: its rename date
+ * is bounded by its own server time, and any member may send a rename outright.
  */
 export function groupNameSupersedes(next: DatedGroupName, held: HeldGroupName): boolean {
   if (held.nameAt === undefined) return true;
-  const nextIsRename = next.statement !== true;
-  const heldIsRename = held.nameFromStatement !== true;
-  if (nextIsRename !== heldIsRename) return nextIsRename;
-  if (next.at !== held.nameAt) return next.at > held.nameAt;
+  const n = nameStanding(next.at, next.statement === true, next.renameAt);
+  const h = nameStanding(held.nameAt, held.nameFromStatement === true, held.nameRenameAt);
+  if (n.rank !== h.rank) return n.rank > h.rank;
+  if (n.at !== h.at) return n.at > h.at;
   return next.name > held.name;
 }
 
 /**
- * `convo` named `next`: the name, its date and its rank written together, the rank REMOVED when the
- * statement is a rename - a rename's row claiming a statement's rank would let the next statement
- * beat it.
+ * `convo` named `next`: the name, its date and its rank written together, every rank field of the
+ * name it replaces REMOVED first - a rename's row claiming a statement's rank would let the next
+ * statement beat it, and an author kept beside another rename's name would answer for it.
  */
 function namedRow(convo: Conversation, next: DatedGroupName): Conversation {
-  const { nameFromStatement: _rank, ...rest } = convo;
+  const { nameFromStatement: _rank, nameRenameAt: _renameAt, nameRenamedBy: _by, ...rest } = convo;
   return {
     ...rest,
     name: next.name,
     nameAt: next.at,
-    ...(next.statement ? { nameFromStatement: true as const } : {}),
+    ...nameRankFields({
+      nameAt: next.at,
+      ...(next.statement ? { nameFromStatement: true as const } : {}),
+      nameRenameAt: next.renameAt,
+      nameRenamedBy: next.by === undefined ? undefined : canonicalUserId(next.by),
+    }),
   };
 }
 
@@ -198,16 +259,23 @@ export function withRestatedGroupName(
  * when its name was never stated by a frame it read (the newcomer reads the server's list for that
  * one, exactly as the inviter did).
  */
-export function restatedGroupName(row: {
-  name: string;
-  nameAt?: number;
-  nameFromStatement?: true;
-}): DatedGroupName | undefined {
+export function restatedGroupName(
+  row: { name: string; nameAt?: number } & NameRank
+): DatedGroupName | undefined {
   const read = readDatedGroupName(row.name, row.nameAt);
   if (!('kept' in read)) return undefined;
   // The RANK travels with the date: a newcomer holding a statement's name as a rename's would keep
-  // it over a later statement every other member takes.
-  return row.nameFromStatement ? { ...read.kept, statement: true } : read.kept;
+  // it over a later statement every other member takes. An answer's rename date and a rename's
+  // author travel with it too, so the newcomer orders and answers as the inviter would.
+  const rank = nameRankFields(row);
+  if (rank.nameFromStatement) {
+    return {
+      ...read.kept,
+      statement: true,
+      ...(rank.nameRenameAt !== undefined ? { renameAt: rank.nameRenameAt } : {}),
+    };
+  }
+  return rank.nameRenamedBy ? { ...read.kept, by: rank.nameRenamedBy } : read.kept;
 }
 
 /**
@@ -221,7 +289,13 @@ export function boundedRestatedGroupName(
   bundleServerAt: number | undefined
 ): GroupNameRead {
   if (!raw || typeof raw !== 'object') return { refused: 'not-a-name' };
-  const r = raw as { name?: unknown; at?: unknown; statement?: unknown };
+  const r = raw as {
+    name?: unknown;
+    at?: unknown;
+    statement?: unknown;
+    renameAt?: unknown;
+    by?: unknown;
+  };
   const read = readDatedGroupName(r.name, r.at);
   if ('refused' in read) return read;
   if (typeof bundleServerAt !== 'number' || !Number.isFinite(bundleServerAt)) {
@@ -229,7 +303,17 @@ export function boundedRestatedGroupName(
   }
   if (read.kept.at > bundleServerAt) return { refused: 'after-the-push' };
   // Absent is a rename's rank: an inviter of the step-1 build dated names from renames only.
-  return r.statement === true ? { kept: { ...read.kept, statement: true } } : read;
+  if (r.statement !== true) {
+    return nonEmptyString(r.by) ? { kept: { ...read.kept, by: r.by } } : read;
+  }
+  // An answer's rename date, bounded like the answer's own (never after its server time).
+  if (r.renameAt !== undefined) {
+    if (!positiveNumber(r.renameAt) || r.renameAt > read.kept.at) {
+      return { refused: 'unbounded-rename-time' };
+    }
+    return { kept: { ...read.kept, statement: true, renameAt: r.renameAt } };
+  }
+  return { kept: { ...read.kept, statement: true } };
 }
 
 /** The words a log line uses for each {@link GroupNameSkip}. Dev-facing, never shown. */
@@ -243,33 +327,48 @@ export const GROUP_NAME_SKIP_TEXT: Record<GroupNameSkip, string> = {
  * What one `groupRenamed` frame does to `convo` - the ONE rule the live handler and the archive
  * replay both apply, so the two cannot drift: read and bound ({@link readRenameFrame}), then written
  * only when newer ({@link withDatedGroupName}). The caller logs the refusal or the skip it is handed.
+ * `by` is the frame's MLS-authenticated sender, kept beside the name (`Conversation.nameRenamedBy`).
  */
 export function applyRenameFrame(
   convo: Conversation,
   newName: unknown,
   serverAt: number | undefined,
-  signedSentAt: number | undefined
+  signedSentAt: number | undefined,
+  by: string
 ): { row: Conversation } | { refused: GroupNameRefusal } | { skipped: GroupNameSkip } {
   const read = readRenameFrame(newName, serverAt, signedSentAt);
   if ('refused' in read) return read;
-  return withDatedGroupName(convo, read.kept);
+  return withDatedGroupName(convo, { ...read.kept, by });
+}
+
+/**
+ * Reads the `renameAt` an ANSWER carries: a positive time no later than the answer's own server time
+ * - a rename the answer restates was read before the answer was sent. `null` when it is unusable.
+ */
+function readAnswerRenameAt(renameAt: unknown, answerAt: number): number | null {
+  return positiveNumber(renameAt) && renameAt <= answerAt ? renameAt : null;
 }
 
 /**
  * What one SILENT `groupNamed` statement does to `convo` - the rename's rule at a statement's rank
  * ({@link groupNameSupersedes}): read and bounded exactly as a rename frame is, then written only when
  * it supersedes the name held. A statement draws no notice anywhere; the live handler and the replay
- * both apply this one function.
+ * both apply this one function. `answer` is set for an ANSWER (`answers` on the frame): its
+ * `renameAt` must be bounded by the answer's own server time, or the answer is refused.
  */
 export function applyNameStatement(
   convo: Conversation,
   name: unknown,
   serverAt: number | undefined,
-  signedSentAt: number | undefined
+  signedSentAt: number | undefined,
+  answer?: { renameAt: unknown }
 ): { row: Conversation } | { refused: GroupNameRefusal } | { skipped: GroupNameSkip } {
   const read = readRenameFrame(name, serverAt, signedSentAt);
   if ('refused' in read) return read;
-  return withDatedGroupName(convo, { ...read.kept, statement: true });
+  if (!answer) return withDatedGroupName(convo, { ...read.kept, statement: true });
+  const renameAt = readAnswerRenameAt(answer.renameAt, read.kept.at);
+  if (renameAt === null) return { refused: 'unbounded-rename-time' };
+  return withDatedGroupName(convo, { ...read.kept, statement: true, renameAt });
 }
 
 /** The (conversation, name) pairs {@link reportOutrankedStatement} already said. */
@@ -299,30 +398,134 @@ export function reportOutrankedStatement(
   return true;
 }
 
+/** Whether `row` holds a name a RENAME by `userId` dated - the only rows that answer. */
+function heldRenameIsOwn(row: Conversation, userId: string): boolean {
+  return (
+    row.nameAt !== undefined &&
+    row.nameFromStatement !== true &&
+    row.nameRenamedBy !== undefined &&
+    row.nameRenamedBy === canonicalUserId(userId) &&
+    row.name.trim() !== ''
+  );
+}
+
 /**
- * THE HEAL OF A SPLIT A STATEMENT REVEALS (#3888 review, S1). A device holding a RENAME-dated name
- * that reads a statement of ANOTHER name knows the stating device - and every member that took the
- * statement - shows a name the group was renamed away from. It ANSWERS: one silent statement of its
- * own name, marked as an answer. Between statements the later wins, so every device holding a
- * statement-dated name converges on it; a device holding a rename-dated name keeps its own.
+ * THE HEAL OF A SPLIT A STATEMENT REVEALS (#3888 review, S1; re-review, A1-A3). A device holding a
+ * RENAME-dated name that reads a plain statement of ANOTHER name knows the stating device - and every
+ * member that took the statement - shows a name the group was renamed away from. It ANSWERS: one
+ * silent statement of its own name, carrying the rename's date (`renameAt`), which outranks every
+ * plain statement ({@link groupNameSupersedes}), so every member a statement dated converges on it.
  *
- * TERMINATION IS A PROOF, NOT A COUNT: an answer is never answered (`answers` set), a device holding
- * a statement-dated name never answers, and each device answers a given statement at most once -
- * by the id it records on the row ({@link NameSync.answered}), so a re-delivery after a restart
- * answers nothing again. Statements that are not answers are finite (a creation, one restatement),
- * so the answers are too.
+ * ONLY THE RENAME'S AUTHOR ANSWERS (`userId` is the `nameRenamedBy` of the row): every rename-dated
+ * device answering cost one frame per member device for one straggler, each taking a slot in the
+ * group's capped log. The author's devices are bounded by one user's, and a device that READ an
+ * answer of its own name and rename date skips its own ({@link answerReadSettlesOwn}). An author no
+ * longer in the group answers nothing; that residual is counted (`reportOutrankedStatement`).
+ *
+ * TERMINATION IS A PROOF, NOT A COUNT: an answer is never answered (`answers` set), a statement-dated
+ * device never answers, and a device owes at most ONE answer at a time - recorded on the row
+ * ({@link NameSync.answer}) and owed until sent, so a re-delivery adds nothing and a restart loses
+ * nothing. Plain statements are finite (a creation, one restatement), so the answers are too.
  */
 export function statementAnswerDue(
   convo: Conversation,
   statedName: unknown,
-  statement: { id: string | undefined; isAnswer: boolean }
+  statement: { id: string | undefined; isAnswer: boolean },
+  userId: string
 ): boolean {
   if ((convo.conversationType ?? 'group') !== 'group') return false;
   if (statement.isAnswer || !statement.id) return false;
-  if (convo.nameAt === undefined || convo.nameFromStatement) return false;
-  if (convo.name.trim() === '' || convo.lifecycle !== 'active') return false;
+  if (!heldRenameIsOwn(convo, userId) || convo.lifecycle !== 'active') return false;
   if (typeof statedName !== 'string' || statedName.trim() === convo.name) return false;
-  return convo.nameSync?.answered !== statement.id;
+  const owed = convo.nameSync?.answer;
+  // One owed answer heals every plain statement, past and future (it outranks them all): a second
+  // one would only cost a slot. A settled one answered `to` already.
+  return !owed || (owed.done === true && owed.to !== statement.id);
+}
+
+/**
+ * `convo` once it owes an answer to `statementId` - recorded BEFORE anything is sent, and settled
+ * only by a send ({@link ownAnswerOutcome}), never by being scheduled.
+ */
+export function withOwedAnswer(convo: Conversation, statementId: string): Conversation {
+  return withNameSync(convo, { ...convo.nameSync, answer: { to: statementId } });
+}
+
+/**
+ * Whether an ANSWER this device just read (another device's, of this user or not) says exactly what
+ * this device's owed answer would - the same name, the same rename date - so it is SETTLED unsent:
+ * the members took that one, and a second is only a slot taken in the capped log. The row with its
+ * debt settled, or `null` when nothing changes.
+ */
+export function answerReadSettlesOwn(
+  convo: Conversation,
+  answer: { name: unknown; renameAt: unknown }
+): Conversation | null {
+  const owed = convo.nameSync?.answer;
+  if (!owed || owed.done) return null;
+  if (convo.nameAt === undefined || convo.nameFromStatement) return null;
+  if (typeof answer.name !== 'string' || answer.name.trim() !== convo.name) return null;
+  if (answer.renameAt !== convo.nameAt) return null;
+  return withNameSync(convo, { ...convo.nameSync, answer: { to: owed.to, done: true } });
+}
+
+/**
+ * What the owed answer on `row` asks of the sender, read off the row as it stands:
+ * - `resend`: a frame was minted for the name and rename the row still holds, and its send got no
+ *   answer or was not made - the SAME frame, so the members take one answer however many copies;
+ * - `mint`: nothing minted yet, or minted for a name the row no longer holds - a fresh frame;
+ * - `void`: the row no longer holds a rename of this user's - a later rename reached everyone, and
+ *   with it the members the answer was for. Settled unsent;
+ * - `none`: nothing owed.
+ */
+export function owedAnswerDue(
+  row: Conversation,
+  userId: string
+):
+  | { due: 'resend'; frame: AnswerFrame; to: string }
+  | { due: 'mint'; to: string }
+  | 'void'
+  | 'none' {
+  const owed = row.nameSync?.answer;
+  if (!owed || owed.done) return 'none';
+  if (!heldRenameIsOwn(row, userId)) return 'void';
+  const f = owed.frame;
+  if (f && f.name === row.name && f.renameAt === row.nameAt) {
+    return { due: 'resend', frame: f, to: owed.to };
+  }
+  return { due: 'mint', to: owed.to };
+}
+
+/**
+ * The row once this device's answer `frame` to `to` came to `outcome`, re-read after the send:
+ * - sent: settled (`done`), the frame dropped - the server holds it;
+ * - no answer, or not made: the frame kept, re-sent as the same frame by the next sweep;
+ * - refused by the receivers' bound (`clock`): the frame dropped, the debt kept - a fresh one, signed
+ *   when the clock is proven, goes out instead;
+ * - refused for good (`evicted`, `group-deleted`): settled, nothing a member could take.
+ */
+export function ownAnswerOutcome(
+  current: Conversation,
+  to: string,
+  frame: AnswerFrame,
+  outcome: NameStatementOutcome
+): Conversation {
+  const answer: OwedAnswer =
+    'sent' in outcome
+      ? { to, done: true }
+      : 'kept' in outcome
+        ? { to, frame }
+        : outcome.refused === 'clock'
+          ? { to }
+          : { to, done: true };
+  return withNameSync(current, { ...current.nameSync, answer });
+}
+
+/** `row` with its owed answer settled unsent (`void`, see {@link owedAnswerDue}). */
+export function withAnswerSettled(row: Conversation): Conversation {
+  const owed = row.nameSync?.answer;
+  if (!owed) return row;
+  return withNameSync(row, { ...row.nameSync, answer: { to: owed.to, done: true } });
 }
 
 /**
@@ -377,12 +580,27 @@ export type NameSync = {
   pending?: PendingRename;
   unconfirmed?: PendingRename;
   statement?: OwnNameStatement;
-  /**
-   * The id of the last statement this device ANSWERED ({@link statementAnswerDue}) - written before
-   * the answer goes out, so a statement re-delivered after a restart is answered once, not twice.
-   */
-  answered?: string;
+  /** The answer this device owes, or last settled ({@link OwedAnswer}, {@link statementAnswerDue}). */
+  answer?: OwedAnswer;
 };
+
+/**
+ * One frame answering a statement: this row's name and the date of the rename that dated it here,
+ * under the id and signed `sentAt` it was minted with - kept so a send with no answer is re-sent as
+ * the SAME frame, and the members take one answer however many copies.
+ */
+export type AnswerFrame = { name: string; renameAt: number; messageId: string; sentAt: number };
+
+/**
+ * The answer this device owes to the plain statement `to` (#3888 re-review, A1) - on the row, so
+ * "answered" is a fact of the store that a restart, a sign-out or a lost tab cannot drop:
+ * - neither `frame` nor `done`: owed, nothing minted yet;
+ * - `frame`: minted, and its send got no answer or was not made - re-sent as that frame;
+ * - `done`: settled - sent, read from another device ({@link answerReadSettlesOwn}), or made void by
+ *   a later rename. `to` stays, so a re-delivery of that statement is not answered again.
+ * Settled by the drain that follows the statement, else by the next connection's sweep.
+ */
+export type OwedAnswer = { to: string; frame?: AnswerFrame; done?: true };
 
 /**
  * A silent `groupNamed` statement THIS device minted for a row no frame had dated - at creation, or
@@ -444,6 +662,30 @@ function parsePendingRename(raw: unknown): PendingRename | null {
   };
 }
 
+function parseOwedAnswer(raw: unknown): OwedAnswer | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (!nonEmptyString(r.to)) return null;
+  if (r.done !== undefined && r.done !== true) return null;
+  if (r.done === true) return { to: r.to, done: true };
+  if (r.frame === undefined) return { to: r.to };
+  const f = r.frame as Record<string, unknown> | null;
+  if (
+    !f ||
+    typeof f !== 'object' ||
+    !nonEmptyString(f.name) ||
+    !positiveNumber(f.renameAt) ||
+    !nonEmptyString(f.messageId) ||
+    !positiveNumber(f.sentAt)
+  ) {
+    return null;
+  }
+  return {
+    to: r.to,
+    frame: { name: f.name, renameAt: f.renameAt, messageId: f.messageId, sentAt: f.sentAt },
+  };
+}
+
 function parseOwnNameStatement(raw: unknown): OwnNameStatement | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
@@ -470,7 +712,7 @@ export function withNameSync<T extends { nameSync?: NameSync }>(row: T, sync: Na
     ...(sync.pending ? { pending: sync.pending } : {}),
     ...(sync.unconfirmed ? { unconfirmed: sync.unconfirmed } : {}),
     ...(sync.statement ? { statement: sync.statement } : {}),
-    ...(sync.answered ? { answered: sync.answered } : {}),
+    ...(sync.answer ? { answer: sync.answer } : {}),
   };
   return (Object.keys(kept).length ? { ...rest, nameSync: kept } : rest) as T;
 }
@@ -505,7 +747,14 @@ export function parseNameSync(raw: unknown): NameSync | undefined {
   const pending = v.pending === undefined ? undefined : parsePendingRename(v.pending);
   const unconfirmed = v.unconfirmed === undefined ? undefined : parsePendingRename(v.unconfirmed);
   const statement = v.statement === undefined ? undefined : parseOwnNameStatement(v.statement);
-  if (serverCopy === null || pending === null || unconfirmed === null || statement === null) {
+  const answer = v.answer === undefined ? undefined : parseOwedAnswer(v.answer);
+  if (
+    serverCopy === null ||
+    pending === null ||
+    unconfirmed === null ||
+    statement === null ||
+    answer === null
+  ) {
     console.error('[GROUP_NAME] stored nameSync holds an unreadable half - that half is dropped');
   }
   return nameSyncField({
@@ -513,7 +762,7 @@ export function parseNameSync(raw: unknown): NameSync | undefined {
     pending: pending ?? undefined,
     unconfirmed: unconfirmed ?? undefined,
     statement: statement ?? undefined,
-    answered: nonEmptyString(v.answered) ? v.answered : undefined,
+    answer: answer ?? undefined,
   }).nameSync;
 }
 
@@ -535,15 +784,22 @@ export function ownRenameOutcome(
   name: string,
   receivedAt: number | null,
   serverCopyOwed: boolean,
-  over: RenameBase
+  over: RenameBase,
+  userId: string
 ): { row: Conversation } | { skipped: GroupNameSkip } {
   const sync: NameSync = serverCopyOwed ? { serverCopy: { name, from: over.name } } : {};
   if (receivedAt === null) {
     if ((current.conversationType ?? 'group') !== 'group') return { skipped: 'not-a-group' };
-    const { nameAt: _undated, nameFromStatement: _rank, ...rest } = current;
+    const {
+      nameAt: _undated,
+      nameFromStatement: _rank,
+      nameRenameAt: _renameAt,
+      nameRenamedBy: _by,
+      ...rest
+    } = current;
     return { row: withNameSync({ ...rest, name }, sync) };
   }
-  const outcome = withDatedGroupName(current, { name, at: receivedAt });
+  const outcome = withDatedGroupName(current, { name, at: receivedAt, by: userId });
   if (!('row' in outcome)) return outcome;
   return { row: withNameSync(outcome.row, sync) };
 }
@@ -634,7 +890,8 @@ export type RelayedRenameRow = {
  */
 export function ownRenameFromRelay(
   convo: Conversation,
-  rows: Iterable<RelayedRenameRow>
+  rows: Iterable<RelayedRenameRow>,
+  userId: string
 ):
   | { row: Conversation; outcome: 'applied' | 'older'; frame: PendingRename }
   | { refused: 'other-name' | GroupNameRefusal; frame: PendingRename }
@@ -653,7 +910,7 @@ export function ownRenameFromRelay(
       pending: sync?.pending?.messageId === frame.messageId ? undefined : sync?.pending,
       unconfirmed: sync?.unconfirmed?.messageId === frame.messageId ? undefined : sync?.unconfirmed,
     };
-    const applied = withDatedGroupName(withNameSync(convo, rest), read.kept);
+    const applied = withDatedGroupName(withNameSync(convo, rest), { ...read.kept, by: userId });
     if (!('row' in applied)) return { row: withNameSync(convo, rest), outcome: 'older', frame };
     return {
       row: withNameSync(applied.row, {

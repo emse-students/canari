@@ -220,18 +220,22 @@ describe('a received groupNamed statement', () => {
 });
 
 /**
- * #3888 review, S1: A SPLIT A STATEMENT REVEALS IS ANSWERED, AND THE ANSWERS TERMINATE. A device
- * holding a RENAME-dated name that reads a statement of another name answers once with a statement of
- * its own name; devices holding statement-dated names take the later statement; an answer is never
- * answered and a statement-dated device never answers, so it ends.
+ * #3888 review S1, re-review A1-A3: A SPLIT A STATEMENT REVEALS IS ANSWERED, AND THE ANSWERS
+ * TERMINATE. Only the devices of the user whose RENAME dated the name answer (A2), with a statement of
+ * that name carrying the rename's date (A3), owed on the row until sent (A1). Devices holding
+ * statement-dated names take the answer over any plain statement and order answers by their rename;
+ * an answer is never answered and a statement-dated device never answers, so it ends.
  */
 describe('a statement outranked by a rename-dated name of another text is answered', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  type Frame = { name: string; answers?: string };
+  type Frame = { name: string; answers?: string; renameAt?: number };
 
-  /** One member device holding `held`; `sent` collects the statements it answers with. */
-  function member(held: { name: string; nameAt?: number; nameFromStatement?: true }) {
+  /** One member device of `userId` holding `held`; `sent` collects the answers it sends. */
+  function member(
+    held: { name: string; nameAt?: number; nameFromStatement?: true; nameRenamedBy?: string },
+    userId = 'me'
+  ) {
     const conversations = new Map<string, any>([
       [
         'g1',
@@ -246,19 +250,32 @@ describe('a statement outranked by a rename-dated name of another text is answer
       ],
     ]);
     const sent: Frame[] = [];
+    // Undrained while a frame of the group is being handled; the drain then runs the owed answer.
+    let drained = false;
     const mlsService = {
-      whenGroupDrained: vi.fn().mockResolvedValue(undefined),
+      isGroupDrained: () => drained,
+      whenGroupDrained: vi.fn(async () => {
+        drained = true;
+      }),
+      getGroupServerStatus: vi.fn(async () => ({
+        groupId: 'g1',
+        name: '',
+        isGroup: true,
+        deletedAt: null,
+        serverNow: Date.now(),
+      })),
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
       sendMessage: vi.fn(async (_g: string, bytes: Uint8Array) => {
         sent.push(JSON.parse(decodeAppMessage(bytes)?.system?.data ?? '{}'));
         return { receivedAt: Date.now() };
       }),
     };
-    const read = (frame: Frame, id: string, serverAt: number) =>
-      handleSystemEvent('groupNamed', frame, {
+    const read = (frame: Frame, id: string, serverAt: number, sender = 'peer') => {
+      drained = false;
+      return handleSystemEvent('groupNamed', frame, {
         mlsService,
         storage: {},
-        userId: 'me',
+        userId,
         deviceKey: () => 'device-key',
         conversations,
         messageReactions: new Map(),
@@ -273,30 +290,35 @@ describe('a statement outranked by a rename-dated name of another text is answer
         convoKey: 'g1',
         persistMlsStateNow: vi.fn(),
         convo: conversations.get('g1'),
-        senderNorm: 'peer',
+        senderNorm: sender,
         messageId: id,
         sentAt: serverAt,
         deliveryMeta: { queuedCreatedAt: serverAt },
       } as never);
+    };
     const name = () => conversations.get('g1').name as string;
     return { read, sent, name, row: () => conversations.get('g1') };
   }
 
   /** Lets every chained answer run. */
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-  it('two devices: the rename holder answers once; the statement holder converges; a re-delivery answers nothing', async () => {
+  const quiet = () => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
-    const renamed = member({ name: 'Nouveau', nameAt: T });
-    const stated = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+  };
+
+  it("two devices: the rename's author answers once; the statement holder converges; a re-delivery answers nothing", async () => {
+    quiet();
+    const renamed = member({ name: 'Nouveau', nameAt: T, nameRenamedBy: 'me' });
+    const stated = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true }, 'bob');
     await renamed.read({ name: 'Ancien' }, 's-1', T + 1_000);
     await settle();
-    expect(renamed.sent).toEqual([{ name: 'Nouveau', answers: 's-1' }]);
+    expect(renamed.sent).toEqual([{ name: 'Nouveau', answers: 's-1', renameAt: T }]);
     expect(renamed.name()).toBe('Nouveau');
-    expect(renamed.row().nameSync).toEqual({ answered: 's-1' });
-    // The answer reaches the statement holder: a later statement, taken.
-    await stated.read(renamed.sent[0], 'a-1', T + 2_000);
-    expect(stated.name()).toBe('Nouveau');
+    expect(renamed.row().nameSync).toEqual({ answer: { to: 's-1', done: true } });
+    // The answer reaches the statement holder: it outranks the plain statement, taken.
+    await stated.read(renamed.sent[0], 'a-1', T + 2_000, 'me');
+    expect(stated.row()).toMatchObject({ name: 'Nouveau', nameRenameAt: T });
     await settle();
     expect(stated.sent).toEqual([]);
     // TERMINATION: the same statement again answers nothing.
@@ -305,32 +327,83 @@ describe('a statement outranked by a rename-dated name of another text is answer
     expect(renamed.sent).toHaveLength(1);
   });
 
-  it('three devices, two rename holders whose answers CROSS: every statement holder converges, and nobody answers an answer', async () => {
-    vi.spyOn(console, 'info').mockImplementation(() => {});
-    const x = member({ name: 'Nouveau', nameAt: T });
-    const z = member({ name: 'Autre', nameAt: T + 10 });
-    await x.read({ name: 'Ancien' }, 's-1', T + 1_000);
+  it("A2: N devices of OTHER users holding the same rename send nothing; the author's devices do, and a late one skips after reading the first answer", async () => {
+    quiet();
+    const held = { name: 'Nouveau', nameAt: T, nameRenamedBy: 'alice' };
+    const others = ['bob', 'carol', 'dave', 'erin'].map((u) => member(held, u));
+    for (const o of others) await o.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    expect(others.map((o) => o.sent)).toEqual([[], [], [], []]);
+    expect(others.map((o) => o.row().nameSync)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    // Two devices of the author: the first answers; the second read the statement, then - in the
+    // same drain - the first one's answer, and skips its own.
+    const phone = member(held, 'alice');
+    const laptop = member(held, 'alice');
+    await phone.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    expect(phone.sent).toEqual([{ name: 'Nouveau', answers: 's-1', renameAt: T }]);
+    await laptop.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await laptop.read(phone.sent[0], 'a-1', T + 2_000, 'alice');
+    await settle();
+    expect(laptop.sent).toEqual([]);
+    expect(laptop.row().nameSync).toEqual({ answer: { to: 's-1', done: true } });
+  });
+
+  it('A3: three devices, answers of two renames CROSS - every statement holder takes the NEWER rename in both orders, and nobody answers an answer', async () => {
+    quiet();
+    // x's rename (T) is older than z's (T + 10); x's answer is SENT later.
+    const x = member({ name: 'Nouveau', nameAt: T, nameRenamedBy: 'xavier' }, 'xavier');
+    const z = member({ name: 'Autre', nameAt: T + 10, nameRenamedBy: 'zoe' }, 'zoe');
     await z.read({ name: 'Ancien' }, 's-1', T + 1_000);
     await settle();
-    const ax = x.sent[0];
-    const az = z.sent[0];
-    expect(ax).toEqual({ name: 'Nouveau', answers: 's-1' });
-    expect(az).toEqual({ name: 'Autre', answers: 's-1' });
-    // Two statement holders read the two answers in opposite orders: the later one wins on both.
-    const y1 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
-    const y2 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true });
-    await y1.read(ax, 'a-x', T + 2_000);
-    await y1.read(az, 'a-z', T + 3_000);
-    await y2.read(az, 'a-z', T + 3_000);
-    await y2.read(ax, 'a-x', T + 2_000);
+    await x.read({ name: 'Ancien' }, 's-1', T + 1_000);
+    await settle();
+    const [az] = z.sent;
+    const [ax] = x.sent;
+    expect(ax).toEqual({ name: 'Nouveau', answers: 's-1', renameAt: T });
+    expect(az).toEqual({ name: 'Autre', answers: 's-1', renameAt: T + 10 });
+    const y1 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true }, 'y');
+    const y2 = member({ name: 'Ancien', nameAt: T + 1_000, nameFromStatement: true }, 'y');
+    await y1.read(az, 'a-z', T + 2_000, 'zoe');
+    await y1.read(ax, 'a-x', T + 3_000, 'xavier');
+    await y2.read(ax, 'a-x', T + 3_000, 'xavier');
+    await y2.read(az, 'a-z', T + 2_000, 'zoe');
     expect(y1.name()).toBe('Autre');
     expect(y2.name()).toBe('Autre');
     // Each rename holder reads the other's answer: an answer is never answered - it ends here.
-    await x.read(az, 'a-z', T + 3_000);
-    await z.read(ax, 'a-x', T + 2_000);
+    await x.read(az, 'a-z', T + 2_000, 'zoe');
+    await z.read(ax, 'a-x', T + 3_000, 'xavier');
     await settle();
     expect(x.sent).toHaveLength(1);
     expect(z.sent).toHaveLength(1);
     expect([y1.sent, y2.sent]).toEqual([[], []]);
+  });
+
+  it('an answer whose rename date lies after its own server time is refused', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    quiet();
+    const y = member({ name: 'Ancien', nameAt: T, nameFromStatement: true }, 'y');
+    await y.read(
+      { name: 'Faux', answers: 's-1', renameAt: T + 5_000 },
+      'a-1',
+      T + 1_000,
+      'mallory'
+    );
+    expect(y.name()).toBe('Ancien');
+    expect(
+      [
+        ...warn.mock.calls,
+        ...(console.error as any).mock.calls,
+        ...(console.info as any).mock.calls,
+      ]
+        .map((c) => String(c[0]))
+        .join('\n')
+    ).toContain('rename date');
   });
 });

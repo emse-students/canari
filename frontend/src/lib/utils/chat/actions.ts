@@ -23,6 +23,7 @@ import {
   purgeLocalConversationRecord,
   isGroupActiveOnServer,
   resendPendingRename,
+  nameAnswerSender,
   sendNameStatement,
 } from '$lib/utils/chat/groupActions';
 import {
@@ -1569,6 +1570,8 @@ export async function discoverMissingGroups(params: {
     clock: newSweepClock(),
     state: (statement, groupId) =>
       sendNameStatement({ mlsService, groupId, userId, deviceKeyB64, minted: statement }),
+    // An answer this device owes to a statement that named the group otherwise (`settleOwedAnswer`).
+    answer: nameAnswerSender(mlsService, userId, deviceKeyB64),
   };
   for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {

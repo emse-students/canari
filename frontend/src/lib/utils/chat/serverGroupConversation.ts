@@ -12,11 +12,15 @@ import { Log } from '$lib/utils/Log';
 import {
   GROUP_NAME_SKIP_TEXT,
   nameStatementDue,
+  owedAnswerDue,
+  ownAnswerOutcome,
   ownNameStatementOutcome,
   ownRenameOutcome,
   pendingRenameVerdict,
   unconfirmedFrom,
+  withAnswerSettled,
   withNameSync,
+  type AnswerFrame,
   type NameStatementOutcome,
   type NameSync,
   type OwnNameStatement,
@@ -124,7 +128,16 @@ export interface NameSyncSettler {
     statement: Omit<OwnNameStatement, 'answered'>,
     groupId: string
   ) => Promise<NameStatementOutcome>;
+  /** `sendNameStatement` as an ANSWER, bound to this device's key ({@link settleOwedAnswer}). */
+  answer: AnswerSender;
 }
+
+/** Sends one answer `frame` to the statement `to` in `groupId` (`sendNameStatement`). */
+export type AnswerSender = (
+  frame: AnswerFrame,
+  to: string,
+  groupId: string
+) => Promise<NameStatementOutcome>;
 
 /**
  * Why no row was created, when none was - each one a DIFFERENT next move for the caller.
@@ -489,7 +502,7 @@ async function settlePendingRename(
     return;
   }
   const sent = outcome.sent;
-  const own = ownRenameOutcome(after, pending.name, sent.receivedAt, true, pending.over);
+  const own = ownRenameOutcome(after, pending.name, sent.receivedAt, true, pending.over, userId);
   if ('row' in own) {
     await replace(own.row.nameSync ?? {}, own.row);
     log(`[GROUP_NAME] ${id} re-sent and delivered - the server copy follows`);
@@ -586,25 +599,9 @@ async function stateGroupNameOnce(
       });
     return;
   }
-  const serverNow = await sweepServerNow(settler.clock, group.groupId, mlsService, userId);
-  if (typeof serverNow !== 'number') {
-    if (!settler.clock.said.has(serverNow)) {
-      settler.clock.said.add(serverNow);
-      console.warn(
-        serverNow === 'clockless'
-          ? `[GROUP_NAME] names not stated this sweep - the server's answer carried no readable clock, so whether the receivers would take a statement cannot be proven; stated once a clock is readable`
-          : `[GROUP_NAME] names not stated this sweep - the server's clock could not be read (${short} answered nothing usable); the next sweep states them`
-      );
-    }
-    return;
-  }
-  const inBound = (sentAt: number) => {
-    const lead = serverNow - sentAt;
-    return (
-      lead <= BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS &&
-      -lead <= BUNDLE_SERVER_TIME_SKEW_MS
-    );
-  };
+  const serverNow = await provenServerNow(settler.clock, group.groupId, mlsService, userId);
+  if (serverNow === null) return;
+  const inBound = (sentAt: number) => inReceiversBound(serverNow, sentAt);
   let minted: Omit<OwnNameStatement, 'answered'>;
   if (due.due === 'resend' && inBound(due.statement.sentAt)) {
     minted = {
@@ -618,12 +615,7 @@ async function stateGroupNameOnce(
     const sentAt = Date.now();
     if (!inBound(sentAt)) {
       // ONCE PER SWEEP, not once per group: it is one fact about this device's clock.
-      if (!settler.clock.said.has('skewed')) {
-        settler.clock.said.add('skewed');
-        console.error(
-          `[GROUP_NAME] names NOT stated this sweep - this device's clock lies outside the receivers' bound from the server's (${Math.round((sentAt - serverNow) / 60_000)} min), so every member would refuse them; stated once the clock is right`
-        );
-      }
+      saySkewedClock(settler.clock, sentAt, serverNow);
       return;
     }
     minted = { name: start.name, messageId: crypto.randomUUID(), sentAt };
@@ -674,14 +666,175 @@ async function sweepServerNow(
   groupId: string,
   mlsService: IMlsService,
   userId: string
-): Promise<number | 'clockless' | 'unanswered'> {
+): Promise<number | 'clockless' | 'unanswered' | 'absent'> {
   if (clock.serverNow !== undefined) return clock.serverNow;
   const status = await mlsService.getGroupServerStatus(groupId);
-  if (status === 'error' || status === 'absent') return 'unanswered';
+  if (status === 'error') return 'unanswered';
+  if (status === 'absent') return 'absent';
   noteServerTime(userId, status.serverNow);
   if (status.serverNow === undefined) return 'clockless';
   clock.serverNow = status.serverNow;
   return clock.serverNow;
+}
+
+/**
+ * {@link sweepServerNow}, its failure said: `null` when no clock is proven, with the line that says
+ * why. A clock fact (no answer, no readable clock) is said ONCE per sweep; a group the server
+ * confirms it no longer holds is a fact of that group alone, said for it.
+ */
+async function provenServerNow(
+  clock: SweepClock,
+  groupId: string,
+  mlsService: IMlsService,
+  userId: string
+): Promise<number | null> {
+  const serverNow = await sweepServerNow(clock, groupId, mlsService, userId);
+  if (typeof serverNow === 'number') return serverNow;
+  if (serverNow === 'absent') {
+    console.warn(
+      `[GROUP_NAME] ${groupIdShort(groupId)} name frame not sent - the server confirms it no longer holds the group, so no clock was read through it`
+    );
+    return null;
+  }
+  if (!clock.said.has(serverNow)) {
+    clock.said.add(serverNow);
+    console.warn(
+      serverNow === 'clockless'
+        ? `[GROUP_NAME] name frames not sent this sweep - the server's answer carried no readable clock, so whether the receivers would take one cannot be proven; sent once a clock is readable`
+        : `[GROUP_NAME] name frames not sent this sweep - the server's clock could not be read (${groupIdShort(groupId)} got no answer); the next sweep sends them`
+    );
+  }
+  return null;
+}
+
+/**
+ * Whether the receivers take a frame signed at `sentAt`, as the server's clock `serverNow` proves it:
+ * within {@link BUNDLE_SERVER_TIME_SKEW_MS} either way, less {@link RENAME_RESEND_MARGIN_MS} on the
+ * late side for the time the send itself takes.
+ */
+function inReceiversBound(serverNow: number, sentAt: number): boolean {
+  const lead = serverNow - sentAt;
+  return (
+    lead <= BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS &&
+    -lead <= BUNDLE_SERVER_TIME_SKEW_MS
+  );
+}
+
+/** Says, ONCE per sweep, that this device's clock lies outside the receivers' bound - one fact. */
+function saySkewedClock(clock: SweepClock, sentAt: number, serverNow: number): void {
+  if (clock.said.has('skewed')) return;
+  clock.said.add('skewed');
+  console.error(
+    `[GROUP_NAME] name frames NOT sent this sweep - this device's clock lies outside the receivers' bound from the server's (${Math.round((sentAt - serverNow) / 60_000)} min), so every member would refuse them; sent once the clock is right`
+  );
+}
+
+/** What {@link settleOwedAnswer} needs beyond the row: the sender, the clock and the store. */
+export interface OwedAnswerDeps {
+  send: AnswerSender;
+  clock: SweepClock;
+  mlsService: IMlsService;
+  userId: string;
+  conversations: Map<string, Conversation>;
+  saveConversation: ((key: string) => Promise<void>) | undefined;
+  log: (msg: string) => void;
+}
+
+/** The groups whose owed answer is chained on their drain right now (one chain per group). */
+const answersWaitingForDrain = new Set<string>();
+
+/**
+ * SENDS THE ANSWER THIS DEVICE OWES (`NameSync.answer`, `statementAnswerDue`; #3888 re-review, A1) -
+ * from the drain that follows the statement and from every connection sweep, ONE function, so an
+ * answer interrupted by a restart, a sign-out or a lost tab is sent by the next sweep, never lost.
+ *
+ * Read off the row as it stands (`owedAnswerDue`): settled unsent once a later rename reached
+ * everyone; the SAME frame when one was minted for the name and rename the row still holds; a fresh
+ * one otherwise, RECORDED BEFORE THE SEND, so whatever becomes of the send, what is re-sent is that
+ * frame and the members take one answer. Only once the group is drained here (chained on
+ * `whenGroupDrained` otherwise), and only within the receivers' bound as the server's clock proves
+ * it - the statement's rule ({@link inReceiversBound}). The outcome is written only while the row
+ * still owes that answer: a copy read from another device may have settled it during the send.
+ */
+export async function settleOwedAnswer(
+  key: string,
+  groupId: string,
+  deps: OwedAnswerDeps
+): Promise<void> {
+  const { conversations, mlsService, userId, log } = deps;
+  const start = conversations.get(key);
+  if (!start) return;
+  const due = owedAnswerDue(start, userId);
+  if (due === 'none') return;
+  const short = groupIdShort(groupId);
+  const save = async (what: string) => {
+    await deps.saveConversation?.(key).catch((e: unknown) => {
+      console.error(
+        `[GROUP_NAME] ${short} answer ${what} but not saved - the next sweep reads the row as it was before: ${String(e).slice(0, 120)}`
+      );
+    });
+  };
+  if (due === 'void') {
+    conversations.set(key, withAnswerSettled(start));
+    await save('settled unsent');
+    log(
+      `[GROUP_NAME] ${short} owed answer settled unsent - the row no longer holds a rename of this user's, so a later rename reached the members it was for`
+    );
+    return;
+  }
+  if (!mlsService.isGroupDrained(groupId)) {
+    if (answersWaitingForDrain.has(groupId)) return;
+    answersWaitingForDrain.add(groupId);
+    log(`[GROUP_NAME] ${short} owed answer waits for this link to drain the group`);
+    mlsService
+      .whenGroupDrained(groupId)
+      .then(() => {
+        // Released BEFORE the re-run, so a group busy again by then chains anew.
+        answersWaitingForDrain.delete(groupId);
+        return settleOwedAnswer(key, groupId, { ...deps, clock: newSweepClock() });
+      })
+      .catch((e: unknown) => {
+        answersWaitingForDrain.delete(groupId);
+        console.warn(
+          `[GROUP_NAME] ${short} owed answer not sent now - the group never drained here, or the send threw; it stays owed and the next sweep sends it: ${String(e).slice(0, 120)}`
+        );
+      });
+    return;
+  }
+  const serverNow = await provenServerNow(deps.clock, groupId, mlsService, userId);
+  if (serverNow === null) return;
+  let frame: AnswerFrame;
+  let to = due.to;
+  if (due.due === 'resend' && inReceiversBound(serverNow, due.frame.sentAt)) {
+    frame = due.frame;
+  } else {
+    const sentAt = Date.now();
+    if (!inReceiversBound(serverNow, sentAt)) {
+      saySkewedClock(deps.clock, sentAt, serverNow);
+      return;
+    }
+    // Re-read after the clock's round trip: what goes out is the name the row holds now.
+    const held = conversations.get(key) ?? start;
+    const now = owedAnswerDue(held, userId);
+    if (typeof now !== 'object') return settleOwedAnswer(key, groupId, deps);
+    to = now.to;
+    frame = { name: held.name, renameAt: held.nameAt!, messageId: crypto.randomUUID(), sentAt };
+    conversations.set(key, withNameSync(held, { ...held.nameSync, answer: { to, frame } }));
+    await save('minted');
+  }
+  const outcome = await deps.send(frame, to, groupId);
+  const after = conversations.get(key);
+  if (!after) return;
+  const owed = after.nameSync?.answer;
+  if (owed && owed.to === to && !owed.done) {
+    conversations.set(key, ownAnswerOutcome(after, to, frame, outcome));
+    await save('settled');
+  }
+  const detail =
+    'refused' in outcome ? ` (${outcome.refused})` : 'kept' in outcome ? ` (${outcome.kept})` : '';
+  log(
+    `[GROUP_NAME] ${short} answer ${frame.messageId.slice(0, 8)} to statement ${to.slice(0, 8)} ${due.due === 'resend' && frame === due.frame ? 're-sent (same frame)' : 'sent'}: ${Object.keys(outcome)[0]}${detail}`
+  );
 }
 
 /** The 8-character prefix every line in this file names a group by. */
@@ -745,6 +898,16 @@ export async function ensureConversationForServerGroup(
         saveConversation,
         log
       );
+      // An answer this device owes - interrupted by a restart, or never sent - goes out here.
+      await settleOwedAnswer(known[0], groupId, {
+        send: deps.nameSync.answer,
+        clock: deps.nameSync.clock,
+        mlsService,
+        userId,
+        conversations,
+        saveConversation,
+        log,
+      });
     }
     await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';

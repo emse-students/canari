@@ -2929,7 +2929,8 @@ export function useConversations() {
                 name,
                 result.delivered.nameAt,
                 result.delivered.serverCopyOwed,
-                over
+                over,
+                ctx.userId
               );
         if ('row' in outcome) {
           conversations.set(key, outcome.row);

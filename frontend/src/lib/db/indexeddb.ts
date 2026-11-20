@@ -1,5 +1,5 @@
 import { RowRefusedError } from './rowWriteFailure';
-import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
+import { nameRankFields, nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -831,15 +831,20 @@ export class IndexedDbStorage implements IStorage {
    * whatever was written, including a value an older build got wrong.
    */
   private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
-    const { nameAt, nameSync, nameFromStatement, ...rest } = r;
+    const { nameAt, nameSync, nameFromStatement, nameRenameAt, nameRenamedBy, ...rest } = r;
     const positive = (v: unknown): v is number =>
       typeof v === 'number' && Number.isFinite(v) && v > 0;
     return {
       ...rest,
       // A positive server time or nothing: "never stated" is absence, never a 0 or a NaN.
       ...(positive(nameAt) ? { nameAt } : {}),
-      // A statement's rank only beside a date, and only as `true`: anything else is a rename's.
-      ...(positive(nameAt) && nameFromStatement === true ? { nameFromStatement } : {}),
+      // The rank only beside a date, by the one rule every store applies (`nameRankFields`).
+      ...nameRankFields({
+        ...(positive(nameAt) ? { nameAt } : {}),
+        nameFromStatement,
+        nameRenameAt,
+        nameRenamedBy,
+      }),
       ...nameSyncField(parseNameSync(nameSync)),
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
       readWatermarks: parseReadWatermarks(r.readWatermarks),
