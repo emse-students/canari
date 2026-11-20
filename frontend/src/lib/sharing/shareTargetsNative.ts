@@ -26,6 +26,17 @@ const MAX_SHARE_TARGET_ID_LENGTH = 200;
 /** A conversation id as it may travel in a shortcut id and a deep link: a plain token. */
 const CONVERSATION_ID = /^[A-Za-z0-9_-]+$/;
 
+/**
+ * WHICH picture a suggestion is drawn with: an id and never a location, the same two routes a
+ * push notification's icon may name (`CanariFirebaseMessagingService`): a person's photo through
+ * the authenticated avatar route, or a public media object (a group's image, a community's logo).
+ * The native side fetches and caches it itself - no bytes cross the bridge.
+ */
+export interface ShareTargetAvatar {
+  kind: 'user' | 'media';
+  id: string;
+}
+
 /** One suggestion as the native side takes it (`publish_share_targets`). */
 export interface ShareTarget {
   /**
@@ -37,6 +48,8 @@ export interface ShareTarget {
   label: string;
   /** The deep link a tap from Android's launcher long-press menu opens (iOS has no such menu). */
   link: string;
+  /** The picture to draw; absent -> the native side draws the initials of `label`. */
+  avatar?: ShareTargetAvatar;
 }
 
 /** The shortcut id of a conversation, or null when its id is not a plain token. */
@@ -57,9 +70,12 @@ export function conversationIdFromShareTarget(value: unknown): string | null {
   return CONVERSATION_ID.test(conversationId) ? conversationId : null;
 }
 
-/** What identifies a published set: the ordered ids and labels (the link follows from the id). */
+/**
+ * What identifies a published set: the ordered ids, labels and pictures (the link follows from the
+ * id). The picture is part of it, so a changed group image reaches the sheet at the next departure.
+ */
 function keyOf(targets: readonly ShareTarget[]): string {
-  return JSON.stringify(targets.map((t) => [t.id, t.label]));
+  return JSON.stringify(targets.map((t) => [t.id, t.label, t.avatar?.kind, t.avatar?.id]));
 }
 
 /**

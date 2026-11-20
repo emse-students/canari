@@ -1679,8 +1679,8 @@ can say nothing about either outcome. Reasoning and the evidence behind each cha
 Test the **release** artifact from `android.yml`, not a local build: a locally re-signed
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
 re-enrolment. **IT DOES NOT COST A 2FA PROMPT, AND THE SENTENCE THAT SAID SO HELD THIS CHECK UP.**
-The campaign's test accounts are Authentik service accounts reached through the "Connexion externe
-(service-account)" link, and they carry no second factor; 2FA is a PRODUCTION-account property
+The campaign's test accounts are Authentik service accounts reached through the "Se connecter avec
+un mot de passe" link (labelled "Connexion externe (service-account)" before 2026-11-20), and they carry no second factor; 2FA is a PRODUCTION-account property
 (user, 2026-09-23). A session declined to start this check on the strength of the old wording, which
 is the cost of a precondition nobody re-measured. **TWO signed artifacts now exist and the RELEASE one is the target:**
 v0.14.5 of 2026-08-26 carries both Android fixes and went to Google Play production, so its attached
@@ -4896,7 +4896,7 @@ Dev served `1.7.1-alpha.5` (`/api/version` build `dev.45b428c`). **Builds:** the
 | 4a. A live muted by hand reopens muted (iPhone 12) | **PASS by icon state** | `gamma` on the iPhone watched `alpha`'s live from the Mi: it opened with the speaker icon on; muted by hand (icon crossed), closed, reopened from the feed card in the same session: opened muted |
 | 4b. The feed is silent again after a live closes (iPhone 12) | **PASS by icon state** | The CanaReels viewer's sound set to off (crossed icon); app killed and relaunched (so no hand-mute remembered); the live opened WITH sound (icon with waves); closed; the viewer's icon was crossed again and the setting still off. (Before the relaunch the live opened muted, because of the hand-mute of 4a: that is 4a, not a failure of 4b.) The viewer's sound was put back to on afterwards |
 
-**Replays seen on the way:** the first seek into a segment not yet measured lands on that segment's start (up to 0.4 s early) and exactly on the target otherwise; the duration the bar shows grows from the listed 184.8 s to the measured 188.9 s once the end is reached, as arrival time and media time differ. **Rig note:** after "End the live" on the web the broadcaster overlay stays on a pre-live screen whose start button never enables ([entry, P3](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)), so two of my first three web lives never started and their rows were retaken; a rig that sends a second live must close the overlay first.
+**Replays seen on the way:** the first seek into a segment not yet measured lands on that segment's start (up to 0.4 s early) and exactly on the target otherwise; the duration the bar shows grows from the listed 184.8 s to the measured 188.9 s once the end is reached, as arrival time and media time differ. **Rig note:** after "End the live" on the web the broadcaster overlay stays on a pre-live screen whose start button never enables ([entry, P3](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)), so two of my first three web lives never started and their rows were retaken; a rig that sends a second live must close the overlay first. (Re-measured the same day: the end alone settles on "Live termine"; the stuck sheet is the script's second "En direct" past the still-open screen, fixed by #3905.)
 
 **Not seen, to say plainly:** a replay played on either phone (S11's stall at a flip still owes both), a camera flip in a replay, seek landing on the Mi's replay, any sound by ear, a clap offset, messaging on the Mi 9T, a catch-up of more than twelve messages, and the desktop reactions at 1024 and 1920 px.
 

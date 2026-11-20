@@ -12,7 +12,8 @@
  * answered PASS. It took a check that reads what the product SAID and not only what it did.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchOrUnreachable } from './fetchOrUnreachable';
+import { fetchOrUnreachable, isServerUnreachable } from './fetchOrUnreachable';
+import { DEADLINE_MS } from './requestDeadline';
 
 const UNREACHABLE = 'Impossible de verifier le PIN (serveur injoignable).';
 
@@ -71,7 +72,50 @@ describe('fetchOrUnreachable', () => {
     const init = { method: 'POST', body: 'x' };
 
     await expect(fetchOrUnreachable('https://x/api', init, UNREACHABLE)).resolves.toBe(res);
-    expect(spy).toHaveBeenCalledWith('https://x/api', init);
+    // The init is handed on with the deadline's signal added, and nothing else changed.
+    expect(spy).toHaveBeenCalledWith(
+      'https://x/api',
+      expect.objectContaining({ method: 'POST', body: 'x', signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it('gives up on a request that never answers at the read deadline, as unreachable (row 11)', async () => {
+    // A link that accepts the socket and answers nothing: the gate's spinner must end in a typed,
+    // retryable "unreachable", never wait for ever. The deadline is `requestDeadline.ts`'s own.
+    vi.useFakeTimers();
+    try {
+      const warn = warned();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init.signal?.addEventListener('abort', () =>
+                reject(new DOMException('aborted', 'AbortError'))
+              );
+            })
+        )
+      );
+      const outcome = fetchOrUnreachable('https://x/api/mls/security/pin-salt/u', {}, UNREACHABLE)
+        .then(() => null)
+        .catch((e: unknown) => e);
+
+      await vi.advanceTimersByTimeAsync(DEADLINE_MS.read - 1);
+      let settled = false;
+      void outcome.then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const e = await outcome;
+      expect(isServerUnreachable(e)).toBe(true);
+      expect((e as Error).message).toBe(UNREACHABLE);
+      const ours = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[fetch]'));
+      expect(ours).toHaveLength(1);
+      expect(ours[0]).toContain(`no answer within ${DEADLINE_MS.read} ms`);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('logs nothing when the request got an answer, however bad', async () => {

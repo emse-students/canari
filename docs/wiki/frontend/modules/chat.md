@@ -888,8 +888,50 @@ the keyboard with the conversation around it; and a reply to a GIF quoted the GI
   (2026-10-05: a raw `@[id]` mention weighs ~40 characters but draws short, so a bare cut at 100
   fell under the display's 84 and ended mid-word with no mark; a cut inside a token is pulled back
   before it. Quotes stored before that stay unmarked); a quote already stored cut short is not a GIF URL any more and stays text.
-  **Not done: an image or video quote still reads `[Media]`** - drawing it needs a thumbnail the
-  quote does not carry.
+  **Not done: an image or video quote shows no thumbnail** - drawing it needs one the quote does not
+  carry; it names what the message is instead ([below](#a-media-message-is-previewed-by-what-it-is-2026-11-20)).
+
+### A media message is previewed by what it is (2026-11-20)
+
+The conversation list read `[Media]` for every photo, video, voice note and file (owner, 2026-11-20,
+screenshot: say what it is, the way Messenger does). **Then the owner, same day: "Il faut tout
+homogeneiser"** - the list, the reply quotes, the in-app notification and the native push banners say
+the SAME words for the same message, in the WhatsApp style the banners already had: a leading emoji.
+
+**ONE table of words, in two copies guarded against each other.** TS: Paraglide `chat_preview_*`
+(`messages/{fr,en}.json`), classified by `mediaKindLabel(ref)` and composed by
+`previewForMedia(ref, caption)` (`envelope.ts`) for `getPreviewText` (list tile, reply strip, thread
+plain text, search, the in-app notification body) and `quoteReference` (the quote a reply stores).
+Native: `PushText::render` (`mobile/push_text.rs`), chosen from the proto by `extract_full_message_info`.
+**`push_text.rs` reads the two JSON files at test time** (`media_lines_match_the_apps_paraglide_messages`)
+and fails `cargo test` if a word, an emoji or a punctuation mark differs on either side.
+`chat_preview_media` is deleted.
+
+| What the message is | fr | en |
+| --- | --- | --- |
+| image | `📷 Photo` | `📷 Photo` |
+| image, mime `image/gif` (any case; the proto carries it, field 5) | `🌀 GIF` | `🌀 GIF` |
+| video | `🎥 Vidéo` | `🎥 Video` |
+| a video declaring `intent: reel-message` | `🎬 CanaReel` | `🎬 CanaReel` |
+| audio declared a voice note | `🎤 Message vocal` | `🎤 Voice message` |
+| audio, undeclared (an import, or before 2026-09-17) | `🎵 Fichier audio` | `🎵 Audio file` |
+| file, named | `📎 Fichier : <nom>` | `📎 File: <name>` |
+| file, nameless | `📎 Pièce jointe` | `📎 Attachment` |
+
+**A caption FOLLOWS the kind everywhere** (`📷 Photo : coucou`; `{label} : {caption}` in fr,
+`{label}: {caption}` in en) - in the list, in the quote a reply stores (the caption raw there, mentions
+unresolved, as a text quote's), and in the banner, which used to show the caption alone for a photo.
+A file drops its name when a caption follows, so the line stays short. **A file name is sender-chosen
+text:** control, bidi and format characters are stripped (`stripInvisible` in TS, `clean_file_name`
+in Rust), whitespace is collapsed first, and it is capped at 60 code points with an ellipsis; a stored
+quote is also cut by `cutReplyPreview`. Cosmetic edges (`is_invisible`): Rust strips per character,
+TS per grapheme, so a name's emoji joiners (ZWJ), Arabic/Syriac/Indic joiners (ZWNJ/ZWJ) and a
+subdivision flag's tag characters (U+E0020-U+E007F) survive in the app and not in a banner. The text-GIF preview (a pasted GIF link) keeps `[GIF]`.
+A media envelope holds ONE file (several files are several messages), so there is no `N photos` line.
+**A reply quote already stored as `[Média]` stays as persisted:** it is written once, into the reply,
+and is not rebuilt. Tests: `envelope.mediaPreview.test.ts`, and `push_text.rs` / `proto_fields.rs`.
+**Owed: one look at the list and a banner on a phone** (backlog entry
+`reading-owed-media-preview-names-the-kind`); no reading has been taken.
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
