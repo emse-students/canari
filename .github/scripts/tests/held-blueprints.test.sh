@@ -10,12 +10,11 @@
 # comment states is one the next edit undoes in silence, so the real script is run here against the
 # real tree, with a fake transport that records the program it would have sent.
 #
-# SINCE 2026-11-18 THE TERMS HOLD IS A PROVIDER'S, NOT A FILE'S: 45-consent.yaml builds the flow on
-# every instance (a flow nobody names is inert) and 50-providers.yaml declares which providers name
-# it - dev and local, where the pre-release apps and the harness sign in, never production. That
-# declaration is asserted below, without Docker; test-blueprints.sh asserts it on a built instance.
-# Lifting the hold for production is adding `miconnect-canari` to BOUND here, in the blueprint and in
-# test-consent-flow.py, in one pull request (docs/wiki/infrastructure/authentik.md).
+# SINCE 2026-11-18 THE TERMS HOLD WAS A PROVIDER'S, NOT A FILE'S, AND SINCE 2026-11-20 IT IS LIFTED:
+# 45-consent.yaml builds the flow on every instance and 50-providers.yaml declares which providers
+# name it - now all eight, production's included. That declaration is asserted below, without Docker;
+# test-blueprints.sh asserts it on a built instance. Holding a provider again is removing it from
+# BOUND here, in the blueprint and in test-consent-flow.py (docs/wiki/infrastructure/authentik.md).
 #
 # Run by `make test-ci-scripts` and by CI. No Docker, no network.
 set -uo pipefail
@@ -55,14 +54,14 @@ for file in "$blueprints"/held/*.yaml; do
 done
 # THE HOLD THE USER DECIDED, named rather than derived: the providers whose `authorization_flow` is
 # the terms flow, read from the blueprint, must be exactly BOUND.
-BOUND="miconnect-canari-dev miconnect-canari-local"
+BOUND="miconnect-archives miconnect-canari miconnect-canari-dev miconnect-canari-local miconnect-cercle miconnect-migallery miconnect-mino-wiki miconnect-sky"
 bound="$(awk '
   /^[[:space:]]*-[[:space:]]*model:/ { name = "" }
   /^[[:space:]]*name: "miconnect-/ && name == "" { v = $2; gsub(/"/, "", v); name = v }
   /authorization_flow:.*miconnect-authorization/ { print name }
 ' "$blueprints/50-providers.yaml" | sort | paste -sd' ' -)"
 if [ "$bound" = "$BOUND" ]; then
-  pass "the terms flow is named by exactly: $BOUND (production held)"
+  pass "the terms flow is named by exactly: $BOUND (every provider, production included)"
 else
   fail "the terms flow is named by '$bound', not '$BOUND' - lifting the hold is a decision, change BOUND with it"
 fi

@@ -41,6 +41,7 @@
     "siteNotEnabled": "HANDOFF_SITE_NOT_ENABLED",
     "badDest": "HANDOFF_BAD_DEST",
     "accessRefused": "HANDOFF_ACCESS_REFUSED",
+    "termsNotAccepted": "HANDOFF_TERMS_NOT_ACCEPTED",
     "miconnectUnavailable": "HANDOFF_MICONNECT_UNAVAILABLE"
   }
 }

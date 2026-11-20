@@ -12,15 +12,18 @@
 # at the first sign-in) and for every future version of the text.
 #
 # WHICH PROVIDERS NAME IT IS DECLARED IN 50-providers.yaml, one `authorization_flow` per provider, and
-# nowhere else (2026-11-18). This file only BUILDS the flow; a flow no provider names is inert. Until
-# the hold of 2026-10-17 is lifted, only the two non-production Canari providers (dev, local) name it,
-# so the terms are read on dev and the harness before production asks anybody
+# nowhere else (2026-11-18). This file only BUILDS the flow; a flow no provider names is inert. Since
+# the hold of 2026-10-17 was lifted (2026-11-20) all eight providers name it, production's included
 # (docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
 # The answer is stored on the
 # account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO
 # PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
 # check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
-# date and the test's VERSION disagree.
+# date, the test's VERSION and core-service's CONSENT_VERSION (the handoff mint's gate) disagree.
+# THE TWO BINDINGS OF THE POLICY `miconnect-consent-needed` BELOW ARE AN ALLOWLIST OF core-service's
+# handoff gate (miconnect-reader.client.ts): it recognises exactly them, by policy and stage names,
+# and answers them from the person's `cgu_version`. Rename a stage or the policy and the handoff to
+# Sky, MiGallery and Le Cercle is refused `policy_bound` until the gate follows.
 version: 1
 metadata:
   name: miconnect-consent
@@ -35,7 +38,7 @@ entries:
       title: "Conditions d'utilisation de MiConnect"
       designation: "authorization"
       authentication: "require_authenticated"
-      # Same as default-provider-authorization-implicit-consent: no per-application consent screen.
+      # No per-application consent screen (the terms stages below are the only ones); a denial shows the message and continues.
       denied_action: "message_continue"
   - model: authentik_stages_prompt.prompt
     identifiers:
@@ -45,7 +48,7 @@ entries:
       label: "Information"
       type: "static"
       order: 1
-      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, le wiki Mino, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-accept"
@@ -63,7 +66,7 @@ entries:
       label: "Version des conditions"
       type: "hidden"
       order: 3
-      initial_value: "2026-10-16"
+      initial_value: "2026-11-20"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-date"
@@ -84,7 +87,7 @@ entries:
     identifiers:
       name: "miconnect-consent-needed"
     attrs:
-      execution_logging: true
+      execution_logging: false
       # True = the stage is shown. The literal is THE CURRENT VERSION (see the header).
       # NEVER IN AN IMPERSONATED SESSION: there request.user is the person impersonated, so the
       # administrator would be shown the terms and their tick written on THAT person's account
@@ -94,7 +97,7 @@ entries:
         if "authentik/impersonate/user" in session:
             ak_logger.info("miconnect-consent: impersonated session, terms neither shown nor written")
             return False
-        return request.user.attributes.get("cgu_version") != "2026-10-16"
+        return request.user.attributes.get("cgu_version") != "2026-11-20"
   # THE TICK IS CHECKED HERE, because `required` on a checkbox is not: authentik builds a checkbox as
   # a BooleanField with required=False, so `required: true` above only reaches the browser's form,
   # and a POST without the tick was ACCEPTED and written (driven 2026-10-16 by test-consent-flow.py).
@@ -102,7 +105,7 @@ entries:
     identifiers:
       name: "miconnect-consent-validate-accept"
     attrs:
-      execution_logging: true
+      execution_logging: false
       expression: |-
         if request.context.get("prompt_data", {}).get("cgu_accept") is True:
             return True

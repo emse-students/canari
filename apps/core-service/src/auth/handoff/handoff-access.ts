@@ -4,6 +4,7 @@ import type { Repository } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { ECOSYSTEM_SITES } from './handoff-sites';
 import {
+  CONSENT_VERSION,
   MiconnectReadError,
   MiconnectReaderClient,
   OPEN_FLOW_AUTHENTICATION,
@@ -33,6 +34,12 @@ export const HandoffAccessClass = {
    * flow, or on a stage of them: only MiConnect could evaluate it, and it cannot be asked (section 9).
    */
   policyBound: 'policy_bound',
+  /**
+   * The mint passes through MiConnect's terms-of-use flow, whose two bindings the person's own
+   * answer settles, and they have not accepted the current text: an OIDC sign-in would stop them on
+   * the terms page, so a handoff must not skip it.
+   */
+  termsNotAccepted: 'terms_not_accepted',
   /** The authorization flow asks more than a signed-in user (e.g. `require_superuser`). */
   flowRestricted: 'flow_restricted',
   /** The tenant's `core_default_app_access` is false: an unbound application lets nobody in. */
@@ -84,7 +91,10 @@ export interface HandoffAccess {
  * the INPUTS of its answer with a read-only account and answers exactly when they settle it: the
  * account is active, the application has no enabled policy binding, and `core_default_app_access`
  * is true (or unset - its default is true, `authentik/core/apps.py`). A bound application is
- * REFUSED (`policy_bound`), never evaluated here: copying MiConnect's policy logic into Canari is
+ * REFUSED (`policy_bound`), never evaluated here - EXCEPT the terms-of-use flow's own two bindings,
+ * recognised by an allowlist (policy `miconnect-consent-needed` on the two stage bindings of
+ * `miconnect-authorization`) and answered from the person's `cgu_version` (`terms_not_accepted`
+ * when it is not the current text); copying any OTHER policy's logic is copying MiConnect's policy logic into Canari is
  * what F2 was rejected for. Every MiConnect failure refuses too - a transport failure is not an
  * answer, and the mint never falls back to minting.
  *
@@ -135,6 +145,14 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
       if (closed) {
         throw new HandoffAccessRefused(closed, `app=${application} ${describe(access)}`);
       }
+      // The consent flow's bindings (an ALLOWLIST) ask the person, not a policy Canari cannot
+      // evaluate: the mint passes only when they accepted the current text.
+      if (access.consentBindings > 0 && account.cguVersion !== CONSENT_VERSION) {
+        throw new HandoffAccessRefused(
+          HandoffAccessClass.termsNotAccepted,
+          `app=${application} pk ${account.pk} accepted ${account.cguVersion ?? 'nothing'}, the text is ${CONSENT_VERSION}`
+        );
+      }
     } catch (e) {
       if (e instanceof MiconnectReadError) {
         const accessClass =
@@ -180,7 +198,11 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
         } else {
           this.logger.log(
             `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} ${describe(access)} ` +
-              '- an active account may be handed off (not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
+              (access.consentBindings > 0
+                ? `- an active account that accepted the MiConnect terms ${CONSENT_VERSION} may be handed off ` +
+                  '(the consent bindings are recognised by the NAMES of their policy and stages, not by the policy content, which this account cannot read) '
+                : '- an active account may be handed off ') +
+              '(not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
           );
         }
       } catch (e) {
@@ -205,7 +227,7 @@ function closedBy(access: MiconnectApplicationAccess): HandoffAccessClassCode | 
 /** The inputs, as a log line names them. */
 function describe(access: MiconnectApplicationAccess): string {
   return (
-    `bindings=${access.enabledBindings} flow_bindings=${access.flowBindings} ` +
+    `bindings=${access.enabledBindings} flow_bindings=${access.flowBindings} consent_bindings=${access.consentBindings} ` +
     `flow_auth=${access.authorizationFlowAuthentication} default_access=${access.defaultAccessFlag ?? 'unset'}`
   );
 }
