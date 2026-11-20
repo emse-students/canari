@@ -4,6 +4,7 @@ import {
   applyRenameFrame,
   nameStatementDue,
   statementAnswerDue,
+  sameShownName,
   answerReadSettlesOwn,
   owedAnswerDue,
   ownAnswerOutcome,
@@ -702,6 +703,19 @@ describe('#3888 review: statements and the rest of the rule', () => {
     });
     expect(answerReadSettlesOwn(owed, { name: 'Nouveau', renameAt: T - 1 })).toBeNull();
     expect(answerReadSettlesOwn(owed, { name: 'Autre', renameAt: T })).toBeNull();
+  });
+
+  it('a legacy stored name with a trailing space is the same name as its trimmed statement', () => {
+    const legacy = group({ name: 'Team ', nameAt: T, nameRenamedBy: 'alice' });
+    // A statement "Team" is the same name: no split to answer.
+    expect(statementAnswerDue(legacy, 'Team', { id: 's-1', isAnswer: false }, 'alice')).toBe(false);
+    expect(sameShownName('Team', 'Team ')).toBe(true);
+    expect(sameShownName('Team', 'Other')).toBe(false);
+    // An answer "Team" is accepted against the owed one.
+    const owed = withOwedAnswer(legacy, 's-1');
+    expect(answerReadSettlesOwn(owed, { name: 'Team', renameAt: T })!.nameSync).toEqual({
+      answer: { to: 's-1', done: true },
+    });
   });
 
   it('the owed answer survives the store, frame included', () => {

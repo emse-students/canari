@@ -23,6 +23,15 @@ import type { Conversation } from '$lib/types';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 
 /**
+ * Whether two group names show the same: compared TRIMMED on both sides, the one rule every reader
+ * uses. A statement's name is trimmed on read (`readDatedGroupName`) but a Welcome or an old build may
+ * have stored the name with a trailing space, which must not make an honest restatement a different name.
+ */
+export function sameShownName(a: string, b: string): boolean {
+  return a.trim() === b.trim();
+}
+
+/**
  * A name and the server time (Unix ms) of the MLS statement that set it. `statement` marks a SILENT
  * `groupNamed` statement (a creation, or the one-time restatement of a group that existed before
  * names were dated) as opposed to a `groupRenamed` frame - see {@link groupNameSupersedes} for why
@@ -387,7 +396,7 @@ export function reportOutrankedStatement(
   where: string
 ): boolean {
   if (convo.nameAt === undefined || convo.nameFromStatement) return false;
-  if (typeof statedName !== 'string' || statedName.trim() === convo.name) return false;
+  if (typeof statedName !== 'string' || sameShownName(statedName, convo.name)) return false;
   const key = `${convo.id}|${statedName.trim()}`;
   if (!outrankedStatementsSaid.has(key)) {
     outrankedStatementsSaid.add(key);
@@ -436,7 +445,7 @@ export function statementAnswerDue(
   if ((convo.conversationType ?? 'group') !== 'group') return false;
   if (statement.isAnswer || !statement.id) return false;
   if (!heldRenameIsOwn(convo, userId) || convo.lifecycle !== 'active') return false;
-  if (typeof statedName !== 'string' || statedName.trim() === convo.name) return false;
+  if (typeof statedName !== 'string' || sameShownName(statedName, convo.name)) return false;
   const owed = convo.nameSync?.answer;
   // One owed answer heals every plain statement, past and future (it outranks them all): a second
   // one would only cost a slot. A settled one answered `to` already.
@@ -464,7 +473,7 @@ export function answerReadSettlesOwn(
   const owed = convo.nameSync?.answer;
   if (!owed || owed.done) return null;
   if (convo.nameAt === undefined || convo.nameFromStatement) return null;
-  if (typeof answer.name !== 'string' || answer.name.trim() !== convo.name) return null;
+  if (typeof answer.name !== 'string' || !sameShownName(answer.name, convo.name)) return null;
   if (answer.renameAt !== convo.nameAt) return null;
   return withNameSync(convo, { ...convo.nameSync, answer: { to: owed.to, done: true } });
 }
@@ -850,8 +859,8 @@ export function pendingRenameVerdict(
   // member's one-time restatement of the base - the rollout itself - cancelled this device's
   // unanswered rename without a word (#3888 review, B1).
   if (row.nameAt !== undefined && row.nameFromStatement) return 'resend';
-  if (row.name === pending.name && row.nameAt !== undefined) return 'landed';
-  if (row.name !== pending.over.name) return 'superseded';
+  if (sameShownName(row.name, pending.name) && row.nameAt !== undefined) return 'landed';
+  if (!sameShownName(row.name, pending.over.name)) return 'superseded';
   return row.nameAt === pending.over.at ? 'resend' : 'superseded';
 }
 
@@ -951,7 +960,7 @@ export function nameStatementDue(row: Conversation, listedName: string): NameSta
   if (row.lifecycle !== 'active') return { not: 'not-active' };
   if (row.nameAt !== undefined) return { not: 'dated' };
   const name = row.name.trim();
-  if (name === '' || name !== listedName.trim() || name !== row.name) return { not: 'unnamed' };
+  if (name === '' || !sameShownName(name, listedName)) return { not: 'unnamed' };
   const sync = row.nameSync;
   if (sync?.pending || sync?.serverCopy) return { not: 'rename-owed' };
   const own = sync?.statement;
