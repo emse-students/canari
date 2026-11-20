@@ -5602,7 +5602,7 @@ export abstract class BaseMlsService implements IMlsService {
       const what =
         framesLeft === 'unknown'
           ? 'a row observer could not say which frames left rows unstored'
-          : `${framesLeft.size} frame(s) have rows shown and not stored`;
+          : `${framesLeft.size} frame(s) have rows not stored (shown and not stored, decrypted orphans, or a write in flight)`;
       console.warn(
         `[ACK] ${withheld} id(s) not acknowledged: ${what} - those frames stay on the server until a checkpoint stores their rows. Further withheld acks are counted until then, not said one by one.`
       );
@@ -5621,8 +5621,9 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * The queued ids of the frames whose rows stand shown and NOT stored, across the observers that
-   * hold rows (a write kept after a transient failure, a batch that threw): what an application
+   * The queued ids of the frames whose rows are NOT stored, across the observers that hold rows (a
+   * write kept after a transient failure, a batch that threw, a decrypted orphan held in memory, a
+   * write in flight): what an application
    * frame's ack must not run ahead of ({@link idsDurableEnoughToAck}). An observer that cannot answer
    * makes it `'unknown'` - every application id is then withheld - said at the level that accuses:
    * withholding an ack costs a re-listing, acking past an unstored row costs the message.
