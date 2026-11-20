@@ -38,6 +38,7 @@ import {
 import { LYDIA_ENROLMENT_PENDING } from './webhook.controller';
 import {
   LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
   LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
   LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
 } from './lydia-cashiers.controller';
@@ -1202,6 +1203,7 @@ describe('the Lydia codes core-service answers follow the shared contract (lot 2
       responsableNumberChangeForbidden: LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN,
       responsableHandoverDisabled: provider.LYDIA_RESPONSABLE_HANDOVER_DISABLED,
       responsableHandoverHeirCashierRemoved: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
+      responsableHandoverHeirCashierOnCard: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
     }).toEqual(contract.core);
     expect(provider.LYDIA_RESPONSABLE_HANDOVER_ENABLED).toBe(
       (contract as unknown as { switches: { responsableHandoverEnabled: boolean } }).switches

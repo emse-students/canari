@@ -51,6 +51,8 @@ function lydiaCashierCodeText(code: string | null | undefined): string | null {
       return m.asso_lydia_handover_err_cashier_number();
     case LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED:
       return m.asso_lydia_handover_err_heir_cashier_removed();
+    case LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD:
+      return m.asso_lydia_handover_err_heir_cashier_on_card();
   }
   return null;
 }

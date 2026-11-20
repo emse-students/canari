@@ -1210,7 +1210,10 @@ pre-releases already out cannot draw it, and a floor compares the version core o
      unconfirmed answer. A promoted cashier who lost the permission loses their cashier seat with it
      (their own number may hold the 13 rights, so it is removed): core answers its own
      `LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED` instead, and the screen says they are no longer a
-     cashier.
+     cashier - only once that removal is CONFIRMED. A removal that did not complete (another operation
+     `IN_FLIGHT`, Lydia refusing it, or its re-read short of 0 rights) leaves the row live, unconfirmed
+     or flagged: core answers `LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD`, and the screen says the
+     number is still on the card, to remove there.
    - **no old row left** (an account erasure took it while the step ran) - the heir is recorded as the
      Responsable, confirmed or not, as lot 2 records one, whatever else the record read: no other
      Responsable number remains to remove theirs with (a removal needs one as its context, and the

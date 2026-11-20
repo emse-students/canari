@@ -2,6 +2,7 @@ import axios from 'axios';
 import { HttpException, Logger } from '@nestjs/common';
 import {
   LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
   LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
   LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
   LydiaCashiersController,
@@ -698,6 +699,59 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
       cashierId: NEW_ROW,
       number: 'current',
     });
+  });
+
+  /** A promoted cashier refused at the record (heir-ineligible), the revoke claim answered `claim`. */
+  function ineligibleCashier(claim: unknown) {
+    social({
+      '/lydia-responsable-handover-claim': { ...CLAIMED, heirCashierId: NEW_ROW },
+      '/lydia-responsable-handover': {
+        outcome: 'heir-ineligible',
+        cashierId: NEW_ROW,
+        remove: 'current',
+      },
+      '/lydia-cashier-revoke-claim': claim,
+      '/lydia-cashier-revoke': { ok: true },
+    });
+  }
+
+  it('a promoted cashier refused, their removal FAILED at Lydia: never "removed" - the typed 409 sends them to the card', async () => {
+    ineligibleCashier({
+      vendorToken: 'vendor-1',
+      cashierPhone: HEIR,
+      contextPhone: CONTEXT_PHONE,
+      claimToken: REVOKE_TOKEN,
+    });
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const removeLydiaCashier = jest
+      .fn()
+      .mockRejectedValue(new HttpException({ code: 'LYDIA_CASHIER_REVOKE_UNCONFIRMED' }, 502));
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD },
+    });
+    expect(removeLydiaCashier).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('a promoted cashier refused, their removal waiting on another operation (IN_FLIGHT): the typed 409 sends them to the card', async () => {
+    ineligibleCashier({ status: 409, refusal: { code: 'LYDIA_CASHIER_IN_FLIGHT' } });
+    const removeLydiaCashier = jest.fn();
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD },
+    });
+    expect(removeLydiaCashier).not.toHaveBeenCalled();
   });
 
   it("a promoted cashier who left meanwhile: THEIR OWN row's current number removed", async () => {

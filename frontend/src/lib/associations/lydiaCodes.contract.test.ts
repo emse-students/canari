@@ -69,6 +69,7 @@ describe('Lydia codes follow the shared contract', () => {
       RESPONSABLE_HANDOVER_DISABLED: CONTRACT.core.responsableHandoverDisabled,
       RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED:
         CONTRACT.core.responsableHandoverHeirCashierRemoved,
+      RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD: CONTRACT.core.responsableHandoverHeirCashierOnCard,
     });
     expect(LYDIA_CASHIER_SOCIAL_REFUSAL).toEqual({
       IN_FLIGHT: CONTRACT.social.cashierInFlight,

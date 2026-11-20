@@ -118,6 +118,10 @@ describe('lydiaHandoverErrorText - the hand-over words its own outcomes', () => 
     expect(text(LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED)).toBe(
       m.asso_lydia_handover_err_heir_cashier_removed()
     );
+    // ... and when that removal did not complete, the number is still on the card, to remove there.
+    expect(text(LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD)).toBe(
+      m.asso_lydia_handover_err_heir_cashier_on_card()
+    );
   });
 
   it('every other code reads as the cashier screen words it', () => {

@@ -20,6 +20,8 @@ export const LYDIA_CASHIER_REFUSAL = {
    * made and their own number was removed - they are no longer a cashier.
    */
   RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED: 'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED',
+  /** The same refusal, but that number's removal did not complete: it is still on the card. */
+  RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD: 'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD',
 } as const;
 
 /** The typed refusals social-service answers on the same routes (core passes them on as given). */

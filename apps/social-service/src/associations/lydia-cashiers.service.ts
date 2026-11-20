@@ -732,8 +732,10 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
    * - `target-left` (no longer a member) and `heir-ineligible` (MANAGE_PAYOUT_ACCOUNT taken away since
    *   the claim, re-read HERE): whatever Lydia answered, the same tracking and its removal next
    *   (`remove`) - the number may hold every right for someone who must not hold it. With no old
-   *   Responsable left, the number is tracked as a departed Responsable's (no other Responsable number
-   *   remains to remove it with; a platform admin hands the role over, which removes it).
+   *   Responsable left, no other Responsable number remains to remove it with, so the heir is
+   *   RECORDED as the Responsable: a `target-left` one as a departed Responsable (a platform admin
+   *   hands the role over, which removes it); a `heir-ineligible` one answered as recorded
+   *   (`handed-over` or `unconfirmed`), the card naming the missing permission.
    * The claim is cleared in the same transaction, and released on every typed refusal. The heir is
    * told by a bell row once the hand-over is made (no acceptance step, owner, 2026-11-20); the
    * association's name it carries is read INSIDE the transaction, so nothing after the commit can
@@ -786,6 +788,9 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
     let result: HandoverRecordResult;
     /** The association's name for the heir's notice, read under the record's lock. */
     let assoName = '';
+    // Set when the old Responsable row was gone and the heir recorded alone: said AFTER the commit,
+    // so a rollback (a unique index) never leaves a line claiming a row that does not exist.
+    let recordedAlone: string | null = null;
     try {
       result = await this.assoRepo.manager.transaction(async (manager: EntityManager) => {
         await this.lockForRecord(manager, id, vendorToken, claimToken, 'hand-over record');
@@ -868,16 +873,13 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
           // platform admin's hand-over ends: `target-left` stays the answer, the card says departed.
           const recorded: HandoverOutcome =
             outcome === 'heir-ineligible' ? (confirmed ? 'handed-over' : 'unconfirmed') : outcome;
-          this.logger.error(
-            `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)}: the old Responsable row is gone - ` +
-              `the new one is recorded alone` +
-              (outcome === 'target-left'
-                ? ' (target-left): a platform admin hands the role over'
-                : outcome === 'heir-ineligible'
-                  ? ` (${recorded}) WITHOUT MANAGE_PAYOUT_ACCOUNT: a manager grants it, or a ` +
-                    'platform admin hands the role over'
-                  : '')
-          );
+          recordedAlone =
+            outcome === 'target-left'
+              ? ' (target-left): a platform admin hands the role over'
+              : outcome === 'heir-ineligible'
+                ? ` (${recorded}) WITHOUT MANAGE_PAYOUT_ACCOUNT: a manager grants it, or a ` +
+                  'platform admin hands the role over'
+                : '';
           if (recorded === 'handed-over') assoName = await this.nameIn(manager, id);
           await closeHeirRow();
           return done({ outcome: recorded, cashierId: await insertHeir(null), remove: null });
@@ -955,6 +957,13 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       }
       throw err;
     }
+    if (recordedAlone !== null) {
+      this.logger.error(
+        `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)}: the old Responsable row was gone - ` +
+          `the new one was recorded alone` +
+          recordedAlone
+      );
+    }
     const audit =
       `Lydia Responsable hand-over on association ${sanitizeLog(id)}: to user ` +
       `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ` +
@@ -977,8 +986,10 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
           (result.outcome === 'target-left'
             ? 'left meanwhile'
             : 'no longer manages the payout account') +
-          ` - not recorded as the Responsable; their number is tracked` +
-          (result.remove ? ' and removed next' : ' as a departed Responsable')
+          (result.remove
+            ? ' - not recorded as the Responsable; their number is tracked and removed next'
+            : ' - recorded as a DEPARTED Responsable (no old Responsable was left to keep): a ' +
+              'platform admin hands the role over, which removes the number')
       );
     }
     return result;

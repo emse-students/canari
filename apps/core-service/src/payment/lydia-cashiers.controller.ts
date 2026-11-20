@@ -49,6 +49,14 @@ export const LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER =
  */
 export const LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED =
   'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED';
+/**
+ * core's `code` (`core.responsableHandoverHeirCashierOnCard`) for the same refusal when that
+ * removal did NOT complete (another operation in flight, Lydia refused it, or its re-read did not
+ * reach 0 rights): the cashier's row stays live, unconfirmed or flagged, and the screen sends the
+ * user to the card to remove the number there - never "removed" over a row that says otherwise.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD =
+  'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD';
 
 /** social-service's `code` of a cashier operation refused while another holds the claim. */
 const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
@@ -387,11 +395,17 @@ export class LydiaCashiersController {
               message: 'The new Responsable is no longer a member of the association',
             }
           : record.remove === 'current'
-            ? {
-                code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
-                message:
-                  'The new Responsable no longer manages the payout account; their cashier number was removed',
-              }
+            ? removed === true
+              ? {
+                  code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
+                  message:
+                    'The new Responsable no longer manages the payout account; their cashier number was removed',
+                }
+              : {
+                  code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD,
+                  message:
+                    'The new Responsable no longer manages the payout account; their cashier number is still to remove, on the card',
+                }
             : {
                 code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
                 message: 'The new Responsable no longer manages the payout account',

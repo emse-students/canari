@@ -2826,6 +2826,7 @@
   "asso_lydia_handover_hint": "Pick the member who becomes Responsable and their mobile number. Only members who manage the payout account can; a cashier keeps their own number. Lydia sends them a text.",
   "asso_lydia_handover_members_empty": "No other member manages the payout account: first give that right to whoever takes the role over.",
   "asso_lydia_handover_err_heir_cashier_removed": "This member no longer manages the payout account: they did not become Responsable, and their number was removed from Lydia, so they are no longer a cashier. Add them again if needed.",
+  "asso_lydia_handover_err_heir_cashier_on_card": "This member no longer manages the payout account: they did not become Responsable. Their number could not be removed from Lydia: it is still on the card, remove it there.",
   "asso_lydia_cashier_responsable_no_payout": "Does not manage the payout account: can neither manage the cashiers nor hand the role over. Give them that right, or a platform administrator hands the role over.",
   "asso_lydia_handover_err_not_payout_manager": "This member does not manage the payout account: give them that right first.",
   "asso_lydia_handover_err_cashier_number": "This member already is a cashier: the role goes to the number they are cashier with.",

@@ -2858,6 +2858,7 @@
   "asso_lydia_handover_hint": "Choisissez le membre qui devient Responsable et son numéro de mobile. Seuls les membres qui gèrent le compte de paiement peuvent le devenir ; un caissier garde son propre numéro. Lydia lui envoie un SMS.",
   "asso_lydia_handover_members_empty": "Aucun autre membre ne gère le compte de paiement : donnez d'abord ce droit à celui qui reprend le rôle.",
   "asso_lydia_handover_err_heir_cashier_removed": "Ce membre n'a plus le droit de gérer le compte de paiement : il n'est pas devenu Responsable, et son numéro a été retiré de Lydia, il n'est donc plus caissier. Ajoutez-le de nouveau si besoin.",
+  "asso_lydia_handover_err_heir_cashier_on_card": "Ce membre n'a plus le droit de gérer le compte de paiement : il n'est pas devenu Responsable. Son numéro n'a pas pu être retiré de Lydia : il est toujours sur la carte, retirez-le là.",
   "asso_lydia_cashier_responsable_no_payout": "N'a pas le droit de gérer le compte de paiement : ne peut ni gérer les caissiers ni transférer le rôle. Donnez-lui ce droit, ou un administrateur de la plateforme transfère le rôle.",
   "asso_lydia_handover_err_not_payout_manager": "Ce membre ne gère pas le compte de paiement : donnez-lui d'abord ce droit.",
   "asso_lydia_handover_err_cashier_number": "Ce membre est déjà caissier : le rôle passe au numéro avec lequel il l'est.",
