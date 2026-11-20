@@ -1,6 +1,8 @@
 ## P3 - a native app asks for a refresh carrying no credential at all, and nothing says why its store is empty
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 core-service logs `Refresh refused for the NATIVE app: no canari_refresh cookie. cookies=[]
 x-canari-refresh=absent client=<version> origin=<native origin>` at WARN. Since the header transport

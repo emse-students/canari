@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-15 and 2026-11-16
 
-target: 1.7.1
+target: 1.7.2
 
 Recorded so no question answered here is asked again. Each line names where its detail lives.
 

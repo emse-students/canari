@@ -1,6 +1,8 @@
 ## P2 - A reaction to my message notifies nobody while the app is open, on any screen (2026-11-17)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **Reported by the owner, 2026-11-17** (Android, production): no notification when someone reacts to
 one of his messages while the app is open. The push is dropped in the foreground, and nothing else

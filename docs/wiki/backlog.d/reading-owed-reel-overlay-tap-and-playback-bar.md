@@ -1,6 +1,8 @@
 ## P3 - Reading owed - the CanaReel overlay tap and the fixed playback bar, on both phones
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **row 1 PASSED in part on both phones; rows 2-4 are owed.** A tap hides close button, tabs, rail and author with the line kept, and a tap brings them back (Mi 9T and iPhone 12, four alternating taps on the iPhone read through the accessibility tree); on the Mi a rail tap (mute) left the overlay up, the next reel showed it again, and a long press held the frame for 1.5 s and resumed on release. Not read: the double tap and the swipe (a double tap writes a like), the iPhone long press, TalkBack/VoiceOver, the slow link, a reel opened from a conversation._
 

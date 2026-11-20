@@ -1,6 +1,8 @@
 ## P3 - an object moved onto the idle window after upload carries no stamp, so the idle-file setting never governs it
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 Since 2026-11-14 an `ephemeral` file is stamped at its UPLOAD with the idle window in force
 (`idleRetentionMs`, from `retention_idle_file_days`), and an entry with no stamp is meant to be a file

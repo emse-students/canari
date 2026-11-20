@@ -1,6 +1,8 @@
 ## P3 - on the iPhone in landscape, the close circle looks clipped at the right edge
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 Seen at the iPhone 12 sitting on `1.7.0-alpha.7` (2026-11-17, the interim readings of #3756): with a
 full-screen viewer turned to landscape, the round close control looks cut at its right edge. Not

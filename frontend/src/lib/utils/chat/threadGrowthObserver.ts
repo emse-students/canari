@@ -241,10 +241,17 @@ function takeThreadRideOff(scroller: Element): number | null {
   return progress === null ? null : ride.fromPx * (1 - progress);
 }
 
-/** Reads a `--motion-*` duration token (`220ms`) as milliseconds, or null if it is not one. */
-function motionMs(value: string): number | null {
-  const match = /^(\d+(?:\.\d+)?)ms$/.exec(value.trim());
-  return match ? Number(match[1]) : null;
+/**
+ * Reads a `--motion-*` duration token as milliseconds, or null if it is not a time. The token is
+ * authored as `220ms` but Chromium (desktop and the Android WebView) answers the normalised `.22s`,
+ * so both units and a leading-dot number are accepted; a parser keyed on the authored text alone
+ * silently never played the glide there.
+ */
+export function motionMs(value: string): number | null {
+  const match = /^(\d*\.?\d+)(ms|s)$/.exec(value.trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  return match[2] === 's' ? Math.round(amount * 1000 * 1e6) / 1e6 : amount;
 }
 
 /** Where a glide taken off the rows had drawn them. */

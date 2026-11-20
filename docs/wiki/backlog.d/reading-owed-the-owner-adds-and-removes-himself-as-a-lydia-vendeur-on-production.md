@@ -1,6 +1,8 @@
 ## Reading owed - the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **What is built.** Adding a Tresorier or a Vendeur, changing a cashier's role and changing the
 Responsable's number are ON since 1.7.1 (`LYDIA_CASHIER_ADD_ENABLED` and its two twins; owner,

@@ -1,6 +1,8 @@
 ## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09; built, on since 2026-11-19, the readings owed)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **Urgent (owner, 2026-11-19):** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en
 production"*. `live_replays_mode` went `on` in production and on dev on 2026-11-19, before the texts
