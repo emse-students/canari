@@ -714,6 +714,8 @@ The unknown-type row above is a SIGNAL that this rule failed, never the path.
   without a header, which nothing allows. Birthdays shipped in `1.6.9`, so the population - a reader
   who switched them off on a `1.6.9` device and then saves from a `1.6.8` one - is near zero, and it
   ends with the update. Every category from `suggestions` on is covered, by the header.
+**SWITCHED ON at the `1.7.0` floor (2026-11-20, owner decision of 2026-11-18): `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused` and `lydia_cashier_added`.** `FORM_ORGANISER_ALERT_ENABLED` (#2228, `v1.4.0`), `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED` (lot 2, `v1.5.3`) and `LYDIA_CASHIER_NOTIFICATIONS_ENABLED` (lot 3, `v1.6.0`) are `true`; each flip condition below is met, since every one of those builds is below the floor, and each constant stays as the kill switch (nothing to remove). The three owe a phone reading on the next alpha. The paragraphs that follow keep the rule each was held under. Still OFF: `LYDIA_REFUND_NOTIFICATIONS_ENABLED`.
+
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the
