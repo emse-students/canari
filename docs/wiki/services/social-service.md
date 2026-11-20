@@ -814,6 +814,15 @@ app sent to the background, read on the web, never removed - DMs, groups and sal
   front showing another conversation holds that salon's banner. `channel_read` touches no `mls.bin`
   and now passes (`push/ForegroundGuard.kt`, pinned by `ForegroundGuardTest`).
 
+**Measured on the Mi 9T against dev, 2026-11-20 (DM, before the fix):** a peer's message reached the
+app in front over the socket and was posted (`notifyMessageFromWebSocket: queued`, `notifId=1001`);
+the app went home (`onPause: isInForeground=false`); the same account opened the DM on the web
+6 s later, whose read watermark the gateway routed in REALTIME to the phone's device, which ACKed
+it - and chat-delivery logged no `PUSH_DEFERRED` for that send. Not one `FCM silent from self` for
+that group followed, while the self receipts of other groups, un-ACKed, were pushed and cancelled;
+`id=1001` was still in the shade a minute later. The salon half rests on the code (the guard
+above); its bench run did not reach a posted banner.
+
 Like the push's cancel, the WebView's removes the conversation's whole notification, whatever its
 lines' instants: one rule for both triggers. Pinned by `systemMessageHandler.readState.test.ts`,
 `channelEventHandler.read.test.ts` and `nativeNotification.test.ts`.
