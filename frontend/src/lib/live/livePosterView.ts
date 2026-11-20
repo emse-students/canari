@@ -23,6 +23,7 @@ import { fetchLivePoster, isLiveRefusal } from './api';
 import { LivePosterOpenError, openLivePoster } from './livePosterCrypto';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
+import { LIVE_POSTER_MAX_CONCURRENT } from './constants';
 
 /** How one poster load ended - every way is a value, so the card never parses a message. */
 export type LivePosterLoad =
@@ -66,12 +67,14 @@ function remember(liveId: string, entry: { name: string; image: Blob }): void {
 /**
  * THE MOST POSTERS FETCHED AT THE SAME TIME (S14, 2026-11-20): nginx bounds the preview path per
  * ADDRESS by CONNECTIONS (`limit_conn lives_posters_conn 4`), and a feed of thirty replay covers
- * opened thirty fetches at once - everything past the fourth answered 429, a blank cover. Three
- * leaves one connection to the tab's other preview traffic. The bound is a width, never a delay: a
- * fetch starts the moment a slot frees, so no clock is involved and any number of covers drains.
+ * opened thirty fetches at once - everything past the fourth answered 429, a blank cover. The width
+ * stays UNDER that bound by one because nginx may count a request until it finishes, slightly after
+ * the client has read the body and handed the slot on: at the bound itself the next fetch would race
+ * the previous one's release. The bound is a width, never a delay: a fetch starts the moment a slot
+ * frees, so no clock is involved and any number of covers drains. The figure is
+ * `LIVE_POSTER_MAX_CONCURRENT` in `./constants`, which MIRRORS the server's constant of the same
+ * name; `live-segments-route.test.mjs` asserts it stays under nginx's `limit_conn`.
  */
-export const LIVE_POSTER_MAX_CONCURRENT = 3;
-
 let fetching = 0;
 const waiting: Array<() => void> = [];
 
@@ -84,9 +87,11 @@ function releaseSlot(): void {
 
 /**
  * Takes a fetch slot: `true` AT ONCE when one is free (the fetch starts in the same turn), else a
- * promise of `true` when one is handed over, or `false` when `signal` aborted while waiting.
+ * promise of `true` when one is handed over, or `false` when `signal` aborted while waiting - or
+ * already had on entry (an aborted signal never fires `abort` again, so it would wait for ever).
  */
-function takeSlot(signal: AbortSignal | undefined): true | Promise<boolean> {
+function takeSlot(signal: AbortSignal | undefined): boolean | Promise<boolean> {
+  if (signal?.aborted) return false;
   if (fetching < LIVE_POSTER_MAX_CONCURRENT) {
     fetching++;
     return true;

@@ -585,9 +585,18 @@ lives_posters_conn 4` per address. A feed of about thirty replays mounted thirty
 `loadLivePoster` at once, so thirty fetches were open together and everything past the fourth was refused
 (the sealed still is small, but `limit_rate 250000` keeps each connection open). The fix is in the request
 pattern, not the bound: `livePosterView.ts` holds a module-wide width, `LIVE_POSTER_MAX_CONCURRENT` (3, one
-connection left to the tab's other preview traffic); a fourth load waits for a slot, handed straight to the
+under the bound because nginx may count a request until it finishes, slightly after the client read the
+body; the figure lives in the server's `live.constants.ts`, the client mirrors it, and
+`live-segments-route.test.mjs` asserts it stays under `limit_conn`); a fourth load waits for a slot, handed straight to the
 longest waiter, an abort while waiting never fetches, and a failed fetch frees its slot. No clock, no retry;
 the live card and the replay covers share it because they share the loader. nginx is unchanged.
+
+Three limits of this fix, stated so nobody reads more into it. (1) `limit_conn` is per ADDRESS
+(`$binary_remote_addr`), not per tab: two tabs, or several readers behind one campus NAT, still add up past
+4 and can still get a 429; the client cap cures the single-reader pattern only. (2) The `custom` tab keeps
+EVERY live - the PR's own call (the owner's decision only named the `associations` tab). (3) The waiting
+line is a plain FIFO with no priority: the live card's refreshed poster queues behind the replay covers
+already waiting.
 
 It asks `GET /api/lives` (no seat) when the FEED asks for its first page - the tab load and
 `refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - AND, while the card
