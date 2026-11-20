@@ -394,9 +394,10 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
 /// Android excludes its whole data domain in `data_extraction_rules.xml`, desktop writes no cache.
 ///
 /// Per FILE and after EVERY write: the writers replace the file by an atomic rename, a new inode,
-/// and the flag does not travel with the name. Never the directory: it also holds `mls.bin` and the
-/// identity files, which a restore must bring back (the ObjC twin,
-/// `CanariExcludeNativeCacheFilesFromBackup`, says why). A failure is logged and changes nothing
+/// and the flag does not travel with the name. Since 1.7.2 the DIRECTORIES holding these files are
+/// excluded whole at every launch (`backup_exclusion`), which makes this per-file pass redundant;
+/// it is kept until the iPhone reading proves the directory flag holds, then deleted (mobile wiki,
+/// "Nothing local travels to another phone"). A failure is logged and changes nothing
 /// else: the file is sealed whichever way, so a backup of it carries ciphertext under a key that
 /// does not travel.
 pub(crate) fn exclude_from_backup(path: &std::path::Path) {
@@ -416,7 +417,7 @@ pub(crate) fn exclude_from_backup(path: &std::path::Path) {
 /// is linked into the notification extension too, so a function of ours in `canari_push.mm` would
 /// leave the extension's link with an undefined symbol. Foundation is linked into both.
 #[cfg(target_os = "ios")]
-fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
     use objc2::msg_send;
     use objc2::runtime::{AnyClass, AnyObject, Bool};
 
@@ -454,6 +455,56 @@ fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
             } else {
                 Err("setResourceValue refused".to_string())
             }
+        }
+    })
+}
+
+/// `[[NSURL fileURLWithPath:path] getResourceValue:&v forKey:NSURLIsExcludedFromBackupKey]`: the
+/// flag as the file system holds it NOW, read back after [`ios_exclude_from_backup`] so the launch
+/// log states what is set, not what was asked (`backup_exclusion`). `Ok(false)` for a path whose
+/// value is unset.
+#[cfg(target_os = "ios")]
+pub(crate) fn ios_is_excluded_from_backup(path: &std::path::Path) -> Result<bool, String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool};
+
+    #[link(name = "Foundation", kind = "framework")]
+    extern "C" {
+        static NSURLIsExcludedFromBackupKey: *const AnyObject;
+    }
+
+    let c_path = std::ffi::CString::new(path.to_string_lossy().into_owned())
+        .map_err(|e| format!("path has a NUL byte: {e}"))?;
+    objc2::rc::autoreleasepool(|_| {
+        let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
+        let url_class = AnyClass::get(c"NSURL").ok_or("NSURL is not loaded")?;
+        // SAFETY: plain Foundation messages with the argument and return types their headers
+        // declare; the value out-parameter is autoreleased into the pool around this block and read
+        // inside it, and the key is a Foundation constant that lives as long as the process.
+        unsafe {
+            let ns_path: *mut AnyObject =
+                msg_send![str_class, stringWithUTF8String: c_path.as_ptr()];
+            if ns_path.is_null() {
+                return Err("path is not UTF-8".to_string());
+            }
+            let url: *mut AnyObject = msg_send![url_class, fileURLWithPath: ns_path];
+            let mut value: *mut AnyObject = std::ptr::null_mut();
+            let value_out: *mut *mut AnyObject = &mut value;
+            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            let ok: Bool = msg_send![
+                url,
+                getResourceValue: value_out,
+                forKey: NSURLIsExcludedFromBackupKey,
+                error: no_error
+            ];
+            if !ok.as_bool() {
+                return Err("getResourceValue refused".to_string());
+            }
+            if value.is_null() {
+                return Ok(false);
+            }
+            let set: Bool = msg_send![value, boolValue];
+            Ok(set.as_bool())
         }
     })
 }

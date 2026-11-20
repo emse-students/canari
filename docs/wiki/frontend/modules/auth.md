@@ -697,7 +697,10 @@ new PIN.
 (`ThisDeviceOnly` items do not migrate), leaves rows nothing can open: `hardware_key_unavailable`,
 the reset, and history from peers and backups. Markers stay IN the backup on purpose: a restored
 `hardware` marker without its key reads as that typed state (never a silent reset of good data), and
-a restored `migrating` marker without its key is reverted (nothing moved). The reset forgets the
+a restored `migrating` marker without its key is reverted (nothing moved). Since 1.7.2 a NEW iOS
+backup carries neither the markers nor the data they describe: both are excluded at every launch
+([mobile](../mobile.md#nothing-local-travels-to-another-phone-2026-11-20)); an older backup still
+carries both, and Apple calls the flag guidance, not a guarantee. The reset forgets the
 marker (`cle_au_repos_oublier`) once the data is gone, which is what frees the entry.
 
 #### Decisions taken on 2026-10-22, and what each costs
