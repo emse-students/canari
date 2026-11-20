@@ -58,7 +58,7 @@ WebView registers none either - so the keyboard faded.
 
 |               | Messenger at rest                                                                                        | Messenger, keyboard up                                                      | Canari before (keyboard up)                                       |
 | ------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Left controls | +, camera, gallery, microphone: glyphs centred at 20, 60, 100, 140 - a 40 dp pitch from the edge, no gap | one chevron, centred at 21                                                  | margin 12; "+" 44 at 12-56; gap 8; microphone 44 at 64-108        |
+| Left controls | +, camera, gallery, microphone: glyphs centred at 20, 60, 100, 140 - a 40 dp pitch from the edge, no gap (Messenger; ours has 6 px since 2026-11-20) | one chevron, centred at 21                                                  | margin 12; "+" 44 at 12-56; gap 8; microphone 44 at 64-108        |
 | Field         | 160 -> 392, 42 tall, corner ~20, emoji inside at 374                                                     | 40 -> 392 (396 while typing), 42 tall                                       | 116 -> 368, 44 tall, corner 20                                    |
 | Right control | like, centred at 412 (4 dp from the edge to its box)                                                     | like, or send (centred 417) while typing                                    | gap 8; send 44 at 376-420, plus 4 of padding; margin 12           |
 | What folds    | -                                                                                                        | all four left controls fold into the chevron as soon as the field has focus | the microphone folds when the first character is typed; "+" stays |
@@ -117,10 +117,11 @@ in a row held one `--text-2xs` line tall by that token's line height (so text zo
 `role="status"`, so the bubble keeps its size from the tap to delivery; a failure stays inside,
 with its buttons. The bubble hands that row its Retry and Delete (`MessageBubble.transitActions`).
 
-**The composer bar (phone, both platforms).** Below 768 px only: controls on a 40 px box with no gap,
-a 42 px field (11 px padding), 4 px from the screen's edges, the send's extra padding gone. Expected
-with the keyboard up: "+" 4-44, microphone 44-84, field 84-392, send 392-432; while typing, field
-44-392. It is the owner's one exception to the 44 px touch floor ([design-reference](design-reference.md)):
+**The composer bar (phone, both platforms).** Below 768 px only: controls on a 40 px box with a 6 px gap
+(owner, 2026-11-20: Messenger's 0 suits its bare glyphs, our glass "+" and yellow send are disks and
+touched the field), a 42 px field (11 px padding), 4 px from the screen's edges, the send's extra
+padding gone. Expected with the keyboard up at 390 pt: "+" 4-44, microphone 50-90, field 96-338, send
+346-386; while typing, the field starts after the chevron. The widest row at 320 px leaves an 88 px field. It is the owner's one exception to the 44 px touch floor ([design-reference](design-reference.md)):
 a touch tablet keeps 44 px and its gaps, a pointer its 38 px. `iconButtonScale.test.ts` asserts the
 rule, not the value: a box under 44 px sits under `pointer: fine`, is the hover strip's `--sm`, or is
 this row inside `(max-width: 767px)` (review S4). In iPhone landscape the composer is already inside
