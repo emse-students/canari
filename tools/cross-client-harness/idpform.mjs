@@ -43,52 +43,22 @@ export function deepVisible(sel, root) {
 }
 
 /**
- * Resolves a selector THROUGH SHADOW ROOTS whether or not the match is laid out - the same walk as
- * {@link deepVisible}, without its size filter.
- *
- * The terms checkbox is the one control the classifier must find even when the page styles the
- * native input out of layout (a custom-drawn box with a zero-size input, which is how a design
- * system restyles a checkbox). Safe for THAT field only because `cgu_accept` exists on no other
- * stage; the autofill trio is on every stage, which is why the other lookups stay visible-only.
- * @param {string} sel
- * @param {{ querySelectorAll(sel: string): ArrayLike<any> }} root
- * @returns {any} the first match, or null
- */
-export function deepAny(sel, root) {
-  const walk = (r) => {
-    const own = Array.from(r.querySelectorAll(sel));
-    if (own.length) return own[0];
-    for (const n of Array.from(r.querySelectorAll('*'))) {
-      if (n.shadowRoot) {
-        const hit = walk(n.shadowRoot);
-        if (hit) return hit;
-      }
-    }
-    return null;
-  };
-  return walk(root);
-}
-
-/**
  * Which credential stage is on screen, named by what it renders, or null between stages.
  *
  * `cas` is the school's server-rendered page. The service-account flow is up to THREE stages on the
  * same URL: the identifier, the password, then - for an account that has not accepted the current
  * terms - the terms page. The terms page is tested FIRST of the authentik three because it is the
  * only one carrying `cgu_accept`; the hidden autofill trio is on it too, and a visible-only lookup is
- * what keeps that from reading as a password stage. THE TERMS BOX ITSELF IS FOUND WITH `any`, laid
- * out or not: a page that restyles its checkbox must not read as "no stage", which is what stalled
- * every sign-in of the 2026-11-20 reading ("the authentik-password stage never gave way").
+ * what keeps that from reading as a password stage.
  *
  * Runs in the page.
  * @param {(sel: string) => any} q a visible-match lookup bound to the page
  * @param {{ querySelector(sel: string): any }} doc
- * @param {(sel: string) => any} [any] a lookup that ignores layout; defaults to `q`
  * @returns {'cas' | 'authentik-terms' | 'authentik-uid' | 'authentik-password' | null}
  */
-export function classifyIdpForm(q, doc, any = q) {
+export function classifyIdpForm(q, doc) {
   if (doc.querySelector('#username')) return 'cas';
-  if (any('input[name=cgu_accept]')) return 'authentik-terms';
+  if (q('input[name=cgu_accept]')) return 'authentik-terms';
   if (q('input[name=uidField]')) return 'authentik-uid';
   if (q('input[type=password]')) return 'authentik-password';
   return null;
@@ -97,33 +67,8 @@ export function classifyIdpForm(q, doc, any = q) {
 /** The page-side lookup, as an expression taking a selector: `${DEEP}(sel)`. */
 export const DEEP = `(function (sel) { return (${deepVisible.toString()})(sel, document); })`;
 
-/** The page-side layout-blind lookup, as an expression taking a selector: `${DEEP_ANY}(sel)`. */
-export const DEEP_ANY = `(function (sel) { return (${deepAny.toString()})(sel, document); })`;
-
 /** The page-side classification, as an expression evaluating to the stage name or null. */
-export const FORM_SHAPE = `(${classifyIdpForm.toString()})(${DEEP}, document, ${DEEP_ANY})`;
-
-/**
- * What an UNCLASSIFIED page is made of, as an expression for the page: tag, type and name of its
- * visible controls and the label of its buttons, NEVER a value (a password field is reported as a
- * password field and nothing more). It is what a stalled login throws, so the next unknown stage
- * names itself instead of costing a night.
- */
-export const DESCRIBE_STAGE = `(function (deep) {
-  var out = [];
-  var walk = function (r) {
-    Array.prototype.forEach.call(r.querySelectorAll('input,button,select,textarea,a[href]'), function (e) {
-      var b = e.getBoundingClientRect();
-      var shown = b.width > 0 && b.height > 0;
-      var tag = e.tagName.toLowerCase();
-      var label = tag === 'button' || tag === 'a' ? ' "' + (e.textContent || '').trim().slice(0, 40) + '"' : '';
-      out.push((shown ? '' : '~') + tag + (e.type ? '[' + e.type + ']' : '') + (e.name ? '#' + e.name : '') + label);
-    });
-    Array.prototype.forEach.call(r.querySelectorAll('*'), function (n) { if (n.shadowRoot) walk(n.shadowRoot); });
-  };
-  walk(document);
-  return out.join(' ');
-})()`;
+export const FORM_SHAPE = `(${classifyIdpForm.toString()})(${DEEP}, document)`;
 
 /**
  * What each stage wants typed (`fields`), ticked (`ticks`) and pressed (`submit`).
@@ -153,7 +98,7 @@ export function stageTable(creds) {
  */
 export function tickScript(selector) {
   return `(function () {
-    const e = ${DEEP_ANY}(${JSON.stringify(selector)});
+    const e = ${DEEP}(${JSON.stringify(selector)});
     if (!e) return 'missing';
     if (!e.checked) e.click();
     return e.checked ? 'ticked' : 'not-ticked';
