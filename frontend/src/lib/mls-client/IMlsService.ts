@@ -646,9 +646,10 @@ export interface BulkIngestObserver {
    */
   holdRowsForCheckpoint?(): Promise<() => void>;
   /**
-   * ROWS BEFORE RATCHET, THE ACK: the queued ids of the frames whose rows this observer shows and
-   * has NOT stored (a write kept after a transient failure, a batch that threw), read once a drain's
-   * window closed. An application frame is acknowledged - deleted from the server - only while its
+   * ROWS BEFORE RATCHET, THE ACK: the queued ids of the frames whose rows this observer has NOT
+   * stored - shown and not stored (a write kept after a transient failure, a batch that threw),
+   * held in memory and shown nowhere (a decrypted orphan, whose conversation is not in the map), or
+   * taken by a store whose write has not landed yet - read once a drain's window closed. An application frame is acknowledged - deleted from the server - only while its
    * id is NOT in this set, so the server keeps the frame of a row that exists only in memory, and
    * only that frame (review of #3851: a page-wide count withheld every ack for one bad row). A row
    * the store refuses for what it is (a poison row) is dropped, never in it. Optional, like the
