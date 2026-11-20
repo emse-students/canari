@@ -4,6 +4,8 @@ target: 1.7.2
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
+_2026-11-20 ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): the index still holds exactly the seven unstamped `ephemeral` entries created since the `1.7.0` deploy, 27 stamped conversation files beside them, and none created since the `1.7.1` deploy. Nothing new to decide; the replanning to the new version is the plan's whole re-read._
+
 Since 2026-11-14 an `ephemeral` file is stamped at its UPLOAD with the idle window in force
 (`idleRetentionMs`, from `retention_idle_file_days`), and an entry with no stamp is meant to be a file
 uploaded BEFORE the setting existed, which keeps the constant `RETENTION_MS` (90 days) - the comment

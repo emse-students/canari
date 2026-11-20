@@ -455,7 +455,7 @@ Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-al
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
 6. **The audience**: an outsider, a blocked account (both ways) and a removed viewer each get `404`: **read**, on the replay route and on the post route.
 7. **The backup**: after WP-R3, the next restic snapshot holds no replay byte (`restic ls latest` names
-   no `live_segments` path, and `live/` is absent from Garage's listing): **owed.** The configuration was read (three paths, `live_segments` outside them); the snapshot of 2026-11-20 after 04:00 is the one to list, by an account that reaches restic.
+   no `live_segments` path, and `live/` is absent from Garage's listing): **owed.** The configuration was read (three paths, `live_segments` outside them); the snapshot of 2026-11-20 after 04:00 is the one to list, by an account that reaches restic. **Production, 2026-11-20 ([reading](device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): half read** - the 03:00Z snapshot exists and checks clean, the backup mounts `garage_data`, `garage_meta` and `media_meta` only, Garage's `live/` is empty at the boot (`drained=0 leftAlone=0`); `restic ls latest` itself is refused to a deploy account and is owed to the backup account.
 8. **The cap on dev**: `LIVE_REPLAY_TOTAL_MAX_GB` set low, the oldest replay evicted, `[LIVE_REPLAY_CAP]` logged, the panel's line showing it: **owed.** Setting it needs the runner's identity on dev's `.env`.
 9. **The first week in production**: the panel's replay bytes against the scenarios above.
 
