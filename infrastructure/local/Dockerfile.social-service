@@ -23,13 +23,24 @@ COPY apps/social-service ./apps/social-service
 # before the merge is the `typecheck` script CI now runs for all four services.
 RUN cd apps/social-service && bunx tsc -p tsconfig.build.json
 
+# -- Production dependencies ---------------------------------------------------
+# What the runtime stage ships: the production closure only. The builder installs devDependencies
+# too (it needs tsc and @nestjs/cli), and copying ITS node_modules put jest, the Nest CLI, ts-jest
+# and the rest next to dist/ on the image's disk, in its size, its pull time and its scan.
+FROM oven/bun:1.4.4-alpine AS prod-deps
+
+WORKDIR /app
+
+COPY apps/social-service/package.json apps/social-service/bun.lock ./apps/social-service/
+RUN cd apps/social-service && bun install --production --frozen-lockfile
+
 # -- Runtime stage -------------------------------------------------------------
 FROM oven/bun:1.4.4-alpine
 
 WORKDIR /app
 
 COPY --from=builder /app/apps/social-service/dist ./dist
-COPY --from=builder /app/apps/social-service/node_modules ./node_modules
+COPY --from=prod-deps /app/apps/social-service/node_modules ./node_modules
 COPY --from=builder /app/apps/social-service/package.json ./
 
 EXPOSE 3014
