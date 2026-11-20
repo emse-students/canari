@@ -2570,8 +2570,8 @@ question asked at the moment of the change, and the only one that sees a host al
 morning. **A MiConnect that is degraded BLOCKS CANARI'S STABLES**: the step runs first and the job
 fails on any failed check, rolled back or not, so no Canari stable ships while production MiConnect
 cannot take the pin and pass its checks - and a pre-release whose test stack fails keeps `dev-deployed`
-where it was, which gate 4 then reads as "no stable". The first pre-release after the merge needs the
-test stack recreated by hand on the version it runs first
+where it was, which gate 4 then reads as "no stable". The test stack had to be recreated by hand on
+the version it runs before the first pre-release after the merge, and was, on 2026-11-20
 ([the order](infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)).
 
 ONE script, `infrastructure/authentik/deploy-stack.sh`, restarts only when the image a container

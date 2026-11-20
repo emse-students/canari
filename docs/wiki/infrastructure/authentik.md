@@ -61,22 +61,23 @@ the release whole, with nothing else changed.
 
 ### The order: the hand step, then the merge
 
-**Until a human recreates the TEST stack's `server` and `worker` on the version they run, every
-pre-release fails** - read-only, 2026-11-13, compose's dry run of the test stack with its running tag
-answers `Recreate` (step 2 below), and the release refuses an `up` that would apply more than the tag.
-So the order is fixed, and this pull request is merged only after the first:
+Read-only, 2026-11-13, compose's dry run of the test stack with its running tag answered `Recreate`
+on `server` and `worker` (its `postgresql`: `Running`), and the release refuses an `up` that would
+apply more than the tag - so every pre-release after the merge would have failed at its first step.
+Both hand steps are DONE, so this pull request may merge:
 
-1. **By hand, on the host, in the test stack's directory** (a step for the owner, queued in
-   [backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)): read what
-   differs with `AUTHENTIK_TAG=<the tag it runs> docker compose --dry-run up -d --no-deps server worker`,
-   then `AUTHENTIK_TAG=<the tag it runs> docker compose up -d --no-deps server worker` - our own stack,
-   sign-in on the test instance down about a minute. No secret is in either command.
-2. **By hand, on the host, in PRODUCTION's stack directory, read-only**: `AUTHENTIK_TAG=<the tag it
-   runs> docker compose --dry-run up -d --no-deps server worker`, and the verdict written beside the
-   owed row (re-review of #3486, 2026-11-19). Production's verdict has never been measured, and the
-   first stable after the merge is an upgrade, `2026.8.0` to `2026.8.5`: a `Recreate` there means
-   production carries the same drift as the test stack, and gate 8 would refuse that stable until
-   production is recreated the same way. Nothing is changed by this step.
+1. **DONE 2026-11-20 - the test stack's `server` and `worker` recreated on the version they run**,
+   in its directory, after reading what differs:
+   `AUTHENTIK_TAG=<the tag it runs> docker compose --dry-run up -d --no-deps server worker`, then
+   `AUTHENTIK_TAG=<the tag it runs> docker compose up -d --no-deps server worker` (only those two
+   containers, healthy in about 40 s). What differed was compose's config-hash label alone: the
+   image was the same, and so was every environment value compose sets. Afterwards the dry run reads
+   `Running` for both, and the health and OIDC discovery endpoints answer 200.
+2. **MEASURED 2026-11-20, read-only - production's verdict: `Running` / `Running`.** The same dry run
+   in production's stack directory recreates nothing. Production already runs `2026.8.5` (upgraded
+   by hand on 2026-11-13, `.env` line included), which is the pin, so the first stable after the
+   merge DOES NOTHING to MiConnect: `deploy-stack.sh` decides a no-op, pulls nothing, dumps nothing
+   and recreates nothing, and gate 8's preflight passes on that same decision.
 3. **Then the merge**, and the next pre-release.
 
 **The refusal is early and names that command** (review of #3486, 2026-11-19): `deploy-stack.sh
@@ -165,9 +166,10 @@ script runs compose under `env -i`):
    `com.docker.compose.config-hash` label even for a container that `up` leaves alone, while the dry
    run makes the very comparison `up` makes. **Measured the same day, read-only: the test stack's
    `server` and `worker` WOULD be recreated with the tag they run** (its `postgresql`, started in the
-   same minute, would not; the cause was not read, since that means opening `.env`) - so the next
-   pre-release refuses here until the test stack is recreated on its current version by hand ([the
-   order](#the-order-the-hand-step-then-the-merge)); the refusal names the exact hand command. **Up to
+   same minute, would not; the cause was not read, since that means opening `.env`) - so a
+   pre-release would have refused here until the test stack was recreated on its current version by
+   hand, done on 2026-11-20 ([the order](#the-order-the-hand-step-then-the-merge)); a stack that
+   drifts again is refused the same way, and the refusal names the exact hand command. **Up to
    here everything is read-only, and that is `deploy-stack.sh preflight`**, which both release jobs run
    first and the daily `drift` job runs every morning. Then **the root disk's ceiling**: the shared
    host's root filesystem must stay at or under 85 % (the `hosts` report's `DISK_FAIL_PERCENT`,
@@ -350,7 +352,9 @@ read-only reports that run independently, and one write:
   `ABSENT`. Read from the RELEASED trees, never `main`, so an update merged and not yet shipped is not
   a drift. **First reading, 2026-11-13, before the release step existed**: everything on its pin but
   production's `server` and `worker` (`2026.8.0` against `2026.8.5`) and the test stack's
-  `postgresql` (`16-alpine` against the 18 digest) - both real.
+  `postgresql` (`16-alpine` against the 18 digest) - both real. The first is gone: production's
+  `server` and `worker` run `2026.8.5` since the hand upgrade of that evening (measured 2026-11-20);
+  the test stack's `postgresql` remains.
   **A drift with a known cause is a warning until its date, and red after it**: each one is a row of
   `infrastructure/deploy/image-drift-known.txt` (project, service, the EXACT running image, an expiry
   date, the backlog entry), printed at the top of every report and as a `KNOWN ... until <date>`

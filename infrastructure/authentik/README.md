@@ -17,9 +17,9 @@ stack de test doit partir de la version de production) refuse des le debut du jo
 l arreterait, en nommant la commande a lancer a la main ; le job quotidien `drift` le lance chaque
 matin sur la stack de test, et le job `miconnect-preflight` sur la production : une stable est
 refusee avant le bump (porte 8 de `release-preflight.sh`) si ce dernier n a pas reussi sur la
-version d authentik qu elle livre. **Mesurer aussi, en lecture seule, le dry-run de la production
-avant la fusion.** **Premier pre-release apres la fusion : recreer d abord a la main `server` et `worker` de la
-stack de test sur la version qu ils font tourner**
+version d authentik qu elle livre. Les deux pas a la main d avant la fusion sont faits (2026-11-20) :
+le dry-run de la production, mesure en lecture seule, ne recree rien, et `server` et `worker` de la
+stack de test ont ete recrees sur la version qu ils font tourner
 ([l ordre](../../docs/wiki/infrastructure/authentik.md#the-order-the-hand-step-then-the-merge)). Les
 copies de retour arriere (dump, `.env`, journaux) restent 3 par type et 30 jours au plus (le
 proprietaire, 2026-11-19), purgees par chaque release et par le job quotidien `drift`. Le compte du runner doit pouvoir lire et ecrire le `.env` de chaque stack
@@ -57,7 +57,7 @@ un artefact deploye**, et il a derive de celui qui tourne :
 | | Ce dossier | L ancienne VM | L hote cible, depuis le 2026-09-24 |
 | --- | --- | --- | --- |
 | Image | `ghcr.io/goauthentik/server` | `docker.io/authentik/server` | `ghcr.io/...` - **ce fichier** |
-| Version | `2026.8.5` (2026-10-23, version corrective courante), deployee par la release depuis le 2026-11-13 | `2026.8.0` | `2026.8.0`, mise a jour a la main le 2026-11-13, puis par la release |
+| Version | `2026.8.5` (2026-10-23, version corrective courante), deployee par la release depuis le 2026-11-13 | `2026.8.0` | `2026.8.5` en production (mise a jour a la main le 2026-11-13 depuis `2026.8.0`, mesure le 2026-11-20), puis par la release |
 | Volume | `database_18` (nomme `miconnect_database_18` par le projet) | `miconnect_database`, `external: true` | `database_18` depuis le passage a PostgreSQL 18 du 2026-10-31 ; l ancien volume (16) a ete supprime le meme jour |
 
 **La derive est fermee : c est ce `compose.yml` qui tourne maintenant**, au `.env`
