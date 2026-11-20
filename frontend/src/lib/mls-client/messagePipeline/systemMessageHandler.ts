@@ -103,7 +103,7 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
-import { dismissNativeConversationNotification } from '$lib/utils/nativeNotification';
+import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
 import {
   applyNameStatement,
   applyRenameFrame,
@@ -1508,20 +1508,24 @@ export async function handleSystemEvent(
         // Only this tab has the socket: a follower tab of the same browser learns the receipt, and
         // this account's read on another device, from here or not at all (`read_state`).
         if (mark) publishReadState(convoKey, senderNorm, mark.at, mark.clock);
-        // READ ELSEWHERE, LEARNED OVER THE SOCKET: the Android banner of this conversation goes too.
-        // The server pushes only an un-ACKed frame, so the push that used to be the cancel's only
-        // trigger never comes for a receipt this WebView took (owner's report, 2026-11-20). Only
-        // when nothing stays unread: a mark below a newer message must leave that message's banner.
-        if (selfRead && mark && next.unreadCount === 0)
-          void dismissNativeConversationNotification(
-            convoKey,
-            'read_watermark',
-            mark.at,
-            mark.clock
-          );
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});
+      }
+      // READ ELSEWHERE, LEARNED OVER THE SOCKET: the server pushes only an un-ACKed frame, so the
+      // push that used to be the Android cancel's only trigger never comes for a receipt this
+      // WebView took (owner's report, 2026-11-20). OUTSIDE `next !== c`: a mark this row already
+      // held (learned on a reconnect) moves nothing here, and its banner still has to go. The mark
+      // is handed over on every own read - a post still on its way is refused against it - and the
+      // banner goes only when nothing is left unread, so a newer message keeps its own.
+      if (selfRead && mark) {
+        void recordNativeReadElsewhere(
+          convoKey,
+          'read_watermark',
+          mark.at,
+          mark.clock,
+          next.unreadCount === 0
+        );
       }
       if (merged) {
         log(

@@ -201,8 +201,9 @@ export async function postNativeReactionNotification(
 export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
 
 /**
- * Asks the Android builder to REMOVE a conversation's notification, because this account has read
- * it on another device and this WebView learned it over its socket.
+ * Tells the Android builder that this account read a conversation on another device, as this
+ * WebView learned it over its socket - and, when nothing is left unread, to REMOVE the
+ * conversation's notification.
  *
  * **THE SECOND TRIGGER OF THE CANCEL**, as {@link postNativeMessageNotification} is the second
  * trigger of the post (owner's report, 2026-11-20). The cancel had one trigger, the push - a silent
@@ -211,44 +212,46 @@ export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
  * therefore never pushed, and the banner this WebView had posted for the conversation stayed in the
  * shade for good. Same key as the post (the conversation id), so the two triggers of each meet.
  *
- * Called only when this account's OWN mark moved AND the conversation has nothing left unread - a
- * mark that leaves a newer message unread must not take that message's banner with it.
- *
- * **THE MARK TRAVELS WITH THE CANCEL**, because the cancel alone can lose a race: the post of a
+ * **THE MARK IS RECORDED ON EVERY OWN READ; THE BANNER GOES ONLY AT ZERO UNREAD.** The post of a
  * message is asynchronous before it reaches Kotlin, so a read covering it may land first and find
- * nothing to remove. Kotlin records `at` and refuses any later post at or below it
- * (`ReadElsewhereMarks`), so the order of arrival decides nothing. `clock` says which clock `at` is
- * on (readState.ts): `server` for a mark on the server's `createdAt`, `stamped` otherwise.
+ * nothing to remove: Kotlin records `at` and refuses any later post at or below it
+ * (`ReadElsewhereMarks`), so the order of arrival decides nothing - and that holds even when a newer
+ * message stays unread, which is why the record does not wait for `dismiss`. `dismiss` is whether the
+ * conversation has nothing left unread: a mark below a newer message must not take that message's
+ * banner with it. `clock` says which clock `at` is on (readState.ts): `server` for a mark on the
+ * server's `createdAt`, `stamped` otherwise.
  *
- * Off Android there is no native banner to remove: `false`, and nothing is invoked.
+ * Off Android there is no native banner: `false`, and nothing is invoked.
  *
- * @returns whether the native side queued the cancel.
+ * @returns whether the native side queued the work.
  */
-export async function dismissNativeConversationNotification(
+export async function recordNativeReadElsewhere(
   conversationId: string,
   event: ReadElsewhereEvent,
   at: number,
-  clock: 'server' | 'stamped'
+  clock: 'server' | 'stamped',
+  dismiss: boolean
 ): Promise<boolean> {
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const queued = await invoke<boolean>('dismiss_conversation_notification', {
+    const queued = await invoke<boolean>('record_read_elsewhere', {
       groupId: conversationId,
       at: Number.isFinite(at) ? Math.trunc(at) : 0,
       serverClock: clock === 'server',
+      dismiss,
       reason: event,
     });
     if (!queued) {
       console.error(
-        `[NOTIF] The native side refused to dismiss ${conversationId} (${event}) - its banner stays.`
+        `[NOTIF] The native side refused the read of ${conversationId} elsewhere (${event}) - a banner for it may stay.`
       );
     }
     return queued;
   } catch (e) {
-    // Said at a level that accuses: the banner of a conversation already read stays in the shade.
+    // Said at a level that accuses: the banner of a conversation already read may stay in the shade.
     console.error(
-      `[NOTIF] Dismissing ${conversationId} (${event}) threw - its banner stays: ${String(e)}`
+      `[NOTIF] Handing over the read of ${conversationId} elsewhere (${event}) threw - a banner for it may stay: ${String(e)}`
     );
     return false;
   }

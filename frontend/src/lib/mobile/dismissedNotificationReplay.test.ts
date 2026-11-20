@@ -112,3 +112,38 @@ describe('the native builder remembers what it has already announced', () => {
     expect(before.slice(refused)).toContain('return 0L');
   });
 });
+
+/**
+ * A POST COVERED BY A READ ON ANOTHER DEVICE TOUCHES NOTHING (re-review of #3912, 2026-11-20).
+ *
+ * The channel switch removed the conversation's CURRENT banner before the read-elsewhere check, so
+ * a covered late post - an older mention already read on the web - took a newer message's banner
+ * down and then posted nothing. The decision itself is JVM-tested (`ReadElsewhereMarksTest`); what
+ * this pins is that the builder hands it EVERY side effect: the switch's cancel lives inside the step
+ * `postUnlessRead` runs, and the early check comes before the first side effect.
+ */
+describe('the builder decides "already read elsewhere" before touching the shade', () => {
+  const builderStart = source.indexOf('fun Context.showMessageNotification(');
+  const builder = source.slice(builderStart);
+
+  it('asks the record before the id is minted, and nothing in between touches the shade', () => {
+    const early = builder.indexOf('READ_ELSEWHERE.covers(groupId, sentAt, serverAt)');
+    expect(early).toBeGreaterThan(-1);
+    expect(early).toBeLessThan(builder.indexOf('getStableNotifId(this, notifKey)'));
+  });
+
+  it('runs the channel-switch cancel only inside the guarded post', () => {
+    const step = builder.indexOf('val postToShade = {');
+    expect(step).toBeGreaterThan(-1);
+    const stepBody = builder.slice(
+      step,
+      builder.indexOf('}', builder.indexOf('manager.notify', step))
+    );
+    expect(stepBody).toContain('if (switchesChannel) manager.cancel(notifId)');
+    expect(builder.slice(step)).toContain(
+      'READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, postToShade)'
+    );
+    // No cancel of the conversation's banner anywhere before that step.
+    expect(builder.slice(0, step)).not.toContain('manager.cancel(notifId)');
+  });
+});

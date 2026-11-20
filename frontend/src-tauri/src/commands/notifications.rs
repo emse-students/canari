@@ -222,8 +222,9 @@ fn with_native_builder(
     done
 }
 
-/// Asks the native side to remove a conversation's notification because THIS ACCOUNT read it on
-/// another device, as the WebView learned it over its socket (Android).
+/// Tells the native side that THIS ACCOUNT read a conversation on another device, as the WebView
+/// learned it over its socket, and asks it to remove the conversation's notification when nothing
+/// is left unread (Android).
 ///
 /// **THE SECOND TRIGGER OF THE CANCEL**, as [`notify_native_message`] is the second trigger of the
 /// post. The push was the cancel's only trigger, and the server pushes only a frame the device did
@@ -233,14 +234,16 @@ fn with_native_builder(
 ///
 /// `at` is the mark and `server_clock` its clock: Kotlin RECORDS it beside the cancel, and every
 /// post checks it, so a post of a message this mark covers that reaches Kotlin AFTER this call is
-/// not posted - the order of the two decides nothing (`ReadElsewhereMarks`). The caller asks only
-/// when nothing is left unread. Returns whether the dismissal was queued; `false` off Android,
-/// where there is no native banner and the caller never calls.
+/// not posted - the order of the two decides nothing (`ReadElsewhereMarks`). The mark is recorded
+/// on every own read; `dismiss` (nothing left unread, from the WebView's row) decides the cancel, so
+/// a newer unread message keeps its banner. Returns whether the work was queued; `false` off
+/// Android, where there is no native banner and the caller never calls.
 #[tauri::command]
-pub(crate) fn dismiss_conversation_notification(
+pub(crate) fn record_read_elsewhere(
     group_id: String,
     at: i64,
     server_clock: bool,
+    dismiss: bool,
     reason: String,
 ) -> bool {
     #[cfg(target_os = "android")]
@@ -252,7 +255,7 @@ pub(crate) fn dismiss_conversation_notification(
                 (Ok(group), Ok(why)) => (group, why),
                 (Err(e), _) | (_, Err(e)) => {
                     log::error!(
-                        "[NOTIF] new_string failed: {e} - the read conversation was NOT dismissed"
+                        "[NOTIF] new_string failed: {e} - the read elsewhere was NOT recorded"
                     );
                     return false;
                 }
@@ -260,12 +263,13 @@ pub(crate) fn dismiss_conversation_notification(
             match env
                 .call_static_method(
                     class,
-                    "dismissConversationFromWebSocket",
-                    "(Ljava/lang/String;JZLjava/lang/String;)Z",
+                    "readElsewhereFromWebSocket",
+                    "(Ljava/lang/String;JZZLjava/lang/String;)Z",
                     &[
                         (&group).into(),
                         JValue::Long(at),
                         JValue::Bool(u8::from(server_clock)),
+                        JValue::Bool(u8::from(dismiss)),
                         (&why).into(),
                     ],
                 )
@@ -274,9 +278,7 @@ pub(crate) fn dismiss_conversation_notification(
                 // Kotlin logs what it queued; a refusal it already accused there.
                 Ok(queued) => queued,
                 Err(e) => {
-                    log::error!(
-                        "[NOTIF] dismissConversationFromWebSocket failed: {e} - NOT dismissed"
-                    );
+                    log::error!("[NOTIF] readElsewhereFromWebSocket failed: {e} - NOT recorded");
                     false
                 }
             }
@@ -284,7 +286,7 @@ pub(crate) fn dismiss_conversation_notification(
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (group_id, at, server_clock, reason);
+        let _ = (group_id, at, server_clock, dismiss, reason);
         false
     }
 }

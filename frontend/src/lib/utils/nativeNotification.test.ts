@@ -8,7 +8,7 @@ vi.mock('$lib/utils/appVersion', () => ({
 
 import {
   composePlainNotificationText,
-  dismissNativeConversationNotification,
+  recordNativeReadElsewhere,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -281,7 +281,7 @@ describe('composePlainNotificationText', () => {
  * socket was never pushed (the server pushes only an un-ACKed frame), so the banner it had posted
  * stayed. The seam is pinned: the conversation id the post used, the mark and the event reach the command.
  */
-describe('dismissNativeConversationNotification', () => {
+describe('recordNativeReadElsewhere', () => {
   beforeEach(() => {
     invoke.mockReset();
     isAndroidTauriRuntime.mockReset();
@@ -292,12 +292,13 @@ describe('dismissNativeConversationNotification', () => {
     invoke.mockResolvedValue(true);
 
     expect(
-      await dismissNativeConversationNotification('channel_c1', 'channel.read', 200, 'stamped')
+      await recordNativeReadElsewhere('channel_c1', 'channel.read', 200, 'stamped', true)
     ).toBe(true);
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('dismiss_conversation_notification', {
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
       groupId: 'channel_c1',
       at: 200,
       serverClock: false,
+      dismiss: true,
       reason: 'channel.read',
     });
   });
@@ -307,11 +308,12 @@ describe('dismissNativeConversationNotification', () => {
     isAndroidTauriRuntime.mockReturnValue(true);
     invoke.mockResolvedValue(true);
 
-    await dismissNativeConversationNotification('g1', 'read_watermark', 1234.7, 'server');
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('dismiss_conversation_notification', {
+    await recordNativeReadElsewhere('g1', 'read_watermark', 1234.7, 'server', false);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
       groupId: 'g1',
       at: 1234,
       serverClock: true,
+      dismiss: false,
       reason: 'read_watermark',
     });
   });
@@ -319,9 +321,7 @@ describe('dismissNativeConversationNotification', () => {
   it('invokes nothing off Android, where there is no native banner', async () => {
     isAndroidTauriRuntime.mockReturnValue(false);
 
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
-      false
-    );
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -330,12 +330,8 @@ describe('dismissNativeConversationNotification', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     invoke.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('no JavaVM'));
 
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
-      false
-    );
-    expect(await dismissNativeConversationNotification('g1', 'read_watermark', 1, 'server')).toBe(
-      false
-    );
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
+    expect(await recordNativeReadElsewhere('g1', 'read_watermark', 1, 'server', true)).toBe(false);
     expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
   });

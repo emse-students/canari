@@ -23,10 +23,9 @@ vi.mock('$lib/utils/chat/messageUtils', () => ({
   appMsgToChannelSystemEnvelope: vi.fn(),
 }));
 vi.mock('$lib/mls-client/incomingDelivery', () => ({ parseServerTimestampMs: vi.fn() }));
-const dismissNativeConversationNotification = vi.fn();
+const recordNativeReadElsewhere = vi.fn();
 vi.mock('$lib/utils/nativeNotification', () => ({
-  dismissNativeConversationNotification: (...args: unknown[]) =>
-    dismissNativeConversationNotification(...args),
+  recordNativeReadElsewhere: (...args: unknown[]) => recordNativeReadElsewhere(...args),
 }));
 
 const { handleChannelEvent } = await import('./channelEventHandler');
@@ -88,28 +87,49 @@ describe('channelEventHandler - channel.read', () => {
   // The salon's Android banner goes by the socket too (owner's report, 2026-11-20): the WebView
   // posted it, and the `channel_read` push alone left it standing while the app was in front.
   it('my own mark from another device dismisses the salon banner, and only mine does', async () => {
-    dismissNativeConversationNotification.mockClear();
+    recordNativeReadElsewhere.mockClear();
     const conversations = new Map<string, unknown>([
       ['channel_c1', { id: 'channel_c1', unreadCount: 1, messages: [] }],
     ]);
 
     await handleChannelEvent(read('bob', 200), ctx(conversations));
-    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
+    expect(recordNativeReadElsewhere).not.toHaveBeenCalled();
 
     await handleChannelEvent(read('Me', 200), ctx(conversations));
-    // A repeat moves nothing, and so dismisses nothing a second time.
-    await handleChannelEvent(read('me', 200), ctx(conversations));
-    expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
       'channel_c1',
       'channel.read',
       200,
-      'stamped'
+      'stamped',
+      true
     );
   });
 
-  // Review of #3912: a mark below a newer message must not take that message's banner with it.
-  it('my own mark that leaves a newer message unread dismisses no banner', async () => {
-    dismissNativeConversationNotification.mockClear();
+  // Review of #3912: a mark already held moves nothing here, and the salon's banner still has to go.
+  it('my own mark that moves nothing still dismisses when nothing is unread', async () => {
+    recordNativeReadElsewhere.mockClear();
+    const conversations = new Map<string, unknown>([
+      [
+        'channel_c1',
+        { id: 'channel_c1', unreadCount: 0, messages: [], readWatermarks: { me: 500 } },
+      ],
+    ]);
+
+    await handleChannelEvent(read('me', 200), ctx(conversations));
+
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'channel_c1',
+      'channel.read',
+      200,
+      'stamped',
+      true
+    );
+  });
+
+  // Review of #3912: a mark below a newer message must not take that message's banner with it -
+  // but it is still RECORDED, so an older message's post still on its way is refused.
+  it('my own mark that leaves a newer message unread is recorded, and dismisses no banner', async () => {
+    recordNativeReadElsewhere.mockClear();
     const msg = (id: string, at: number) => ({
       id,
       senderId: 'bob',
@@ -127,7 +147,13 @@ describe('channelEventHandler - channel.read', () => {
     await handleChannelEvent(read('me', 100), ctx(conversations));
 
     expect((conversations.get('channel_c1') as { unreadCount: number }).unreadCount).toBe(1);
-    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'channel_c1',
+      'channel.read',
+      100,
+      'stamped',
+      false
+    );
   });
 
   it("someone else's mark never touches my count", async () => {

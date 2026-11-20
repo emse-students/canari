@@ -1,8 +1,7 @@
-const dismissNativeConversationNotification = vi.fn();
+const recordNativeReadElsewhere = vi.fn();
 vi.mock('$lib/utils/nativeNotification', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/nativeNotification')>()),
-  dismissNativeConversationNotification: (...args: unknown[]) =>
-    dismissNativeConversationNotification(...args),
+  recordNativeReadElsewhere: (...args: unknown[]) => recordNativeReadElsewhere(...args),
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
@@ -78,23 +77,25 @@ describe('handleSystemEvent - read_watermark', () => {
   // frame the device did not ACK, so the push that was the cancel's only trigger never came for a
   // receipt the WebView took, and the Android banner of the conversation stayed for good.
   it('our own mark from another device dismisses the native banner of that conversation', async () => {
-    dismissNativeConversationNotification.mockClear();
+    recordNativeReadElsewhere.mockClear();
     const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
 
     await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
 
     // The mark travels with the cancel, so a post still on its way to Kotlin is refused there.
-    expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
       'g1',
       'read_watermark',
       1000,
-      'stamped'
+      'stamped',
+      true
     );
   });
 
-  // Review of #3912: a mark below a newer message must not take that message's banner with it.
-  it('our own mark that leaves a newer message unread dismisses no banner', async () => {
-    dismissNativeConversationNotification.mockClear();
+  // Review of #3912: a mark below a newer message must not take that message's banner with it -
+  // but it is still RECORDED, so an older message's post still on its way is refused.
+  it('our own mark that leaves a newer message unread is recorded, and dismisses no banner', async () => {
+    recordNativeReadElsewhere.mockClear();
     const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
     (ctx.conversations.get('g1') as any).messages.push({
       id: 'm2',
@@ -105,16 +106,30 @@ describe('handleSystemEvent - read_watermark', () => {
     await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
 
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
-    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark',
+      1000,
+      'stamped',
+      false
+    );
   });
 
-  it("a peer's mark, or our own that moves nothing, dismisses no banner", async () => {
-    dismissNativeConversationNotification.mockClear();
+  it("a peer's mark hands nothing to the native side", async () => {
+    recordNativeReadElsewhere.mockClear();
     await handleSystemEvent(
       'read_watermark',
       { at: 1000 },
       makeCtx({ senderNorm: 'peer', userId: 'me' }) as any
     );
+
+    expect(recordNativeReadElsewhere).not.toHaveBeenCalled();
+  });
+
+  // Review of #3912: a mark this row already held (learned on a reconnect) moves nothing here, and
+  // the banner posted for the conversation still has to go.
+  it('our own mark that moves nothing still dismisses when nothing is unread', async () => {
+    recordNativeReadElsewhere.mockClear();
     const conversations = new Map<string, any>([
       [
         'g1',
@@ -126,13 +141,18 @@ describe('handleSystemEvent - read_watermark', () => {
         },
       ],
     ]);
-    await handleSystemEvent(
-      'read_watermark',
-      { at: 1000 },
-      makeCtx({ conversations, senderNorm: 'me', userId: 'me' }) as any
-    );
+    const ctx = makeCtx({ conversations, senderNorm: 'me', userId: 'me' });
 
-    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect(ctx.saveConversation).not.toHaveBeenCalled();
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark',
+      1000,
+      'stamped',
+      true
+    );
   });
 
   it("records a peer's read state without touching our own badge", async () => {

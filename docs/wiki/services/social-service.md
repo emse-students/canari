@@ -804,12 +804,14 @@ app sent to the background, read on the web, never removed - DMs, groups and sal
   when the device has not ACKed it within 10 s (`PUSH_DEFERRED`); an own `read_watermark` that the
   live WebView received and ACKed - app in front, or backgrounded and not yet frozen - produced no
   push, and the WebView itself cancelled nothing. Now the WebView is the cancel's second trigger:
-  an own `read_watermark` from another device (`systemMessageHandler`) or an own `channel.read`
-  (`channelEventHandler`) that MOVES this account's mark AND leaves the conversation with nothing
-  unread (`next.unreadCount === 0`) calls `dismissNativeConversationNotification` ->
-  `dismiss_conversation_notification` -> `dismissConversationFromWebSocket`, which cancels under the
-  same key on `WS_NOTIF_LANE`. A mark that leaves a newer message unread dismisses nothing: the
-  banner is that newer message's now;
+  EVERY own `read_watermark` from another device (`systemMessageHandler`) and every own
+  `channel.read` (`channelEventHandler`) calls `recordNativeReadElsewhere` -> `record_read_elsewhere`
+  -> `readElsewhereFromWebSocket` on `WS_NOTIF_LANE`, with the mark and a `dismiss` flag. The mark
+  is RECORDED every time; the banner is cancelled only when `dismiss`, i.e. when the conversation's
+  row has nothing unread left (`next.unreadCount === 0`) - a mark that leaves a newer message unread
+  leaves that message's banner. The call is made whether or not the mark MOVED the row: a mark the
+  row already held (learned on a reconnect, before the banner was even posted) changes nothing in
+  the WebView and still has to clear the shade;
 - **`channel_read` was dropped in front.** The foreground guard of `dispatchPush` let through only
   what shows in front, on the premise that the device in front is the one reading - but a phone in
   front showing another conversation holds that salon's banner. `channel_read` touches no `mls.bin`
@@ -827,25 +829,47 @@ above); its bench run did not reach a posted banner.
 **THE ORDER OF ARRIVAL DECIDES NOTHING: THE MARK TRAVELS WITH THE CANCEL.** Sharing a lane does
 not order the two: the WebView's post is asynchronous BEFORE it reaches Kotlin (the sender's name is
 resolved, the name files flushed), while the read covering it is handed over at once. A bare cancel
-landing first found nothing to remove, and the post that followed stood for good. So the dismissal
-carries the mark (`at`, and whether it is on the server's clock) and Kotlin RECORDS it in
-`ReadElsewhereMarks` before cancelling; `showMessageNotification` asks that record before
-`manager.notify`, and a message at or below the mark is not posted. The check-then-notify of the
-post and the record-then-cancel of the dismissal run under one leaf lock (`READ_ELSEWHERE_LOCK`,
-nothing else taken inside it), so neither can fall between the other's two steps. The comparison is
-on the server clock when both the message and the mark carry it, on the stamped clock otherwise (a
-salon's stamp IS its server time); a message comparable on neither is posted - a lost banner is a
-lost message. The record is in memory on purpose: the race is between a post still being built and
-a read this process was told about, and both die with the process. Pinned by `ReadElsewhereMarksTest`.
+landing first found nothing to remove, and the post that followed stood for good. So the read
+carries its mark (`at`, and whether it is on the server's clock) and Kotlin RECORDS it in
+`push/ReadElsewhereMarks.kt` - on every own read, dismissing or not, since a late post of an OLDER
+message must be refused even while a newer one stays unread. The comparison is on the server clock
+when both the message and the mark carry it, on the stamped clock otherwise (a salon's stamp IS its
+server time); a message comparable on neither is posted - a lost banner is a lost message. The
+record is in memory on purpose: the race is between a post still being built and a read this
+process was told about, and both die with the process.
 
-The `channel_read` push carries no mark, so its cancel records none; it now runs on `WS_NOTIF_LANE`
-too, and a post still in flight is covered by the socket's own `channel.read`, which does. The push
-silent-from-self cancel (`handleMlsFrame`) cannot apply the zero-unread gate: the mark is inside the
-ciphertext the service does not open, so it still removes the whole notification - the one place
-where a newer message's banner can go with an older read.
+**A COVERED POST TOUCHES NOTHING.** `showMessageNotification` asks the record twice:
 
-Pinned by `systemMessageHandler.readState.test.ts`, `channelEventHandler.read.test.ts` (both: an own
-mark leaving a newer message unread dismisses nothing) and `nativeNotification.test.ts`.
+- EARLY, before any side effect (before an id is minted, a shortcut pushed, the previous banner
+  removed) - a covered post returns there;
+- AND DECIDING, at the post: every side effect on the shade - the channel switch's `cancel` of the
+  previous banner (a mention upgrading a plain post, WP-XP-5), then the `notify` - is ONE step that
+  `ReadElsewhereMarks.postUnlessRead` runs only when the message is not covered, under the lock
+  `recordThenCancel` (the dismissal: record, then cancel) also takes. The lock is owned by the class
+  and is a leaf: only binder calls run inside it.
+
+The switch's cancel used to run before the check, so a covered late post (an older mention read on
+the web) removed a newer message's banner on its way to posting nothing (re-review of #3912).
+
+What is JVM-tested (`ReadElsewhereMarksTest`, no clock - latches and the waiting thread's state):
+the comparison, the record's rise, that a covered post runs none of its steps, and both
+interleavings - a read arriving while a post is inside its steps waits and then removes it; a post
+arriving while a read is inside its steps waits and is then refused. What only a device proves: that
+the builder hands EVERY side effect to that step (pinned as source by
+`dismissedNotificationReplay.test.ts`), and the binder calls themselves.
+
+**Windows that remain.** The `channel_read` push carries no mark, so its cancel records none; it runs
+on `WS_NOTIF_LANE`, and a post still in flight is covered by the socket's own `channel.read`, which
+does. The push silent-from-self cancel (`handleMlsFrame`) cannot apply the zero-unread gate: the mark
+is inside the ciphertext the service does not open, so it still removes the whole notification - the
+one place where a newer message's banner can go with an older read. And `dismiss` is the WebView's
+row speaking: a message pushed to the shade that the row has not received yet is not counted there,
+so an own read the row sees as complete removes that banner too (the next message redraws one).
+
+Pinned by `systemMessageHandler.readState.test.ts` and `channelEventHandler.read.test.ts` (an own mark
+leaving a newer message unread is recorded and dismisses nothing; an own mark that moves nothing still
+dismisses at zero unread), `nativeNotification.test.ts`, `ReadElsewhereMarksTest` and
+`dismissedNotificationReplay.test.ts`.
 
 ### Forms (`/api/forms`)
 
