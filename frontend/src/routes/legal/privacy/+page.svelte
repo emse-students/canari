@@ -1159,9 +1159,9 @@
         laisser ses lignes de base de données (dont le chat chiffré et la clé du direct, elle-même
         chiffrée par un secret du serveur qui n'est pas dans la base), pour les durées ci-dessus :
         une rediffusion supprimée peut ainsi subsister jusqu'à 14 jours dans les sauvegardes de la
-        base, sous la forme de sa publication (titre, auteur, durée, commentaires), jamais de sa
-        vidéo. Les segments vidéo des directs et des rediffusions ne sont jamais sauvegardés. Une
-        sauvegarde n'est relue que pour restaurer le service.
+        base, sous la forme de sa publication (titre, auteur, durée, commentaires), jamais de ses
+        images ni de son son. Les images et le son des directs et des rediffusions ne sont jamais
+        sauvegardés. Une sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>
   </section>
