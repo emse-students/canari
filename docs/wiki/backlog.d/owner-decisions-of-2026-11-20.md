@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-20
 
-target: 1.7.2
+target: 1.7.3
 
 Recorded so no question answered here is asked again. Each line names where its detail lives.
 
@@ -26,3 +26,5 @@ Recorded so no question answered here is asked again. Each line names where its 
 20. **The GIF label stays "🌀 GIF"** (owner, 2026-11-20), the one exception to decision 15's per-kind emoji.
 21. **Voice notes: the lead ships the processing-off change directly** if the measurements are better (owner, 2026-11-20), without a further question.
 22. **The `1.7.2` store notes are written by the lead** (owner, 2026-11-20); the owner does not review them before the stable.
+
+**Carried out, 2026-11-20 (`1.7.2` shipped):** decision 17's confirmation was run by the lead and PASSED ([readings](../device-verification.md#the-audiovideo-drift-fix-171-read-on-2026-11-20)): at 12.4 fps the replay's drift slope is +0.21 ms/s, against -38.6 ms/s for the control without the fix. Decisions 15 and 20 (#3907) and 16 and 21 (#3910) are built; their readings are in the entries they name. The stable of the day is `1.7.2`, cut on `1.7.2-alpha.4` (the libxml2 image fix, #3915).

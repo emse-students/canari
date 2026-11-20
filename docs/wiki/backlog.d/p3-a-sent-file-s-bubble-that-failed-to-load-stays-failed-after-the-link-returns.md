@@ -1,8 +1,10 @@
 ## P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Seen 2026-11-18 (iPhone 12, `1.7.0-alpha.11`, dev, [readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11)):** a 45 MB file was uploaded and sent (`[OUTBOX] ... sent`), then the Wi-Fi was cut through Control Center. The bubble's media load failed (`E [MessageBubble] media not shown (other) <media> TypeError: Load failed`) and the bubble drew the file name with a red retry icon. The Wi-Fi came back and, more than a minute later, the bubble still showed the retry icon: nothing reloaded it on reconnection.
 

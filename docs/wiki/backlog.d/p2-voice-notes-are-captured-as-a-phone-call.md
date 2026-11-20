@@ -52,3 +52,5 @@ and a spectrogram. A reference-based score with ViSQOL or PESQ against the studi
 - Chromium, the aaudio input preset code (https://source.chromium.org/chromium/chromium/src/+/main:media/audio/android/): the communication preset chosen when processing is on.
 - WebKit bugs 192932, 257495, 234784, 274222 (capture and audio session behaviour).
 - EBU R128 s2 and AES TD1008: loudness targets for speech.
+
+**2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, Mi 9T): the capture line is read, one per voice note:** `capture: echo=true noise=true agc=true rate=48000Hz ch=1 mime=audio/mp4 bps=128000`. It confirms cause 1 (all three call-style flags ON) on the Mi; the iPhone's line is not read.

@@ -1,8 +1,10 @@
 ## An institution chooses each post's spaces and public: the iPhone's change-and-save and the "Entre etudiants" chip in the viewer, owed on the phones (a reading deferred to 1.7.1)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _Deferred 2026-11-18 under the owner's rule of 2026-11-18 ([owner-decisions-of-2026-11-18.md](owner-decisions-of-2026-11-18.md), rule 2): the step left needs a hand on the iPhone (sitting S6: WDA reached neither "Modifier le post" by a swipe nor by text behind the platform admin's pin items), and it is not a regression. Evidence: `git log v1.6.12..origin/main` on `EditPostForm.svelte`, `InstitutionReachPicker.svelte`, `InstitutionReachChip.svelte` and `institutionReach.ts` lists #3514, #3566, #3616, #3660 and #3670 - `1.7.0` work, but the paths they changed were read on `1.7.0` code: the web half (2026-11-14, 2026-11-16), the Mi's edit save after #3670, the iPhone's edit form drawn on `alpha.7` and its card chip on `alpha.6`. What stays owed is an iPhone tap, not a code path left unread._
 

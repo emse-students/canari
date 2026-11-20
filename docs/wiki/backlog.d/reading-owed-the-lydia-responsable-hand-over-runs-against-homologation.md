@@ -1,6 +1,8 @@
 ## Reading owed - the Lydia Responsable hand-over runs against homologation
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **What is built** (2026-11-20, owner's decision of 2026-11-19, item 31): "Transférer le rôle" in the
 cashier section hands the Responsable to another member - add the heir's number with the 13 rights and
