@@ -32,7 +32,6 @@ import {
   refuseRemovedByModeration,
   rowsReleasedBy,
 } from './comment-removal';
-import { assertPostAcceptsComments } from './comment-publication';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceCampusTrend } from './campus-trend';
 import { authorNoticeKind } from './post-activity-notice';
@@ -200,8 +199,6 @@ export class PostInteractionsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
-    // A scheduled post takes no comment, its own author's included (owner, 2026-11-19).
-    assertPostAcceptsComments(post, new Date());
 
     // The picture must be the writer's own upload: deleting this comment releases the blob it names.
     if (data.media?.mediaId) {
@@ -246,24 +243,29 @@ export class PostInteractionsService {
     };
     // The parent is read under the post's lock, with the append: a moderation delete that lands
     // first is seen here, never overwritten by this write (`writeComments`).
-    const parent = await writeComments(this.postRepo.manager, postId, (existing) => {
-      const found = data.parentId ? existing.find((c) => c.id === data.parentId) : undefined;
-      if (data.parentId) {
-        if (!found) throw new NotFoundException('Parent comment not found');
-        refuseRemovedByModeration(found, 'reply');
-        // Enforce max nesting depth of 3 to prevent DoS via deeply nested threads.
-        let depth = 1;
-        let current: StoredComment | undefined = found;
-        while (current?.parentId) {
-          const parentId: string = current.parentId;
-          current = existing.find((c) => c.id === parentId);
-          depth++;
-          if (depth >= 3)
-            throw new BadRequestException('Comment nesting limit reached (max 3 levels)');
+    const parent = await writeComments(
+      this.postRepo.manager,
+      postId,
+      (existing) => {
+        const found = data.parentId ? existing.find((c) => c.id === data.parentId) : undefined;
+        if (data.parentId) {
+          if (!found) throw new NotFoundException('Parent comment not found');
+          refuseRemovedByModeration(found, 'reply');
+          // Enforce max nesting depth of 3 to prevent DoS via deeply nested threads.
+          let depth = 1;
+          let current: StoredComment | undefined = found;
+          while (current?.parentId) {
+            const parentId: string = current.parentId;
+            current = existing.find((c) => c.id === parentId);
+            depth++;
+            if (depth >= 3)
+              throw new BadRequestException('Comment nesting limit reached (max 3 levels)');
+          }
         }
-      }
-      return { next: [...existing, comment], result: found };
-    });
+        return { next: [...existing, comment], result: found };
+      },
+      { requirePublished: true }
+    ); // a scheduled post takes no comment: decided under the lock, DB clock
     post.comments = [...(post.comments ?? []), comment];
 
     // Fire-and-forget: notify the post author (also for an association post), the parent comment

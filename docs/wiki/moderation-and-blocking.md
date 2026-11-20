@@ -291,12 +291,19 @@ open-report sub-select; for a post scheduled later it runs, and the same seed me
 #### A post that is not published yet takes no comment (owner, 2026-11-19)
 
 *"On ne devrait pas pouvoir commenter un post programme."* `PostInteractionsService.addComment` refuses a
-post whose `publishedAt` (the instant it becomes visible, `publication-time.ts`) is in the future, for
-EVERY writer including the post's own author: a typed `409 Conflict` carrying
-`code: COMMENT_POST_NOT_PUBLISHED` (`comment-publication.ts`), never a message to parse. Only the add is
-refused (a like, edit or delete needs an existing comment, and none can exist under such a post). On the
-client a scheduled card draws no comment control or preview, and since this change it opens no comment
-sheet either, even when a notification tap asks for one. The 2026-11-15 moderation read therefore
+post that is not published yet, for EVERY writer including the post's own author: a typed
+`409 Conflict` carrying `code: COMMENT_POST_NOT_PUBLISHED` (`comment-publication.ts`), never a message
+to parse. **The decision is the database's and is taken under the row lock**: `writeComments`
+(`comment-write.ts`, `requirePublished`) selects `PUBLISHED_SQL` (`publication-time.ts`, the feed's own
+predicate `scheduledAt IS NULL OR scheduledAt <= NOW()`, on the DATABASE clock) in the same
+`SELECT ... FOR UPDATE` that reads the comments, so a reschedule committed while an add waited is seen
+by it (proven in `comment-write.integration.spec.ts`). There is no earlier app-clock check and no read
+of `publishedAt`, which can be out of step with `scheduledAt`. Only the add is refused (a like, edit
+or delete needs an existing comment, and none can exist under such a post). On the client a scheduled
+card (the strip's prop, OR the post's own `scheduledAt` still ahead, so a deep link to the post page
+too) draws no comment control or preview and opens no comment sheet, even when a notification tap
+asks for one; a stale copy that still posts gets the 409 mapped to its own sentence
+(`post_comment_not_published_refusal`, `publishFailure.ts`). The 2026-11-15 moderation read therefore
 needs no case for comments under a scheduled post. Charter: principle 6 (kindness) and 7 (simplicity) -
 the question disappears with its cause.
 

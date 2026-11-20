@@ -211,7 +211,7 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
   it('a post not published yet takes no comment, its own author included; a published one does', async () => {
     const postId = '40000000-0000-4000-8000-000000000006';
     await seed(postId, []);
-    await client.query(`UPDATE posts SET "publishedAt" = now() + interval '1 day' WHERE id = $1`, [
+    await client.query(`UPDATE posts SET "scheduledAt" = now() + interval '1 day' WHERE id = $1`, [
       postId,
     ]);
     await expect(
@@ -219,15 +219,41 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
     ).rejects.toMatchObject({ response: { code: 'COMMENT_POST_NOT_PUBLISHED' } });
     await expect(
       interactions.addComment(postId, { userId: 'u5', text: 'early' })
-    ).rejects.toMatchObject({
-      response: { code: 'COMMENT_POST_NOT_PUBLISHED' },
-    });
+    ).rejects.toMatchObject({ response: { code: 'COMMENT_POST_NOT_PUBLISHED' } });
     expect(await stored(postId)).toEqual([]);
     await client.query(
-      `UPDATE posts SET "publishedAt" = now() - interval '1 minute' WHERE id = $1`,
+      `UPDATE posts SET "scheduledAt" = now() - interval '1 minute' WHERE id = $1`,
       [postId]
     );
     await interactions.addComment(postId, { userId: 'u5', text: 'on time' });
     expect((await stored(postId)).map((c) => c.text)).toEqual(['on time']);
+  });
+
+  it('a reschedule committed while an add waits on the row lock refuses the add', async () => {
+    const postId = '40000000-0000-4000-8000-000000000007';
+    await seed(postId, []);
+    const holder = new Client({ connectionString: URL });
+    await holder.connect();
+    try {
+      await holder.query(`SET search_path TO ${schema}`);
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM posts WHERE id = $1 FOR UPDATE`, [postId]);
+      // The add is queued on the lock, then the post is rescheduled into the future and committed.
+      const add = interactions.addComment(postId, { userId: 'u5', text: 'too late' });
+      const settled = add.then(
+        () => 'added',
+        (e: { response?: { code?: string } }) => e.response?.code
+      );
+      await queuedOnLock(1);
+      await holder.query(
+        `UPDATE posts SET "scheduledAt" = now() + interval '1 day' WHERE id = $1`,
+        [postId]
+      );
+      await holder.query('COMMIT');
+      expect(await settled).toBe('COMMENT_POST_NOT_PUBLISHED');
+    } finally {
+      await holder.end();
+    }
+    expect(await stored(postId)).toEqual([]);
   });
 });

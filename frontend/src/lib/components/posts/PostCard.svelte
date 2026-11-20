@@ -17,6 +17,7 @@
   import { Log } from '$lib/utils/Log';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { withdrawProposal } from '$lib/proposals/api';
+  import { isStillScheduled } from '$lib/posts/scheduledDue';
   import { pendingRequests } from '$lib/posts/republication';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
@@ -118,12 +119,18 @@
     onDelete,
     commentsOpen = false,
     focusCommentId,
-    scheduled = false,
+    scheduled: scheduledProp = false,
     onEdited,
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
   let localPost = $state.raw<PostEntity>(untrack(() => ({ ...postProp })));
+
+  /**
+   * Scheduled by the caller (the strip) OR by the post itself: its `scheduledAt` still ahead, so a
+   * deep link to one (its author opening it) is drawn and gated like the strip (owner, 2026-11-19).
+   */
+  const scheduled = $derived(scheduledProp || isStillScheduled(localPost, Date.now()));
 
   /**
    * This card's writes, and the rule deciding what a new served row may replace.

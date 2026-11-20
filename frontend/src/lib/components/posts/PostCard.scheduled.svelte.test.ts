@@ -105,3 +105,12 @@ it('opens no comment sheet on a scheduled post, even asked to (a notification ta
   flushSync();
   expect(document.body.querySelector('[role="dialog"]')).toBeNull();
 });
+
+it('derives "scheduled" from the post itself: a deep link (no prop) shows no comment control', () => {
+  // The post detail page draws its card WITHOUT the strip's `scheduled` prop.
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+  const t = mountCard(row({ scheduledAt: future, publishedAt: future, commentCount: 1 }), false);
+  expect(t.querySelector('[data-scheduled-post="true"]')).not.toBeNull();
+  expect(commentButton(t)).toBeNull();
+  expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+});
