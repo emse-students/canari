@@ -154,11 +154,17 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     private var allWithdrawn = false
 
     /**
-     * The replies this process has seen DELIVERED ([replyDelivered]), newest last and bounded: a
-     * re-post of a reply as pending ([wasDelivered]) is decided against it under [lock], so a drain
-     * that delivered the reply before the re-post leaves no "not sent yet" behind. Guarded by [lock].
+     * The quick replies whose handler is still running ([awaitReply] .. [settleReply]), each with the
+     * server's receive time once a drain DELIVERED it ([replyDelivered]), null until then. The
+     * handler decides from it - under [lock] - whether another drain sent its reply while it was
+     * replying ([replyDeliveredAt]).
+     *
+     * BOUNDED BY CONSTRUCTION, NOT BY A CAP: an id is added before its entry can reach the outbox
+     * (so no drain can deliver it unseen) and removed when its handler ends, so the map holds at
+     * most one entry per quick reply in flight - and a delivery of any other message records
+     * nothing here. No eviction, so no number to prove against the drain's batch. Guarded by [lock].
      */
-    private val delivered = LinkedHashSet<String>()
+    private val awaited = HashMap<String, Long?>()
 
     /**
      * Raises [conversationId]'s mark to [read]'s instant, on its clock. A lower or non-positive
@@ -242,20 +248,19 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * the line carrying that id goes. Every peer line stays, to be weighed by a later read as usual,
      * and so does every other pending reply still queued - nothing unseen is ever dropped (principle
      * 2). The banner is cancelled when no line is left, else [repost] rebuilds it with the lines that
-     * stay and returns what it posted (null: it could not, and the banner is left as it was). The
-     * delivery is remembered, so a re-post racing it is refused ([wasDelivered]). All in one critical
-     * section with the record.
+     * stay and returns what it posted (null: it could not, and the banner is left as it was). A
+     * quick reply whose handler still runs learns of it, with [receivedAt] ([replyDeliveredAt]).
+     * All in one critical section with the record.
      */
     fun replyDelivered(
         conversationId: String,
         messageId: String,
+        receivedAt: Long,
         shade: () -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
         repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
     ): Delivery = synchronized(lock) {
-        delivered.remove(messageId)
-        delivered.add(messageId)
-        while (delivered.size > MAX_DELIVERED) delivered.remove(delivered.first())
+        if (awaited.containsKey(messageId)) awaited[messageId] = receivedAt
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Delivery.NONE
         val at = banner.messages.indexOfFirst { lineOf(it).pendingReplyId == messageId }
         if (at < 0) return@synchronized Delivery.NONE
@@ -271,11 +276,25 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     }
 
     /**
-     * Whether reply [messageId] has been seen delivered by this process. Asked under [lock] by the
-     * re-post of a failed reply as pending: a second drain may have delivered it between the quick
-     * reply's own failed drain and that re-post.
+     * A quick reply's handler starts: from now until [settleReply], a drain that delivers
+     * [messageId] says so here. Called BEFORE the entry is queued, so no delivery can be missed.
      */
-    fun wasDelivered(messageId: String): Boolean = synchronized(lock) { messageId in delivered }
+    fun awaitReply(messageId: String) {
+        synchronized(lock) { awaited[messageId] = null }
+    }
+
+    /**
+     * The server's receive time of reply [messageId] when a drain delivered it while its handler
+     * runs, else null. Asked by the handler after its own drain, and again under [lock] by its
+     * re-post as pending: a second drain may have delivered it in between (a quick reply and the
+     * retry worker 5 ms apart, Mi 9T).
+     */
+    fun replyDeliveredAt(messageId: String): Long? = synchronized(lock) { awaited[messageId] }
+
+    /** The quick reply's handler ends: [messageId] is no longer awaited. */
+    fun settleReply(messageId: String) {
+        synchronized(lock) { awaited.remove(messageId) }
+    }
 
     /**
      * Runs [post] - EVERY side effect a post has on the shade, the removal of the previous banner
@@ -352,11 +371,6 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      */
     fun covers(conversationId: String, sentAt: Long, serverAt: Long): Boolean =
         synchronized(lock) { coversLocked(conversationId, sentAt, serverAt) }
-
-    private companion object {
-        /** How many delivered replies [delivered] keeps: far more than a re-post can race with. */
-        const val MAX_DELIVERED = 64
-    }
 
     private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()

@@ -891,26 +891,31 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   `notify`, where a shade read is not ordered at all.
 - **The pending reply** (`repostReplyPending`) asks the record FIRST, under the lock, for both its
   lines and its template (`Banner.posted`, the notification as handed to `notify`; the shade's only
-  in a fresh process), records what it posts, so its bound (`takeLast`) is the record's too.
+  in a fresh process), records what it posts, so its bound (`takeLast`) is the record's too. No
+  dismissal that cannot weigh lines removes it when the dismissal only announces a read elsewhere:
+  the push's silent-from-self cancel passes `keepPendingReply`, and `ReadElsewhereMarks.withdraw`
+  keeps a banner whose record (or, in a fresh process, shade) holds a `LINE_PENDING_REPLY` line - it
+  removed one while the reply was still queued (device reading of #3912). Its delivery and the "mark
+  as read" action remove it.
 - **A delivered reply clears its notice, whichever path sends it.** The pending line carries its
   message id (`LINE_PENDING_REPLY_ID`), and `drainOutboxBackground` - the one drain every native
   send goes through: the quick reply, `OutboxRetryWorker`, a push-woken drain, the boot drain -
   calls `replyDelivered` for each entry it delivered, after the outbox lock and after the ids are
   durable. A LATE DELIVERY IS NOT A READ (round-8 decision, principle 2): only the line carrying that
   id goes - every peer line stays for a later read to weigh, and every other reply still queued
-  stays pending. With no line left the banner goes, with its reaction; otherwise it is rebuilt
-  silently (`setOnlyAlertOnce`) from its own template, and left as it was - logged at WARN - when it
-  has none. Only the quick reply's FIRST-TRY success treats answering as reading, with its
-  watermark. The quick reply decides on THIS reply's delivery, not on an empty outbox, and its
-  re-post as pending is refused under the record's lock when a drain already delivered it
-  (`ReadElsewhereMarks.wasDelivered`: the drain enters the record after releasing the outbox lock,
-  so either it ran first and the re-post sees it, or it runs after and clears the re-posted line).
-  The in-memory record decides rather than the outbox files: both are rewritten whole, not
-  atomically, and `outbox_sent` is emptied by the app at login. No dismissal that cannot weigh lines removes it when
-  the dismissal only announces a read elsewhere: the push's silent-from-self cancel passes
-  `keepPendingReply`, and `ReadElsewhereMarks.withdraw` keeps a banner whose record (or, in a fresh
-  process, shade) holds a `LINE_PENDING_REPLY` line - it removed one while the reply was still queued
-  (device reading of #3912). The delivered reply and the "mark as read" action remove it.
+  stays pending. With no line left the banner goes - NOT its reaction notification, which a peer
+  may not have seen (round-9 correction); otherwise it is rebuilt silently (`setOnlyAlertOnce`) from
+  its own template, and left as it was - logged at WARN - when it has none.
+- **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
+  the cancel - the reaction included, this IS a read - and the watermark. `handleReply` runs it when
+  THIS reply went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart
+  on a Mi 9T): the reply is AWAITED before its entry is queued (`ReadElsewhereMarks.awaitReply`), a
+  drain that delivers it records the receive time there, and the handler reads it
+  (`replyDeliveredAt`) after its drain - and its re-post as pending asks again under the record's
+  lock, handing the receive time back so the success runs instead: the RemoteInput spinner always
+  ends in a re-post or a cancel. The map holds only replies whose handler is running (removed in a
+  `finally`), so it needs no cap. The in-memory record decides rather than the outbox files: both
+  are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and

@@ -311,10 +311,10 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(source.split('drainOutboxLocked(').length - 1).toBe(2);
     const drain = source.slice(source.indexOf('internal fun drainOutboxBackground('));
     const body = drain.slice(0, drain.indexOf('private val OUTBOX_LOCK'));
-    expect(body).toContain('replyDelivered(context, entry.groupId, entry.id)');
+    expect(body).toContain('replyDelivered(context, entry.groupId, entry.id, receivedAt)');
     const locked = source.slice(source.indexOf('private fun drainOutboxLocked('));
     expect(locked.slice(0, locked.indexOf('private fun encryptQueuedMessages('))).toContain(
-      'delivered.add(entry)'
+      'delivered.add(entry to receivedAt)'
     );
     // The retry worker and the push-woken drains go through it.
     const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
@@ -337,10 +337,47 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(body).toContain('return@repost null');
     const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
     const lock = repost.indexOf('synchronized(READ_ELSEWHERE.lock) {');
-    const asked = repost.indexOf('if (READ_ELSEWHERE.wasDelivered(messageId)) {');
+    const asked = repost.indexOf('READ_ELSEWHERE.replyDeliveredAt(messageId)?.let { receivedAt ->');
     expect(lock).toBeGreaterThan(-1);
     expect(asked).toBeGreaterThan(lock);
     expect(asked).toBeLessThan(repost.indexOf('manager.notify('));
+    // The delivered branch hands the receive time back, it does not just return.
+    expect(repost.slice(asked, asked + 400)).toContain('return receivedAt');
+    // A late delivery is not a read: its cancel leaves the reaction notification alone.
+    expect(body).not.toContain('reactionNotifKey(');
+  });
+
+  // Round-9 review (B1): a reply another drain delivered while the user was replying from the
+  // banner left the spinner running, with no action. It is the first-try success: one function,
+  // reached from both branches, cancels and sends the watermark.
+  it('a quick reply delivered by any drain runs the one success action', () => {
+    const receiver = readFileSync(
+      resolve(dirname(SERVICE), 'CanariNotificationActionReceiver.kt'),
+      'utf8'
+    );
+    const handle = receiver.slice(receiver.indexOf('private fun handleReply('));
+    const fn = handle.slice(0, handle.indexOf('private fun replyAnswered('));
+    // Awaited before it is queued, settled whatever happens.
+    expect(fn.indexOf('awaitReplyDelivery(messageId)')).toBeLessThan(
+      fn.indexOf('enqueueOutboxMirror(')
+    );
+    expect(fn).toContain('finally {');
+    expect(fn).toContain('settleReplyDelivery(messageId)');
+    // Delivered by this drain OR another one: the success action.
+    expect(fn).toContain(
+      'ownReceivedAt ?: CanariFirebaseMessagingService.replyDeliveredAt(messageId)'
+    );
+    expect(
+      fn.split('replyAnswered(context, groupId, pushCtx, messageId, text, sentAt,').length - 1
+    ).toBe(2);
+    expect(fn.slice(fn.indexOf('repostReplyPending('))).toContain('?.let { late -> replyAnswered(');
+    // The success action is the only place that cancels and announces the read.
+    const answered = handle.slice(handle.indexOf('private fun replyAnswered('));
+    const body = answered.slice(0, answered.indexOf('private fun sendReadWatermark('));
+    expect(body).toContain('cancelConversationNotification(context, groupId)');
+    expect(body).toContain('sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)');
+    expect(fn).not.toContain('cancelConversationNotification(');
+    expect(fn).not.toContain('sendReadWatermark(');
   });
 
   it('commits the announced-message record and rebuilds the summary after the lock', () => {

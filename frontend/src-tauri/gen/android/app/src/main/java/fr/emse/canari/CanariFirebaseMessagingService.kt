@@ -740,7 +740,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             replyText: String,
             sentAt: Long,
             serverAt: Long,
-        ) {
+        ): Long? {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 val notifId = getStableNotifId(context, groupId)
@@ -755,20 +755,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // delivered this reply between the quick reply's failed drain and here. Its
                     // [replyDelivered] took this lock after the outbox lock was released, so either
                     // it ran first and this sees it, or it runs after and clears the line posted here.
-                    if (READ_ELSEWHERE.wasDelivered(messageId)) {
-                        Log.d(TAG, "repostReplyPending: reply id=${messageId.take(8)} already delivered - nothing to re-post group=${ConversationRef.of(groupId)}")
-                        return
+                    // Delivered meanwhile: the user DID answer from the banner - the caller runs the
+                    // first-try success (cancel and watermark), never leaves the spinner running.
+                    READ_ELSEWHERE.replyDeliveredAt(messageId)?.let { receivedAt ->
+                        Log.d(TAG, "repostReplyPending: reply id=${messageId.take(8)} delivered by another drain - answered, not re-posted group=${ConversationRef.of(groupId)}")
+                        return receivedAt
                     }
                     val held = READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
                     val existing = held?.posted as? android.app.Notification
                     if (held == null || existing == null) {
                         Log.d(TAG, "repostReplyPending: no banner for group=${ConversationRef.of(groupId)} (removed, or never posted) - nothing to correct")
-                        return
+                        return null
                     }
                     val previous = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(existing)
                     if (previous == null) {
                         Log.w(TAG, "repostReplyPending: no MessagingStyle on the notification for group=${ConversationRef.of(groupId)}")
-                        return
+                        return null
                     }
                     val style = NotificationCompat.MessagingStyle(previous.user)
                     previous.conversationTitle?.let {
@@ -821,14 +823,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } catch (e: Exception) {
                 Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
+            return null
         }
+
+        /** A quick reply's handler starts ([ReadElsewhereMarks.awaitReply]) - before its entry is queued. */
+        internal fun awaitReplyDelivery(messageId: String) = READ_ELSEWHERE.awaitReply(messageId)
+
+        /** When a drain delivered quick reply [messageId] while its handler runs, else null. */
+        internal fun replyDeliveredAt(messageId: String): Long? = READ_ELSEWHERE.replyDeliveredAt(messageId)
+
+        /** A quick reply's handler ends ([ReadElsewhereMarks.settleReply]). */
+        internal fun settleReplyDelivery(messageId: String) = READ_ELSEWHERE.settleReply(messageId)
 
         /**
          * A reply this device queued was DELIVERED: the banner stops showing it as "not sent yet"
          * ([ReadElsewhereMarks.replyDelivered]). A LATE DELIVERY IS NOT A READ: only that line goes;
          * every peer line and every reply still queued stays. With no line left the banner goes
-         * (its reaction with it, as on the quick reply's first try), else it is rebuilt silently
-         * from its own template.
+         * (its reaction stays: this is not a read), else it is rebuilt silently from its own
+         * template.
          *
          * Called by [drainOutboxBackground] for every entry it delivered - the ONE drain every
          * native send goes through (the quick reply's first try, [OutboxRetryWorker], a push-woken
@@ -836,7 +848,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * reply's FIRST-TRY success treats answering as reading, with its watermark
          * ([CanariNotificationActionReceiver]).
          */
-        private fun replyDelivered(context: Context, groupId: String, messageId: String) {
+        private fun replyDelivered(context: Context, groupId: String, messageId: String, receivedAt: Long) {
             if (groupId.isEmpty()) return
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
             val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
@@ -845,6 +857,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val outcome = READ_ELSEWHERE.replyDelivered(
                 groupId,
                 messageId,
+                receivedAt,
                 shade = { stableId?.let { shadeBannerOf(manager, it) } },
                 cancel = { id ->
                     cancelledId = id
@@ -875,7 +888,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             when (outcome) {
                 ReadElsewhereMarks.Delivery.NONE, ReadElsewhereMarks.Delivery.NOT_REBUILT -> Unit
                 ReadElsewhereMarks.Delivery.CANCELLED -> {
-                    prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }
+                    // NOT its reaction: a late delivery is not a read, and a peer's reaction may be
+                    // unseen (principle 2). Only the quick reply's first-try success cancels it.
                     synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
                     Log.d(TAG, "replyDelivered: reply delivered - its banner held nothing else, removed group=${ConversationRef.of(groupId)}")
                     refreshBadgeSummary(context, justCancelled = cancelledId)
@@ -1887,14 +1901,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             onSent: (SentOutboxId) -> Unit = {},
         ): Int {
-            val delivered = mutableListOf<OutboxMirrorEntry>()
+            val delivered = mutableListOf<Pair<OutboxMirrorEntry, Long>>()
             val remaining = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent, delivered) }
             // EVERY DELIVERY CLEARS ITS "NOT SENT YET" NOTICE, whichever caller drained: after the
             // outbox lock is released (no lock order to keep with the banner record), and after the
             // delivered ids are durable (`appendOutboxSent`) - the visible trace never goes first.
-            for (entry in delivered) {
+            for ((entry, receivedAt) in delivered) {
                 try {
-                    replyDelivered(context, entry.groupId, entry.id)
+                    replyDelivered(context, entry.groupId, entry.id, receivedAt)
                 } catch (e: Exception) {
                     Log.e(TAG, "drainOutboxBackground: clearing the pending notice failed id=${entry.id.take(8)}: ${throwableSite(e)}")
                 }
@@ -1971,7 +1985,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
             onSent: (SentOutboxId) -> Unit,
-            delivered: MutableList<OutboxMirrorEntry>,
+            delivered: MutableList<Pair<OutboxMirrorEntry, Long>>,
         ): Int {
             val entries = readOutboxMirror(context)
             if (entries.isEmpty()) return 0
@@ -2013,7 +2027,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (receivedAt != null) {
                     val sent = SentOutboxId(entry.id, receivedAt)
                     sentIds.add(sent)
-                    delivered.add(entry)
+                    delivered.add(entry to receivedAt)
                     onSent(sent)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
