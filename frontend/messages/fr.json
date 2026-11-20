@@ -4552,7 +4552,15 @@
       }
     }
   ],
-  "chat_preview_media": "[Média]",
+  "chat_preview_gif_media": "🌀 GIF",
+  "chat_preview_photo": "📷 Photo",
+  "chat_preview_video": "🎥 Vidéo",
+  "chat_preview_voice_note": "🎤 Message vocal",
+  "chat_preview_audio": "🎵 Fichier audio",
+  "chat_preview_reel": "🎬 CanaReel",
+  "chat_preview_file": "📎 Fichier : {name}",
+  "chat_preview_attachment": "📎 Pièce jointe",
+  "chat_preview_captioned": "{label} : {caption}",
   "chat_preview_poll": "[Sondage]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Lien]",

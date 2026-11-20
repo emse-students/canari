@@ -124,6 +124,7 @@ earliest version, as a checklist.
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
 - [ ] [iOS: the App Group's files live in a flagged store directory, and no App Group file is in a backup (iPhone 12)](backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
+- [ ] [a media message is worded the same in the list, the quotes and the banners (owner, 2026-11-20)](backlog.d/reading-owed-media-preview-names-the-kind.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [the PIN gate's audit rows of 2026-11-20 (deadline, 429, confirmation, removed device)](backlog.d/reading-owed-pin-gate-audit-rows-of-2026-11-20.md)
 - [ ] [the launcher's long-press conversations and the share sheet show each conversation's picture (Android, owner, 2026-11-20)](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)

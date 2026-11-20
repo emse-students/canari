@@ -8,7 +8,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::mobile::graine::GRAINE_SEED_BYTES;
-use crate::mobile::push_text::{PushLanguage, PushText};
+use crate::mobile::push_text::{clean_file_name, PushLanguage, PushText};
 
 /// Reads a protobuf varint from `bytes` at position `pos`.
 /// Returns (value, next_position), or None if invalid.
@@ -448,19 +448,35 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
         // does in the app (WP-RC-7, docs/wiki/frontend/modules/reels-in-chat.md section 6).
         let reel = kind_str == "video" && find_varint_field(&media_msg, 14) == Some(1);
         let media_kind = if reel { "reel" } else { kind_str };
-        let display_text = if reel {
-            PushText::Reel(caption.as_deref()).render(language)
+        // WHAT THE MESSAGE IS, worded like the app's list and quotes (owner, 2026-11-20: one table,
+        // `PushText`, mirrored from Paraglide's `chat_preview_*` by a test). A GIF is told by its mime
+        // type, case-insensitively, as the app does; a file is named when it has a name, and the
+        // name is cleaned and capped by `clean_file_name`. The caption FOLLOWS the kind, never
+        // replaces it - and a file then drops its name, so the line stays short.
+        let mime = find_length_delimited_field(&media_msg, 5)
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_default();
+        let file_name = find_length_delimited_field(&media_msg, 7)
+            .and_then(|b| String::from_utf8(b).ok())
+            .map(|n| clean_file_name(&n))
+            .unwrap_or_default();
+        let kind_text = if reel {
+            PushText::Reel
         } else {
-            caption.unwrap_or_else(|| {
-                match kind_str {
-                    "image" => PushText::Photo,
-                    "video" => PushText::Video,
-                    "audio" if voice_note => PushText::VoiceNote,
-                    "audio" => PushText::Audio,
-                    _ => PushText::Attachment,
-                }
-                .render(language)
-            })
+            match kind_str {
+                "image" if mime.eq_ignore_ascii_case("image/gif") => PushText::Gif,
+                "image" => PushText::Photo,
+                "video" => PushText::Video,
+                "audio" if voice_note => PushText::VoiceNote,
+                "audio" => PushText::Audio,
+                _ if caption.is_none() && !file_name.is_empty() => PushText::File(&file_name),
+                _ => PushText::Attachment,
+            }
+        };
+        let label = kind_text.render(language);
+        let display_text = match caption.as_deref() {
+            Some(caption) => PushText::Captioned(&label, caption).render(language),
+            None => label,
         };
         // Media reference + CEK (WP-XP-3): the native notification builder downloads the opaque
         // ciphertext by `mediaId` and AES-256-GCM-decrypts it with `mediaKey`/`mediaIv` to attach a
@@ -494,9 +510,7 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             .filter(|_| thumbnail_readable)
             .map(|b| STANDARD.encode(b))
             .unwrap_or_default();
-        let mime_type = find_length_delimited_field(&media_msg, 5)
-            .and_then(|b| String::from_utf8(b).ok())
-            .unwrap_or_default();
+        let mime_type = mime;
         return serde_json::json!({
             "ok": true, "text": display_text, "messageId": message_id,
             "sentAt": sent_at, "type": "media", "replyTo": null, "mediaKind": media_kind,
@@ -1048,6 +1062,69 @@ mod tests {
         assert_eq!(file["text"], "\u{1f3b5} Fichier audio");
         let english = extract_full_message_info(&audio_app_message(true), PushLanguage::English);
         assert_eq!(english["text"], "\u{1f3a4} Voice message");
+    }
+
+    /// A `MediaMsg` of `kind` with a mime type, and a file name (7) and caption (8) when given.
+    fn described_media_app_message(
+        kind: u64,
+        mime: &str,
+        file_name: Option<&str>,
+        caption: Option<&str>,
+    ) -> Vec<u8> {
+        let mut media = Vec::new();
+        write_tag(&mut media, 1, 0);
+        write_varint(&mut media, kind);
+        write_string_field(&mut media, 2, "f-1");
+        write_string_field(&mut media, 5, mime);
+        if let Some(name) = file_name {
+            write_string_field(&mut media, 7, name);
+        }
+        if let Some(caption) = caption {
+            write_string_field(&mut media, 8, caption);
+        }
+        wrap_app_message(4, &media, "msg-f", 1)
+    }
+
+    /// Owner, 2026-11-20: the banner says what the app says. A GIF (mime, any case), a named file
+    /// and a captioned photo are the three lines that used to differ.
+    #[test]
+    fn a_banner_words_a_gif_a_file_and_a_caption_like_the_app() {
+        let text =
+            |bytes: Vec<u8>, language| extract_full_message_info(&bytes, language)["text"].clone();
+        let fr = PushLanguage::French;
+        assert_eq!(
+            text(described_media_app_message(1, "IMAGE/GIF", None, None), fr),
+            "\u{1f300} GIF"
+        );
+        assert_eq!(
+            text(
+                described_media_app_message(1, "image/jpeg", None, Some("coucou")),
+                fr
+            ),
+            "\u{1f4f7} Photo : coucou"
+        );
+        assert_eq!(
+            text(
+                described_media_app_message(4, "application/pdf", Some("a\u{202E}b.pdf"), None),
+                fr
+            ),
+            "\u{1f4ce} Fichier : ab.pdf"
+        );
+        // A caption drops the file name; a name that cleans to nothing is no name.
+        assert_eq!(
+            text(
+                described_media_app_message(4, "application/pdf", Some("x.pdf"), Some("le TD")),
+                PushLanguage::English
+            ),
+            "\u{1f4ce} Attachment: le TD"
+        );
+        assert_eq!(
+            text(
+                described_media_app_message(4, "application/pdf", Some("\u{200B}"), None),
+                fr
+            ),
+            "\u{1f4ce} Pi\u{e8}ce jointe"
+        );
     }
 
     /// The language reaches every sentence the scanner composes, and NEVER the text somebody typed.
