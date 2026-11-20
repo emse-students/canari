@@ -9,3 +9,10 @@
 export function publicationTime(scheduledAt: Date | string | null | undefined, now: Date): Date {
   return scheduledAt ? new Date(scheduledAt) : now;
 }
+
+/**
+ * THE feed's one definition of "published", as SQL on the DATABASE clock: no `scheduledAt`, or one
+ * that has passed. Anything asking "may this post be acted on yet" reads this, never the app clock
+ * and never `publishedAt` (which can be out of step with `scheduledAt`). `posts` is the table name.
+ */
+export const PUBLISHED_SQL = `(posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())`;
