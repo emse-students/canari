@@ -56,6 +56,7 @@ import {
   putLiveSegment,
   removeLiveViewer,
   startLive,
+  switchLiveReplayOff,
 } from './api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { refusalCode } from '$lib/utils/apiRefusal';
@@ -147,6 +148,19 @@ describe('the routes', () => {
     expect(JSON.parse(apiFetch.mock.lastCall![1].body)).toEqual({
       key: KEY,
       acceptedRulesVersion: 1,
+    });
+  });
+
+  it('start carries replay: false only when the organiser switched it off, and the switch-off is a DELETE', async () => {
+    apiFetch.mockImplementation(async () => json(201, { id: LIVE, key: KEY }));
+    await startLive(KEY, undefined, undefined, null, false);
+    expect(JSON.parse(apiFetch.mock.lastCall![1].body)).toEqual({ key: KEY, replay: false });
+    await startLive(KEY, undefined, undefined, null, true);
+    expect(JSON.parse(apiFetch.mock.lastCall![1].body)).toEqual({ key: KEY });
+    apiFetch.mockResolvedValueOnce(json(200, { liveId: LIVE, keepsReplay: false }));
+    await expect(switchLiveReplayOff(LIVE)).resolves.toEqual({ liveId: LIVE, keepsReplay: false });
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/replay`, {
+      method: 'DELETE',
     });
   });
 

@@ -103,9 +103,10 @@ export interface LiveView {
   title: string | null;
   /**
    * Whether this live is kept three days as a replay at its end (docs/wiki/live-replays.md), fixed
-   * at its start from `live_replays_mode`: the broadcaster's end screen and a viewer can say so.
+   * at its start from `live_replays_mode` and the organiser's "Rediffusion" switch: the broadcaster's
+   * own screens say so. A VIEWER is never told (owner, 2026-11-20), so the viewer's read omits it.
    */
-  keepsReplay: boolean;
+  keepsReplay?: boolean;
 }
 
 /**
@@ -431,7 +432,7 @@ export class LivesService implements OnModuleDestroy {
   /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
   private readonly announcements = new Set<Promise<void>>();
   /** The trim running for each live right now: at most ONE per live in this process. */
-  private readonly trimming = new Map<string, Promise<void>>();
+  private readonly trimming = new Map<string, Promise<number>>();
 
   /**
    * The replays' total cap (decision D5), read ONCE at construction: an invalid
@@ -482,6 +483,7 @@ export class LivesService implements OnModuleDestroy {
       associationId?: unknown;
       acceptedRulesVersion?: unknown;
       title?: unknown;
+      replay?: unknown;
     }
   ): Promise<LiveView> {
     this.logger.debug(`[LIVE] start asked by ${short(broadcasterId)}`);
@@ -491,6 +493,7 @@ export class LivesService implements OnModuleDestroy {
     const key = input.key;
     // Checked BEFORE anything is written, as the key: a refused title starts nothing.
     const title = parseLiveTitle(input.title);
+    const wantsReplay = parseReplayChoice(input.replay);
     // Refused BEFORE anything is written: a live whose key cannot be sealed is never stored.
     if (!isLiveKeySealingConfigured()) {
       this.logger.error(
@@ -524,8 +527,11 @@ export class LivesService implements OnModuleDestroy {
       await this.assertAssociationNotArchived(broadcasterId, associationId);
     }
     await this.assertRulesAccepted(broadcasterId, input.acceptedRulesVersion);
-    // FIXED HERE, ON THE ROW, for the live's whole life: a flip mid-live never makes half a replay.
-    const keepsReplay = (await readLiveReplaysMode(this.db.manager, this.logger)) === 'on';
+    // FIXED HERE, ON THE ROW: a flip of the platform switch mid-live never makes half a replay. The
+    // ORGANISER's "Rediffusion" switch is the second lock (owner, 2026-11-20): on by default, and from
+    // here on it can only go OFF (`switchReplayOff`), never back on.
+    const keepsReplay =
+      wantsReplay && (await readLiveReplaysMode(this.db.manager, this.logger)) === 'on';
     let row: LiveRow;
     try {
       row = await this.db.transaction(async (tx) => {
@@ -784,8 +790,12 @@ export class LivesService implements OnModuleDestroy {
       viewerId,
       row.id,
     ]);
+    const view = toView(row, key);
+    // Viewers are NOT told whether the live will be replayed (owner, 2026-11-20): the fact is the
+    // organiser's own, so only the broadcaster re-opening their live reads it.
+    if (row.broadcasterId !== viewerId) delete view.keepsReplay;
     return {
-      ...toView(row, key),
+      ...view,
       viewerModerates: scoped[0]?.moderates === true,
       chatWithheld: row.chatWithheld,
     };
@@ -1292,7 +1302,7 @@ export class LivesService implements OnModuleDestroy {
    * `createdAt` (the database clock), so what such a live stores is bounded by three hours, never by
    * how long it lasts.
    */
-  private async trim(liveId: string): Promise<void> {
+  private async trim(liveId: string): Promise<number> {
     try {
       // A live that keeps a replay keeps its last LIVE_REPLAY_MAX_MS too (D1): a segment goes only
       // when it is BOTH behind the window and older than three hours before the newest segment, by
@@ -1307,7 +1317,7 @@ export class LivesService implements OnModuleDestroy {
           ORDER BY s."index" ASC LIMIT $3`,
         [liveId, LIVE_RETAINED_SEGMENTS, LIVE_TRIM_BATCH, LIVE_REPLAY_MAX_MS]
       );
-      if (rows.length === 0) return;
+      if (rows.length === 0) return 0;
       const answer = await this.store.deleteSegments(
         liveId,
         rows.map((r) => r.name)
@@ -1319,7 +1329,7 @@ export class LivesService implements OnModuleDestroy {
           `[LIVE_TRIM] ${liveId}: the store refused ${answer.failed.length} of ${rows.length} segment(s) - asked again by the next segment`
         );
       }
-      if (indexes.length === 0) return;
+      if (indexes.length === 0) return 0;
       const freed = await this.db.transaction(async (tx): Promise<number> => {
         const [deleted] = (await tx.query(
           `DELETE FROM live_segments WHERE "liveId" = $1 AND "index" = ANY($2::int[]) RETURNING bytes`,
@@ -1337,10 +1347,12 @@ export class LivesService implements OnModuleDestroy {
       this.logger.log(
         `[LIVE_TRIM] ${liveId}: trimmed ${indexes.length} segment(s) behind the window (${indexes[0]}..${indexes[indexes.length - 1]}), ${freed} B`
       );
+      return indexes.length;
     } catch (e) {
       this.logger.warn(
         `[LIVE_TRIM] ${liveId}: the trim failed, asked again by the next segment: ${causeOf(e)}`
       );
+      return 0;
     }
   }
 
@@ -2690,6 +2702,75 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * THE ORGANISER'S "REDIFFUSION" SWITCH, OFF (owner, 2026-11-20; docs/wiki/live-replays.md,
+   * "The organiser's switch"; charter principle 1, your messages are yours). The switch is shown at
+   * the start and is ON by default ({@link LivesService.start}); once the live has started it can only
+   * go OFF, during or after the live, and that DELETES what was kept - it can never come back on,
+   * because nothing is kept. The server is the authority: the column is written here, nothing turns
+   * it back on, and every reader (the trim, the end's verdict, `publishReplay`, the sweep) reads it.
+   *
+   * IDEMPOTENT FROM DURABLE STATE, NO CLOCK: one transaction under the live's row lock (the lock a
+   * cut and a publication take) writes `keepsReplay = false` and, for a replay already published,
+   * ends it by its own column ({@link expireReplay}); a second call finds the column false and the
+   * post already ended and changes nothing. What follows is the ordinary machinery, each step
+   * re-asked from rows until none is left:
+   * - an OPEN live: the trim, now on the 20-segment rule, deletes the segments behind the window in
+   *   a loop (not one batch per segment) - the live goes on, only what it kept is gone;
+   * - an ENDED live not yet published: `replayDue` is false, so the sweep purges it as any live;
+   * - a PUBLISHED replay: every read refuses it from this commit on, the retention worker deletes
+   *   the post (comments, their media, notifications) and the next sweep purges the segments.
+   *
+   * 404 `LIVE_NOT_FOUND` for another member's live and for a live already purged (nothing is kept).
+   * Returns the server's verdict, which is always `false`.
+   */
+  async switchReplayOff(
+    broadcasterId: string,
+    liveId: string
+  ): Promise<{ liveId: string; keepsReplay: false }> {
+    this.logger.debug(`[LIVE_REPLAY] ${liveId}: switch off asked by ${short(broadcasterId)}`);
+    const done = await this.db.transaction(async (tx) => {
+      const rows: { broadcasterId: string; endedAt: Date | null; keepsReplay: boolean }[] =
+        await tx.query(
+          `SELECT "broadcasterId", "endedAt", "keepsReplay" FROM lives WHERE id = $1 FOR UPDATE`,
+          [liveId]
+        );
+      const row = rows[0];
+      if (!row || row.broadcasterId !== broadcasterId) {
+        this.logger.debug(
+          `[LIVE_REPLAY] ${liveId}: switch off refused, not ${short(broadcasterId)}'s`
+        );
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
+      if (row.keepsReplay) {
+        await tx.query(`UPDATE lives SET "keepsReplay" = false WHERE id = $1`, [liveId]);
+      }
+      const replayEnded = row.endedAt ? await this.expireReplay(liveId, 'switched-off', tx) : false;
+      return { wasOn: row.keepsReplay, isEnded: row.endedAt !== null, replayEnded };
+    });
+    if (done.replayEnded) await this.replayFeedsChanged(liveId, 'its organiser switched it off');
+    if (done.wasOn) {
+      this.logger.log(
+        `[LIVE_REPLAY] ${liveId}: switched OFF by its organiser (${done.isEnded ? 'after the live' : 'on air'}, replay post ${done.replayEnded ? 'ended' : 'not published'})`
+      );
+    } else {
+      this.logger.debug(`[LIVE_REPLAY] ${liveId}: already off`);
+    }
+    // On air, what was kept goes NOW rather than one batch per segment: each pass re-selects from
+    // the rows and ends when a pass deletes nothing (rows only shrink here - a proof, not a timer).
+    // An ended live is the sweep's.
+    if (!done.isEnded) await this.trimAll(liveId);
+    return { liveId, keepsReplay: false };
+  }
+
+  /** Trims until a pass deletes nothing, behind any pass already running for the live. */
+  private async trimAll(liveId: string): Promise<void> {
+    for (;;) {
+      await this.trimming.get(liveId);
+      if ((await this.trim(liveId)) === 0) return;
+    }
+  }
+
+  /**
    * Ends a live's replay NOW by its own column - `posts."expiresAt" = now()` - so every read refuses
    * it from this statement on and the hourly worker deletes it (comments, their media, notifications)
    * by its one per-row path; the live sweep then purges the segments. The ONE early end of a replay,
@@ -2698,7 +2779,7 @@ export class LivesService implements OnModuleDestroy {
    */
   private async expireReplay(
     liveId: string,
-    why: 'removed' | 'cap',
+    why: 'removed' | 'cap' | 'switched-off',
     tx: EntityManager = this.db.manager
   ): Promise<boolean> {
     const [rows] = (await tx.query(
@@ -3159,6 +3240,17 @@ function toView(row: LiveRow, key: string): LiveView {
     title: row.title,
     keepsReplay: row.keepsReplay,
   };
+}
+
+/**
+ * The organiser's "Rediffusion" choice as a start request carries it (owner, 2026-11-20): absent is
+ * ON (the switch's default), a boolean is that choice, anything else is refused 400
+ * `LIVE_REPLAY_INVALID` before anything is written.
+ */
+export function parseReplayChoice(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return true;
+  if (typeof raw !== 'boolean') throw new BadRequestException({ code: 'LIVE_REPLAY_INVALID' });
+  return raw;
 }
 
 /**

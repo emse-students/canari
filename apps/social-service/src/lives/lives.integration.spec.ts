@@ -745,8 +745,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(after.keepsReplay).toBe(true);
       await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
       expect(await keeps(after.id)).toBe(true);
-      // The viewer reads the same fact the broadcaster was answered with.
-      await expect(lives.get(CAROL, after.id)).resolves.toMatchObject({ keepsReplay: true });
+      // A viewer is NOT told whether the live is replayed (owner, 2026-11-20); the organiser is.
+      expect(await lives.get(CAROL, after.id)).not.toHaveProperty('keepsReplay');
+      await expect(lives.get(BOB, after.id)).resolves.toMatchObject({ keepsReplay: true });
     });
 
     it('a value outside the two refuses the start rather than keep media under it', async () => {
@@ -1308,6 +1309,135 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await lives.pruneReplayEvictions()).toBe(0);
       await q(`UPDATE live_replay_cap_evictions SET "evictedAt" = now() - interval '31 days'`);
       expect(await lives.pruneReplayEvictions()).toBe(1);
+    });
+  });
+
+  describe("the organiser's Rediffusion switch (owner, 2026-11-20, docs/wiki/live-replays.md)", () => {
+    const keeps = async (id: string) =>
+      (await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [id]))[0]?.keepsReplay;
+    const replayPosts = async (liveId: string) =>
+      (await q(
+        `SELECT "expiresAt" <= now() AS ended FROM posts WHERE "liveId" = $1 AND kind = 'replay'`,
+        [liveId]
+      )) as { ended: boolean }[];
+    const longLive = async (who = ALICE, replay?: boolean) => {
+      const live = await lives.start(who, { key: KEY, replay });
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      return live;
+    };
+
+    beforeEach(() => q(`UPDATE platform_config SET live_replays_mode = 'on'`));
+
+    it('is ON by default, and a start that says off keeps nothing; a non-boolean is refused before anything is written', async () => {
+      await expect(lives.start(ALICE, { key: KEY })).resolves.toMatchObject({ keepsReplay: true });
+      await lives.end(ALICE, (await q(`SELECT id FROM lives`))[0].id);
+      const off = await lives.start(BOB, { key: KEY, replay: false });
+      expect(off.keepsReplay).toBe(false);
+      expect(await keeps(off.id)).toBe(false);
+      expect(await refusal(lives.start(CAROL, { key: KEY, replay: 'yes' }))).toEqual({
+        status: HttpStatus.BAD_REQUEST,
+        code: 'LIVE_REPLAY_INVALID',
+      });
+      await expect(q(`SELECT id FROM lives WHERE "broadcasterId" = $1`, [CAROL])).resolves.toEqual(
+        []
+      );
+    });
+
+    it('the platform switch stays the first lock: replay true with the mode off keeps nothing', async () => {
+      await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
+      const live = await lives.start(ALICE, { key: KEY, replay: true });
+      expect(live.keepsReplay).toBe(false);
+    });
+
+    it('switched off ON AIR: what was kept is deleted at once, the live goes on, and nothing ever turns it back on', async () => {
+      const live = await longLive();
+      const total = LIVE_RETAINED_SEGMENTS + 30;
+      for (let i = 0; i < total; i++) {
+        await lives.ingest(ALICE, live.id, i, segment(i));
+        await lives.trimsSettled();
+      }
+      // While it keeps a replay, nothing within three hours is trimmed.
+      expect(store.countFor(live.id)).toBe(total);
+
+      await expect(lives.switchReplayOff(ALICE, live.id)).resolves.toEqual({
+        liveId: live.id,
+        keepsReplay: false,
+      });
+      expect(await keeps(live.id)).toBe(false);
+      // The whole backlog went in this call (a loop, not one batch per segment).
+      expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      expect(
+        await q(`SELECT count(*)::int AS n FROM live_segments WHERE "liveId" = $1`, [live.id])
+      ).toEqual([{ n: LIVE_RETAINED_SEGMENTS }]);
+      expect(await q(`SELECT "endedAt" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endedAt: null },
+      ]);
+      // Idempotent: a second call changes nothing, and the end then answers no replay.
+      await expect(lives.switchReplayOff(ALICE, live.id)).resolves.toMatchObject({
+        keepsReplay: false,
+      });
+      expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
+      expect(await replayPosts(live.id)).toEqual([]);
+    });
+
+    it('switched off AFTER the live but before publication: the live is purged, no replay is ever published', async () => {
+      const live = await longLive();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      store.failPurge = true; // the row outlives its end, so the switch meets an ended, unpublished live
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: true });
+      await lives.switchReplayOff(ALICE, live.id);
+      store.failPurge = false;
+      expect(await keeps(live.id)).toBe(false);
+      await sweeper.sweepOnce();
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await replayPosts(live.id)).toEqual([]);
+    });
+
+    it('switched off once the replay is PUBLISHED: every read refuses it, the post goes, the segments follow; a repeat and a purged live change nothing', async () => {
+      const live = await longLive();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      await lives.end(ALICE, live.id);
+      expect(await replayPosts(live.id)).toEqual([{ ended: false }]);
+
+      // Another member cannot switch it off: the same 404 as a live that is not theirs.
+      expect(await refusal(lives.switchReplayOff(BOB, live.id))).toMatchObject({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      expect(await replayPosts(live.id)).toEqual([{ ended: false }]);
+
+      await lives.switchReplayOff(ALICE, live.id);
+      expect(await replayPosts(live.id)).toEqual([{ ended: true }]);
+      await expect(lives.switchReplayOff(ALICE, live.id)).resolves.toMatchObject({
+        keepsReplay: false,
+      });
+      // The retention worker's own predicate deletes the post; the sweep then purges the segments.
+      await q(`DELETE FROM posts WHERE kind IN ('reel', 'replay') AND "expiresAt" <= now()`);
+      await sweeper.sweepOnce();
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      // The live is gone: nothing is kept, and the answer is the one for an unknown live.
+      expect(await refusal(lives.switchReplayOff(ALICE, live.id))).toMatchObject({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
     });
   });
 

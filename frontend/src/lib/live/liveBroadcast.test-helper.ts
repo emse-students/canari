@@ -155,6 +155,7 @@ export function fakeDeps() {
         title: title ?? null,
       })
     ),
+    switchLiveReplayOff: vi.fn(async (id: string) => ({ liveId: id, keepsReplay: false as const })),
     setLiveTitle: vi.fn(async (id: string, title: string | null) => ({ id, title })),
     putLivePoster: vi.fn(async (_id: string, _sealed: Uint8Array<ArrayBuffer>) => ({
       name: 'p',

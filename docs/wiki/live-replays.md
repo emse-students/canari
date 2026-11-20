@@ -1,6 +1,6 @@
 # Live replays - a finished live kept three days as a CanaReel
 
-**State (2026-11-19): BUILT AND ON. Every question decided by the owner on 2026-11-09
+**State (2026-11-20, the organiser's switch added, [below](#the-organisers-rediffusion-switch-owner-2026-11-20)): BUILT AND ON. Every question decided by the owner on 2026-11-09
 ([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 to WP-R5 built and shipped (the client in
 the `1.7.0` stable); `live_replays_mode` turned `on` in production and on dev on 2026-11-19 at the
 owner's request, BEFORE the texts (*"Prod maintenant, textes juste après"*,
@@ -806,3 +806,52 @@ fetched twice), at the moment the reel list answered again. NOT the same cause a
 one is the player's fill; this is the pane's reactivity). `ReplayPane`'s effect read `post.liveId`, so a new `post`
 object for the same replay re-ran it: stop, then start. The live id is now a `$derived` (equal values do not
 re-run the effect) and the player's start runs untracked. Test: a re-keyed post, one `fetchReplay`.
+
+## The organiser's "Rediffusion" switch (owner, 2026-11-20)
+
+**Decided by the owner on 2026-11-20** ([decision 5](backlog.d/owner-decisions-of-2026-11-20.md)): a finished live
+stays as a replay ONLY if its organiser leaves a "Rediffusion" switch on. **Charter, principle 1 (your messages are
+yours, [principes](../principes.md)): the video is the organiser's, so keeping it is theirs to grant and to
+withdraw, at any moment, and withdrawing deletes it.** It narrows the platform switch (`live_replays_mode`), never
+widens it: both must say yes.
+
+| Rule (owner, 2026-11-20) | Where it is enforced |
+| --- | --- |
+| The switch is shown when the live is launched and is ON by default | the pre-live sheet (`Toggle`, `LiveBroadcaster.svelte`); `POST /api/lives` `replay?: boolean`, absent = on, a non-boolean is `400 LIVE_REPLAY_INVALID` |
+| The server is the authority | `lives."keepsReplay"` is written at the start as `replay AND live_replays_mode = 'on'`; the client only asks, and shows the column's value it is answered |
+| Once started it can only go OFF, during or after the live | `DELETE /api/lives/:id/replay` (`LivesService.switchReplayOff`): there is no route, statement or client path that writes `keepsReplay = true` on an existing row |
+| Switching off deletes what was kept | see below |
+| Viewers are not told whether the live will be replayed | `GET /api/lives/:id` OMITS `keepsReplay` unless the caller is the broadcaster (it used to answer the column to every viewer, though no viewer screen drew it); the viewer client never read it |
+
+**The off switch, step by step.** One transaction under the live's row lock (the lock a cut and a publication
+take) writes `keepsReplay = false` and, if the live has ended, ends a published replay by its own column
+(`expireReplay`, `posts."expiresAt" = now()`, the one early end the cut and the cap already use). Then, each step
+re-selecting from rows, none from a clock:
+
+- **On air**: the trim, now on the 20-segment rule, runs in a loop (`trimAll`) until a pass deletes nothing, so the
+  whole kept backlog goes in the call, not one batch of 50 per segment; the live goes on.
+- **Ended, replay not yet published** (the drain window): `replayDue` is false and `publishReplay` re-reads
+  `keepsReplay` under the same lock, so nothing is ever published; the sweep purges the live.
+- **Ended, replay published**: every read refuses the replay from the commit on; the hourly retention worker deletes
+  the post (comments, their media, notifications) and the next 30 s sweep purges the segments. **The segments
+  therefore leave the disk within 1 hour + 30 s of the switch**, the same bound as a cut or the cap; what is
+  immediate is that nobody can reach them. Nothing is added to a clock: the worker's predicate is the existing
+  `expiresAt <= now()` on the database.
+- **Idempotent from durable state**: a second call finds the column false and the post already ended and changes
+  nothing; a call after the live is purged is `404 LIVE_NOT_FOUND` (nothing is kept), which the client reads as
+  "already off". A viewer, the retention job and a retry can run in any order.
+- **Other members**: only the broadcaster may call it (`404` for anyone else, as every write on a live). A
+  `POST_AS_ASSO` holder or staff still deletes a replay by deleting its POST (D7), unchanged.
+
+**Client.** The switch lives in `LiveBroadcast.replayChoice` (default `true`, sent as `replay: false` only when
+off), `keepsReplay` stays the server's verdict, and `switchReplayOff()` flips `keepsReplay` and the end verdict to
+false only on the server's answer (or its 404). The button "Désactiver la rediffusion" shows on air and on the
+broadcaster's end screen while the server says it keeps a replay, behind a confirm (`live_replay_off_confirm`: it
+deletes and cannot be undone). `Toggle` is disabled once the live has started. Tests:
+`lives.integration.spec.ts` ("the organiser's Rediffusion switch": default on, platform lock first, off on air
+with the whole backlog trimmed, off before publication, off after publication, a stranger, a purged live),
+`live-replay-choice.spec.ts`, `liveBroadcast.svelte.test.ts`, `api.test.ts`.
+
+**Not built, asked the same day**: the chat and the reactions replayed in sync with the video
+([decision 6](backlog.d/owner-decisions-of-2026-11-20.md), [design and open questions](backlog.d/live-replay-chat-and-reactions-replayed.md)).
+Today a live's chat and reaction rows are deleted in the publication transaction, as designed above.

@@ -286,6 +286,8 @@ export async function fetchWithdrawnBroadcasters(): Promise<LiveBroadcasterStand
  * @param associationId Broadcast AS this association (needs `POST_AS_ASSO` there), or omitted.
  * @param acceptedRulesVersion The rules version the member accepted on THIS screen, sent only then:
  *   the server records it with the start. Omitted when the account accepted it before.
+ * @param replay The organiser's "Rediffusion" switch (owner, 2026-11-20): sent only when it is OFF
+ *   (`false`) - the server's default is on, and an older server ignores the field.
  * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`, `LIVE_RULES_NOT_ACCEPTED`,
  * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ASSOCIATION_ARCHIVED`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
  * `LIVE_KEY_SEALING_UNAVAILABLE` (`unavailable`: the server cannot seal the key, nothing was written).
@@ -294,18 +296,20 @@ export async function startLive(
   keyHex: string,
   associationId?: string,
   acceptedRulesVersion?: number,
-  title?: string | null
+  title?: string | null,
+  replay?: boolean
 ): Promise<LiveView> {
   console.debug(
     `[LIVE] start${associationId ? ` as association ${associationId}` : ''}${
       acceptedRulesVersion === undefined ? '' : `, rules v${acceptedRulesVersion} accepted`
-    }, title ${title ? `${[...title].length} chars` : 'none'}`
+    }, title ${title ? `${[...title].length} chars` : 'none'}, replay ${replay === false ? 'off' : 'on'}`
   );
   const body: {
     key: string;
     associationId?: string;
     acceptedRulesVersion?: number;
     title?: string;
+    replay?: boolean;
   } = {
     key: keyHex,
   };
@@ -313,6 +317,7 @@ export async function startLive(
   if (acceptedRulesVersion !== undefined) body.acceptedRulesVersion = acceptedRulesVersion;
   // Sent only when there is one: a server before the titles ignores an unknown field anyway.
   if (title) body.title = title;
+  if (replay === false) body.replay = false;
   const live = await liveJson<LiveView>(livesBase(), 'Live start', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -489,6 +494,23 @@ export async function setLiveTitle(liveId: string, title: string | null): Promis
     method: 'PATCH',
     body: JSON.stringify({ title }),
   });
+}
+
+/**
+ * `DELETE /api/lives/:id/replay` - the organiser switches the "Rediffusion" OFF, on air or after the
+ * live (owner, 2026-11-20): the server deletes what it kept and it can never be switched back on.
+ * Idempotent. Refusals: `not-found` (another member's live, or a live already purged - nothing is
+ * kept either way).
+ */
+export async function switchLiveReplayOff(
+  liveId: string
+): Promise<{ liveId: string; keepsReplay: false }> {
+  console.debug(`[LIVE] replay of ${liveId}: switch off`);
+  return liveJson<{ liveId: string; keepsReplay: false }>(
+    `${livePath(liveId)}/replay`,
+    'Live replay off',
+    { method: 'DELETE' }
+  );
 }
 
 /**

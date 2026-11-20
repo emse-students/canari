@@ -43,6 +43,7 @@ import {
   putLivePoster,
   setLiveTitle,
   startLive,
+  switchLiveReplayOff,
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
@@ -136,8 +137,11 @@ export interface LiveBroadcastDeps {
     keyHex: string,
     associationId?: string,
     acceptedRulesVersion?: number,
-    title?: string | null
+    title?: string | null,
+    replay?: boolean
   ) => Promise<LiveView>;
+  /** `DELETE /api/lives/:id/replay`: the organiser's "Rediffusion" switch, OFF (owner, 2026-11-20). */
+  switchLiveReplayOff: (liveId: string) => Promise<unknown>;
   /** `PATCH /api/lives/:id`: the title edited on air (owner, 2026-11-07). */
   setLiveTitle: (liveId: string, title: string | null) => Promise<LiveTitleResult>;
   /** `PUT /api/lives/:id/poster`: one sealed preview image. */
@@ -182,6 +186,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     fetchLiveRules,
     fetchLiveStanding,
     startLive,
+    switchLiveReplayOff,
     setLiveTitle,
     putLivePoster,
     derivePosterKey: deriveLivePosterKey,
@@ -286,6 +291,16 @@ export class LiveBroadcast {
    * server that does not say. The broadcaster's end screen reads it, never a client clock.
    */
   replayVerdict = $state<boolean | null>(null);
+  /**
+   * The organiser's "Rediffusion" switch AT THE START (owner, 2026-11-20): ON by default, read once by
+   * {@link start}. Once the live has started it is no longer a choice but a fact the server holds
+   * ({@link keepsReplay}); it can then only be switched off ({@link switchReplayOff}).
+   */
+  replayChoice = $state(true);
+  /** True while the switch-off is with the server. */
+  replayOffSaving = $state(false);
+  /** Why the last switch-off was not taken, or null. */
+  replayOffProblem = $state<'offline' | 'failed' | null>(null);
   /** True while an on-air title edit is with the server. */
   titleSaving = $state(false);
   /** Why the last on-air title edit was not taken, or null. */
@@ -587,7 +602,8 @@ export class LiveBroadcast {
         keyHex,
         this.associationId ?? undefined,
         this.rulesAcceptedHere ? this.rules?.version : undefined,
-        liveTitleToSend(this.title)
+        liveTitleToSend(this.title),
+        this.replayChoice
       );
     } catch (e) {
       if (this.#disposed) return;
@@ -728,6 +744,38 @@ export class LiveBroadcast {
     } finally {
       this.titleSaving = false;
     }
+  }
+
+  /**
+   * The organiser switches the replay OFF, on air or on the end screen (owner, 2026-11-20): the server
+   * deletes what it kept, and nothing can switch it back on. Answers whether the server took it; on a
+   * 404 (the live is already purged, so nothing is kept) the verdict is the same and it counts as
+   * taken. `keepsReplay` and the end verdict become false only on the server's answer.
+   */
+  async switchReplayOff(): Promise<boolean> {
+    const liveId = this.liveId;
+    if (!liveId || !this.keepsReplay || this.replayOffSaving) {
+      console.warn(`[LIVE-BROADCAST] replay switch-off ignored in ${this.phase}`);
+      return false;
+    }
+    this.replayOffSaving = true;
+    this.replayOffProblem = null;
+    try {
+      await this.#deps.switchLiveReplayOff(liveId);
+    } catch (e) {
+      if (!isLiveRefusal(e, 'not-found')) {
+        this.replayOffProblem = isTransportFailure(e) ? 'offline' : 'failed';
+        console.warn(`[LIVE-BROADCAST] replay not switched off (${this.replayOffProblem})`, e);
+        this.replayOffSaving = false;
+        return false;
+      }
+      console.debug(`[LIVE-BROADCAST] ${liveId} already purged: nothing is kept`);
+    }
+    this.keepsReplay = false;
+    this.replayVerdict = false;
+    this.replayOffSaving = false;
+    console.log(`[LIVE-BROADCAST] ${liveId} replay switched off`);
+    return true;
   }
 
   /** The app left the screen. */
