@@ -138,8 +138,9 @@ preselection, never a destination by itself.
     SAME initials disc as every notification, sized like a fetched picture (`notificationIconSizePx`, so a
     disc and a photo sit alike on the icon canvas). Nothing crosses the bridge but the id. `ShortcutIcons`
     (public) carries `Avatar`, the two kind constants and `Cached`; `ShareTargets` stays internal to the plugin.
-  - **A publish never waits for the network.** `cachedRemoteIcon(networkAllowed = false)` answers from
-    the cache alone. `ShareTargets.publish` pushes each target with the cached picture, else the
+  - **A publish never waits for the network.** `cachedIconState` (the ONE place the picture's and the
+    absence's freshness are tested, asked first by `cachedRemoteIcon` too) answers from the cache alone,
+    silently - no line per target. `ShareTargets.publish` pushes each target with the cached picture, else the
     initials disc; the cache answers `Cached.Hit`, `Cached.Absent` (the server answered there is no photo,
     remembered: initials, nothing fetched, nothing logged) or `Cached.Miss`; only the misses are then
     fetched one at a time on `ShareTargets.iconThread` and pushed AGAIN under the same id, which
@@ -147,7 +148,8 @@ preselection, never a destination by itself.
     is cached costs one push, so the platform's background rate limit on shortcut updates is spent
     only by genuine misses.
   - **A late fetch cannot outlive a clear.** `UpgradeGeneration` (pure, JVM-tested by `UpgradeGenerationTest`) starts a
-    generation at every publish and ends it at every clear; an upgrade pushes only through
+    generation at every publish - BEFORE it removes any stale id, or an upgrade of the previous publish
+    could push a removed id back and leave an orphan - and ends it at every clear; an upgrade pushes only through
     `runIfCurrent`, the check and the push one step under its lock, and the
     sign-out's `clear` therefore drops one still in flight - it cannot put a conversation back.
   - **One icon helper for both kinds of shortcut** (`ShortcutIcons.adaptive`): the circular picture

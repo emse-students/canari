@@ -232,8 +232,11 @@ describe('the launcher shortcuts are drawn with one icon helper', () => {
     );
     // The synchronous half never asks the network, and tells a remembered absence from a miss
     // (an absent picture is neither fetched nor logged again).
-    expect(service).toMatch(/val hit = load\(context, avatar, false\)/);
-    expect(service).toMatch(/context\.knownAbsent\(avatar\) -> ShortcutIcons\.Cached\.Absent/);
+    expect(service).toMatch(/ShortcutIcons\.AVATAR_USER -> context\.cachedIconState\(/);
+    expect(service).toMatch(/ShortcutIcons\.Cached\.Absent -> \{/);
+    // ONE place writes the freshness tests, and the cache-only read is silent (no per-target line).
+    expect(service).not.toMatch(/knownAbsent/);
+    expect(service).toMatch(/decodeSampled\(target, quiet = true\)/);
     expect(targets).toMatch(/if \(state is ShortcutIcons\.Cached\.Miss\) toFetch\.add/);
   });
 
@@ -245,9 +248,14 @@ describe('the launcher shortcuts are drawn with one icon helper', () => {
   it('a clear and a publish supersede an upgrade still in flight', () => {
     const guard = codeOnly(readFileSync(resolve(JAVA, 'pure/UpgradeGeneration.kt'), 'utf8'));
     expect(targets).toMatch(/val started = generations\.next\(\)/);
-    expect(targets).toMatch(
-      /fun clear\(context: Context\): Int \{\s*(\/\/.*\s*)*generations\.invalidate\(\)/
-    );
+    // (comments are already stripped from `targets`, so the pattern needs no comment alternative)
+    expect(targets).toMatch(/fun clear\(context: Context\): Int \{\s*generations\.invalidate\(\)/);
+    // The generation advances BEFORE the stale ids are removed: an upgrade of the previous publish
+    // could otherwise push a removed id back, and the record would drop it - an orphan shortcut.
+    const advanced = targets.indexOf('val started = generations.next()');
+    const removed = targets.indexOf('remove(context, stale)');
+    expect(advanced).toBeGreaterThan(-1);
+    expect(removed).toBeGreaterThan(advanced);
     expect(targets).toMatch(/generations\.runIfCurrent\(started\)/);
     // The check and the push are one step under the guard's lock (JVM-tested: UpgradeGenerationTest).
     expect(guard).toMatch(/@Synchronized\s+fun <T> runIfCurrent/);

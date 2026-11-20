@@ -109,11 +109,14 @@ internal object ShareTargets {
         if (!record.write(context, previous + keptIds)) {
             throw IllegalStateException("the share targets could not be recorded - nothing published")
         }
+        // THE GENERATION ADVANCES BEFORE ANYTHING IS REMOVED, as clear() does: an upgrade of the previous
+        // publish could otherwise push a stale id back after it was removed, and the record would then
+        // drop that id - an orphan shortcut nothing ever removes.
+        val started = generations.next()
         val staleLeft = if (stale.isEmpty() || remove(context, stale)) emptyList() else stale
         enablePinned(context, keptIds)
         val icons = ShortcutIcons.requireSource("publish")
         val activityClass = activity.javaClass
-        val started = generations.next()
         // The targets whose picture the cache MISSES - not the ones it remembers as absent, which
         // have nothing to fetch: fetched afterwards.
         val toFetch = mutableListOf<Pair<Int, Target>>()

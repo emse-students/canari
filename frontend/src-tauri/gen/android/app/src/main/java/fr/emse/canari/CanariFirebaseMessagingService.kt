@@ -2449,7 +2449,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param decode Runs ONE decode pass under the given options. The same lambda serves a file
          *   and a byte array, which is why neither call site carries a copy of this.
          */
-        private fun Context.decodeSampled(target: Int, decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
+        private fun Context.decodeSampled(target: Int, quiet: Boolean = false, decode: (BitmapFactory.Options) -> Bitmap?): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             decode(bounds)
             val shortest = minOf(bounds.outWidth, bounds.outHeight)
@@ -2461,7 +2461,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             var sample = 1
             while (shortest / (sample * 2) >= target) sample *= 2
-            Log.d(TAG, "decodeSampled: ${bounds.outWidth}x${bounds.outHeight} -> inSampleSize=$sample, target=$target")
+            if (!quiet) Log.d(TAG, "decodeSampled: ${bounds.outWidth}x${bounds.outHeight} -> inSampleSize=$sample, target=$target")
             return decode(BitmapFactory.Options().apply { inSampleSize = sample })
         }
 
@@ -2471,8 +2471,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * The cache avoids the HTTP request when the app is in the background and
          * the network is slow or PushSecretKeystore.retrieve() is unstable.
          */
-        private fun Context.fetchAvatar(userId: String, networkAllowed: Boolean = true): Bitmap? =
-            cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId), networkAllowed) {
+        private fun Context.fetchAvatar(userId: String): Bitmap? =
+            cachedRemoteIcon("fetchAvatar", userId, avatarCacheFile(userId)) {
                 val ctx    = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
                 val secret = retrievePushSecret(this) ?: return@cachedRemoteIcon null
                 ("${ctx.baseUrl}/api/mls/push/avatar/${java.net.URLEncoder.encode(userId, "UTF-8")}" +
@@ -2487,17 +2487,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private fun Context.mediaCacheFile(safeId: String): File = File(filesDir, "assologo_$safeId.jpg")
 
         /**
-         * Whether the cache REMEMBERS that [avatar] has no picture ([absentMarkerFile], still fresh)
-         * and no fresher picture sits beside it. Read after a cache miss, so a hit always wins.
+         * What the cache says about [cacheFile], WITHOUT the network and without a log line: a fresh
+         * picture ([ShortcutIcons.Cached.Hit]), a fresh remembered absence ([absentMarkerFile],
+         * [ShortcutIcons.Cached.Absent]) or nothing ([ShortcutIcons.Cached.Miss]). THE ONE place the
+         * two freshness tests are written: [cachedRemoteIcon] asks it first, and so do the launcher
+         * shortcuts, which publish with this answer and fetch the misses afterwards.
+         *
+         * The image is asked BEFORE the absence, so a photo that arrived since (a 200 deletes the
+         * marker, but a foreground write may not have) always wins over an older "none".
          */
-        private fun Context.knownAbsent(avatar: ShortcutIcons.Avatar): Boolean {
-            val file = when (avatar.kind) {
-                ShortcutIcons.AVATAR_USER -> avatarCacheFile(avatar.id)
-                ShortcutIcons.AVATAR_MEDIA -> mediaCacheFile(safeMediaId(avatar.id))
-                else -> return false
+        private fun Context.cachedIconState(cacheFile: File): ShortcutIcons.Cached {
+            val target = notificationIconSizePx()
+            val now = System.currentTimeMillis()
+            if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
+                decodeSampled(target, quiet = true) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
+                    return ShortcutIcons.Cached.Hit(circleCrop(bmp, target))
+                }
             }
-            val marker = absentMarkerFile(file)
-            return marker.exists() && (System.currentTimeMillis() - marker.lastModified()) < AVATAR_CACHE_MAX_AGE_MS
+            val absent = absentMarkerFile(cacheFile)
+            if (absent.exists() && (now - absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) return ShortcutIcons.Cached.Absent
+            return ShortcutIcons.Cached.Miss
         }
 
         /**
@@ -2508,9 +2517,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * is also why it is a SEPARATE function from [fetchAvatar] rather than a flag on it: which of
          * the two routes to call is decided by the payload's own field, never guessed from a string.
          */
-        private fun Context.fetchPublicMediaIcon(mediaId: String, networkAllowed: Boolean = true): Bitmap? {
+        private fun Context.fetchPublicMediaIcon(mediaId: String): Bitmap? {
             val safe = safeMediaId(mediaId)
-            return cachedRemoteIcon("fetchPublicMediaIcon", safe, mediaCacheFile(safe), networkAllowed) {
+            return cachedRemoteIcon("fetchPublicMediaIcon", safe, mediaCacheFile(safe)) {
                 val ctx = MlsContextLoader.loadPushContext(this) ?: return@cachedRemoteIcon null
                 "${ctx.baseUrl}/api/media/public/$safe" to null
             }
@@ -2522,25 +2531,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * reached through the plugin the app module depends on. [cached] never touches the network.
          */
         internal val shortcutIconSource = object : ShortcutIcons.Source {
-            private fun load(context: Context, avatar: ShortcutIcons.Avatar, networkAllowed: Boolean): Bitmap? = when (avatar.kind) {
-                ShortcutIcons.AVATAR_USER -> context.fetchAvatar(avatar.id, networkAllowed)
-                ShortcutIcons.AVATAR_MEDIA -> context.fetchPublicMediaIcon(avatar.id, networkAllowed)
+            private fun load(context: Context, avatar: ShortcutIcons.Avatar): Bitmap? = when (avatar.kind) {
+                ShortcutIcons.AVATAR_USER -> context.fetchAvatar(avatar.id)
+                ShortcutIcons.AVATAR_MEDIA -> context.fetchPublicMediaIcon(avatar.id)
                 else -> {
                     Log.e(TAG, "shortcutIconSource: unknown avatar kind (length ${avatar.kind.length}) - initials")
                     null
                 }
             }
 
-            override fun cached(context: Context, avatar: ShortcutIcons.Avatar): ShortcutIcons.Cached {
-                val hit = load(context, avatar, false)
-                return when {
-                    hit != null -> ShortcutIcons.Cached.Hit(hit)
-                    context.knownAbsent(avatar) -> ShortcutIcons.Cached.Absent
-                    else -> ShortcutIcons.Cached.Miss
-                }
+            override fun cached(context: Context, avatar: ShortcutIcons.Avatar): ShortcutIcons.Cached = when (avatar.kind) {
+                ShortcutIcons.AVATAR_USER -> context.cachedIconState(context.avatarCacheFile(avatar.id))
+                ShortcutIcons.AVATAR_MEDIA -> context.cachedIconState(context.mediaCacheFile(safeMediaId(avatar.id)))
+                else -> ShortcutIcons.Cached.Miss
             }
 
-            override fun fetch(context: Context, avatar: ShortcutIcons.Avatar): Bitmap? = load(context, avatar, true)
+            override fun fetch(context: Context, avatar: ShortcutIcons.Avatar): Bitmap? = load(context, avatar)
 
             // At the size a fetched picture has, so the disc and a photo sit alike on the icon canvas.
             override fun initials(context: Context, label: String): Bitmap =
@@ -2611,9 +2617,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *
          * @param label the caller's name, so a log line says which fetch it describes.
          * @param subject what is being fetched, truncated in logs - a user id or a media id.
-         * @param networkAllowed false answers from the cache alone - a hit, or null - and never asks
-         *   the network: for a caller that must stay cheap (a shortcut being published) and fetches
-         *   the misses later, on its own thread. A remembered absence answers null either way.
          * @param request the URL to fetch and the `Authorization` header to send with it, or null for a
          *   route that takes none - sending an empty one would be a header the proxy has to reason
          *   about. It is a LAMBDA rather than two parameters so that a cache HIT pays for neither: the
@@ -2624,28 +2627,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             label: String,
             subject: String,
             cacheFile: File,
-            networkAllowed: Boolean = true,
             request: () -> Pair<String, String?>?,
         ): Bitmap? {
             val target = notificationIconSizePx()
-            val now = System.currentTimeMillis()
-            if (cacheFile.exists() && (now - cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
-                decodeSampled(target) { BitmapFactory.decodeFile(cacheFile.absolutePath, it) }?.let { bmp ->
-                    Log.d(TAG, "$label: from cache for ${subject.take(8)}")
-                    return circleCrop(bmp, target)
-                }
-            }
-            // THE ABSENCE IS REMEMBERED TOO - see [absentMarkerFile]. Asked AFTER the image, so a
-            // photo that arrived since (a 200 deletes the marker, but a foreground write may not
-            // have) always wins over an older "none".
+            // THE ABSENCE IS REMEMBERED TOO - see [absentMarkerFile], and [cachedIconState] for the order.
             val absent = absentMarkerFile(cacheFile)
-            if (absent.exists() && (now - absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS) {
-                Log.d(TAG, "$label: no picture for ${subject.take(8)} (answered ${(now - absent.lastModified()) / 1_000}s ago) -> initials, no request")
-                return null
+            when (val state = cachedIconState(cacheFile)) {
+                is ShortcutIcons.Cached.Hit -> {
+                    Log.d(TAG, "$label: from cache for ${subject.take(8)}")
+                    return state.picture
+                }
+                ShortcutIcons.Cached.Absent -> {
+                    val now = System.currentTimeMillis()
+                    Log.d(TAG, "$label: no picture for ${subject.take(8)} (answered ${(now - absent.lastModified()) / 1_000}s ago) -> initials, no request")
+                    return null
+                }
+                ShortcutIcons.Cached.Miss -> Unit
             }
-            // A MISS the caller asked not to pay for: expected and handled by it (a shortcut is
-            // published with its initials, then fetched), so it is not a line here.
-            if (!networkAllowed) return null
             val (url, authorization) = request() ?: return null
             return try {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
