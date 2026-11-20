@@ -114,6 +114,13 @@ export function newMediaStart(
 }
 
 /**
+ * The least stretch of new media that counts as one: far below a frame (a live's last fragment can be a
+ * single frame, 33 ms, or less), and only above float noise. NOT {@link HOLE_MIN_S}: that is about holes between
+ * segments, never about whether a segment was measured - an unmeasured one is "not held" and refetched on every fill.
+ */
+const NEW_MEDIA_MIN_S = 0.001;
+
+/**
  * The span the buffer just took: where it begins ({@link newMediaStart}) and where that new stretch
  * ends - at the next range the buffer already held, or at the end of the range it grew. Measured, so
  * the hole after a segment is known from the list whatever the buffer later forgets.
@@ -131,7 +138,7 @@ function newMediaExtent(
       if (b0 > from + 0.05) break;
       from = Math.max(from, b1);
     }
-    if (end - from > 0.05) {
+    if (end - from > NEW_MEDIA_MIN_S) {
       const bridged = held.find(([b0]) => b0 > from + 0.05 && b0 < end);
       return [from, bridged ? bridged[0] : end];
     }
@@ -809,10 +816,7 @@ export class ReplayPlayer {
     for (let k = k0; k < this.segments.length; k++) {
       const { index } = this.segments[k];
       if (this.missing.has(index)) continue;
-      const start = this.placed.get(index);
-      const held =
-        start !== undefined && spans.some(([a, b]) => start >= a - EDGE_TOL_S && start + 0.5 < b);
-      if (!held) return k;
+      if (!this.heldIn(spans, index)) return k;
     }
     return this.segments.length;
   }
@@ -925,11 +929,22 @@ export class ReplayPlayer {
     return { media, position: pos };
   }
 
-  /** Whether segment `index` is already buffered where it was placed. */
+  /**
+   * Whether segment `index` is already buffered where it was placed: ONE range holds its whole MEASURED
+   * extent. Never a fixed share of it (a live's last fragment is often under half a second, and a rule
+   * "0.5 s past its start" called it missing for good: fetched again on every timeupdate, S13).
+   */
   private isBuffered(index: number): boolean {
+    if (!this.buffer) return false;
+    return this.heldIn(spansOf(this.buffer), index);
+  }
+
+  /** Whether one of `spans` holds the measured extent of segment `index`. */
+  private heldIn(spans: readonly MediaSpan[], index: number): boolean {
     const start = this.placed.get(index);
-    if (start === undefined || !this.buffer) return false;
-    return spansOf(this.buffer).some(([s, e]) => start >= s - 0.01 && start + 0.5 < e);
+    const end = this.placedEnd.get(index);
+    if (start === undefined || end === undefined) return false;
+    return spans.some(([a, b]) => start >= a - EDGE_TOL_S && end <= b + EDGE_TOL_S);
   }
 
   /** The cursor after the buffered `span`: one past the last segment MEASURED inside it. */
@@ -1337,13 +1352,15 @@ export class ReplayPlayer {
     if (extent !== null && this.appended === 0 && extent[0] > REBASE_THRESHOLD_S) {
       extent = await this.rebaseToZero(gen, media, end, extent[0]);
     }
-    const start = extent === null ? null : extent[0];
     this.appended++;
     this.retryAttempt = 0;
     // A step that answers again after a reconnect is the end of the reconnecting screen.
     if (this.state.kind === 'reconnecting') this.setState({ kind: 'playing' });
-    if (extent !== null) this.measure(s.index, extent);
-    return start;
+    if (extent === null) return null;
+    this.measure(s.index, extent);
+    // The segment's own start - the earliest the measurements ever put it at - not where a re-take's new
+    // piece begins (a segment the trim cut at its tail re-adds only the tail).
+    return this.placed.get(s.index) ?? extent[0];
   }
 
   /**

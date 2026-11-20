@@ -449,7 +449,7 @@ replay (`MIGRATION.md` section 6): the replay posts that come back with the data
 Sitting [S11](device-verification.md#the-phone-readings-of-2026-11-19-s11-171-alpha3-live-replays-on-dev), 2026-11-19, dev only, `1.7.1-alpha.3`. A reading still owed says what closes it.
 
 1. **Bytes per hour by platform**: **read.** A 10-minute live: the Mi 9T 0.50 GB/h (a still, dark scene), the iPhone 12 0.87 GB/h, both under the 1.39 and 1.04 GB/h of the forecast above.
-2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one. **S13 (2026-11-20, `1.7.1-alpha.5`, desktop Chrome only):** four replays played from 0 to their end, each fired `ended`; seeks landed in their target's segment; a 53.3 s hole of a Mi 9T live was crossed by play alone with the segment after it downloaded once ([S13](device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)). The two phones playing a replay are STILL owed, and one defect found: [the last segment re-downloaded at every `timeupdate`](backlog.d/p2-a-replay-s-last-segment-is-downloaded-again-on-every-timeupdate-over-its-final-seconds.md).
+2. **A replay plays end to end** on both phones, across a background pause and a camera flip, and seeks: **FAILED**, the player stalls for good at the first flip or pause ([entry](backlog.d/replay-seek-decoupled-from-loading.md)). A continuous replay plays and seeks (Mi). **Owed again** once the entry ships: a flip-and-pause replay through both boundaries on both phones, and the iPhone on a continuous one. **S13 (2026-11-20, `1.7.1-alpha.5`, desktop Chrome only):** four replays played from 0 to their end, each fired `ended`; seeks landed in their target's segment; a 53.3 s hole of a Mi 9T live was crossed by play alone with the segment after it downloaded once ([S13](device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)). The two phones playing a replay are STILL owed, and one defect found: [the last segment re-downloaded at every `timeupdate`](#a-segment-is-held-when-the-buffer-holds-its-whole-measured-extent-s13-2026-11-20).
 3. **A saved replay plays** in the Android Gallery and in Photos, across a gap and as parts: **read.** Three parts on each phone, played in both; the Gallery's indexed length is wrong (filed in the entry above).
 4. **Expiry on dev**: **read.** `expiresAt` set into the past by SQL; the 18:23:00 worker deleted the post (`[REEL_GC] due=2 deleted=2`) and the 18:23:30 sweep deleted its segment objects (`[LIVE_GC] ... deleted (38 segment object(s))`), the volume listing then holding only the live replay.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one: **read.**
@@ -779,6 +779,25 @@ to 100.8: a false hole `[100.8, 102)` that hole-crossing skipped, losing 1.2 s o
 A segment's place in media time is fixed, so `measure` keeps the smaller start and the larger end of the old and
 new values; a new extent reaching OUTSIDE the old one by more than a frame at the slowest camera rate (1/15 s) says the segment moved,
 which nothing should cause, and is said at warn (a narrower new extent is the legitimate partial re-add and is silent).
+
+## A segment is held when the buffer holds its whole measured extent (S13, 2026-11-20)
+
+**Symptom (S13, alpha.5):** on two of four replays the LAST segment was downloaded again at every `timeupdate` for
+the final 12 s (46 times), each with a fresh `end of stream declared`; `ended` still fired.
+
+**Cause, measured on the fake engine, 49 downloads of one segment on main.** `isBuffered` and `firstGapAhead` called a
+segment held only when a range ran more than 0.5 s past its start (`start + 0.5 < end`). A live's last fragment is
+often shorter than that: it was never held, `firstGapAhead` rewound the cursor to it on every tick, and the fill took
+it again. Not the end-of-stream declaration (idempotent through the engine's state) nor trim's `far` bound.
+
+**Fix.** ONE predicate, `heldIn`: a range holds the segment's whole MEASURED extent `[placed, placedEnd]` (within
+`EDGE_TOL_S`). It is exact for a short segment, and still false for one the trim cut at either end. Test: a 0.3 s
+last segment, the playhead walked to the end, at most one download per segment.
+
+A last fragment can be a single frame (33 ms) or less: `newMediaExtent` used the HOLE threshold (0.05 s) to decide whether
+a segment added anything, so such a segment was never measured and stayed "not held" for ever. A segment is measured when
+it added more than float noise (`NEW_MEDIA_MIN_S`, 1 ms); the hole threshold stays about holes between segments. `take` also
+answers the segment's own start (the earliest measured), not where a re-take's new piece begins.
 
 ## The replay page starts its player once (S13, 2026-11-20)
 
