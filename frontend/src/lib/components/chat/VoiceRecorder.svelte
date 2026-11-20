@@ -194,7 +194,12 @@
         ? new MediaRecorder(opened, { mimeType })
         : new MediaRecorder(opened);
       // One line per recording: what the engine granted, not what was asked.
-      Log.i('VoiceRecorder', describeVoiceNoteCapture(opened.getAudioTracks()[0], recorder));
+      // A report is never worth a recording: an odd engine that throws here is logged and skipped.
+      try {
+        Log.i('VoiceRecorder', describeVoiceNoteCapture(opened.getAudioTracks()[0], recorder));
+      } catch (reportError) {
+        Log.w('VoiceRecorder', 'capture report failed, recording continues', reportError);
+      }
       const started: Session = {
         recorder,
         stream: opened,

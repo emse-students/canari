@@ -204,6 +204,24 @@ describe('VoiceRecorder - hold, slide, release', () => {
     expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('holding');
   });
 
+  it('still records when the capture report throws (an odd WebView)', async () => {
+    const track = {
+      stop: trackStop,
+      label: '',
+      getSettings: () => {
+        throw new Error('getSettings unsupported');
+      },
+    };
+    (navigator.mediaDevices.getUserMedia as Mock).mockResolvedValue({
+      getTracks: () => [track],
+      getAudioTracks: () => [track],
+    });
+    await press();
+
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('holding');
+  });
+
   it('SENDS on a plain release once the hold is long enough', async () => {
     await press(300);
     await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
