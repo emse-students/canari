@@ -41,8 +41,18 @@ function run(reloadConversations: () => Promise<void>, log = vi.fn()) {
 describe('a backup import and the restore it asks for', () => {
   it('a restore that REJECTS leaves the import successful, and is said as the restore failing', async () => {
     importedOnce();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const log = vi.fn();
     const outcome = await run(() => Promise.reject(new Error('groups unavailable')), log);
+    // The failure ACCUSES: said at ERROR, not only in the log ring.
+    expect(
+      errors.mock.calls.some(
+        (call) =>
+          String(call[0]).includes('could not be restored') &&
+          String(call[0]).includes('groups unavailable')
+      )
+    ).toBe(true);
+    errors.mockRestore();
 
     expect(outcome).toEqual({ conversations: 1, messages: 2, isSameDevice: false });
     const lines = log.mock.calls.map((call) => String(call[0]));

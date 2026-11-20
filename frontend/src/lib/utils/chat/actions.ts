@@ -1726,9 +1726,10 @@ export async function importUserBackup(params: {
   try {
     await reloadConversations();
   } catch (e) {
-    log(
-      `[BACKUP] the backup is imported, but the conversation list could not be restored from it now: ${String(e)} - the next restore shows it`
-    );
+    const line = `[BACKUP] the backup is imported, but the conversation list could not be restored from it now: ${String(e)} - the next restore shows it`;
+    // AT ERROR TOO: `log` is the in-app log ring, a plain line - a failure must accuse.
+    console.error(line, e);
+    log(line);
   }
 
   log(
