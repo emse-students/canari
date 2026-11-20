@@ -131,6 +131,46 @@ describe('selectShareTargets', () => {
     );
     expect(targets[0].label).toBe('General (BDE)');
   });
+
+  it('names the picture each kind of destination is drawn with, as the picker draws it', () => {
+    const salon = 'channel_22222222-2222-4222-8222-222222222222';
+    const peer = '33333333-3333-4333-8333-333333333333';
+    const targets = selectShareTargets(
+      [
+        group('dm', 'Camille', 5000, { conversationType: 'direct', directPeerId: peer }),
+        group('imaged', 'Le zoo', 4000, { imageMediaId: 'img-zoo' }),
+        group('plain', 'Sans image', 3000),
+        group(salon, 'General', 2000, { conversationType: 'channel' }),
+      ],
+      ME,
+      [{ name: 'BDE', channels: [{ id: salon }], imageMediaId: 'logo-bde' }]
+    );
+    const byId = Object.fromEntries(targets.map((t) => [t.id, t.avatar]));
+    expect(byId['c:dm']).toEqual({ kind: 'user', id: peer });
+    expect(byId['c:imaged']).toEqual({ kind: 'media', id: 'img-zoo' });
+    // No picture known: the key is absent, so the native side draws the initials.
+    expect('avatar' in targets.find((t) => t.id === 'c:plain')!).toBe(false);
+    expect(byId[`c:${salon}`]).toEqual({ kind: 'media', id: 'logo-bde' });
+  });
+
+  it('draws no logo for a salon whose community has none', () => {
+    const salon = 'channel_22222222-2222-4222-8222-222222222222';
+    const [target] = selectShareTargets(
+      [group(salon, 'General', 1000, { conversationType: 'channel' })],
+      ME,
+      [{ name: 'BDE', channels: [{ id: salon }], imageMediaId: null }]
+    );
+    expect(target.avatar).toBeUndefined();
+  });
+
+  it('publishes again when only a picture changed', async () => {
+    const base = { id: 'c:a', label: 'Le zoo', link: 'fr.emse.canari://chat/a' };
+    invoke.mockResolvedValue(CLEAN);
+    await publishShareTargets([{ ...base, avatar: { kind: 'media', id: 'one' } }], 'test');
+    await publishShareTargets([{ ...base, avatar: { kind: 'media', id: 'one' } }], 'test');
+    await publishShareTargets([{ ...base, avatar: { kind: 'media', id: 'two' } }], 'test');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, PUBLISH]);
+  });
 });
 
 describe('publishing on change', () => {

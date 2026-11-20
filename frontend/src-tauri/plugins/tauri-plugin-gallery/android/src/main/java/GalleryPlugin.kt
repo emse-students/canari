@@ -238,11 +238,20 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** WHICH picture a target is drawn with (`ShortcutIcons.Avatar`): a kind and an id, no bytes. */
+    @InvokeArg
+    class ShareTargetAvatarArg {
+        lateinit var kind: String
+        lateinit var id: String
+    }
+
     @InvokeArg
     class ShareTargetArg {
         lateinit var id: String
         lateinit var label: String
         lateinit var link: String
+        /** Null when the page knows no picture: the initials are drawn. */
+        var avatar: ShareTargetAvatarArg? = null
     }
 
     @InvokeArg
@@ -261,7 +270,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     fun publishShareTargets(invoke: Invoke) {
         val args = invoke.parseArgs(PublishShareTargetsArgs::class.java)
         Log.d(TAG, "publishShareTargets: ${args.targets.size} target(s)")
-        val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link) }
+        val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link, it.avatar?.let { a -> ShortcutIcons.Avatar(a.kind, a.id) }) }
         shareTargetsThread.execute {
             try {
                 val published = ShareTargets.publish(activity, targets)
