@@ -28,6 +28,12 @@ vi.mock('$lib/posts/postIdentity', async (orig) => ({
   listPostAsAssociations: () => Promise.resolve([]),
   listLiveAssociations: () => Promise.resolve([]),
 }));
+// A dropped web image goes through `webViewFetch`, which captured the runtime's `fetch` when its
+// module loaded; route it to the `fetch` each test stubs.
+vi.mock('$lib/utils/fetchRouting', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/fetchRouting')>()),
+  webViewFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
+}));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
   createPost: vi.fn(),
