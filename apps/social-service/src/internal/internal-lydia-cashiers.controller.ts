@@ -11,6 +11,7 @@ import {
 import { isUUID } from 'class-validator';
 import {
   LydiaCashiersService,
+  type HandoverRecordResult,
   type LydiaCashierRevokeTarget,
 } from '../associations/lydia-cashiers.service';
 import type { LydiaCashierNumber, LydiaCashierView } from '../associations/lydia-cashiers-list';
@@ -142,6 +143,68 @@ export class InternalLydiaCashiersController {
     assertInternalSecret(headerSecret);
     try {
       return { ok: true, released: await this.cashiers.release(id, claimTokenOrThrow(body)) };
+    } finally {
+      this.afterRelease(id);
+    }
+  }
+
+  /**
+   * The checks and claim before a hand-over of the Responsable (`LydiaCashiersService.claimHandover`):
+   * the asker (`actorId`, `globalAdmin` - as core read them from nginx's headers) must be the
+   * Responsable or a platform admin.
+   */
+  @Post(':id/lydia-responsable-handover-claim')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async handoverClaim(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('id') id: string,
+    @Body() body: { actorId?: unknown; globalAdmin?: unknown; userId?: unknown; phone?: unknown }
+  ): Promise<{
+    vendorToken: string;
+    claimToken: string;
+    previousResponsableId: string;
+    retry: boolean;
+    heirCashierId: string | null;
+  }> {
+    assertInternalSecret(headerSecret);
+    return this.cashiers.claimHandover(id, {
+      actorId: text(body?.actorId),
+      globalAdmin: body?.globalAdmin === true,
+      userId: text(body?.userId),
+      phone: text(body?.phone),
+    });
+  }
+
+  /** Records a hand-over Lydia answered (confirmed or not); releases the claim. */
+  @Post(':id/lydia-responsable-handover')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async handoverRecord(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      vendorToken?: unknown;
+      userId?: unknown;
+      phone?: unknown;
+      previousResponsableId?: unknown;
+      actorId?: unknown;
+      confirmed?: unknown;
+      claimToken?: unknown;
+    }
+  ): Promise<HandoverRecordResult> {
+    assertInternalSecret(headerSecret);
+    try {
+      return await this.cashiers.recordHandover(id, {
+        vendorToken: body?.vendorToken,
+        userId: body?.userId,
+        phone: body?.phone,
+        previousResponsableId: body?.previousResponsableId,
+        actorId: body?.actorId,
+        confirmed: body?.confirmed,
+        claimToken: body?.claimToken,
+      });
     } finally {
       this.afterRelease(id);
     }

@@ -216,7 +216,8 @@ switches still silence it in one gesture. Principle 1 is untouched: the push car
      `profile_correction_refused`, `repost_personal_requested`, `repost_personal_accepted`,
      `repost_personal_refused`, `live_cut`, `live_suspended`, `live_withdrawn`, `live_reinstated`,
      `form_paid_over_capacity`, `lydia_payments_active`, `lydia_payments_paused`,
-     `lydia_refund_issued`, `lydia_cashier_added`, `delegation_revoked`,
+     `lydia_refund_issued`, `lydia_cashier_added`, `lydia_responsable_handed_over`,
+     `delegation_revoked`,
      `delegation_receiver_not_ready`, `delegation_resumed`).
    The `Record` still refuses a type that is not placed, and `engagement-push-cap.spec.ts` pins the
    three lists.

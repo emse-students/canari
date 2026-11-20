@@ -1240,7 +1240,11 @@ export class AssociationsController {
     return this.service.leaveAssociation(id, callerId.trim());
   }
 
-  /** Removes a member from the association. */
+  /**
+   * Removes a member from the association. `?lydiaResponsableAcknowledged=true` is a platform
+   * admin's typed confirmation that removing the Lydia Responsable leaves their number's rights at
+   * Lydia (owner, 2026-11-20); the service ignores it for anyone else.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/members/:userId')
@@ -1248,7 +1252,8 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('userId') targetUserId: string,
     @Headers('x-user-id') callerId: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Query('lydiaResponsableAcknowledged') lydiaAck?: string
   ) {
     const isGlobalAdmin = ga === 'true';
     // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
@@ -1263,6 +1268,8 @@ export class AssociationsController {
     return this.service.removeMember(id, targetUserId, {
       granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
+      // A platform admin's typed confirmation that a Lydia Responsable removed keeps their rights.
+      lydiaResponsableAcknowledged: lydiaAck === 'true',
     });
   }
 

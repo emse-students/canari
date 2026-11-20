@@ -795,7 +795,7 @@ plan above, unchanged; asserted again by `bell-target-rows.integration.spec.ts`)
 | `admin_report` | the report that announced its subject | the reader is a global admin AND a report about the same subject (`contentType`, `contentId`) still waits that this notice answers for - not one filed after the subject's next notice (`reportNoticeOwedSql`) |
 | post-bound kinds | a post | the section above |
 | `birthday` | - | `birthdayRowShownSql` |
-| `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
+| `form_reminder`, `booking_*` (the reader's own place), `profile_correction_*`, `follow_*`, `lydia_refund_issued`, `lydia_cashier_added`, `lydia_responsable_handed_over`, `live_cut`/`_suspended`/`_withdrawn` | - | always: about the reader's own account, booking, payment or live (a fixed sentence for `form_reminder`); a follow request withdrawn deletes its row |
 
 A role is read through the reader's OWN membership row - the member tier the writers chose the
 recipients with - so a row is shown exactly while its reader would be told again. A row that fails

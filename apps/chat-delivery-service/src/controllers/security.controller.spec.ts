@@ -1,12 +1,12 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { InternalServerErrorException, Logger } from '@nestjs/common';
+import { ConflictException, InternalServerErrorException, Logger } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
-import { SecurityController } from './security.controller';
+import { LEGACY_UNSALTED_VERIFIER, SecurityController } from './security.controller';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -20,6 +20,7 @@ describe('SecurityController - checkPinVerifier', () => {
     create: jest.Mock;
     save: jest.Mock;
     update: jest.Mock;
+    createQueryBuilder: jest.Mock;
   };
   let revokedDeviceRepo: {
     findOne: jest.Mock;
@@ -32,6 +33,7 @@ describe('SecurityController - checkPinVerifier', () => {
       create: jest.fn(),
       save: jest.fn(),
       update: jest.fn(),
+      createQueryBuilder: jest.fn(),
     };
     revokedDeviceRepo = {
       findOne: jest.fn(),
@@ -63,54 +65,294 @@ describe('SecurityController - checkPinVerifier', () => {
   });
 
   /**
-   * Test 1 — Placeholder → UPDATE (the bug fix)
-   *
-   * When pin-salt created a placeholder row (verifier: ''), pin-check must UPDATE
-   * the existing entity rather than INSERTing a second row (which would violate
-   * the UNIQUE constraint on userId).
+   * The FIRST verifier is one conditional write, and only on a creation the client declared
+   * (PIN audit, 2026-11-20): a keypad drawn as "unlock" by mistake must not store an unconfirmed PIN,
+   * and two devices creating at once must not both be told `registered`.
    */
-  it('UPDATEs existing placeholder row (created by pin-salt) instead of INSERTing', async () => {
-    const existingDoc = { id: 'existing-id', userId: 'u1', verifier: '', salt: 'abc123' };
-    pinVerifierRepo.findOne.mockResolvedValue(existingDoc);
-    pinVerifierRepo.save.mockResolvedValue(existingDoc);
+  it('fills the placeholder row with a conditional update, and answers registered', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', userId: 'u1', verifier: '', salt: 's' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
 
     const result = await controller.checkPinVerifier(
-      { userId: 'u1', verifier: 'a'.repeat(64) },
+      { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
       'u1'
     );
 
-    // Must NOT call create — we're updating, not inserting
-    expect(pinVerifierRepo.create).not.toHaveBeenCalled();
-    // Must call save on the existing entity (with its original id)
-    expect(pinVerifierRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'existing-id', userId: 'u1', verifier: 'a'.repeat(64) })
+    // Pinned to the row that was READ, never "whatever placeholder this user has now".
+    expect(pinVerifierRepo.update).toHaveBeenCalledWith(
+      { id: 'p', verifier: '' },
+      { verifier: 'a'.repeat(64) }
     );
+    expect(pinVerifierRepo.save).not.toHaveBeenCalled();
     expect(result).toEqual({ status: 'registered', resetRequired: false });
   });
 
-  /**
-   * Test 2 — First registration → INSERT
-   *
-   * When no row exists for the user, a brand-new PinVerifier entity is created
-   * and saved.
-   */
-  it('INSERTs a new row on first registration (no existing row)', async () => {
-    pinVerifierRepo.findOne.mockResolvedValue(null);
-    const newDoc = { userId: 'u1', verifier: 'a'.repeat(64) };
-    pinVerifierRepo.create.mockReturnValue(newDoc);
-    pinVerifierRepo.save.mockResolvedValue(newDoc);
+  it('a write that lost to a reset (the row re-minted under another id) answers stale-salt', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce({ id: 'q', userId: 'u1', verifier: '', salt: 's2' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
+  });
+
+  it('a lost write with no row left answers stale-salt, never a 500', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce(null);
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
+  });
+
+  it('a creation that lost the race is COMPARED with the winner, never told registered', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: 'b'.repeat(64), salt: 's' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    const lost = await controller.checkPinVerifier(
+      { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+      'u1'
+    );
+    expect(lost).toEqual({ status: 'mismatch', resetRequired: false });
+  });
+
+  it('the same PIN chosen on both devices: the loser is told ok', async () => {
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: '', salt: 's' })
+      .mockResolvedValueOnce({ id: 'p', userId: 'u1', verifier: 'a'.repeat(64), salt: 's' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'ok', resetRequired: false });
+  });
+
+  it('an UNLOCK on an account with no PIN answers not-set and stores nothing', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', userId: 'u1', verifier: '', salt: 's' });
 
     const result = await controller.checkPinVerifier(
-      { userId: 'u1', verifier: 'a'.repeat(64) },
+      { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'unlock' },
       'u1'
     );
 
-    expect(pinVerifierRepo.create).toHaveBeenCalledWith({
-      userId: 'u1',
-      verifier: 'a'.repeat(64),
+    expect(result).toEqual({ status: 'not-set', resetRequired: false });
+    expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+    expect(pinVerifierRepo.createQueryBuilder).not.toHaveBeenCalled();
+    expect(pinVerifierRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses an intent it does not know', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue(null);
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), intent: 'other' as 'create' },
+        'u1'
+      )
+    ).rejects.toThrow('intent invalid');
+  });
+
+  it('LEGACY: a client sending no intent still registers (until the client floor passes)', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', userId: 'u1', verifier: '', salt: 's' });
+    pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
+
+    await expect(
+      controller.checkPinVerifier({ userId: 'u1', verifier: 'a'.repeat(64) }, 'u1')
+    ).resolves.toEqual({ status: 'registered', resetRequired: false });
+  });
+
+  /** The insert builder `registerVerifier` drives; `raw` is what `ON CONFLICT DO NOTHING` returned. */
+  const insertReturning = (raw: unknown[]) => {
+    const builder = {
+      insert: jest.fn().mockReturnThis(),
+      values: jest.fn().mockReturnThis(),
+      orIgnore: jest.fn().mockReturnThis(),
+      execute: jest.fn().mockResolvedValue({ raw }),
+    };
+    pinVerifierRepo.createQueryBuilder.mockReturnValue(builder);
+    return builder;
+  };
+
+  it('INSERTs a new row when there is none, and a lost insert race is compared, not a 500', async () => {
+    pinVerifierRepo.findOne.mockResolvedValue(null);
+    const builder = insertReturning([{ id: 'n' }]);
+
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'registered', resetRequired: false });
+    expect(builder.values).toHaveBeenCalledWith({ userId: 'u1', verifier: 'a'.repeat(64) });
+    expect(builder.orIgnore).toHaveBeenCalled();
+
+    // A concurrent insert won (no row returned): its verifier is compared, nothing is filled.
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'w', userId: 'u1', verifier: 'a'.repeat(64) });
+    insertReturning([]);
+    await expect(
+      controller.checkPinVerifier(
+        { userId: 'u1', verifier: 'a'.repeat(64), intent: 'create' },
+        'u1'
+      )
+    ).resolves.toEqual({ status: 'ok', resetRequired: false });
+    expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+
+    // The conflict was a placeholder `pin-salt` minted meanwhile: its salt is not the caller's.
+    pinVerifierRepo.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'm', userId: 'u1', verifier: '', salt: 's9' });
+    insertReturning([]);
+    await expect(
+      controller.checkPinVerifier({ userId: 'u1', verifier: 'a'.repeat(64) }, 'u1')
+    ).resolves.toEqual({ status: 'stale-salt', resetRequired: false });
+    expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A PIN CHOSEN BEFORE SALTS (`salt IS NULL`, a real verifier) is still a PIN. `GET pin-salt` used to
+   * delete that row and mint a placeholder, and the next `unlock` was then answered `not-set`: someone
+   * who had typed their PIN for months was told to choose one (review of #3909).
+   */
+  describe('a PIN from before salts', () => {
+    const LEGACY = { id: 'l', userId: 'u1', verifier: 'c'.repeat(64), salt: null };
+
+    it('pin-salt salts the row in place and keeps the fact that it holds a PIN', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue(LEGACY);
+      pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
+
+      const { salt } = await controller.getPinSalt('u1', 'u1');
+
+      expect(salt).toMatch(/^[0-9a-f]{32}$/);
+      // Pinned on the verifier READ too: a row that changed meanwhile is not marked from stale facts.
+      expect(pinVerifierRepo.update).toHaveBeenCalledWith(
+        { id: 'l', salt: expect.anything(), verifier: 'c'.repeat(64) },
+        { salt, verifier: LEGACY_UNSALTED_VERIFIER }
+      );
+      expect(pinVerifierRepo.save).not.toHaveBeenCalled();
     });
-    expect(pinVerifierRepo.save).toHaveBeenCalledWith(newDoc);
-    expect(result).toEqual({ status: 'registered', resetRequired: false });
+
+    it('pin-status reads the salted legacy row as registered', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({ id: 'l', verifier: LEGACY_UNSALTED_VERIFIER });
+      await expect(controller.getPinStatus('u1', 'u1')).resolves.toEqual({ registered: true });
+    });
+
+    it('its next UNLOCK re-registers the PIN typed - never not-set', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({
+        id: 'l',
+        userId: 'u1',
+        verifier: LEGACY_UNSALTED_VERIFIER,
+        salt: 's',
+      });
+      pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
+
+      await expect(
+        controller.checkPinVerifier(
+          { userId: 'u1', verifier: 'a'.repeat(64), salt: 's', intent: 'unlock' },
+          'u1'
+        )
+      ).resolves.toEqual({ status: 'registered', resetRequired: false });
+      expect(pinVerifierRepo.update).toHaveBeenCalledWith(
+        { id: 'l', verifier: LEGACY_UNSALTED_VERIFIER },
+        { verifier: 'a'.repeat(64) }
+      );
+    });
+
+    it('a legacy row that changed between the read and the salting is not marked: its salt is read back', async () => {
+      pinVerifierRepo.findOne
+        .mockResolvedValueOnce(LEGACY)
+        .mockResolvedValueOnce({ id: 'l', verifier: 'd'.repeat(64), salt: 'other' });
+      pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(controller.getPinSalt('u1', 'u1')).resolves.toEqual({ salt: 'other' });
+    });
+
+    it('a legacy row with no PIN becomes a plain placeholder', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({ ...LEGACY, verifier: '' });
+      pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
+
+      const { salt } = await controller.getPinSalt('u1', 'u1');
+
+      expect(pinVerifierRepo.update).toHaveBeenCalledWith(
+        { id: 'l', salt: expect.anything(), verifier: '' },
+        { salt, verifier: '' }
+      );
+    });
+  });
+
+  describe('getPinSalt - one salt per account, minted idempotently', () => {
+    const insertReturningRows = (raw: unknown[]) => {
+      const builder = {
+        insert: jest.fn().mockReturnThis(),
+        values: jest.fn().mockReturnThis(),
+        orIgnore: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ raw }),
+      };
+      pinVerifierRepo.createQueryBuilder.mockReturnValue(builder);
+      return builder;
+    };
+
+    it('returns the salt a row already holds, writing nothing', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', verifier: '', salt: 'abc' });
+      await expect(controller.getPinSalt('u1', 'u1')).resolves.toEqual({ salt: 'abc' });
+      expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+      expect(pinVerifierRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('no row: a placeholder INSERTed ON CONFLICT DO NOTHING', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue(null);
+      const builder = insertReturningRows([{ id: 'n' }]);
+
+      const { salt } = await controller.getPinSalt('u1', 'u1');
+
+      expect(builder.values).toHaveBeenCalledWith({ userId: 'u1', verifier: '', salt });
+      expect(builder.orIgnore).toHaveBeenCalled();
+    });
+
+    it('a concurrent GET minted first: its salt is returned, never a 500', async () => {
+      pinVerifierRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'w', verifier: '', salt: 'theirs' });
+      insertReturningRows([]);
+
+      await expect(controller.getPinSalt('u1', 'u1')).resolves.toEqual({ salt: 'theirs' });
+    });
+
+    it('a row that changed again before the read back is a 409, nothing guessed', async () => {
+      pinVerifierRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+      insertReturningRows([]);
+
+      await expect(controller.getPinSalt('u1', 'u1')).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('getPinStatus - registered means a NON-EMPTY verifier', () => {
+    it('reads the placeholder row pin-salt writes as NOT registered', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', verifier: '' });
+      await expect(controller.getPinStatus('u1', 'u1')).resolves.toEqual({ registered: false });
+    });
+
+    it('reads a stored verifier as registered, and no row as not', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue({ id: 'p', verifier: 'a'.repeat(64) });
+      await expect(controller.getPinStatus('u1', 'u1')).resolves.toEqual({ registered: true });
+      pinVerifierRepo.findOne.mockResolvedValue(null);
+      await expect(controller.getPinStatus('u1', 'u1')).resolves.toEqual({ registered: false });
+    });
   });
 
   /**

@@ -170,6 +170,10 @@ import {
 import { promoCutoffFor } from '../common/promo-visibility';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  LYDIA_RESPONSABLE_MUST_HAND_OVER,
+} from './lydia-responsable-handover';
+import {
   isDelegating,
   resolvePaymentTarget,
   fetchActivePaymentProvider,
@@ -2189,7 +2193,15 @@ export class AssociationsService {
   async removeMember(
     associationId: string,
     targetUserId: string,
-    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
+    opts: {
+      granter: MemberGranter;
+      bypassLastAdmin?: boolean;
+      /**
+       * A PLATFORM ADMIN confirmed, by typing it, that the Lydia Responsable removed keeps their
+       * number's rights at Lydia until it is removed (owner, 2026-11-20). Ignored for anyone else.
+       */
+      lydiaResponsableAcknowledged?: boolean;
+    }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -2231,6 +2243,13 @@ export class AssociationsService {
     // the association's lock: two managers leaving at once would otherwise both count two.
     const deleted = await this.underMemberLock(associationId, 'removeMember', async (members) => {
       if (guarded) await this.assertNotLastManagerLost(members, associationId, 'removal');
+      // Under the SAME association lock a hand-over's record takes: a Responsable is never removed
+      // between the hand-over's checks and its record (owner, 2026-11-19).
+      await this.assertNotLydiaResponsable(members.manager, associationId, targetUserId, {
+        leaving,
+        adminAcknowledged:
+          !leaving && opts.granter.isGlobalAdmin && opts.lydiaResponsableAcknowledged === true,
+      });
       return members.delete({ id: membership.id, permissions: membership.permissions });
     });
     if (deleted.affected !== 1) {
@@ -2249,6 +2268,60 @@ export class AssociationsService {
     // the rows themselves, so a failure here is retried by the next payments-card read.
     this.settleCashierDepartures(associationId, 'departure', targetUserId);
     return { ok: true };
+  }
+
+  /** The owner's gate on the Responsable hand-over, read through a method so a spec can open it. */
+  responsableHandoverEnabled(): boolean {
+    return LYDIA_RESPONSABLE_HANDOVER_ENABLED;
+  }
+
+  /**
+   * A LYDIA RESPONSABLE DOES NOT LEAVE BEFORE HANDING OVER (owner, 2026-11-19: "il doit d'abord passer
+   * la main lui-meme"). While the hand-over is on, removing the membership of the person holding the
+   * live, CONFIRMED Responsable row of the association's MANAGED Business - the hand-over's own
+   * predicate (`planHandover` hands over only that row), so the rule never blocks someone the
+   * hand-over could not take the role from - is the typed 409 `LYDIA_RESPONSABLE_MUST_HAND_OVER`:
+   * leaving, or removed by a member or a manager. A PLATFORM ADMIN may remove them anyway after a
+   * typed confirmation that the number keeps its Lydia rights until it is removed
+   * (`adminAcknowledged`, owner, 2026-11-20), said at ERROR. Read under the association's lock
+   * `manager` holds, the one the hand-over's record takes. Never on an erasure or an association's
+   * deletion: neither goes through here. Off, the earlier behaviour holds (the departure keeps the
+   * number, said at ERROR).
+   */
+  private async assertNotLydiaResponsable(
+    manager: EntityManager,
+    associationId: string,
+    userId: string,
+    how: { leaving: boolean; adminAcknowledged: boolean }
+  ): Promise<void> {
+    if (!this.responsableHandoverEnabled()) return;
+    const leaving = how.leaving;
+    const rows = (await manager.query(
+      `SELECT 1 FROM lydia_cashiers c
+         JOIN associations a ON a.id = c."associationId"
+         ${bridgeJoinSql('a', 'b')}
+        WHERE c."associationId" = $1 AND c."userId" = $2 AND c.role = 'responsable'
+          AND c."removedAt" IS NULL AND c."confirmedAt" IS NOT NULL
+          AND c."vendorToken" = ${managedVendorTokenSql('a', 'b')}`,
+      [associationId, userId]
+    )) as unknown[];
+    if (rows.length === 0) return;
+    if (how.adminAcknowledged) {
+      this.logger.error(
+        `removeMember on association ${sanitizeLog(associationId)}: a platform admin removed the ` +
+          `Lydia Responsable without a hand-over (confirmed by typing) - their number keeps every ` +
+          `right at Lydia until it is removed`
+      );
+      return;
+    }
+    this.logger.warn(
+      `removeMember refused on association ${sanitizeLog(associationId)}: the ` +
+        `${leaving ? 'leaver' : 'member removed'} is the Lydia Responsable - the role is handed over first`
+    );
+    throw new ConflictException({
+      code: LYDIA_RESPONSABLE_MUST_HAND_OVER,
+      message: 'The Lydia Responsable hands the role over before leaving',
+    });
   }
 
   /**
@@ -5773,6 +5846,14 @@ ${rejectionReason}`
       lydiaOnboardingComplete: historicalCollects ? false : row.activeReady,
       responsable,
       cashiers,
+      ...(business && this.responsableHandoverEnabled()
+        ? {
+            payoutManagerIds: await this.listFlagHolders(
+              id,
+              AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT
+            ),
+          }
+        : {}),
       readiness:
         !historicalCollects && row.activeCause && row.activeAt
           ? { cause: row.activeCause, at: iso(row.activeAt) as string }

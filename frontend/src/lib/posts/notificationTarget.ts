@@ -100,7 +100,9 @@ export function notificationHref(
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
     // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
+    // The heir of a Lydia Responsable hand-over: the same page - the role is held in Lydia Pro.
     case 'lydia_cashier_added':
+    case 'lydia_responsable_handed_over':
       return LYDIA_PRO_HELP_ROUTE;
     case 'repost_proposed':
     case 'coorganise_proposed':
@@ -233,6 +235,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'lydia_payments_active',
   'lydia_payments_paused',
   'lydia_cashier_added',
+  'lydia_responsable_handed_over',
   'lydia_refund_issued',
   'delegation_revoked',
   'delegation_receiver_not_ready',

@@ -20,6 +20,11 @@ export type LoginErrorCode =
   /** The PIN does not match the account-wide verifier. */
   | 'pin_mismatch'
   /**
+   * An UNLOCK met an account with no PIN (`pin-check` answered `not-set`): nothing was stored, and
+   * the gate turns into its first setup, which asks the PIN twice (PIN audit, 2026-11-20).
+   */
+  | 'pin_not_set'
+  /**
    * PIN accepted, and this device's local MLS state would not OPEN.
    *
    * IT NAMES THE OBSERVATION BECAUSE THE OBSERVATION IS ALL THERE IS. It was called
@@ -87,6 +92,12 @@ export type LoginErrorCode =
    * never "unreachable": the person waits until the time shown, then retries (`pinThrottle.ts`).
    */
   | 'pin_attempts_throttled'
+  /**
+   * `GET pin-salt` answered 409: the account's PIN row changed (a reset on another device) while
+   * this salt was being minted. An answer, never "unreachable": nothing was compared, and the next
+   * try asks the salt again.
+   */
+  | 'pin_salt_changed'
   /**
    * The server answered `stale-salt` twice: the account's PIN salt changed (a PIN reset) between
    * this login asking for it and checking with it, and again on the one retry. Nothing was
@@ -306,10 +317,12 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
+    code === 'pin_not_set' ||
     (provesLocalStateExists(code) && code !== 'hardware_key_unavailable') ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'pin_attempts_throttled' ||
+    code === 'pin_salt_changed' ||
     code === 'account_deleted' ||
     code === 'revoked_device_wipe_owed' ||
     code === 'pin_reset_unsettled' ||
@@ -317,6 +330,19 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'state_owned_by_another_tab' ||
     isVaultRefusal(code)
   );
+}
+
+/**
+ * The PIN gate's NO-KEYPAD text for a failure that leaves no PIN worth typing on this device, or
+ * `null` (PIN audit row 18, 2026-11-20). A device removed from the account - revoked and wiped just
+ * now, or with its wipe still owed - is the one case: its session is over, so a keypad would only
+ * send the next PIN into the ended session and on to the sign-in page, unexplained. The way on is the
+ * gate's "Se deconnecter".
+ */
+export function noKeypadNoticeFor(code: LoginErrorCode | undefined): string | null {
+  return code === 'device_revoked' || code === 'revoked_device_wipe_owed'
+    ? m.auth_device_revoked_here()
+    : null;
 }
 
 /** True for both refusals of a vaulted key whose owner was not proven (see the two codes). */

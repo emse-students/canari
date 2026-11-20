@@ -5,7 +5,7 @@ import type { PinSaltAhead } from './pinSaltAhead';
 
 /** What `POST /api/mls/security/pin-check` answers. */
 export interface PinCheckAnswer {
-  status: 'ok' | 'registered' | 'mismatch' | 'stale-salt';
+  status: 'ok' | 'registered' | 'mismatch' | 'stale-salt' | 'not-set';
   resetRequired?: boolean;
 }
 
@@ -17,7 +17,16 @@ export interface PinCheckAnswer {
  * the device key must never be installed from an unproven PIN - and that is a behaviour, so it now
  * lives here, where a test can answer `mismatch` and watch `installDeviceKey` stay uncalled.
  */
+/**
+ * What the PIN typed is FOR, sent to `pin-check`: `create` only when the gate asked it twice (a first
+ * setup), `unlock` otherwise. The server registers a PIN on `create` alone, and answers an `unlock` on
+ * an account with no PIN `not-set` (PIN audit, 2026-11-20).
+ */
+export type PinIntent = 'create' | 'unlock';
+
 export interface PinUnlockDeps {
+  /** What the typed PIN is for ({@link PinIntent}). */
+  intent: PinIntent;
   /** The salt asked while the keypad was up, if any (`takePinSaltAhead`). */
   saltAhead: Promise<PinSaltAhead> | undefined;
   /** The salt round trip with this login's own token. */
@@ -29,7 +38,12 @@ export interface PinUnlockDeps {
   /** This device's stored id - reads, decrypts nothing. */
   resolveDeviceId: () => Promise<string>;
   /** The server's answer for this verifier, derived from `salt`. */
-  checkPin: (args: { verifier: string; deviceId: string; salt: string }) => Promise<PinCheckAnswer>;
+  checkPin: (args: {
+    verifier: string;
+    deviceId: string;
+    salt: string;
+    intent: PinIntent;
+  }) => Promise<PinCheckAnswer>;
   /** Returns a revoked device to a fresh install. */
   wipeRevokedDevice: () => Promise<void>;
   /** Stores the at-rest key for the session. Called once, and only for a PIN the server accepted. */
@@ -72,7 +86,7 @@ async function saltForSubmit(deps: PinUnlockDeps): Promise<{ salt: string; sourc
  * once more. A second `stale-salt` is a reset racing the retry too, and is refused by name.
  *
  * @returns The installed device key.
- * @throws LoginFailure `pin_mismatch`, `device_revoked` or `pin_salt_rotated`, and `other` for an
+ * @throws LoginFailure `pin_mismatch`, `pin_not_set`, `device_revoked` or `pin_salt_rotated`, and `other` for an
  *   answer that is neither `ok` nor `registered` - only those two install the key.
  */
 export async function unlockWithPin(deps: PinUnlockDeps): Promise<string> {
@@ -94,7 +108,7 @@ export async function unlockWithPin(deps: PinUnlockDeps): Promise<string> {
     );
 
     beginBootSpan('pin-check-request');
-    const answer = await deps.checkPin({ verifier, deviceId, salt });
+    const answer = await deps.checkPin({ verifier, deviceId, salt, intent: deps.intent });
     endBootSpan('pin-check-request');
 
     if (answer.status === 'stale-salt') {
@@ -107,6 +121,12 @@ export async function unlockWithPin(deps: PinUnlockDeps): Promise<string> {
       );
       salt = await deps.fetchSalt();
       continue;
+    }
+    if (answer.status === 'not-set') {
+      // An unlock on an account with no PIN: nothing was stored, and the gate asks for a new one,
+      // twice. Never registered from here - that took a gate drawn "returning" by mistake.
+      deps.log('[PIN] The account has no PIN yet - nothing stored, the first-setup gate follows.');
+      throw new LoginFailure('pin_not_set', m.auth_pin_not_set());
     }
     if (answer.status === 'mismatch') {
       throw new LoginFailure('pin_mismatch', m.auth_pin_mismatch());

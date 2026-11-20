@@ -91,6 +91,48 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
 
+### A PIN check with no intent still registers, unconfirmed (2026-11-20)
+
+- **What.** `POST /api/mls/security/pin-check` registers an account's first PIN only on
+  `intent: 'create'` (a first setup that asked the PIN twice) and answers `intent: 'unlock'` with
+  `not-set` ([auth](frontend/modules/auth.md#pin-and-device-key)). An app older than #3909 sends no
+  intent, so a body with none is answered as before: it REGISTERS on an account with no PIN, through
+  the same conditional write (`checkPinVerifier`, `security.controller.ts`). That branch is the
+  unconfirmed registration the PIN audit closed, kept open for those builds only.
+- **Measured by.** The two lines the service writes for a body with no intent, a registration AND
+  an unlock (an older app unlocks with no intent too):
+  `[PIN_VERIFIER] legacy client (no intent) registering for <user> - unconfirmed` and
+  `[PIN_VERIFIER] legacy client (no intent) unlocking for <user>`.
+- **Removal condition.** The client floor passes the first stable carrying #3909 (`1.7.2` at the
+  earliest), AND a week of silence of BOTH lines on production.
+- **Then delete.** The registration of a body with no intent: such a body is then treated as
+  `unlock` - never a `400`, so a build above the floor that somehow omits it still unlocks, and an
+  account with no PIN is answered `not-set`. The spec case `LEGACY: a client sending no intent still
+  registers` becomes "a body with no intent is an unlock", and both log lines go.
+
+### A PIN from before salts re-registers on its next check (2026-11-20)
+
+- **What.** A `pin_verifier` row with `salt IS NULL` holds a verifier derived from the old
+  predictable salt, which no client computes any more. `GET pin-salt` gives it a salt IN PLACE and
+  marks its verifier `LEGACY_UNSALTED_VERIFIER` (`security.controller.ts`): `pin-status` reads it as
+  registered, and the next `pin-check` - `unlock` included - re-registers the PIN typed, unconfirmed,
+  as the pre-salt check did ([auth](frontend/modules/auth.md#pin-and-device-key)). Deleting the row
+  instead told someone with a PIN that they had none.
+- **Measured by.** One `GROUP BY` on production: `SELECT salt IS NULL AS unsalted, verifier =
+  'legacy-unsalted' AS marked, count(*) FROM pin_verifier GROUP BY 1, 2`; and the service's lines
+  `[PIN_SALT] new salt minted for <user> (legacy row, ...)` and `[PIN_VERIFIER] legacy unsalted PIN
+  of <user> re-registered`.
+- **Removal condition.** Both counts at zero, OR **2027-02-20**, whichever comes first. The date
+  exists because the counts may never reach zero: an account dormant since the salts arrived (July
+  2026) never asks for its salt, and the shim would then live for ever.
+- **On that date, what is left.** One migration turns every remaining row into a placeholder: a
+  marked row loses its marker (`verifier = ''`, its salt kept), and an unsalted row is deleted (the
+  next `GET pin-salt` mints a fresh placeholder). Those accounts are then asked to CHOOSE a PIN,
+  twice, at their next unlock - their old PIN was never comparable since July, and no server fact
+  can re-register it once the marker is gone.
+- **Then delete.** The `IsNull()` branch of `getPinSalt`, the `LEGACY_UNSALTED_VERIFIER` branch of
+  `checkPinVerifier`, the constant, and the spec cases `a PIN from before salts`.
+
 ### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
 
 "Carried by" is read as for `1.6.6` below (`git tag --contains` on the squash commit found by its
@@ -774,6 +816,14 @@ Play and the App Store serve it - then a one-line pull request sets the constant
 spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
 row only, no push (so no push key, category or native string is owed); the client row, the type in
 `KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+
+**Built 2026-11-20, floor `1.7.3`: `lydia_responsable_handed_over`**, the bell row telling the heir of a
+Lydia Responsable hand-over that they are the Responsable now (no acceptance step, owner, 2026-11-20;
+[payments](frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)). Same shape and
+switch as `lydia_cashier_added` (bell row only, no push, the Lydia Pro help page), and written only while
+the hand-over itself is switched on. Its floor is `1.7.3`, not `1.7.2`: the `1.7.2` pre-releases already
+out do not draw it, and a floor compares the version core only, so a `1.7.2` floor would serve them the
+neutral unknown-type row. `notification-client-floor.ts` keeps it from every older build.
 The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
 
 **What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**

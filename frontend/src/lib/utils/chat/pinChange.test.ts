@@ -340,7 +340,7 @@ describe('both PIN paths go through performPinChange', () => {
     const fn = body('export async function changePinImpl(');
     const guard = fn.indexOf('thisTabMayChangeDeviceKey(');
     expect(guard).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(fn.indexOf('/api/mls/security/pin-change'));
+    expect(guard).toBeLessThan(fn.indexOf("route: 'pin-change'"));
     expect(guard).toBeLessThan(fn.indexOf('await performPinChange('));
   });
 

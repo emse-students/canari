@@ -15,6 +15,7 @@ import {
   flagsBeyondCeiling,
   grantCeiling,
 } from './member-flag-ceiling';
+import { LYDIA_RESPONSABLE_MUST_HAND_OVER } from './lydia-responsable-handover';
 
 /**
  * THE GRANT CEILING: an ordinary member changes only the flags it holds itself, on add and on
@@ -171,7 +172,7 @@ function makeService(rows: Row[], opts: { departures?: boolean } = {}) {
   // The Lydia cashiers' departure debt, registered at boot by `LydiaCashiersService`.
   const departures = { settleDepartures: jest.fn(() => Promise.resolve()) };
   if (opts.departures !== false) service.registerCashierDepartures(departures);
-  return { service, update, remove, departures };
+  return { service, update, remove, departures, memberRepo };
 }
 
 /** A refusal's typed code, or the outcome itself when the call did not throw a typed one. */
@@ -788,5 +789,102 @@ describe('removeMember - a membership that ended asks the Lydia cashiers to sett
     await expect(service.leaveAssociation(ASSO, 'plain')).resolves.toEqual({ ok: true });
     expect(String(error.mock.calls)).toContain('departure removals are not registered');
     error.mockRestore();
+  });
+});
+
+describe('removeMember - a Lydia Responsable hands the role over before leaving (owner, 2026-11-19)', () => {
+  const rows = (): Row[] => [
+    { associationId: ASSO, userId: 'pres', permissions: MANAGE_MEMBERS },
+    { associationId: ASSO, userId: 'sec', permissions: MANAGE_MEMBERS },
+    { associationId: ASSO, userId: 'plain', permissions: 0 },
+  ];
+  /** The service with the hand-over gate `on`, and `pres` holding the live Responsable row. */
+  function withResponsable(on: boolean) {
+    const made = makeService(rows());
+    const query = jest.fn((sql: string, params: unknown[]) =>
+      Promise.resolve(
+        sql.includes('lydia_cashiers') && (params as string[])[1] === 'pres'
+          ? [{ '?column?': 1 }]
+          : []
+      )
+    );
+    Object.assign(made.memberRepo.manager, { query });
+    jest.spyOn(made.service, 'responsableHandoverEnabled').mockReturnValue(on);
+    return { ...made, query };
+  }
+
+  it('gate on: the Responsable leaving is the typed 409, the membership kept and no debt asked', async () => {
+    const { service, remove, departures } = withResponsable(true);
+    expect(await settle(service.leaveAssociation(ASSO, 'pres'))).toBe(
+      LYDIA_RESPONSABLE_MUST_HAND_OVER
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(departures.settleDepartures).not.toHaveBeenCalled();
+  });
+
+  it('gate on: removed by another manager, or by the platform admin without the typed confirmation - refused', async () => {
+    const { service, remove } = withResponsable(true);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'pres', { granter: { userId: 'sec', isGlobalAdmin: false } })
+      )
+    ).toBe(LYDIA_RESPONSABLE_MUST_HAND_OVER);
+    expect(await settle(service.removeMember(ASSO, 'pres', { granter: PLATFORM }))).toBe(
+      LYDIA_RESPONSABLE_MUST_HAND_OVER
+    );
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("gate on: the predicate is the hand-over's - a CONFIRMED row of the MANAGED Business only", async () => {
+    const { service, query } = withResponsable(true);
+    await settle(service.leaveAssociation(ASSO, 'pres'));
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('"confirmedAt" IS NOT NULL');
+    expect(sql).toContain('"enrolledVendorToken"');
+    expect(sql).toContain('"lydiaAccountId"');
+  });
+
+  it('gate on: a platform admin who confirmed by typing removes the Responsable, said at ERROR (owner, 2026-11-20)', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, remove, departures } = withResponsable(true);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'pres', {
+          granter: PLATFORM,
+          lydiaResponsableAcknowledged: true,
+        })
+      )
+    ).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls)).toContain('keeps every right at Lydia');
+    // The departure still settles what it owes (the other number), and says the current one stays.
+    expect(departures.settleDepartures).toHaveBeenCalledWith(ASSO, 'departure', 'pres');
+    error.mockRestore();
+  });
+
+  it('gate on: the acknowledgement counts for a platform admin only - a manager sending it is refused', async () => {
+    const { service, remove } = withResponsable(true);
+    expect(
+      await settle(
+        service.removeMember(ASSO, 'pres', {
+          granter: { userId: 'sec', isGlobalAdmin: false },
+          lydiaResponsableAcknowledged: true,
+        })
+      )
+    ).toBe(LYDIA_RESPONSABLE_MUST_HAND_OVER);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('gate on: a member who is not the Responsable leaves freely', async () => {
+    const { service, remove } = withResponsable(true);
+    expect(await settle(service.leaveAssociation(ASSO, 'plain'))).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('gate off (shipped): the earlier behaviour - the Responsable may leave, nothing read', async () => {
+    const { service, remove, query } = withResponsable(false);
+    expect(await settle(service.leaveAssociation(ASSO, 'pres'))).toBe('written');
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
   });
 });

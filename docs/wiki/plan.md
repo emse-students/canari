@@ -117,6 +117,7 @@ earliest version, as a checklist.
 - [ ] [the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)](backlog.d/reading-owed-ios-seed-mirror-one-copy.md)
 - [ ] [the broadcaster's right-edge control column on both phones (owner, 2026-11-19)](backlog.d/reading-owed-the-broadcasters-control-column.md)
 - [ ] [the live card follows the feed tab, and the covers load without a 429 (owner, 2026-11-19; S14, 2026-11-20)](backlog.d/reading-owed-the-live-card-tab-and-poster-width.md)
+- [ ] [the owner hands the Lydia Responsable over in production, then takes it back](backlog.d/reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md)
 - [ ] [the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)](backlog.d/live-replay-switch-readings-owed.md)
 - [ ] ["En direct" past an open web live screen no longer leaves it on "Reading the live's rules..." (S13, 2026-11-20)](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
@@ -125,9 +126,11 @@ earliest version, as a checklist.
 - [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [a media message is worded the same in the list, the quotes and the banners (owner, 2026-11-20)](backlog.d/reading-owed-media-preview-names-the-kind.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
+- [ ] [the PIN gate's audit rows of 2026-11-20 (deadline, 429, confirmation, removed device)](backlog.d/reading-owed-pin-gate-audit-rows-of-2026-11-20.md)
 - [ ] [the launcher's long-press conversations and the share sheet show each conversation's picture (Android, owner, 2026-11-20)](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)
 - [ ] [the "you were added as a Lydia cashier" notice (switched on 2026-11-20)](backlog.d/reading-owed-the-lydia-cashier-added-notice.md)
 - [ ] [the Lydia managers' notices, "payments active" and "payments paused" (switched on 2026-11-20)](backlog.d/reading-owed-the-lydia-managers-notices-active-and-paused.md)
+- [ ] [the Lydia Responsable hand-over runs against homologation](backlog.d/reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md)
 - [ ] [the organiser alert for a payment over capacity (switched on 2026-11-20)](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 
@@ -208,7 +211,7 @@ earliest version, as a checklist.
 - [P2 - rows before ratchet: the history catch-up decrypt sessions take no mark (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)
 - [P2 - rows before ratchet: the Tauri resume's live-ahead persist bypasses both holds (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)
 - [P2 - rows before ratchet: measure the acks withheld on unstored rows, and the poison rows dropped (review of #3851, 2026-11-19)](backlog.d/p2-rows-before-ratchet-withheld-ack-metric.md)
-- [P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, four adjacent hazards are (2026-11-20)](backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md)
+- [P2 - PIN salt between two devices: the audit's "ping-pong" is not in the code, two adjacent races remain (2026-11-20)](backlog.d/p2-pin-salt-two-devices-what-the-code-does-and-does-not-show.md)
 
 **P3 - hygiene**
 

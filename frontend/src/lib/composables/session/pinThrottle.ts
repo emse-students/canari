@@ -73,7 +73,12 @@ export async function throwIfPinThrottled(
   if (res.status !== 429) return;
   const refusal = await refusalFromResponse(res, 'PIN attempt throttled');
   const header = res.headers.get('Retry-After');
-  const waitMs = refusal.retryAfterMs ?? parseRetryAfterMs(header, now.getTime());
+  // The first POSITIVE wait: a body of `retryAfterMs: 0` says nothing a usable header does not.
+  const fromBody = refusal.retryAfterMs;
+  const waitMs =
+    fromBody !== null && fromBody !== undefined && fromBody > 0
+      ? fromBody
+      : (parseRetryAfterMs(header, now.getTime()) ?? fromBody);
   log(
     `[PIN] The server refused the attempt as too many (429, wait ${waitMs ?? 'unknown'} ms, Retry-After ${header ?? 'none'}).`
   );
