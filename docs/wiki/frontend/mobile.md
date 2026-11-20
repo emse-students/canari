@@ -3477,7 +3477,13 @@ but not the at-rest key, a `ThisDeviceOnly` Keychain item that never migrates (A
 `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: "Items with this attribute do not migrate to a
 new device"). The PIN screen then said the data was unreadable. **None of it may travel**: without
 the key it is ciphertext nothing opens, and with the key it would be a second holder of one MLS
-device identity. A new phone enrols as a new device ([backup](backup.md)). Android refuses both
+device identity. A new phone enrols as a new device ([backup](backup.md)). **The decision, and its
+cost** ([owner, 2026-11-20](../backlog.d/owner-decisions-of-2026-11-20.md), item 5): an encrypted
+backup restored onto the SAME iPhone also brings back no data and no at-rest marker, and the phone
+enrols as a new device, its history from the account's other devices, from peers or from a
+`.canari` backup. Charter principle 1 (no second holder) wins over principle 2 for that restore;
+principle 2 is still served by the peers and the `.canari` file ([principes](../../principes.md)).
+Android refuses both
 channels since 2026-08-26 (`data_extraction_rules.xml` with `allowBackup=false`,
 [below](#plays-q3-2026-quality-requirements-measured-against-this-app)).
 
@@ -3487,12 +3493,12 @@ change. Everything below was IN the backup except the two native caches:
 
 | Where | What | In the backup before 1.7.2 | After |
 | --- | --- | --- | --- |
-| `Library/Application Support/fr.emse.canari/` (Tauri's `app_data_dir`, and `app_config_dir`, where `tauri-plugin-sql` opens `canari_<user>.db`) | the SQLite stores (`canari_<user>.db`, `mls_pending.db`), `mls.bin` (3.5 MB), `mls_accounts/`, the `at_rest_keys/` markers, `auth-native.json`, `oidc-state.json`, `session-meta.json`, `push_context.json`, `fcm_token.txt`, `voip_token.txt`, `display_names.json`, `conversation_nicknames.json`, `logs/` | yes (only `graine_seeds.json` excluded, per file) | excluded: the flag is on `Library/Application Support` |
+| `Library/Application Support/fr.emse.canari/` (Tauri's `app_data_dir`, and `app_config_dir`, where `tauri-plugin-sql` opens `canari_<user>.db`) | the SQLite stores (`canari_<user>.db`, `mls_pending.db`), `mls.bin` (3.5 MB), `mls_accounts/`, the `at_rest_keys/` markers, the session and push credentials, `push_context.json`, `display_names.json`, `conversation_nicknames.json`, `logs/` | yes (only `graine_seeds.json` excluded, per file) | excluded: the flag is on `Library/Application Support` |
 | `Library/Application Support/Google/`, `google-heartbeat-storage/` | Firebase Messaging's store | yes | excluded (same directory) |
 | `Library/WebKit/WebsiteData/` (the default persistent `WKWebsiteDataStore`) | `Default/<salt>/<salt>/IndexedDB`, `LocalStorage`, `CacheStorage` (254 MB in 159 files), `ResourceLoadStatistics`, `DeviceIdHashSalts`, `MediaKeys` | yes | excluded: the flag is on `Library/WebKit` |
 | `Library/Preferences/` | `fr.emse.canari.plist`, `canari_notif_ids.plist` (conversation ids to notification ids), Firebase's plist | yes | excluded |
 | `Library/Cookies/`, `Library/HTTPStorages/` | absent on that phone | - | excluded (the pass creates them) |
-| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, `push_secret.txt`, `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files | yes (only `graine_seeds.json` and the push cache excluded, per file) | excluded: the flag is on the container root |
+| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, the extension's copy of the push credential, `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files | yes (only `graine_seeds.json` and the push cache excluded, per file) | excluded: the flag is on the container root |
 | `Documents/` | log exports and an agenda image the member saved there himself | yes | **kept**: the member's own files, which Apple says never to exclude |
 | `Library/Caches/`, `tmp/` | the HTTP cache, the picker's copies | never (Apple: purged, so not backed up) | unchanged |
 | the NSE's and the Share Extension's own containers | nothing in the manifest | - | unchanged |
@@ -3528,7 +3534,8 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
   has one.
 - **The flag is guidance, not a guarantee** - Apple's own words: "it's not a mechanism to guarantee
   those items never appear in a backup or on a restored device". And a backup taken BEFORE 1.7.2
-  still carries everything. So the app must still recognise a copied install by itself, from the
+  still carries everything (the session and push credentials in it are dead: both rotate, the push
+  credential at every registration and the refresh token at every use, [sessions](../sessions.md)). So the app must still recognise a copied install by itself, from the
   at-rest key proven absent ([auth](modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)).
   This pass stops new backups from carrying the data; it does not make that detection unnecessary.
 - **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a

@@ -24,7 +24,7 @@
 //! `Library/WebKit` (IndexedDB, LocalStorage, CacheStorage: 254 MB on that phone), `Library/Preferences`
 //! (the notification-id map names conversations), `Library/Cookies` and `Library/HTTPStorages`
 //! (empty there, the system's network stores), and the App Group container shared with the two
-//! extensions, whose root holds `mls.bin`, `push_secret.txt` and the identity copies. NOT covered, on
+//! extensions, whose root holds `mls.bin`, the push credential and the identity copies. NOT covered, on
 //! purpose: `Documents` (only files the member saved there himself - Apple: never exclude user
 //! documents) and `Library/Caches` / `tmp` (never backed up). The extensions' own containers held
 //! nothing in that manifest.
@@ -38,7 +38,9 @@
 use std::path::{Path, PathBuf};
 
 /// The directories of the app container the pass excludes, relative to its home. Each is created
-/// when absent, so it carries the flag before anything writes into it.
+/// when absent, so it carries the flag before anything writes into it - which is why the two the
+/// system's network stack creates on demand (`Cookies`, `HTTPStorages`, absent on the bench phone)
+/// are listed too: whatever lands there is covered from its first byte.
 pub(crate) const CONTAINER_DIRS: [&str; 5] = [
     "Library/Application Support",
     "Library/WebKit",
@@ -80,23 +82,28 @@ pub(crate) fn excluded_dirs(home: &Path, app_group: Option<&Path>) -> Vec<Exclud
 }
 
 /// Whether `data_dir` (Tauri's `app_data_dir`) lies inside one of `dirs` - the check that the home
-/// the pass was handed is the one Tauri derived its data directory from. A `false` is said at ERROR:
-/// the SQLite stores and `mls.bin` would then sit outside every excluded directory.
+/// the pass was handed is the one Tauri derived its data directory from. A `false` makes the launch
+/// a failure ([`summary`]): the SQLite stores and `mls.bin` would sit outside every excluded
+/// directory.
 pub(crate) fn covers(dirs: &[ExcludedDir], data_dir: &Path) -> bool {
     dirs.iter().any(|d| data_dir.starts_with(&d.path))
 }
 
-/// The one line a launch logs, and whether it is a success: every label when all held, else the
-/// count and the labels that did not (each failure is ALSO said with its reason, at ERROR, by the
-/// caller).
-pub(crate) fn summary(outcomes: &[(&'static str, Result<(), String>)]) -> (bool, String) {
+/// The one line a launch logs, and whether it is a success: every label when all held AND the data
+/// directory is covered ([`covers`]), else the count, the labels that did not hold and, when it
+/// is so, that the data directory is outside them all (each directory's failure is ALSO said with
+/// its reason, at ERROR, by the caller). One verdict: a launch never says ERROR and then "6/6".
+pub(crate) fn summary(
+    outcomes: &[(&'static str, Result<(), String>)],
+    data_dir_covered: bool,
+) -> (bool, String) {
     let failed: Vec<&str> = outcomes
         .iter()
         .filter(|(_, r)| r.is_err())
         .map(|(l, _)| *l)
         .collect();
     let total = outcomes.len();
-    if failed.is_empty() {
+    if failed.is_empty() && data_dir_covered {
         let labels: Vec<&str> = outcomes.iter().map(|(l, _)| *l).collect();
         (
             true,
@@ -106,14 +113,14 @@ pub(crate) fn summary(outcomes: &[(&'static str, Result<(), String>)]) -> (bool,
             ),
         )
     } else {
-        (
-            false,
-            format!(
-                "{}/{total} directories excluded - NOT excluded: {}",
-                total - failed.len(),
-                failed.join(", ")
-            ),
-        )
+        let mut line = format!("{}/{total} directories excluded", total - failed.len());
+        if !failed.is_empty() {
+            line.push_str(&format!(" - NOT excluded: {}", failed.join(", ")));
+        }
+        if !data_dir_covered {
+            line.push_str(" - the app data directory lies outside every excluded directory");
+        }
+        (false, line)
     }
 }
 
@@ -137,12 +144,6 @@ pub(crate) fn exclude_install_from_backup(home: &Path, data_dir: &Path) {
     log::debug!("[BACKUP_EXCLUSION] launch pass");
     let group = crate::app_group::app_group_dir();
     let dirs = excluded_dirs(home, group.as_deref().ok());
-    if !covers(&dirs, data_dir) {
-        log::error!(
-            "[BACKUP_EXCLUSION] the app data directory lies outside every excluded directory - the \
-             home the pass was handed is not the one Tauri derived it from"
-        );
-    }
     let mut outcomes: Vec<(&'static str, Result<(), String>)> = dirs
         .iter()
         .map(|d| (d.label, exclude_one(&d.path)))
@@ -155,7 +156,7 @@ pub(crate) fn exclude_install_from_backup(home: &Path, data_dir: &Path) {
             log::error!("[BACKUP_EXCLUSION] {label} not excluded from backups: {e}");
         }
     }
-    match summary(&outcomes) {
+    match summary(&outcomes, covers(&dirs, data_dir)) {
         (true, verdict) => log::info!("[BACKUP_EXCLUSION] {verdict}"),
         (false, verdict) => log::error!("[BACKUP_EXCLUSION] {verdict}"),
     }
@@ -230,7 +231,10 @@ mod tests {
 
     #[test]
     fn the_summary_lists_every_label_when_all_held() {
-        let (ok, line) = summary(&[("Library/WebKit", Ok(())), (APP_GROUP_LABEL, Ok(()))]);
+        let (ok, line) = summary(
+            &[("Library/WebKit", Ok(())), (APP_GROUP_LABEL, Ok(()))],
+            true,
+        );
         assert!(ok);
         assert_eq!(
             line,
@@ -241,14 +245,27 @@ mod tests {
 
     #[test]
     fn the_summary_names_what_did_not_hold() {
-        let (ok, line) = summary(&[
-            ("Library/WebKit", Ok(())),
-            (APP_GROUP_LABEL, Err("container unavailable".into())),
-        ]);
+        let (ok, line) = summary(
+            &[
+                ("Library/WebKit", Ok(())),
+                (APP_GROUP_LABEL, Err("container unavailable".into())),
+            ],
+            true,
+        );
         assert!(!ok);
         assert_eq!(
             line,
             "1/2 directories excluded - NOT excluded: AppGroup(group.fr.emse.canari)"
+        );
+    }
+
+    #[test]
+    fn an_uncovered_data_directory_fails_the_launch_even_when_every_flag_held() {
+        let (ok, line) = summary(&[("Library/WebKit", Ok(()))], false);
+        assert!(!ok);
+        assert_eq!(
+            line,
+            "1/1 directories excluded - the app data directory lies outside every excluded directory"
         );
     }
 }

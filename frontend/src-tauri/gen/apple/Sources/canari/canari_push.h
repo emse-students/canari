@@ -70,9 +70,10 @@ void CanariMirrorPushStateToAppGroup(void);
 void CanariDrainAppGroupFcmCache(void);
 
 /// Marks the native caches in `dir` - `graine_seeds.json` and every `fcm_message_cache*.ndjson` -
-/// excluded from iCloud and computer backups, and nothing else in it: the directory also holds
-/// `mls.bin`, `push_context.json` and the identity files a restore must bring back. Per file, so it
-/// is re-applied after every atomic write (a new inode does not carry the flag). nil is a no-op.
+/// excluded from iCloud and computer backups. Per file, so it is re-applied after every atomic write
+/// (a new inode does not carry the flag). Since 1.7.2 the DIRECTORY itself is excluded at every
+/// launch by the Rust pass (`backup_exclusion.rs`), the one writer of a directory flag; this pass is
+/// redundant and goes once the iPhone reading proves that one holds. nil is a no-op.
 void CanariExcludeNativeCacheFilesFromBackup(NSString *_Nullable dir);
 
 #endif
