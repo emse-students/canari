@@ -13,7 +13,7 @@
         "@fontsource-variable/nunito": "^5.3.0",
         "@fontsource/chewy": "^5.3.0",
         "@fontsource/leckerli-one": "^5.3.0",
-        "@humanspeak/svelte-markdown": "^2.2.1",
+        "@humanspeak/svelte-markdown": "^2.3.0",
         "@lucide/svelte": "^1.73.0",
         "@sosweetham/tauri-plugin-system-components-api": "0.1.8",
         "@tauri-apps/api": "^2.12.4",
@@ -142,7 +142,7 @@
 
     "@humanspeak/memory-cache": ["@humanspeak/memory-cache@1.2.0", "", {}, "sha512-im7GIIpgjdD6Fx68xCeiXw3XiDv30/WMRAaodMm+ep0ptYfEUd0cdNeTAylHGIRTJIeByKFHdTmPjAktyDM/JQ=="],
 
-    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@2.2.1", "", { "dependencies": { "@humanspeak/memory-cache": "^1.2.0", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.14" }, "peerDependencies": { "@humanspeak/svelte-motion": "^2.0.1-0", "@tanstack/highlight": ">=0.1.0", "katex": ">=0.16.0", "mermaid": ">=10.0.0", "pele": ">=1.10.1", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["@humanspeak/svelte-motion", "@tanstack/highlight", "katex", "mermaid", "pele", "shiki"] }, "sha512-enHJM+QSDWtKiLYMkxhxzyx5297U9ShEWhbb8Mq2JgLt6kJcC1Sh/lfot/uPhy15wKwaqZZa+LBuQ8Bem1eN1g=="],
+    "@humanspeak/svelte-markdown": ["@humanspeak/svelte-markdown@2.3.0", "", { "dependencies": { "@humanspeak/memory-cache": "^1.2.0", "github-slugger": "^2.0.0", "htmlparser2": "^12.0.0", "marked": "^18.0.14" }, "peerDependencies": { "@humanspeak/svelte-motion": "^2.0.1-0", "@tanstack/highlight": ">=0.1.0", "katex": ">=0.16.0", "mermaid": ">=10.0.0", "pele": ">=1.10.1", "shiki": ">=4.0.0", "svelte": "^5.0.0" }, "optionalPeers": ["@humanspeak/svelte-motion", "@tanstack/highlight", "katex", "mermaid", "pele", "shiki"] }, "sha512-ARaqlaEhoNCMo2IRp0w3yGCaj/RbFSVXy6NVI0EtTPUA59GH8mNP+dEWRBl5TZs9+u735AqUR31M/ETd+Z5Tog=="],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 
