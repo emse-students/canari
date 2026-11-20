@@ -82,7 +82,6 @@ earliest version, as a checklist.
 - [P2 - the Android background answer to a `welcome_request` retries the add lock on a clock (2026-11-18)](backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md)
 - [P2 - the reply swipe along a thumb's arc does nothing on WebKit: the thread scrolls instead](backlog.d/p2-the-reply-swipe-along-a-thumb-s-arc-does-nothing-on-webkit.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
-- [P2 - a replay's LAST segment is downloaded again on every `timeupdate` for the final ~12 seconds, and `end of stream declared` is logged each time (S13, 2026-11-20)](backlog.d/p2-a-replay-s-last-segment-is-downloaded-again-on-every-timeupdate-over-its-final-seconds.md)
 
 **P3 - hygiene**
 
