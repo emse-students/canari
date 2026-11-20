@@ -199,3 +199,11 @@ export const LIVE_STRIKE_WINDOW_DAYS = 90;
  * fails the day one of them drifts.
  */
 export const LIVE_REPLAY_MIN_MS = 30_000;
+
+/**
+ * THE MOST POSTER FETCHES OUT AT ONCE (S14, 2026-11-20). MIRRORS the server's
+ * `LIVE_POSTER_MAX_CONCURRENT` (`apps/social-service/src/lives/live.constants.ts`), which sits one
+ * under nginx's `limit_conn lives_posters_conn`; `replayAvailability.test.ts` and
+ * `live-segments-route.test.mjs` fail the day one of the three drifts.
+ */
+export const LIVE_POSTER_MAX_CONCURRENT = 3;
