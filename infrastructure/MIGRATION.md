@@ -72,6 +72,8 @@ reasons, and the order in which a secret moves, are in
 `.github/scripts/tests/secret-levels.test.mjs`: a workflow reading a secret absent from it, or an
 environment secret read by a job that does not declare that environment, fails `make test-ci-scripts`.
 
+**A token roll is complete only once the secret that carries it is rewritten and the consumer is redeployed**: until then the consumer holds the revoked value (dev's TURN budget meter did, 2026-11-19 to 2026-11-20).
+
 <!-- secret-levels:start -->
 | Secret | Level | Read by |
 |---|---|---|

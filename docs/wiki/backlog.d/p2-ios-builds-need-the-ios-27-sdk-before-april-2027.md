@@ -1,6 +1,8 @@
 ## P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **What Apple said.** The upload of build `100700011` (`1.7.0-alpha.11`) was accepted with the
 warning ITMS-90725: it was built with the iOS 26.2 SDK, and from April 2027 App Store Connect

@@ -1,6 +1,8 @@
 ## A push raised while the app is dead titles an unnamed group by its members' first names (owner, 2026-11-17)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **The owner, the evening of 2026-11-17** ([decisions](owner-decisions-of-2026-11-17.md#the-evening-the-owner-present)):
 in `1.7.0` a push for an UNNAMED group (#3793) shows the sender alone - the plain-notification rule for

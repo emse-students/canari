@@ -1,6 +1,8 @@
 ## P2 - a device that accuses frames falsely walks the whole online membership at every cold start (#3762)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - a regression of `1.7.0`: the walk it describes is #3762's, merged 2026-11-17, after `v1.6.12` ([decisions](owner-decisions-of-2026-11-17.md))._
 

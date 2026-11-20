@@ -1,6 +1,8 @@
 ## P1 - rows before ratchet: the orphan buffer, the last window once a checkpoint stores the buffered rows first (raised by the second review of #3321, 2026-11-15)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 **Built.** The first step shipped in `1.7.0` (#3786, [read PASS on the web and the Mi 9T on
 2026-11-18](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11)): a

@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-18
 
-target: 1.7.1
+target: 1.7.2
 
 Recorded so no question answered here is asked again. Taken by the owner in person, about 01:20 on
 2026-11-18. Each line names where its detail lives.

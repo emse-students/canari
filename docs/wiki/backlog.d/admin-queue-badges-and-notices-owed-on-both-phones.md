@@ -1,6 +1,8 @@
 ## The admin queue badges and notices, owed on both phones (a reading for 1.7.1; owner, 2026-11-18)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **only the static counts were read, on the Mi 9T.** The agenda queue's `2` showed on the queue row, the dashboard's Administration row and the dashboard tab ("2 en attente"), with no corrections or reports badge while those queues were empty. Steps 1-5 need a second client filing items and were not taken._
 

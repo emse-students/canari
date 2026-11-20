@@ -1,6 +1,8 @@
 ## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-19, sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3) on `1.7.1-alpha.3`: **the iPhone half PASSED, the Mi half is undecidable; the hold for production stays, and nothing here blocks the `1.7.1` stable.** iPhone 12, a signed-out app signing a test account in through `Canari Dev`: the sheet showed "Conditions d'utilisation de MiConnect" with its checkbox, `findTermsBox` ticked it (its first live proof), the account landed signed in. The helper's submit lookup missed a below-the-fold "Continue" ([filed](p3-the-iphone-sign-in-helper-misses-a-terms-button-below-the-fold.md)); "skipped the second time" was not read. Mi 9T: an in-app sign-in of another test account through `miconnect-authorization` (the `Canari Dev` client) showed only the identifier and password stages and ended signed in - consistent with that account having accepted the current version earlier, but its stored acceptance could not be read in this sitting, so it is not a PASS. Owed: the Mi prompt with an account that has not accepted, and the second-authorization skip on either phone._
 

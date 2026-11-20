@@ -1,6 +1,8 @@
 ## P2 - held migration 176: the videos already posted become CanaReels, waiting for its approval line
 
-target: 1.7.1
+target: 1.7.2
+
+_2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 The owner decided on 2026-11-14 that every vertical video, and every video of 90 s or less, is a
 CanaReel, and that the videos already posted follow ("Oui, toutes"), each expiring one year after its
