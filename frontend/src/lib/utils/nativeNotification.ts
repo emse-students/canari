@@ -195,6 +195,54 @@ export async function postNativeReactionNotification(
 }
 
 /**
+ * Which socket event told this device that its account read a conversation elsewhere: an own
+ * MLS `read_watermark` from another device, or an own salon `channel.read`.
+ */
+export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
+
+/**
+ * Asks the Android builder to REMOVE a conversation's notification, because this account has read
+ * it on another device and this WebView learned it over its socket.
+ *
+ * **THE SECOND TRIGGER OF THE CANCEL**, as {@link postNativeMessageNotification} is the second
+ * trigger of the post (owner's report, 2026-11-20). The cancel had one trigger, the push - a silent
+ * self frame, or `channel_read` - and the server pushes only a frame the device did not ACK. A read
+ * receipt this WebView received and ACKed (app in front, or backgrounded and not yet frozen) was
+ * therefore never pushed, and the banner this WebView had posted for the conversation stayed in the
+ * shade for good. Same key as the post (the conversation id), so the two triggers of each meet.
+ *
+ * Called only when this account's OWN mark moved - the fact a banner is made stale by. Off Android
+ * there is no native banner to remove: `false`, and nothing is invoked.
+ *
+ * @returns whether the native side queued the cancel.
+ */
+export async function dismissNativeConversationNotification(
+  conversationId: string,
+  event: ReadElsewhereEvent
+): Promise<boolean> {
+  if (!isAndroidTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('retirer_notification_conversation', {
+      groupId: conversationId,
+      reason: event,
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused to dismiss ${conversationId} (${event}) - its banner stays.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    // Said at a level that accuses: the banner of a conversation already read stays in the shade.
+    console.error(
+      `[NOTIF] Dismissing ${conversationId} (${event}) threw - its banner stays: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
  * The conversation title a notification should carry, from the row the client already holds.
  *
  * EMPTY for a direct message, which is the server's own contract for `groupName` in a push - see

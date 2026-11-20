@@ -721,10 +721,11 @@ the sidebar reveals its community and the members panel loads; DM/group targets 
 
 Cross-device read dismissal: opening a channel that had unread messages calls
 `POST /api/channels/:channelId/read`, which fans out a silent `channel_read` push (via the same
-internal push path) to the caller's own devices. Sibling devices in the background cancel that
-channel's notification (`cancelConversationNotification("channel_<uuid>")`); the reading device
-ignores it (foreground guard). This mirrors the MLS DM/group behaviour, where a self read-receipt
-push clears the conversation's notification on the user's other devices.
+internal push path) to the caller's own devices. Every device that receives it cancels that
+channel's notification (`cancelConversationNotification("channel_<uuid>")`) - in front as well as
+in the background since 2026-11-20 (`ForegroundGuard`, below). This mirrors the MLS DM/group
+behaviour, where a self read-receipt push clears the conversation's notification on the user's
+other devices.
 
 #### Read receipts in a salon
 
@@ -789,8 +790,33 @@ posters do set `threadIdentifier` to the conversation (`groupId`, or `channel_<u
 then writes the badge from what remains — computed from the array already in hand, since
 `removeDeliveredNotificationsWithIdentifiers:` has no completion handler to wait on. Fixed
 2026-08-16, together with the missing `apns` block that had kept the frame from arriving at all
-(see [chat-delivery](chat-delivery.md)). Android is unaffected: it has one poster, and its
-`groupId → notifId` map is written by that poster.
+(see [chat-delivery](chat-delivery.md)).
+
+**Android has one KEY but had one cancel TRIGGER against two post triggers (fixed 2026-11-20).**
+Both Android posters - the push (`CanariFirebaseMessagingService`) and the WebView's frame
+(`notifier_message_natif` -> `notifyMessageFromWebSocket`, since 2026-09-18) - post under
+`getStableNotifId(<conversation id>)`, the MLS group id or `channel_<uuid>`, so the ids always
+agreed. The defect was the cancel: only a PUSH triggered it, and two things kept that push from
+acting on a banner the WebView had posted while the app was open (owner's report: posted in front,
+app sent to the background, read on the web, never removed - DMs, groups and salons alike):
+
+- **a read the WebView took over its socket is never pushed.** The server pushes an MLS frame only
+  when the device has not ACKed it within 10 s (`PUSH_DEFERRED`); an own `read_watermark` that the
+  live WebView received and ACKed - app in front, or backgrounded and not yet frozen - produced no
+  push, and the WebView itself cancelled nothing. Now the WebView is the cancel's second trigger:
+  an own `read_watermark` from another device (`systemMessageHandler`) or an own `channel.read`
+  (`channelEventHandler`) that MOVES this account's mark calls `dismissNativeConversationNotification`
+  -> `retirer_notification_conversation` -> `dismissConversationFromWebSocket`, which cancels under
+  the same key on `WS_NOTIF_LANE`, the post's own lane, so a cancel cannot overtake a post still
+  being built for the same conversation;
+- **`channel_read` was dropped in front.** The foreground guard of `dispatchPush` let through only
+  what shows in front, on the premise that the device in front is the one reading - but a phone in
+  front showing another conversation holds that salon's banner. `channel_read` touches no `mls.bin`
+  and now passes (`push/ForegroundGuard.kt`, pinned by `ForegroundGuardTest`).
+
+Like the push's cancel, the WebView's removes the conversation's whole notification, whatever its
+lines' instants: one rule for both triggers. Pinned by `systemMessageHandler.readState.test.ts`,
+`channelEventHandler.read.test.ts` and `nativeNotification.test.ts`.
 
 ### Forms (`/api/forms`)
 

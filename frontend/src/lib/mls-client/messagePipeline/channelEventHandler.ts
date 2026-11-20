@@ -26,6 +26,7 @@ import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
 import { salonGrants } from '$lib/utils/chat/memberRemoval';
 import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
+import { dismissNativeConversationNotification } from '$lib/utils/nativeNotification';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -438,6 +439,12 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       conversations.set(key, next);
       // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
       publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
+      // MY OWN MARK MOVED: the salon's Android banner goes too, by the socket as well as by the
+      // `channel_read` push - the WebView posted it, and the push alone left it standing in front
+      // (owner's report, 2026-11-20).
+      if (userId.toLowerCase() === ctx.userId.toLowerCase()) {
+        void dismissNativeConversationNotification(key, 'channel.read');
+      }
     }
     return;
   }

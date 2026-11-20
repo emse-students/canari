@@ -46,6 +46,7 @@ import fr.emse.canari.push.ConversationNicknames
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
+import fr.emse.canari.push.ForegroundGuard
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
@@ -2330,6 +2331,47 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
+         * Removes a conversation's notification because THIS ACCOUNT read it on another device, as
+         * the WebView learned it over its socket - the second trigger of the CANCEL, exactly as
+         * [notifyMessageFromWebSocket] is the second trigger of the POST.
+         *
+         * WHY A SECOND TRIGGER IS OWED (owner's report, 2026-11-20). The cancel had one trigger, the
+         * push: a silent self frame ([handleMlsFrame]) or a `channel_read`. But a read reaches a
+         * phone whose engine is alive over the SOCKET, and the server pushes only a frame the device
+         * did not ACK within 10 s - so a self read receipt the WebView received and ACKed (app in
+         * front, or backgrounded and not yet frozen) was never pushed, and the banner the WebView had
+         * posted for that conversation stayed in the shade for good. The post had two triggers and
+         * the cancel one; now both have two, under the same key ([getStableNotifId] of the
+         * conversation id).
+         *
+         * ON [WS_NOTIF_LANE], THE POST'S OWN LANE: the socket hands this device the message and then
+         * the read of it, in that order, and a cancel overtaking the still-queued post (its avatar
+         * fetch is network I/O) would leave the very banner it was sent to remove.
+         *
+         * @param groupId the conversation id: the MLS group id, or `channel_<uuid>` for a salon.
+         * @param reason which socket event said so (`read_watermark`, `channel.read`), for the log.
+         * @return whether the cancel was queued; `false` only with no Application context.
+         */
+        @JvmStatic
+        fun dismissConversationFromWebSocket(groupId: String, reason: String): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.w(TAG, "dismissConversationFromWebSocket: no Application context - group=${groupId.take(8)} NOT dismissed ($reason)")
+                return false
+            }
+            Log.d(TAG, "dismissConversationFromWebSocket: queued group=${groupId.take(8)} - read on another device ($reason)")
+            WS_NOTIF_LANE.execute {
+                try {
+                    cancelConversationNotification(context, groupId)
+                } catch (e: Exception) {
+                    // EVERY SWALLOWED BRANCH LOGS: the banner of a conversation already read stays.
+                    Log.e(TAG, "dismissConversationFromWebSocket: cancel failed for ${groupId.take(8)}: ${throwableSite(e)}")
+                }
+            }
+            return true
+        }
+
+        /**
          * Posts (or updates) a conversation's REACTION notification - the ONE composition both
          * triggers of a reaction share: the push ([handleReactionNotification], app not in front)
          * and the WebSocket frame ([notifyMessageFromWebSocket] with `reaction = true`, that
@@ -3486,9 +3528,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // A CALL RING TOUCHES NO mls.bin EITHER, and whether it shows in front is not this guard's
         // question but `showIncomingCallNotification`'s: the page rings a call only while it holds
         // the gateway socket, which a page at the PIN gate does not (`foregroundPageRings`).
-        val showsWhileForeground =
-            msgType == "form_reminder" || (msgType == "social" && !isReaction) || msgType == "call_ring"
-        if (MainActivity.isInForeground && !showsWhileForeground) {
+        //
+        // A SALON READ ELSEWHERE (`channel_read`) IS A PURE CANCELLATION and acts in front too: a
+        // phone showing another conversation holds a banner for that salon. The list is ONE pure
+        // function, [ForegroundGuard], pinned on the JVM.
+        if (MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction)) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
             return
         }
@@ -3614,8 +3658,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Channel read on another of my devices: clear this device's notification for that channel
         // (cross-device read-state sync, channel counterpart of the MLS silent-receipt path below).
-        // The reading device is in the foreground and already returned above; only background
-        // sibling devices reach here. No decryption, no state - pure notification cancellation.
+        // Reached in the foreground too since 2026-11-20 ([ForegroundGuard]): the app in front may
+        // be showing another conversation while this salon's banner sits in the shade. No
+        // decryption, no state - pure notification cancellation.
         if (msgType == "channel_read") {
             val channelId = data["channelId"] ?: ""
             if (channelId.isNotEmpty()) {

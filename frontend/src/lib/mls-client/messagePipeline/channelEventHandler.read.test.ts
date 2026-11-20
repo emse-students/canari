@@ -23,6 +23,11 @@ vi.mock('$lib/utils/chat/messageUtils', () => ({
   appMsgToChannelSystemEnvelope: vi.fn(),
 }));
 vi.mock('$lib/mls-client/incomingDelivery', () => ({ parseServerTimestampMs: vi.fn() }));
+const dismissNativeConversationNotification = vi.fn();
+vi.mock('$lib/utils/nativeNotification', () => ({
+  dismissNativeConversationNotification: (...args: unknown[]) =>
+    dismissNativeConversationNotification(...args),
+}));
 
 const { handleChannelEvent } = await import('./channelEventHandler');
 
@@ -78,6 +83,26 @@ describe('channelEventHandler - channel.read', () => {
     const c = conversations.get('channel_c1') as { unreadCount: number; readWatermarks: unknown };
     expect(c.unreadCount).toBe(0);
     expect(c.readWatermarks).toEqual({ me: 200 });
+  });
+
+  // The salon's Android banner goes by the socket too (owner's report, 2026-11-20): the WebView
+  // posted it, and the `channel_read` push alone left it standing while the app was in front.
+  it('my own mark from another device dismisses the salon banner, and only mine does', async () => {
+    dismissNativeConversationNotification.mockClear();
+    const conversations = new Map<string, unknown>([
+      ['channel_c1', { id: 'channel_c1', unreadCount: 1, messages: [] }],
+    ]);
+
+    await handleChannelEvent(read('bob', 200), ctx(conversations));
+    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
+
+    await handleChannelEvent(read('Me', 200), ctx(conversations));
+    // A repeat moves nothing, and so dismisses nothing a second time.
+    await handleChannelEvent(read('me', 200), ctx(conversations));
+    expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
+      'channel_c1',
+      'channel.read'
+    );
   });
 
   it("someone else's mark never touches my count", async () => {

@@ -1,3 +1,10 @@
+const dismissNativeConversationNotification = vi.fn();
+vi.mock('$lib/utils/nativeNotification', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/nativeNotification')>()),
+  dismissNativeConversationNotification: (...args: unknown[]) =>
+    dismissNativeConversationNotification(...args),
+}));
+
 import { handleSystemEvent } from './systemMessageHandler';
 
 /**
@@ -65,6 +72,48 @@ describe('handleSystemEvent - read_watermark', () => {
     await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
 
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
+  });
+
+  // READ ELSEWHERE, LEARNED OVER THE SOCKET (owner's report, 2026-11-20): the server pushes only a
+  // frame the device did not ACK, so the push that was the cancel's only trigger never came for a
+  // receipt the WebView took, and the Android banner of the conversation stayed for good.
+  it('our own mark from another device dismisses the native banner of that conversation', async () => {
+    dismissNativeConversationNotification.mockClear();
+    const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect(dismissNativeConversationNotification).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark'
+    );
+  });
+
+  it("a peer's mark, or our own that moves nothing, dismisses no banner", async () => {
+    dismissNativeConversationNotification.mockClear();
+    await handleSystemEvent(
+      'read_watermark',
+      { at: 1000 },
+      makeCtx({ senderNorm: 'peer', userId: 'me' }) as any
+    );
+    const conversations = new Map<string, any>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          unreadCount: 0,
+          readWatermarks: { me: 5000 },
+          messages: [{ id: 'm1', senderId: 'peer', timestamp: new Date(1000) }],
+        },
+      ],
+    ]);
+    await handleSystemEvent(
+      'read_watermark',
+      { at: 1000 },
+      makeCtx({ conversations, senderNorm: 'me', userId: 'me' }) as any
+    );
+
+    expect(dismissNativeConversationNotification).not.toHaveBeenCalled();
   });
 
   it("records a peer's read state without touching our own badge", async () => {

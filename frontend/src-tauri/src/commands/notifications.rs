@@ -76,68 +76,49 @@ pub(crate) fn notifier_message_natif(
     {
         use jni::objects::{JObject, JValue};
 
-        let Some(vm) = crate::android_java_vm() else {
-            log::error!("[NOTIF] no JavaVM cached - the message notification was NOT raised");
-            return false;
-        };
-        let mut env = match vm.attach_current_thread() {
-            Ok(env) => env,
-            Err(e) => {
-                log::error!("[NOTIF] attach_current_thread failed: {e} - notification NOT raised");
-                return false;
-            }
-        };
-        // NOT `find_class`. A thread attached from native code has no Java frames on its stack, so
-        // `FindClass` falls back to the SYSTEM class loader, which knows the boot classpath and
-        // nothing of ours - the reason `flush_webview_cookies` could only ever call a framework
-        // class. The app's own loader is cached at `JNI_OnLoad`, where the stack still has one.
-        let Some(class) =
-            crate::find_app_class(&mut env, "fr.emse.canari.CanariFirebaseMessagingService")
-        else {
-            log::error!("[NOTIF] CanariFirebaseMessagingService not loadable - NOT raised");
-            return false;
-        };
-
-        // Built in one pass so that a failure names WHICH argument failed: five separate matches
-        // would say the same thing five times, and one shared message would say nothing.
-        let mut args = Vec::with_capacity(5);
-        for (value, what) in [
-            (&group_id, "groupId"),
-            (&sender_id, "senderId"),
-            (&sender_name, "senderName"),
-            (&group_name, "groupName"),
-            (&body, "body"),
-        ] {
-            match env.new_string(value) {
-                Ok(s) => args.push(s),
-                Err(e) => {
-                    log::error!("[NOTIF] new_string({what}) failed: {e} - notification NOT raised");
-                    return false;
-                }
-            }
-        }
-        // A boxed Boolean, so "not said" stays null rather than becoming `false` (a DM). The class
-        // is a boot class, which the system loader of this attached thread does find.
-        let is_group_arg = match is_group {
-            None => JObject::null(),
-            Some(value) => {
-                match env.new_object(
-                    "java/lang/Boolean",
-                    "(Z)V",
-                    &[JValue::Bool(u8::from(value))],
-                ) {
-                    Ok(boxed) => boxed,
+        with_native_builder(|env, class| {
+            // Built in one pass so that a failure names WHICH argument failed: five separate matches
+            // would say the same thing five times, and one shared message would say nothing.
+            let mut args = Vec::with_capacity(5);
+            for (value, what) in [
+                (&group_id, "groupId"),
+                (&sender_id, "senderId"),
+                (&sender_name, "senderName"),
+                (&group_name, "groupName"),
+                (&body, "body"),
+            ] {
+                match env.new_string(value) {
+                    Ok(s) => args.push(s),
                     Err(e) => {
-                        log::error!("[NOTIF] new_object(isGroup) failed: {e} - NOT raised");
+                        log::error!(
+                            "[NOTIF] new_string({what}) failed: {e} - notification NOT raised"
+                        );
                         return false;
                     }
                 }
             }
-        };
+            // A boxed Boolean, so "not said" stays null rather than becoming `false` (a DM). The class
+            // is a boot class, which the system loader of this attached thread does find.
+            let is_group_arg = match is_group {
+                None => JObject::null(),
+                Some(value) => {
+                    match env.new_object(
+                        "java/lang/Boolean",
+                        "(Z)V",
+                        &[JValue::Bool(u8::from(value))],
+                    ) {
+                        Ok(boxed) => boxed,
+                        Err(e) => {
+                            log::error!("[NOTIF] new_object(isGroup) failed: {e} - NOT raised");
+                            return false;
+                        }
+                    }
+                }
+            };
 
-        match env
+            match env
             .call_static_method(
-                &class,
+                class,
                 "notifyMessageFromWebSocket",
                 "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZLjava/lang/Boolean;Z)Z",
                 &[
@@ -171,6 +152,7 @@ pub(crate) fn notifier_message_natif(
                 false
             }
         }
+        })
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -188,6 +170,103 @@ pub(crate) fn notifier_message_natif(
             is_group,
             reaction,
         );
+        false
+    }
+}
+
+/// Runs `call` against `CanariFirebaseMessagingService` on a thread attached to the JVM - the ONE
+/// door both commands of this file take into the native builder.
+///
+/// NOT `find_class`. A thread attached from native code has no Java frames on its stack, so
+/// `FindClass` falls back to the SYSTEM class loader, which knows the boot classpath and nothing of
+/// ours - the reason `flush_webview_cookies` could only ever call a framework class. The app's own
+/// loader is cached at `JNI_OnLoad`, where the stack still has one.
+///
+/// `false` when the class cannot be reached (no JavaVM, no attach, no class loader), logged at a
+/// level that accuses: nothing the caller asked of the native builder happened.
+#[cfg(target_os = "android")]
+fn with_native_builder(
+    call: impl FnOnce(&mut jni::JNIEnv<'_>, &jni::objects::JClass<'_>) -> bool,
+) -> bool {
+    let Some(vm) = crate::android_java_vm() else {
+        log::error!("[NOTIF] no JavaVM cached - the native builder was NOT reached");
+        return false;
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(e) => {
+            log::error!(
+                "[NOTIF] attach_current_thread failed: {e} - the native builder was NOT reached"
+            );
+            return false;
+        }
+    };
+    let Some(class) =
+        crate::find_app_class(&mut env, "fr.emse.canari.CanariFirebaseMessagingService")
+    else {
+        log::error!("[NOTIF] CanariFirebaseMessagingService not loadable - NOT reached");
+        return false;
+    };
+    call(&mut env, &class)
+}
+
+/// Asks the native side to remove a conversation's notification because THIS ACCOUNT read it on
+/// another device, as the WebView learned it over its socket (Android).
+///
+/// **THE SECOND TRIGGER OF THE CANCEL**, as [`notifier_message_natif`] is the second trigger of
+/// the post. The push was the cancel's only trigger, and the server pushes only a frame the device
+/// did not ACK: a self read receipt the WebView received over its socket (app in front, or
+/// backgrounded and not yet frozen) was never pushed, so the banner the WebView had posted for that
+/// conversation was never removed (owner's report, 2026-11-20). Kotlin queues the cancel on the
+/// post's own lane, so it cannot overtake a post still being built for the same conversation.
+///
+/// `group_id` is the conversation id the banner was posted under (the MLS group id, or
+/// `channel_<uuid>`); `reason` names the socket event, for the log. Returns whether the cancel was
+/// queued; `false` off Android, where there is no native banner to remove and the caller never
+/// calls.
+#[tauri::command]
+pub(crate) fn retirer_notification_conversation(group_id: String, reason: String) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        with_native_builder(|env, class| {
+            let (group, why) = match (env.new_string(&group_id), env.new_string(&reason)) {
+                (Ok(group), Ok(why)) => (group, why),
+                (Err(e), _) | (_, Err(e)) => {
+                    log::error!(
+                        "[NOTIF] new_string failed: {e} - the read conversation was NOT dismissed"
+                    );
+                    return false;
+                }
+            };
+            match env
+                .call_static_method(
+                    class,
+                    "dismissConversationFromWebSocket",
+                    "(Ljava/lang/String;Ljava/lang/String;)Z",
+                    &[(&group).into(), (&why).into()],
+                )
+                .and_then(|v| v.z())
+            {
+                Ok(queued) => {
+                    log::debug!(
+                        "[NOTIF] dismissal of {} {} ({reason})",
+                        group_id.chars().take(8).collect::<String>(),
+                        if queued { "queued" } else { "refused" }
+                    );
+                    queued
+                }
+                Err(e) => {
+                    log::error!(
+                        "[NOTIF] dismissConversationFromWebSocket failed: {e} - NOT dismissed"
+                    );
+                    false
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (group_id, reason);
         false
     }
 }
