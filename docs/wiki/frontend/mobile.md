@@ -646,32 +646,48 @@ lines (`nseOutcomes.ts`):
 | --- | --- |
 | Source | The service imports `FcmLog as Log` (`NativePushLog.kt`): same signatures, and every `w`, `e` and `println` at WARN or above ALSO goes to `NativePushLog.record`. No call site was rewritten. Debug and info stay in logcat, as the in-app log keeps no debug. |
 | Line | `NativePushLogLine`: the service's own instant in the in-app log's stamp shape, `W`/`E`, the tag, the message, an exception named by its CLASS (never its message or stack), on one line. |
-| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB. Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
+| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB (the recorded INFO lines have their own pair, below). Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
 | Into the log | `take_native_push_log` (empty off Android) hands the lines over, oldest first, and removes them; `drainNativePushLog` (`nativePushLog.ts`) writes each as `[NATIVE_PUSH] <line>` through `appendLog`, plus one count line - at login, at every resume, and **at the top of `exportAppLog`, before `readAppLog`**, so an export carries what the service said since the last resume. That is the one hook in the export: what the file CONTAINS, never how it is shared. |
 | Privacy | Through `appendLog`, so through the console wrapper and `redactLogLine` like every other line: the lines leave the device under the in-app log's rules (8-character id prefixes, no secrets, no prose values). The service never logs message text; the file itself is app-private and plain, like logcat. |
 | Failure | A writer that cannot write says so ONCE to logcat (`NativePushLog`: `the push service's lines are NOT reaching the in-app log`), never through `FcmLog`, so it cannot recurse. A take that cannot read or remove a generation says so and leaves it for the next take. |
 
-**One INFO line is recorded on purpose: what each show decision did (2026-11-20).** A full-mode,
-high-priority push reached a Pixel, was cached (the reopen's `FCM_CACHE` pre-inject listed it), and
-no notification was seen - and nothing in the export could say why, because every way
-`showMessageNotification` ends without a visible banner was a logcat `Log.d`: the app in the
-foreground, the conversation already read from the shade, the message already announced and
-dismissed, already in the shade, or posted silent under a call. Nor does `manager.notify` check the
+**One INFO line is recorded on purpose: how each visible message push ended (2026-11-20).** A
+full-mode, high-priority push reached a Pixel, was cached (the reopen's `FCM_CACHE` pre-inject listed
+it), and no notification was seen - and nothing in the export could say why, because every way a
+message push ends without a visible banner was a logcat `Log.d`. Nor does `manager.notify` check the
 app's switch or the channel's importance, so "posted" and "posted, then dropped by the OS" looked the
-same. Now every return of the show decision records exactly ONE line, whichever trigger reached it
-(push, salon push, WebSocket frame, reaction):
+same. Now each of the ends below records exactly ONE line:
 
 ```
-I CanariFCM: [PUSH_SHOW] outcome=<token> groupId=<8 chars> channel=<channel id> os: enabled=<bool> importance=<none|min|low|default|high> dnd=<all|priority|none|alarms> bucket=<active|working_set|frequent|rare|restricted> powerSave=<bool>
+I CanariFCM: [PUSH_SHOW] outcome=<token> conv=<g:8 | ch:8 | ?> channel=<id | ?> os: enabled=<bool> paused=<bool> importance=<none|min|low|default|high> dnd=<all|priority|none|alarms> bucket=<active|working_set|frequent|rare|restricted> powerSave=<bool>[ -> the OS drops it][ why: <reason>]
 ```
+
+| Where it ends | Outcome |
+| --- | --- |
+| `showMessageNotification`, whichever trigger reached it (MLS push, salon push, WebSocket frame, reaction) | `posted`, `posted-silent-call`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`, `suppressed-already-alerted`. `already-in-shade` (the second trigger of one message refreshing its line) is decided too but stays in logcat: recording it would spend the budget on nothing. |
+| `dispatchPush`'s foreground guard, for a visible `message`, `channel` or reaction push | `suppressed-foreground-guard`, `why: type=<type> reaction=<bool>` |
+| `onWakePush`'s foreground guard, for a visible wake | `suppressed-foreground-wake` (a wake names no conversation: `conv=?`) |
+| The decrypt yielded to the foreground engine, which holds the frame | `yielded` |
+| The member's level withholds it (`NotificationLevelGate`) - the message IS cached | `withheld-level`, `why: cached=<bool> <the gate's reason>` |
+| Refused for good while the real banner is already up | `refused-covered` |
+
+**What a missing line now proves.** An MLS message that is in `FCM_CACHE` with no `[PUSH_SHOW]` line
+for its conversation means the process died between the cache write and the show decision: in
+`handleMlsFrame` the two cache writes are followed only by `withheld-level`, `refused-covered` or
+the show decision, and each records. **Two kinds of push leave no line, on purpose**: a SILENT frame
+(a commit, a receipt, a key frame - nothing was to be announced), and a conversation muted at
+`none`, which the server sends silent. The ends in the table are the ones covered; a visible push
+that stops anywhere else (a signed-out device, a frame with nothing to render) is not claimed here.
 
 | Part | Decision |
 | --- | --- |
-| Outcomes | `posted`, `posted-silent-call`, `already-in-shade`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`, `suppressed-already-alerted` - `PushShowOutcome.kt`, pure, pinned by `PushShowOutcomeTest` in `android-tests`. |
-| OS state | Read at the decision (`recordShowOutcome`): `areNotificationsEnabled`, the posting channel's importance, the DND interruption filter, `UsageStatsManager.appStandbyBucket` (a `rare` or `restricted` bucket defers high-priority FCM) and `PowerManager.isPowerSaveMode`. A field the platform would not answer is `?`, never guessed. |
-| Level | **INFO by design, through `FcmLog.iRecorded`**, the one deliberate path past the W/E gate (`NativePushLog.recordInfo`): a plain `Log.i` still stays in logcat, and no WARN is spent on a decision that accuses nothing. **WARN** - with ` -> the OS drops it` - exactly when the decision posted and the app's notifications are off or the channel is blocked (`NONE`). A `LOW` channel still shows it, quietly: the member's choice, reported in `importance=` and not accused. |
-| Wiring | `pushShowOutcome.test.ts` reads the function's body and fails when a `return` is not preceded by its own `recordShowOutcome`, or when a post's outcome is recorded before `manager.notify`. A builder that throws records nothing - its caller's WARN says so. |
-| Content | An outcome token, an 8-character id prefix, a channel id and platform constants by name; never message text, never a name. `drainNativePushLog`'s count line counts `info=` beside `errors=` and `warnings=`. |
+| Outcomes | `PushShowOutcome.kt`, pure, pinned by `PushShowOutcomeTest` in `android-tests`. |
+| Conversation | `ch:` and 8 characters of a salon's own id (`channel_` stripped first, or every salon read `channel_`), `g:` and 8 of an MLS conversation. |
+| OS state | Read at the decision (`recordShowOutcome`): `areNotificationsEnabled`, `areNotificationsPaused` (the app suspended), the importance of the channel it posts on - the CONVERSATION's own channel when its shortcut has one (`getNotificationChannel(channel, shortcutId)`, API 30+), since a member can silence one conversation alone - the DND interruption filter, `UsageStatsManager.appStandbyBucket` (a `rare` or `restricted` bucket defers high-priority FCM) and `PowerManager.isPowerSaveMode`. A field the platform would not answer is `?`, never guessed. |
+| Level | **INFO by design, through `FcmLog.iRecorded`**, the one deliberate path past the W/E gate (`NativePushLog.recordInfo`): a plain `Log.i` still stays in logcat, and no WARN is spent on an end that accuses nothing. **WARN** - with ` -> the OS drops it` - exactly when the decision posted and the app's notifications are off, paused, or the channel is blocked (`NONE`). A `LOW` channel still shows it, quietly: the member's choice, reported in `importance=` and not accused. |
+| Budget | **Its own pair of files**, `native_push_info.txt` / `native_push_info.1.txt`, with the same 32 KiB rotation (`Stream::Info` in `native_push_log.rs`, JNI `nativeAppendPushLog(..., info)`). Many ordinary INFO lines in the WARN/ERROR pair would rotate the warnings out whole; in their own pair they never can. A take merges the two streams by the service's stamp. Pinned by `info_lines_never_evict_a_warning`. |
+| Wiring | `pushShowOutcome.test.ts` reads the code (comments stripped): `showMessageNotification` holds as many `recordShowOutcome` calls as `return`s (`?: return` and `-> return` counted), the post is recorded right after `manager.notify`, and each earlier end above records once before its return. A builder that throws records nothing - its caller's WARN says so. |
+| Content | An outcome token, an 8-character id prefix, a channel id, platform constants by name, and a system-worded reason; never message text, never a name. The line passes `redactLogLine` unchanged (pinned). `drainNativePushLog`'s count line counts `info=` beside `errors=` and `warnings=`. |
 
 ## The app owns which URLs its own WebView may load
 

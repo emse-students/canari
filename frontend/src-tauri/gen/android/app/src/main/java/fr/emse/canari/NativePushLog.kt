@@ -21,8 +21,11 @@ object NativePushLog {
     /** Whether a failure was already said, so a dead writer costs one logcat line, not one per line. */
     @Volatile private var failureSaid = false
 
-    /** Appends one line under `dataDir`; true when written. See `lib.rs`. */
-    private external fun nativeAppendPushLog(dataDir: String, line: String): Boolean
+    /**
+     * Appends one line under `dataDir`; true when written. [info] stores it in the recorded-INFO
+     * stream, whose own budget can never evict a WARN or ERROR line. See `lib.rs`.
+     */
+    private external fun nativeAppendPushLog(dataDir: String, line: String, info: Boolean): Boolean
 
     /** Records one service line when its level is one the in-app log carries ([NativePushLogLine.records]). */
     fun record(level: Char, tag: String, message: String, error: Throwable?) {
@@ -41,7 +44,7 @@ object NativePushLog {
         val context = CanariApplication.appContext() ?: return sayOnce("no application context yet")
         try {
             val line = NativePushLogLine.format(System.currentTimeMillis(), level, tag, message, error, ZoneId.systemDefault())
-            if (!nativeAppendPushLog(MlsContextLoader.tauriDataDir(context).absolutePath, line)) {
+            if (!nativeAppendPushLog(MlsContextLoader.tauriDataDir(context).absolutePath, line, level == 'I')) {
                 sayOnce("the native writer refused a line")
             }
         } catch (e: Throwable) {

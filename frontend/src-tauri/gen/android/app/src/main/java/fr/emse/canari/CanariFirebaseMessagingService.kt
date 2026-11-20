@@ -2770,23 +2770,37 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Records what one show decision did, with the OS state that decides whether a post is seen,
-         * as ONE line in the in-app log ([PushShowOutcome], 2026-11-20). Every return of
-         * [showMessageNotification] calls it exactly once (`pushShowOutcome.test.ts`).
-         * A WARN only when the app posted what the OS drops; an INFO line, recorded on purpose
-         * ([FcmLog.iRecorded]), for every decision by design.
+         * Records how one visible message push ended, with the OS state that decides whether a post
+         * is seen, as ONE line in the in-app log ([PushShowOutcome], 2026-11-20). Every return of
+         * [showMessageNotification] calls it exactly once, and so does every earlier end of a visible
+         * message push (`pushShowOutcome.test.ts`). A WARN only when the app posted what the OS
+         * drops; an INFO line, recorded on purpose ([FcmLog.iRecorded]), for every end by design; an
+         * outcome the log does not carry ([PushShowOutcome.Outcome.recorded]) stays in logcat.
+         *
+         * @param channel    the notification channel, null when none was chosen yet
+         * @param shortcutId the conversation's shortcut, whose own channel (API 30+) is the one that
+         *                   decides when the member silenced this conversation alone
+         * @param detail     a system-worded reason, never message text or a name
          */
-        private fun Context.recordShowOutcome(
+        internal fun Context.recordShowOutcome(
             outcome: PushShowOutcome.Outcome,
-            groupId: String,
-            channel: String,
+            groupId: String?,
+            channel: String?,
             known: NotificationManager? = null,
+            shortcutId: String? = null,
+            detail: String? = null,
         ) {
             val os = try {
                 val manager = known ?: getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val postedOn = channel?.let { id ->
+                    shortcutId?.takeIf { android.os.Build.VERSION.SDK_INT >= 30 }
+                        ?.let { manager.getNotificationChannel(id, it) }
+                        ?: manager.getNotificationChannel(id)
+                }
                 PushShowOutcome.OsState(
                     notificationsEnabled = manager.areNotificationsEnabled(),
-                    channelImportance = manager.getNotificationChannel(channel)?.importance,
+                    paused = if (android.os.Build.VERSION.SDK_INT >= 29) manager.areNotificationsPaused() else false,
+                    channelImportance = postedOn?.importance,
                     interruptionFilter = manager.currentInterruptionFilter,
                     standbyBucket = (getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager)?.appStandbyBucket,
                     powerSave = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isPowerSaveMode,
@@ -2794,10 +2808,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } catch (e: Exception) {
                 // The decision is still recorded, its OS state as unread (`?`).
                 Log.w(TAG, "recordShowOutcome: OS notification state unreadable: ${e.javaClass.simpleName}")
-                PushShowOutcome.OsState(null, null, null, null, null)
+                PushShowOutcome.OsState.UNREAD
             }
-            val line = PushShowOutcome.line(outcome, groupId, channel, os)
-            if (PushShowOutcome.level(outcome, os) == 'W') Log.w(TAG, line) else Log.iRecorded(TAG, line) // log-safe: PushShowOutcome.line - an outcome token, an 8-character id prefix, a channel id and OS constants by name
+            val line = PushShowOutcome.line(outcome, groupId, channel, os, detail)
+            when {
+                !outcome.recorded -> Log.d(TAG, line) // log-safe: PushShowOutcome.line - an outcome token, an 8-character id prefix, a channel id and OS constants by name
+                PushShowOutcome.level(outcome, os) == 'W' -> Log.w(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+                else -> Log.iRecorded(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+            }
         }
 
         /**
@@ -3161,6 +3179,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
             manager.notify(notifId, notif)
+            recordShowOutcome(
+                PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds), groupId, channel, manager, conversationShortcutId,
+            )
 
             // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
             // announcement that never reached the shade - the record would then suppress the retry.
@@ -3172,9 +3193,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // this very notification with it. A reaction passes nothing: it is not in the bundle.
             refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
 
-            recordShowOutcome(
-                PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds), groupId, channel, manager,
-            )
             // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
             // has on the line it must replace - see [supersedes].
             return stamp
@@ -3600,6 +3618,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             msgType == "form_reminder" || (msgType == "social" && !isReaction) || msgType == "call_ring"
         if (MainActivity.isInForeground && !showsWhileForeground) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
+            if (PushShowOutcome.guardedAnnouncement(msgType, isReaction, data["silent"] == "true", data["isWelcome"] == "true")) {
+                val conversation = data["groupId"] ?: data["channelId"]?.let { "channel_$it" }
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND_GUARD, conversation, null, detail = "type=$msgType reaction=$isReaction")
+            }
             return
         }
 
@@ -3957,6 +3979,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // sent down the fallback path for a frame it had already handed over.
         if (outcome is PushDecrypt.Yielded) {
             Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
+            recordShowOutcome(PushShowOutcome.Outcome.YIELDED, groupId, null)
             return
         }
 
@@ -3982,6 +4005,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
                 maybeNotifyPendingSync(drainOutboxBackground(this, this, drainCtx))
             }
+            recordShowOutcome(PushShowOutcome.Outcome.WITHHELD_LEVEL, groupId, null, detail = "cached=${decrypted != null} ${gate.reason}")
             return
         }
 
@@ -4047,6 +4071,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         synchronized(GENERIC_BANNERS_LOCK) {
             if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
                 Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${groupId.take(8)})")
+                recordShowOutcome(PushShowOutcome.Outcome.REFUSED_COVERED, groupId, channel)
             } else {
                 val stamp = showMessageNotification(
                     shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
@@ -4799,6 +4824,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The foreground engine drains the queue over its WebSocket; fetching here would only race it.
         if (MainActivity.isInForeground) {
             Log.d(TAG, "[PUSH_WAKE] app in foreground -> the WebSocket delivers queued=$queuedMessageId, nothing fetched")
+            // A wake names no conversation (its payload carries nothing); a silent one announces nothing.
+            if (!silent) recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND_WAKE, null, null)
             return
         }
         if (queuedMessageId.isEmpty()) {

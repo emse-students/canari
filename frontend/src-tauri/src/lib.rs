@@ -294,9 +294,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     })
 }
 
-/// Appends one WARN or ERROR line of the push service to the log the page takes into the in-app
-/// log (`commands/native_push_log.rs`, Kotlin `NativePushLog`). True when written; a refusal is
-/// said here and the caller says it again in logcat, where this crate's log may not reach.
+/// Appends one line of the push service to the log the page takes into the in-app log
+/// (`commands/native_push_log.rs`, Kotlin `NativePushLog`): a WARN or ERROR line, or with `info`
+/// set a deliberately recorded INFO line, which has its own budget so it can never evict the
+/// others. True when written; a refusal is said here and the caller says it again in logcat, where
+/// this crate's log may not reach.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_NativePushLog_nativeAppendPushLog<'a>(
@@ -304,14 +306,20 @@ pub extern "system" fn Java_fr_emse_canari_NativePushLog_nativeAppendPushLog<'a>
     _this: jni::objects::JObject<'a>,
     data_dir: jni::objects::JString<'a>,
     line: jni::objects::JString<'a>,
+    info: jni::sys::jboolean,
 ) -> jni::sys::jboolean {
+    let stream = if info != 0 {
+        commands::native_push_log::Stream::Info
+    } else {
+        commands::native_push_log::Stream::Alerts
+    };
     let dir: Option<String> = env.get_string(&data_dir).ok().map(Into::into);
     let text: Option<String> = env.get_string(&line).ok().map(Into::into);
     let (Some(dir), Some(text)) = (dir, text) else {
         log::error!("[NATIVE_PUSH_LOG] jni-string");
         return 0;
     };
-    match commands::native_push_log::append(std::path::Path::new(&dir), &text) {
+    match commands::native_push_log::append(std::path::Path::new(&dir), stream, &text) {
         Ok(()) => 1,
         Err(e) => {
             log::error!("[NATIVE_PUSH_LOG] append refused: {e}");

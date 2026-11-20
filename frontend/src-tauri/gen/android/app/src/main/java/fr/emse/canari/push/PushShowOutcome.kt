@@ -1,19 +1,21 @@
 package fr.emse.canari.push
 
 /**
- * WHAT ONE SHOW DECISION DID, AND WHAT THE OS WAS SET TO WHEN IT DID IT (2026-11-20).
+ * WHAT ONE MESSAGE PUSH ENDED IN, AND WHAT THE OS WAS SET TO WHEN IT DID (2026-11-20).
  *
- * `showMessageNotification` can take a message and draw nothing - the app is in the foreground, the
- * reader already read it from the shade, it was already announced and dismissed - and it can post a
- * notification the OS then drops or silences, since `NotificationManager.notify` checks neither the
- * app's switch nor the channel's importance. Each of those was a logcat `Log.d` only, so a member's
- * exported log could not tell "suppressed by design" from "posted" from "posted and dropped by the
- * OS": a full-mode push was cached on 2026-11-20 and no notification was seen, and nothing said why.
+ * A message push can be cached and draw nothing: the app is in the foreground, the member's level
+ * withholds it, the foreground engine holds the frame, the reader already read it from the shade,
+ * it was already announced and dismissed. And a post can be dropped or silenced by the OS, since
+ * `NotificationManager.notify` checks neither the app's switch nor the channel's importance. Each
+ * of those was a logcat `Log.d` only, so a member's exported log could not tell "suppressed by
+ * design" from "posted" from "posted and dropped by the OS": a full-mode push was cached on
+ * 2026-11-20 and no notification was seen, and nothing said why.
  *
- * So every return of the show decision records ONE line ([line]) into the in-app log, through the
- * push service's recorded-info path (`FcmLog.iRecorded`), and that line is a WARN ([level]) exactly
- * when the app meant to show something the OS will not - the one outcome that is a defect to chase
- * rather than a decision to read.
+ * So every way a VISIBLE message push ends records ONE line ([line]) into the in-app log, through
+ * the push service's recorded-INFO path (`FcmLog.iRecorded`), and that line is a WARN ([level])
+ * exactly when the app posted what the OS drops - the one outcome that is a defect to chase rather
+ * than a decision to read. [Outcome.recorded] false stays in logcat: a refresh of a line already
+ * shown is the second trigger of one message, and recording it would spend the budget on nothing.
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard. The OS constants are therefore restated below by
@@ -21,18 +23,31 @@ package fr.emse.canari.push
  */
 object PushShowOutcome {
 
-    /** Each way the show decision ends. [posts] is whether it reached `manager.notify`. */
-    enum class Outcome(val token: String, val posts: Boolean) {
+    /**
+     * Each way a visible message push ends. [posts]: it reached `manager.notify`. [recorded]: the
+     * in-app log carries it (else logcat only).
+     */
+    enum class Outcome(val token: String, val posts: Boolean, val recorded: Boolean = true) {
         /** A first announcement, alerting as its channel says. */
         POSTED("posted", true),
         /** A first announcement posted without its sound, because a call holds it ([CallSoundHold]). */
         POSTED_SILENT_CALL("posted-silent-call", true),
         /** The other trigger already put this message in the shade: refreshed, no second alert. */
-        ALREADY_IN_SHADE("already-in-shade", true),
+        ALREADY_IN_SHADE("already-in-shade", true, recorded = false),
         /** The post replaces a line already announced (a blind banner's decrypted redraw): no alert. */
         REDRAWN("redrawn", true),
-        /** A push, with the app in the foreground: the WebSocket already delivered it to the UI. */
+        /** The show decision, with the app in the foreground: the WebSocket delivered it to the UI. */
         SUPPRESSED_FOREGROUND("suppressed-foreground", false),
+        /** `dispatchPush`'s guard: the app in front handles the frame, nothing decrypted here. */
+        SUPPRESSED_FOREGROUND_GUARD("suppressed-foreground-guard", false),
+        /** `onWakePush`'s guard: the app in front drains the queue, nothing fetched here. */
+        SUPPRESSED_FOREGROUND_WAKE("suppressed-foreground-wake", false),
+        /** The decrypt yielded to the foreground engine, which holds the frame and notifies for it. */
+        YIELDED("yielded", false),
+        /** The member's level for the conversation withholds it ([NotificationLevelGate]); cached. */
+        WITHHELD_LEVEL("withheld-level", false),
+        /** Refused for good, and the real banner from the engine that holds it is already up. */
+        REFUSED_COVERED("refused-covered", false),
         /** The reader already read the conversation up to this message from the shade. */
         SUPPRESSED_SHADE_MARK("suppressed-shade-mark", false),
         /** Already announced, then dismissed (swiped, or cleared by a launch): not announced twice. */
@@ -52,52 +67,80 @@ object PushShowOutcome {
     }
 
     /**
+     * Whether a push `dispatchPush`'s foreground guard skips was a VISIBLE message - the only kind
+     * that records a line there. A silent frame (a commit, a receipt, a level-`none` conversation,
+     * which the server sends silent) and the non-message types announce nothing, so they say nothing.
+     */
+    fun guardedAnnouncement(type: String?, isReaction: Boolean, silent: Boolean, isWelcome: Boolean): Boolean =
+        !silent && !isWelcome && (type == "message" || type == "channel" || isReaction)
+
+    /**
      * The OS settings that decide whether a posted notification is seen, read at the decision.
      * Each field is null when the platform would not answer.
      *
      * @param notificationsEnabled `NotificationManager.areNotificationsEnabled`
-     * @param channelImportance    the posting channel's `importance`; null also when the channel does not exist
+     * @param paused               `NotificationManager.areNotificationsPaused` (API 29+: the app suspended)
+     * @param channelImportance    the posting channel's `importance` - the CONVERSATION's own channel
+     *                             when the member gave it one (API 30+) - null when unknown
      * @param interruptionFilter   `NotificationManager.currentInterruptionFilter` (Do Not Disturb)
      * @param standbyBucket        `UsageStatsManager.appStandbyBucket`
      * @param powerSave            `PowerManager.isPowerSaveMode`
      */
     data class OsState(
         val notificationsEnabled: Boolean?,
+        val paused: Boolean?,
         val channelImportance: Int?,
         val interruptionFilter: Int?,
         val standbyBucket: Int?,
         val powerSave: Boolean?,
-    )
+    ) {
+        companion object {
+            /** Nothing could be read. */
+            val UNREAD = OsState(null, null, null, null, null, null)
+        }
+    }
 
-    // NotificationManager.IMPORTANCE_*.
+    // NotificationManager.IMPORTANCE_NONE.
     private const val IMPORTANCE_NONE = 0
 
     /**
-     * Whether the OS will drop a notification this app posts: the app's switch is off, or the
-     * channel is blocked. A LOW or MIN channel still shows it, quietly - the member's own choice,
-     * which the line reports without accusing.
+     * Whether the OS will drop a notification this app posts: the app's switch is off, the app is
+     * paused, or the channel (or the conversation's own channel) is blocked. A LOW or MIN channel
+     * still shows it, quietly - the member's own choice, which the line reports without accusing.
      */
     fun osDrops(os: OsState): Boolean =
-        os.notificationsEnabled == false || os.channelImportance == IMPORTANCE_NONE
+        os.notificationsEnabled == false || os.paused == true || os.channelImportance == IMPORTANCE_NONE
 
-    /** `W` when the app meant to show what the OS drops, `I` otherwise. */
+    /** `W` when the app posted what the OS drops, `I` otherwise. */
     fun level(outcome: Outcome, os: OsState): Char = if (outcome.posts && osDrops(os)) 'W' else 'I'
 
     /**
-     * The recorded line. Ids are cut to 8 characters, the in-app log's pattern; no message text and
-     * no name ever reaches it.
-     *
-     * @param conversationId the conversation (or `channel_<id>` salon) the decision was about
-     * @param channel        the notification channel id it posts on
+     * The conversation as the line names it: `ch:` and 8 characters for a salon (`channel_<id>`,
+     * whose prefix would otherwise fill all 8), `g:` and 8 for an MLS conversation, `?` unknown.
      */
-    fun line(outcome: Outcome, conversationId: String, channel: String, os: OsState): String {
+    fun conversationRef(conversationId: String?): String = when {
+        conversationId.isNullOrEmpty() -> "?"
+        conversationId.startsWith("channel_") -> "ch:" + conversationId.removePrefix("channel_").take(8)
+        else -> "g:" + conversationId.take(8)
+    }
+
+    /**
+     * The recorded line. No message text and no name ever reaches it.
+     *
+     * @param conversationId the conversation (or `channel_<id>` salon), null when the push named none
+     * @param channel        the notification channel id it posts on, null before one was chosen
+     * @param detail         a short system-worded reason (a withholding level, a push type), or null
+     */
+    fun line(outcome: Outcome, conversationId: String?, channel: String?, os: OsState, detail: String? = null): String {
         val drop = if (outcome.posts && osDrops(os)) " -> the OS drops it" else ""
-        return "[PUSH_SHOW] outcome=${outcome.token} groupId=${conversationId.take(8)} channel=$channel" +
+        val why = detail?.let { " why: ${it.replace('\n', ' ').take(120)}" } ?: ""
+        return "[PUSH_SHOW] outcome=${outcome.token} conv=${conversationRef(conversationId)} channel=${channel ?: "?"}" +
             " os: enabled=${os.notificationsEnabled ?: "?"}" +
+            " paused=${os.paused ?: "?"}" +
             " importance=${importanceName(os.channelImportance)}" +
             " dnd=${interruptionFilterName(os.interruptionFilter)}" +
             " bucket=${standbyBucketName(os.standbyBucket)}" +
-            " powerSave=${os.powerSave ?: "?"}$drop"
+            " powerSave=${os.powerSave ?: "?"}$drop$why"
     }
 
     /** `NotificationManager.IMPORTANCE_*` by name; `?` when unread or the channel is missing. */
