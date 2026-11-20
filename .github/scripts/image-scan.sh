@@ -27,6 +27,7 @@
 #                                          `TRIVY_CACHE_DIR` honoured)
 #        image-scan.sh --allowlist-ids    (the ids the retirement check reads; no network)
 #        image-scan.sh --allowlist-purls  (the `id package version` triples it reads; no network)
+#        image-scan.sh --upgraded-packages <Dockerfile> / --shipped-base <Dockerfile>  (the readers; no network)
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,6 +64,87 @@ if [ "${1:-}" = '--allowlist-ids' ]; then
 fi
 if [ "${1:-}" = '--allowlist-purls' ]; then
   allowlist_purls
+  exit 0
+fi
+
+# THE PACKAGES A `dockerfile:` TARGET UPGRADES PAST ITS BASE, one per line: the words after `upgrade`
+# in each `apk`/`apt-get`/`apt` upgrade of the shipped stage (the last `FROM`), up to the end of that
+# command, its options left out. Docker's own line continuation is honoured first: a line ending in a
+# backslash is joined to the next (a comment line inside it dropped, as Docker does), so a package
+# list spread over several lines is read whole. A word is cut at a trailing backslash, `;` or `&&`
+# (`libpq\`, `libpq;`): the part before it is the package, and `;` or `&&` also ends the command, as
+# a separate `&&`, `||` or `;` does. An upgrade naming no package (`apk upgrade` alone) prints
+# nothing: it moves everything, and no single package can be called a no-op.
+# Usage: upgraded_packages <Dockerfile>
+upgraded_packages() {
+  awk '
+    function parse(line,    n, w, i, j, word, ends) {
+      n = split(line, w, /[[:space:]]+/)
+      if (toupper(w[1]) == "FROM" || (w[1] == "" && toupper(w[2]) == "FROM")) { split("", pkgs); return }
+      for (i = 1; i < n; i++) {
+        if ((w[i] == "apk" || w[i] == "apt-get" || w[i] == "apt") && w[i + 1] == "upgrade") {
+          for (j = i + 2; j <= n; j++) {
+            word = w[j]
+            if (word == "&&" || word == "||" || word == ";") break
+            ends = (word ~ /(;|&&)$/)
+            sub(/(\\|;|&&)+$/, "", word)
+            if (word != "" && word !~ /^-/) pkgs[word] = 1
+            if (ends) break
+          }
+        }
+      }
+    }
+    { sub(/\r$/, "") }
+    /^[[:space:]]*#/ { next }
+    /\\[[:space:]]*$/ { line = $0; sub(/\\[[:space:]]*$/, " ", line); joined = joined line; next }
+    { parse(joined $0); joined = "" }
+    END { if (joined != "") parse(joined); for (p in pkgs) print p }
+  ' "$1" | sort -u
+}
+
+# THE IMAGE THE SHIPPED STAGE STARTS FROM, as a registry reference: the last `FROM`, followed through
+# an earlier stage it names (`FROM base` after `FROM nginx:x AS base`) and through the `ARG` defaults
+# declared before the first `FROM` (`${TAG}`, `$TAG`). Prints `SKIP <reason>` when no reference can be
+# named - an `ARG` with no default, `${X:-y}`, `scratch` - so the caller logs why it did not compare,
+# rather than reading an outage into a reference that was never an image.
+# Usage: shipped_base <Dockerfile>
+shipped_base() {
+  awk '
+    function resolve(r,    n, k, pre, post) {
+      for (n = 0; n < 20; n++) {
+        if (tolower(r) in stage) { r = stage[tolower(r)]; continue }
+        if (match(r, /\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { k = substr(r, RSTART + 2, RLENGTH - 3) }
+        else if (match(r, /\$[A-Za-z_][A-Za-z0-9_]*/)) { k = substr(r, RSTART + 1, RLENGTH - 1) }
+        else break
+        if (!(k in args)) break
+        pre = substr(r, 1, RSTART - 1); post = substr(r, RSTART + RLENGTH); r = pre args[k] post
+      }
+      return r
+    }
+    { sub(/\r$/, "") }
+    toupper($1) == "ARG" && !from_seen { eq = index($2, "="); if (eq > 0) args[substr($2, 1, eq - 1)] = substr($2, eq + 1) }
+    toupper($1) == "FROM" {
+      from_seen = 1; ref = ""
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break }
+      for (i = 2; i < NF; i++) if (toupper($i) == "AS") { stage[tolower($(i + 1))] = ref }
+      last = ref
+    }
+    END {
+      r = resolve(last)
+      if (r ~ /\$/) print "SKIP the shipped stage starts from " last ", which names a build argument with no default here"
+      else if (tolower(r) == "scratch") print "SKIP the shipped stage starts from scratch, which carries no package"
+      else print r
+    }
+  ' "$1"
+}
+
+# The two readers above, alone, for `image-scan-targets.test.sh` (no network, no trivy).
+if [ "${1:-}" = '--upgraded-packages' ]; then
+  upgraded_packages "$2"
+  exit 0
+fi
+if [ "${1:-}" = '--shipped-base' ]; then
+  shipped_base "$2"
   exit 0
 fi
 
@@ -136,29 +218,6 @@ stage_context() {
   printf '%s\n' "$dir"
 }
 
-# THE PACKAGES A `dockerfile:` TARGET UPGRADES PAST ITS BASE, one per line: the words after `upgrade`
-# in each `apk`/`apt-get` upgrade of the shipped stage (the last `FROM`), up to the end of that command
-# (`&&`, `||`, `;`, a line continuation), its options left out. An upgrade naming no package
-# (`apk upgrade` alone) prints nothing: it moves everything, and no single package can be called a
-# no-op. Read so the scan can say when the base itself carries the fix and a line can go.
-# Usage: upgraded_packages <Dockerfile>
-upgraded_packages() {
-  awk '
-    toupper($1) == "FROM" { delete pkgs; next }
-    $1 !~ /^#/ {
-      for (i = 1; i < NF; i++) {
-        if (($i == "apk" || $i == "apt-get" || $i == "apt") && $(i + 1) == "upgrade") {
-          for (j = i + 2; j <= NF; j++) {
-            if ($j == "&&" || $j == "||" || $j == ";" || $j == "\\" || $j ~ /;$/) break
-            if ($j !~ /^-/) pkgs[$j] = 1
-          }
-        }
-      }
-    }
-    END { for (p in pkgs) print p }
-  ' "$1" | sort -u
-}
-
 common=(--quiet --skip-db-update --scanners vuln --severity 'HIGH,CRITICAL' --ignore-unfixed)
 root="$(cd "$here/../.." && pwd)"
 found=""
@@ -212,16 +271,18 @@ while IFS= read -r target; do
   # run - the image is right, only the file is longer than it needs to be.
   case "$target" in
     dockerfile:*)
-      base="$(awk 'toupper($1) == "FROM" { for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break } } END { print ref }' "$root/$path")"
+      base="$(shipped_base "$root/$path")"
       packages="$(upgraded_packages "$root/$path")"
       if [ -z "$packages" ]; then
         echo "    $path upgrades no named package, so no line of it can be called a no-op"
+      elif [ "${base%% *}" = 'SKIP' ]; then
+        echo "    $path: its upgrades are not compared with a base - ${base#SKIP }"
       elif trivy image "${common[@]}" --image-src remote --exit-code 0 --format json --output "$work/base-$name.json" "$base"; then
         while read -r package; do
           if jq -e --arg p "$package" '[.Results[]?.Vulnerabilities[]? | select(.PkgName == $p)] | length > 0' "$work/base-$name.json" >/dev/null; then
             echo "    $package: its base $base still needs the upgrade"
           else
-            echo "::warning title=Image scan, an upgrade is a no-op::$path upgrades $package, and its base $base reports no fixable HIGH or CRITICAL advisory on $package any more - upstream shipped the fix, so delete $package from that upgrade (and the file, if it was the last)."
+            echo "::warning title=Image scan, an upgrade is likely a no-op::no fixable HIGH/CRITICAL advisory left on $package in $base: the upgrade of $package in $path is likely a no-op, check and delete it (and the file, if it was the last). Only that package name was compared, not the advisory the line was written for."
           fi
         done <<< "$packages"
       else

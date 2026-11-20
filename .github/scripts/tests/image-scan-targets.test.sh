@@ -121,13 +121,56 @@ printf 'FROM nginx:x\nRUN apk upgrade --no-cache libxml2\nCOPY web/tpyo /srv/\n'
 rc=0
 out="$(PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
 if [ "$rc" -eq 1 ] && [ ! -e "$work/context-seen" ] && grep -F 'git does not ignore it' <<< "$out" >/dev/null; then ok "a COPY source that is neither in the tree nor ignored fails before any build"; else ko "a missing, unignored COPY source exited $rc: $(tail -2 <<< "$out")"; fi
-# The forms the reader does not stage are refused by name, before any build.
-for form in 'COPY ["web/src/nginx.conf", "/srv/"]' 'COPY <<EOF /srv/x' 'COPY web/src/*.conf /srv/' 'ADD https://example.org/x.tar /srv/'; do
+# The forms the reader does not stage are refused BY NAME, before any build: each must print its own
+# refusal, not merely fail on a source that happens not to exist.
+refusals=(
+  'COPY ["web/src/nginx.conf", "/srv/"]|the JSON form is a COPY/ADD form this reader does not stage'
+  'COPY <<EOF /srv/x|a heredoc is a COPY/ADD form this reader does not stage'
+  'COPY web/src/*.conf /srv/|a glob (web/src/*.conf) is a COPY/ADD form this reader does not stage'
+  'ADD https://example.org/x.tar /srv/|a remote source (https://example.org/x.tar) is a COPY/ADD form this reader does not stage'
+)
+for refusal in "${refusals[@]}"; do
+  form="${refusal%%|*}"
   printf 'FROM nginx:x\nRUN apk upgrade --no-cache libxml2\n%s\n' "$form" > "$fake/infrastructure/local/Dockerfile.web"
   rc=0
   out="$(PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
-  if [ "$rc" -eq 1 ] && [ ! -e "$work/context-seen" ] && grep -F 'could not be staged' <<< "$out" >/dev/null; then ok "'$form' is refused: could not be staged"; else ko "'$form' exited $rc: $(tail -2 <<< "$out")"; fi
+  if [ "$rc" -eq 1 ] && [ ! -e "$work/context-seen" ] && grep -F "Dockerfile.web: ${refusal#*|}" <<< "$out" >/dev/null && grep -F 'could not be staged' <<< "$out" >/dev/null; then ok "'$form' is refused by name"; else ko "'$form' exited $rc without its refusal: $(tail -3 <<< "$out")"; fi
 done
+
+echo "image-scan.sh --upgraded-packages: the packages the SHIPPED stage upgrades, whatever the line shape:"
+cat > "$work/Dockerfile.shapes" <<'DF'
+FROM alpine:3 AS builder
+RUN apk upgrade --no-cache zlib
+FROM nginx:x
+RUN apk upgrade --no-cache \
+    libxml2 \
+    # a comment inside the continuation, which Docker drops
+    libcurl && apk info -e libxml2
+RUN apk upgrade libpq\
+ && true
+RUN apk upgrade openssl; echo done
+RUN apk add --no-cache tini
+DF
+got="$(bash "$here/../image-scan.sh" --upgraded-packages "$work/Dockerfile.shapes" | tr '\n' ' ')"
+if [ "$got" = "libcurl libpq libxml2 openssl " ]; then ok "a continued list, 'libpq\\', 'openssl;' read whole; the builder stage and 'apk add' are not"; else ko "the shapes read as '$got'"; fi
+printf 'FROM nginx:x\nRUN apk upgrade --no-cache\n' > "$work/Dockerfile.all"
+got="$(bash "$here/../image-scan.sh" --upgraded-packages "$work/Dockerfile.all")"
+if [ -z "$got" ]; then ok "an upgrade naming no package names none"; else ko "a bare upgrade read as '$got'"; fi
+
+echo "image-scan.sh --shipped-base: a stage or an ARG is followed to an image, or skipped with a reason:"
+cat > "$work/Dockerfile.stages" <<'DF'
+ARG TAG=1.31-alpine
+FROM --platform=linux/amd64 nginx:${TAG} AS base
+RUN apk upgrade --no-cache libxml2
+FROM base AS middle
+FROM middle
+DF
+got="$(bash "$here/../image-scan.sh" --shipped-base "$work/Dockerfile.stages")"
+if [ "$got" = 'nginx:1.31-alpine' ]; then ok "a chain of stages and an ARG default resolve to the image"; else ko "the stage chain read as '$got'"; fi
+# shellcheck disable=SC2016 # a literal, unexpanded build argument is the fixture.
+printf 'FROM nginx:$NO_DEFAULT\n' > "$work/Dockerfile.arg"
+got="$(bash "$here/../image-scan.sh" --shipped-base "$work/Dockerfile.arg")"
+if [ "${got%% *}" = 'SKIP' ]; then ok "an ARG with no default is skipped with a reason"; else ko "an unresolved ARG read as '$got'"; fi
 
 echo "image-scan.sh: an upgrade the bare base no longer needs is named in a warning, and fails nothing:"
 # `docker` builds; `trivy` answers every scan clean except the bare base `nginx:x`, which reports
@@ -140,19 +183,34 @@ cat > "$stubs/trivy" <<'STUB'
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "--output" ] && out="$a"; prev="$a"; done
 [ -n "$out" ] || exit 0
+[ -n "${TRIVY_LOG:-}" ] && printf '%s\n' "${*: -1}" >> "$TRIVY_LOG"
 if [ "${*: -1}" = 'nginx:x' ] && [ "${BASE_HAS_LIBXML2:-0}" = 1 ]; then
   printf '{"Results":[{"Vulnerabilities":[{"VulnerabilityID":"CVE-1","PkgName":"libxml2","InstalledVersion":"1"}]}]}\n' > "$out"
 else
   printf '{"Results":[]}\n' > "$out"
 fi
 STUB
+warning='::warning title=Image scan, an upgrade is likely a no-op::'
 rc=0
 out="$(BASE_HAS_LIBXML2=1 PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
 if [ "$rc" -eq 0 ] && grep -F 'libxml2: its base nginx:x still needs the upgrade' <<< "$out" >/dev/null; then ok "a package the base still reports is kept, silently"; else ko "the needed upgrade read as $rc: $(grep -E 'libxml2|::' <<< "$out")"; fi
-if grep -F '::warning title=Image scan, an upgrade is a no-op::infrastructure/local/Dockerfile.web upgrades libpq' <<< "$out" >/dev/null; then ok "a package the base no longer reports is named as a no-op"; else ko "no warning named libpq: $(grep -E 'libpq|::' <<< "$out")"; fi
+if grep -F "${warning}no fixable HIGH/CRITICAL advisory left on libpq in nginx:x: the upgrade of libpq in infrastructure/local/Dockerfile.web is likely a no-op, check and delete it" <<< "$out" >/dev/null; then ok "a package the base no longer reports is named, as LIKELY a no-op"; else ko "no warning named libpq: $(grep -E 'libpq|::' <<< "$out")"; fi
 rc=0
 out="$(BASE_HAS_LIBXML2=0 PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
-if [ "$rc" -eq 0 ] && [ "$(grep -c '::warning title=Image scan, an upgrade is a no-op::' <<< "$out")" -eq 2 ]; then ok "once the base carries both fixes, both packages are named, and the run still passes"; else ko "the fixed base read as $rc: $(grep -E '::' <<< "$out")"; fi
+if [ "$rc" -eq 0 ] && [ "$(grep -cF "$warning" <<< "$out")" -eq 2 ]; then ok "once the base carries both fixes, both packages are named, and the run still passes"; else ko "the fixed base read as $rc: $(grep -E '::' <<< "$out")"; fi
+# A shipped stage that is an earlier stage is compared with THAT stage's image; one starting from an
+# unresolved ARG is skipped with its reason, never scanned and never an outage.
+printf 'FROM nginx:x AS base\nFROM base\nRUN apk upgrade --no-cache libpq libxml2\nCOPY web/src/nginx.conf /srv/\n' > "$fake/infrastructure/local/Dockerfile.web"
+rc=0
+out="$(BASE_HAS_LIBXML2=1 PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && grep -F 'libxml2: its base nginx:x still needs the upgrade' <<< "$out" >/dev/null; then ok "FROM <stage> is compared with the stage's own image"; else ko "FROM <stage> read as $rc: $(grep -E 'base|::' <<< "$out")"; fi
+# shellcheck disable=SC2016 # a literal, unexpanded build argument is the fixture.
+printf 'FROM nginx:$NO_DEFAULT\nRUN apk upgrade --no-cache libpq\nCOPY web/src/nginx.conf /srv/\n' > "$fake/infrastructure/local/Dockerfile.web"
+rc=0
+: > "$work/trivy-log"
+out="$(TRIVY_LOG="$work/trivy-log" PATH="$stubs:$PATH" bash "$fake/.github/scripts/image-scan.sh" 2>&1)" || rc=$?
+# shellcheck disable=SC2016 # a literal, unexpanded build argument is the fixture.
+if [ "$rc" -eq 0 ] && grep -F 'its upgrades are not compared with a base - the shipped stage starts from nginx:$NO_DEFAULT' <<< "$out" >/dev/null && ! grep -qF 'NO_DEFAULT' "$work/trivy-log"; then ok "an unresolved ARG is skipped with its reason, not scanned, not an outage"; else ko "the unresolved ARG read as $rc: $(grep -E 'compared|::' <<< "$out")"; fi
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."

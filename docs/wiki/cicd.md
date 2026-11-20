@@ -3352,14 +3352,19 @@ would meet too, and fails the run like a build that fails. **Only the plain `COP
 and a remote `ADD <url>` are refused by name ("could not be staged", exit 1) rather than built from a
 context missing a source; `image-scan-targets.test.sh` holds each refusal.
 
-**An upgrade the base no longer needs is reported** (review of #3915). The built image is clean
-whether or not the base still needs its `apk upgrade`, so nothing else would say that upstream shipped
-the fix. For each `dockerfile:` target the scan also reads its BARE base (the last `FROM`) without the
-allowlist, and for each package the shipped stage upgrades by name, one on which the base reports no
-fixable HIGH/CRITICAL advisory any more is named in a `::warning title=Image scan, an upgrade is a
-no-op::` annotation: delete it from the upgrade, and the file with its last package (adminer's
-`libpq`/`libxml2`, the frontend's `libxml2`). It fails nothing - the image is right, only the file is
-longer than it needs to be. A base that cannot be read is an outage like any other image (exit 2).
+**An upgrade the base may no longer need is reported** (reviews of #3915 and #3916). The built image
+is clean whether or not the base still needs its `apk upgrade`, so nothing else would say that
+upstream shipped the fix. For each `dockerfile:` target the scan also reads its BARE base without the
+allowlist: the last `FROM`, followed through an earlier stage it names and the `ARG` defaults declared
+before the first `FROM` (`--shipped-base`). A base that names an `ARG` with no default, or `scratch`, is
+not compared, and the log says why; it is never read as an outage. The packages are the words after
+`upgrade` in the shipped stage (`--upgraded-packages`), Docker's line continuations joined first and a
+trailing `\`, `;` or `&&` cut from a word. For each one on which the base reports no fixable
+HIGH/CRITICAL advisory under that exact package name any more, a
+`::warning title=Image scan, an upgrade is likely a no-op::` annotation says so: it compares the
+package NAME, not the advisory the line was written for, so it asks for a check before the delete
+(adminer's `libpq`/`libxml2`, the frontend's `libxml2`). It fails nothing - the image is right. A base
+that cannot be read is an outage like any other image (exit 2).
 The build is tied to the release by `build.yml`'s own `[<name>]="./infrastructure/local/Dockerfile.<x>"`
 line, and its `no-cache:` must be one plain OR of `matrix.name == '<name>'` terms naming it: both are
 asserted per target, never assumed from the file name.

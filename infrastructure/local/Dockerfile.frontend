@@ -23,7 +23,7 @@ FROM nginx:stable-alpine
 # build if the repository hands over no fixed `libxml2`, rather than ship 2.13.9-r2 under a green build.
 # The upgrade also makes the image scan BUILD this file and read the result, not the base
 # (`image-scan-targets.sh`). Delete this line the day the base carries `libxml2 >= 2.13.9-r3`: the scan
-# says so itself, in an "upgrade is a no-op" warning (docs/wiki/cicd.md, container images are scanned).
+# says so itself, in an "upgrade is likely a no-op" warning (docs/wiki/cicd.md, container images are scanned).
 RUN apk upgrade --no-cache libxml2 && apk info -e 'libxml2>=2.13.9-r3'
 
 COPY frontend/build/client /usr/share/nginx/html
