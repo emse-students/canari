@@ -924,8 +924,9 @@ unresolved, as a text quote's), and in the banner, which used to show the captio
 A file drops its name when a caption follows, so the line stays short. **A file name is sender-chosen
 text:** control, bidi and format characters are stripped (`stripInvisible` in TS, `clean_file_name`
 in Rust), whitespace is collapsed first, and it is capped at 60 code points with an ellipsis; a stored
-quote is also cut by `cutReplyPreview`. One known edge: TS keeps a zero-width joiner inside an emoji
-of a file name, Rust strips every joiner. The text-GIF preview (a pasted GIF link) keeps `[GIF]`.
+quote is also cut by `cutReplyPreview`. Cosmetic edges (`is_invisible`): Rust strips per character,
+TS per grapheme, so a name's emoji joiners (ZWJ), Arabic/Syriac/Indic joiners (ZWNJ/ZWJ) and a
+subdivision flag's tag characters (U+E0020-U+E007F) survive in the app and not in a banner. The text-GIF preview (a pasted GIF link) keeps `[GIF]`.
 A media envelope holds ONE file (several files are several messages), so there is no `N photos` line.
 **A reply quote already stored as `[Média]` stays as persisted:** it is written once, into the reply,
 and is not rebuilt. Tests: `envelope.mediaPreview.test.ts`, and `push_text.rs` / `proto_fields.rs`.

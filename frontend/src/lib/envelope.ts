@@ -169,7 +169,7 @@ export function serializeEnvelope(env: MessageEnvelope): string {
 }
 
 /** Longest file name a preview shows, in code points. */
-export const PREVIEW_FILE_NAME_MAX = 60;
+const PREVIEW_FILE_NAME_MAX = 60;
 
 /**
  * A file name as a preview may draw it: a name is SENDER-CHOSEN text, so control, bidi and

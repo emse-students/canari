@@ -151,9 +151,7 @@ const FILE_NAME_MAX: usize = 60;
 /// A sender-chosen file name as a banner may draw it, the app's rule (`previewFileName`): control,
 /// bidi and invisible-format characters (Unicode `Cc`, `Cf`, `Zl`, `Zp`) are dropped, whitespace is
 /// collapsed and the name is capped with an ellipsis. Empty once cleaned means "no name".
-///
-/// One known edge: the app keeps a zero-width joiner INSIDE an emoji (`stripInvisible`), this strips
-/// every joiner, so a name holding a joined emoji reads as separate emoji here.
+/// It is not `stripInvisible` byte for byte, see [`is_invisible`].
 pub fn clean_file_name(raw: &str) -> String {
     // Whitespace first: a newline is a control character, and stripping it would glue two words.
     let spaced = raw.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -167,6 +165,12 @@ pub fn clean_file_name(raw: &str) -> String {
 }
 
 /// The Unicode `Cc`, `Cf`, `Zl` and `Zp` characters: std covers `Cc`, the rest is listed.
+///
+/// It differs from the app's `stripInvisible` in three cosmetic ways, because that one judges per
+/// grapheme and this one per character: it strips (1) the zero-width joiner INSIDE an emoji sequence
+/// (a joined family reads as separate emoji), (2) the zero-width (non-)joiner that Arabic, Syriac and
+/// the Indic scripts spell with, and (3) the tag characters U+E0020-U+E007F of a subdivision flag
+/// (the England flag reads as the black flag). Only a file name's look differs, never its safety.
 fn is_invisible(c: char) -> bool {
     c.is_control()
         || matches!(c as u32,
