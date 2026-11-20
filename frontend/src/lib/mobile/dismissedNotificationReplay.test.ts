@@ -140,9 +140,8 @@ describe('the builder decides "already read elsewhere" before touching the shade
       builder.indexOf('}', builder.indexOf('manager.notify', step))
     );
     expect(stepBody).toContain('if (switchesChannel) manager.cancel(notifId)');
-    expect(builder.slice(step)).toContain(
-      'READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, linesOf(style), postToShade)'
-    );
+    expect(builder.slice(step)).toContain('READ_ELSEWHERE.postUnlessRead(');
+    expect(builder.slice(step, step + 1200)).toContain('postToShade,');
     // No cancel of the conversation's banner anywhere before that step.
     expect(builder.slice(0, step)).not.toContain('manager.cancel(notifId)');
   });
@@ -159,13 +158,18 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
     expect(source).toContain('newMessage.extras.putLong(LINE_SERVER_AT, serverAt)');
   });
 
-  it('looks the notification up inside recordThenCancel, never before it', () => {
+  // Round-5 review: the id was resolved only on the shade's branch, so the usual case cancelled -1.
+  // The cancel now takes the id of the banner it weighed, whichever source supplied it.
+  it('cancels the id of the banner it weighed, looked up inside recordThenCancel', () => {
     const fn = source.slice(source.indexOf('internal fun cancelConversationNotification('));
     const guarded = fn.indexOf('READ_ELSEWHERE.recordThenCancel(');
     expect(guarded).toBeGreaterThan(-1);
-    const lambda = fn.slice(guarded, fn.indexOf('cancel = {', guarded));
-    expect(lambda).toContain('notifId = prefs.getInt(groupId, -1)');
-    expect(lambda).toContain('shadeLinesOf(manager, notifId)');
+    const call = fn.slice(guarded, fn.indexOf('if (!cancelled)', guarded));
+    expect(call).toContain('prefs.getInt(groupId, -1)');
+    expect(call).toContain('shadeBannerOf(manager, it)');
+    expect(call).toContain('cancel = { id ->');
+    expect(call).toContain('manager.cancel(id)');
+    expect(call).not.toContain('manager.cancel(notifId)');
   });
 
   it('a WebSocket post asks the record before the avatar and the generic ledger', () => {
@@ -184,8 +188,29 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
  * builder's side of it.
  */
 describe('the builder records what it posted and keeps the stamps current', () => {
-  it('hands the posted lines to the record with the post', () => {
-    expect(source).toContain('linesOf(style), postToShade)');
+  it('builds on the record under its lock and hands the posted banner to it', () => {
+    const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
+    const lock = fn.indexOf('return synchronized(READ_ELSEWHERE.lock) {');
+    expect(lock).toBeGreaterThan(-1);
+    // The banner a post re-injects comes from the record (the shade only when there is none)...
+    const held = fn.indexOf('READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }');
+    expect(held).toBeGreaterThan(lock);
+    // ...and nothing before the lock reads the shade.
+    expect(fn.slice(0, lock)).not.toContain('activeNotifications');
+    expect(fn).toContain('ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList())');
+  });
+
+  it("marks this account's own line explicitly, never by its name", () => {
+    expect(source).toContain('extras.putBoolean(LINE_OWN, true)');
+    const fn = source.slice(source.indexOf('private fun lineOfMessage('));
+    expect(fn.slice(0, 700)).toContain('stamps.getBoolean(LINE_OWN, false)');
+    expect(fn.slice(0, 700)).not.toContain('.name');
+  });
+
+  it("forgets the record on the user's swipe and when every banner is cleared", () => {
+    expect(source).toContain('.setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))');
+    const all = source.slice(source.indexOf('fun cancelAllMessageNotifications('));
+    expect(all.slice(0, 3000)).toContain('READ_ELSEWHERE.forgetAll()');
   });
 
   it('restamps a re-injected line when the second trigger knows the server instant', () => {

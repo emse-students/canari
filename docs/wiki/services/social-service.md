@@ -842,17 +842,35 @@ instants in its extras (`LINE_SENT_AT`, `LINE_SERVER_AT`, written by `showMessag
 re-injected with the line on every later post - androidx core keeps a message's extras - and
 restamped when a second trigger of the same message knows the server instant the first did not).
 
-**WHICH LINES: WHAT THIS PROCESS POSTED, NOT WHAT THE SHADE ANSWERS.** `notify` returns before
+**THE BANNER IS WHAT THIS PROCESS POSTED, NOT WHAT THE SHADE ANSWERS.** `notify` returns before
 NotificationManagerService has enqueued the record (it posts a runnable to its handler), so the shade
-read right after a post can still show the notification from BEFORE it: a read covering M1 would see
-M1 alone while M2 was just posted, and cancel it (M2 lost); a read right after a first banner would
-see nothing and cancel nothing (a read banner left standing). So `postUnlessRead` records, under the
-lock, the exact lines it handed to `notify`, and `recordThenCancel` weighs that record; the shade
-(`shadeLinesOf`) is read only when this process has posted nothing for the conversation - a fresh
-process whose banner an earlier one left. The record goes with the banner (a cancel by a read, or
-`forget` on every other cancel). The notification id is looked up INSIDE the critical section too.
-A line from someone else without stamps (a banner from a build that did not stamp) is never covered;
-this account's own line (a reply drawn in the shade) is not news and is left out.
+read right after a post can still show the notification from BEFORE it. Weighed by a read, a banner
+holding M1 while M2 was just posted would be cancelled (M2 lost), and a first banner would not be
+found at all (a read banner left standing); re-injected by a post, two posts back to back would drop
+the first one's line. So every post records the banner it handed to `notify` - its id, its channel,
+its messages (`ReadElsewhereMarks.Banner`) - and both the next post and a read start from that
+record (`bannerOf`); the shade (`shadeBannerOf`) answers only when this process has posted nothing
+for the conversation, i.e. a fresh process whose banner an earlier one left.
+
+- **One lock from the banner a post builds on to the record of what it posted.**
+  `showMessageNotification` holds `READ_ELSEWHERE.lock` from the moment it reads the banner it
+  re-injects to the end of its post; a read holds it across record, weigh and cancel. The lock is
+  reentrant, takes no other app lock inside it, and may be taken while the generic-banner lock is
+  held (the WebSocket path), never the reverse.
+- **The cancel takes the id of the banner it weighed**, whichever source supplied it - the record,
+  or the shade looked up by id inside the lock. (Round 5 found the id resolved only on the shade's
+  branch, so the usual case cancelled id -1.)
+- **The record goes with the banner**: a cancel by a read drops it, every other cancel `forget`s it,
+  `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the user's swipe
+  does too, through the notification's delete intent (`ACTION_BANNER_DISMISSED` -> `forgetPostedBanner`)
+  - otherwise the next post would bring back the lines the user dismissed. A post whose dismissal
+  broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
+- **The pending reply** (`repostReplyPending`) builds on the same record and records what it posts,
+  so its bound (`takeLast`) is the record's too.
+- **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): this account's own line
+  only when MARKED so (`LINE_OWN`, set on the pending reply - never by its name, which a peer may
+  share), its stamps otherwise, and an uncoverable line when it carries none (a banner from a build
+  that did not stamp).
 
 The WebView's row used to decide
 (`unreadCount === 0`), and it can lag behind the shade: the WebView is frozen, the account reads on
@@ -868,8 +886,7 @@ re-post then refused as already announced (`hasAlreadyAlerted`), so N lost its b
 - AND DECIDING, at the post: every side effect on the shade - the channel switch's `cancel` of the
   previous banner (a mention upgrading a plain post, WP-XP-5), then the `notify` - is ONE step that
   `ReadElsewhereMarks.postUnlessRead` runs only when the message is not covered, under the lock
-  `recordThenCancel` (the dismissal: record, then cancel) also takes. The lock is owned by the class
-  and is a leaf: only binder calls run inside it.
+  `recordThenCancel` (the dismissal: record, then cancel) also takes - the lock described above.
 
 The switch's cancel used to run before the check, so a covered late post (an older mention read on
 the web) removed a newer message's banner on its way to posting nothing (re-review of #3912). The
@@ -878,8 +895,10 @@ a generic line from `GenericBannerLedger`, so a refused post consumes neither.
 
 What is JVM-tested (`ReadElsewhereMarksTest`, no clock - latches, and the waiting thread's state
 bounded by a spin count so a lock that stopped excluding fails instead of hanging; the shade is an
-ASYNCHRONOUS fake whose posts show only once the test drains them): the comparison, the record's rise,
-the two lag scenarios above, an unstamped foreign line never covered, that a mark older than the
+ASYNCHRONOUS fake whose posts show only once the test drains them, driven by the same steps as the
+service's - build on `bannerOf` under the lock, `postUnlessRead`, `recordThenCancel` with the shade
+lookup and a cancel that receives the id): the comparison, the record's rise, the id the cancel
+receives from either source, two posts back to back keeping both lines, the two lag scenarios above, an unstamped foreign line never covered, that a mark older than the
 newest line cancels nothing and one covering every line cancels, that a covered post runs none of its steps, and both interleavings - a read
 arriving while a post is inside its steps waits, then weighs its line and removes it; a post arriving
 while a read is inside its steps waits and is then refused. What only a device proves (pinned as

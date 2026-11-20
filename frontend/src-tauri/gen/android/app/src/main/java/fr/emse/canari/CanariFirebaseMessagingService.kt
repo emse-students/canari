@@ -302,6 +302,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         const val LINE_SENT_AT = "canari.line.sentAt"
         const val LINE_SERVER_AT = "canari.line.serverAt"
+
+        /**
+         * Set on a line this ACCOUNT wrote (the pending reply drawn in the shade): it is not news,
+         * so no read is weighed against it. Explicit, because a peer may carry the same name.
+         */
+        const val LINE_OWN = "canari.line.own"
+
+        /** The user swiped a conversation notification away ([bannerDismissedIntent]). */
+        const val ACTION_BANNER_DISMISSED = "fr.emse.canari.ACTION_BANNER_DISMISSED"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
@@ -521,6 +530,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+                // And what this process recorded as posted: the next post starts a new thread.
+                READ_ELSEWHERE.forgetAll()
                 // The one "could not be loaded" notice of the wake-up push: the app is open, so the
                 // queue it asked to drain is draining. Named, not left to the channel sweep above,
                 // which an API below 26 does not filter by channel and a channel move would miss.
@@ -732,16 +743,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     style.conversationTitle = it
                     style.isGroupConversation = previous.isGroupConversation
                 }
-                previous.messages.takeLast(MAX_NOTIF_MESSAGES - 1).forEach { style.addMessage(it) }
                 // Attributed to US, like the in-flight reply Android was drawing, so the thread
-                // reads as the user's own pending message and not as a new incoming one.
-                style.addMessage(
-                    NotificationCompat.MessagingStyle.Message(
-                        res.getString(R.string.notif_reply_pending, replyText),
-                        System.currentTimeMillis(),
-                        previous.user
-                    )
-                )
+                // reads as the user's own pending message and not as a new incoming one - and
+                // marked so ([LINE_OWN]): no read is weighed against it.
+                val pending = NotificationCompat.MessagingStyle.Message(
+                    res.getString(R.string.notif_reply_pending, replyText),
+                    System.currentTimeMillis(),
+                    previous.user
+                ).apply { extras.putBoolean(LINE_OWN, true) }
                 val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
                     existing.channelId ?: CHANNEL_MESSAGES
                 } else {
@@ -762,7 +771,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
                     builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
                 }
-                manager.notify(notifId, builder.build())
+                // THE SAME RECORD AS A MESSAGE POST ([ReadElsewhereMarks]): the lines it builds on
+                // are what this process last posted (the shade only when it posted nothing), and
+                // what it posts is recorded under the same lock - so a read weighs this re-post,
+                // the line its bound dropped included, exactly as the shade will show it.
+                synchronized(READ_ELSEWHERE.lock) {
+                    val held = READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
+                    (held?.messages ?: previous.messages)
+                        .takeLast(MAX_NOTIF_MESSAGES - 1)
+                        .forEach { style.addMessage(it) }
+                    style.addMessage(pending)
+                    builder.setStyle(style)
+                    manager.notify(notifId, builder.build())
+                    READ_ELSEWHERE.remember(groupId, ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList()))
+                }
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
             } catch (e: Exception) {
                 Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
@@ -903,21 +925,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } else {
                 // THE ID AND THE SHADE ARE READ INSIDE THE CRITICAL SECTION: a first-ever banner
                 // posted between an outside lookup and the record would otherwise stand.
+                // THE ID COMES WITH THE BANNER WEIGHED, whichever source supplied it - what this
+                // process posted, or the shade.
                 READ_ELSEWHERE.recordThenCancel(
                     groupId,
                     read,
-                    shadeLines = {
-                        notifId = prefs.getInt(groupId, -1)
-                        if (notifId == -1) null else shadeLinesOf(manager, notifId)
+                    shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } },
+                    cancel = { id ->
+                        notifId = id
+                        manager.cancel(id)
                     },
-                    cancel = { manager.cancel(notifId) },
                 )
             }
             if (!cancelled) {
-                if (notifId == -1) {
+                if (notifId == -1 && read == null) {
                     Log.d(TAG, "cancelConversationNotification: no notif for group=${groupId.take(8)}")
                 } else {
-                    Log.d(TAG, "cancelConversationNotification: kept group=${groupId.take(8)} id=$notifId - a line newer than the read stays unread")
+                    Log.d(TAG, "cancelConversationNotification: kept group=${groupId.take(8)} - no banner, or a line newer than the read stays unread")
                 }
                 return
             }
@@ -944,41 +968,64 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * The lines of conversation notification [notifId] as the SHADE holds them, for
-         * [ReadElsewhereMarks.recordThenCancel] when this process has posted nothing for it (the
-         * shade lags a post this process made; its own record answers then). Null when none is
-         * posted. A shade that cannot be read is reported as nothing posted, at a level that
-         * accuses: the banner then stays, which is noise - never a lost message.
+         * Conversation notification [notifId] as the SHADE holds it, for [ReadElsewhereMarks.bannerOf]
+         * when this process has posted nothing for it (the shade lags a post this process made; its
+         * own record answers then). Null when none is posted. A shade that cannot be read is reported
+         * as nothing posted, at a level that accuses: a read then keeps the banner (noise, never a
+         * lost message), a post then starts a new thread.
          */
-        private fun shadeLinesOf(manager: NotificationManager, notifId: Int): List<ReadElsewhereMarks.Line>? {
-            val posted = try {
+        private fun shadeBannerOf(
+            manager: NotificationManager,
+            notifId: Int,
+        ): ReadElsewhereMarks.Banner<NotificationCompat.MessagingStyle.Message>? {
+            val shown = try {
                 manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
             } catch (e: Exception) {
-                Log.e(TAG, "shadeLinesOf: activeNotifications unavailable - the banner is kept: ${throwableSite(e)}")
+                Log.e(TAG, "shadeBannerOf: activeNotifications unavailable - read as nothing posted: ${throwableSite(e)}")
                 return null
             } ?: return null
-            return NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(posted)
-                ?.let { linesOf(it) }
-                ?: emptyList()
+            return ReadElsewhereMarks.Banner(
+                notifId,
+                if (android.os.Build.VERSION.SDK_INT >= 26) shown.channelId else null,
+                NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(shown)?.messages.orEmpty(),
+            )
         }
 
         /**
-         * The lines [style] holds, as [ReadElsewhereMarks.Line]s: the stamps each message carries
-         * ([LINE_SENT_AT], [LINE_SERVER_AT]); none for this account's own line; an uncoverable
-         * line for a message without stamps ([ReadElsewhereMarks.Line.of]).
+         * What a line of a conversation notification counts as for a read
+         * ([ReadElsewhereMarks.Line.of]): this account's own line when it says so ([LINE_OWN] - never
+         * a name, which a peer can share), its stamps ([LINE_SENT_AT], [LINE_SERVER_AT]) otherwise, and
+         * an uncoverable line when it carries none.
          */
-        private fun linesOf(style: NotificationCompat.MessagingStyle): List<ReadElsewhereMarks.Line> =
-            style.messages.mapNotNull { line ->
-                val stamps = line.extras
-                val author = line.person
-                val fromSelf = author == null ||
-                    (author.key == style.user.key && author.name?.toString() == style.user.name?.toString())
-                ReadElsewhereMarks.Line.of(
-                    fromSelf = fromSelf,
-                    sentAt = if (stamps.containsKey(LINE_SENT_AT)) stamps.getLong(LINE_SENT_AT) else null,
-                    serverAt = if (stamps.containsKey(LINE_SERVER_AT)) stamps.getLong(LINE_SERVER_AT) else null,
-                )
-            }
+        private fun lineOfMessage(line: NotificationCompat.MessagingStyle.Message): ReadElsewhereMarks.Line? {
+            val stamps = line.extras
+            return ReadElsewhereMarks.Line.of(
+                own = stamps.getBoolean(LINE_OWN, false),
+                sentAt = if (stamps.containsKey(LINE_SENT_AT)) stamps.getLong(LINE_SENT_AT) else null,
+                serverAt = if (stamps.containsKey(LINE_SERVER_AT)) stamps.getLong(LINE_SERVER_AT) else null,
+            )
+        }
+
+        /**
+         * The delete intent of a conversation notification: the user swiped it away, so what this
+         * process recorded as posted is forgotten ([forgetPostedBanner]).
+         */
+        private fun bannerDismissedIntent(context: Context, groupId: String, notifId: Int): PendingIntent =
+            PendingIntent.getBroadcast(
+                context,
+                notifId,
+                Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                    action = ACTION_BANNER_DISMISSED
+                    putExtra(EXTRA_GROUP_ID, groupId)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+
+        /** The user dismissed [groupId]'s banner: forget what this process recorded as posted. */
+        internal fun forgetPostedBanner(groupId: String) {
+            READ_ELSEWHERE.forget(groupId)
+            Log.d(TAG, "forgetPostedBanner: dismissed by the user - group=${groupId.take(8)}")
+        }
 
         /**
          * Appends one entry to `fcm_message_cache.ndjson`, the cross-process file the app drains at
@@ -2260,7 +2307,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * ([ReadElsewhereMarks], which owns the lock the post and the dismissal share); recorded by
          * [readElsewhereFromWebSocket], asked by every post.
          */
-        private val READ_ELSEWHERE = ReadElsewhereMarks()
+        private val READ_ELSEWHERE =
+            ReadElsewhereMarks<NotificationCompat.MessagingStyle.Message> { lineOfMessage(it) }
 
         /**
          * Posts the SAME notification a push would, for a message that arrived over the WEBSOCKET.
@@ -2448,7 +2496,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          *
          * THE BANNER GOES ONLY WHEN THE MARK COVERS EVERY LINE IT HOLDS, decided here against the
          * instants this side stamped on those lines ([ReadElsewhereMarks.recordThenCancel],
-         * [shadeLinesOf]) - not by the WebView's row, which can lag behind the shade: a frozen
+         * [shadeBannerOf]) - not by the WebView's row, which can lag behind the shade: a frozen
          * WebView drains an own read from before a message the push already announced, and its row,
          * not holding that message yet, counts nothing unread. A newer line keeps the banner.
          *
@@ -3088,250 +3136,263 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .apply { selfAvatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
                 .build()
 
-            val existingNotif = try {
-                manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
-            } catch (e: Exception) {
-                Log.w(TAG, "showNotification: activeNotifications unavailable: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
-                null
-            }
-
-            // Its title and group flag are set below, once the shortcut is known: [ConversationShape].
-            val style = NotificationCompat.MessagingStyle(selfPerson)
-            // Re-inject the previous (bounded) messages, then add the new one.
-            // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
-            existingNotif
-                ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
-                ?.messages
-                ?.filter { (supersedes == 0L || it.timestamp != supersedes) && it.timestamp !in alsoSupersedes }
-                ?.takeLast(MAX_NOTIF_MESSAGES - 1)
-                ?.forEach { style.addMessage(it) }
-            // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
-            // thumbnail while keeping the conversation's MessagingStyle stacking. NotificationManager
-            // grants the system read access to the FileProvider content Uri carried in the notification.
-            // THE SENDER'S OWN INSTANT, NOT THIS ONE. It is what the shade should show, and it is
-            // also the only thing that lets the two triggers recognise the SAME message: a push and
-            // a WebSocket frame reach this builder at different moments, so a wall clock read here
-            // would stamp one message twice and the line below could never match.
-            val stamp = if (sentAt > 0) sentAt else System.currentTimeMillis()
-            // ONE MESSAGE, ONE LINE, WHICHEVER TRIGGER ARRIVES SECOND. `style.messages` holds the
-            // history re-injected from the notification already in the shade, so this asks the post
-            // itself - durable state, not a clock and not a flag this process would lose on a kill.
-            //
-            // IT NEEDS A SENT-AT TO WORK, and since 2026-09-22 the channel (salon) push carries
-            // one too: `createdAt`, the same stored column the socket frame reads, so a salon
-            // message that arrives BOTH ways is recognised here exactly as a DM is. It was the
-            // missing field rather than a missing rule - the notification was always single,
-            // because the id is shared.
-            //
-            // THE INSTANT ALONE, NOT THE INSTANT AND THE TEXT. This used to compare the body too,
-            // which quietly required the two triggers to RENDER a message identically - and they do
-            // not: see [alertedKey]. Any message that is not plain prose failed the match and was
-            // added a second time.
-            val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
-            val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
-            // Re-injected with the line on every later post (`extractMessagingStyleFromNotification`
-            // carries a message's extras), so each line keeps its own instants for as long as it shows.
-            newMessage.extras.putLong(LINE_SENT_AT, sentAt)
-            newMessage.extras.putLong(LINE_SERVER_AT, serverAt)
-            if (mediaUri != null && mediaMime != null) {
-                newMessage.setData(mediaMime, mediaUri)
-            }
-            if (alreadyPosted) {
-                Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
-                // THE SECOND TRIGGER MAY KNOW MORE: a line keeps its first trigger's stamps, and the
-                // first may not have had the server's instant. The re-injected line is restamped, so
-                // a read on the server clock can cover it ([ReadElsewhereMarks.recordThenCancel]).
-                if (serverAt > 0L) {
-                    style.messages
-                        .filter { it.timestamp == stamp && it.extras.getLong(LINE_SERVER_AT, 0L) == 0L }
-                        .forEach {
-                            it.extras.putLong(LINE_SENT_AT, sentAt)
-                            it.extras.putLong(LINE_SERVER_AT, serverAt)
-                        }
+            // THE BANNER THIS POST BUILDS ON, AND THE POST ITSELF, UNDER ONE LOCK ([ReadElsewhereMarks]).
+            // What this process last posted for the conversation, not the shade's answer: `notify`
+            // returns before the system enqueues the record, so the shade read right after a post can
+            // still show the banner from BEFORE it, and two posts back to back would drop the first
+            // one's line. The shade answers only when this process has posted nothing here (a fresh
+            // process). A reaction has its own notification and no record: it reads the shade.
+            return synchronized(READ_ELSEWHERE.lock) {
+                val held = if (channel == CHANNEL_REACTIONS) {
+                    shadeBannerOf(manager, notifId)
+                } else {
+                    READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
                 }
-            } else {
-                style.addMessage(newMessage)
-            }
 
-            // AND IF IT IS NOT IN THE SHADE, IT MAY STILL HAVE BEEN ANNOUNCED - see [ALERTED_PREFS].
-            // The shade answers "is it still showing", which is a strictly weaker question than "has
-            // the user been told": a swipe, and `MainActivity.onResume`'s cancel-all, both erase the
-            // first answer while leaving the second true. Posting again is not a duplicate of
-            // something visible, it is a second announcement of something the user already dismissed.
-            //
-            // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
-            // and for the same reason: a reaction from a reactor predating `at` reaches here with
-            // `sentAt = 0`, no reaction of its own can be identified, and this must never guess. A salon push carried 0 until
-            // 2026-09-22 and now carries `createdAt`.
-            //
-            // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
-            // moment the salon push gained a stamp. A post that replaces a line is by definition a
-            // re-post of something already announced - the generic "nouveau message" banner whose
-            // seed has just landed - so this question is already answered `true` for it, and asking
-            // it would drop the decrypted redraw and leave the generic line standing for ever.
-            val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
-            if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
-                Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
-                return 0L
-            }
-
-            // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
-            // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
-            // the old post first - the rebuilt MessagingStyle above already carries its history.
-            // The cancel itself runs WITH the post, below: a post refused as already read must not
-            // have taken the previous banner down first.
-            val switchesChannel = existingNotif != null && android.os.Build.VERSION.SDK_INT >= 26 &&
-                existingNotif.channelId != channel
-            // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
-            // see [RepostAlert].
-            val repostMode = RepostAlert.of(
-                redraw = alreadyPosted || supersedes != 0L,
-                switchesChannel = switchesChannel,
-                hasExistingPost = existingNotif != null,
-            )
-            if (repostMode == RepostAlert.Mode.SILENT) {
-                Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
-            }
-            // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
-            val callHolds = callHoldsSound()
-            if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
-                Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
-            }
-            val alertMode = CallSoundHold.alert(repostMode, callHolds)
-
-            val isReactionNotif = channel == CHANNEL_REACTIONS
-
-            // NO SHORTCUT FOR A SALON. Dynamic shortcuts share one platform cap with the DMs and the
-            // direct-share targets, and a busy salon posting one per message would evict them; the
-            // share sheet offers conversations, not salons (`sharing.md`). A salon keeps its large
-            // icon instead - the speaker's face or initials.
-            val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
-                publishConversationShortcut(
-                    this, groupId, if (isGroup) groupTitle else senderName, largeIcon, senderPerson, tapIntent
-                )
-            } else null
-
-            // ONE NAME ON A DIRECT MESSAGE. On API 30+ SystemUI titles a shortcut-backed post with the
-            // shortcut's label, so a DM in the group shape read its sender twice: in the header,
-            // then above the line (owner, 2026-11-11). [ConversationShape] decides title and shape.
-            val shape = ConversationShape.of(
-                isGroup = isGroup,
-                groupName = groupTitle,
-                namesEachSender = namesEachSender,
-                hasShortcut = conversationShortcutId != null,
-                sdkInt = android.os.Build.VERSION.SDK_INT,
-            )
-            shape.title?.let { style.conversationTitle = it }
-            style.isGroupConversation = shape.groupConversation
-            Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${groupId.take(8)})")
-
-            val notifBuilder = NotificationCompat.Builder(this, channel)
-                .setSmallIcon(R.drawable.ic_notification)
-                .setStyle(style)
-                .setAutoCancel(true)
-                // Below API 26 there are no channels and this is the whole of the importance, so it
-                // has to say what the channel says: DEFAULT for a reaction, HIGH for a message.
-                .setPriority(
-                    if (isReactionNotif) NotificationCompat.PRIORITY_DEFAULT
-                    else NotificationCompat.PRIORITY_HIGH
-                )
-                .setContentIntent(pendingIntent)
-                // ONE IDENTITY, NOT TWO. A conversation-shaped post (group shape: a group, or a DM
-                // naming each author) is drawn by the platform from its SHORTCUT: the shortcut's icon
-                // is the header circle, with the app's small icon as the corner badge. Without one the
-                // header circle was the app's bird while the sender's face sat beside the line, two
-                // round pictures one above the other (user, 2026-10-05). The large icon is therefore
-                // set only on a post with no shortcut (a reaction, a salon, or a refused shortcut).
-                .apply {
-                    if (conversationShortcutId != null) {
-                        setShortcutId(conversationShortcutId)
-                    } else if (alreadyPosted) {
-                        // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
-                        // posted the same message first - so its icon describes nothing shown. The
-                        // face is the one of the last line SOMEBODY ELSE wrote: the reader's own
-                        // inline reply (the style's user, or a line with no Person) is never the
-                        // conversation's face.
-                        val shownFace = style.messages
-                            .lastOrNull { it.person != null && it.person?.name != selfPerson.name }
-                            ?.person?.icon?.toIcon(this@showMessageNotification)
-                        if (shownFace != null) {
-                            setLargeIcon(shownFace)
-                        } else {
-                            // No line by somebody else carries a face (an unnamed speaker's is drawn as
-                            // initials into the icon, so this is a line with no icon): no large icon.
-                            Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
-                        }
-                    } else {
-                        setLargeIcon(largeIcon)
+                // Its title and group flag are set below, once the shortcut is known: [ConversationShape].
+                val style = NotificationCompat.MessagingStyle(selfPerson)
+                // Re-inject the previous (bounded) messages, then add the new one.
+                // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
+                held
+                    ?.messages
+                    ?.filter { (supersedes == 0L || it.timestamp != supersedes) && it.timestamp !in alsoSupersedes }
+                    ?.takeLast(MAX_NOTIF_MESSAGES - 1)
+                    ?.forEach { style.addMessage(it) }
+                // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
+                // thumbnail while keeping the conversation's MessagingStyle stacking. NotificationManager
+                // grants the system read access to the FileProvider content Uri carried in the notification.
+                // THE SENDER'S OWN INSTANT, NOT THIS ONE. It is what the shade should show, and it is
+                // also the only thing that lets the two triggers recognise the SAME message: a push and
+                // a WebSocket frame reach this builder at different moments, so a wall clock read here
+                // would stamp one message twice and the line below could never match.
+                val stamp = if (sentAt > 0) sentAt else System.currentTimeMillis()
+                // ONE MESSAGE, ONE LINE, WHICHEVER TRIGGER ARRIVES SECOND. `style.messages` holds the
+                // history re-injected from the notification already in the shade, so this asks the post
+                // itself - durable state, not a clock and not a flag this process would lose on a kill.
+                //
+                // IT NEEDS A SENT-AT TO WORK, and since 2026-09-22 the channel (salon) push carries
+                // one too: `createdAt`, the same stored column the socket frame reads, so a salon
+                // message that arrives BOTH ways is recognised here exactly as a DM is. It was the
+                // missing field rather than a missing rule - the notification was always single,
+                // because the id is shared.
+                //
+                // THE INSTANT ALONE, NOT THE INSTANT AND THE TEXT. This used to compare the body too,
+                // which quietly required the two triggers to RENDER a message identically - and they do
+                // not: see [alertedKey]. Any message that is not plain prose failed the match and was
+                // added a second time.
+                val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
+                val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
+                // Re-injected with the line on every later post (`extractMessagingStyleFromNotification`
+                // carries a message's extras), so each line keeps its own instants for as long as it shows.
+                newMessage.extras.putLong(LINE_SENT_AT, sentAt)
+                newMessage.extras.putLong(LINE_SERVER_AT, serverAt)
+                if (mediaUri != null && mediaMime != null) {
+                    newMessage.setData(mediaMime, mediaUri)
+                }
+                if (alreadyPosted) {
+                    Log.d(TAG, "showMessageNotification: already in the shade -> refreshed without alerting (groupId=${groupId.take(8)})")
+                    // THE SECOND TRIGGER MAY KNOW MORE: a line keeps its first trigger's stamps, and the
+                    // first may not have had the server's instant. The re-injected line is restamped, so
+                    // a read on the server clock can cover it ([ReadElsewhereMarks.recordThenCancel]).
+                    if (serverAt > 0L) {
+                        style.messages
+                            .filter { it.timestamp == stamp && it.extras.getLong(LINE_SERVER_AT, 0L) == 0L }
+                            .forEach {
+                                it.extras.putLong(LINE_SENT_AT, sentAt)
+                                it.extras.putLong(LINE_SERVER_AT, serverAt)
+                            }
                     }
+                } else {
+                    style.addMessage(newMessage)
                 }
-                // The second trigger for a message already in the shade re-posts the same content,
-                // so it must not sound or vibrate a second time - which is the whole of what the
-                // user saw as "the same notification twice".
-                // A SUPERSEDE IS THE SAME MESSAGE, SPELT PROPERLY. The reader was alerted when the
-                // generic line went up; buzzing again to correct its wording would be a second
-                // notification for one message, which is the defect, not the fix.
-                .setOnlyAlertOnce(alertMode != RepostAlert.Mode.ALERT)
-                // A re-draw that is a NEW post (after a channel-switch cancel, or after the reader
-                // swiped the old line away): `setSilent` - compat mutes the post itself, which
-                // `setOnlyAlertOnce` cannot do for a post that is not an update.
-                .setSilent(alertMode == RepostAlert.Mode.SILENT)
 
-            // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
-            // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
-            // - so a reaction arriving alone would be a grouped notification whose summary has just
-            // been cancelled, a shape OEM shells render inconsistently. It is also not a message, which
-            // is the whole reason it left [CHANNEL_MESSAGES].
-            if (!isReactionNotif) notifBuilder.setGroup(GROUP_KEY_MESSAGES)
+                // AND IF IT IS NOT IN THE SHADE, IT MAY STILL HAVE BEEN ANNOUNCED - see [ALERTED_PREFS].
+                // The shade answers "is it still showing", which is a strictly weaker question than "has
+                // the user been told": a swipe, and `MainActivity.onResume`'s cancel-all, both erase the
+                // first answer while leaving the second true. Posting again is not a duplicate of
+                // something visible, it is a second announcement of something the user already dismissed.
+                //
+                // Only where a SENDER'S stamp exists, which is the same condition `alreadyPosted` carries
+                // and for the same reason: a reaction from a reactor predating `at` reaches here with
+                // `sentAt = 0`, no reaction of its own can be identified, and this must never guess. A salon push carried 0 until
+                // 2026-09-22 and now carries `createdAt`.
+                //
+                // AND NEVER AGAINST A SUPERSEDE, which is the half that would otherwise break the
+                // moment the salon push gained a stamp. A post that replaces a line is by definition a
+                // re-post of something already announced - the generic "nouveau message" banner whose
+                // seed has just landed - so this question is already answered `true` for it, and asking
+                // it would drop the decrypted redraw and leave the generic line standing for ever.
+                val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
+                if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
+                    Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                    return 0L
+                }
 
-            // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
-            // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
-            if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt))
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
-            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
-                // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
-                // reaches with one PushSecret call. Reply stays off - the send is end-to-end
-                // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
-                // banner that shows the message: the mark is the receipt the sender sees.
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
+                // Channel switch (WP-XP-5): a posted notification cannot move channels in place, so when
+                // a mention upgrades (or a plain message downgrades) this conversation's channel, cancel
+                // the old post first - the rebuilt MessagingStyle above already carries its history.
+                // The cancel itself runs WITH the post, below: a post refused as already read must not
+                // have taken the previous banner down first.
+                val switchesChannel = held != null && android.os.Build.VERSION.SDK_INT >= 26 &&
+                    held.channelId != channel
+                // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
+                // see [RepostAlert].
+                val repostMode = RepostAlert.of(
+                    redraw = alreadyPosted || supersedes != 0L,
+                    switchesChannel = switchesChannel,
+                    hasExistingPost = held != null,
+                )
+                if (repostMode == RepostAlert.Mode.SILENT) {
+                    Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${held != null})")
+                }
+                // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
+                val callHolds = callHoldsSound()
+                if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
+                    Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
+                }
+                val alertMode = CallSoundHold.alert(repostMode, callHolds)
+
+                val isReactionNotif = channel == CHANNEL_REACTIONS
+
+                // NO SHORTCUT FOR A SALON. Dynamic shortcuts share one platform cap with the DMs and the
+                // direct-share targets, and a busy salon posting one per message would evict them; the
+                // share sheet offers conversations, not salons (`sharing.md`). A salon keeps its large
+                // icon instead - the speaker's face or initials.
+                val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
+                    publishConversationShortcut(
+                        this, groupId, if (isGroup) groupTitle else senderName, largeIcon, senderPerson, tapIntent
+                    )
+                } else null
+
+                // ONE NAME ON A DIRECT MESSAGE. On API 30+ SystemUI titles a shortcut-backed post with the
+                // shortcut's label, so a DM in the group shape read its sender twice: in the header,
+                // then above the line (owner, 2026-11-11). [ConversationShape] decides title and shape.
+                val shape = ConversationShape.of(
+                    isGroup = isGroup,
+                    groupName = groupTitle,
+                    namesEachSender = namesEachSender,
+                    hasShortcut = conversationShortcutId != null,
+                    sdkInt = android.os.Build.VERSION.SDK_INT,
+                )
+                shape.title?.let { style.conversationTitle = it }
+                style.isGroupConversation = shape.groupConversation
+                Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${groupId.take(8)})")
+
+                val notifBuilder = NotificationCompat.Builder(this, channel)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setStyle(style)
+                    .setAutoCancel(true)
+                    // Below API 26 there are no channels and this is the whole of the importance, so it
+                    // has to say what the channel says: DEFAULT for a reaction, HIGH for a message.
+                    .setPriority(
+                        if (isReactionNotif) NotificationCompat.PRIORITY_DEFAULT
+                        else NotificationCompat.PRIORITY_HIGH
+                    )
+                    .setContentIntent(pendingIntent)
+                    // THE USER'S SWIPE FORGETS WHAT WAS POSTED ([ReadElsewhereMarks.forget]): the next post
+                    // builds on that record, and must not bring back the lines the user dismissed.
+                    .setDeleteIntent(bannerDismissedIntent(this, groupId, notifId))
+                    // ONE IDENTITY, NOT TWO. A conversation-shaped post (group shape: a group, or a DM
+                    // naming each author) is drawn by the platform from its SHORTCUT: the shortcut's icon
+                    // is the header circle, with the app's small icon as the corner badge. Without one the
+                    // header circle was the app's bird while the sender's face sat beside the line, two
+                    // round pictures one above the other (user, 2026-10-05). The large icon is therefore
+                    // set only on a post with no shortcut (a reaction, a salon, or a refused shortcut).
+                    .apply {
+                        if (conversationShortcutId != null) {
+                            setShortcutId(conversationShortcutId)
+                        } else if (alreadyPosted) {
+                            // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
+                            // posted the same message first - so its icon describes nothing shown. The
+                            // face is the one of the last line SOMEBODY ELSE wrote: the reader's own
+                            // inline reply (the style's user, or a line with no Person) is never the
+                            // conversation's face.
+                            val shownFace = style.messages
+                                .lastOrNull { it.person != null && it.person?.name != selfPerson.name }
+                                ?.person?.icon?.toIcon(this@showMessageNotification)
+                            if (shownFace != null) {
+                                setLargeIcon(shownFace)
+                            } else {
+                                // No line by somebody else carries a face (an unnamed speaker's is drawn as
+                                // initials into the icon, so this is a line with no icon): no large icon.
+                                Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
+                            }
+                        } else {
+                            setLargeIcon(largeIcon)
+                        }
+                    }
+                    // The second trigger for a message already in the shade re-posts the same content,
+                    // so it must not sound or vibrate a second time - which is the whole of what the
+                    // user saw as "the same notification twice".
+                    // A SUPERSEDE IS THE SAME MESSAGE, SPELT PROPERLY. The reader was alerted when the
+                    // generic line went up; buzzing again to correct its wording would be a second
+                    // notification for one message, which is the defect, not the fix.
+                    .setOnlyAlertOnce(alertMode != RepostAlert.Mode.ALERT)
+                    // A re-draw that is a NEW post (after a channel-switch cancel, or after the reader
+                    // swiped the old line away): `setSilent` - compat mutes the post itself, which
+                    // `setOnlyAlertOnce` cannot do for a post that is not an update.
+                    .setSilent(alertMode == RepostAlert.Mode.SILENT)
+
+                // A REACTION DOES NOT JOIN THE MESSAGES BUNDLE. [refreshBadgeSummary] builds that bundle's
+                // summary from the unread-CONVERSATION count, which a reaction is deliberately not part of
+                // - so a reaction arriving alone would be a grouped notification whose summary has just
+                // been cancelled, a shape OEM shells render inconsistently. It is also not a message, which
+                // is the whole reason it left [CHANNEL_MESSAGES].
+                if (!isReactionNotif) notifBuilder.setGroup(GROUP_KEY_MESSAGES)
+
+                // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
+                // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
+                if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+                    notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt))
+                    notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
+                } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
+                    // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
+                    // reaches with one PushSecret call. Reply stays off - the send is end-to-end
+                    // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
+                    // banner that shows the message: the mark is the receipt the sender sees.
+                    notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
+                }
+
+                val notif = notifBuilder.build()
+
+                // EVERY SIDE EFFECT ON THE SHADE, AS ONE STEP: the channel switch's removal of the
+                // previous banner, then the post. A message is decided against a read on another device
+                // under the lock the dismissal takes ([ReadElsewhereMarks.postUnlessRead]): the read may
+                // have landed since the early check above, and a refused post then touches nothing.
+                val postToShade = {
+                    if (switchesChannel) manager.cancel(notifId)
+                    manager.notify(notifId, notif)
+                }
+                val readElsewhere = if (isReactionNotif) {
+                    postToShade()
+                    false
+                } else {
+                    !READ_ELSEWHERE.postUnlessRead(
+                        groupId, sentAt, serverAt,
+                        ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList()),
+                        postToShade,
+                    )
+                }
+                if (readElsewhere) {
+                    Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
+                    return 0L
+                }
+                Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
+
+                // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
+                // announcement that never reached the shade - the record would then suppress the retry.
+                alertedKey?.let { rememberAlerted(it) }
+
+                // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
+                // conversation's notification is active. IT IS NAMED, not looked up: the post above has
+                // not necessarily landed, and a count that missed it cancelled the summary - which took
+                // this very notification with it. A reaction passes nothing: it is not in the bundle.
+                refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
+
+                // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
+                // has on the line it must replace - see [supersedes].
+                stamp
             }
-
-            val notif = notifBuilder.build()
-
-            // EVERY SIDE EFFECT ON THE SHADE, AS ONE STEP: the channel switch's removal of the
-            // previous banner, then the post. A message is decided against a read on another device
-            // under the lock the dismissal takes ([ReadElsewhereMarks.postUnlessRead]): the read may
-            // have landed since the early check above, and a refused post then touches nothing.
-            val postToShade = {
-                if (switchesChannel) manager.cancel(notifId)
-                manager.notify(notifId, notif)
-            }
-            val readElsewhere = if (isReactionNotif) {
-                postToShade()
-                false
-            } else {
-                !READ_ELSEWHERE.postUnlessRead(groupId, sentAt, serverAt, linesOf(style), postToShade)
-            }
-            if (readElsewhere) {
-                Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
-                return 0L
-            }
-            Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
-
-            // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
-            // announcement that never reached the shade - the record would then suppress the retry.
-            alertedKey?.let { rememberAlerted(it) }
-
-            // Rebuild the group summary and refresh the launcher badge count (WP-XP-2) now that this
-            // conversation's notification is active. IT IS NAMED, not looked up: the post above has
-            // not necessarily landed, and a count that missed it cancelled the summary - which took
-            // this very notification with it. A reaction passes nothing: it is not in the bundle.
-            refreshBadgeSummary(this, justPosted = if (isReactionNotif) 0 else notifId)
-
-            // THE INSTANT THIS POST IS IDENTIFIED BY, which is the only handle a later correction
-            // has on the line it must replace - see [supersedes].
-            return stamp
         }
 
     }
