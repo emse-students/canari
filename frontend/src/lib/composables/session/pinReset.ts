@@ -1,4 +1,6 @@
 import type { AtRestKeyScheme } from '$lib/crypto/hardwareHeldKey';
+import { m } from '$lib/paraglide/messages';
+import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { restartsAsNewDevice, type LoginErrorCode } from './loginErrors';
 
 /**
@@ -145,8 +147,8 @@ export interface PinServer {
   baseUrl: string;
   /** A live access token. */
   token: string;
-  /** Defaults to the global `fetch`. */
-  fetchFn?: typeof fetch;
+  /** Defaults to {@link pinServerFetch}: under the request deadline. */
+  fetchFn?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 /**
@@ -157,9 +159,17 @@ export interface PinServer {
  * `pin-status` FIRST: `GET pin-salt` WRITES for a user with no salt (it creates the placeholder row),
  * so it is asked only of a user the server says has one.
  */
+/**
+ * The PIN server's requests under the app's request deadline (`fetchOrUnreachable`, PIN audit row 11):
+ * one that never answers rejects as unreachable, which the reset reads as "no answer".
+ */
+export function pinServerFetch(url: string, init: RequestInit): Promise<Response> {
+  return fetchOrUnreachable(url, init, m.auth_server_unreachable());
+}
+
 export async function serverPinSaltFingerprint(
   userId: string,
-  { baseUrl, token, fetchFn = fetch }: PinServer
+  { baseUrl, token, fetchFn = pinServerFetch }: PinServer
 ): Promise<string | null> {
   const headers = { Authorization: `Bearer ${token}` };
   const id = encodeURIComponent(userId);

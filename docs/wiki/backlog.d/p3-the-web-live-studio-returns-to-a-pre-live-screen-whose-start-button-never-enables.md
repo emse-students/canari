@@ -1,17 +1,36 @@
-## P3 - on the web, ending a live leaves the studio on a pre-live screen whose "Start the live" stays disabled on "Reading the live's rules..." (S13, 2026-11-20)
+## Reading owed - "En direct" past an open web live screen no longer leaves it on "Reading the live's rules..." (S13, 2026-11-20)
 
 target: 1.7.2
 
-Seen on `1.7.1-alpha.5` (dev), desktop Chrome, twice (after the first and after the third live ended)
+**Seen** on `1.7.1-alpha.5` (dev) by the rig's throwaway scripts in S13
 ([S13](../device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)):
-after "End the live" (confirmed) the broadcaster overlay did not close; it showed the pre-live screen
-("Go live", the scene buttons, the rules text) with the red button greyed and the line "Reading the
-live's rules...", and it stayed so for at least two minutes: no `GET /api/lives/rules` was logged in that
-time (the request is logged at every normal open, answered in about 110 ms), and the button never
-enabled, so a second live cannot be started from that screen. Closing the overlay with its X and
-opening "Publier > En direct" again reads the rules and starts normally
-(the next live of the sitting did). A person who ends a live and wants to go on again meets a dead button with a line that
-promises something that is not happening. **Not known**: whether the overlay is meant to close at the
-end (the phones show a "Live termine" screen with "Fermer"); the web end screen was not read in
-this state. **Test first**: end a live on the web seat and read the overlay's state and the rules
-request.
+after a web live ended, the broadcaster overlay showed the pre-live sheet with Start greyed on
+"Reading the live's rules..." and no `GET /api/lives/rules` for two minutes.
+
+**Reproduced on dev `1.7.2-alpha.2`, 2026-11-20** (W5, `--fake-media`, a CDP script reading the
+page's own console and network). Ending a live alone does NOT reproduce it: the overlay settles on
+"Live termine / Fermer" (phase `ended`), one `[LIVE-BROADCAST] screen for` line per opening. What
+reproduces it is a SECOND "En direct" while that ended screen is still mounted: the feed's own
+"Publier" (reachable past the full-screen layer by the keyboard, or by a script's `click()`), then
+"En direct". `[POSTS] going live from the composer` is logged, no `[live-overlay] open` (no remount),
+**two** more `[LIVE-BROADCAST] screen for` lines and two `[LIVE-MIX] audio context running`, no
+`[LIVE] limits|rules|standing` and no `GET /api/lives/{limits,rules,standing}` in the next 30 s, and the
+overlay reads phase `preview`, Start disabled, "Reading the live's rules". Two live ids in the rig's
+`WRITTEN-IDS.txt`.
+
+**Cause.** `routes/posts/+page.svelte` `onGoLive` assigned `liveTarget` a new object while the screen
+was mounted; the screen's machine was the prop fallback `broadcast = new LiveBroadcast(..., associationId)`
+in `LiveBroadcaster.svelte`, which Svelte 5 evaluates as a `derived` of the props it reads, and
+`associationId` is the getter `liveTarget.associationId`. So the screen got fresh `preview` machines
+whose `loadLimits` (called in `onMount`) never ran, and the ones they replaced were never disposed.
+
+**Built** (PR #3905): the screen makes its machine once at mount (`untrack`), and `onGoLive` refuses
+to re-target an open screen (a `[POSTS]` warning). Both tests fail on the old code
+([live](../frontend/modules/live.md)).
+
+**The reading that closes it**, on the first pre-release carrying #3905, on a web seat with
+`--fake-media`: start a live, end it, then "Publier" > "En direct" with the ended screen still
+open. Expected: one `[LIVE-BROADCAST] screen for` line for the whole sequence, the warning
+`[POSTS] going live while a live screen is open`, the overlay still on "Live termine"; then "Fermer",
+"Publier" > "En direct" opens a fresh screen that reads the rules (`GET /api/lives/rules`) and
+offers Start.

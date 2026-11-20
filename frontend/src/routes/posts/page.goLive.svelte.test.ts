@@ -133,4 +133,32 @@ describe('going live from the composer', () => {
     expect(q('[data-stub="live-overlay"]')).toBeNull();
     expect(q('[data-stub="modal"]')).toBeNull();
   });
+
+  it('"En direct" again while a live screen is open never re-targets it (dev, 2026-11-20)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const data = { posts: Promise.resolve([]), feedParams: { feed: 'all' as const } };
+    const app = mount(Page, { target: document.body, props: { data } });
+    mounted.push(() => unmount(app));
+    await settle();
+    const publish = () =>
+      [...document.querySelectorAll('button')]
+        .find((b) => b.textContent?.includes(m.posts_publish_button()))!
+        .click();
+
+    publish();
+    await settle();
+    q('[data-stub="composer-go-live"]')!.click();
+    await settle();
+    expect(q('[data-stub="live-overlay"]')!.dataset.retargets).toBe('0');
+
+    // The feed's "Publier" is still reachable past the screen (the keyboard, a script).
+    publish();
+    await settle();
+    q('[data-stub="composer-go-live"]')!.click();
+    await settle();
+    expect(q('[data-stub="modal"]')).toBeNull();
+    expect(document.querySelectorAll('[data-stub="live-overlay"]')).toHaveLength(1);
+    expect(q('[data-stub="live-overlay"]')!.dataset.retargets).toBe('0');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('a live screen is open'));
+  });
 });

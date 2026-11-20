@@ -251,6 +251,14 @@ need(
   'the poster location has no limit_conn or no limit_rate'
 );
 need(posterBudget > 0, 'live.constants.ts states no LIVE_POSTER_EGRESS_PER_ADDRESS_BPS');
+// The client's width must stay UNDER nginx's per-address connection bound, or a single reader's
+// feed of covers is refused again (a 429, a blank cover).
+const posterWidth = num('LIVE_POSTER_MAX_CONCURRENT');
+need(posterWidth > 0, 'live.constants.ts states no LIVE_POSTER_MAX_CONCURRENT');
+need(
+  posterWidth < posterConnN,
+  `the client poster width (${posterWidth}) is not under nginx's limit_conn (${posterConnN})`
+);
 need(
   posterConnN * posterRateBps <= posterBudget,
   `one address may pull ${posterConnN} x ${posterRateBps} b/s of posters, over its per-address bound ${posterBudget}`
