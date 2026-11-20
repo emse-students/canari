@@ -193,6 +193,12 @@ export const LYDIA_CASHIER_NOTIFICATIONS_ENABLED = true;
 export const LYDIA_CASHIER_ADDED_TYPE = 'lydia_cashier_added';
 
 /**
+ * The bell row's type for "you are now the Responsable" (the heir of a hand-over); equals
+ * `libs/contracts/lydia-refusal-codes.json`. Its client floor is `1.7.3` (notification-client-floor.ts).
+ */
+export const LYDIA_RESPONSABLE_HANDED_OVER_TYPE = 'lydia_responsable_handed_over';
+
+/**
  * TELLS A MEMBER THEY WERE ADDED AS A LYDIA CASHIER OF AN ASSOCIATION (lot 3): one bell row, its
  * `postId` the association id and its text the association's name; the client links it to the
  * Lydia Pro help page. No push: Lydia sends its own SMS, and a push would need a content key every
@@ -214,15 +220,37 @@ export class LydiaCashierNotifier {
    * throws: a notice that could not be written is logged at WARN - the add itself stands.
    */
   async tellAdded(association: { id: string; name: string }, recipientId: string): Promise<number> {
+    return this.tell(association, recipientId, LYDIA_CASHIER_ADDED_TYPE, 'cashier');
+  }
+
+  /**
+   * Writes the bell row telling `recipientId` they are now THE Responsable of the association's
+   * Business - the heir of a confirmed hand-over, and nobody else (owner, 2026-11-20: no acceptance
+   * step, this notice is enough). Same shape and switch as {@link tellAdded}; never throws.
+   */
+  async tellResponsable(
+    association: { id: string; name: string },
+    recipientId: string
+  ): Promise<number> {
+    return this.tell(association, recipientId, LYDIA_RESPONSABLE_HANDED_OVER_TYPE, 'Responsable');
+  }
+
+  /** One bell row of `type` for `recipientId`, no push (Lydia sends its own SMS). */
+  private async tell(
+    association: { id: string; name: string },
+    recipientId: string,
+    type: typeof LYDIA_CASHIER_ADDED_TYPE | typeof LYDIA_RESPONSABLE_HANDED_OVER_TYPE,
+    who: string
+  ): Promise<number> {
     const short = association.id.slice(0, 8);
     if (!this.enabled()) {
-      this.logger.debug(`[LYDIA-NOTIFY] association ${short}: cashier notice switched off`);
+      this.logger.debug(`[LYDIA-NOTIFY] association ${short}: ${who} notice switched off`);
       return 0;
     }
     try {
       const written = await this.notifications.createNotifications({
         recipientIds: [recipientId],
-        type: LYDIA_CASHIER_ADDED_TYPE,
+        type,
         postId: association.id,
         actorId: SYSTEM_ACTOR_ID,
         actorName: SYSTEM_ACTOR_NAME,
@@ -230,12 +258,12 @@ export class LydiaCashierNotifier {
         skipPush: true,
       });
       this.logger.log(
-        `[LYDIA-NOTIFY] association ${short}: cashier ${recipientId.slice(0, 8)} told (${written} row)`
+        `[LYDIA-NOTIFY] association ${short}: ${who} ${recipientId.slice(0, 8)} told (${written} row)`
       );
       return written;
     } catch (err: unknown) {
       this.logger.warn(
-        `[LYDIA-NOTIFY] association ${short}: the cashier notice could not be written: ${String(err)}`
+        `[LYDIA-NOTIFY] association ${short}: the ${who} notice could not be written: ${String(err)}`
       );
       return 0;
     }

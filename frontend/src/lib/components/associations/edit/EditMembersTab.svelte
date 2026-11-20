@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import {
     addMember,
-    removeMember,
     updateMemberRole,
     reorderMembers,
     ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY,
@@ -25,6 +24,8 @@
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
   import { confirmMemberRemoval } from '$lib/utils/users/memberRemovalConfirm';
+  import { isGlobalAdmin } from '$lib/stores/user';
+  import { removeRosterMember } from '$lib/associations/lydiaResponsableRemoval';
 
   interface Props {
     asso: Association;
@@ -91,6 +92,10 @@
     if (code === MEMBER_FLAGS_BEYOND_GRANTER) return m.asso_member_flags_beyond_granter_error();
     // Removing or demoting the last holder of "manage members", from the roster editor.
     if (code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER) return m.asso_member_last_manager_error();
+    // Removing the association's Lydia Responsable: they hand the role over first.
+    if (code === LEAVE_REFUSAL.RESPONSABLE_MUST_HAND_OVER) {
+      return m.asso_member_lydia_responsable_error();
+    }
     if (code === ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY) {
       return m.asso_institution_members_admin_only_error();
     }
@@ -147,7 +152,11 @@
       return;
     }
     try {
-      await removeMember(asso.id, targetId);
+      // A platform admin removing the Lydia Responsable confirms by typing (owner, 2026-11-20).
+      if ((await removeRosterMember(asso, targetId, isGlobalAdmin())) === 'declined') {
+        Log.d('editMembersTab.handleRemoveMember: the Lydia Responsable kept', { targetId });
+        return;
+      }
       members = members.filter((m) => m.userId !== targetId);
     } catch (err) {
       memberError = memberWriteError(err, m.common_delete_error());

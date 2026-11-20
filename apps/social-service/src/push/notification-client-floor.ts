@@ -121,6 +121,9 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // A new item in a global admin's queue (owner, 2026-11-18): the first build that draws it.
   admin_profile_correction: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
   admin_report: ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION,
+  // The heir of a Lydia Responsable hand-over (2026-11-20): the first build that draws it. The
+  // `1.7.2` pre-releases already out do not, and a floor compares the version core only.
+  lydia_responsable_handed_over: '1.7.3',
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */

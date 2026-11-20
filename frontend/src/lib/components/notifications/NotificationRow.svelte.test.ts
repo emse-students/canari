@@ -595,6 +595,15 @@ describe('NotificationRow for the Lydia payments notices', () => {
     expect(target.textContent).not.toContain(m.notif_unknown_type_text());
     expect(target.querySelector('button')!.disabled).toBe(false);
   });
+
+  it('tells the heir of a hand-over they are the Responsable now, as a known row that opens', () => {
+    const target = renderRow(row('lydia_responsable_handed_over'));
+    expect(target.textContent).toContain(
+      m.notif_lydia_responsable_handed_over_text({ name: 'BDE' })
+    );
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
 });
 
 describe('NotificationRow for an item in a global admin queue (owner, 2026-11-18)', () => {

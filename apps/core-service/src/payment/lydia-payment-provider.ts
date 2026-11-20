@@ -409,6 +409,21 @@ export const LYDIA_CASHIER_REVOKE_UNCONFIRMED = 'LYDIA_CASHIER_REVOKE_UNCONFIRME
  */
 export const LYDIA_CASHIER_ADD_ENABLED = true;
 
+/**
+ * THE OWNER'S GATE ON THE RESPONSABLE HAND-OVER (owner, 2026-11-19: a Responsable hands the role to
+ * another member before leaving), OFF: it has never run against Lydia. It flips once a homologation
+ * run and the owner's production trial are read (docs/wiki/backlog.d, the two readings owed). One
+ * switch in FOUR places changed together - this constant, social-service's of the same name
+ * (`lydia-responsable-handover.ts`, which also gates the departure refusal), the frontend's
+ * (`frontend/src/lib/associations/lydiaCashiers.ts`) and `switches.responsableHandoverEnabled` in
+ * `libs/contracts/lydia-refusal-codes.json`; each side's contract spec asserts them equal. Off, the
+ * hand-over is the typed 409 `LYDIA_RESPONSABLE_HANDOVER_DISABLED` and Lydia is never asked.
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_ENABLED = false;
+
+/** The `code` (409) of a hand-over while {@link LYDIA_RESPONSABLE_HANDOVER_ENABLED} is off. */
+export const LYDIA_RESPONSABLE_HANDOVER_DISABLED = 'LYDIA_RESPONSABLE_HANDOVER_DISABLED';
+
 /** `auth/vendortoken`'s answer when the private token does not match the vendor token (homologation, 2026-10-30). */
 const LYDIA_VENDOR_TOKEN_MISMATCH = '103';
 

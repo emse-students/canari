@@ -12,7 +12,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { firstValueFrom } from 'rxjs';
 import type { EntityManager, Repository } from 'typeorm';
 import { Association } from './entities/association.entity';
-import { AssociationsService, LYDIA_CASHIER_PHONE_PURPOSE } from './associations.service';
+import {
+  AssociationsService,
+  LYDIA_CASHIER_PHONE_PURPOSE,
+  LYDIA_RESPONSABLE_PHONE_LOCKED,
+} from './associations.service';
 import { LydiaCashierNotifier } from './lydia-payments-notifier.service';
 import { isSecretBoxConfigured, openSecret, sealSecret } from '../common/secret-box';
 import { sanitizeLog } from '../common/log.utils';
@@ -43,9 +47,31 @@ import {
   writeClaim,
 } from './lydia-cashier-claim';
 import { bridgeJoinSql, managedVendorTokenSql } from './lydia-account-bridge';
+import { AssociationPermissionFlag } from './entities/association-member.entity';
+import {
+  LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+  LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  handoverOutcome,
+  heirRefused,
+  planHandover,
+  type HandoverOutcome,
+  type HandoverPlan,
+} from './lydia-responsable-handover';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { describeHttpError } from '../common/http-error-log';
+
+/**
+ * What a hand-over's record answers core: its outcome, and the number core removes next through the
+ * verified path - `previous` (the old Responsable's, or an untracked heir's who left) or `current`
+ * (a promoted cashier's who left) of row `cashierId` - or none.
+ */
+export interface HandoverRecordResult {
+  outcome: HandoverOutcome;
+  cashierId: string;
+  remove: LydiaCashierNumber | null;
+}
 
 /** The `code` (400) of a cashier who is not a member of the association. */
 export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
@@ -580,6 +606,393 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
       });
     }
     return claimed;
+  }
+
+  /**
+   * THE CHECKS AND CLAIM BEFORE A HAND-OVER of the Responsable to member `userId` (number `phone`):
+   * `planHandover` on the rows the claim locks, the target's membership read in the same
+   * transaction - so the identity, the numbers and the membership checked are what the hand-over
+   * acts on. Typed refusals first, then the claim (`LYDIA_CASHIER_IN_FLIGHT` while held). Answers
+   * the Business, the claim token and the Responsable row being replaced.
+   */
+  async claimHandover(
+    id: string,
+    ask: { actorId: string; globalAdmin: boolean; userId: string; phone: string }
+  ): Promise<HandoverPlan & { vendorToken: string; claimToken: string }> {
+    this.logger.debug(`[LYDIA-CASHIER] Responsable hand-over claim asked on ${sanitizeLog(id)}`);
+    this.assertHandoverEnabled(id, 'claim');
+    if (!E164_RE.test(ask.phone) || !ask.userId || !ask.actorId) {
+      this.logger.warn(
+        `[LYDIA-CASHIER] hand-over claim refused on ${sanitizeLog(id)}: malformed body`
+      );
+      throw new BadRequestException('actorId, userId and an E.164 phone are required');
+    }
+    const claimed = await this.claimWithin(
+      id,
+      'Responsable hand-over',
+      async (_vendor, rows, manager) => {
+        const target = await this.membershipIn(manager, id, ask.userId);
+        try {
+          return planHandover(
+            rows,
+            ask,
+            target,
+            (sealed) => this.open(id, sealed, 'a cashier number'),
+            {
+              noResponsable: LYDIA_CASHIER_NO_RESPONSABLE,
+              notAMember: LYDIA_CASHIER_NOT_A_MEMBER,
+              phoneLocked: LYDIA_RESPONSABLE_PHONE_LOCKED,
+            }
+          );
+        } catch (err: unknown) {
+          const code = (err as { response?: { code?: unknown } })?.response?.code;
+          this.logger.warn(
+            `[LYDIA-CASHIER] hand-over refused on ${sanitizeLog(id)}: ` +
+              `${typeof code === 'string' ? code : 'untyped'}`
+          );
+          throw err;
+        }
+      }
+    );
+    this.logger.log(
+      `[LYDIA-CASHIER] hand-over of the Responsable claimed on ${sanitizeLog(id)} ` +
+        `(asked by ${sanitizeLog(ask.actorId).slice(0, 8)}${ask.globalAdmin ? ', a platform admin' : ''}; ` +
+        `${claimed.heirCashierId ? 'a cashier promoted' : claimed.retry ? 'a retry of the tracked number' : 'a new number'})`
+    );
+    return claimed;
+  }
+
+  /** The social switch of the hand-over (OFF, equal to core's): a spec opens it. */
+  handoverEnabled(): boolean {
+    return LYDIA_RESPONSABLE_HANDOVER_ENABLED;
+  }
+
+  /**
+   * Defence in depth: core refuses a hand-over while its switch is off, and so does this service's
+   * own route - a call that reached it anyway is a 409 `LYDIA_RESPONSABLE_HANDOVER_DISABLED`, WARN.
+   */
+  private assertHandoverEnabled(id: string, step: string): void {
+    if (this.handoverEnabled()) return;
+    this.logger.warn(
+      `[LYDIA-CASHIER] hand-over ${step} refused on ${sanitizeLog(id)}: switched off`
+    );
+    throw conflict(
+      LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+      'Handing the Responsable over is not open yet'
+    );
+  }
+
+  /** The association's name, read in `manager`'s transaction (the heir's notice carries it). */
+  private async nameIn(manager: EntityManager, id: string): Promise<string> {
+    const rows = (await manager.query(`SELECT name FROM associations WHERE id = $1`, [
+      id,
+    ])) as Array<{ name: string | null }>;
+    return rows[0]?.name ?? '';
+  }
+
+  /**
+   * Whether `userId` is a member of association `id`, and holds MANAGE_PAYOUT_ACCOUNT there, read
+   * in `manager`'s transaction. The member bitmask IS the whole rule for that flag:
+   * `mayAct` grants it to no super-admin (`SUPER_ADMIN_EXCLUDED_FLAGS`), and the kinds that exclude
+   * it hold no Lydia Business.
+   */
+  private async membershipIn(
+    manager: EntityManager,
+    id: string,
+    userId: string
+  ): Promise<{ isMember: boolean; managesPayout: boolean }> {
+    const rows = (await manager.query(
+      `SELECT permissions FROM association_members WHERE "associationId" = $1 AND "userId" = $2`,
+      [id, userId]
+    )) as Array<{ permissions: number }>;
+    if (rows.length === 0) return { isMember: false, managesPayout: false };
+    return {
+      isMember: true,
+      managesPayout:
+        (Number(rows[0].permissions) & AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT) !== 0,
+    };
+  }
+
+  /**
+   * RECORDS A HAND-OVER Lydia answered (`confirmed`: its read-back showed the 13 rights), under the
+   * claim `claimToken`, in ONE transaction that locks the association row and the live cashier rows:
+   * the Business must still be `vendorToken` (`LYDIA_BUSINESS_CHANGED`), the target's membership is
+   * re-read there, and so is the heir's own cashier row (a Tresorier or Vendeur PROMOTED in one step,
+   * owner, 2026-11-20 - its number must still be the one Lydia was asked about). Then
+   * (`handoverOutcome`):
+   * - `handed-over`: the heir's cashier row (if any) and the old Responsable row are CLOSED and the
+   *   target inserted as the live, confirmed Responsable, the old number moved to the new row's OTHER
+   *   number - the slot every removal path, the departure debt and the delete/unlink guard already
+   *   read - for core to remove next (`remove: 'previous'`). Close first, insert second: the partial
+   *   unique indexes keep ONE live Responsable and one live row per member at every statement. With
+   *   no old row left (an erasure took it meanwhile), the target is recorded alone, confirmed or not.
+   * - `unconfirmed`: nothing moves. A promoted cashier's row is marked UNCONFIRMED (its rights are
+   *   unknown now, as after a role change Lydia did not confirm); any other number is tracked as the
+   *   OLD Responsable's other number, so the card names it and a retry or "Retirer" ends it.
+   * - `target-left` (no longer a member) and `heir-ineligible` (MANAGE_PAYOUT_ACCOUNT taken away since
+   *   the claim, re-read HERE): whatever Lydia answered, the same tracking and its removal next
+   *   (`remove`) - the number may hold every right for someone who must not hold it. With no old
+   *   Responsable left, no other Responsable number remains to remove it with, so the heir is
+   *   RECORDED as the Responsable: a `target-left` one as a departed Responsable (a platform admin
+   *   hands the role over, which removes it); a `heir-ineligible` one answered as recorded
+   *   (`handed-over` or `unconfirmed`), the card naming the missing permission.
+   * The claim is cleared in the same transaction, and released on every typed refusal. The heir is
+   * told by a bell row once the hand-over is made (no acceptance step, owner, 2026-11-20); the
+   * association's name it carries is read INSIDE the transaction, so nothing after the commit can
+   * fail the answer of a hand-over that happened. Answers the row and the number core removes next,
+   * if any. The phone is never logged.
+   */
+  async recordHandover(
+    id: string,
+    input: {
+      vendorToken: unknown;
+      userId: unknown;
+      phone: unknown;
+      previousResponsableId: unknown;
+      actorId: unknown;
+      confirmed: unknown;
+      claimToken: unknown;
+    }
+  ): Promise<HandoverRecordResult> {
+    const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    const vendorToken = text(input.vendorToken);
+    const userId = text(input.userId);
+    const phone = text(input.phone);
+    const previousId = text(input.previousResponsableId);
+    const actorId = text(input.actorId);
+    const claimToken = requiredClaimToken(input.claimToken);
+    let confirmed: boolean;
+    try {
+      this.assertHandoverEnabled(id, 'record');
+      if (!vendorToken || !userId || !actorId || !previousId || !E164_RE.test(phone)) {
+        this.logger.warn(
+          `[LYDIA-CASHIER] hand-over record refused on ${sanitizeLog(id)}: malformed body`
+        );
+        throw new BadRequestException(
+          'vendorToken, userId, actorId, previousResponsableId and an E.164 phone are required'
+        );
+      }
+      confirmed = confirmedOf(input.confirmed);
+    } catch (err: unknown) {
+      await this.release(id, claimToken);
+      throw err;
+    }
+    if (!isSecretBoxConfigured()) {
+      this.logger.error(
+        `[LYDIA-CASHIER] hand-over record refused on ${sanitizeLog(id)}: LYDIA_KEY_ENCRYPTION_SECRET is not configured`
+      );
+      throw new ServiceUnavailableException('Cashier phone storage is not configured');
+    }
+    const sealed = sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, id, phone);
+    const phoneEnd = phone.slice(-2);
+    let result: HandoverRecordResult;
+    /** The association's name for the heir's notice, read under the record's lock. */
+    let assoName = '';
+    // Set when the old Responsable row was gone and the heir recorded alone: said AFTER the commit,
+    // so a rollback (a unique index) never leaves a line claiming a row that does not exist.
+    let recordedAlone: string | null = null;
+    try {
+      result = await this.assoRepo.manager.transaction(async (manager: EntityManager) => {
+        await this.lockForRecord(manager, id, vendorToken, claimToken, 'hand-over record');
+        const previous: Array<{
+          id: string;
+          phoneSealed: string | null;
+          phoneEnd: string | null;
+          previousPhoneSealed: string | null;
+        }> = await manager.query(
+          `SELECT id, "phoneSealed", "phoneEnd", "previousPhoneSealed" FROM lydia_cashiers
+            WHERE id = $1 AND "associationId" = $2 AND "vendorToken" = $3 AND role = 'responsable'
+              AND "removedAt" IS NULL
+            FOR UPDATE`,
+          [previousId, id, vendorToken]
+        );
+        const heirRows: Array<{ id: string; phoneSealed: string | null }> = await manager.query(
+          `SELECT id, "phoneSealed" FROM lydia_cashiers
+            WHERE "associationId" = $1 AND "vendorToken" = $2 AND "userId" = $3
+              AND role <> 'responsable' AND "removedAt" IS NULL
+            FOR UPDATE`,
+          [id, vendorToken, userId]
+        );
+        const heir = heirRows[0];
+        if (heir && this.open(id, heir.phoneSealed, "the heir's cashier number") !== phone) {
+          // The claim refused another number; only a cleared and retaken claim could reach this.
+          this.logger.error(
+            `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)} NOT recorded: the heir's cashier number ` +
+              `changed meanwhile - the number ending ${phoneEnd} may hold rights at Lydia with no row`
+          );
+          throw conflict(
+            LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+            "The heir's cashier number changed"
+          );
+        }
+        const old = previous[0];
+        const target = await this.membershipIn(manager, id, userId);
+        const outcome = handoverOutcome(confirmed, target);
+        const refused = heirRefused(outcome);
+        const closeHeirRow = async () => {
+          if (!heir) return;
+          await manager.query(
+            `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
+                    "revokeUnconfirmedAt" = NULL
+              WHERE id = $1`,
+            [heir.id]
+          );
+        };
+        const insertHeir = async (previousNumber: { sealed: string; end: string | null } | null) =>
+          (
+            (await manager.query(
+              `INSERT INTO lydia_cashiers
+                 ("associationId", "vendorToken", "userId", "phoneSealed", "phoneEnd", role,
+                  "addedByUserId", "confirmedAt", "previousPhoneSealed", "previousPhoneEnd")
+               VALUES ($1, $2, $3, $4, $5, 'responsable', $6, CASE WHEN $7 THEN now() END, $8, $9)
+               RETURNING id`,
+              [
+                id,
+                vendorToken,
+                userId,
+                sealed,
+                phoneEnd,
+                actorId,
+                confirmed,
+                previousNumber?.sealed ?? null,
+                previousNumber?.end ?? null,
+              ]
+            )) as Array<{ id: string }>
+          )[0].id;
+        const done = async (r: HandoverRecordResult) => {
+          await clearClaim((s, p) => manager.query(s, p), id, claimToken);
+          return r;
+        };
+        if (!old) {
+          // No Responsable left to replace (an erasure removed the row meanwhile): the target IS the
+          // Responsable now, as lot 2 records one - confirmed or not. Nothing else could hold the
+          // number: a removal needs a Responsable number as its context, and none is left. So an heir
+          // who lost MANAGE_PAYOUT_ACCOUNT is recorded too, and ANSWERED as recorded (handed over, or
+          // unconfirmed) - never "not made" over a row that says otherwise; the card names the missing
+          // permission (`withoutPayout`). A target who left is a departed Responsable, which only a
+          // platform admin's hand-over ends: `target-left` stays the answer, the card says departed.
+          const recorded: HandoverOutcome =
+            outcome === 'heir-ineligible' ? (confirmed ? 'handed-over' : 'unconfirmed') : outcome;
+          recordedAlone =
+            outcome === 'target-left'
+              ? ' (target-left): a platform admin hands the role over'
+              : outcome === 'heir-ineligible'
+                ? ` (${recorded}) WITHOUT MANAGE_PAYOUT_ACCOUNT: a manager grants it, or a ` +
+                  'platform admin hands the role over'
+                : '';
+          if (recorded === 'handed-over') assoName = await this.nameIn(manager, id);
+          await closeHeirRow();
+          return done({ outcome: recorded, cashierId: await insertHeir(null), remove: null });
+        }
+        const trackedHere = this.open(
+          id,
+          old.previousPhoneSealed,
+          "the Responsable's other number"
+        );
+        if (!heir && old.previousPhoneSealed && trackedHere !== phone) {
+          // The claim refused this; only a cleared and retaken claim could reach it. Lydia holds the
+          // asked number, which no row then names.
+          this.logger.error(
+            `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)} NOT recorded: the Responsable's other ` +
+              `number changed meanwhile - the number ending ${phoneEnd} may be listed at Lydia with no row`
+          );
+          throw conflict(LYDIA_RESPONSABLE_PHONE_LOCKED, "The Responsable's other number changed");
+        }
+        if (outcome === 'handed-over') {
+          if (!old.phoneSealed) {
+            this.logger.error(
+              `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)} NOT recorded: the Responsable row ` +
+                `${sanitizeLog(old.id).slice(0, 8)} stores no number - the number ending ${phoneEnd} ` +
+                `holds every right at Lydia with no row; the claim stays until a global admin clears it`
+            );
+            throw new ServiceUnavailableException("The Responsable's number is not stored");
+          }
+          assoName = await this.nameIn(manager, id);
+          await closeHeirRow();
+          await manager.query(
+            `UPDATE lydia_cashiers SET "removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL,
+                    "previousPhoneSealed" = NULL, "previousPhoneEnd" = NULL,
+                    "revokeUnconfirmedAt" = NULL, "previousRevokeUnconfirmedAt" = NULL
+              WHERE id = $1`,
+            [old.id]
+          );
+          const cashierId = await insertHeir({ sealed: old.phoneSealed, end: old.phoneEnd });
+          return done({ outcome, cashierId, remove: 'previous' });
+        }
+        const remove = refused;
+        if (heir) {
+          // A promoted cashier's number: its rights are unknown now (Lydia was asked for the 13).
+          await manager.query(
+            `UPDATE lydia_cashiers SET "confirmedAt" = NULL, "revokeUnconfirmedAt" = NULL
+              WHERE id = $1`,
+            [heir.id]
+          );
+          return done({ outcome, cashierId: heir.id, remove: remove ? 'current' : null });
+        }
+        if (!old.previousPhoneSealed) {
+          await manager.query(
+            `UPDATE lydia_cashiers
+                SET "previousPhoneSealed" = $2, "previousPhoneEnd" = $3,
+                    "previousRevokeUnconfirmedAt" = NULL
+              WHERE id = $1`,
+            [old.id, sealed, phoneEnd]
+          );
+        }
+        return done({ outcome, cashierId: old.id, remove: remove ? 'previous' : null });
+      });
+    } catch (err: unknown) {
+      if ((err as { code?: unknown })?.code === '23505') {
+        this.logger.error(
+          `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)} NOT recorded: a unique index refused ` +
+            `it - the number ending ${phoneEnd} may be listed at Lydia with no row`
+        );
+        await this.release(id, claimToken);
+        throw conflict(
+          LYDIA_CASHIER_ALREADY_SET,
+          'The cashiers changed meanwhile: a unique index refused the hand-over record'
+        );
+      }
+      if (err instanceof ConflictException || err instanceof NotFoundException) {
+        await this.release(id, claimToken);
+      }
+      throw err;
+    }
+    if (recordedAlone !== null) {
+      this.logger.error(
+        `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)}: the old Responsable row was gone - ` +
+          `the new one was recorded alone` +
+          recordedAlone
+      );
+    }
+    const audit =
+      `Lydia Responsable hand-over on association ${sanitizeLog(id)}: to user ` +
+      `${sanitizeLog(userId).slice(0, 8)}, phone ending ${phoneEnd}, by ` +
+      `${sanitizeLog(actorId).slice(0, 8)} - ${result.outcome}`;
+    if (result.outcome === 'handed-over') {
+      this.logger.log(
+        `[AUDIT] ${audit}` +
+          (result.remove ? '; the old number is removed next' : '; no old Responsable left')
+      );
+      // Never throws (the notifier logs its own failure): the hand-over is committed.
+      if (confirmed) await this.notifier.tellResponsable({ id, name: assoName }, userId);
+    } else if (result.outcome === 'unconfirmed') {
+      this.logger.error(
+        `[AUDIT] ${audit}: Lydia did not confirm the rights - the Responsable is unchanged unless ` +
+          `none was left; the number is tracked for a retry or a removal`
+      );
+    } else {
+      this.logger.warn(
+        `[AUDIT] ${audit}: the new holder ` +
+          (result.outcome === 'target-left'
+            ? 'left meanwhile'
+            : 'no longer manages the payout account') +
+          (result.remove
+            ? ' - not recorded as the Responsable; their number is tracked and removed next'
+            : ' - recorded as a DEPARTED Responsable (no old Responsable was left to keep): a ' +
+              'platform admin hands the role over, which removes the number')
+      );
+    }
+    return result;
   }
 
   /**
