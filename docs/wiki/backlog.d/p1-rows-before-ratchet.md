@@ -15,6 +15,7 @@ only once the window's close stored its row.
 **Owed with them, on the `1.7.1` pre-release (a reading, not a build):** a catch-up of a few dozen
 messages on the Mi 9T and the web, then a reload - every message present, no `[ACK] ... shown and
 not stored` line, `[ROWS_OWED] A checkpoint waits` rare and never followed by a stall of the drain.
+**Read in [S13](../device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone) (`1.7.1-alpha.5`), the iPhone 12 and a web seat:** the iPhone killed in the middle of a burst of 12, then relaunched - nine pending messages fetched at boot, all twelve present once and in order, the edit, the delete and the reaction applied; no `[DB] POISON ROW`, `[PENDING] A PARKED MUTATION`, `Rows of applied frames` or `[ROWS_OWED]` line in the iPhone's log ring or in the web seats' consoles. **Still owed:** the same on the Mi 9T, and a catch-up of a few dozen messages (the burst was twelve).
 
 **Left (same class, narrowest window): the orphan buffer** (`bufferOrphan`). A message whose
 conversation is not in the map is kept in memory until `drainOrphanMessages`, so a checkpoint can

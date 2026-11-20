@@ -970,8 +970,7 @@ of `trun`s (Chromium and WebKit write one per track per fragment; several are re
 already stored (three days) and lives from app versions already installed; a second copy at the
 broadcaster would be duplication. **A replay saved to the gallery** (`replaySave.ts`) is a file of the
 recorder's bytes and is NOT corrected - and does not drift: a native player places each fragment by
-its `tfdt` and has no MSE discontinuity rule to drop audio by. Owed: one reading, the Mi 9T broadcasting 5+ min in a dark room
-watched in desktop Chrome, in sync at the end - the real test; the counter only shows the rule acting ([backlog](../../backlog.d/p2-a-live-s-sound-drifts-ahead-of-its-picture-under-15-fps.md)).
+its `tfdt` and has no MSE discontinuity rule to drop audio by. **Read (S13, 2026-11-20, `1.7.1-alpha.5`)**: the Mi 9T broadcast 14.6 min watched in desktop Chrome, its front camera in the dark delivering 12.4-12.9 fps for the last 6.4 min (a dark surface and a saturated CPU left the back camera at 30 fps; flipping to the front camera did it); the viewer logged `191 last frames held` and the stream-level offset (audio end minus video end) went 58.6 ms at the start, 78.9 ms at the first fragment under 15 fps, 50.3 ms at the end: it did not grow ([S13](../../device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)). The method is the stream's own timestamps, not a clap.
 
 ### Background, a lens taken, and the same live
 
