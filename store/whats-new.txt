@@ -1,3 +1,3 @@
-version: 1.7.0
+version: 1.7.1
 
-Depuis « Envoyer à… », on envoie un post ou un CanaReel à plusieurs conversations d'un coup, et les CanaReels s'ouvrent dans les discussions. Les vidéos et les lives suivent la rotation du téléphone. Sur ordinateur, un live peut passer de la caméra à l'écran partagé. Les pièces jointes d'un post forment des cartes alignées, et une réponse ou une mention sur votre post sonne à part. MiGallery s'ouvre sans nouvelle connexion, et l'icône est plus nette.
+Un live terminé reste visible trois jours en CanaReel, avec une lecture qui saute où vous visez et va jusqu'au bout. Le spectateur d'un live arrive avec le son, et en paysage les réactions s'alignent en une rangée. Une vidéo verticale, ou de 90 s au plus, devient un CanaReel. Chaque BDE choisit la couleur de ses événements Campus. Une sélection de plusieurs photos garde chacune d'elles, et la bande blanche au-dessus de l'en-tête a disparu.

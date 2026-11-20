@@ -129,10 +129,12 @@ earliest version, as a checklist.
 - [P2 - A post's pictures and videos: the layout from one to many, designed (owner, 2026-11-15)](backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)
 - [P2 - a post that is not published yet takes no comment (owner, 2026-11-19)](backlog.d/a-scheduled-post-takes-no-comment.md)
 - [P2 - the live card follows the feed tab (owner, 2026-11-19)](backlog.d/the-live-card-follows-the-feed-tab.md)
+- [P2 - the thread glide never plays on Chromium, and warns at every arrival (S14, 2026-11-20)](backlog.d/p2-the-thread-glide-never-plays-on-chromium-and-warns-at-every-arrival.md)
 
 **P3 - hygiene**
 
 - [P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery](backlog.d/replay-length-and-gallery-index-read-short.md)
+- [P3 - the feed's live posters answer 429 at load: `Live poster <id>: 429 - -> rate-limited` (S14, 2026-11-20)](backlog.d/p3-the-feed-s-live-posters-hit-429-at-load.md)
 - [P3 - on the web, ending a live leaves the studio on a pre-live screen whose "Start the live" stays disabled on "Reading the live's rules..." (S13, 2026-11-20)](backlog.d/p3-the-web-live-studio-returns-to-a-pre-live-screen-whose-start-button-never-enables.md)
 
 ## 1.7.3
