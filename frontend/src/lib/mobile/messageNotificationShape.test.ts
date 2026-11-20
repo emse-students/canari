@@ -150,12 +150,17 @@ describe('the avatar cache remembers "no picture", and only that', () => {
   });
 
   it('asks the image first and the marker second, on one clock, before any request', () => {
-    const image = icon.indexOf('cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS');
-    const marker = icon.indexOf('absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS');
-    const request = icon.indexOf('request() ?: return null');
+    // The two freshness tests live in ONE function (cachedIconState), image before marker, and
+    // cachedRemoteIcon asks it before any request (the launcher shortcuts ask it alone).
+    const state = body('private fun Context.cachedIconState(');
+    const image = state.indexOf('cacheFile.lastModified()) < AVATAR_CACHE_MAX_AGE_MS');
+    const marker = state.indexOf('absent.lastModified()) < AVATAR_CACHE_MAX_AGE_MS');
     expect(image).toBeGreaterThan(-1);
     expect(marker).toBeGreaterThan(image);
-    expect(request).toBeGreaterThan(marker);
+    const asked = icon.indexOf('cachedIconState(cacheFile)');
+    const request = icon.indexOf('request() ?: return null');
+    expect(asked).toBeGreaterThan(-1);
+    expect(request).toBeGreaterThan(asked);
   });
 
   it('drops the marker when a picture arrives, and the picture when the answer is "none"', () => {
