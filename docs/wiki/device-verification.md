@@ -1679,8 +1679,8 @@ can say nothing about either outcome. Reasoning and the evidence behind each cha
 Test the **release** artifact from `android.yml`, not a local build: a locally re-signed
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
 re-enrolment. **IT DOES NOT COST A 2FA PROMPT, AND THE SENTENCE THAT SAID SO HELD THIS CHECK UP.**
-The campaign's test accounts are Authentik service accounts reached through the "Connexion externe
-(service-account)" link, and they carry no second factor; 2FA is a PRODUCTION-account property
+The campaign's test accounts are Authentik service accounts reached through the "Se connecter avec
+un mot de passe" link (labelled "Connexion externe (service-account)" before 2026-11-20), and they carry no second factor; 2FA is a PRODUCTION-account property
 (user, 2026-09-23). A session declined to start this check on the strength of the old wording, which
 is the cost of a precondition nobody re-measured. **TWO signed artifacts now exist and the RELEASE one is the target:**
 v0.14.5 of 2026-08-26 carries both Android fixes and went to Google Play production, so its attached

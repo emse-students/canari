@@ -1,4 +1,6 @@
 import { LocalizedError } from '$lib/utils/localizedError';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { trackedFetch } from '$lib/utils/trackedFetch';
 
 /**
  * `fetch`, with a NOT-REACHED turned into the same sentence a BAD ANSWER already gets.
@@ -54,13 +56,23 @@ export function isServerUnreachable(e: unknown): boolean {
   return e instanceof ServerUnreachableError;
 }
 
+/**
+ * IT HAS A DEADLINE, AND IT IS THE APP'S ONE DEADLINE (PIN audit row 11, 2026-11-20). The PIN salt
+ * and check went through a bare `fetch`, so a link that accepted the socket and answered nothing left
+ * the gate's spinner up for as long as the engine tolerated - with no outcome the person could act
+ * on. The request now goes through `trackedFetch`: the per-class head deadline of `requestDeadline.ts`
+ * (20 s for a read, 30 s plus upload time for a write) and the connectivity store's reading, the same
+ * as every REST call. An expiry is typed there ({@link RequestDeadlineError}) and turned into the same
+ * {@link ServerUnreachableError} as a refused socket: nothing answered, so the gate shows its
+ * retryable "unreachable" state. No clock is added here; the deadline is the request's own.
+ */
 export async function fetchOrUnreachable(
   url: string,
   init: RequestInit,
   unreachable: string
 ): Promise<Response> {
   try {
-    return await fetch(url, init);
+    return await trackedFetch(fetch, url, init);
   } catch (e: unknown) {
     // THE CALLER CANCELLED IT (a sign-out aborting the login in flight): nobody failed to reach
     // anything, so there is no transport line and no `ServerUnreachableError`. The abort is passed
@@ -68,7 +80,8 @@ export async function fetchOrUnreachable(
     if (init.signal?.aborted) throw e;
     // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. The raw cause is the only thing that tells a
     // developer which host was unreachable, and it is exactly what a user must not be shown.
-    console.warn(`[fetch] ${url.replace(/\?.*$/, '')} could not be reached:`, e);
+    const why = e instanceof RequestDeadlineError ? `no answer within ${e.deadlineMs} ms` : 'error';
+    console.warn(`[fetch] ${url.replace(/\?.*$/, '')} could not be reached (${why}):`, e);
     throw new ServerUnreachableError(unreachable, e);
   }
 }
