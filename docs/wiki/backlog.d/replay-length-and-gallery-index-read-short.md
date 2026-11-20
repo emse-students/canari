@@ -1,5 +1,7 @@
 ## P3 - a replay's card length is short by about 6 s and a saved replay is indexed at about 2 s by the Gallery
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Found in sitting S11 (2026-11-19), split from the replay-stall entry.
 

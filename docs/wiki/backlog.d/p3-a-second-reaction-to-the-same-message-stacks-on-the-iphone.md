@@ -1,8 +1,10 @@
 ## P3 - a second reaction to the same message stacks on the iPhone, where Android replaces it
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Seen 2026-11-18 (iPhone 12, `1.7.0-alpha.11`, dev, [readings](../device-verification.md#the-phone-readings-of-2026-11-18-m1-and-i1-170-alpha11)):** `beta` reacted ❤️ then 😂 to one message of `gamma`'s, locked and then killed: two entries in Notification Center each time; the Mi 9T replaced the first.
 

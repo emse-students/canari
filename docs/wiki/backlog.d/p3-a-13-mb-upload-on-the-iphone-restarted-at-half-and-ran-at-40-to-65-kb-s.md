@@ -1,8 +1,10 @@
 ## P3 - a 13 MB upload on the iPhone restarted at about half and ran at 40 to 65 KB/s
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-17, scope cut: KEPT in `1.7.0` - its fix is merged in `1.7.0`; one iPhone bench reading is left ([decisions](owner-decisions-of-2026-11-17.md))._
 

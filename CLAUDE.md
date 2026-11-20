@@ -208,8 +208,7 @@ slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md
 
 **[plan](docs/wiki/plan.md) is the order** - every open entry under its version, P1 first then the oldest, generated
 from the `target:` line of each [backlog.d/](docs/wiki/backlog.d/README.md) file (owner, 2026-11-13). Nothing is
-listed here a second time. `1.7.0` (owner, 2026-11-13): group calls; "Envoyer a..." and CanaReels in chats,
-flipped after the 13 readings; screen share in lives on desktop; the slow-link chantier steps that are ready; and
-EVERY entry owed only a reading, taken on the `1.6.12` and `1.7.0` pre-releases ([checklist](docs/wiki/plan.md#readings-owed)).
-After it, the owner's order of 2026-11-11: the slow-link chantier, then the oldest entries, no new feature unless asked
-([note](docs/wiki/backlog.d/owner-decisions-of-2026-11-11.md)).
+listed here a second time. `1.7.3` is the next tier (`1.7.2` shipped 2026-11-20): every entry owed only a reading sits in it, as
+the [checklist](docs/wiki/plan.md#readings-owed), to be taken on its pre-releases; `1.8.0` and the blocks after it follow
+the owner's order of 2026-11-19 (reliability first, [decisions](docs/wiki/backlog.d/owner-decisions-of-2026-11-19.md)),
+no new feature unless asked.

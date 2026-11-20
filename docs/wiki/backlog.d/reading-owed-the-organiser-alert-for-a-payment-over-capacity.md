@@ -1,6 +1,6 @@
 ## Reading owed - the organiser alert for a payment over capacity (switched on 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped. THE SWITCH IS ON: `FORM_ORGANISER_ALERT_ENABLED = true` (floor `1.7.0`, #2228 in `v1.4.0`); what is owed is the phone reading below, on the next alpha (dev)._
 

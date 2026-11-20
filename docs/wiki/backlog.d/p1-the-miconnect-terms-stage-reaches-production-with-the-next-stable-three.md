@@ -1,6 +1,8 @@
-## P1 - The MiConnect terms stage reaches production with the next STABLE: the hold is lifted in code, the stable's apply and a production read remain (2026-10-16)
+## P1 - The MiConnect terms stage shipped with the `1.7.2` stable: the hold is lifted in code, the production read of its apply remains (2026-10-16)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-20: **the three conditions are MET and the hold is LIFTED in code** (the pull request that narrowed this entry). Web read PASSED (2026-11-17); iPhone half PASSED (sitting [S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3)); Mi 9T half PASSED (sitting S15, #3889, a new test account: the terms page appeared, was ticked, and a second sign-in skipped it). `50-providers.yaml` now binds ALL eight providers (`miconnect-archives`, `-canari`, `-canari-dev`, `-canari-local`, `-cercle`, `-migallery`, `-mino-wiki`, `-sky`) to `miconnect-authorization`, `BOUND` follows in `held-blueprints.test.sh` and `test-consent-flow.py`, and `changelog.d/miconnect-terms-of-use.md` is restored. **Nothing reaches production until the next stable's `apply-blueprints.sh apply`**; at the next authorization a person is shown the terms page once, then never for that version. **Owed, and what keeps this entry open:** after that stable, read production's providers (all eight on `miconnect-authorization`) and one real sign-in on the web; delete the entry then. **Review fixes, same day (lead's decisions, reversible):** the handoff mint now recognises the two consent bindings by allowlist and requires the person's `cgu_version` to be current (`terms_not_accepted`), without which binding migallery, sky and cercle refused every handoff; the wiki Mino was added to the notice and the version moved to `2026-11-20` (six accounts asked once more); execution logging is off on both consent policies. **Rollback:** merge a revert of the pull request (the next stable's apply writes the implicit-consent flow back); a hand write in an `ak shell` needs the owner's yes during the absence and is overwritten by the next stable unless the revert is merged; the fail-open property and the flow are in [authentik](../infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)._
 
@@ -47,3 +49,5 @@ The three conditions, in order:
 **The lead lifts the hold** once the three hold, and tells the user (decided 2026-10-18).
 
 _2026-11-19, sitting [S10](../device-verification.md#the-phone-readings-of-2026-11-19-s10-171-alpha3): **the Mi half was not taken again.** None of the four test accounts is known to have the current terms unaccepted. The identity provider's `cgu_version` could not be read in this sitting (the read was refused). Clearing it on an account would be an identity-provider write, outside a reading. The Mi half still needs an account whose state is read first._
+
+_2026-11-20, `1.7.2` SHIPPED: the stable carries the lifted hold (#3890). Left, and the reason the entry stays: the production read of the stable's apply - the eight providers bound to `miconnect-authorization`, a new production account shown the terms page once and skipped the second time. A fresh MiConnect sign-in on a phone was not taken in S18._

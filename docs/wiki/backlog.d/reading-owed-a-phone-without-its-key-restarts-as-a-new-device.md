@@ -1,6 +1,8 @@
 ## Reading owed - a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Built: on a PIN the server accepted over a hardware-held key proven gone (`absent`, `mismatch`), the
 phone discards its local state through the forgot-PIN reset's LOCAL half (never `pin-reset`), shows one

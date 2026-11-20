@@ -1,8 +1,10 @@
 ## P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 In `/admin/moderation`, the "hidden" tab row (`frontend/src/routes/admin/moderation/+page.svelte`, the
 `{#each hiddenPosts as post}` block) prints the post's `authorId` name and avatar whenever one is set,
