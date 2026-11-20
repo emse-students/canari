@@ -288,6 +288,28 @@ unchanged (~1.16 ms before and after). That figure is a published post's, which 
 open-report sub-select; for a post scheduled later it runs, and the same seed measured ~0.30 ms with
 `content_reports` (500 rows) scanned sequentially. Not measured on dev or production.
 
+#### A post that is not published yet takes no comment (owner, 2026-11-19)
+
+*"On ne devrait pas pouvoir commenter un post programme."* `PostInteractionsService.addComment` refuses a
+post that is not published yet, for EVERY writer including the post's own author: a typed
+`409 Conflict` carrying `code: COMMENT_POST_NOT_PUBLISHED` (`comment-publication.ts`), never a message
+to parse. **The decision is the database's and is taken under the row lock**: `writeComments`
+(`comment-write.ts`, `requirePublished`) selects `PUBLISHED_SQL` (`publication-time.ts`, the feed's own
+predicate `scheduledAt IS NULL OR scheduledAt <= NOW()`, on the DATABASE clock) in the same
+`SELECT ... FOR UPDATE` that reads the comments, so a reschedule committed while an add waited is seen
+by it (proven in `comment-write.integration.spec.ts`). There is no earlier app-clock check and no read
+of `publishedAt`, which can be out of step with `scheduledAt`. Only the add is refused (a like, edit
+or delete needs an existing comment, and none can exist under such a post). On the client a scheduled
+card (the strip's prop, OR the post's own `scheduledAt` still ahead, so a deep link to the post page
+too) draws no comment control or preview and opens no comment sheet, even when a notification tap
+asks for one; a stale copy that still posts gets the 409 mapped to its own sentence
+(`post_comment_not_published_refusal`, `publishFailure.ts`). The 2026-11-15 moderation read therefore
+needs no case for comments under a scheduled post. Charter: principle 6 (kindness) and 7 (simplicity) -
+the question disappears with its cause.
+
+**Production count (read-only, 2026-11-20, about 15:45 UTC):** 0 posts have a `publishedAt` in the future,
+so 0 comments sit under a not-yet-published post. Nothing needed repairing.
+
 #### Decided by the owner (2026-11-04)
 
 - **The place decides.** A student's comment under an institution's or another BDE's post, and a

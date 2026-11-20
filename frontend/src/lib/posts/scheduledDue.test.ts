@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_TIMER_MS, applyScheduledEdit, msUntilNextDue, stillScheduled } from './scheduledDue';
+import {
+  MAX_TIMER_MS,
+  applyScheduledEdit,
+  isStillScheduled,
+  msUntilNextDue,
+  stillScheduled,
+} from './scheduledDue';
 
 const at = (ms: number) => ({ scheduledAt: new Date(ms).toISOString() });
 
@@ -51,5 +57,15 @@ describe('applyScheduledEdit', () => {
   });
   it('drops the post when the edit removes its schedule', () => {
     expect(applyScheduledEdit([p('a', 2000)], p('a', null), 1000).published).toBe(true);
+  });
+});
+
+describe('isStillScheduled', () => {
+  it('is true only for a scheduledAt still ahead', () => {
+    const now = Date.parse('2026-11-20T10:00:00Z');
+    expect(isStillScheduled({ scheduledAt: '2026-11-21T10:00:00Z' }, now)).toBe(true);
+    expect(isStillScheduled({ scheduledAt: '2026-11-20T09:00:00Z' }, now)).toBe(false);
+    expect(isStillScheduled({ scheduledAt: null }, now)).toBe(false);
+    expect(isStillScheduled({}, now)).toBe(false);
   });
 });
