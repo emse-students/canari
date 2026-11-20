@@ -114,6 +114,10 @@ describe('lydiaHandoverErrorText - the hand-over words its own outcomes', () => 
     expect(text(LYDIA_CASHIER_SOCIAL_REFUSAL.RESPONSABLE_HANDOVER_CASHIER_NUMBER)).toBe(
       m.asso_lydia_handover_err_cashier_number()
     );
+    // A cashier promoted in place who lost the right at the record: their seat is gone, and said.
+    expect(text(LYDIA_CASHIER_REFUSAL.RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED)).toBe(
+      m.asso_lydia_handover_err_heir_cashier_removed()
+    );
   });
 
   it('every other code reads as the cashier screen words it', () => {

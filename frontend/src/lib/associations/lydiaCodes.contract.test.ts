@@ -67,6 +67,8 @@ describe('Lydia codes follow the shared contract', () => {
       REMOVAL_PRECONDITION: CONTRACT.core.cashierRemovalPrecondition,
       RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: CONTRACT.core.responsableNumberChangeForbidden,
       RESPONSABLE_HANDOVER_DISABLED: CONTRACT.core.responsableHandoverDisabled,
+      RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED:
+        CONTRACT.core.responsableHandoverHeirCashierRemoved,
     });
     expect(LYDIA_CASHIER_SOCIAL_REFUSAL).toEqual({
       IN_FLIGHT: CONTRACT.social.cashierInFlight,

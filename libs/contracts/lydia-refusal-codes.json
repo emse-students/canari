@@ -18,7 +18,8 @@
     "cashierReadbackInvalid": "LYDIA_CASHIER_READBACK_INVALID",
     "cashierRemovalPrecondition": "LYDIA_CASHIER_REMOVAL_PRECONDITION",
     "responsableNumberChangeForbidden": "LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN",
-    "responsableHandoverDisabled": "LYDIA_RESPONSABLE_HANDOVER_DISABLED"
+    "responsableHandoverDisabled": "LYDIA_RESPONSABLE_HANDOVER_DISABLED",
+    "responsableHandoverHeirCashierRemoved": "LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED"
   },
   "social": {
     "paymentsNotActivated": "PAYMENTS_NOT_ACTIVATED",

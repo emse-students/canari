@@ -311,6 +311,10 @@
             <p class="text-amber-warn-text text-xs" role="status">
               {m.asso_lydia_cashier_departed()}
             </p>
+          {:else if row.withoutPayout}
+            <p class="text-amber-warn-text text-xs" role="status">
+              {m.asso_lydia_cashier_responsable_no_payout()}
+            </p>
           {/if}
           {#if cashier.state === 'unconfirmed'}
             <p class="text-amber-warn-text text-xs" role="status">

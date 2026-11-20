@@ -790,6 +790,20 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect(tellResponsable).not.toHaveBeenCalled();
     });
 
+    it('no old Responsable left AND the heir lost MANAGE_PAYOUT_ACCOUNT: recorded and answered as the Responsable', async () => {
+      await reset();
+      await members('holder', 'member-2');
+      const pre = await claim();
+      await ds.query(`UPDATE lydia_cashiers SET "removedAt" = now() WHERE role = 'responsable'`);
+      await ds.query(`UPDATE association_members SET permissions = 0 WHERE "userId" = 'member-2'`);
+      const out = await recordAfter(pre, true);
+      expect(out).toMatchObject({ outcome: 'handed-over', remove: null });
+      expect(await liveRows()).toEqual([
+        { id: out.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
+      ]);
+      expect(await claimHeld()).toBe(false);
+    });
+
     describe('the departure rule, on the real SQL', () => {
       type Guarded = {
         assertNotLydiaResponsable: (

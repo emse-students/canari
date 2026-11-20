@@ -41,6 +41,14 @@ export const LYDIA_CASHIER_NOT_A_MEMBER = 'LYDIA_CASHIER_NOT_A_MEMBER';
  */
 export const LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER =
   'LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER';
+/**
+ * core's own `code` (`core.responsableHandoverHeirCashierRemoved` in the contract) for the same
+ * refusal when the heir was a CASHIER promoted in place: their own number - the one Lydia was just
+ * asked to give the 13 rights - is the one removed, so they are no longer a cashier, and the screen
+ * says so rather than "nothing changed".
+ */
+export const LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED =
+  'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED';
 
 /** social-service's `code` of a cashier operation refused while another holds the claim. */
 const LYDIA_CASHIER_IN_FLIGHT = 'LYDIA_CASHIER_IN_FLIGHT';
@@ -378,10 +386,16 @@ export class LydiaCashiersController {
               code: LYDIA_CASHIER_NOT_A_MEMBER,
               message: 'The new Responsable is no longer a member of the association',
             }
-          : {
-              code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
-              message: 'The new Responsable no longer manages the payout account',
-            }
+          : record.remove === 'current'
+            ? {
+                code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
+                message:
+                  'The new Responsable no longer manages the payout account; their cashier number was removed',
+              }
+            : {
+                code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+                message: 'The new Responsable no longer manages the payout account',
+              }
       );
     }
     if (added !== true) throw added;

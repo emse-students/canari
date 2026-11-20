@@ -223,9 +223,12 @@ export function planHandover(
  * - `heir-ineligible`: the target is still a member but no longer holds MANAGE_PAYOUT_ACCOUNT (it
  *   was taken away between the claim and the record) - handled as `target-left`: never recorded as
  *   the Responsable, the number tracked and removed next.
- * With NO old Responsable left (an erasure took it meanwhile), an ineligible heir's number is tracked
- * as a departed Responsable's: no other Responsable number remains to remove it with, so a platform
- * admin hands the role over and that removes it.
+ * With NO old Responsable left (an erasure took it meanwhile), no other Responsable number remains
+ * to remove the heir's with (a removal needs one as its context), so the heir is RECORDED as the
+ * Responsable whatever the outcome: a `target-left` heir as a departed Responsable (a platform admin
+ * hands the role over, which removes the number); a `heir-ineligible` heir, still a member, is
+ * answered as recorded (`handed-over` or `unconfirmed`), and the card names the missing permission
+ * until a manager grants it or a platform admin hands the role over.
  */
 export type HandoverOutcome = 'handed-over' | 'unconfirmed' | 'target-left' | 'heir-ineligible';
 

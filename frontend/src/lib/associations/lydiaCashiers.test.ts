@@ -144,6 +144,19 @@ describe('lydiaCashiersView', () => {
     expect(view.rows.map((row) => row.canRevokeCurrent)).toEqual([false, true, true]);
   });
 
+  it('a Responsable still a member WITHOUT the payout right is named on the card; departed or unknown, never', () => {
+    const flag = (overrides: Partial<AssociationPayoutAccount>) =>
+      lydiaCashiersView(account(overrides), true).rows.map((row) => row.withoutPayout);
+    expect(flag({ cashiers: [responsable], payoutManagerIds: ['other'] })).toEqual([true]);
+    expect(flag({ cashiers: [responsable], payoutManagerIds: ['ur'] })).toEqual([false]);
+    // Not sent (the hand-over off, or an older server): nothing is claimed.
+    expect(flag({ cashiers: [responsable] })).toEqual([false]);
+    // A departed Responsable has its own line; a cashier is never flagged.
+    expect(
+      flag({ cashiers: [{ ...responsable, departed: true }, cashier({})], payoutManagerIds: [] })
+    ).toEqual([false, false]);
+  });
+
   it('a server older than 1.7.1 (no departed field) reads as a member', () => {
     const [row] = lydiaCashiersView(account({ cashiers: [cashier({})] }), true).rows;
     expect(row.departed).toBeNull();

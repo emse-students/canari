@@ -878,13 +878,15 @@ describe('LydiaCashiersService.recordHandover - the record, with an SQL-routed d
    * live, no cashier row for the heir, the heir's bitmask `permissions` (null: not a member). Every
    * write is kept. `assoRepo.query` - anything OUTSIDE the transaction - fails.
    */
-  function made(permissions: number | null) {
+  function made(permissions: number | null, shape: { old?: boolean; heirCashier?: boolean } = {}) {
+    const { old = true, heirCashier = false } = shape;
     const writes: Array<{ sql: string; params: unknown[] }> = [];
     const query = jest.fn(async (sql: string, params: unknown[] = []) => {
       if (sql.includes('FOR UPDATE OF a')) {
         return [{ vendorToken: 'vendor-1', startedAt: new Date(0), claimToken: TOKEN }];
       }
       if (sql.includes("role = 'responsable'") && sql.includes('FOR UPDATE')) {
+        if (!old) return [];
         return [
           {
             id: 'row-old',
@@ -894,7 +896,16 @@ describe('LydiaCashiersService.recordHandover - the record, with an SQL-routed d
           },
         ];
       }
-      if (sql.includes("role <> 'responsable'")) return [];
+      if (sql.includes("role <> 'responsable'")) {
+        return heirCashier
+          ? [
+              {
+                id: 'row-heir',
+                phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO_ID, HEIR),
+              },
+            ]
+          : [];
+      }
       if (sql.includes('FROM association_members')) {
         return permissions === null ? [] : [{ permissions }];
       }
@@ -961,6 +972,40 @@ describe('LydiaCashiersService.recordHandover - the record, with an SQL-routed d
       cashierId: 'row-old',
       remove: 'previous',
     });
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('no old Responsable left, the heir without MANAGE_PAYOUT_ACCOUNT: recorded AND answered as the Responsable - never "not made" over the row', async () => {
+    const { record, writes, tellResponsable } = made(0, { old: false });
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'handed-over',
+      cashierId: 'row-new',
+      remove: null,
+    });
+    expect(writes.some((w) => w.sql.includes('INSERT INTO lydia_cashiers'))).toBe(true);
+    expect(tellResponsable).toHaveBeenCalledWith({ id: ASSO_ID, name: 'BDE' }, 'heir-user');
+    const said = String((Logger.prototype.error as jest.Mock).mock.calls);
+    expect(said).toContain('WITHOUT MANAGE_PAYOUT_ACCOUNT');
+  });
+
+  it('no old Responsable left, an ineligible heir Lydia did not confirm: recorded unconfirmed, answered unconfirmed', async () => {
+    const { record, tellResponsable } = made(0, { old: false });
+    await expect(record(false)).resolves.toEqual({
+      outcome: 'unconfirmed',
+      cashierId: 'row-new',
+      remove: null,
+    });
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('a promoted cashier who lost MANAGE_PAYOUT_ACCOUNT: their OWN number removed next (current) - the seat goes with it', async () => {
+    const { record, writes, tellResponsable } = made(0, { heirCashier: true });
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'heir-ineligible',
+      cashierId: 'row-heir',
+      remove: 'current',
+    });
+    expect(writes.some((w) => w.sql.includes('INSERT INTO lydia_cashiers'))).toBe(false);
     expect(tellResponsable).not.toHaveBeenCalled();
   });
 

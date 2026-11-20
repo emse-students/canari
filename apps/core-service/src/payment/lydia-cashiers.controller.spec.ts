@@ -2,6 +2,7 @@ import axios from 'axios';
 import { HttpException, Logger } from '@nestjs/common';
 import {
   LYDIA_CASHIER_NOT_A_MEMBER,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED,
   LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
   LydiaCashiersController,
 } from './lydia-cashiers.controller';
@@ -665,6 +666,38 @@ describe('LydiaCashiersController - handing the Responsable over (owner, 2026-11
     expect(said).not.toContain(HEIR);
     expect(removeLydiaCashier).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+
+  it('a promoted cashier who lost MANAGE_PAYOUT_ACCOUNT: their own number removed, the typed 409 says they are no longer a cashier', async () => {
+    social({
+      '/lydia-responsable-handover-claim': { ...CLAIMED, heirCashierId: NEW_ROW },
+      '/lydia-responsable-handover': {
+        outcome: 'heir-ineligible',
+        cashierId: NEW_ROW,
+        remove: 'current',
+      },
+      '/lydia-cashier-revoke-claim': {
+        vendorToken: 'vendor-1',
+        cashierPhone: HEIR,
+        contextPhone: CONTEXT_PHONE,
+        claimToken: REVOKE_TOKEN,
+      },
+      '/lydia-cashier-revoke': { ok: true },
+    });
+    const removeLydiaCashier = jest.fn().mockResolvedValue({ verified: true, held: 0 });
+    await expect(
+      open({
+        addLydiaBusinessHolder: jest.fn().mockResolvedValue(undefined),
+        removeLydiaCashier,
+      }).handOverResponsable(ASSO, ask, selfReq)
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED },
+    });
+    expect(postsTo('/lydia-cashier-revoke-claim')[0][1]).toEqual({
+      cashierId: NEW_ROW,
+      number: 'current',
+    });
   });
 
   it("a promoted cashier who left meanwhile: THEIR OWN row's current number removed", async () => {

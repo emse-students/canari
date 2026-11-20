@@ -15,6 +15,11 @@ export const LYDIA_CASHIER_REFUSAL = {
   RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN',
   /** Handing the Responsable over is off (the owner's gate). */
   RESPONSABLE_HANDOVER_DISABLED: 'LYDIA_RESPONSABLE_HANDOVER_DISABLED',
+  /**
+   * A cashier promoted in place lost MANAGE_PAYOUT_ACCOUNT before the record: the hand-over is not
+   * made and their own number was removed - they are no longer a cashier.
+   */
+  RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED: 'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED',
 } as const;
 
 /** The typed refusals social-service answers on the same routes (core passes them on as given). */

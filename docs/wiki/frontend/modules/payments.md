@@ -1207,12 +1207,20 @@ pre-releases already out cannot draw it, and a floor compares the version core o
      rights, for someone who may not hold the role (`previous` on the old Responsable, or `current` on a
      promoted cashier's own row). Core removes it, then answers the typed 409 `LYDIA_CASHIER_NOT_A_MEMBER`
      or `LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER`, WARN in its log, before Lydia's own
-     unconfirmed answer.
+     unconfirmed answer. A promoted cashier who lost the permission loses their cashier seat with it
+     (their own number may hold the 13 rights, so it is removed): core answers its own
+     `LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED` instead, and the screen says they are no longer a
+     cashier.
    - **no old row left** (an account erasure took it while the step ran) - the heir is recorded as the
-     Responsable, confirmed or not, as lot 2 records one. If the heir left too (or lost the
-     permission), the outcome is `target-left` (or `heir-ineligible`) and the number is tracked as a DEPARTED Responsable's: no other Responsable number
-     remains to remove it with (a removal needs one as its context, and the Business needs a manager),
-     so the departed-Responsable card asks a platform admin to hand over, which removes it.
+     Responsable, confirmed or not, as lot 2 records one, whatever else the record read: no other
+     Responsable number remains to remove theirs with (a removal needs one as its context, and the
+     Business needs a manager). If the heir left too, the outcome is `target-left` and the row is a
+     DEPARTED Responsable's: the departed-Responsable card asks a platform admin to hand over, which
+     removes the number. If the heir is still a member but lost `MANAGE_PAYOUT_ACCOUNT`, the answer is
+     what was recorded (`handed-over` or `unconfirmed`, never "not made" over a row that says
+     otherwise; social logs it at ERROR), and the card names the missing right on the Responsable's row
+     (`withoutPayout`, from `payoutManagerIds`): a manager grants it, or a platform admin hands over.
+     The same line shows whenever a manager takes the right from a live Responsable later.
 4. **Remove** the number the record names through the existing verified path (`LydiaCashierOps.revoke`:
    its own claim, `revokeTarget`'s checks with the live Responsable's number as the confirmed context,
    Lydia's removal, the re-read at 0 rights, `recordRevoke`). Only 0 rights clears it.

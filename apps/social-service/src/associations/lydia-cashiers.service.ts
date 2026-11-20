@@ -860,16 +860,27 @@ export class LydiaCashiersService implements OnModuleInit, LydiaCashierDeparture
         };
         if (!old) {
           // No Responsable left to replace (an erasure removed the row meanwhile): the target IS the
-          // Responsable now, as lot 2 records one - confirmed or not; a target who left too is a
-          // departed Responsable, which only a platform admin's hand-over ends.
+          // Responsable now, as lot 2 records one - confirmed or not. Nothing else could hold the
+          // number: a removal needs a Responsable number as its context, and none is left. So an heir
+          // who lost MANAGE_PAYOUT_ACCOUNT is recorded too, and ANSWERED as recorded (handed over, or
+          // unconfirmed) - never "not made" over a row that says otherwise; the card names the missing
+          // permission (`withoutPayout`). A target who left is a departed Responsable, which only a
+          // platform admin's hand-over ends: `target-left` stays the answer, the card says departed.
+          const recorded: HandoverOutcome =
+            outcome === 'heir-ineligible' ? (confirmed ? 'handed-over' : 'unconfirmed') : outcome;
           this.logger.error(
             `[LYDIA-CASHIER] hand-over on ${sanitizeLog(id)}: the old Responsable row is gone - ` +
               `the new one is recorded alone` +
-              (refused ? ` (${outcome}): a platform admin hands the role over` : '')
+              (outcome === 'target-left'
+                ? ' (target-left): a platform admin hands the role over'
+                : outcome === 'heir-ineligible'
+                  ? ` (${recorded}) WITHOUT MANAGE_PAYOUT_ACCOUNT: a manager grants it, or a ` +
+                    'platform admin hands the role over'
+                  : '')
           );
-          if (outcome === 'handed-over') assoName = await this.nameIn(manager, id);
+          if (recorded === 'handed-over') assoName = await this.nameIn(manager, id);
           await closeHeirRow();
-          return done({ outcome, cashierId: await insertHeir(null), remove: null });
+          return done({ outcome: recorded, cashierId: await insertHeir(null), remove: null });
         }
         const trackedHere = this.open(
           id,

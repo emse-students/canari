@@ -75,6 +75,13 @@ interface LydiaCashierRowView {
    * current number and a new Responsable is needed. Null for a member.
    */
   departed: 'cashier' | 'responsable' | null;
+  /**
+   * The Responsable, still a member, does NOT hold MANAGE_PAYOUT_ACCOUNT: they cannot reach these
+   * screens to manage cashiers or hand over. A hand-over recorded with no old Responsable left can
+   * produce it (nothing else could hold the number), and so can a manager taking the right away
+   * later. Read from `payoutManagerIds`, sent while the hand-over is on; false without it.
+   */
+  withoutPayout: boolean;
 }
 
 /** Everything the "Caissiers" section draws, from ONE payout-account read. */
@@ -103,6 +110,7 @@ export function lydiaCashiersView(
   const visible = linked && responsableConfirmed;
   if (!visible) return { visible: false, canAdd: false, rows: [] };
   const cashiers = account.cashiers ?? [];
+  const payoutManagers = account.payoutManagerIds ? new Set(account.payoutManagerIds) : null;
   const rank = (role: LydiaCashierRole) => (role === 'responsable' ? 0 : 1);
   const rows = [...cashiers]
     .sort((a, b) => rank(a.role) - rank(b.role) || a.addedAt.localeCompare(b.addedAt))
@@ -123,6 +131,11 @@ export function lydiaCashiersView(
             ? ('responsable' as const)
             : ('cashier' as const)
           : null,
+      withoutPayout:
+        payoutManagers != null &&
+        cashier.role === 'responsable' &&
+        cashier.departed !== true &&
+        !payoutManagers.has(cashier.userId),
     }));
   return { visible, canAdd: addEnabled, rows };
 }
