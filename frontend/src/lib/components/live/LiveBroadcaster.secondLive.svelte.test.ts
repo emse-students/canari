@@ -1,18 +1,19 @@
 // @vitest-environment happy-dom
 /**
- * THE SECOND LIVE OF A SITTING, through the screen's OWN machine (no injected broadcast, as in
- * production): the machine is made once, so nothing a live's end sets can hand the screen a fresh
- * `preview` machine whose limits were never read ("Reading the live's rules" forever, no request).
- * Starts the first live, ends it, and counts the machines the screen made and the rules it read.
+ * A PARENT RE-TARGETING A MOUNTED SCREEN, through the screen's OWN machine (no injected broadcast, as
+ * in production). The feed passes `associationId={liveTarget.associationId}`, a getter over its
+ * `$state`, and "En direct" assigns `liveTarget` a new object. Reached on dev (2026-11-20) by
+ * "Publier" then "En direct" past an ended screen: the screen's machine, then a prop fallback and so
+ * a `derived` of that getter, was made again - phase `preview`, its limits never read, "Reading the
+ * live's rules" with no request. The screen must hold ONE machine for its life, whatever its props do.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import LiveBroadcaster from './LiveBroadcaster.svelte';
 import { FakeMediaStream, studioOn } from '$lib/live/liveStudio.test-helper';
 import * as liveApi from '$lib/live/api';
-import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
 import { m } from '$lib/paraglide/messages';
-import { fakeCamera, fakeDeps, LIMITS } from '$lib/live/liveBroadcast.test-helper';
+import { fakeDeps, LIMITS } from '$lib/live/liveBroadcast.test-helper';
 import { showConfirm } from '$lib/stores/confirm.svelte';
 import { clearHistoryOverlayStack, initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 
@@ -79,16 +80,30 @@ afterEach(() => {
 });
 
 describe('LiveBroadcaster - its own machine across a live', () => {
-  it('start -> end: ONE machine, its rules read once, the end screen over the same machine', async () => {
+  it('start -> end -> the parent re-targets it: ONE machine, the end screen stays, rules read once', async () => {
     // The desktop's machine: scenes, whose constructor sets state the screen must not track.
     vi.stubGlobal('MediaStream', FakeMediaStream);
     const f = fakeDeps();
     f.deps.createStudio.mockImplementation((camera) => studioOn(camera).studio);
     made.deps = f.deps;
     const deps = f.deps;
+    // The feed's own shape (`routes/posts/+page.svelte`): a `$state` target read through getters.
+    let liveTarget = $state<{ associationId: string | null; associationName: string | null }>({
+      associationId: null,
+      associationName: null,
+    });
+    const props = {
+      get associationId() {
+        return liveTarget.associationId;
+      },
+      get associationName() {
+        return liveTarget.associationName;
+      },
+      onclose: vi.fn(),
+    };
     const target = document.createElement('div');
     document.body.appendChild(target);
-    app = mount(LiveBroadcaster, { target, props: { onclose: vi.fn() } });
+    app = mount(LiveBroadcaster, { target, props });
     await settle();
     const q = <T extends Element = HTMLElement>(sel: string) => target.querySelector<T>(sel);
     expect(made.machines).toHaveLength(1);
@@ -97,43 +112,19 @@ describe('LiveBroadcaster - its own machine across a live', () => {
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
     expect(q('[data-live-phase]')!.dataset.livePhase).toBe('live');
-    // The member moves between scenes on air (pause), as a desktop live does.
-    await (
-      made.machines[0] as { studio: { selectScene: (s: string) => Promise<void> } }
-    ).studio.selectScene('pause');
-    await settle();
-    expect(made.machines).toHaveLength(1);
-    expect(q('[data-live-phase]')!.dataset.livePhase).toBe('live');
     q<HTMLButtonElement>('[data-live-end]')!.click();
     await settle();
     expect(showConfirm).toHaveBeenCalled();
     expect(q('[data-live-ended]')).not.toBeNull();
 
-    // The same machine and the same rules: no machine nothing ever loaded was swapped in.
+    // "En direct" again with this screen mounted: the same target, as a NEW object.
+    liveTarget = { associationId: null, associationName: null };
+    await settle();
+
     expect(made.machines).toHaveLength(1);
-    expect(deps.fetchLiveRules).toHaveBeenCalledTimes(1);
-  });
-
-  it('a machine swapped in under the mounted screen has its rules read, not left on "Reading"', async () => {
-    const first = fakeDeps();
-    const second = fakeDeps();
-    made.deps = first.deps;
-    const a = new LiveBroadcast(fakeCamera().session, null);
-    made.deps = second.deps;
-    const b = new LiveBroadcast(fakeCamera().session, null);
-    made.machines.length = 0;
-    const props = $state({ broadcast: a, onclose: () => {} });
-    const target = document.createElement('div');
-    document.body.appendChild(target);
-    app = mount(LiveBroadcaster, { target, props });
-    await settle();
-    expect(first.deps.fetchLiveRules).toHaveBeenCalledTimes(1);
-    expect(second.deps.fetchLiveRules).not.toHaveBeenCalled();
-
-    props.broadcast = b;
-    await settle();
-    expect(second.deps.fetchLiveRules).toHaveBeenCalledTimes(1);
+    expect(q('[data-live-phase]')!.dataset.livePhase).toBe('ended');
+    expect(q('[data-live-ended]')).not.toBeNull();
     expect(target.textContent).not.toContain(m.live_limits_loading());
-    expect(b.limits).not.toBeNull();
+    expect(deps.fetchLiveRules).toHaveBeenCalledTimes(1);
   });
 });
