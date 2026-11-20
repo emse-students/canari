@@ -207,7 +207,7 @@
     {@render face()}
     {#each confetti as piece, i (i)}
       <span
-        class="birthday-confetti {piece.dot ? 'rounded-full' : 'rounded-[1px]'}"
+        class="birthday-confetti {piece.dot ? 'birthday-confetti-dot' : ''}"
         aria-hidden="true"
         data-confetti
         style="left:{piece.xPct}%;top:{piece.yPct}%;width:{piece.widthPx}px;height:{piece.heightPx}px;background:var(--birthday-c{piece.colour});--birthday-rot:{piece.rotationDeg}deg;--birthday-delay:{piece.delayS}s"
