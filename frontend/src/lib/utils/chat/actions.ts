@@ -1669,8 +1669,14 @@ export async function importUserBackup(params: {
   myDeviceId: string;
   userId: string;
   log: (msg: string) => void;
+  /**
+   * Rebuilds the conversation map from the store the import just merged into. NEVER preceded by a
+   * clear (rows before ratchet, review of #3887): the inbound pipeline keeps running during an
+   * import, and a frame whose conversation was missing from the map in between was handled as one
+   * the reader had deleted. The restore prunes and re-seeds the map in one synchronous loop, so no
+   * conversation is ever absent from it.
+   */
   reloadConversations: () => Promise<void>;
-  clearConversations: () => void;
 }): Promise<{ conversations: number; messages: number; isSameDevice: boolean }> {
   const {
     file,
@@ -1681,7 +1687,6 @@ export async function importUserBackup(params: {
     userId,
     log,
     reloadConversations,
-    clearConversations,
   } = params;
 
   const arrayBuffer = await file.arrayBuffer();
@@ -1714,8 +1719,18 @@ export async function importUserBackup(params: {
     );
   }
 
-  clearConversations();
-  await reloadConversations();
+  // THE IMPORT'S OUTCOME IS THE STORE MERGE ABOVE, which has landed (review of #3887). A restore
+  // that fails now - a group list the server did not answer - is the RESTORE's failure: said as
+  // such, and caught up by the next restore, which reads the same store. Reported as the import's,
+  // it had the reader import again a file that was already in.
+  try {
+    await reloadConversations();
+  } catch (e) {
+    const line = `[BACKUP] the backup is imported, but the conversation list could not be restored from it now: ${String(e)} - the next restore shows it`;
+    // AT ERROR TOO: `log` is the in-app log ring, a plain line - a failure must accuse.
+    console.error(line, e);
+    log(line);
+  }
 
   log(
     `[OK] Backup imported: ${backup.conversations.length} conversation(s), ` +
