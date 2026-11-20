@@ -330,6 +330,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
+	@bun .github/scripts/tests/image-prod-deps.test.mjs
 	@bun .github/scripts/tests/route-params-wired.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh

@@ -18,13 +18,24 @@ RUN cd apps/core-service && bun install --frozen-lockfile
 COPY apps/core-service ./apps/core-service
 RUN cd apps/core-service && bunx tsc -p tsconfig.build.json
 
+# -- Production dependencies ---------------------------------------------------
+# What the runtime stage ships: the production closure only. The builder installs devDependencies
+# too (it needs tsc and @nestjs/cli), and copying ITS node_modules put jest, the Nest CLI, ts-jest
+# and the rest next to dist/ on the image's disk, in its size, its pull time and its scan.
+FROM oven/bun:1.4.4-alpine AS prod-deps
+
+WORKDIR /app
+
+COPY apps/core-service/package.json apps/core-service/bun.lock ./apps/core-service/
+RUN cd apps/core-service && bun install --production --frozen-lockfile
+
 # -- Runtime stage -------------------------------------------------------------
 FROM oven/bun:1.4.4-alpine
 
 WORKDIR /app
 
 COPY --from=builder /app/apps/core-service/dist ./dist
-COPY --from=builder /app/apps/core-service/node_modules ./node_modules
+COPY --from=prod-deps /app/apps/core-service/node_modules ./node_modules
 COPY --from=builder /app/apps/core-service/package.json ./
 # Eight invented dev avatars: inert unless DEV_AVATAR_OVERRIDE_DIR is set, which only the dev compose does.
 COPY --from=builder /app/apps/core-service/dev-avatars ./dev-avatars
