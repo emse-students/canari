@@ -135,3 +135,67 @@ describe('loadLivePoster', () => {
     expect(d.fetch).toHaveBeenCalledTimes(LIVE_POSTER_MEMO_MAX + 2);
   });
 });
+
+describe('loadLivePoster - the width of the fetches (S14)', () => {
+  const lives = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `w${i}`,
+      poster: { name: `n${i}`, ageMs: 1 },
+      posterKey: 'ab'.repeat(32),
+    }));
+
+  it('never has more than LIVE_POSTER_MAX_CONCURRENT fetches out, and drains all of them', async () => {
+    forgetLivePostersExcept([]);
+    let out = 0;
+    let peak = 0;
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      out++;
+      peak = Math.max(peak, out);
+      await new Promise<void>((r) => gates.push(r));
+      out--;
+      return new ArrayBuffer(2);
+    });
+    const loads = lives(10).map((l) => loadLivePoster(l, undefined, d));
+    await Promise.resolve();
+    // ten asked, three out: the rest wait for a slot, no clock involved
+    expect(d.fetch).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    const outcomes = await Promise.all(loads);
+    expect(outcomes.every((o) => o.kind === 'shown')).toBe(true);
+    expect(d.fetch).toHaveBeenCalledTimes(10);
+    expect(peak).toBe(3);
+  });
+
+  it('frees the slot when a fetch fails, and an abort while waiting never fetches', async () => {
+    forgetLivePostersExcept([]);
+    const gates: Array<() => void> = [];
+    const d = deps(async () => {
+      await new Promise<void>((r) => gates.push(r));
+      throw refusal(429, 'rate-limited');
+    });
+    const [a, b, c, e, f] = lives(5);
+    const running = [a, b, c].map((l) => loadLivePoster(l, undefined, d));
+    const ctl = new AbortController();
+    const waitingAborted = loadLivePoster(e, ctl.signal, d);
+    const waitingKept = loadLivePoster(f, undefined, d);
+    await Promise.resolve();
+    ctl.abort();
+    for (let i = 0; i < 40; i++) {
+      await Promise.resolve();
+      while (gates.length) gates.shift()!();
+    }
+    expect((await waitingAborted).kind).toBe('aborted');
+    expect((await waitingKept).kind).toBe('rate-limited');
+    expect((await Promise.all(running)).map((o) => o.kind)).toEqual(Array(3).fill('rate-limited'));
+    expect(d.fetch).toHaveBeenCalledTimes(4);
+    // every slot is back: a new load starts at once
+    const again = deps(async () => new ArrayBuffer(2));
+    await expect(loadLivePoster(lives(1)[0], undefined, again)).resolves.toMatchObject({
+      kind: 'shown',
+    });
+  });
+});

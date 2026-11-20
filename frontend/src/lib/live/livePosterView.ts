@@ -63,6 +63,54 @@ function remember(liveId: string, entry: { name: string; image: Blob }): void {
   }
 }
 
+/**
+ * THE MOST POSTERS FETCHED AT THE SAME TIME (S14, 2026-11-20): nginx bounds the preview path per
+ * ADDRESS by CONNECTIONS (`limit_conn lives_posters_conn 4`), and a feed of thirty replay covers
+ * opened thirty fetches at once - everything past the fourth answered 429, a blank cover. Three
+ * leaves one connection to the tab's other preview traffic. The bound is a width, never a delay: a
+ * fetch starts the moment a slot frees, so no clock is involved and any number of covers drains.
+ */
+export const LIVE_POSTER_MAX_CONCURRENT = 3;
+
+let fetching = 0;
+const waiting: Array<() => void> = [];
+
+/** Gives a slot back: straight to the longest waiter (never to a newcomer in between), else it frees. */
+function releaseSlot(): void {
+  const next = waiting.shift();
+  if (next) next();
+  else fetching--;
+}
+
+/**
+ * Takes a fetch slot: `true` AT ONCE when one is free (the fetch starts in the same turn), else a
+ * promise of `true` when one is handed over, or `false` when `signal` aborted while waiting.
+ */
+function takeSlot(signal: AbortSignal | undefined): true | Promise<boolean> {
+  if (fetching < LIVE_POSTER_MAX_CONCURRENT) {
+    fetching++;
+    return true;
+  }
+  console.debug(`[LIVE] card poster: ${waiting.length + 1} waiting for a fetch slot`);
+  return new Promise<boolean>((resolve) => {
+    const turn = () => {
+      signal?.removeEventListener('abort', onAbort);
+      if (signal?.aborted) {
+        releaseSlot();
+        resolve(false);
+      } else resolve(true);
+    };
+    const onAbort = () => {
+      const at = waiting.indexOf(turn);
+      if (at < 0) return;
+      waiting.splice(at, 1);
+      resolve(false);
+    };
+    waiting.push(turn);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /** The load running for each live, by live id: the name it fetches and its outcome. */
 const running = new Map<string, { name: string; load: Promise<LivePosterLoad> }>();
 
@@ -124,14 +172,24 @@ async function fetchAndOpen(
   deps: LivePosterViewDeps
 ): Promise<LivePosterLoad> {
   console.debug(`[LIVE] card poster ${liveId}: loading ${poster.name} (${poster.ageMs} ms old)`);
+  let holding = false;
   try {
+    const slot = takeSlot(signal);
+    holding = slot === true || (await slot);
+    if (!holding) {
+      console.debug(`[LIVE] card poster ${liveId}: aborted while waiting for a fetch slot`);
+      return { kind: 'aborted' };
+    }
     const sealed = new Uint8Array(await deps.fetch(liveId, poster.name, signal));
+    releaseSlot();
+    holding = false;
     const plain = await deps.open(posterKey, liveId, sealed);
     console.debug(`[LIVE] card poster ${liveId}: opened, ${plain.byteLength} bytes`);
     const image = new Blob([plain], { type: 'image/jpeg' });
     remember(liveId, { name: poster.name, image });
     return { kind: 'shown', image };
   } catch (e) {
+    if (holding) releaseSlot();
     if (signal?.aborted) {
       console.debug(`[LIVE] card poster ${liveId}: aborted`);
       return { kind: 'aborted' };
