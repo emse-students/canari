@@ -111,6 +111,7 @@ export function toConversationMeta(
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
+    ...(convo.nameAt !== undefined && convo.nameFromStatement ? { nameFromStatement: true } : {}),
     ...(convo.nameSync !== undefined ? { nameSync: convo.nameSync } : {}),
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
     // the row holds", never as 0: the store migration wrote it, and only it.
@@ -496,6 +497,8 @@ export interface ConversationRowSpec {
   startedAt?: Conversation['startedAt'];
   /** See {@link Conversation.nameAt}; absent keeps `existing`'s. */
   nameAt?: Conversation['nameAt'];
+  /** See {@link Conversation.nameFromStatement}; read only beside `nameAt`, whose rank it is. */
+  nameFromStatement?: Conversation['nameFromStatement'];
   /** See {@link Conversation.nameSync}; absent keeps `existing`'s. */
   nameSync?: Conversation['nameSync'];
   /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
@@ -548,6 +551,14 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const keepsDatedName =
     conversationType === 'group' && spec.nameAt === undefined && existing?.nameAt !== undefined;
   const nameAt = conversationType === 'group' ? (spec.nameAt ?? existing?.nameAt) : undefined;
+  // The RANK goes with the date it qualifies: from the spec when the spec dates the name, from
+  // `existing` when its date is kept.
+  const nameFromStatement =
+    nameAt === undefined
+      ? undefined
+      : spec.nameAt !== undefined
+        ? spec.nameFromStatement
+        : existing?.nameFromStatement;
   const name = keepsDatedName && existing ? existing.name : identity.displayName;
   const nameSync = conversationType === 'group' ? (spec.nameSync ?? existing?.nameSync) : undefined;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
@@ -574,6 +585,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(nameAt !== undefined ? { nameAt } : {}),
+    ...(nameFromStatement === true ? { nameFromStatement } : {}),
     ...(nameSync !== undefined ? { nameSync } : {}),
     ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
@@ -1062,6 +1074,7 @@ export function restoredConversationRow(
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
     nameAt: meta.nameAt,
+    nameFromStatement: meta.nameFromStatement,
     nameSync: meta.nameSync,
     localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,

@@ -285,9 +285,17 @@ export interface Conversation {
    */
   nameAt?: number;
   /**
+   * The dated name was stated by a SILENT `groupNamed` statement (a creation, or the one-time
+   * restatement of a group that existed before names were dated), not by a rename. A statement dates
+   * a name and never renames, so any rename beats it whatever the dates (`groupNameSupersedes`).
+   * Absent: a rename dated it, or nothing did.
+   */
+  nameFromStatement?: true;
+  /**
    * What this device still owes about a rename it made (`groupName.ts`, `NameSync`): the server's
    * copy of a name its members already hold, and/or a `groupRenamed` frame whose send ended with no
-   * answer. Settled by the next connection's sweep (`settleNameSync`). Absent: nothing owed.
+   * answer, and/or its own silent `groupNamed` statement (`OwnNameStatement`). Settled by the next
+   * connection's sweep (`settleNameSync`, `stateGroupNameOnce`). Absent: nothing owed.
    */
   nameSync?: NameSync;
   conversationType?: 'direct' | 'group' | 'channel';

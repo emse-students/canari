@@ -18,8 +18,10 @@ import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
+  applyNameStatement,
   applyRenameFrame,
   GROUP_NAME_SKIP_TEXT,
+  reportOutrankedStatement,
   reportRenameRefusal,
 } from '$lib/utils/chat/groupName';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
@@ -312,6 +314,31 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         );
       }
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
+    } else if (parsed.system.event === 'groupNamed') {
+      // The live handler's rule for a silent name statement (`applyNameStatement`), dated by the
+      // archive row's server time: no notice, and a rename outranks it whatever the order read.
+      const convo = getConversation(contactName);
+      const outcome = convo
+        ? applyNameStatement(
+            convo,
+            data.name,
+            parseServerTimestampMs(msg.timestamp),
+            appMessageSentAtMs(parsed.sentAt)
+          )
+        : null;
+      if (outcome && 'row' in outcome) {
+        setConversation(contactName, outcome.row);
+      } else if (outcome && 'refused' in outcome) {
+        reportRenameRefusal(conversationId, outcome.refused, 'replayed name statement');
+      } else if (outcome?.skipped === 'not-a-group') {
+        console.warn(
+          `[GROUP_NAME] replayed name statement in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+        );
+      } else if (convo && outcome) {
+        reportOutrankedStatement(convo, data.name, 'replayed name statement', (line) =>
+          console.debug(line)
+        );
+      }
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
       systemContent = await visibleNoticeContent('memberRemoved', data, senderNorm);
     } else if (parsed.system.event === 'groupImageChanged') {

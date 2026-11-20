@@ -113,3 +113,106 @@ describe('a received groupRenamed frame', () => {
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('not a group');
   });
 });
+
+/**
+ * A SILENT `groupNamed` STATEMENT (sealed-names.md, step 2): a creation, or the one-time restatement
+ * of a group that existed before names were dated. It dates the name and draws no notice; two that
+ * cross settle by the tie rule; a rename beats one whatever the dates, so a restatement crossing a
+ * real rename never puts the old name back - in either reading order.
+ */
+describe('a received groupNamed statement', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function phone() {
+    const d = device();
+    const ctx = (serverAt: number, sentAt = serverAt) => ({
+      convo: d.conversations.get('g1'),
+      senderNorm: 'bob',
+      messageId: crypto.randomUUID(),
+      sentAt,
+      deliveryMeta: { queuedCreatedAt: serverAt },
+    });
+    const addMessageToChat = vi.fn().mockResolvedValue(undefined);
+    const state = (name: string, serverAt: number) =>
+      handleSystemEvent('groupNamed', { name }, {
+        ...base(d, addMessageToChat),
+        ...ctx(serverAt),
+      } as never);
+    return { ...d, state, addMessageToChat };
+  }
+
+  /** The handler context `device()` built, with this test's notice writer. */
+  function base(d: ReturnType<typeof device>, addMessageToChat: ReturnType<typeof vi.fn>) {
+    return {
+      mlsService: {},
+      storage: {},
+      userId: 'me',
+      deviceKey: () => 'device-key',
+      conversations: d.conversations,
+      messageReactions: new Map(),
+      addMessageToChat,
+      batchAddMessages: vi.fn(),
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      saveConversation: d.saveConversation,
+      getSelectedContact: () => 'g1',
+      setSelectedContact: vi.fn(),
+      onReadStateAdvanced: vi.fn(),
+      log: vi.fn(),
+      convoKey: 'g1',
+      persistMlsStateNow: vi.fn(),
+    };
+  }
+
+  it('dates the name at a statement rank, saves it, and draws NO notice', async () => {
+    const p = phone();
+    await p.state('Groupe', T);
+    expect(p.conversations.get('g1')).toMatchObject({
+      name: 'Groupe',
+      nameAt: T,
+      nameFromStatement: true,
+    });
+    expect(p.saveConversation).toHaveBeenCalledWith('g1');
+    expect(p.addMessageToChat).not.toHaveBeenCalled();
+  });
+
+  it('two crossing restatements converge, whatever order a device reads them in', async () => {
+    const a = phone();
+    await a.state('Les ROOTz', T);
+    await a.state('Groupe', T + 1_000);
+    const b = phone();
+    await b.state('Groupe', T + 1_000);
+    await b.state('Les ROOTz', T);
+    expect(a.conversations.get('g1').name).toBe('Groupe');
+    expect(b.conversations.get('g1').name).toBe('Groupe');
+    // A tie goes to the larger name, read in either order.
+    const c = phone();
+    await c.state('Alpha', T);
+    await c.state('Zeta', T);
+    const d = phone();
+    await d.state('Zeta', T);
+    await d.state('Alpha', T);
+    expect(c.conversations.get('g1').name).toBe('Zeta');
+    expect(d.conversations.get('g1').name).toBe('Zeta');
+  });
+
+  it('a restatement LATER than a crossing rename never puts the old name back, in either order', async () => {
+    const first = phone();
+    await first.rename('Nouveau', T);
+    await first.state('Groupe', T + 1_000);
+    const second = phone();
+    await second.state('Groupe', T + 1_000);
+    await second.rename('Nouveau', T);
+    for (const p of [first, second]) {
+      expect(p.conversations.get('g1').name).toBe('Nouveau');
+      expect(p.conversations.get('g1').nameFromStatement).toBeUndefined();
+    }
+  });
+
+  it("an older build's rename frame (no signed sentAt) is refused and does not move a stated name", async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const p = phone();
+    await p.state('Groupe', T);
+    await p.rename('Ancien build', T + 60_000, 0);
+    expect(p.conversations.get('g1').name).toBe('Groupe');
+  });
+});

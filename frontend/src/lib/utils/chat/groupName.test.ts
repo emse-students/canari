@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  applyNameStatement,
   applyRenameFrame,
+  nameStatementDue,
+  ownNameStatementOutcome,
   boundedRestatedGroupName,
   groupNameSupersedes,
   ownRenameOutcome,
@@ -422,6 +425,165 @@ describe('a refused rename frame is reported', () => {
     reportRenameRefusal('conv-x', 'server-time-out-of-bound', 'rename by abcd');
     reportRenameRefusal('conv-x', 'server-time-out-of-bound', 'rename by abcd');
     expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+});
+
+/**
+ * STEP 2 (sealed-names.md): every group gets a dated name, by a SILENT `groupNamed` statement - at
+ * creation, or the one-time restatement of a group that existed before names were dated. A statement
+ * dates a name and never renames: it is ranked below every rename.
+ */
+describe('a silent name statement is ranked below every rename', () => {
+  it('a rename beats a statement whatever the dates, and a statement never beats a rename', () => {
+    const stated = { name: 'Groupe', at: T + 60_000, statement: true as const };
+    const renamed = { name: 'Nouveau', at: T };
+    expect(
+      groupNameSupersedes(renamed, { name: 'Groupe', nameAt: T + 60_000, nameFromStatement: true })
+    ).toBe(true);
+    expect(groupNameSupersedes(stated, { name: 'Nouveau', nameAt: T })).toBe(false);
+  });
+
+  it('between two statements the later wins and a tie goes to the larger name, in either order', () => {
+    const a = { name: 'Alpha', at: T, statement: true as const };
+    const z = { name: 'Zeta', at: T, statement: true as const };
+    const later = { name: 'Alpha', at: T + 1, statement: true as const };
+    const fold = (...s: Array<typeof a>) =>
+      s.reduce((row, next) => {
+        const out = withDatedGroupName(row, next);
+        return 'row' in out ? out.row : row;
+      }, group());
+    expect(fold(a, z).name).toBe('Zeta');
+    expect(fold(z, a).name).toBe('Zeta');
+    expect(fold(z, later).name).toBe('Alpha');
+    expect(fold(later, z).name).toBe('Alpha');
+  });
+
+  it('the row carries the rank with the date, and a rename removes it', () => {
+    const stated = rowOf(withDatedGroupName(group(), { name: 'Groupe', at: T, statement: true }));
+    expect(stated).toMatchObject({ name: 'Groupe', nameAt: T, nameFromStatement: true });
+    const renamed = rowOf(applyRenameFrame(stated, 'Nouveau', T - 1_000, T - 1_000));
+    expect(renamed.nameFromStatement).toBeUndefined();
+    expect(renamed).toMatchObject({ name: 'Nouveau', nameAt: T - 1_000 });
+  });
+
+  it('a statement is bounded by its signed sentAt exactly as a rename is', () => {
+    expect(applyNameStatement(group(), 'Groupe', Date.UTC(2100, 0, 1), T)).toEqual({
+      refused: 'server-time-out-of-bound',
+    });
+    expect(applyNameStatement(group(), 'Groupe', T, undefined)).toEqual({
+      refused: 'no-signed-time',
+    });
+  });
+
+  it("an own rename answered with no server time drops the statement's rank with its date", () => {
+    const stated = group({ name: 'Groupe', nameAt: T, nameFromStatement: true });
+    const out = rowOf(ownRenameOutcome(stated, 'Nouveau', null, false, { name: 'Groupe', at: T }));
+    expect(out.nameAt).toBeUndefined();
+    expect(out.nameFromStatement).toBeUndefined();
+  });
+
+  it('the join push carries the rank: a newcomer holds a statement as a statement', () => {
+    const relayed = restatedGroupName({ name: 'Groupe', nameAt: T, nameFromStatement: true });
+    expect(relayed).toEqual({ name: 'Groupe', at: T, statement: true });
+    const read = boundedRestatedGroupName(relayed, T + 1_000);
+    expect(read).toEqual({ kept: { name: 'Groupe', at: T, statement: true } });
+    // An inviter of the step-1 build relays no rank: its dates came from renames only.
+    expect(boundedRestatedGroupName({ name: 'Groupe', at: T }, T + 1_000)).toEqual({
+      kept: { name: 'Groupe', at: T },
+    });
+  });
+});
+
+describe('when the sweep states a name, read off the row (nameStatementDue)', () => {
+  const OWN = { name: 'Groupe', messageId: 'm-1', sentAt: T };
+
+  it('an undated group named as the list names it: a fresh statement', () => {
+    expect(nameStatementDue(group(), 'Groupe')).toEqual({ due: 'mint' });
+  });
+
+  it('a dated row is never stated again - the date is the durable "once"', () => {
+    expect(nameStatementDue(group({ nameAt: T }), 'Groupe')).toEqual({ not: 'dated' });
+    expect(nameStatementDue(group({ nameAt: T, nameFromStatement: true }), 'Groupe')).toEqual({
+      not: 'dated',
+    });
+  });
+
+  it('an unanswered statement of this name is re-sent; an answered one never again', () => {
+    expect(nameStatementDue(group({ nameSync: { statement: OWN } }), 'Groupe')).toEqual({
+      due: 'resend',
+      statement: OWN,
+    });
+    expect(
+      nameStatementDue(group({ nameSync: { statement: { ...OWN, answered: true } } }), 'Groupe')
+    ).toEqual({ not: 'answered' });
+  });
+
+  it("a name the server's list does not hold, an empty one, a DM, a pending row: nothing", () => {
+    expect(nameStatementDue(group({ name: 'g1' }), '')).toEqual({ not: 'unnamed' });
+    expect(nameStatementDue(group({ name: '' }), '')).toEqual({ not: 'unnamed' });
+    expect(nameStatementDue(group({ name: 'Guess' }), 'Groupe')).toEqual({ not: 'unnamed' });
+    expect(nameStatementDue(group({ conversationType: 'direct' }), 'Groupe')).toEqual({
+      not: 'not-a-group',
+    });
+    expect(nameStatementDue(group({ lifecycle: 'pending' }), 'Groupe')).toEqual({
+      not: 'not-active',
+    });
+  });
+
+  it("a rename of this device's own still owed blocks it; an unconfirmed one does not", () => {
+    const pending = { name: 'N', messageId: 'p', sentAt: T, over: { name: 'Groupe' } };
+    expect(nameStatementDue(group({ nameSync: { pending } }), 'Groupe')).toEqual({
+      not: 'rename-owed',
+    });
+    expect(
+      nameStatementDue(group({ nameSync: { serverCopy: { name: 'Groupe', from: 'O' } } }), 'Groupe')
+    ).toEqual({ not: 'rename-owed' });
+    expect(nameStatementDue(group({ nameSync: { unconfirmed: pending } }), 'Groupe')).toEqual({
+      due: 'mint',
+    });
+  });
+});
+
+describe("what this device's own statement does to its row (ownNameStatementOutcome)", () => {
+  const MINTED = { name: 'Groupe', messageId: 'm-1', sentAt: T };
+
+  it('answered with a time: dated at a statement rank, nothing recorded', () => {
+    const out = ownNameStatementOutcome(group({ nameSync: { statement: MINTED } }), MINTED, {
+      sent: { receivedAt: T + 5 },
+    });
+    expect(out).toMatchObject({ nameAt: T + 5, nameFromStatement: true });
+    expect(out!.nameSync).toBeUndefined();
+  });
+
+  it('a rename read while it was in flight stays', () => {
+    const renamed = group({ name: 'Nouveau', nameAt: T - 1_000 });
+    const out = ownNameStatementOutcome(renamed, MINTED, { sent: { receivedAt: T + 5 } });
+    expect(out).toMatchObject({ name: 'Nouveau', nameAt: T - 1_000 });
+    expect(out!.nameFromStatement).toBeUndefined();
+  });
+
+  it('answered with none: recorded answered; no answer: recorded to re-send; refused: dropped', () => {
+    expect(
+      ownNameStatementOutcome(group(), MINTED, { sent: { receivedAt: null } })!.nameSync
+    ).toEqual({ statement: { ...MINTED, answered: true } });
+    expect(ownNameStatementOutcome(group(), MINTED, { kept: 'unanswered' })!.nameSync).toEqual({
+      statement: MINTED,
+    });
+    expect(
+      ownNameStatementOutcome(group({ nameSync: { statement: MINTED } }), MINTED, {
+        refused: 'clock',
+      })!.nameSync
+    ).toBeUndefined();
+    expect(ownNameStatementOutcome(group(), MINTED, { kept: 'not-sent' })).toBeNull();
+  });
+
+  it('the record survives the store: parseNameSync reads it back, and refuses a bad one', () => {
+    const stored = JSON.stringify({ statement: { ...MINTED, answered: true } });
+    expect(parseNameSync(stored)).toEqual({ statement: { ...MINTED, answered: true } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(parseNameSync(JSON.stringify({ statement: { name: 'x' } }))).toBeUndefined();
+    expect(error).toHaveBeenCalled();
     error.mockRestore();
   });
 });

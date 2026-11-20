@@ -102,8 +102,10 @@ import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import {
+  applyNameStatement,
   applyRenameFrame,
   boundedRestatedGroupName,
+  reportOutrankedStatement,
   GROUP_NAME_REFUSAL_TEXT,
   GROUP_NAME_SKIP_TEXT,
   reportRenameRefusal,
@@ -1238,6 +1240,29 @@ export async function handleSystemEvent(
     }
     const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
+    return true;
+  }
+
+  if (event === 'groupNamed') {
+    // A SILENT STATEMENT OF THE NAME (sealed-names.md, step 2): a creation, or the one-time
+    // restatement of a group that existed before names were dated. The rename's rule at a
+    // statement's rank (`applyNameStatement`): a rename beats it whatever the dates, so a member's
+    // restatement crossing a real rename never puts the old name back. No notice: nothing was renamed.
+    const outcome = applyNameStatement(convo, data.name, deliveryMeta?.queuedCreatedAt, sentAt);
+    const where = `name statement by ${senderNorm.slice(0, 8)}`;
+    if ('row' in outcome) {
+      conversations.set(convoKey, outcome.row);
+      if (storage) await saveConversation(convoKey);
+      log(`[GROUP_NAME] ${where} dated the name of ${convoKey.slice(0, 8)}…`);
+    } else if ('refused' in outcome) {
+      reportRenameRefusal(convo.id, outcome.refused, where);
+    } else if (outcome.skipped === 'not-a-group') {
+      console.warn(
+        `[GROUP_NAME] ${where} in ${convoKey.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+      );
+    } else {
+      reportOutrankedStatement(convo, data.name, where, log);
+    }
     return true;
   }
 

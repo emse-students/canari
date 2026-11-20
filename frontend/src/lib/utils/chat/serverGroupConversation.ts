@@ -11,11 +11,15 @@ import { isGroupInCreation } from './groupsInCreation';
 import { Log } from '$lib/utils/Log';
 import {
   GROUP_NAME_SKIP_TEXT,
+  nameStatementDue,
+  ownNameStatementOutcome,
   ownRenameOutcome,
   pendingRenameVerdict,
   unconfirmedFrom,
   withNameSync,
+  type NameStatementOutcome,
   type NameSync,
+  type OwnNameStatement,
   type PendingRename,
 } from './groupName';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
@@ -113,6 +117,11 @@ export interface NameSyncSettler {
     groupId: string,
     contactName: string
   ) => Promise<RenameResendOutcome>;
+  /** `sendNameStatement`, bound to this device's key: one silent `groupNamed` statement. */
+  state: (
+    statement: Omit<OwnNameStatement, 'answered'>,
+    groupId: string
+  ) => Promise<NameStatementOutcome>;
 }
 
 /**
@@ -505,6 +514,125 @@ export const RENAME_RESEND_MARGIN_MS = 10 * 60_000;
  */
 const clocklessFramesSaid = new Set<string>();
 
+/**
+ * THE ONE-TIME RESTATEMENT OF A GROUP'S NAME (sealed-names.md, step 2). A group that existed before
+ * names were dated holds an undated name on every device, and step 3 takes the server's copy away:
+ * so one member device states the name it holds, once, as a SILENT `groupNamed` frame, and every
+ * member dates the name by it. Any member device of this build may be that one - the first to sweep
+ * the group after the update. Two that cross are two statements of the same rank, settled by the
+ * tie rule; a rename crossing one beats it whatever the dates (`groupNameSupersedes`).
+ *
+ * ONCE, BY STORED STATE, NEVER BY A CLOCK OR A SESSION (`nameStatementDue`): a row a statement or a
+ * rename dated is never stated again - the date on the row is the proof, and it is persisted with the
+ * name; a statement answered with no time is recorded as `answered`; one with no answer is recorded,
+ * and re-sent as the same frame here at the next connection.
+ *
+ * Only once this link has DRAINED the group (`isGroupDrained`), so the row holds what the members said
+ * while this device was out - a rename among them dates it, and nothing is stated. Only within the
+ * receivers' bound, as the server's clock READ IN THIS PASS proves it (`getGroupServerStatus`, the
+ * rename re-send's rule and margin): a statement every member refuses dates nothing. Never a notice:
+ * a group being dated was not renamed.
+ */
+async function stateGroupNameOnce(
+  key: string,
+  group: ServerGroupRow,
+  settler: NameSyncSettler,
+  mlsService: IMlsService,
+  userId: string,
+  conversations: Map<string, Conversation>,
+  saveConversation: ((key: string) => Promise<void>) | undefined,
+  log: (msg: string) => void
+): Promise<void> {
+  if (!group.isGroup) return;
+  const start = conversations.get(key);
+  if (!start) return;
+  const due = nameStatementDue(start, group.name ?? '');
+  // Every `not` is the ordinary state of some row on every sweep - a dated group above all - so none
+  // is a line.
+  if ('not' in due) return;
+  const short = groupIdShort(group.groupId);
+  if (!mlsService.isGroupDrained(group.groupId)) {
+    log(
+      `[GROUP_NAME] ${short} name statement left to the next sweep - this link has not drained the group, so a rename among what arrived may still date it`
+    );
+    return;
+  }
+  const status = await mlsService.getGroupServerStatus(group.groupId);
+  if (status === 'error') {
+    log(
+      `[GROUP_NAME] ${short} name statement left to the next sweep - the group row read got no answer`
+    );
+    return;
+  }
+  if (status === 'absent' || status.deletedAt) {
+    log(
+      `[GROUP_NAME] ${short} name not stated - the server holds no live group (${status === 'absent' ? 'no row' : 'deleted'})`
+    );
+    return;
+  }
+  noteServerTime(userId, status.serverNow);
+  if (status.serverNow === undefined) {
+    if (!clocklessStatementsSaid.has(group.groupId)) {
+      clocklessStatementsSaid.add(group.groupId);
+      console.warn(
+        `[GROUP_NAME] ${short} name not stated yet - the server's answer carried no readable clock, so whether the receivers would take the statement cannot be proven; stated once a clock is readable`
+      );
+    }
+    return;
+  }
+  const inBound = (sentAt: number) => {
+    const lead = status.serverNow! - sentAt;
+    return (
+      lead <= BUNDLE_SERVER_TIME_SKEW_MS - RENAME_RESEND_MARGIN_MS &&
+      -lead <= BUNDLE_SERVER_TIME_SKEW_MS
+    );
+  };
+  let minted: Omit<OwnNameStatement, 'answered'>;
+  if (due.due === 'resend' && inBound(due.statement.sentAt)) {
+    minted = {
+      name: due.statement.name,
+      messageId: due.statement.messageId,
+      sentAt: due.statement.sentAt,
+    };
+  } else {
+    // A fresh statement, signed with this device's clock: sent only when the server's clock read in
+    // this pass proves the receivers will take it. A recorded one past the bound is replaced by it.
+    const sentAt = Date.now();
+    if (!inBound(sentAt)) {
+      if (!skewedStatementsSaid.has(group.groupId)) {
+        skewedStatementsSaid.add(group.groupId);
+        console.error(
+          `[GROUP_NAME] ${short} name NOT stated - this device's clock lies outside the receivers' bound from the server's (${Math.round((sentAt - status.serverNow) / 60_000)} min), so every member would refuse it; stated once the clock is right`
+        );
+      }
+      return;
+    }
+    minted = { name: start.name, messageId: crypto.randomUUID(), sentAt };
+  }
+  const outcome = await settler.state(minted, group.groupId);
+  // Re-read: a frame read during the send may have dated the row already.
+  const after = conversations.get(key);
+  if (!after) return;
+  const next = ownNameStatementOutcome(after, minted, outcome);
+  if (next) {
+    conversations.set(key, next);
+    await saveConversation?.(key).catch((e) => {
+      console.error(
+        `[GROUP_NAME] ${short} name statement settled but not saved - it runs again next connection: ${String(e).slice(0, 120)}`
+      );
+    });
+  }
+  log(
+    `[GROUP_NAME] ${short} name ${due.due === 'resend' && minted.messageId === due.statement.messageId ? 're-stated (same frame)' : 'stated'} ${minted.messageId.slice(0, 8)}: ${Object.keys(outcome)[0]} - the row is ${next?.nameAt !== undefined ? 'dated' : 'undated'}`
+  );
+}
+
+/** The groups whose missing server clock this tab already said, for a name statement. */
+const clocklessStatementsSaid = new Set<string>();
+
+/** The groups whose statement this tab already refused to sign with a clock outside the bound. */
+const skewedStatementsSaid = new Set<string>();
+
 /** The 8-character prefix every line in this file names a group by. */
 const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;
 
@@ -554,6 +682,19 @@ export async function ensureConversationForServerGroup(
     }
     const row = conversations.get(known[0]) ?? known[1];
     await repairGroupLabel(known[0], row, group, conversations, saveConversation, log);
+    // AFTER the label repair: what is restated is the name the row and the list now agree on.
+    if (deps.nameSync) {
+      await stateGroupNameOnce(
+        known[0],
+        group,
+        deps.nameSync,
+        mlsService,
+        userId,
+        conversations,
+        saveConversation,
+        log
+      );
+    }
     await recordGroupStart(known[0], group, conversations, saveConversation);
     return 'existed';
   }

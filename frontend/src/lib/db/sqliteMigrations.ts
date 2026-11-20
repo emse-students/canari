@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -224,6 +224,20 @@ export function conversationNameSyncStatement(columns: readonly string[]): strin
   return columns.includes('name_sync')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN name_sync TEXT';
+}
+
+/**
+ * The v21 -> v22 step: `name_from_statement` (`ConversationMeta.nameFromStatement`), the RANK of the
+ * dated name - 1 when a silent `groupNamed` statement dated it, which any rename beats
+ * (`groupNameSupersedes`). NULL on arrival: a rename's rank, which every name dated before this
+ * column existed has. Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationNameFromStatementStatement(columns: readonly string[]): string | null {
+  return columns.includes('name_from_statement')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN name_from_statement INTEGER';
 }
 
 /**

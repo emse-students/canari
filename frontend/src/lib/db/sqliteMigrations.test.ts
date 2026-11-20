@@ -2,6 +2,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationNameAtStatement,
+  conversationNameFromStatementStatement,
   conversationNameSyncStatement,
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
@@ -219,7 +220,7 @@ describe('conversationStartedAtStatement (v17)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(21);
+    expect(SCHEMA_VERSION).toBe(22);
   });
 });
 
@@ -258,7 +259,7 @@ describe('outboxUnavailableAnswersStatement (v19)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(outboxUnavailableAnswersStatement(['id', 'unavailable_answers'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(21);
+    expect(SCHEMA_VERSION).toBe(22);
   });
 });
 
@@ -290,6 +291,14 @@ describe('conversationNameAtStatement (v21)', () => {
     expect(sync).not.toBeNull();
     engine.exec(sync!);
     expect(conversationNameSyncStatement(columnsOf())).toBeNull();
-    expect(SCHEMA_VERSION).toBe(21);
+    // v22: the dated name's rank, NULL on arrival - a rename's, which every older dated name has.
+    const rank = conversationNameFromStatementStatement(columnsOf());
+    expect(rank).not.toBeNull();
+    engine.exec(rank!);
+    expect(engine.prepare('SELECT name_from_statement FROM conversations').get()).toEqual({
+      name_from_statement: null,
+    });
+    expect(conversationNameFromStatementStatement(columnsOf())).toBeNull();
+    expect(SCHEMA_VERSION).toBe(22);
   });
 });

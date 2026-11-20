@@ -23,6 +23,7 @@ import {
   purgeLocalConversationRecord,
   isGroupActiveOnServer,
   resendPendingRename,
+  sendNameStatement,
 } from '$lib/utils/chat/groupActions';
 import {
   awaitProbe,
@@ -1562,6 +1563,9 @@ export async function discoverMissingGroups(params: {
         deviceKeyB64,
         ownNotice: { contactName, addMessageToChat: params.addMessageToChat },
       }),
+    // The one-time silent restatement of a group's undated name (sealed-names.md, step 2).
+    state: (statement, groupId) =>
+      sendNameStatement({ mlsService, groupId, userId, deviceKeyB64, minted: statement }),
   };
   for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {

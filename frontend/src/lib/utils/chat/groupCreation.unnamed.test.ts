@@ -14,6 +14,9 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 import { createNewGroup } from './groupCreation';
 import type { Conversation } from '$lib/types';
+import type { canari } from '$lib/proto/canari.js';
+import { decodeAppMessage } from '$lib/proto/codec';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 function deps(conversations = new SvelteMap<string, Conversation>()) {
   const local = new Set<string>();
@@ -80,5 +83,59 @@ describe('an unnamed group', () => {
       reason: 'duplicate-group-name',
     });
     expect(d.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * STEP 2 (sealed-names.md): a NAMED group dates its name at creation, by a silent `groupNamed`
+ * statement in its first epoch - before anyone is invited, so every later member is handed it dated.
+ */
+describe('a named group dates its name at creation', () => {
+  /** `deps()` with a send path: the frame it posted, and the server time it is answered with. */
+  function withSend(answer: () => Promise<{ receivedAt: number | null }>) {
+    const d = deps();
+    const sent: Array<{ groupId: string; frame: canari.AppMessage | null }> = [];
+    Object.assign(d.mlsService, {
+      sendMessage: vi.fn(async (groupId: string, bytes: Uint8Array) => {
+        sent.push({ groupId, frame: decodeAppMessage(bytes) });
+        return answer();
+      }),
+    });
+    return { ...d, sent };
+  }
+
+  it('sends ONE silent statement naming it, and dates the row by its answer at a statement rank', async () => {
+    const at = Date.UTC(2026, 10, 20, 9, 0, 0);
+    const d = withSend(async () => ({ receivedAt: at }));
+    await createNewGroup('Les ROOTz', d.args);
+    expect(d.sent).toHaveLength(1);
+    expect(d.sent[0].groupId).toBe('g-new');
+    expect(d.sent[0].frame?.system?.event).toBe('groupNamed');
+    expect(JSON.parse(d.sent[0].frame?.system?.data ?? '{}')).toEqual({ name: 'Les ROOTz' });
+    expect(d.conversations.get('g-new')).toMatchObject({
+      name: 'Les ROOTz',
+      nameAt: at,
+      nameFromStatement: true,
+    });
+    // Silent: no notice row anywhere, the creator's included.
+    expect(d.conversations.get('g-new')?.messages).toEqual([]);
+  });
+
+  it('a statement with no answer leaves the group created, its statement recorded for the next connection', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = withSend(async () => {
+      throw new TransportFailureError(new Error('offline'));
+    });
+    expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
+    const row = d.conversations.get('g-new')!;
+    expect(row.nameAt).toBeUndefined();
+    expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
+    vi.restoreAllMocks();
+  });
+
+  it('an unnamed group states nothing', async () => {
+    const d = withSend(async () => ({ receivedAt: 1 }));
+    await createNewGroup('', d.args);
+    expect(d.sent).toEqual([]);
   });
 });

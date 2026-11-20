@@ -34,6 +34,9 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     getDismissedGroups: vi.fn().mockResolvedValue({ kind: 'listed', groupIds: [] }),
     getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
+    // Asked by the one-time name statement of an undated, named group (sealed-names.md, step 2):
+    // drained, then the group row read above answers `absent`, so nothing is ever stated here.
+    isGroupDrained: vi.fn().mockReturnValue(true),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
     isDistributionGroup: vi.fn().mockReturnValue(false),
     noteDistributionGroup: vi.fn(),

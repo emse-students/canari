@@ -646,3 +646,34 @@ describe('a replayed rename that set the base of a pending rename', () => {
     expect(pendingRenameVerdict(convo(), convo().nameSync!.pending!)).toBe('resend');
   });
 });
+
+/**
+ * STEP 2 (sealed-names.md): a silent `groupNamed` statement replayed from the archive dates the name
+ * by the row's server time, at a statement's rank, and draws no notice - the live rule, one function.
+ */
+describe('a replayed groupNamed statement', () => {
+  const T0 = Date.parse('2026-10-23T10:00:00.000Z');
+  const statement = (name: string) => ({
+    sentAt: T0 - 1_000,
+    ...mkSystem('groupNamed', JSON.stringify({ name })),
+  });
+
+  it('dates an undated name at a statement rank, and draws no notice', async () => {
+    const { keys } = await cast();
+    const { convo, pushed } = await replayFrame(keys, 'alice', statement('Groupe'), [], [], {
+      name: 'Groupe',
+    });
+    expect(convo()).toMatchObject({ name: 'Groupe', nameAt: T0, nameFromStatement: true });
+    expect(pushed).toEqual([]);
+  });
+
+  it('never puts an older name back over a rename, even replayed later than it', async () => {
+    const { keys } = await cast();
+    const { convo } = await replayFrame(keys, 'alice', statement('Ancien'), [], [], {
+      name: 'Nouveau',
+      nameAt: T0 - 60_000,
+    });
+    expect(convo()).toMatchObject({ name: 'Nouveau', nameAt: T0 - 60_000 });
+    expect(convo().nameFromStatement).toBeUndefined();
+  });
+});

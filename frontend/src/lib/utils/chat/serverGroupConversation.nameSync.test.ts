@@ -13,7 +13,9 @@
  */
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import type { PendingRename } from './groupName';
+import type { NameStatementOutcome, PendingRename } from './groupName';
+import { restoredConversationRow, toConversationMeta } from './conversations';
+import { SqliteStorage } from '$lib/db/sqlite';
 import type { RenameResendOutcome } from './groupActions';
 import { BUNDLE_SERVER_TIME_SKEW_MS } from './messageTime';
 import { resetServerClockForTests, serverTimeSeen } from './serverClock';
@@ -48,6 +50,7 @@ const DELIVERED: RenameResendOutcome = { sent: { receivedAt: T + 60_000, sentAt:
 function settler(over: Partial<NameSyncSettler> = {}): NameSyncSettler {
   return {
     resend: vi.fn().mockResolvedValue(DELIVERED),
+    state: vi.fn().mockResolvedValue({ sent: { receivedAt: T + 60_000 } }),
     ...over,
   };
 }
@@ -392,5 +395,185 @@ describe('the pending frame (a send with no answer) is re-sent as the same frame
     );
     expect(nameSync!.resend).not.toHaveBeenCalled();
     expect(after.nameSync).toEqual({ unconfirmed: PENDING });
+  });
+});
+
+/**
+ * THE ONE-TIME RESTATEMENT OF AN UNDATED NAME (sealed-names.md, step 2). A group that existed before
+ * names were dated holds an undated name everywhere; the first member device of this build to sweep
+ * it states that name once, silently, and every member dates it. "Once" is stored state: the date on
+ * the row (persisted with its rank), or a record of a statement the server took without a time.
+ */
+describe('the one-time name statement of an undated group', () => {
+  const STATED: NameStatementOutcome = { sent: { receivedAt: T + 60_000 } };
+
+  /** A real `node:sqlite` engine behind the plugin's `execute`/`select` - the phone's store. */
+  async function sqliteStore() {
+    // Reached through `process.getBuiltinModule`, never an `import`: the test environment is a
+    // browser one, and Vite refuses to bundle a Node built-in named in an import.
+    const engine = new (process.getBuiltinModule('node:sqlite').DatabaseSync)(':memory:');
+    const positional = (sql: string) => sql.replace(/\$(\d+)/g, '?$1');
+    const db = {
+      execute: async (sql: string, params: unknown[] = []) => {
+        const result = engine.prepare(positional(sql)).run(...(params as never[]));
+        return { rowsAffected: Number(result.changes) };
+      },
+      select: async (sql: string, params: unknown[] = []) =>
+        engine.prepare(positional(sql)).all(...(params as never[])),
+      close: async () => undefined,
+    };
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    const storage = new SqliteStorage(`statement-${crypto.randomUUID()}`);
+    await storage.init();
+    return storage;
+  }
+
+  /** One connection's sweep over `conversations`, each save written through the real store. */
+  async function connect(
+    conversations: Map<string, Conversation>,
+    storage: SqliteStorage,
+    serverName: string,
+    opts: { state?: NameStatementOutcome; drained?: boolean; serverNow?: number } = {}
+  ) {
+    const state = vi.fn().mockResolvedValue(opts.state ?? STATED);
+    const meta = {
+      groupId: GROUP_ID,
+      name: serverName,
+      isGroup: true,
+      deletedAt: null,
+      serverNow: opts.serverNow ?? T + 60_000,
+    };
+    const log = vi.fn();
+    await ensureConversationForServerGroup(listed(serverName), {
+      mlsService: {
+        renameGroup: vi.fn(),
+        getGroupMeta: vi.fn().mockResolvedValue(meta),
+        getGroupServerStatus: vi.fn().mockResolvedValue(meta),
+        isGroupDrained: () => opts.drained ?? true,
+      } as unknown as IMlsService,
+      userId: 'u1',
+      conversations,
+      saveConversation: async (key) => {
+        await storage.saveConversation(toConversationMeta(key, conversations.get(key)!, 'u1'));
+      },
+      owedExits: new Set<string>(),
+      log,
+      nameSync: { resend: vi.fn().mockResolvedValue({ kept: 'unanswered' }), state },
+    });
+    return { state, log };
+  }
+
+  /** What a restart reads back: the row rebuilt from the store alone. */
+  async function restart(storage: SqliteStorage) {
+    const meta = await storage.getConversation(GROUP_ID);
+    return new Map([[GROUP_ID, restoredConversationRow(meta!, 'u1')]]);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(T);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.doUnmock('@tauri-apps/plugin-sql');
+    vi.restoreAllMocks();
+  });
+
+  it('states the name once, dates the row at a statement rank, and a restart states nothing again', async () => {
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    const first = await connect(phone, storage, 'Les ROOTz');
+    expect(first.state).toHaveBeenCalledTimes(1);
+    expect(first.state.mock.calls[0][0]).toMatchObject({ name: 'Les ROOTz', sentAt: T });
+    expect(phone.get(GROUP_ID)).toMatchObject({
+      name: 'Les ROOTz',
+      nameAt: T + 60_000,
+      nameFromStatement: true,
+    });
+    expect(phone.get(GROUP_ID)!.nameSync).toBeUndefined();
+
+    // ONCE IS STORED STATE: the row read back from the store alone carries the date and its rank.
+    const reopened = await restart(storage);
+    expect(reopened.get(GROUP_ID)).toMatchObject({ nameAt: T + 60_000, nameFromStatement: true });
+    const second = await connect(reopened, storage, 'Les ROOTz');
+    expect(second.state).not.toHaveBeenCalled();
+  });
+
+  it('answered with no server time: recorded as answered, and never stated again - restart included', async () => {
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    await connect(phone, storage, 'Les ROOTz', { state: { sent: { receivedAt: null } } });
+    expect(phone.get(GROUP_ID)!.nameAt).toBeUndefined();
+    expect(phone.get(GROUP_ID)!.nameSync?.statement).toMatchObject({ answered: true });
+    const again = await connect(await restart(storage), storage, 'Les ROOTz');
+    expect(again.state).not.toHaveBeenCalled();
+  });
+
+  it('no answer: the next connection re-sends the SAME frame - one statement, however many copies', async () => {
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    const first = await connect(phone, storage, 'Les ROOTz', { state: { kept: 'unanswered' } });
+    const minted = first.state.mock.calls[0][0];
+    expect(phone.get(GROUP_ID)!.nameSync?.statement).toEqual(minted);
+
+    vi.setSystemTime(T + 3_600_000);
+    const reopened = await restart(storage);
+    const second = await connect(reopened, storage, 'Les ROOTz', { serverNow: T + 3_600_000 });
+    expect(second.state).toHaveBeenCalledTimes(1);
+    expect(second.state.mock.calls[0][0]).toEqual(minted);
+    expect(reopened.get(GROUP_ID)).toMatchObject({ nameFromStatement: true });
+    expect(reopened.get(GROUP_ID)!.nameSync).toBeUndefined();
+  });
+
+  it('not before this link has drained the group: a rename among what arrived may date it', async () => {
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    const { state, log } = await connect(phone, storage, 'Les ROOTz', { drained: false });
+    expect(state).not.toHaveBeenCalled();
+    expect(said(log)).toContain('not drained');
+  });
+
+  it("never states a name the server's list does not hold: a raw id never becomes the members' word", async () => {
+    const storage = await sqliteStore();
+    for (const held of [GROUP_ID, '']) {
+      const phone = new Map([[GROUP_ID, row({ name: held })]]);
+      const { state } = await connect(phone, storage, '');
+      expect(state).not.toHaveBeenCalled();
+    }
+  });
+
+  it("never while a rename of this device's own is pending: its re-send compares the row's date", async () => {
+    const storage = await sqliteStore();
+    const pending = {
+      name: 'New',
+      messageId: 'f0000000-0000-4000-8000-000000000001',
+      sentAt: T - 1_000,
+      over: { name: 'Les ROOTz' },
+    };
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz', nameSync: { pending } })]]);
+    const { state } = await connect(phone, storage, 'Les ROOTz');
+    expect(state).not.toHaveBeenCalled();
+  });
+
+  it("this device's clock outside the receivers' bound: nothing is stated, and it is said", async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    const { state } = await connect(phone, storage, 'Les ROOTz', {
+      serverNow: T + 2 * BUNDLE_SERVER_TIME_SKEW_MS,
+    });
+    expect(state).not.toHaveBeenCalled();
+    expect(error.mock.calls.map((c) => String(c[0])).join('\n')).toContain('NOT stated');
+  });
+
+  it("an older build's undated rename (the server's list only) still loses to the stated name", async () => {
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    await connect(phone, storage, 'Les ROOTz');
+    // An older build renames through the server's list alone - nothing a device of this build can
+    // date - and the dated name stands.
+    const { state } = await connect(phone, storage, 'Renamed by an old build');
+    expect(phone.get(GROUP_ID)!.name).toBe('Les ROOTz');
+    expect(state).not.toHaveBeenCalled();
   });
 });

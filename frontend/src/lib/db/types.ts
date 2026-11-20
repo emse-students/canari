@@ -50,6 +50,8 @@ export interface ConversationMeta {
    * Persisted beside the name so both are written by one save; absent reads as "never stated".
    */
   nameAt?: number;
+  /** `Conversation.nameFromStatement`: the dated name's rank, persisted with it. Absent: a rename's. */
+  nameFromStatement?: true;
   /** `Conversation.nameSync`: what this device still owes about a rename it made. Absent: none. */
   nameSync?: NameSync;
   /**
