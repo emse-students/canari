@@ -50,6 +50,12 @@ export interface ConversationMeta {
    * Persisted beside the name so both are written by one save; absent reads as "never stated".
    */
   nameAt?: number;
+  /** `Conversation.nameFromStatement`: the dated name's rank, persisted with it. Absent: a rename's. */
+  nameFromStatement?: true;
+  /** `Conversation.nameRenameAt`: an answer's rename date, beside a statement's rank only. */
+  nameRenameAt?: number;
+  /** `Conversation.nameRenamedBy`: the renaming user, beside a rename's rank only. */
+  nameRenamedBy?: string;
   /** `Conversation.nameSync`: what this device still owes about a rename it made. Absent: none. */
   nameSync?: NameSync;
   /**
@@ -918,14 +924,16 @@ export interface IStorage {
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /**
-   * The messages of a conversation whose `timestamp` is at or after `since`, decrypting only those:
-   * what a reconciliation reads, whose window is `since` - its cost is the window's, never the whole
-   * conversation's. Oldest-first.
+   * The messages of a conversation whose `timestamp` is at or after `since` - and at or before
+   * `until` when given - decrypting only those: what a reconciliation reads, whose window is
+   * `since`, and what a bounded lookup reads (a rename's notice, `backfillRenameAuthor`). Its cost is
+   * the window's, never the whole conversation's. Oldest-first.
    */
   getMessagesSince(
     conversationId: string,
     since: number,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    until?: number
   ): Promise<StoredMessage[]>;
 
   // Mutations whose message is not here yet (see PendingMutation)

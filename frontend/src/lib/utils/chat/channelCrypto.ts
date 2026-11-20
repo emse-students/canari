@@ -7,6 +7,7 @@ import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
 import { channelSystemEnvelope } from './channelNotice';
+import { CHANNEL_CONVERSATION_PREFIX, isChannelConversationId } from './rawId';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
   GraineAuthorMismatchError,
@@ -396,13 +397,8 @@ export interface ChannelPollDraft {
   endsAt: string | null;
 }
 
-/** The prefix of every salon conversation id (`channel_<uuid>`). */
-export const CHANNEL_CONVERSATION_PREFIX = 'channel_';
-
-/** True for community channel conversations (`channel_<uuid>`). */
-export function isChannelConversationId(conversationId: string): boolean {
-  return String(conversationId).startsWith(CHANNEL_CONVERSATION_PREFIX);
-}
+/** Re-exported: the salon id's shape lives low in the graph (`rawId.ts`), callers read it here. */
+export { CHANNEL_CONVERSATION_PREFIX, isChannelConversationId };
 
 /**
  * Seals `payloadBytes` under this device's Graine session for the channel and POSTs it.

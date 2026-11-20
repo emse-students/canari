@@ -256,26 +256,185 @@ push, and each device keeps it beside the row it names.
 Readings owed: none on a phone. The change is to the order in which frames apply, and the unit tests
 read it deterministically. Step 3 is the first one a person can see.
 
+## Step 2 - built (2026-11-20): every group gets a dated name
+
+Step 3 takes the server's copy away, and a group whose name no frame ever dated would then have no
+name the members agree on. So every group gets one, by a **silent `groupNamed` statement**: `{ name }`
+in a system frame carrying a `messageId` and a signed `sentAt`, sent `DELIVERY.mutation` (no push,
+kept in the group's log for the replay). An older build acknowledges the unknown event and ignores
+it.
+
+- **Silent while it only dates; a notice as soon as it CHANGES the name shown** (#3888 re-review,
+  decision taken). Any member can send a statement or an answer - an answer with a `renameAt` just
+  under its own server time - and every statement-dated device takes it. Silent, that was a forged
+  rename nobody could see, and the answer's rank (A3) made it stick. So a statement or an answer that
+  CHANGES THE NAME SHOWN draws the rename notice, naming the frame's MLS sender, live and replayed
+  alike (`nameChangeNoticeDue`, `visibleNoticeContent('groupRenamed')`, under the frame's id). Honest
+  changes are rare - a crossing, a heal - so the notice costs little. **The one exception is a newly
+  invited member's PLACEHOLDER** (owner, 2026-11-20; narrowed by the lead under that intent after
+  the round-4 review): an UNDATED, NON-EMPTY name that is a raw id (`isRawId`) or the group's own id,
+  which the Welcome and the push write. No member chose it; that device is learning the name. An
+  undated LIST name and an EMPTY one are not exempt: a dated-only rule let a member state a new name
+  over every still-undated row during the rollout, and name an unnamed group - which stays undated
+  for ever - at any time, both silently. The honest rollout draws nothing anyway: a restatement does
+  not change the name shown.
+
+- **A statement ranks below every rename** (`groupNameSupersedes`). Ordered by date alone, a member
+  restating the name it holds put the old name back over a rename accepted a second before its own
+  frame - for every member, with no notice to say so, and with no heal. A statement dates a name and
+  never renames, so any `groupRenamed` frame beats it whatever the dates; between two statements the
+  later server time wins and a tie goes to the larger name. The rank keeps the order total, so the
+  outcome does not depend on reading order. An ANSWER (below) ranks between the two: it beats every
+  plain statement whatever the dates, and answers are ordered by the date of the rename each restates
+  (`renameAt`), then by name (#3888 re-review, A3) - ordered by sending time, an answer reflecting an
+  older rename sent late put a stale name back on every member a statement dated. It carries no more
+  trust than a rename: `renameAt` is refused unless it lies at or before the answer's own server time
+  (`unbounded-rename-time`), and any member may send a rename outright. The rank is stored beside the
+  date (`NameRank`, read by one rule, `nameRankFields`: `nameFromStatement`, `nameRenameAt` for an
+  answer, `nameRenamedBy` - the rename's MLS-authenticated sender - for a rename; local SQLite v22
+  columns `name_from_statement`, `name_rename_at`, `name_renamed_by`; IndexedDB keeps the fields) and
+  travels in the join push (`groupName.statement`, `.renameAt`, `.by`). An absent rank is a rename's:
+  a step-1 inviter dated names from renames only.
+- **A pending rename is never superseded by a statement** (`pendingRenameVerdict`). A row a
+  statement dated answers `resend`: the re-sent rename outranks the statement on every device. Read
+  as "a later name", a member's restatement of the base - the rollout itself - cancelled this
+  device's unanswered rename without a word (#3888 review, B1).
+- **Read, live and replayed, by one rule** (`applyNameStatement`): the rename frame's bound on the
+  signed `sentAt`, then written only when it supersedes. A statement that loses to a rename-dated name
+  of ANOTHER text is a SPLIT: the stating device never read that rename (a stale list, a missed
+  frame, a crossing). It is counted once per conversation and name at INFO on both paths
+  (`reportOutrankedStatement`, its length and never its text).
+- **The answer heals the split** (`statementAnswerDue`, `answerOutrankedStatement`,
+  `settleOwedAnswer`). A device whose row holds a name dated by a rename made BY ITS OWN USER answers
+  a plain statement of another name with ONE silent statement of its name, marked
+  `answers: <statement id>` and carrying `renameAt`, the rename's date. It outranks every plain
+  statement, so every device holding a statement-dated name converges on it; a device holding a
+  rename-dated name keeps its own.
+  - **Only the rename's author answers** (#3888 re-review, A2). Every rename-dated device answering
+    cost one frame per member device for one straggler - about 300 in a 150-member group - each taking
+    a slot in the group's capped log and evicting real messages. The author is the rename frame's
+    sender, stored beside the name (`nameRenamedBy`), so the answers are bounded by ONE user's
+    devices. A device that reads an answer saying exactly what it owes (same name, same `renameAt`)
+    settles its own unsent (`answerReadSettlesOwn`, live and replayed). An author no longer in the
+    group answers nothing: that residual is counted at INFO (`reportOutrankedStatement`) and accepted.
+  - **A rename dated before the author was stored learns it from its notice** (#3888 re-review,
+    decision taken; `backfillRenameAuthor`). Every group step 1 dated is such a row - the very case
+    the answer exists for. Before an outranked statement is weighed, a rename-dated row with no
+    `nameRenamedBy` reads this device's own stored notice of that rename: a `groupRenamed` notice
+    naming the row's name, dated by the server at exactly `nameAt`, whose `actor` is the author
+    (`renameAuthorFromNotices`). It decrypts ONLY the window that can hold it,
+    `[nameAt - 24 h, nameAt + 24 h]` (the notice row is dated by its frame's `sentAt`, bounded by the
+    server time either way; `getMessagesSince` with its `until`), so a conversation of any size costs
+    the same two days; a search that finds nothing is noted in memory per (conversation, `nameAt`)
+    and not repeated by a later statement - so a notice that arrives LATER (a history bundle filling
+    the window) is read only after a restart clears the memo, at the next outranked statement. It
+    runs there, not in the store migration, because notice rows are sealed under the device key the
+    migration does not hold; once found it is stored. **What
+    stays uncovered**, logged at INFO and left empty: a rename whose notice this device never wrote
+    (it joined after the rename and was handed the name by a step-1 push), whose notice was collected
+    by the retention window, or whose notice predates the notice's `actor`. Those rows answer nothing
+    until the next rename.
+  - **A notice relayed by a peer in a history bundle carries a CLAIMED actor**, and the backfill
+    trusts it as it trusts a notice this device drew. The worst case is the same as below: a wrong
+    author answers when it should not (a redundant answer of the name it holds) or a right one
+    stays silent (a missing answer - the residual counted above). It never changes a name.
+  - **The `by` a join push relays is the inviter's word, unverified.** A newcomer stores it as its
+    row's author. The worst case is bounded: a newcomer told that ITS user made the rename answers
+    when it should not - a redundant answer, of the name it holds, which the read-side dedupe and the
+    answer's own rank make harmless; one told another user's id answers nothing it would have.
+  - **Owed, never scheduled** (#3888 re-review, A1). The debt is written on the row
+    (`nameSync.answer = {to}`) and saved before anything is sent; the frame minted for it is written
+    too, before its send. Only a send settles it (`ownAnswerOutcome`): no answer or a send not made
+    keeps the frame, re-sent as the SAME frame; a clock refusal drops the frame and keeps the debt; an
+    eviction or a deleted group settles it. It is sent by the drain that follows the statement and, if
+    a restart, a sign-out or a lost tab comes first, by the next connection's sweep - one function,
+    under the statement's rules (drained group, receivers' bound by the sweep's server clock). A later
+    rename by anyone else makes it void: that rename reached the members it was for. A duplicate
+    answer is harmless; a lost one left a two-member group split for good.
+  - **It terminates by construction:** an answer is never answered, a statement-dated device never
+    answers, and a device owes at most ONE answer at a time (one heals every plain statement, past and
+    future, since it outranks them all); a settled one keeps the id it answered, so a re-delivery adds
+    nothing. Plain statements are finite (a creation, one restatement), so the answers are too.
+  - Two renames' authors that disagree both answer; the statement holders take the answer of the
+    NEWER rename whatever order they read them in. The rename holders' own split is a rename-level
+    one, older than this step, closed only by a later rename. The archive replay counts and dedupes
+    but never answers: an answer is owed where the statement was read live.
+- **At creation** (`createNewGroup`, `stateCreatedGroupName`): a named group sends its statement right
+  after its row is written, in the first epoch. The creation does NOT wait for it (#3888 review, S2):
+  the outcome is written on the row when it comes. An invitee admitted after it lands is handed the
+  name dated by the join push; one whose Add crossed it reads it live, or restates the very same name
+  at its own first sweep. A statement that fails never fails the creation.
+- **Once for each existing group** (`stateGroupNameOnce`, in the connection sweep after the label
+  repair, `NameSyncSettler.state`). Any member device of this build may be the one: the first to sweep
+  the group after the update. Concurrent ones settle by the tie rule. `nameStatementDue` decides from
+  the row alone:
+  - only a group row that is `active` and undated;
+  - only a name the row and the server's list AGREE on. A raw id, an empty name or a placeholder never
+    becomes the members' word;
+  - not while a rename of this device's own is `pending` or owes its server copy. Their settlement
+    compares the row's date with the base, so a statement would stop the re-send. An `unconfirmed`
+    frame does not block: if it landed, its relayed copy is a rename and outranks the statement;
+  - only once the link has drained the group (`isGroupDrained`), so a rename among what arrived
+    dates the row first. An undrained group is CHAINED on its first drain (`whenGroupDrained`, one
+    chain per group), never skipped to the next sweep;
+  - only within the receivers' bound, as the server's clock read ONCE for the whole sweep proves it
+    (`SweepClock`, `sweepServerNow`, from the group row read's `Date`, with the rename re-send's
+    `RENAME_RESEND_MARGIN_MS`); a chained statement reads its own. A device whose clock is outside the
+    bound states nothing, and says so once per sweep.
+- **"Once" is stored state, never a clock.** A row a frame dated is never stated again: the date and
+  its rank are persisted with the name, and a restart reads them back. The send's outcome is a type
+  (`NameStatementOutcome`, from `sendNameStatement`, classified at the throw) and is written to the row
+  by `ownNameStatementOutcome`:
+  - **no answer**: recorded as `nameSync.statement` and re-sent as the SAME frame (its id and signed
+    `sentAt`) by the next sweep. That is one statement, however many copies. If the record's `sentAt`
+    has left the bound, a fresh statement replaces it;
+  - **answered with no server time**: recorded `answered`. The members dated it and this device cannot,
+    so it never states it again;
+  - **refused**: the record is dropped. Either nothing was posted or no member takes it, and a later
+    sweep may state the name afresh.
+- **The accepted cost, unchanged from step 1:** an older build's rename made through the server's list
+  alone does not move a dated name. Once every group is dated, that covers every group. The minimum
+  version for step 3 is this build (owner, 2026-11-17).
+- **A step-1 newcomer mis-ranks a statement.** An inviter of this build relays a statement-dated name
+  with `statement: true`; a step-1 (1.7.1) device ignores the field and stores the date with no rank,
+  as it stores every date. While it runs 1.7.1 nothing differs: 1.7.1 orders by date alone and
+  ignores `groupNamed`. Once it updates, that row reads as RENAME-dated with no author: a later
+  statement no longer moves it, and it never answers, so its split stays until the next rename. That
+  is the measured residual (`reportOutrankedStatement`).
+- **A downgrade to 1.7.1** keeps the store (SQLite at v22: 1.7.1 runs no branch above 21) and
+  writes rows without the three rank columns (its `INSERT OR REPLACE` names none of them, so they go
+  NULL on every save). On the next update:
+  - every statement- or answer-dated name it saved comes back RENAME-ranked with NO AUTHOR, with the
+    effect above; a rename's author is lost the same way. Such a row tries the notice backfill again
+    the next time a statement is outranked, so an author whose notice is still stored comes back;
+  - the `nameSync.statement` and `nameSync.answer` records are dropped by 1.7.1's parser on its next
+    write: an unanswered statement is minted afresh, and an OWED ANSWER IS LOST - the one residual of
+    A1, and only across a downgrade.
+- **The rank columns are added on every open, not only under v22** (`conversationNameRankStatements`,
+  guarded by column name). An earlier head of #3888 stamped a store 22 with only `name_from_statement`;
+  that store skipped the v22 branch and every `saveConversation`, which names all three, failed.
+  Guarded by `sqliteConversationColumns.test.ts`.
+
+Readings owed: none on a phone. A statement that only dates is silent, and its order is read deterministically by the
+unit tests (`groupName.test.ts`, `systemMessageHandler.groupName.test.ts`,
+`serverGroupConversation.nameSync.test.ts`, where the restart goes through the real SQLite store,
+`historySystemEvents.bundleAuthorship.test.ts`, `groupCreation.unnamed.test.ts`).
+
 ## The remaining steps, in order
 
-1. **Step 2 - every group gets a dated name (about 2 days).** A group created by this build dates its
-   name at creation: the creator sends a silent `groupNamed` statement in the first epoch. A group
-   that existed before has no dated name on any device. One member device restates it once, as a
-   silent frame, and the tie rule settles concurrent restatements. A notice is drawn only for a real
-   rename.
-2. **Step 3 - the server stops knowing group names (about 1 week, native included).** Create and rename
+1. **Step 3 - the server stops knowing group names (about 1 week, native included).** Create and rename
    send no name, and the server refuses one. The `groupName` push field and the join-ask
    `contentArg` go. The native push path names the group from the mirrored rows (Android
    `ChatBackgroundService`, iOS App Group copy). The invite preview carries the name in the link's
    `#fragment` (decided, below).
    Builds older than step 1 read only the server's list, so this step ships behind the minimum-version
    gate ([legacy-compatibility](../legacy-compatibility.md)) at the version decided below.
-3. **Step 4 - the held migration (about 1 day, then the owner's approval line).** Set `dm_groups.name`
+2. **Step 4 - the held migration (about 1 day, then the owner's approval line).** Set `dm_groups.name`
    to NULL with a before and after count of rows still readable by the server. Rollback: the column
    stays and the clients write nothing to it, so reverting the code needs no schema change. The names
    themselves come back only from the pre-migration dump. The migration is HELD
    ([cicd](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
-4. **Step 5 - the sealed community state (2 to 4 weeks).** Community name, photo, salon names, role
+3. **Step 5 - the sealed community state (2 to 4 weeks).** Community name, photo, salon names, role
    labels and community nicknames go into one state, sealed under a key the key group distributes and
    versioned by a monotone counter. Every reader in the social-service table above moves to the
    device. The slug and its unique index go, and `by-slug` becomes by-id. Its own held migration nulls

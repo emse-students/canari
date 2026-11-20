@@ -427,6 +427,13 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   and now print a byte count, which is the shape `[PUSH_SEND]` had already reached for the identical
   value. **An exposure written down nowhere is an exposure nobody accepted**, so the table in
   `SECURITY.md` is the list, and a new log line touching any column in it owes the same treatment.
+- **A STATEMENT THAT ONLY RESTATES MUST RANK BELOW ONE THAT CHANGES, OR IT UNDOES THE CHANGE IT
+  CROSSED.** The one-time `groupNamed` restatement is dated like a rename, and ordered by date alone
+  it put the old name back over a rename accepted a second before it - for every member, silently,
+  for good. The restater cannot know of a rename in flight, so no drain or delay closes the window:
+  the RANK does. A rename beats any statement whatever the dates, the rank is stored with the date and
+  relayed with it, and the order stays total, so reading order changes nothing.
+  [sealed-names](protocols/sealed-names.md#step-2---built-2026-11-20-every-group-gets-a-dated-name)
 
 - **TWO SPELLINGS OF ONE FACT MUST BE DERIVED AT EVERY SEAM THAT MATERIALISES A ROW, NOT AT ONE OF
   THEM.** `isSystem` and `senderId === 'system'` say the same thing, and the `history_bundle`

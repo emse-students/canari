@@ -1,5 +1,5 @@
 import { RowRefusedError } from './rowWriteFailure';
-import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
+import { nameRankFields, nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { appendLog } from '$lib/utils/sessionLog';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -831,13 +831,20 @@ export class IndexedDbStorage implements IStorage {
    * whatever was written, including a value an older build got wrong.
    */
   private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
-    const { nameAt, nameSync, ...rest } = r;
+    const { nameAt, nameSync, nameFromStatement, nameRenameAt, nameRenamedBy, ...rest } = r;
     const positive = (v: unknown): v is number =>
       typeof v === 'number' && Number.isFinite(v) && v > 0;
     return {
       ...rest,
       // A positive server time or nothing: "never stated" is absence, never a 0 or a NaN.
       ...(positive(nameAt) ? { nameAt } : {}),
+      // The rank only beside a date, by the one rule every store applies (`nameRankFields`).
+      ...nameRankFields({
+        ...(positive(nameAt) ? { nameAt } : {}),
+        nameFromStatement,
+        nameRenameAt,
+        nameRenamedBy,
+      }),
       ...nameSyncField(parseNameSync(nameSync)),
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
       readWatermarks: parseReadWatermarks(r.readWatermarks),
@@ -1312,7 +1319,8 @@ export class IndexedDbStorage implements IStorage {
   async getMessagesSince(
     conversationId: string,
     since: number,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    until?: number
   ): Promise<StoredMessage[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
@@ -1323,7 +1331,7 @@ export class IndexedDbStorage implements IStorage {
       // phone backup wrote, sorted after every number) - dated below by `storedTimeInWindow`, the
       // rule SQLite applies to the same rows. Before this, IndexedDB dropped them and SQLite kept them.
       const numeric = index.getAll(
-        IDBKeyRange.bound([conversationId, since], [conversationId, Infinity])
+        IDBKeyRange.bound([conversationId, since], [conversationId, until ?? Infinity])
       );
       numeric.onsuccess = () => found.push(...numeric.result);
       const other = index.getAll(
@@ -1340,7 +1348,7 @@ export class IndexedDbStorage implements IStorage {
     });
     const results: StoredMessage[] = [];
     for (const raw of rows) {
-      const at = storedTimeInWindow(raw.timestamp, since);
+      const at = storedTimeInWindow(raw.timestamp, since, until);
       if (at === null) continue;
       const row = { ...raw, timestamp: at };
       try {

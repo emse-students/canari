@@ -23,14 +23,17 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
 - **Step 1 - BUILT (2026-11-17):** the device dates a group's name, and the members' frames, not the
   server's list, are the authority. This also fixes an older rename overwriting a newer one. No
   migration. No phone reading is owed, because the unit tests read it deterministically.
+- **Step 2 - BUILT (2026-11-20):** every group gets a dated name. A new group dates it at creation
+  and an existing one is restated once, both by a silent `groupNamed` frame that draws no notice. A
+  rename always outranks such a statement. No migration of the server; the local store gains one
+  column. No phone reading is owed.
 - **Left, in order:**
-  1. Every group gets a dated name: creation and a one-time silent restatement. About 2 days.
-  2. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
+  1. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
      native naming, the invite preview (the name moves to the link's `#fragment`). It ships behind the
      minimum version decided below. About 1 week.
-  3. A HELD migration nulls `dm_groups.name`, with a before and after count. About 1 day plus the
+  2. A HELD migration nulls `dm_groups.name`, with a before and after count. About 1 day plus the
      owner's line.
-  4. The sealed community state: name, photo, salons, role labels and nicknames under a key-group key.
+  3. The sealed community state: name, photo, salons, role labels and nicknames under a key-group key.
      The slug goes, and the migration is held. 2 to 4 weeks.
 - **Owner decisions taken (2026-11-17)**, on the page:
   - A shared invite link carries the name in its `#fragment`, never sent to a server. The in-app card

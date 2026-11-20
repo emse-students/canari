@@ -5,8 +5,10 @@ import type { Conversation } from '$lib/types';
 import {
   deliverWelcomes,
   persistMlsStateAfterMutation,
+  sendNameStatement,
   warnSkippedKeyPackages,
 } from '$lib/utils/chat/groupActions';
+import { ownNameStatementOutcome } from './groupName';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
@@ -223,6 +225,48 @@ function dischargeCreatedGroupAudit(mlsService: IMlsService, userId: string, gro
 }
 
 /**
+ * Dates a new group's name: sends its silent `groupNamed` statement (`sendNameStatement`) and writes
+ * what it came to onto the row (`ownNameStatementOutcome`) - dated at a statement's rank when
+ * answered, recorded for the next connection's sweep when not (re-sent as the same frame), left for
+ * that sweep to state when nothing was sent. NEVER a failed creation: the group exists and works, and
+ * an undated name is the state every group had before this build, which the sweep settles once.
+ */
+async function stateCreatedGroupName(params: {
+  mlsService: IMlsService;
+  userId: string;
+  deviceKeyB64: string;
+  conversations: SvelteMap<string, Conversation>;
+  conversationKey: string;
+  name: string;
+  save: () => Promise<void>;
+  log: (msg: string) => void;
+}): Promise<void> {
+  const { mlsService, userId, deviceKeyB64, conversations, conversationKey, name, log } = params;
+  const minted = { name, messageId: crypto.randomUUID(), sentAt: Date.now() };
+  const outcome = await sendNameStatement({
+    mlsService,
+    groupId: conversationKey,
+    userId,
+    deviceKeyB64,
+    minted,
+  });
+  // RE-READ AFTER THE AWAIT: a frame read meanwhile may have changed the row.
+  const current = conversations.get(conversationKey);
+  const next = current ? ownNameStatementOutcome(current, minted, outcome) : null;
+  if (next) {
+    conversations.set(conversationKey, next);
+    await params.save().catch((e: unknown) => {
+      console.error(
+        `[GROUP_NAME] ${conversationKey.slice(0, 8)}… name statement settled but not saved: ${String(e).slice(0, 120)}`
+      );
+    });
+  }
+  log(
+    `[GROUP_NAME] creation's name statement for ${conversationKey.slice(0, 8)}…: ${Object.keys(outcome)[0]} - the row ${next?.nameAt !== undefined ? 'dated' : 'undated, settled by the next connection'}`
+  );
+}
+
+/**
  * Creates a new MLS multi-user group on the server, initialises the local
  * MLS state, and automatically adds all other devices belonging to the current user
  * in a single bulk commit to avoid epoch fragmentation.
@@ -393,6 +437,28 @@ export async function createNewGroup(
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
     dischargeCreatedGroupAudit(mlsService, userId, groupId);
+    // THE NAME IS DATED AT CREATION, by a silent statement in the group's first epoch (sealed-names.md,
+    // step 2). An invitee admitted after it lands is handed the name dated by the join push; one whose
+    // Add crossed it reads it live if it went out in the new epoch, and otherwise restates the very
+    // same name at its own first sweep - the same name either way.
+    if (groupDisplayName) {
+      // NOT AWAITED: the creation returns at once, and the statement's outcome is written on the row
+      // when it comes (`ownNameStatementOutcome`) - an unanswered one is re-sent by the next sweep.
+      void stateCreatedGroupName({
+        mlsService,
+        userId,
+        deviceKeyB64,
+        conversations,
+        conversationKey,
+        name: groupDisplayName,
+        save: () => saveConversation(conversationKey!),
+        log,
+      }).catch((e: unknown) => {
+        console.error(
+          `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`
+        );
+      });
+    }
     log(`[OK] Group ${groupId} created.`);
     console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
