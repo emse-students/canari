@@ -1,3 +1,5 @@
+import { restartsAsNewDevice, type LoginErrorCode } from './loginErrors';
+
 /**
  * The "forgot PIN" reset's ORDER, which is its whole mechanism (rounds 6 to 10 of the review of #2919).
  *
@@ -260,4 +262,59 @@ export async function settleUnsettledPinReset(
     `[PIN_RESET] the server reset the PIN (${now === null ? 'no PIN registered' : 'another salt'}) - the reset is committed`
   );
   return now === null ? 'committed' : 'committed_pin_chosen';
+}
+
+/**
+ * Whether a failed unlock restarts THIS DEVICE as a new device of the account, and why not when it
+ * does not. `automatic` is the owner's decision of 2026-11-20 for a hardware-held key PROVEN gone
+ * (`restartsAsNewDevice`): no error, no button. `none` covers every other code, the unreadable key
+ * above all - it may still exist. `withheld_other_account`: this install's state is proven to be
+ * another account's, and nothing of that account is ever deleted from this one's session.
+ * `already_restarted`: this page restarted the account once already and met the same refusal again,
+ * so a second restart could only loop - the proof that ends it, accused by the caller.
+ */
+export type DeviceRestartDecision =
+  | 'automatic'
+  | 'none'
+  | 'withheld_other_account'
+  | 'already_restarted';
+
+/** Decides {@link DeviceRestartDecision} from the typed code and the two facts that withhold it. */
+export function decideAutomaticRestart(
+  code: LoginErrorCode | undefined,
+  facts: { otherAccountState: boolean; alreadyRestarted: boolean }
+): DeviceRestartDecision {
+  if (!restartsAsNewDevice(code)) return 'none';
+  if (facts.otherAccountState) return 'withheld_other_account';
+  if (facts.alreadyRestarted) return 'already_restarted';
+  return 'automatic';
+}
+
+/** The local half of the "forgot PIN" reset, which {@link runDeviceRestart} reuses. */
+export interface DeviceRestartSteps {
+  /** The forgot-PIN reset's `stage`: sets the account's local MLS state apart. */
+  stage: (serverBasis: string) => Promise<void>;
+  /** The forgot-PIN reset's `commit`: removes what was set apart, with the account's local records. */
+  commit: () => Promise<void>;
+  log: (msg: string) => void;
+}
+
+/**
+ * RESTARTS THIS DEVICE AS A NEW DEVICE OF THE ACCOUNT: the forgot-PIN reset's local half, and ONLY
+ * that half. The server is never asked to reset the PIN - `pin-reset` deletes the account's verifier
+ * and purges EVERY device, the ones that still hold the history this device gets back from. The PIN
+ * the person holds stays the account's, and the next unlock enrols this device afresh.
+ *
+ * Staged under {@link noServerPinBasis}, as a reset with no PIN on the server is: a page cut between
+ * the stage and the commit leaves a journalled reset that the next sign-in's settle COMMITS (no salt
+ * the server mints has that fingerprint), never one it puts back - the state set apart opens under no
+ * key, so putting it back would only meet the same refusal again.
+ */
+export async function runDeviceRestart(steps: DeviceRestartSteps): Promise<void> {
+  steps.log(
+    '[DEVICE_RESTART] setting the local MLS state apart - the server PIN is left untouched'
+  );
+  await steps.stage(await noServerPinBasis());
+  await steps.commit();
+  steps.log('[DEVICE_RESTART] local MLS state removed - the next unlock enrols a new device');
 }

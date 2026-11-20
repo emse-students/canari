@@ -3574,7 +3574,8 @@ async function recoverPinSteps(
       cb.log(
         `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
       );
-      throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+      // TYPED, so the gate under the recovery offers "start fresh on this device" for it.
+      throw new LoginFailure('local_state_unopenable', m.auth_pin_recover_state_unopenable());
     }
     if (e instanceof LocalStateNotReadyError) {
       // The state OPENED with the old key, but could not be made ready (its groups not listed):
