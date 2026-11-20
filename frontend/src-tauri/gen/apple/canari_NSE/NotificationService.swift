@@ -1616,8 +1616,9 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Keeps one native cache file out of iCloud and computer backups. Per FILE, and re-applied
   /// after every write: an atomic write is a new inode renamed over the old one, and the flag does
-  /// not survive it. Only the caches are excluded - never their directory, which also holds the
-  /// state a restore must bring back. Twin: `CanariExcludeNativeCacheFilesFromBackup`.
+  /// not survive it. The directory is the app's to exclude: since 1.7.2 its launch pass flags the
+  /// App Group root (`backup_exclusion.rs`), which makes this redundant until the iPhone reading
+  /// retires it. Twin: `CanariExcludeNativeCacheFilesFromBackup`.
   private static func excludeFromBackup(_ url: URL) {
     var target = url
     var values = URLResourceValues()

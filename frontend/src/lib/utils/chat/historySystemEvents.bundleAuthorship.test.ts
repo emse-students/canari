@@ -646,3 +646,62 @@ describe('a replayed rename that set the base of a pending rename', () => {
     expect(pendingRenameVerdict(convo(), convo().nameSync!.pending!)).toBe('resend');
   });
 });
+
+/**
+ * STEP 2 (sealed-names.md): a silent `groupNamed` statement replayed from the archive dates the name
+ * by the row's server time, at a statement's rank, and draws no notice - the live rule, one function.
+ */
+describe('a replayed groupNamed statement', () => {
+  const T0 = Date.parse('2026-10-23T10:00:00.000Z');
+  const statement = (name: string) => ({
+    sentAt: T0 - 1_000,
+    ...mkSystem('groupNamed', JSON.stringify({ name })),
+  });
+
+  it('dates an undated name at a statement rank, and draws no notice', async () => {
+    const { keys } = await cast();
+    const { convo, pushed } = await replayFrame(keys, 'alice', statement('Groupe'), [], [], {
+      name: 'Groupe',
+    });
+    expect(convo()).toMatchObject({ name: 'Groupe', nameAt: T0, nameFromStatement: true });
+    expect(pushed).toEqual([]);
+  });
+
+  it('never puts an older name back over a rename, even replayed later than it', async () => {
+    const { keys } = await cast();
+    const { convo } = await replayFrame(keys, 'alice', statement('Ancien'), [], [], {
+      name: 'Nouveau',
+      nameAt: T0 - 60_000,
+    });
+    expect(convo()).toMatchObject({ name: 'Nouveau', nameAt: T0 - 60_000 });
+    expect(convo().nameFromStatement).toBeUndefined();
+  });
+
+  it("draws the notice whenever it CHANGES the name shown - except over an invitee's placeholder (2026-11-20)", async () => {
+    const { keys } = await cast();
+    // The Welcome's placeholder is the group's own id, undated: the name is learnt, not changed.
+    const learnt = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], { name: CONVO });
+    expect(learnt.convo()).toMatchObject({ name: 'Nouveau', nameFromStatement: true });
+    expect(learnt.pushed).toEqual([]);
+    // An undated LIST name, or an empty one, changed by a statement: noticed - the rollout's forgery.
+    const listed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
+      name: 'Liste',
+    });
+    expect(listed.convo().name).toBe('Nouveau');
+    expect(listed.pushed).toHaveLength(1);
+    const unnamed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], { name: '' });
+    expect(unnamed.pushed).toHaveLength(1);
+    // The honest restatement of the name shown changes nothing: nothing drawn.
+    const honest = await replayFrame(keys, 'alice', statement('Liste'), [], [], { name: 'Liste' });
+    expect(honest.pushed).toEqual([]);
+    // A name a member chose, replaced by a later statement: noticed, naming its sender.
+    const changed = await replayFrame(keys, 'alice', statement('Nouveau'), [], [], {
+      name: 'Ancien',
+      nameAt: T0 - 60_000,
+      nameFromStatement: true,
+    });
+    expect(changed.convo().name).toBe('Nouveau');
+    expect(changed.pushed).toHaveLength(1);
+    expect(JSON.stringify(changed.pushed[0])).toContain('groupRenamed');
+  });
+});

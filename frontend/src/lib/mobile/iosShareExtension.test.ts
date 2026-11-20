@@ -332,7 +332,7 @@ describe('a waiting share at rest and in the logs', () => {
     return source.slice(from, source.indexOf(end, from + start.length));
   }
 
-  it('keeps both iOS manifests and the App Group inbox out of backups, after every write', () => {
+  it('keeps both iOS manifests and the App Group inbox out of backups, and leaves the root to the app', () => {
     const swiftWrite = body(swiftCapture, 'private func writePending(', 'private func deleteDir(');
     // After the rename: the rename is a new inode, and the flag does not travel with the name.
     expect(swiftWrite.indexOf('excludeFromBackup(URL(fileURLWithPath: target))')).toBeGreaterThan(
@@ -341,8 +341,11 @@ describe('a waiting share at rest and in the logs', () => {
     expect(swiftCapture).toContain('values.isExcludedFromBackup = true');
     const captureBody = body(swiftCapture, 'private func captureLocked(', 'static func isSafeId(');
     expect(captureBody).toContain('excludeFromBackup(inbox)');
-    // Never the App Group root: it also holds what a restore must bring back.
+    // The App Group root is excluded by ONE writer, the app's launch pass (since 1.7.2): the
+    // extension never flags it, and the pass names the group among its directories.
     expect(swiftCapture).not.toContain('excludeFromBackup(container)');
+    const launchPass = read(resolve(TAURI, 'src/backup_exclusion.rs'));
+    expect(launchPass).toContain('label: APP_GROUP_LABEL,');
 
     const rustWrite = body(rustGroup, 'fn write_pending(', 'fn delete_share_dir(');
     expect(rustWrite.indexOf('native_cache::exclude_from_backup(&target)')).toBeGreaterThan(

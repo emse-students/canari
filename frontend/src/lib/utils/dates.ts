@@ -14,15 +14,16 @@ export function readStoredTimestampMs(raw: unknown): number | undefined {
 }
 
 /**
- * A stored row's time if it falls in the window starting at `since`, else `null` - THE ONE RULE both
- * storage backends apply in `getMessagesSince`. A number is taken as it is (the index or the `WHERE`
- * already compared it); anything else is read with {@link readStoredTimestampMs} (a string an
- * Android plugin or a phone backup wrote) and compared; a time nothing can read is in no window.
+ * A stored row's time if it falls in the window `[since, until]` (`until` absent: open-ended), else
+ * `null` - THE ONE RULE both storage backends apply in `getMessagesSince`. A number is compared as it
+ * is; anything else is read with {@link readStoredTimestampMs} (a string an Android plugin or a
+ * phone backup wrote) and compared; a time nothing can read is in no window.
  */
-export function storedTimeInWindow(raw: unknown, since: number): number | null {
-  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= since ? raw : null;
-  const ms = readStoredTimestampMs(raw);
-  return ms !== undefined && ms >= since ? ms : null;
+export function storedTimeInWindow(raw: unknown, since: number, until?: number): number | null {
+  const ms =
+    typeof raw === 'number' ? (Number.isFinite(raw) ? raw : undefined) : readStoredTimestampMs(raw);
+  if (ms === undefined || ms < since) return null;
+  return until !== undefined && ms > until ? null : ms;
 }
 
 /** Coerces arbitrary values to a valid `Date`, or returns `fallback` (default: now). */

@@ -125,6 +125,7 @@ earliest version, as a checklist.
 - [ ] [the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)](backlog.d/live-replay-switch-readings-owed.md)
 - [ ] [a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)](backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)
 - [ ] [a phone whose data arrived without its key restarts as a new device (owner, 2026-11-20)](backlog.d/reading-owed-a-phone-without-its-key-restarts-as-a-new-device.md)
+- [ ] [iOS: nothing local travels to another phone, every store excluded from backups at launch (iPhone 12)](backlog.d/reading-owed-ios-local-data-out-of-backups.md)
 - [ ] [Minesweeper replay and the instant dig, on a phone](backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 

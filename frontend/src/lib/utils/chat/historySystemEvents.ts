@@ -10,6 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import {
   memberLeftContent,
   ownRenameSettledByRelay,
+  nameChangeNoticeDue,
   receivedNoticeTime,
   visibleNoticeContent,
 } from '$lib/utils/chat/visibleNotices';
@@ -18,8 +19,11 @@ import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
+  answerReadSettlesOwn,
+  applyNameStatement,
   applyRenameFrame,
   GROUP_NAME_SKIP_TEXT,
+  reportOutrankedStatement,
   reportRenameRefusal,
 } from '$lib/utils/chat/groupName';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
@@ -299,7 +303,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             convo,
             data.newName,
             parseServerTimestampMs(msg.timestamp),
-            appMessageSentAtMs(parsed.sentAt)
+            appMessageSentAtMs(parsed.sentAt),
+            senderNorm
           )
         : null;
       if (outcome && 'row' in outcome) {
@@ -312,6 +317,51 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         );
       }
       systemContent = await visibleNoticeContent('groupRenamed', data, senderNorm);
+    } else if (parsed.system.event === 'groupNamed') {
+      // The live handler's rule for a silent name statement (`applyNameStatement`), dated by the
+      // archive row's server time: a rename outranks it whatever the order read, and a notice is drawn
+      // exactly when it CHANGES the name shown, as live.
+      const convo = getConversation(contactName);
+      const outcome = convo
+        ? applyNameStatement(
+            convo,
+            data.name,
+            parseServerTimestampMs(msg.timestamp),
+            appMessageSentAtMs(parsed.sentAt),
+            typeof data.answers === 'string' ? { renameAt: data.renameAt } : undefined
+          )
+        : null;
+      const settledByRead =
+        convo && typeof data.answers === 'string'
+          ? answerReadSettlesOwn(convo, { name: data.name, renameAt: data.renameAt })
+          : null;
+      if (outcome && 'row' in outcome) {
+        setConversation(contactName, outcome.row);
+        if (convo && nameChangeNoticeDue(convo, outcome.row)) {
+          systemContent = await visibleNoticeContent(
+            'groupRenamed',
+            { newName: outcome.row.name },
+            senderNorm
+          );
+        }
+      } else if (outcome && 'refused' in outcome) {
+        reportRenameRefusal(conversationId, outcome.refused, 'replayed name statement');
+      } else if (outcome?.skipped === 'not-a-group') {
+        console.warn(
+          `[GROUP_NAME] replayed name statement in ${conversationId.slice(0, 8)}… NOT applied: ${GROUP_NAME_SKIP_TEXT[outcome.skipped]}`
+        );
+      } else if (settledByRead) {
+        // The live path's read-side dedupe: an answer of this user's name and rename, replayed, settles
+        // the one this device owes - the members took it.
+        setConversation(contactName, settledByRead);
+        console.info(
+          `[GROUP_NAME] owed answer in ${conversationId.slice(0, 8)}… settled unsent - a replayed answer says the same`
+        );
+      } else if (convo && outcome) {
+        // Counted at the live path's level; never ANSWERED from the archive - a replayed statement
+        // was live once, and the device that held the rename then answered it (sealed-names.md).
+        reportOutrankedStatement(convo, data.name, 'replayed name statement');
+      }
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
       systemContent = await visibleNoticeContent('memberRemoved', data, senderNorm);
     } else if (parsed.system.event === 'groupImageChanged') {
@@ -866,7 +916,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
                   : {}),
               })),
               senderNorm,
-              (line) => console.info(line)
+              (line) => console.info(line),
+              userId
             )
           : null;
         if (healed) setConversation(contactName, healed);

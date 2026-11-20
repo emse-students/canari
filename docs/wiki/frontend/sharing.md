@@ -461,8 +461,9 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    behind the app's (or unreadable), rewrites it, and says so at ERROR level; it never lowers it.
    The factory wipe (`clear_app_data`) also removes the group's `pending_share.json` and
    `shared_inbox/`, under the lock - an allowlist of those two paths.
-5. **At rest: out of backups, NOT sealed.** The App Group and the app data directory are backed up
-   on iOS (the app cache is not), and a waiting share holds what the member shared - the manifest
+5. **At rest: out of backups, NOT sealed.** The App Group and the app data directory were backed up
+   on iOS until 1.7.2, which excludes both whole at every launch
+   ([mobile](mobile.md#nothing-local-travels-to-another-phone-2026-11-20)); a waiting share holds what the member shared - the manifest
    carries the shared TEXT in the clear. So each manifest is excluded from backups per file, after
    every write (a rename is a new inode, and the flag does not travel): the extension's
    `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native

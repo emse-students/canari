@@ -104,3 +104,51 @@ describe('SqliteStorage - the dated group name v21 added (`name_at`, groupName.t
     expect((await storage.getConversation('g5'))?.nameSync).toBeUndefined();
   });
 });
+
+describe("SqliteStorage - the dated name's rank v22 added, on a store already stamped 22", () => {
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/plugin-sql');
+    vi.restoreAllMocks();
+  });
+
+  const NAME_AT = 1_790_000_300_000;
+
+  it('a store stamped 22 WITHOUT the rank columns (an earlier head of #3888) gets them on open, and saves', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const engine = new (process.getBuiltinModule('node:sqlite').DatabaseSync)(':memory:');
+    const positional = (sql: string) => sql.replace(/\$(\d+)/g, '?$1');
+    const db = {
+      execute: async (sql: string, params: unknown[] = []) => {
+        engine.prepare(positional(sql)).run(...(params as never[]));
+      },
+      select: async (sql: string, params: unknown[] = []) =>
+        engine.prepare(positional(sql)).all(...(params as never[])),
+      close: async () => undefined,
+    };
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    await new SqliteStorage(`sqlite-rank-in-place-${n++}`).init();
+    // What an earlier head left: stamped 22 with only the first rank column.
+    engine.exec('ALTER TABLE conversations DROP COLUMN name_rename_at');
+    engine.exec('ALTER TABLE conversations DROP COLUMN name_renamed_by');
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 22 });
+
+    const reopened = new SqliteStorage(`sqlite-rank-in-place-${n++}`);
+    await reopened.init();
+    await reopened.saveConversation({
+      ...conversation('g7'),
+      nameAt: NAME_AT,
+      nameRenamedBy: 'alice',
+    });
+    await reopened.saveConversation({
+      ...conversation('g8'),
+      nameAt: NAME_AT,
+      nameFromStatement: true,
+      nameRenameAt: NAME_AT - 5,
+    });
+    expect(await reopened.getConversation('g7')).toMatchObject({ nameRenamedBy: 'alice' });
+    expect(await reopened.getConversation('g8')).toMatchObject({
+      nameFromStatement: true,
+      nameRenameAt: NAME_AT - 5,
+    });
+  });
+});

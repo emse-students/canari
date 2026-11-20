@@ -1,4 +1,4 @@
-import { nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
+import { nameRankFields, nameSyncField, parseNameSync } from '$lib/utils/chat/groupName';
 import { encryptData, decryptData, PayloadUnreadableError } from '../encryption';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
@@ -83,6 +83,7 @@ import {
   conversationServerReadWatermarksStatement,
   conversationStartedAtStatement,
   conversationNameAtStatement,
+  conversationNameRankStatements,
   conversationNameSyncStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
@@ -275,7 +276,10 @@ export class SqliteStorage implements IStorage {
                 started_at       INTEGER,
                 local_read_seed  INTEGER,
                 name_at          INTEGER,
-                name_sync        TEXT
+                name_sync        TEXT,
+                name_from_statement INTEGER,
+                name_rename_at   INTEGER,
+                name_renamed_by  TEXT
             )
         `);
 
@@ -657,6 +661,23 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 21');
     }
 
+    if (currentVersion < 22) {
+      // v21->v22: the dated name keeps its RANK (`name_from_statement`, `name_rename_at`,
+      // `name_renamed_by`; `groupName.ts`). The columns themselves are added on EVERY OPEN, below.
+      // Stamped at 22, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 22');
+    }
+
+    // EVERY OPEN, not only under v22: the rank columns are guarded by name, so this is a no-op once
+    // they are there. A store an earlier head of #3888 already stamped 22 with fewer of them skipped
+    // the branch above and failed every `saveConversation`, which names all three. Additive and NULL
+    // on arrival: a rename's rank with no author - every name dated before this build.
+    const rankColumns: any[] = await this.db.select('PRAGMA table_info(conversations)');
+    for (const add of conversationNameRankStatements(rankColumns.map((c) => String(c.name)))) {
+      console.info(`[SQLite] conversations rank column added: ${add.split(' ').slice(-2)[0]}`);
+      await this.db.execute(add);
+    }
+
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
     // them. Re-keyed provisionally through the partial index - nothing read when there are none. The
@@ -671,9 +692,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
         CONVERSATION_LOCAL_READ_SEED_VALUE +
-        ', $12, $13)',
+        ', $12, $13, $14, $15, $16)',
       [
         conv.id,
         conv.name,
@@ -688,6 +709,9 @@ export class SqliteStorage implements IStorage {
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
         conv.nameAt ?? null,
         conv.nameSync ? JSON.stringify(conv.nameSync) : null,
+        conv.nameFromStatement === true ? 1 : null,
+        conv.nameRenameAt ?? null,
+        conv.nameRenamedBy ?? null,
       ]
     );
   }
@@ -714,6 +738,14 @@ export class SqliteStorage implements IStorage {
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
       // INTEGER too; NULL (never stated) and an unusable value both read as absent.
       ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
+      // The rank, read by the one rule every store applies (`nameRankFields`): INTEGER columns are
+      // strings on Android; only 1 is a statement's rank, and none of it holds without a date.
+      ...nameRankFields({
+        ...(Number(r.name_at) > 0 ? { nameAt: Number(r.name_at) } : {}),
+        ...(Number(r.name_from_statement) === 1 ? { nameFromStatement: true as const } : {}),
+        ...(Number(r.name_rename_at) > 0 ? { nameRenameAt: Number(r.name_rename_at) } : {}),
+        ...(typeof r.name_renamed_by === 'string' ? { nameRenamedBy: r.name_renamed_by } : {}),
+      }),
       // JSON TEXT, validated on the way out: an unreadable value reads as nothing owed.
       ...nameSyncField(parseNameSync(r.name_sync)),
       // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
@@ -1082,19 +1114,21 @@ export class SqliteStorage implements IStorage {
   async getMessagesSince(
     conversationId: string,
     since: number,
-    deviceKeyB64: string
+    deviceKeyB64: string,
+    until?: number
   ): Promise<StoredMessage[]> {
     // The numeric window, plus every timestamp stored as text or bytes (an Android plugin or a phone
     // backup wrote some), dated by `storedTimeInWindow` - the rule IndexedDB applies to the same rows.
     const rows: any[] = await this.db.select(
       `SELECT *, typeof(timestamp) AS timestamp_type FROM messages WHERE conversation_id = $1
-         AND (timestamp >= $2 OR typeof(timestamp) IN ('text', 'blob'))`,
-      [conversationId, since]
+         AND ((timestamp >= $2 AND ($3 IS NULL OR timestamp <= $3))
+              OR typeof(timestamp) IN ('text', 'blob'))`,
+      [conversationId, since, until ?? null]
     );
     const results: StoredMessage[] = [];
     for (const row of rows) {
       const numeric = row.timestamp_type === 'integer' || row.timestamp_type === 'real';
-      if (!numeric && storedTimeInWindow(row.timestamp, since) === null) continue;
+      if (!numeric && storedTimeInWindow(row.timestamp, since, until) === null) continue;
       try {
         const payload = (await decryptData(
           base64ToUint8(row.cipher_text),
@@ -1533,7 +1567,7 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
       // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)',
       [
         conv.id,
         conv.name,
@@ -1548,6 +1582,9 @@ export class SqliteStorage implements IStorage {
         typeof conv.localReadSeed === 'number' ? conv.localReadSeed : null,
         conv.nameAt ?? null,
         conv.nameSync ? JSON.stringify(conv.nameSync) : null,
+        conv.nameFromStatement === true ? 1 : null,
+        conv.nameRenameAt ?? null,
+        conv.nameRenamedBy ?? null,
       ]
     );
   }

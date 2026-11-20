@@ -394,9 +394,10 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
 /// Android excludes its whole data domain in `data_extraction_rules.xml`, desktop writes no cache.
 ///
 /// Per FILE and after EVERY write: the writers replace the file by an atomic rename, a new inode,
-/// and the flag does not travel with the name. Never the directory: it also holds `mls.bin` and the
-/// identity files, which a restore must bring back (the ObjC twin,
-/// `CanariExcludeNativeCacheFilesFromBackup`, says why). A failure is logged and changes nothing
+/// and the flag does not travel with the name. Since 1.7.2 the DIRECTORIES holding these files are
+/// excluded whole at every launch (`backup_exclusion`), which makes this per-file pass redundant;
+/// it is kept until the iPhone reading proves the directory flag holds, then deleted (mobile wiki,
+/// "Nothing local travels to another phone"). A failure is logged and changes nothing
 /// else: the file is sealed whichever way, so a backup of it carries ciphertext under a key that
 /// does not travel.
 pub(crate) fn exclude_from_backup(path: &std::path::Path) {
@@ -411,14 +412,28 @@ pub(crate) fn exclude_from_backup(path: &std::path::Path) {
     let _ = path;
 }
 
-/// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`,
-/// through the Objective-C runtime like `app_group::app_group_dir` and for its reason: `libapp.a`
-/// is linked into the notification extension too, so a function of ours in `canari_push.mm` would
-/// leave the extension's link with an undefined symbol. Foundation is linked into both.
+/// Runs `body` with `[NSURL fileURLWithPath:path]` and the `NSURLIsExcludedFromBackupKey` constant,
+/// inside an autorelease pool - the one copy of the boilerplate [`ios_exclude_from_backup`] and
+/// [`ios_is_excluded_from_backup`] share. Through the Objective-C runtime like
+/// `app_group::app_group_dir` and for its reason: `libapp.a` is linked into the notification
+/// extension too, so a function of ours in `canari_push.mm` would leave the extension's link with an
+/// undefined symbol. Foundation is linked into both.
+///
+/// # Safety
+///
+/// `body` receives a live autoreleased `NSURL` and a Foundation constant; it must send them only
+/// messages with the argument and return types their headers declare, and keep nothing it gets past
+/// its own return (the pool drains then).
 #[cfg(target_os = "ios")]
-fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
+unsafe fn with_backup_flag_url<T>(
+    path: &std::path::Path,
+    body: impl FnOnce(
+        *mut objc2::runtime::AnyObject,
+        *const objc2::runtime::AnyObject,
+    ) -> Result<T, String>,
+) -> Result<T, String> {
     use objc2::msg_send;
-    use objc2::runtime::{AnyClass, AnyObject, Bool};
+    use objc2::runtime::{AnyClass, AnyObject};
 
     #[link(name = "Foundation", kind = "framework")]
     extern "C" {
@@ -430,7 +445,6 @@ fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
     objc2::rc::autoreleasepool(|_| {
         let str_class = AnyClass::get(c"NSString").ok_or("NSString is not loaded")?;
         let url_class = AnyClass::get(c"NSURL").ok_or("NSURL is not loaded")?;
-        let num_class = AnyClass::get(c"NSNumber").ok_or("NSNumber is not loaded")?;
         // SAFETY: plain Foundation messages with the argument and return types their headers
         // declare; every object returned is autoreleased into the pool around this block, and the
         // key is a Foundation constant that lives as long as the process.
@@ -441,21 +455,62 @@ fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
                 return Err("path is not UTF-8".to_string());
             }
             let url: *mut AnyObject = msg_send![url_class, fileURLWithPath: ns_path];
+            body(url, NSURLIsExcludedFromBackupKey)
+        }
+    })
+}
+
+/// `[[NSURL fileURLWithPath:path] setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey]`.
+#[cfg(target_os = "ios")]
+pub(crate) fn ios_exclude_from_backup(path: &std::path::Path) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject, Bool};
+
+    let num_class = AnyClass::get(c"NSNumber").ok_or("NSNumber is not loaded")?;
+    // SAFETY: `setResourceValue:forKey:error:` and `numberWithBool:` with their declared types; the
+    // number is autoreleased into the helper's pool and used inside it.
+    unsafe {
+        with_backup_flag_url(path, |url, key| {
             let yes: *mut AnyObject = msg_send![num_class, numberWithBool: Bool::YES];
             let no_error: *mut *mut AnyObject = std::ptr::null_mut();
-            let ok: Bool = msg_send![
-                url,
-                setResourceValue: yes,
-                forKey: NSURLIsExcludedFromBackupKey,
-                error: no_error
-            ];
+            let ok: Bool = msg_send![url, setResourceValue: yes, forKey: key, error: no_error];
             if ok.as_bool() {
                 Ok(())
             } else {
                 Err("setResourceValue refused".to_string())
             }
-        }
-    })
+        })
+    }
+}
+
+/// `[[NSURL fileURLWithPath:path] getResourceValue:&v forKey:NSURLIsExcludedFromBackupKey]`: the
+/// flag as the file system holds it NOW, read back after [`ios_exclude_from_backup`] so the launch
+/// log states what is set, not what was asked (`backup_exclusion`). `Ok(false)` for a path whose
+/// value is unset.
+#[cfg(target_os = "ios")]
+pub(crate) fn ios_is_excluded_from_backup(path: &std::path::Path) -> Result<bool, String> {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyObject, Bool};
+
+    // SAFETY: `getResourceValue:forKey:error:` and `boolValue` with their declared types; the value
+    // out-parameter is autoreleased into the helper's pool and read inside it.
+    unsafe {
+        with_backup_flag_url(path, |url, key| {
+            let mut value: *mut AnyObject = std::ptr::null_mut();
+            let value_out: *mut *mut AnyObject = &mut value;
+            let no_error: *mut *mut AnyObject = std::ptr::null_mut();
+            let ok: Bool =
+                msg_send![url, getResourceValue: value_out, forKey: key, error: no_error];
+            if !ok.as_bool() {
+                return Err("getResourceValue refused".to_string());
+            }
+            if value.is_null() {
+                return Ok(false);
+            }
+            let set: Bool = msg_send![value, boolValue];
+            Ok(set.as_bool())
+        })
+    }
 }
 
 /// Gives `path` the iOS Data Protection class `Complete` (`NSFileProtectionComplete`): its key is
