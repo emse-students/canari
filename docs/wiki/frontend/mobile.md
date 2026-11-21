@@ -4146,8 +4146,9 @@ needs "can a retry ever succeed".
   native writers take, and to adopt the entries it did not know only at a login - so a reply queued
   natively while the app was warm in the background, or an entry the drain had marked unsendable,
   was erased by the page's first outbox mutation after it: neither sent, nor shown failed, nor
-  retried. The file now says which line is whose, the page writes only its own under `OUTBOX_LOCK`,
-  and it adopts the native lines on every return to the front -
+  retried. The file now says which line is whose, the page writes only its own under the lock the
+  native writers take (`OUTBOX_LOCK` on Android, `OUTBOX_MIRROR_LOCK` on iOS), and it adopts the
+  native lines on every return to the front -
   [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
   The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
   and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).

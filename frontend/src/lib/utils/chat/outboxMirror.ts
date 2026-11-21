@@ -119,6 +119,18 @@ export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
 let mirrorWrites: Promise<boolean> = Promise.resolve(true);
 
 /**
+ * Native-looking lines {@link adoptOrphanedMirrorEntries} found ALREADY SENT by their stored row:
+ * held by the page's next mirror write, which drops them, so the background drain never sends them
+ * again. Forgotten once a write holding them lands.
+ */
+const sentNativeLines = new Set<string>();
+
+/** Whether a mirror line found already sent still waits for the write that drops it. */
+export function mirrorHoldsSentLines(): boolean {
+  return sentNativeLines.size > 0;
+}
+
+/**
  * Write the page's lines of the native mirror from an outbox snapshot (Tauri only; no-op on
  * web/desktop-web). Called after every outbox mutation so the background service always sees the
  * live queue. `entries` is the WHOLE queue: what it mirrors is written, and every id in it is
@@ -134,11 +146,13 @@ let mirrorWrites: Promise<boolean> = Promise.resolve(true);
 export function syncOutboxMirror(entries: OutboxEntry[]): Promise<boolean> {
   if (!isTauriRuntime()) return Promise.resolve(true);
   const mirror = entries.map(toMirrorEntry).filter((e): e is OutboxMirrorEntry => e !== null);
-  const held = entries.map((e) => e.id);
+  const settled = [...sentNativeLines];
+  const held = [...entries.map((e) => e.id), ...settled];
   const write = mirrorWrites.then(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('store_outbox_mirror', { entries: mirror, held });
+      for (const id of settled) sentNativeLines.delete(id);
       return true;
     } catch (e) {
       appendLog(`[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${String(e)}`);
@@ -353,17 +367,17 @@ export async function adoptOrphanedMirrorEntries(
   storage: IStorage,
   deviceKeyB64: string,
   userId: string
-): Promise<number> {
-  if (!isTauriRuntime()) return 0;
+): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
   let mirror: OutboxMirrorEntry[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     mirror = await invoke<OutboxMirrorEntry[]>('read_outbox_mirror');
   } catch (e) {
     appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
-    return 0;
+    return [];
   }
-  if (!mirror.length) return 0;
+  if (!mirror.length) return [];
 
   const known = await storage
     .getOutboxQueue(deviceKeyB64)
@@ -374,7 +388,7 @@ export async function adoptOrphanedMirrorEntries(
       return null;
     })
     .then((entries) => (entries ? new Set(entries.map((e) => e.id)) : null));
-  if (!known) return 0;
+  if (!known) return [];
 
   const stale = mirror.filter((e) => e.owner === 'page' && !known.has(e.id));
   if (stale.length) {
@@ -383,11 +397,28 @@ export async function adoptOrphanedMirrorEntries(
     );
   }
   const orphans = mirror.filter((e) => e.id && e.owner !== 'page' && !known.has(e.id));
-  if (!orphans.length) return 0;
+  if (!orphans.length) return [];
   appendLog(`[OUTBOX_MIRROR] ${orphans.length} orphan mirror entr(y/ies) to adopt`);
 
-  let adopted = 0;
+  const adopted: string[] = [];
   for (const orphan of orphans) {
+    // ALREADY SENT, BY ITS STORED ROW: a line a page wrote before the `owner` stamp (1.7.3) reads as
+    // native, and one whose send landed after the page's last mirror write is still in the file. The
+    // row the send dated (`serverTimestamp`, `authorship`) is the durable proof - never the server's
+    // dedup. A control frame has no row: it is adopted, and its receiver applies it idempotently.
+    const stored = await storage.getMessage(orphan.id, deviceKeyB64).catch((e) => {
+      appendLog(
+        `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… row not read - adopted on the line alone: ${String(e)}`
+      );
+      return null;
+    });
+    if (stored && (stored.serverTimestamp || stored.authorship)) {
+      appendLog(
+        `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… is already sent by its stored row - not adopted, the next write drops it`
+      );
+      sentNativeLines.add(orphan.id);
+      continue;
+    }
     const rebuilt = adoptMirrorEntry(orphan, userId);
     if (!rebuilt) continue;
     try {
@@ -396,7 +427,7 @@ export async function adoptOrphanedMirrorEntries(
       appendLog(`[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed: ${String(e)}`);
       continue;
     }
-    adopted++;
+    adopted.push(orphan.id);
     if (rebuilt.message) {
       // Best-effort: the entry is queued either way, this only decides whether the user can see it
       // before it lands. A missing conversation row is the expected failure (FK), and it means the
@@ -418,7 +449,7 @@ export async function adoptOrphanedMirrorEntries(
         );
     }
   }
-  appendLog(`[OUTBOX_MIRROR] ${adopted}/${orphans.length} orphan entr(y/ies) adopted`);
+  appendLog(`[OUTBOX_MIRROR] ${adopted.length}/${orphans.length} orphan entr(y/ies) adopted`);
   return adopted;
 }
 

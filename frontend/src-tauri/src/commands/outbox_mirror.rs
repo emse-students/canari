@@ -23,9 +23,14 @@
 //! (`AwaitedReplies`, `RingSequencer.lock`) under it. A drain holds it through its POSTs, so the
 //! page's write waits for one: the commands run on a blocking thread, never the IPC one.
 //!
-//! **iOS HAS NO SHARED LOCK, AND THAT IS A NAMED RESIDUAL.** `canari_push.mm` reads, appends and
-//! rewrites the file with no lock, so a native write landing between this module's read and write is
-//! still lost there ([chat-delivery](../../../../docs/wiki/chat-delivery.md#the-outbox-mirror-has-two-writers)).
+//! **iOS: ONE LOCK, OWNED HERE AND TAKEN BY `canari_push.mm`.** The page's commands and every
+//! native read-modify-write of the file run in the APP process - the file lives in the app's own
+//! Application Support, out of the notification extension's reach, and the extension never names
+//! it. So one process-local lock covers them all: [`OUTBOX_MIRROR_LOCK`], which the ObjC side takes
+//! through [`canari_with_outbox_mirror_lock`] around each append and around each whole drain (read,
+//! encrypt, POST, rewrite, as Kotlin's drain holds `OUTBOX_LOCK`). The order: this lock first; the
+//! drain's encrypt takes `g_mlsStateLock` under it with `tryLock`, which never waits, and the page
+//! takes nothing under it ([chat-delivery](../../../../docs/wiki/services/chat-delivery.md#the-outbox-mirror-has-two-writers)).
 
 use std::collections::HashSet;
 
@@ -35,8 +40,19 @@ use tauri::Manager;
 /// The mirror's file name, under the app data directory.
 pub(crate) const OUTBOX_PENDING_FILE: &str = "outbox_pending.ndjson";
 
+/// Where a mirror that could not be read at all is moved aside ([`read_or_set_aside`]): kept, not
+/// erased, and removed with the account's other files (`ACCOUNT_PUSH_FILES`).
+pub(crate) const OUTBOX_UNREADABLE_FILE: &str = "outbox_pending.unreadable.ndjson";
+
 /// The `owner` value the page stamps on its lines. Any other value, or none, is a native line.
 const PAGE_OWNER: &str = "page";
+
+/// The fields only a NATIVE writer sets on a line - its verdicts on the frame. The page's write
+/// carries them over from the current line of the same id, or its own copy of a page line would
+/// erase what a background drain learned: an `unsendable` mark gone, and every later drain trying
+/// again what the server refused for good. An allowlist: a field the page stopped setting is not
+/// resurrected by this.
+const NATIVE_VERDICTS: [&str; 1] = ["unsendable"];
 
 /// What one merge did, for its log line.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -51,6 +67,8 @@ pub(crate) struct MirrorMerge {
     pub page_dropped: usize,
     /// Lines that are no entry (unparseable, or no `id`): nobody can send them.
     pub unreadable: usize,
+    /// Page lines that kept a native verdict ([`NATIVE_VERDICTS`]) of the current line.
+    pub verdicts_kept: usize,
 }
 
 /// Whether `line` was written by the page.
@@ -64,7 +82,8 @@ fn page_owned(line: &Value) -> bool {
 /// does not mirror: a native line whose id it holds is the page's from then on, and keeping it
 /// would hand the native drain a frame the page shows as failed. The result is the native lines
 /// kept, in their file order, then the page's, each stamped `owner: "page"` - the native ones were
-/// queued before this write ever saw them.
+/// queued before this write ever saw them. A native verdict on the current line of a page id
+/// ([`NATIVE_VERDICTS`]) is carried onto the page's copy.
 ///
 /// Pure, so the rule is tested without a device; [`write_page_lines`] is its one caller.
 pub(crate) fn merge_outbox_mirror(
@@ -78,6 +97,8 @@ pub(crate) fn merge_outbox_mirror(
         .filter_map(|e| e.get("id").and_then(Value::as_str).map(str::to_owned))
         .collect();
     let mut lines: Vec<Value> = Vec::new();
+    let mut verdicts: std::collections::HashMap<String, serde_json::Map<String, Value>> =
+        std::collections::HashMap::new();
     for raw in current.lines().filter(|l| !l.trim().is_empty()) {
         let Ok(line) = serde_json::from_str::<Value>(raw) else {
             merge.unreadable += 1;
@@ -87,6 +108,15 @@ pub(crate) fn merge_outbox_mirror(
             merge.unreadable += 1;
             continue;
         };
+        if page_ids.contains(id) {
+            let found: serde_json::Map<String, Value> = NATIVE_VERDICTS
+                .iter()
+                .filter_map(|k| line.get(*k).map(|v| ((*k).to_owned(), v.clone())))
+                .collect();
+            if !found.is_empty() {
+                verdicts.entry(id.to_owned()).or_default().extend(found);
+            }
+        }
         if page_owned(&line) {
             if !page_ids.contains(id) {
                 merge.page_dropped += 1;
@@ -102,6 +132,13 @@ pub(crate) fn merge_outbox_mirror(
     }
     for mut entry in page {
         if let Value::Object(fields) = &mut entry {
+            let id = fields.get("id").and_then(Value::as_str).map(str::to_owned);
+            if let Some(kept) = id.and_then(|id| verdicts.remove(&id)) {
+                merge.verdicts_kept += 1;
+                for (k, v) in kept {
+                    fields.entry(k).or_insert(v);
+                }
+            }
             fields.insert("owner".into(), Value::String(PAGE_OWNER.into()));
         }
         merge.page += 1;
@@ -150,33 +187,89 @@ fn under_outbox_lock<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     }
 }
 
-/// Off Android no native writer shares a lock with the page: iOS's is the named residual above,
-/// and a desktop has no native sender.
-#[cfg(not(target_os = "android"))]
+/// The iOS mirror lock - see the module doc. Not reentrant: no holder of it takes it again (the ObjC
+/// side takes it around an append, releases it, then drains under it).
+#[cfg(any(target_os = "ios", test))]
+static OUTBOX_MIRROR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Runs `work` holding [`OUTBOX_MIRROR_LOCK`]. A poisoned lock (a panic under it) still serialises:
+/// the file it guards is rewritten whole by every holder, so no half-state survives the panic.
+#[cfg(any(target_os = "ios", test))]
+fn with_mirror_lock<T>(work: impl FnOnce() -> T) -> T {
+    let _held = OUTBOX_MIRROR_LOCK.lock().unwrap_or_else(|poisoned| {
+        log::error!(
+            "[OUTBOX_MIRROR] the mirror lock was poisoned by a panic under it - taken anyway"
+        );
+        poisoned.into_inner()
+    });
+    work()
+}
+
+/// **THE ONE DOOR `canari_push.mm` TAKES THE MIRROR LOCK THROUGH**: runs `work(ctx)` holding
+/// [`OUTBOX_MIRROR_LOCK`], the lock the page's commands take (`CanariWithOutboxMirrorLock`). A null
+/// `work` runs nothing, logged - the caller's read-modify-write did not happen.
+#[cfg(any(target_os = "ios", test))]
+#[no_mangle]
+pub extern "C" fn canari_with_outbox_mirror_lock(
+    ctx: *mut std::ffi::c_void,
+    work: Option<extern "C" fn(*mut std::ffi::c_void)>,
+) {
+    let Some(work) = work else {
+        log::error!("[OUTBOX_MIRROR] canari_with_outbox_mirror_lock: no work given - nothing ran");
+        return;
+    };
+    with_mirror_lock(|| work(ctx));
+}
+
+/// iOS: the lock `canari_push.mm` takes around every read-modify-write of the file.
+#[cfg(target_os = "ios")]
+fn under_outbox_lock<T>(work: impl FnOnce() -> T) -> Result<T, String> {
+    Ok(with_mirror_lock(work))
+}
+
+/// A desktop has no native sender: nothing else writes the file.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn under_outbox_lock<T>(work: impl FnOnce() -> T) -> Result<T, String> {
     Ok(work())
 }
 
-/// Reads the mirror's text; empty when there is no file.
+/// Reads the mirror's text LOSSILY: bytes that are not UTF-8 become U+FFFD, and the line they spoil
+/// is then counted and dropped by its parse, never the whole file. Empty when there is no file.
 fn read_text(path: &std::path::Path) -> Result<String, String> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(text),
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
         Err(e) => Err(format!("mirror read failed: {e}")),
     }
 }
 
+/// The mirror's text for a WRITE. A file that cannot be read at all is MOVED ASIDE to
+/// [`OUTBOX_UNREADABLE_FILE`], logged at ERROR, and the write starts from an empty mirror: kept as
+/// it was, never erased, and the page's writes never wedged behind it for good. `Err` only when it
+/// can be neither read nor moved - then nothing is written over it.
+fn read_or_set_aside(path: &std::path::Path) -> Result<String, String> {
+    let error = match read_text(path) {
+        Ok(text) => return Ok(text),
+        Err(e) => e,
+    };
+    let aside = path.with_file_name(OUTBOX_UNREADABLE_FILE);
+    std::fs::rename(path, &aside).map_err(|e| {
+        format!("{error}, and it could not be moved aside ({e}) - NOT written over")
+    })?;
+    log::error!(
+        "[OUTBOX_MIRROR] {error} - the file is moved aside to {OUTBOX_UNREADABLE_FILE}, this write starts from an empty mirror"
+    );
+    Ok(String::new())
+}
+
 /// Merges the page's lines into the file at `path` and writes it ([`merge_outbox_mirror`]); an
 /// empty result deletes the file, so the native side sees "nothing pending" without parsing it.
-///
-/// AN UNREADABLE FILE IS NOT REWRITTEN: read as empty, the write would erase every native line in
-/// it - the defect this module exists to end.
 fn write_page_lines(
     path: &std::path::Path,
     page: Vec<Value>,
     held: &HashSet<String>,
 ) -> Result<MirrorMerge, String> {
-    let current = read_text(path)?;
+    let current = read_or_set_aside(path)?;
     let (lines, merge) = merge_outbox_mirror(&current, page, held);
     if lines.is_empty() {
         if let Err(e) = std::fs::remove_file(path) {
@@ -364,6 +457,82 @@ mod tests {
         let (lines, merge) = merge_outbox_mirror(&current, vec![], &held(&[]));
         assert_eq!(ids(&lines), ["n"]);
         assert_eq!(merge.unreadable, 2);
+    }
+
+    /// A verdict a background drain set on a PAGE line survives the page's next copy of it.
+    #[test]
+    fn a_native_verdict_on_a_page_line_is_carried_over() {
+        let mut marked = line("p1", Some("page"));
+        marked["unsendable"] = json!(true);
+        let (lines, merge) =
+            merge_outbox_mirror(&text(&[marked]), vec![line("p1", None)], &held(&["p1"]));
+        assert_eq!(lines[0]["unsendable"], json!(true));
+        assert_eq!(lines[0]["owner"], "page");
+        assert_eq!(merge.verdicts_kept, 1);
+    }
+
+    /// Only the allowlisted verdicts: any other field of the old line is the page's to set or not.
+    #[test]
+    fn a_field_outside_the_verdicts_is_not_carried() {
+        let mut old = line("p1", Some("page"));
+        old["somethingElse"] = json!(1);
+        let (lines, _) = merge_outbox_mirror(&text(&[old]), vec![line("p1", None)], &held(&["p1"]));
+        assert!(lines[0].get("somethingElse").is_none());
+    }
+
+    /// Bytes that are not UTF-8 spoil their line only: the rest is read, the spoiled line counted.
+    #[test]
+    fn a_file_with_bad_bytes_is_read_lossily() {
+        let dir = std::env::temp_dir().join(format!("canari-mirror-lossy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(OUTBOX_PENDING_FILE);
+        let mut bytes = b"{\"id\":\xff\xfe}\n".to_vec();
+        bytes.extend(text(&[line("native", None)]).into_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let merge = write_page_lines(&path, vec![], &held(&[])).unwrap();
+        assert_eq!(merge.unreadable, 1);
+        assert_eq!(merge.native_kept, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A mirror that cannot be read at all (here: a directory) is moved aside, never written over,
+    /// and the page's write goes on from an empty mirror.
+    #[test]
+    fn an_unreadable_mirror_is_moved_aside_and_the_write_goes_on() {
+        let dir = std::env::temp_dir().join(format!("canari-mirror-aside-{}", std::process::id()));
+        let path = dir.join(OUTBOX_PENDING_FILE);
+        std::fs::create_dir_all(&path).unwrap();
+        write_page_lines(&path, vec![line("p1", None)], &held(&["p1"])).unwrap();
+        assert!(
+            dir.join(OUTBOX_UNREADABLE_FILE).is_dir(),
+            "the unreadable mirror is kept aside"
+        );
+        assert!(std::fs::read_to_string(&path).unwrap().contains("\"p1\""));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The ObjC door runs its work HOLDING the lock the page's iOS commands take.
+    #[test]
+    fn the_objc_door_runs_its_work_under_the_page_lock() {
+        extern "C" fn probe(ctx: *mut std::ffi::c_void) {
+            // SAFETY: `ctx` is the `bool` below, alive for the whole call.
+            let held = unsafe { &mut *(ctx as *mut bool) };
+            *held = matches!(
+                OUTBOX_MIRROR_LOCK.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            );
+        }
+        let mut held = false;
+        canari_with_outbox_mirror_lock(
+            &mut held as *mut bool as *mut std::ffi::c_void,
+            Some(probe),
+        );
+        assert!(held, "the work ran without the lock");
+        assert!(
+            OUTBOX_MIRROR_LOCK.try_lock().is_ok(),
+            "the lock was not released"
+        );
+        canari_with_outbox_mirror_lock(std::ptr::null_mut(), None);
     }
 
     /// The file round trip: an unreadable file is never rewritten, an empty result deletes it.

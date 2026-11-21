@@ -2047,6 +2047,22 @@ void CanariScheduleOutboxRetryTask(void) {
 #endif
 }
 
+static void CanariOutboxMirrorLockTrampoline(void *ctx) {
+  void (^work)(void) = (__bridge void (^)(void))ctx;
+  work();
+}
+
+/**
+ * Runs `work` holding the outbox mirror lock - the ONE lock the page's Rust commands take too
+ * (`canari_with_outbox_mirror_lock`, `commands/outbox_mirror.rs`). Every read-modify-write of
+ * `outbox_pending.ndjson` runs inside it: an append, and a whole drain. Without it the page's write
+ * and a native one interleaved, and the later erased the earlier's line. NOT REENTRANT: an append
+ * releases it before it drains.
+ */
+static void CanariWithOutboxMirrorLock(void (^work)(void)) {
+  canari_with_outbox_mirror_lock((__bridge void *)work, CanariOutboxMirrorLockTrampoline);
+}
+
 static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -2272,8 +2288,26 @@ static long long CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *s
   return receivedAt;
 }
 
+static int CanariDrainOutboxBackgroundLocked(
+    CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut);
+
+/**
+ * Drains the outbox mirror HOLDING ITS LOCK for the whole read, encrypt, POST and rewrite - as
+ * Kotlin's drain holds `OUTBOX_LOCK`: a line appended, or written by the page, while the drain
+ * POSTs would otherwise be erased by its final rewrite, and two drains overlapping would both send
+ * the same entry. Its encrypt takes `g_mlsStateLock` under it with `tryLock`, which never waits.
+ */
 static int CanariDrainOutboxBackground(CanariPushContext *ctx,
                                        NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
+  __block int remaining = 0;
+  CanariWithOutboxMirrorLock(^{
+    remaining = CanariDrainOutboxBackgroundLocked(ctx, receivedAtOut);
+  });
+  return remaining;
+}
+
+static int CanariDrainOutboxBackgroundLocked(
+    CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {
     return 0;
@@ -2459,9 +2493,11 @@ static void CanariSendReadWatermark(NSString *groupId, long long at) {
   // one sent from the app, and must reach a device that was offline.
   entry.silent = YES;
   entry.durable = YES;
-  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-  [entries addObject:entry];
-  CanariRewriteOutboxMirror(entries);
+  CanariWithOutboxMirrorLock(^{
+    NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
+    [entries addObject:entry];
+    CanariRewriteOutboxMirror(entries);
+  });
   CanariDrainOutboxBackground(ctx, nil);
   NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
 }
@@ -2559,9 +2595,11 @@ static BOOL CanariSendQuickReplyNatively(CanariPushContext *ctx, NSString *group
   entry.sentAt = sentAt;
   entry.silent = NO;
   entry.durable = YES;
-  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-  [entries addObject:entry];
-  CanariRewriteOutboxMirror(entries);
+  CanariWithOutboxMirrorLock(^{
+    NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
+    [entries addObject:entry];
+    CanariRewriteOutboxMirror(entries);
+  });
   NSLog(@"[CanariPush] handleQuickReplyAction: queued id=%@ group=%@",
         [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)], groupId);
 

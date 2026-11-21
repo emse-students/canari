@@ -114,6 +114,11 @@ char *canari_native_build_text_message_proto(
 
 char *canari_native_build_read_watermark_proto(long long at);
 
+/// Runs `work(ctx)` holding the outbox mirror lock the page's Rust commands take
+/// (`commands/outbox_mirror.rs`). Every read-modify-write of `outbox_pending.ndjson` goes through it
+/// (`CanariWithOutboxMirrorLock`). Not reentrant.
+void canari_with_outbox_mirror_lock(void *ctx, void (*work)(void *ctx));
+
 char *canari_native_build_call_hangup_proto(
     const char *message_id,
     long long sent_at,

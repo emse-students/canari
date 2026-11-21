@@ -63,7 +63,11 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
-import { adoptOrphanedMirrorEntries, syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
+import {
+  adoptOrphanedMirrorEntries,
+  mirrorHoldsSentLines,
+  syncOutboxMirror,
+} from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
@@ -960,6 +964,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const parked = new Set<string>();
   /**
+   * Entries adopted from the native mirror whose CLAIM did not land: the mirror still holds them as
+   * native lines, which a background drain may send. Not sent from here until a mirror write that
+   * holds them lands ({@link writeMirror}), so the server's messageId dedup is never what stands
+   * between them and a double send. In memory by design: a reload adopts nothing new for them (they
+   * are queued) and its first mirror write claims them before any background drain can run again.
+   */
+  const unclaimed = new Set<string>();
+  /**
    * Consecutive upload attempts per entry that ended with NO ANSWER (typed: a stall, an unanswered
    * body, a rejected `fetch`). At {@link UPLOAD_NO_ANSWER_ATTEMPTS} the entry is parked as `failed`.
    * In memory by design, like `parked`: a reload earns one more bounded round, and a manual retry,
@@ -1188,11 +1200,29 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     });
   }
 
+  /**
+   * Writes the page's lines of the native mirror from `queue` ({@link syncOutboxMirror}, which logs
+   * its own failure and never rejects). A write that lands CLAIMS every unclaimed entry it holds,
+   * and the flusher is raised for them.
+   */
+  async function writeMirror(queue: OutboxEntry[]): Promise<boolean> {
+    const landed = await syncOutboxMirror(queue);
+    if (landed && unclaimed.size > 0) {
+      const claimed = queue.filter((e) => unclaimed.delete(e.id)).length;
+      if (claimed > 0) {
+        log(
+          `[OUTBOX] ${claimed} adopted native entr${claimed === 1 ? 'y' : 'ies'} claimed - flushing`
+        );
+        runFlush();
+      }
+    }
+    return landed;
+  }
+
   /** Rewrite the native background-send mirror from the current queue (Tauri only; best-effort). */
-  async function refreshMirror(): Promise<void> {
-    if (!storage) return;
-    // syncOutboxMirror swallows and logs its own failures ([OUTBOX_MIRROR]); it never rejects.
-    await syncOutboxMirror(await readQueue('mirror refresh'));
+  async function refreshMirror(): Promise<boolean> {
+    if (!storage) return true;
+    return writeMirror(await readQueue('mirror refresh'));
   }
 
   /**
@@ -2617,6 +2647,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return 'gone';
     }
 
+    // ADOPTED BUT NOT CLAIMED: a background drain may still send it from the mirror. Held, with its
+    // successors (order), until a mirror write holding it lands - `writeMirror` raises the flush.
+    if (unclaimed.has(entry.id)) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… waits: adopted from the native mirror, not claimed yet`
+      );
+      return 'skip';
+    }
     // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
     // the reconnect it came from.
     if (forbiddenParked.has(entry.id)) return 'skip';
@@ -3652,7 +3690,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (rowDeleted) gone.add(entry.id);
       lostByKind.set(entry.kind, (lostByKind.get(entry.kind) ?? 0) + 1);
     }
-    if (gone.size > 0) await syncOutboxMirror(snapshot.filter((e) => !gone.has(e.id)));
+    if (gone.size > 0) await writeMirror(snapshot.filter((e) => !gone.has(e.id)));
     return { left, kinds: [...lostByKind].map(([k, n]) => `${n} ${k}`).join(', ') };
   }
 
@@ -4638,6 +4676,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // the other tabs' snapshots (a leader draining on our behalf).
     cancelled.set(messageId, reason);
     parked.delete(messageId);
+    unclaimed.delete(messageId);
     serverFailed.delete(messageId);
     noAnswer.delete(messageId);
     bestLoaded.delete(messageId);
@@ -4822,15 +4861,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
                   : `[OUTBOX] ${old.id.slice(0, 8)}… superseded by ${entry.id.slice(0, 8)}… while on the wire here - not retried, the newer one follows it`
             );
           }
-          await syncOutboxMirror(
+          runFlush();
+          // THE SEND DOES NOT WAIT FOR THE MIRROR: its write takes the native writers' lock, which a
+          // background drain holds through its POSTs (`outbox_mirror.rs`). Nothing is lost by the
+          // order - the writes land in the order asked, so the one after this send's own settlement
+          // lands last, and the native drain cannot encrypt while the page holds the MLS state.
+          void writeMirror(
             [...snapshot.filter((e) => !gone.has(e.id)), entry].sort(
               (a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id)
             )
           );
         } else {
-          await refreshMirror();
+          // The queue is read here, the write is not awaited (above): a failure to read is still this
+          // enqueue's, after its durable write - a MessageWrittenError.
+          const queue = await readQueue('mirror refresh');
+          runFlush();
+          void writeMirror(queue);
         }
-        runFlush();
       } catch (e) {
         if (durable && !(e instanceof MessageWrittenError))
           throw new MessageWrittenError(entry.id, e);
@@ -5008,23 +5055,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     async adoptNativeEntries(): Promise<number> {
       if (!storage) return 0;
       const adopted = await adoptOrphanedMirrorEntries(storage, deviceKey(), deps.userId);
-      if (adopted === 0) return 0;
-      // THE CLAIM: the mirror's next lines name them as the page's, so no later adoption takes them
-      // again. Failed, they stay native lines there while the queue holds them - the next write of
-      // this queue claims them (`held`), and until then a background drain may send what this
-      // flusher sends: the double send the claim exists to close, so it is an ERROR.
-      if (!(await syncOutboxMirror(await readQueue('native adoption')))) {
+      for (const id of adopted) unclaimed.add(id);
+      // A claim an earlier return failed is tried again here, adoption or not - and a line found
+      // already sent is dropped from the mirror now, before the page leaves the front.
+      if (unclaimed.size === 0 && !mirrorHoldsSentLines()) return 0;
+      // THE CLAIM: the mirror's next lines name them as the page's, so the background drain no longer
+      // reads them as its own. Until it lands they are NOT sent from here (`unclaimed`): a failed
+      // claim leaves them native lines a drain may send, and the server's dedup must never be what
+      // prevents the second send. The write that lands raises the flush (`writeMirror`).
+      if (!(await refreshMirror())) {
         console.error(
-          `[OUTBOX] ${adopted} native entr${adopted === 1 ? 'y' : 'ies'} adopted but NOT claimed in the mirror - a background drain may send them too until the next mirror write`
+          `[OUTBOX] ${unclaimed.size} adopted native entr${unclaimed.size === 1 ? 'y' : 'ies'} NOT claimed in the mirror - held unsent until a mirror write lands`
         );
       }
       // On screen, pending - or failed with its Retry, for an entry the native drain marked unsendable.
       await controller.applyPendingStatuses();
-      log(
-        `[OUTBOX] ${adopted} native entr${adopted === 1 ? 'y' : 'ies'} adopted on the return to the front - flushing`
-      );
-      runFlush();
-      return adopted;
+      if (adopted.length > 0) {
+        log(
+          `[OUTBOX] ${adopted.length} native entr${adopted.length === 1 ? 'y' : 'ies'} adopted on the return to the front`
+        );
+      }
+      return adopted.length;
     },
 
     async enqueueTake(
@@ -5094,8 +5145,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             await withdraw(entry.id, 'exit');
           }
         }
-        await refreshMirror();
+        // Read here, written unawaited: the send never waits on the native writers' lock (`enqueue`).
+        const queue = await readQueue('mirror refresh');
         runFlush();
+        void writeMirror(queue);
       } catch (e) {
         throw new MessageWrittenError(take.id, e);
       }
