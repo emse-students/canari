@@ -4,6 +4,7 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import RefundDialog from '$lib/components/associations/edit/RefundDialog.svelte';
   import FormSubmissionsTable from './FormSubmissionsTable.svelte';
+  import FormResultsSummary from './FormResultsSummary.svelte';
   import {
     fileAnswerWords,
     validateCashSubmission,
@@ -18,7 +19,6 @@
   } from '$lib/associations/api';
   import {
     RESPONSE_FILTERS,
-    choiceResults,
     filterCounts,
     gridTotalsViews,
     productGridQuestions,
@@ -27,6 +27,7 @@
     type ResponseFilter,
   } from '$lib/forms/responsesView';
   import { productGridCellKey } from '$lib/forms/productGridContract';
+  import { hasResultQuestions } from '$lib/forms/resultsView';
   import { submitterName } from '$lib/forms/submissionTable';
   import { formatAmount } from '$lib/forms/fillAnswers';
   import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -49,7 +50,7 @@
   /**
    * ONE FORM'S RESPONSES SCREEN (WP-G4, the owner-approved mockup of 2026-11-06): summary cards, then
    * three tabs - "Réponses" (search, payment filters, the table and its actions), "Totaux" (a priced
-   * grid's order, row x column) and "Résumé" (a bar per option of each choice question).
+   * grid's order, row x column) and "Résumé" (the server's per-question results, `FormResultsSummary.svelte`).
    *
    * Everything is derived from the answers the list already loaded (`getSubmissions`); the rules
    * live in `responsesView.ts`, and the grid totals in the contract the export shares. The two
@@ -106,12 +107,11 @@
   const totals = $derived(gridTotalsViews(items, submissions, withUnpaid));
   const grandUnits = $derived(totals.reduce((sum, view) => sum + view.totals.total.units, 0));
   const grandCents = $derived(totals.reduce((sum, view) => sum + view.totals.total.cents, 0));
-  const choices = $derived(choiceResults(items, submissions));
 
   const tabs = $derived([
     { key: 'list' as const, label: m.form_responses_tab_list() },
     ...(grids.length ? [{ key: 'totals' as const, label: m.form_responses_tab_totals() }] : []),
-    ...(choices.length || grids.length
+    ...(hasResultQuestions(items)
       ? [{ key: 'summary' as const, label: m.form_responses_tab_summary() }]
       : []),
   ]);
@@ -471,60 +471,8 @@
       {/each}
     </div>
   {:else}
-    <div class="flex flex-col gap-3" role="tabpanel" id="form-{form.id}-tabpanel-summary">
-      <p class="text-text-muted text-xs">{m.form_responses_summary_managers_only()}</p>
-      {#each choices as result (result.item.id)}
-        {@const max = Math.max(1, ...result.bars.map((bar) => bar.count))}
-        <section class="border-cn-border rounded-2xl border p-4" data-testid="choice-result">
-          <h3 class="text-text-main font-bold whitespace-pre-line">{result.item.label}</h3>
-          <p class="text-text-muted mb-3 text-xs">
-            {m.form_responses_summary_answers({ count: result.answered })}
-          </p>
-          <ul class="flex flex-col gap-2">
-            {#each result.bars as bar, index (index)}
-              <li class="grid grid-cols-[minmax(0,12rem)_1fr_auto] items-center gap-3 text-sm">
-                <span class="text-text-main truncate" title={bar.label}>{bar.label}</span>
-                <span class="bg-control-fill h-2.5 overflow-hidden rounded-full">
-                  <span
-                    class="bg-accent block h-full rounded-full"
-                    style:width="{Math.round((100 * bar.count) / max)}%"
-                  ></span>
-                </span>
-                <span class="text-text-muted text-xs font-semibold tabular-nums">
-                  {bar.count} · {bar.percent} %
-                </span>
-              </li>
-            {/each}
-          </ul>
-        </section>
-      {/each}
-      {#if grids.length}
-        {@const max = Math.max(1, ...totals.map((view) => view.totals.total.units))}
-        <section class="border-cn-border rounded-2xl border p-4">
-          <h3 class="text-text-main font-bold">{m.form_responses_summary_units_chart()}</h3>
-          <p class="text-text-muted mb-3 text-xs">{units(grandUnits)}</p>
-          <ul class="flex flex-col gap-2">
-            {#each totals as view (view.item.id)}
-              <li class="grid grid-cols-[minmax(0,12rem)_1fr_auto] items-center gap-3 text-sm">
-                <span class="text-text-main truncate" title={view.item.label}
-                  >{view.item.label}</span
-                >
-                <span class="bg-control-fill h-2.5 overflow-hidden rounded-full">
-                  <span
-                    class="bg-accent block h-full rounded-full"
-                    style:width="{Math.round((100 * view.totals.total.units) / max)}%"
-                  ></span>
-                </span>
-                <span class="text-text-muted text-xs font-semibold tabular-nums">
-                  {view.totals.total.units}
-                </span>
-              </li>
-            {/each}
-          </ul>
-        </section>
-      {:else if choices.length === 0}
-        <p class="text-text-muted text-sm">{m.form_responses_summary_empty()}</p>
-      {/if}
+    <div role="tabpanel" id="form-{form.id}-tabpanel-summary">
+      <FormResultsSummary formId={form.id} onShowTable={() => (tab = 'list')} />
     </div>
   {/if}
 </div>

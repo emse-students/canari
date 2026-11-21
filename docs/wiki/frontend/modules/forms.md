@@ -2884,10 +2884,10 @@ functions in `lib/forms/responsesView.ts`.
   `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
   "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
   in neither list, so it never counts (owner).
-- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
-  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
-  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
-  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **"Résumé"**: since 2026-11-21 the SERVER's per-question results, not a count in the browser -
+  see [the per-question results summary](#the-per-question-results-summary-g-results-owner-2026-11-21).
+  **Managers only** (owner): the whole screen is - `getSubmissions` answers a form manager and
+  nobody else - and the tab says so.
 - **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
   workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
   from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
@@ -2900,9 +2900,88 @@ functions in `lib/forms/responsesView.ts`.
   export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
 
 Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
-with and without unpaid cash, a closed cell, the bars, the refund control),
+with and without unpaid cash, a closed cell, the Résumé tab fed by the server, the refund control),
 `FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
 `product-grid-export.spec.ts` (both CSVs read back, both refusals).
+
+## The per-question results summary (G-RESULTS, owner, 2026-11-21)
+
+**Decision.** Owner, 2026-11-21, on a read-only production survey of 21 forms and 668 answers (four
+forms with 101-126 answers, 2091 single-choice answers in all, every count rebuilt by hand in a
+spreadsheet): *"Oui, en 1.8.0"* for the per-question results summary, moved up from 1.10.0. The
+same answers refused an opens counter (*"Non, pas maintenant"*): **nothing here counts views**.
+The charter principle it touches is the FIRST, *your messages are yours* ([principes](../../../principes.md)):
+see the floor below.
+
+**What it is.** `GET /api/forms/:id/results`, answered by `FormsController.getResults` after
+`assertFormManager` - **the same rule as the responses list** (`getSubmissions`): a global admin, the
+holder of `MANAGE_FORMS` on the association, the owner of a personal form, and nobody else; a
+member who answered reads nothing. The "Résumé" tab (`FormResultsSummary.svelte`) draws it. The tab
+used to count choice questions in the browser from every answer the list had shipped; that function
+(`choiceResults`) is deleted.
+
+**Computed by SQL, never shipped.** `forms/form-results.ts` runs at most eight statements, each
+over the ids of ONE family of question, each one `jsonb_each(s.answers)` pass with a `GROUP BY`:
+the payload is a number per option, cell or scale step whatever the number of answers.
+
+| Question | What comes back |
+| --- | --- |
+| single choice, dropdown | a count per option, and `unlisted` (picks naming no declared option: an old label that matches nothing, or the "Autre" write-in another change adds - it needs no change here) |
+| multiple choice | a count per tick; `answered` is the people, so the percentages may pass 100 % |
+| linear scale | the count per step of `scale.min..max` (empty steps at 0), and the mean over the answers inside the scale |
+| matrix (single / multiple) | a rows x columns table of counts |
+| product grid | pieces per cell, the grid's total, and how many answers ordered anything; a closed cell nobody ordered stays struck through |
+| short / long text | the number of answers, and a link to the responses table. No word cloud |
+| file | nothing (it has no results) |
+
+**What counts** (`COUNTED_ANSWER_SQL`): paid, free, waiting for cash, paid over capacity, and an
+online payment still inside its 30-minute hold - the seat-hold rule. A refunded, cancelled or
+expired answer is not a person's answer now, so it never counts (what the browser tab already did).
+
+**The denominator is always said.** Every question carries `answered`, the counted answers that
+gave THAT question an answer, and a percentage is over it - never over the form's total, since a
+question behind a condition is answered by few. A single choice's `answered` is the sum of its own
+picks and a scale's the sum of its own in-range steps, so a stray stored shape (a number where a list
+belongs) can never make the bars disagree with the denominator they are divided by. The card says it
+in words; a multiple choice adds that the total may pass 100 %.
+
+**The anonymity floor** (`ANONYMOUS_MIN_ANSWERS = 5`, charter principle 1). On an ANONYMOUS form a
+question is detailed only once at least five answers gave it an answer; below that it arrives
+`suppressed: true` with no figure at all - not its count either, because a count of one says
+"somebody skipped it" about the only person who answered. The floor is per QUESTION, because that is
+the unit a stranger would read: a form of 40 answers where 2 people filled the optional comment has a
+thin comment question, and only that one is hidden.
+
+**There are NO cross-tabs.** No question split by another, none by promo, formation or status. A
+cross-tab is the way a floor of five over the whole becomes a cell of one, so the rule is not
+"apply the floor to each cell" (a suppressed cell reads as a missing number a subtraction recovers)
+but that the summary offers no cut that could reach one. If one is ever built it must name its own
+floor and the test that pins it.
+
+**An honest limit.** On an anonymous form the responses TABLE already lists every answer, without a
+name or a time (`getSubmissions`): a manager who opens it reads each row. The floor therefore guards
+the summary - the view that is quoted, screenshotted and shared - and keeps the summary from ever being
+the sharper instrument; it does not make the table less revealing, and that is a decision about the
+table, not this view.
+
+**Performance.** Measured on production, read-only, 2026-11-21: each statement over ALL 690 counted
+answers of every form (a form of 1000 answers is the same order) runs in 7-17 ms. The first draft
+looked answers up per question (`answers -> id`) and paid a function scan per row per question; the
+single `jsonb_each` pass removed it. **The survey-grid statement was compiled by the JIT** - the
+planner prices a nested `jsonb_each` at 1000 rows per level - taking 430-500 ms to run a 7 ms query,
+so `FormsService.getResults` runs in a read-only transaction with `SET LOCAL jit = off` (it ends with
+the transaction, the pooled connection is left as found). Production holds no linear-scale or
+survey-grid question yet, so those two statements are proven by `form-results.integration.spec.ts`
+(real Postgres, in CI) and by the same statements run over literal rows in a read-only session; the
+priced grid's totals were checked equal to the sum of the stored `lines` quantities (35 and 124).
+
+**Old clients.** The route is new and read by the tab only; an app older than this release does not
+call it and keeps its own client-side tab, which cannot disagree with the server since both exclude
+the same statuses. Nothing stored changes - **no migration**.
+
+Tests: `form-results.spec.ts` (every family's shape, the floor's boundary at 4 and 5, what counts),
+`form-results.integration.spec.ts` (the SQL on a real database), `forms.controller.results.spec.ts`
+(managers only), `resultsView.test.ts`, `FormResponsesPanel.svelte.test.ts`.
 
 ## The order bar rests on the bottom of the screen (2026-11-07)
 
