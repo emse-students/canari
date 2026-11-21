@@ -2582,13 +2582,14 @@ exponential backoff on both platforms.
   backoff (30s → 60s → 120s …), constrained to `NetworkType.CONNECTED` like the iOS twin. It is
   enqueued as ONE unique work (`canari_outbox_retry`, `APPEND_OR_REPLACE`, so each enqueue is owed a
   drain after it). The plain requests of earlier builds were unconstrained; they are cancelled once
-  by their class tag (#3912). The constraint means an offline run is no longer an attempt. It does
-  NOT make the cap right: the cap counts, so a server down for a few minutes while the phone is
-  online still spends it ([backlog](../backlog.d/p2-the-outbox-retry-ends-on-a-count-not-on-durable-state.md)).
-  A failed drain below the cap is a `Result.retry()`. After 3 consecutive failures it enters a persistent failure state
-  and shows the "open the app" nudge (`showPendingSyncNotification`). The flag resets when the user
-  opens the app (`MainActivity.onResume`). A foreground guard defers retry when the TS outbox
-  flusher is active (avoids double-send).
+  by their class tag (#3912). **It ends on durable state, never on a count (1.7.3):** the drain says
+  why each entry it left remains, and a drain whose leftovers can all still go is a `Result.retry()`
+  with no cap; one refused for good (a 4xx), no push secret, no MLS state or an unreadable push
+  context enters a persistent failure state and shows the "open the app" nudge
+  (`showPendingSyncNotification`) - [mobile](../frontend/mobile.md#the-retry-ends-on-durable-state-never-on-a-count-173).
+  The flag resets when the user opens the app (`MainActivity.onResume`). A run that finds the app in
+  front ENDS its request (the outbox is the page's), and the app's move to the background enqueues a
+  fresh one when the mirror still holds an entry.
 - **iOS** — `BGTaskScheduler` handler `fr.emse.canari.outboxRetry`: `BGProcessingTaskRequest` with
   `requiresNetworkConnectivity = YES`. The handler drains the outbox mirror and re-submits the
   request on failure so a window always stays queued. Unlike Android WorkManager, iOS

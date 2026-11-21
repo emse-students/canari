@@ -37,16 +37,25 @@ object QueuedSendAnswer {
         data class TransportFailed(val message: String?) : BodyRead
     }
 
-    /** Why a message stays queued. */
-    enum class KeptCause {
-        /** The status was not 200 or 201: a refusal or a server fault. */
-        NOT_ACCEPTED_STATUS,
+    /**
+     * Why a message stays queued, and with it whether a later drain can send it
+     * ([OutboxRetry.Prospect]) - classified here, where the answer is read.
+     */
+    enum class KeptCause(val prospect: OutboxRetry.Prospect) {
+        /** A status that is neither an acceptance nor a final refusal: a server fault, a "later". */
+        NOT_ACCEPTED_STATUS(OutboxRetry.Prospect.NOT_YET),
+
+        /** A 4xx refusal of this frame or credential ([OutboxRetry.isFinalRefusal]): never from here. */
+        REFUSED(OutboxRetry.Prospect.NEVER),
 
         /** A 2xx whose body is not JSON: no answer from the server. */
-        BODY_NOT_JSON,
+        BODY_NOT_JSON(OutboxRetry.Prospect.NOT_YET),
 
         /** A 2xx whose body could not be read: a transport failure after the status. */
-        BODY_READ_FAILED,
+        BODY_READ_FAILED(OutboxRetry.Prospect.NOT_YET),
+
+        /** No answer at all: DNS, connect, timeout, a reset before the status. */
+        TRANSPORT_FAILED(OutboxRetry.Prospect.NOT_YET),
     }
 
     /** The decision. */
@@ -63,7 +72,9 @@ object QueuedSendAnswer {
      * a refused status never reads its body.
      */
     fun classify(code: Int, readBody: () -> BodyRead): Outcome {
-        if (code != 200 && code != 201) return Outcome.Kept(KeptCause.NOT_ACCEPTED_STATUS)
+        if (code != 200 && code != 201) {
+            return Outcome.Kept(if (OutboxRetry.isFinalRefusal(code)) KeptCause.REFUSED else KeptCause.NOT_ACCEPTED_STATUS)
+        }
         return when (val body = readBody()) {
             is BodyRead.Json -> Outcome.Sent(body.receivedAt.coerceAtLeast(0L))
             BodyRead.NotJson -> Outcome.Kept(KeptCause.BODY_NOT_JSON)

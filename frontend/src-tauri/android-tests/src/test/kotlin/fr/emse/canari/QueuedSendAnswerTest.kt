@@ -45,9 +45,15 @@ class QueuedSendAnswerTest {
 
     @Test
     fun aRefusedStatusIsKeptAndItsBodyIsNeverRead() {
-        for (code in listOf(204, 400, 401, 409, 500, 503)) {
+        for (code in listOf(204, 500, 503, 408, 429)) {
             assertEquals(
                 Outcome.Kept(KeptCause.NOT_ACCEPTED_STATUS),
+                QueuedSendAnswer.classify(code) { fail("the body of HTTP $code was read"); BodyRead.NotJson },
+            )
+        }
+        for (code in listOf(400, 401, 409)) {
+            assertEquals(
+                Outcome.Kept(KeptCause.REFUSED),
                 QueuedSendAnswer.classify(code) { fail("the body of HTTP $code was read"); BodyRead.NotJson },
             )
         }

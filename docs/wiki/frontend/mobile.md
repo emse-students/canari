@@ -4000,7 +4000,41 @@ reply the app then flushed itself deferred three times and posted "Vous avez peu
 en attente" over an EMPTY outbox; it also posted that nudge on the first failed drain, beside the
 reply notification already re-posted as pending. Now an empty mirror succeeds, a deferral is not
 counted, real attempts are counted per request id in `canari_outbox_retry_prefs`, and the nudge is
-posted once, after three failed drains.
+posted once, after three failed drains. **The count is gone since 1.7.3**, see the next heading.
+
+#### The retry ends on durable state, never on a count (1.7.3)
+
+Found in the #3912 review (round 11): three failed drains - about three and a half minutes of
+WorkManager backoff from 30 s - ended the retry, so a backend down that long while the phone was
+online spent every attempt, and a reply queued in the outbox then waited for the user to open the
+app (principle 2, the essential is never lost). A count answers "how long have we tried"; the decision
+needs "can a retry ever succeed".
+
+- **The drain says WHY each entry it leaves remains, as a type, classified where it is known.**
+  `drainOutbox` (`drainOutboxBackground` is its count) returns one `OutboxRetry.Prospect` per entry
+  left (`push/OutboxRetry.kt`): `NOT_YET` for no answer (`KeptCause.TRANSPORT_FAILED`), a 5xx or any
+  status that is neither an acceptance nor a final refusal (`NOT_ACCEPTED_STATUS`, which keeps 408,
+  425 and 429), a captive portal's or lost body, the POST budget spent, an entry the batch could not
+  encrypt, a batch encrypt that failed (lock busy, a refused write, a native failure); `NEVER` for a
+  4xx refusal of the frame or credential (`KeptCause.REFUSED`, `OutboxRetry.isFinalRefusal`), no push
+  secret, and no `mls.bin` (`EncryptBatch.Failed`).
+- **The worker decides on them** (`OutboxRetry.decide`): every entry `NOT_YET` is a
+  `Result.retry()` with no cap - WorkManager's backoff bounds the cost, up to five hours between
+  runs; one `NEVER`, or an unreadable push context, sets the failure flag and posts the nudge
+  ("Vous avez peut-etre des messages en attente"), which only opening the app answers. A batch
+  encrypt failure reads `NOT_YET` because nothing typed tells a permanent native failure from a
+  passing one today; such a failure retries at the backoff's cadence rather than nudging.
+- **A run in front ends its request** (`OutboxRetry.Run.END_FOR_PAGE`, `Result.success()`): the
+  outbox is the page's while it is visible. It used to be a `Result.retry()`, which grew the backoff
+  of a chain the next request is appended behind (`APPEND_OR_REPLACE`), so a reply queued after a long
+  foreground session could wait for hours. Ending it was not safe alone: once the page has adopted
+  the mirror, nothing native enqueued a retry when it left the screen. So **the app's move to the
+  background enqueues a fresh request whenever the mirror holds an entry**
+  (`MainActivity.onPause` -> `OutboxRetryWorker.enqueueIfMirrorHolds`, off the main thread).
+- Tests: `OutboxRetryTest` (three transport failures in a row still retry, one 4xx gives up, the
+  three deferrals in front end their request and the background run drains at once),
+  `QueuedSendAnswerTest` (the refused/not-yet split), `androidOutboxRetry.test.ts` (the wiring).
+  The reading: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
