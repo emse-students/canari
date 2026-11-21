@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { handleOidcCallback, getOidcReturnTo, OidcSignInError } from '$lib/stores/auth';
+  import { pathWithoutFragment } from '$lib/utils/logSanitize';
   import { m } from '$lib/paraglide/messages';
 
   let error = $state('');
@@ -50,7 +51,7 @@
     // a navigation failure, logged as one - never reported to them as a failed exchange.
     try {
       const returnTo = await getOidcReturnTo();
-      console.debug('[callback] goto ->', returnTo);
+      console.debug('[callback] goto ->', pathWithoutFragment(returnTo));
       await gotoAppPath(returnTo, { replace: true });
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {

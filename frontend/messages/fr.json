@@ -1189,8 +1189,6 @@
   "seo_association_members_other": "{count} membres.",
   "seo_community_invite_title": "Rejoindre {name}",
   "seo_community_invite_description": "Invitation à rejoindre la communauté {name} sur Canari : discussions, annonces et entraide entre étudiants des Mines Saint-Étienne.",
-  "seo_group_invite_title": "Rejoindre {name}",
-  "seo_group_invite_description": "Invitation à rejoindre la discussion {name} sur Canari, la messagerie chiffrée de bout en bout des Mines Saint-Étienne.",
   "seo_invite_image_alt": "Image de {name}",
   "admin_moderation_title": "Modération",
   "admin_global_description": "Outils globaux et modération de l'agenda.",

@@ -523,7 +523,6 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
-      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
     depends_on:
       social-service:
         condition: service_started

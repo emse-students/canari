@@ -52,7 +52,10 @@ const AUTH_SCHEME_RE = /\b(Bearer|Basic|PushSecret)\s+[\w\-.~+/=]+/gi;
 
 /** A query string or a fragment after a URL or an absolute path. Its keys and values both go. */
 const QUERY_RE = /((?:[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)|(?:\/[\w\-./%…]*))\?[^\s"'<>]*/gi;
-const FRAGMENT_RE = /([a-z][a-z0-9+.-]*:\/\/[^\s#"'<>]*)#[^\s"'<>]*/gi;
+// An absolute path's fragment goes too: a group invite link carries the group's NAME there
+// (sealed names, step 3), and a sign-in `returnTo` is such a path.
+const FRAGMENT_RE =
+  /((?:[a-z][a-z0-9+.-]*:\/\/[^\s#"'<>]*)|(?:(?<![\w/])\/[\w\-./%…]+))#[^\s"'<>]*/gi;
 
 /** An e-mail address, `@` written out or percent-encoded in a path (`jean%40emse.fr`). */
 const EMAIL_RE = /[\w.+-]+(?:@|%40)[\w-]+(?:\.[\w-]+)+/gi;

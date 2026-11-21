@@ -77,3 +77,12 @@ export function describeDeepLink(url: string): string {
   const flags = `${u.search.length > 1 ? ' +query' : ''}${u.hash.length > 1 ? ' +fragment' : ''}`;
   return `${u.protocol}//${host}${path}${flags}`;
 }
+
+/**
+ * An in-app path as a log may print it: the fragment is replaced by `+fragment`. A group invite
+ * link carries the group's name there (sealed names, step 3), and a name is never logged.
+ */
+export function pathWithoutFragment(path: string): string {
+  const hashAt = path.indexOf('#');
+  return hashAt < 0 ? path : `${path.slice(0, hashAt)} +fragment`;
+}

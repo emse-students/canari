@@ -34,7 +34,6 @@ import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
-import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { ADMITTED_SEAT } from '../utils/group-membership';
 import {
   sanitizeAccountUserId,
@@ -75,7 +74,6 @@ function isOneToOneRoster(roster: Set<string> | undefined): boolean {
  * Auth: X-Internal-Secret header matched against INTERNAL_SECRET env var.
  */
 @RouteParams({
-  token: 'opaque',
   userId: 'opaque',
   deviceId: 'opaque',
   sessionId: 'uuid',
@@ -130,22 +128,6 @@ export class InternalController {
     ) {
       throw new ForbiddenException();
     }
-  }
-
-  /**
-   * Session-free group invite preview, called by the web SSR process when it renders the Open
-   * Graph head of `/g/join/:token`. The user-facing route is behind `HeaderAuthGuard` and an
-   * unfurler has no session; both call one `resolveGroupInvitePreview`, so what a shared invite
-   * link discloses is decided in a single place.
-   */
-  @Get('group-invites/:token')
-  async groupInvitePreview(
-    @Param('token') token: string,
-    @Headers('x-internal-secret') headerSecret?: string
-  ) {
-    this.assertInternalSecret(headerSecret);
-    this.logger.debug(`internal group invite preview token=${token.slice(0, 8)}`);
-    return resolveGroupInvitePreview(this.groupInviteRepo, this.groupRepo, token);
   }
 
   /**

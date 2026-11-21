@@ -607,7 +607,6 @@ const invite = [
   // Somebody became a member. This is the line that changes who can read the group.
   ['a join admits a person and says how many devices came with them', `${NEST}[InvitationsController] [GROUP_INVITE] accepted group=00000000-0000-4000-8000-000000000001 user=aaaaaaaa devices=2`, 'notable'],
   // The landing page resolving a token to a group name, anonymous and read-only, at DEBUG.
-  ['an anonymous invite preview is a read', `[Nest] 1  - 08/14/2026, 12:43:51 PM   DEBUG [InternalController] internal group invite preview token=fVcgu-Y-`, 'benign'],
   // The last step of a join...
   ['a membership going active is the end of a join', `${NEST}[MessagingService] [MEMBERSHIP_ACTIVE] group=00000000-0000-4000-8000-000000000001 device=aaaaaaaa:web-aaaaaaaa-msglwqh6-vegy`, 'benign'],
   // ...and the branch twenty lines above it in the same function, which wears the SAME tag and means

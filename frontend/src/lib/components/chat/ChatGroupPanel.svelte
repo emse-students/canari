@@ -59,6 +59,11 @@
     contactName: string;
     /** MLS group id (used to generate shareable invite links for group chats). */
     groupId?: string;
+    /**
+     * The group's name as its members dated it (`inviteLinkName`), carried in an invite link's
+     * `#fragment` and never sent to the server; `null` for a group no frame has named.
+     */
+    inviteName?: string | null;
     /** Whether this is a group conversation (vs. a direct message). */
     isGroupConversation: boolean;
     /** Media-service id of the current group avatar; null when none is set. */
@@ -94,6 +99,7 @@
     effectiveDisplayName,
     contactName,
     groupId = '',
+    inviteName = null,
     isGroupConversation,
     imageMediaId = null,
     currentUserId,
@@ -252,14 +258,18 @@
     shareLoading = true;
     shareError = '';
     const id = groupId;
+    const name = inviteName;
     // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
     // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
     // helper; the link stays visible for a manual copy.
     const link = (async () => {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
+      const { withInviteNameFragment } = await import('$lib/mls/groupInviteName');
       const { token } = await createGroupInvite(id);
-      shareLink = publicAppUrl(`/g/join/${token}`);
+      // The name rides in the fragment, which no request carries (sealed names, step 3).
+      shareLink = withInviteNameFragment(publicAppUrl(`/g/join/${token}`), name);
+      Log.d(`chatGroupPanel.generateShareLink minted named=${name !== null}`);
       return shareLink;
     })();
     try {
