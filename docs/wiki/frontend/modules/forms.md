@@ -2958,11 +2958,12 @@ cross-tab is the way a floor of five over the whole becomes a cell of one, so th
 but that the summary offers no cut that could reach one. If one is ever built it must name its own
 floor and the test that pins it.
 
-**An honest limit.** On an anonymous form the responses TABLE already lists every answer, without a
-name or a time (`getSubmissions`): a manager who opens it reads each row. The floor therefore guards
-the summary - the view that is quoted, screenshotted and shared - and keeps the summary from ever being
-the sharper instrument; it does not make the table less revealing, and that is a decision about the
-table, not this view.
+**The table keeps listing every answer (owner, 2026-11-22).** On an anonymous form the responses
+TABLE lists each answer to a manager, without a name or a time (`getSubmissions`), and it stays so:
+organisers need the table for orders and sign-ups, and the form is anonymous by account, not by
+content. The floor of five therefore applies to the SUMMARY only - the view that is quoted,
+screenshotted and shared - under principle 1 ([principes](../../../principes.md)); it does not
+restrict the table and must not be read as doing so.
 
 **Performance.** Measured on production, read-only, 2026-11-21: each statement over ALL 690 counted
 answers of every form (a form of 1000 answers is the same order) runs in 7-17 ms. The first draft
