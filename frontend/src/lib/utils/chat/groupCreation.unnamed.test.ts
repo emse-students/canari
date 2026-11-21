@@ -101,26 +101,45 @@ describe('a named group dates its name at creation', () => {
         return answer();
       }),
     });
-    return { ...d, sent };
+    // THE STATEMENT'S OWN END, as an event: `stateCreatedGroupName` logs its outcome line last,
+    // after the row is written and saved. Awaiting it is deterministic where polling the row against
+    // a deadline is a race with the runner's load.
+    let settled!: () => void;
+    const statementSettled = new Promise<void>((resolve) => (settled = resolve));
+    d.args.log = vi.fn((msg: string) => {
+      if (msg.startsWith("[GROUP_NAME] creation's name statement")) settled();
+    });
+    return { ...d, sent, statementSettled };
   }
 
   it('sends ONE silent statement naming it, and dates the row by its answer at a statement rank', async () => {
     const at = Date.UTC(2026, 10, 20, 9, 0, 0);
+    // THE CLOCK IS PINNED, NOT READ: the device's own check refuses a server time more than 24 h
+    // from the frame's signed `sentAt`, which is `Date.now()` at the mint. Against the real clock
+    // this fixed `at` went out of bound one day after the test was written (2026-11-21) and the row
+    // stayed undated - a wall-clock assertion. Only `Date` is faked; promises run as they do.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(at);
     const d = withSend(async () => ({ receivedAt: at }));
-    await createNewGroup('Les ROOTz', d.args);
-    // Not awaited by the creation (#3888 review, S2): its outcome lands on the row when it comes.
-    await vi.waitFor(() => expect(d.conversations.get('g-new')?.nameAt).toBe(at));
-    expect(d.sent).toHaveLength(1);
-    expect(d.sent[0].groupId).toBe('g-new');
-    expect(d.sent[0].frame?.system?.event).toBe('groupNamed');
-    expect(JSON.parse(d.sent[0].frame?.system?.data ?? '{}')).toEqual({ name: 'Les ROOTz' });
-    expect(d.conversations.get('g-new')).toMatchObject({
-      name: 'Les ROOTz',
-      nameAt: at,
-      nameFromStatement: true,
-    });
-    // Silent: no notice row anywhere, the creator's included.
-    expect(d.conversations.get('g-new')?.messages).toEqual([]);
+    try {
+      await createNewGroup('Les ROOTz', d.args);
+      // Not awaited by the creation (#3888 review, S2): its outcome lands on the row when it comes.
+      await d.statementSettled;
+      expect(d.conversations.get('g-new')?.nameAt).toBe(at);
+      expect(d.sent).toHaveLength(1);
+      expect(d.sent[0].groupId).toBe('g-new');
+      expect(d.sent[0].frame?.system?.event).toBe('groupNamed');
+      expect(JSON.parse(d.sent[0].frame?.system?.data ?? '{}')).toEqual({ name: 'Les ROOTz' });
+      expect(d.conversations.get('g-new')).toMatchObject({
+        name: 'Les ROOTz',
+        nameAt: at,
+        nameFromStatement: true,
+      });
+      // Silent: no notice row anywhere, the creator's included.
+      expect(d.conversations.get('g-new')?.messages).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a statement with no answer leaves the group created, its statement recorded for the next connection', async () => {
@@ -129,7 +148,7 @@ describe('a named group dates its name at creation', () => {
       throw new TransportFailureError(new Error('offline'));
     });
     expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
-    await vi.waitFor(() => expect(d.conversations.get('g-new')?.nameSync?.statement).toBeDefined());
+    await d.statementSettled;
     const row = d.conversations.get('g-new')!;
     expect(row.nameAt).toBeUndefined();
     expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });

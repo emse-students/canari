@@ -4077,8 +4077,10 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   foreground-service records included. Read identically in `android-9.0.0_r61`, `android10`
   through `android16-release` and `main`. Measured too: on the Mi 9T, a 9998 nudge standing on
   1.7.3-alpha.1 was gone after `adb install -r` of alpha.2, and the shade held no Canari
-  notification at all. So `FixedNotifIds.WORKER_FOREGROUND` is cancelled by nobody;
-  `androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers.
+  notification at all. So no code cancels `FixedNotifIds.WORKER_FOREGROUND` BY ID
+  (`androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers). The
+  app-open sweep cancels every messages-channel record by `sbn.id`, a standing 9998 included; the
+  platform refuses that cancel while the record is a foreground-service record.
 - **Residual.** The app's own `store_outbox_mirror` rewrite does not settle the nudge: a mirror the
   WebView empties in the background leaves the nudge up until the next drain, worker run or open.
 - **Read on the Mi 9T, 1.7.3-alpha.2**: the nudge goes up under 999 and leaves with the reply a
