@@ -1184,6 +1184,10 @@ collection of name and first name, as one required tick, for new AND existing ac
 > iPhone half (S9) and the Mi 9T half (S15), in the app, signed in. **The notice names every service
 > and the version moved to `2026-11-20`** when the wiki Mino was added to it (it was missing from the
 > list), so the six accounts that accepted `2026-10-16` are asked once more.
+> **Read on production, 2026-11-21:** the `1.7.2` stable applied it at 2026-11-20 22:21Z; all eight
+> declared providers authorize through `miconnect-authorization`, every account that authorized since
+> carries `2026-11-20`, none authorized without it, and those that came back skipped the page
+> ([reading](../device-verification.md#the-production-readings-of-2026-11-21-the-admission-count-and-the-miconnect-terms-stage-after-the-172-apply)).
 > **Rollback, and who may take it:** merge a revert of the pull request - the next stable's apply
 > then writes the implicit-consent flow back. A hand rollback in an `ak shell` (set a provider's
 > `authorization_flow` to `default-provider-authorization-implicit-consent`) is an identity-provider
