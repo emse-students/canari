@@ -539,6 +539,7 @@
   function scrollToBottom() {
     if (!chatContainer) return;
     chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
+    lastMeasuredScrollTop = chatContainer.scrollTop;
   }
 
   /**
@@ -1789,7 +1790,10 @@
         isLoadingOlder,
         isEntering: entering && !restoringEntry,
       }),
-      composerBand
+      composerBand,
+      // The pane's place is the baseline the next scroll measurement compares against: a move the
+      // observer made (a pin after a clamp included) is not the reader leaving the bottom.
+      (top) => (lastMeasuredScrollTop = top)
     );
   });
 

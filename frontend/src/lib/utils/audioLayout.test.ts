@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
+import { RECORDING_AUDIO_CONSTRAINTS } from '$lib/utils/audio/recordingConstraints';
 import { audioLayoutOf, describeAudioLayout, logCaptureAudioLayout } from './audioLayout';
 
 describe('audioLayoutOf', () => {
@@ -33,8 +33,8 @@ describe('logCaptureAudioLayout', () => {
   });
 });
 
-describe('REEL_AUDIO_CONSTRAINTS', () => {
+describe('RECORDING_AUDIO_CONSTRAINTS', () => {
   it('asks for ONE channel, so a recording never carries a silent side', () => {
-    expect(REEL_AUDIO_CONSTRAINTS.channelCount).toEqual({ ideal: 1 });
+    expect(RECORDING_AUDIO_CONSTRAINTS.channelCount).toEqual({ ideal: 1 });
   });
 });
