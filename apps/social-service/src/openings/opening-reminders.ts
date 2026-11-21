@@ -30,7 +30,10 @@ function eventSeenBySql(targetId: string, user: string): string {
  *   then the opening;
  * - **followed**: the person follows the target's association, written when the target is
  *   PUBLISHED or its opening MOVED (`announceOpeningToFollowers`) - the opening only, so the row is
- *   written with its heads-up already stamped.
+ *   written with its heads-up already stamped. **A FORM WRITES NONE (owner, 2026-11-17: a form
+ *   notifies only the people who pressed its bell; charter principle 3)**: only booking spaces and
+ *   events announce to followers, and a follower row an older build wrote for a form is claimed at
+ *   the opening and told nothing (`followersTold` is false for a form in `DUE_OPENINGS_SQL`).
  * An ask on a follower's row turns it into an ask and re-arms the heads-up; a follower's row never
  * overwrites an ask (`ON CONFLICT DO NOTHING`). So a follower who also asked has ONE row, ONE claim
  * and ONE push.
@@ -127,7 +130,11 @@ export async function cancelOpening(
   );
 }
 
-/** Whether the person will be told of this target's opening - asked, or as a follower. */
+/**
+ * Whether the person will be told of this target's opening - asked, or as a follower. A FORM tells
+ * only who asked (owner, 2026-11-17): a follower row an older build wrote for one is never told, so it
+ * does not read as "will be told" - the bell would say "on" for a notice that never comes.
+ */
 export async function isTold(
   db: Queryable,
   kind: OpeningKind,
@@ -136,7 +143,8 @@ export async function isTold(
 ): Promise<boolean> {
   const rows = await returned(
     db,
-    `SELECT 1 FROM opening_reminders WHERE kind = $1 AND "targetId" = $2::uuid AND "userId" = $3`,
+    `SELECT 1 FROM opening_reminders WHERE kind = $1 AND "targetId" = $2::uuid AND "userId" = $3
+        AND (kind <> 'form' OR origin = 'asked')`,
     [kind, targetId, userId]
   );
   return rows.length > 0;
@@ -217,8 +225,17 @@ export async function announceOpeningToFollowers(
 }
 
 /**
- * The target's opening MOVED (or was cleared: open at once): every row not yet told of the opening
- * follows it, and an asked row's heads-up is re-armed while the new opening is still to come. A row already told of the opening is left alone - one opening, one push.
+ * The target's opening MOVED (or was cleared: open at once): every row follows it.
+ *
+ * - A row not yet told follows the new instant; an asked row's heads-up is re-armed while the new
+ *   opening is still to come.
+ * - **A row already told is RE-ARMED when the opening moved to an instant still to come** (found on
+ *   production, 2026-11-17: a form opened, was moved later, and the real opening told nobody because
+ *   the stamp of the first one was spent). The new opening is a different opening, so it is owed.
+ *   Moved to now or to the past, a told row stays told: one opening, one push.
+ *
+ * Every kind goes through here: the asked rows of a form, and the follower rows of an event or a
+ * booking space (a form writes no follower row since 2026-11-17, see `announceOpeningToFollowers`).
  */
 export async function followOpeningMove(
   db: Queryable,
@@ -232,13 +249,37 @@ export async function followOpeningMove(
         SET "opensAt" = COALESCE($3::timestamptz, now()),
             "notified5min" = CASE
               WHEN origin = 'asked' AND COALESCE($3::timestamptz, now()) > now()
-              THEN false ELSE "notified5min" END
-      WHERE kind = $1 AND "targetId" = $2::uuid AND NOT "notifiedOnOpen"
+              THEN false ELSE "notified5min" END,
+            "notifiedOnOpen" = CASE
+              WHEN COALESCE($3::timestamptz, now()) > now() THEN false ELSE "notifiedOnOpen" END
+      WHERE kind = $1 AND "targetId" = $2::uuid
+        AND (NOT "notifiedOnOpen" OR COALESCE($3::timestamptz, now()) > now())
       RETURNING id`,
     [kind, targetId, opensAt]
   );
   logger.log(
     `[OPENING] ${kind}=${short(targetId)} moved to ${opensAt ? opensAt.toISOString() : 'now'}: ${rows.length} row(s) follow`
+  );
+  return rows.length;
+}
+
+/**
+ * How many people a move of this target's opening would push: the rows not yet told of an opening
+ * (a form's legacy follower rows are never told, so they are not counted).
+ * Read BEFORE an organiser moves an opening earlier, so the move can name the count and ask first
+ * (owner, 2026-11-17, (B); charter principle 3: nobody is told a form is open by a test).
+ */
+export async function countUntoldOpenings(
+  db: Queryable,
+  kind: OpeningKind,
+  targetId: string
+): Promise<number> {
+  const rows = await returned(
+    db,
+    `SELECT 1 FROM opening_reminders
+      WHERE kind = $1 AND "targetId" = $2::uuid AND NOT "notifiedOnOpen"
+        AND (kind <> 'form' OR origin = 'asked')`,
+    [kind, targetId]
   );
   return rows.length;
 }
@@ -255,9 +296,12 @@ export async function followOpeningMove(
  */
 export const DUE_HEADS_UP_SQL = `SELECT o.id, o.kind, o."targetId", o."userId",
          (f."deletedAt" IS NULL AND f.status = 'published'
-           AND NOT ${associationArchivedSql('f."associationId"')}) AS "targetLive"
+           AND NOT ${associationArchivedSql('f."associationId"')}) AS "targetLive",
+         f."associationId", f.title AS "targetName", a.name AS "associationName",
+         a."logoUrl" AS "associationLogoUrl"
     FROM opening_reminders o
     LEFT JOIN forms f ON f.id = o."targetId"
+    LEFT JOIN associations a ON a.id = f."associationId"
    WHERE o.kind = 'form' AND NOT o."notified5min" AND NOT o."notifiedOnOpen"
      AND o."opensAt" >= $1::timestamptz
      AND o."opensAt" <= $1::timestamptz + make_interval(mins => ${OPENING_HEADS_UP_MINUTES})
@@ -333,7 +377,7 @@ export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", 
     LEFT JOIN LATERAL (
       SELECT f."associationId", f.title AS name, false AS "linkOnly",
              (f."deletedAt" IS NULL AND f.status = 'published') AS live,
-             f."deletedAt" IS NOT NULL AS gone, true AS "followersTold"
+             f."deletedAt" IS NOT NULL AS gone, false AS "followersTold"
         FROM forms f WHERE o.kind = 'form' AND f.id = o."targetId"
       UNION ALL
       SELECT s."associationId", s.name, s.discoverability = 'link', true, false,

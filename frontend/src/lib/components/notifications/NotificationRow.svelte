@@ -287,6 +287,10 @@
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||
       isOpeningNotif ||
+      // A form's opening reminder is the ASSOCIATION's (owner, 2026-11-17): its logo, not the
+      // system actor's profile. A row written before that carries no association and keeps the
+      // neutral avatar.
+      notif.type === 'form_reminder' ||
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||

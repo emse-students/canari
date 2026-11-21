@@ -147,7 +147,11 @@ simple lien : voir [Formulaires publics](formulaires-publics.md).
 ### Rappels automatiques
 
 Le systeme envoie automatiquement une notification push aux utilisateurs qui ont "suivi" le
-formulaire, 5 minutes avant son ouverture. Aucune configuration requise.
+formulaire (cloche "Me prevenir"), 5 minutes avant son ouverture, puis a l'ouverture. Seules ces
+personnes sont prevenues : les abonnes de l'association ne le sont pas pour un formulaire. Avancer la
+date d'ouverture d'un formulaire deja publie, alors que des personnes ont demande a etre prevenues,
+demande d'abord confirmation et indique combien de personnes recevront la notification.
+Aucune configuration requise.
 
 ---
 

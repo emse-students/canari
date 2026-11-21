@@ -6519,6 +6519,27 @@
   "form_draft_invalid_refusal": "Ces modifications ne peuvent pas être publiées en l'état : vérifiez les questions et les réglages.",
   "form_changed_since_revision_refusal": "Ce formulaire a été modifié ailleurs depuis le début de ces modifications (par une version plus ancienne de l'app). Publier remplacerait ces changements : vérifiez-le, puis appuyez sur « Publier quand même ».",
   "form_publish_overwrite_button": "Publier quand même",
+  "form_publish_notify_button": "Publier et prévenir",
+  "form_opening_notifies_now_refusal": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne a demandé à être prévenue de l'ouverture de ce formulaire : en avançant l'ouverture à maintenant, elle sera prévenue tout de suite. Si vous voulez seulement le tester, gardez la date actuelle. Pour continuer, appuyez sur « Publier et prévenir ».",
+        "countPlural=other": "{count} personnes ont demandé à être prévenues de l'ouverture de ce formulaire : en avançant l'ouverture à maintenant, elles seront prévenues tout de suite. Si vous voulez seulement le tester, gardez la date actuelle. Pour continuer, appuyez sur « Publier et prévenir »."
+      }
+    }
+  ],
+  "form_opening_notifies_later_refusal": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne a demandé à être prévenue de l'ouverture de ce formulaire : elle sera prévenue à la nouvelle ouverture. Pour continuer, appuyez sur « Publier et prévenir ».",
+        "countPlural=other": "{count} personnes ont demandé à être prévenues de l'ouverture de ce formulaire : elles seront prévenues à la nouvelle ouverture. Pour continuer, appuyez sur « Publier et prévenir »."
+      }
+    }
+  ],
   "form_action_publish": "Publication du formulaire",
   "form_action_discard": "Abandon des modifications",
   "form_publish_failed": "Le formulaire n'a pas pu être publié. Réessayez.",

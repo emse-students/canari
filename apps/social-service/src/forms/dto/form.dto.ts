@@ -443,6 +443,15 @@ export class PublishFormRevisionDto extends FormRevisionDto {
   @IsBoolean()
   @IsOptional()
   overwrite?: boolean;
+
+  /**
+   * The count the organiser was shown and confirmed ("N people asked to be told",
+   * `FORM_OPENING_NOTIFIES`, owner 2026-11-17): the server refuses again when the count moved.
+   */
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  confirmOpeningNotify?: number;
 }
 
 /**

@@ -160,7 +160,9 @@ export class FormsController {
    * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with
    * the edit's rules, atomically. 409 `FORM_DRAFT_CONFLICT` when it moved, `FORM_DRAFT_EMPTY` when a
    * published form holds no unpublished change, `FORM_CHANGED_SINCE_REVISION` when the form was
-   * written since the revision started and `overwrite` does not confirm publishing over it.
+   * written since the revision started and `overwrite` does not confirm publishing over it, and
+   * `FORM_OPENING_NOTIFIES` (with `askers` and `immediate`) when it moves the opening earlier while
+   * people asked to be told and `confirmOpeningNotify` is not that count.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/draft/publish')
@@ -176,7 +178,8 @@ export class FormsController {
       dto.revision,
       xUserId,
       ga === 'true',
-      dto.overwrite === true
+      dto.overwrite === true,
+      dto.confirmOpeningNotify ?? null
     );
   }
 
@@ -200,9 +203,17 @@ export class FormsController {
     @Param('id') id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string,
-    @Body() dto?: CreateFormDto
+    @Body() dto?: CreateFormDto,
+    @Query('confirmOpeningNotify') confirmOpeningNotify?: string
   ) {
-    return this.service.update(id, dto, xUserId, ga === 'true');
+    return this.service.update(
+      id,
+      dto,
+      xUserId,
+      ga === 'true',
+      undefined,
+      confirmedAskersOf(confirmOpeningNotify)
+    );
   }
 
   /**
@@ -617,4 +628,10 @@ export class FormsController {
 
     res.send(Buffer.from(buffer));
   }
+}
+
+/** The confirmed count of a `confirmOpeningNotify` query, or null when absent or not a whole count. */
+function confirmedAskersOf(raw: string | undefined): number | null {
+  const n = Number(raw);
+  return raw !== undefined && Number.isInteger(n) && n > 0 ? n : null;
 }

@@ -36,6 +36,9 @@
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
   import { describeVoiceNoteCapture } from '$lib/utils/audio/voiceNoteCaptureReport';
+  import { voiceNoteCapture } from '$lib/utils/audio/recordingConstraints';
+  import { callSoundPhase } from '$lib/utils/callSoundGate';
+  import { get } from 'svelte/store';
   import {
     tapRecordingLoudness,
     type RecordingLoudnessTap,
@@ -180,7 +183,17 @@
     let stream: MediaStream | null = null;
     let tap: RecordingLoudnessTap | null = null;
     try {
-      stream = await captureUserMedia(navigator.mediaDevices, { audio: true }, 'voice-note');
+      // A RECORDING, not a call (owner, 2026-11-20): processing off, unless a live call holds the
+      // microphone - then the call's own constraints, so the shared capture is not reconfigured
+      // under it (`recordingConstraints.ts`).
+      const callPhase = get(callSoundPhase);
+      const capture = voiceNoteCapture(callPhase);
+      Log.i('VoiceRecorder', `capture as ${capture.mode} (call phase ${callPhase})`);
+      stream = await captureUserMedia(
+        navigator.mediaDevices,
+        { audio: capture.audio },
+        'voice-note'
+      );
       const opened = stream;
 
       if (phase !== 'arming') {
