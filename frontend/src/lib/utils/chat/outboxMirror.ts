@@ -70,8 +70,10 @@ export interface OutboxMirrorEntry {
   /**
    * Set by the native drain only (`OutboxMirrorEntry.unsendable`): it learned this entry will NEVER
    * go from there - the server refused it, its group is not held, it is malformed. The drains skip
-   * it and keep it; adopted, a text or a reply is parked as FAILED, with its Retry
-   * ({@link adoptMirrorEntry}). Never written by this side.
+   * it and keep it; adopted at the next login, a text or a reply is parked as FAILED, with its Retry
+   * ({@link adoptMirrorEntry}). Never written by this side - and, until the P1
+   * `p1-a-warm-page-erases-the-native-only-outbox-entries` ships, erased by this side's next
+   * {@link syncOutboxMirror} while the page is warm.
    */
   unsendable?: boolean;
 }

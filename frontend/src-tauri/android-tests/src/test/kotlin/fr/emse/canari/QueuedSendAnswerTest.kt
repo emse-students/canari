@@ -51,7 +51,7 @@ class QueuedSendAnswerTest {
                 QueuedSendAnswer.classify(code) { fail("the body of HTTP $code was read"); BodyRead.NotJson },
             )
         }
-        for (code in listOf(400, 401, 409)) {
+        for (code in listOf(400, 409)) {
             assertEquals(
                 Outcome.Kept(KeptCause.REFUSED),
                 QueuedSendAnswer.classify(code) { fail("the body of HTTP $code was read"); BodyRead.NotJson },

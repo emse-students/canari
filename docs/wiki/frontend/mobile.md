@@ -4020,10 +4020,14 @@ needs "can a retry ever succeed".
     captive portal's or lost body, the POST budget spent, a staged commit, a refused `mls.bin` write.
   - `NEVER` - THIS entry will not go from here: any other 4xx (`KeptCause.REFUSED`,
     `OutboxRetry.isFinalRefusal`; the route answers 400 `public_frame_refused` /
-    `message_id_invalid`, 403 `sender_not_member`, 410 `group_deleted`, 401/403 on the push secret),
-    a group this device does not hold or was removed from, a proto that does not decode.
+    `message_id_invalid`, 403 `sender_not_member`, 410 `group_deleted`), a group this device does
+    not hold or was removed from, a proto that does not decode.
   - `BLOCKED` - NOTHING will go from this device's state: no push secret, no `mls.bin`, a key that
-    does not open it.
+    does not open it, or the push secret REFUSED - a 401, or a 403 typed `push_secret_rejected`
+    (`KeptCause.CREDENTIAL_REFUSED`; every refusal of `verifyPushSecret` carries that `error` since
+    1.7.3). A refused secret meets every entry alike, so the drain stops at the first: the rest are
+    not attempted, none is marked, and the retry ends once, with the nudge. A server older than the
+    typed body answers a bare 403, still read per entry as `REFUSED` until it is deployed.
   The native batch classifies its own failures (Rust `SendProspect`, `mobile/background.rs`): each
   entry's result and a whole-batch failure carry a `"prospect"` token (`never` / `not-yet`), read by
   `OutboxRetry.Prospect.of`. On a state load, `StateUndecryptable`, `StateSealedUnderAnotherKey`,
@@ -4033,12 +4037,14 @@ needs "can a retry ever succeed".
   `InvalidData`) carry openmls' errors as prose, so nothing says permanent; a failed serialise at the
   save, and a JNI marshalling fault, likewise. Each retries at the backoff's cadence.
 - **An entry that will never go does not strand the others** (review of #3928: one `NEVER` used to
-  end the whole retry and set the failure flag). It is MARKED in the mirror (`unsendable`, kept -
-  never deleted), skipped by every later drain - no push-woken drain re-encrypts or re-POSTs it - and
-  TOLD: the drain that marked it asks for the nudge ("Vous avez peut-etre des messages en attente"),
-  which stays while the mirror holds it. The page adopts it at the next open as a FAILED message with
-  its Retry (`adoptMirrorEntry`, parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has
-  no bubble, is adopted pending).
+  end the whole retry and set the failure flag). It is MARKED in the mirror (`unsendable`; no native
+  writer deletes it), skipped by every later drain - no push-woken drain re-encrypts or re-POSTs it -
+  and TOLD: the drain that marked it asks for the nudge ("Vous avez peut-etre des messages en
+  attente"), which stays while the mirror holds it. The page adopts it at its next LOGIN - a cold
+  start or a sign-in, NOT a warm return to the front - as a FAILED message with its Retry
+  (`adoptMirrorEntry`, parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has no
+  bubble, is adopted pending). **What this does not yet hold: a page warm in the background erases
+  it** (below).
 - **The worker decides on them** (`OutboxRetry.decide`): any entry `NOT_YET` is a `Result.retry()`
   with no cap - WorkManager's backoff bounds the cost, up to five hours between runs; none left that
   can go ends the request; a `BLOCKED` drain, or an unreadable push context, sets the failure flag
@@ -4055,18 +4061,20 @@ needs "can a retry ever succeed".
   background enqueues a fresh request whenever the mirror holds an entry**
   (`MainActivity.onPause` -> `OutboxRetryWorker.enqueueIfMirrorHolds`, off the main thread).
 - Tests: `OutboxRetryTest` (three transport failures in a row still retry, a refused entry beside
-  ones that can go keeps their retry, only `BLOCKED` gives up, the `sender_not_active` split, the
+  ones that can go keeps their retry, only `BLOCKED` gives up, a refused push secret blocks instead
+  of marking, the `sender_not_active` split, the
   three deferrals in front end their request and the background run drains at once),
   `QueuedSendAnswerTest` (the refused/not-yet split), the `SendProspect` cases in
   `mobile/background.rs` (a key that does not open the state, a group not held, a malformed proto, a
   refused write), `outboxMirror.adopt.test.ts` (an unsendable entry adopted failed),
   `androidOutboxRetry.test.ts` (the wiring).
-- **Not closed here, and pre-existing: a native-only entry is erased by a warm page's mirror
-  rewrite.** `store_outbox_mirror` rewrites the file from the page's queue, and the page adopts the
+- **Not closed here, and pre-existing - P1, [backlog](../backlog.d/p1-a-warm-page-erases-the-native-only-outbox-entries.md):
+  a native-only entry is erased by a warm page's mirror rewrite.** `store_outbox_mirror` rewrites the file from the page's queue, and the page adopts the
   entries it does not know only at a login (`adoptOrphanedMirrorEntries`). An entry queued natively
   in the background therefore waits, while the app is warm in front, until the next `onPause`, and is
-  ERASED by the first outbox mutation of the page before then - an unsendable one included (review
-  of #3928, observation 5).
+  ERASED by the first outbox mutation of the page before then - an unsendable one included, so the
+  "kept, shown failed" above holds only when the next page to read the mirror is a cold one (review
+  of #3928, observation 5, confirmed by the re-review).
   The reading: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then

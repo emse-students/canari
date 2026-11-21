@@ -2,11 +2,11 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
-import { PushSecretGuard } from '../guards/push-secret.guard';
+import { PUSH_SECRET_REJECTED, PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
 import { PushController } from './push.controller';
@@ -184,5 +184,28 @@ describe('PushController - POST mls/push/membership-active', () => {
       })
     ).rejects.toThrow('Invalid push secret');
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+  });
+
+  it('types the refusal, so a native sender tells a refused credential from a refused frame', async () => {
+    // QueuedSendAnswer.kt reads `error` and stops its whole drain on it (CREDENTIAL_REFUSED), where
+    // an untyped 403 would mark every queued message unsendable one by one.
+    pushTokenRepo.findOne.mockResolvedValue(null);
+    const refusal = await controller
+      .markMembershipActivePush(HEADER, { userId: USER, deviceId: DEVICE, groupId: GROUP })
+      .catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      error: PUSH_SECRET_REJECTED,
+    });
+    const missing = await controller
+      .markMembershipActivePush(undefined as unknown as string, {
+        userId: USER,
+        deviceId: DEVICE,
+        groupId: GROUP,
+      })
+      .catch((e: unknown) => e);
+    expect((missing as ForbiddenException).getResponse()).toMatchObject({
+      error: PUSH_SECRET_REJECTED,
+    });
   });
 });

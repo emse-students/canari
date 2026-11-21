@@ -102,8 +102,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val durable: Boolean,
         /**
          * A drain learned it will NEVER go from here ([OutboxRetry.Prospect.NEVER]: refused by the
-         * server, its group not held, malformed). Kept - never deleted - and skipped by every later
-         * drain; the page adopts it as a failed message with its Retry (`outboxMirror.ts`).
+         * server, its group not held, malformed). No native writer deletes it, and every later drain
+         * skips it; the page adopts it at its next login as a failed message with its Retry
+         * (`outboxMirror.ts`). A page warm in the background still erases it with its next mirror
+         * rewrite (`store_outbox_mirror`) - the P1 `p1-a-warm-page-erases-the-native-only-outbox-entries`.
          */
         val unsendable: Boolean = false,
     )
@@ -2363,8 +2365,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val prospects = mutableListOf<OutboxRetry.Prospect>()
             var checkpointed = 0
             var index = 0
+            // Set by a send answer refusing this DEVICE's credential: every later POST would meet
+            // the same refusal, so the rest go back untouched - sendable, never marked.
+            var credentialRefused = false
             for (entry in entries) {
                 index++
+                if (credentialRefused) {
+                    remaining.add(entry)
+                    prospects.add(OutboxRetry.Prospect.BLOCKED)
+                    continue
+                }
                 if (System.currentTimeMillis() >= deadline) {
                     // Out of budget: everything not yet attempted goes back. The next drain
                     // continues from here - partial progress is kept, never discarded.
@@ -2404,6 +2414,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(if (answer.cause.prospect == OutboxRetry.Prospect.NEVER) entry.copy(unsendable = true) else entry)
                     prospects.add(answer.cause.prospect)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued (${answer.cause})") // log-safe: an enum constant's name (QueuedSendAnswer.KeptCause), no content
+                    if (answer.cause.prospect == OutboxRetry.Prospect.BLOCKED) {
+                        credentialRefused = true
+                        Log.e(TAG, "drainOutboxBackground: the push secret was refused - ${entries.size - index} other message(s) not attempted, all kept sendable until the app registers again") // log-safe: a count, no content
+                    }
                 }
                 // Checkpoint: a hard kill (the OS enforcing the goAsync deadline) would otherwise
                 // leave every delivered message still in the mirror, and the next drain would send
@@ -2574,6 +2588,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                                 QueuedSendAnswer.KeptCause.NOT_ACCEPTED_STATUS -> Unit
                                 QueuedSendAnswer.KeptCause.REFUSED ->
                                     Log.w(TAG, "sendQueuedMessagePush: HTTP $code is a refusal of this frame - kept, and no background retry will send it msg=${messageId.take(8)}")
+                                QueuedSendAnswer.KeptCause.CREDENTIAL_REFUSED ->
+                                    Log.e(TAG, "sendQueuedMessagePush: HTTP $code refused this device's push secret - kept, nothing goes from here until the app registers again msg=${messageId.take(8)}")
                                 QueuedSendAnswer.KeptCause.SENDER_BEING_READDED ->
                                     Log.w(TAG, "sendQueuedMessagePush: HTTP $code sender_not_active, this device's re-add in flight - kept for a retry msg=${messageId.take(8)}")
                                 // Classified in the catch below, never by `classify`.

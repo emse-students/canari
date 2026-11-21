@@ -1384,8 +1384,11 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
 ) -> jni::objects::JString<'a> {
     use mobile::background::SendBatchError;
 
-    // A marshalling fault is NOT_YET (nothing about the queue is wrong); an entries list that does
-    // not parse is NEVER (the same mirror is handed again). Classified here, where each is thrown.
+    // A marshalling fault is `not-yet` (nothing about the queue is wrong); an entries list that does
+    // not parse is `never` for the WHOLE batch, which the Kotlin caller reads as BLOCKED
+    // (`OutboxRetry.Prospect.of(batch = true)`): the same mirror is handed again, so nothing in it
+    // goes from here - the retry ends with the nudge and the entries stay sendable for the app.
+    // Classified here, where each is thrown.
     let result = (|| -> Result<serde_json::Value, SendBatchError> {
         let jni = |e: jni::errors::Error| SendBatchError::not_yet(format!("jni: {e}"));
         let files_dir_str: String = env.get_string(&files_dir).map_err(jni)?.into();

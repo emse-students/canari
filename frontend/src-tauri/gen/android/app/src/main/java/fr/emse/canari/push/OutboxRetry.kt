@@ -14,7 +14,8 @@ package fr.emse.canari.push
  *
  * AN ENTRY THAT CAN NEVER GO DOES NOT STRAND THE OTHERS (review of #3928): it is marked in the
  * mirror (`unsendable`), skipped by every later drain, told to the member (the nudge) and shown by
- * the page as failed with its Retry at the next open - never deleted. Only a [Prospect.BLOCKED]
+ * the page as failed with its Retry at its next login - no native writer deletes it (a warm page's
+ * mirror rewrite still can: the P1 `p1-a-warm-page-erases-the-native-only-outbox-entries`). Only a [Prospect.BLOCKED]
  * drain - this DEVICE cannot send anything from here - ends the retry.
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
@@ -35,8 +36,9 @@ object OutboxRetry {
         NEVER,
 
         /**
-         * NOTHING will go from this device's state: no push secret, no MLS state, or a key that
-         * does not open it. Only the app, opened, can act on it.
+         * NOTHING will go from this device's state: no push secret, one the server refused (a 401,
+         * or a 403 typed `push_secret_rejected`), no MLS state, or a key that does not open it. The
+         * entries stay sendable; only the app, opened, can act on it.
          */
         BLOCKED;
 

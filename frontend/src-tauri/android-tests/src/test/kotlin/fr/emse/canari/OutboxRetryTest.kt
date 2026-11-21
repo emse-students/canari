@@ -76,6 +76,19 @@ class OutboxRetryTest {
     }
 
     @Test
+    fun `a refused push secret blocks the device instead of marking each entry unsendable`() {
+        // A revoked or rotated secret meets every entry alike (review of #3928): it is the DEVICE's,
+        // so it gives up once, with the nudge, and leaves the entries sendable - never NEVER.
+        val typed = QueuedSendAnswer.classify(403, { QueuedSendAnswer.Refusal(QueuedSendAnswer.PUSH_SECRET_REJECTED, null) }) { BodyRead.NotJson }
+        assertEquals(Outcome.Kept(KeptCause.CREDENTIAL_REFUSED), typed)
+        assertEquals(Prospect.BLOCKED, (typed as Outcome.Kept).cause.prospect)
+        val unauthorized = QueuedSendAnswer.classify(401, { error("a 401 is the credential whatever its body") }) { BodyRead.NotJson }
+        assertEquals(Outcome.Kept(KeptCause.CREDENTIAL_REFUSED), unauthorized)
+        assertEquals(Decision.GIVE_UP, OutboxRetry.decide(drainLeaves(1, 401) + drainLeaves(2, null)))
+        assertFalse(OutboxRetry.tells(drainLeaves(3, 401)))
+    }
+
+    @Test
     fun `a server fault and the three 4xx that say later are not yet`() {
         for (code in listOf(500, 502, 503, 504, 408, 425, 429, 204)) {
             assertEquals("HTTP $code", listOf(Prospect.NOT_YET), drainLeaves(1, code))
@@ -86,7 +99,8 @@ class OutboxRetryTest {
     fun `every other 4xx is final`() {
         for (code in listOf(400, 401, 403, 404, 409, 410, 413, 422)) {
             assertTrue("HTTP $code", OutboxRetry.isFinalRefusal(code))
-            assertEquals("HTTP $code", listOf(Prospect.NEVER), drainLeaves(1, code))
+            // A 401 is the device's credential, not this frame's: BLOCKED, tested above.
+            if (code != 401) assertEquals("HTTP $code", listOf(Prospect.NEVER), drainLeaves(1, code))
         }
         assertFalse(OutboxRetry.isFinalRefusal(500))
     }
