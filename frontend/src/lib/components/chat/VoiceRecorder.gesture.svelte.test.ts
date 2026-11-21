@@ -15,6 +15,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import VoiceRecorder from './VoiceRecorder.svelte';
+import { RECORDING_AUDIO_CONSTRAINTS } from '$lib/utils/audio/recordingConstraints';
+import { buildCallAudioConstraints } from '$lib/utils/callAudio';
+import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 // The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
 // file's fake streams pin what is ASKED, not the session type.
@@ -199,9 +202,41 @@ describe('VoiceRecorder - hold, slide, release', () => {
   it('opens the microphone on press and tells the composer to stand down', async () => {
     await press();
 
-    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: true });
+    // A recording, not a call: no voice-call processing, mono (recordingConstraints.ts).
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
+      audio: RECORDING_AUDIO_CONSTRAINTS,
+    });
+    expect(RECORDING_AUDIO_CONSTRAINTS).toMatchObject({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    });
     expect(harness.activeChanges).toEqual([true]);
     expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('holding');
+  });
+
+  it("during a live call, asks the call's own constraints so the call's capture is not reconfigured", async () => {
+    reportCallSoundPhase('test-call', 'incall');
+    try {
+      await press();
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
+        audio: buildCallAudioConstraints(),
+      });
+    } finally {
+      resetCallSoundGateForTest();
+    }
+  });
+
+  it('a ring coming in holds no microphone: the note is still a recording', async () => {
+    reportCallSoundPhase('test-call', 'incoming');
+    try {
+      await press();
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({
+        audio: RECORDING_AUDIO_CONSTRAINTS,
+      });
+    } finally {
+      resetCallSoundGateForTest();
+    }
   });
 
   it('still records when the capture report throws (an odd WebView)', async () => {

@@ -3660,7 +3660,11 @@ and restores: if the mode already reads `MODE_IN_COMMUNICATION` it is left to it
 and only then does it reset it at the end - to `MODE_NORMAL`, and only if it still reads
 `MODE_IN_COMMUNICATION`. The OUTPUT (`setCommunicationDevice`, cleared at the end) is the service's
 alone. Which branch the WebView actually takes is not read yet: `dumpsys audio` during AND after a
-call is in the owed list below.
+call is in the owed list below. (Read in Chromium's source, 2026-11-21: `MakeAudioInputStream` sets the mode on the FIRST input
+stream that carries an effect - echo cancellation ON - and `ReleaseInputStream` restores it after the
+LAST one. A voice note recorded during a call asks the call's own constraints for that reason, and a
+voice note outside a call asks no effect at all, so it never sets the mode:
+[sounds](../sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20).)
 
 **Every end path, and none waits on the page (review F2, F6).** A page reload mid-call (the app's own
 `window.location.reload` sites, a renderer that crashed and came back) leaves a page with no call
