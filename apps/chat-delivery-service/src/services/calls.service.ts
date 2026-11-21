@@ -41,7 +41,7 @@ import {
   APNS_VOIP_REFUSED,
   PushDeliveryTally,
   pushFailureCode,
-  recordPushDeliveries,
+  PUSH_DELIVERY_RECORDER,
 } from '../utils/push-delivery-records';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
@@ -1052,16 +1052,19 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
     let rang = 0;
     const delivery = new PushDeliveryTally('ring');
-    for (const pt of tokens) {
-      const delivered =
-        pt.platform === 'ios' && pt.voipToken
-          ? voipReady &&
-            (await this.ringIosVoip(pt, { groupId, callId, callerId, hasVideo }, delivery))
-          : fcmReady && (await this.ringViaFcm(pt, dataFields, delivery));
-      if (delivered) rang++;
+    try {
+      for (const pt of tokens) {
+        const delivered =
+          pt.platform === 'ios' && pt.voipToken
+            ? voipReady &&
+              (await this.ringIosVoip(pt, { groupId, callId, callerId, hasVideo }, delivery))
+            : fcmReady && (await this.ringViaFcm(pt, dataFields, delivery));
+        if (delivered) rang++;
+      }
+    } finally {
+      this.recordDeliveries(delivery, `ring-${callId.slice(0, 8)}`);
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
-    this.recordDeliveries(delivery, `ring-${callId.slice(0, 8)}`);
     return { rang };
   }
 
@@ -1138,39 +1141,43 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
 
     let notified = 0;
     const delivery = new PushDeliveryTally('ring_end');
-    for (const pt of tokens) {
-      // Ring-end is a pure state signal: background/data push on both platforms. An iOS
-      // device ringing via CallKit was just launched by the VoIP push, so its running
-      // process receives this and reports the call ended; a missed delivery is covered
-      // by the local 60s ring timeout on every platform.
-      try {
-        delivery.attempted(pt);
-        await getMessaging().send({
-          token: pt.token,
-          data: dataFields,
-          android: { priority: 'high', ttl: 60_000 },
-          apns: {
-            payload: { aps: { 'content-available': 1 }, ...dataFields },
-            headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
-          },
-        });
-        delivery.accepted(pt);
-        notified++;
-      } catch (e) {
-        await this.dropTokenIfGone(pt, e, 'ring-end', delivery);
+    try {
+      for (const pt of tokens) {
+        // Ring-end is a pure state signal: background/data push on both platforms. An iOS
+        // device ringing via CallKit was just launched by the VoIP push, so its running
+        // process receives this and reports the call ended; a missed delivery is covered
+        // by the local 60s ring timeout on every platform.
+        try {
+          delivery.attempted(pt);
+          await getMessaging().send({
+            token: pt.token,
+            data: dataFields,
+            android: { priority: 'high', ttl: 60_000 },
+            apns: {
+              payload: { aps: { 'content-available': 1 }, ...dataFields },
+              headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+            },
+          });
+          delivery.accepted(pt);
+          notified++;
+        } catch (e) {
+          await this.dropTokenIfGone(pt, e, 'ring-end', delivery);
+        }
       }
+    } finally {
+      this.recordDeliveries(delivery, `ring-end-${callId.slice(0, 8)}`);
     }
     this.logger.log(`[ring] ring-end call=${callId} notified=${notified}/${tokens.length}`);
-    this.recordDeliveries(delivery, `ring-end-${callId.slice(0, 8)}`);
     return { notified };
   }
 
   /**
-   * Hands a ring's record to {@link recordPushDeliveries} WITHOUT awaiting it (migration 054): the
-   * rings it counts already left, and a write that fails logs at WARN and is dropped.
+   * Hands a ring's record to the process's one writer, {@link PUSH_DELIVERY_RECORDER}, without waiting
+   * for the database (migration 054): the rings it counts already left. Called from a `finally`, so a
+   * token prune that throws does not lose the fan-out.
    */
   private recordDeliveries(tally: PushDeliveryTally, traceId: string): void {
-    void recordPushDeliveries(this.pushTokenRepo.manager, tally, this.logger, traceId);
+    PUSH_DELIVERY_RECORDER.record(this.pushTokenRepo.manager, tally, traceId);
   }
 
   /**

@@ -1,7 +1,6 @@
-import type { Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { fcmErrorCode } from './fcm-errors';
-import { cutDeviceId, cutUserId } from './log-repeat';
 
 /**
  * PUSH DELIVERY RECORDS - what the push chain did, kept in the database so a deploy does not erase it
@@ -19,10 +18,12 @@ import { cutDeviceId, cutUserId } from './log-repeat';
  *    pointed at. On the registration row, so they die with it: a session end, a revocation, an
  *    invalid token's prune, the account's erasure.
  *
- * NEVER IN THE WAY OF A SEND. The sender fills a {@link PushDeliveryTally} in memory while it sends,
- * and hands it to {@link recordPushDeliveries} once the batch has settled, without awaiting it. A
- * failed write logs at WARN and is dropped: the count is a witness, never a precondition, and the
- * push it describes already left.
+ * NEVER IN THE WAY OF A SEND. The sender fills a {@link PushDeliveryTally} in memory while it sends
+ * and hands it to {@link PUSH_DELIVERY_RECORDER} once the batch has settled (in a `finally`, so a
+ * failed token prune does not lose it); a fetch route hands it the device. Neither waits for the
+ * database. The recorder writes ONE thing at a time per process and folds everything handed over
+ * meanwhile into the next write, so a burst of batches holds one pool connection. A failed write logs
+ * at WARN and is dropped: the count is a witness, never a precondition, and the push already left.
  */
 
 /** Which send path a push left by: the column `kind`. */
@@ -106,6 +107,17 @@ export class PushDeliveryTally {
     this.bump(pt.platform, 'pruned', '');
   }
 
+  /** Adds every count and accepted device of `other` to this tally (the caller keeps one kind). */
+  absorb(other: PushDeliveryTally): void {
+    for (const row of other.counts.values()) {
+      const key = PushDeliveryTally.keyOf(row.platform, row.outcome, row.code);
+      const mine = this.counts.get(key);
+      if (mine) mine.count += row.count;
+      else this.counts.set(key, { ...row });
+    }
+    for (const id of other.acceptedIds) this.acceptedIds.add(id);
+  }
+
   /** Whether nothing was attempted - a flush then writes nothing. */
   get isEmpty(): boolean {
     return this.counts.size === 0;
@@ -129,8 +141,12 @@ export class PushDeliveryTally {
     return [...this.acceptedIds].sort();
   }
 
+  private static keyOf(platform: string, outcome: PushDeliveryOutcome, code: string): string {
+    return `${platform}\u0000${outcome}\u0000${code}`;
+  }
+
   private bump(platform: string, outcome: PushDeliveryOutcome, code: string): void {
-    const key = `${platform}\u0000${outcome}\u0000${code}`;
+    const key = PushDeliveryTally.keyOf(platform, outcome, code);
     const row = this.counts.get(key);
     if (row) row.count++;
     else this.counts.set(key, { platform, outcome, code, count: 1 });
@@ -140,7 +156,8 @@ export class PushDeliveryTally {
 /**
  * Adds a batch's counts to `push_delivery_daily`, one upsert for every row. The day is the
  * DATABASE's UTC date, so every replica counts on one clock. Rows are inserted in the tally's order
- * (`WITH ORDINALITY ... ORDER BY`), which is what keeps two concurrent flushes deadlock-free.
+ * (`WITH ORDINALITY ... ORDER BY`), which is what keeps two concurrent writes (two replicas)
+ * deadlock-free.
  */
 const INCREMENT_SQL = `
   INSERT INTO push_delivery_daily ("day", "kind", "platform", "outcome", "code", "count")
@@ -154,11 +171,11 @@ const INCREMENT_SQL = `
 /**
  * Stamps `lastPushSentAt` on every accepted registration of a batch, in ONE statement.
  *
- * THE ROWS ARE LOCKED IN ("userId", "deviceId") ORDER FIRST - the order `deleteAccountPushTokens` and
- * `storeEnvelopes` lock a user's rows in - so a stamp across many users never forms a cycle with an
- * erasure or an envelope store; `FOR NO KEY UPDATE` is what the UPDATE itself takes, so it blocks
- * no foreign-key check. A row deleted since the send is simply not matched. `GREATEST` keeps the date
- * from going back when two flushes commit out of order.
+ * THE ROWS ARE LOCKED IN ("userId", "deviceId") ORDER FIRST - the order `deleteAccountPushTokens`,
+ * `deleteStalePushTokens` and `storeEnvelopes` lock rows in - so a stamp across many users never
+ * forms a cycle with an erasure, the stale sweep or an envelope store; `FOR NO KEY UPDATE` is what
+ * the UPDATE itself takes, so it blocks no foreign-key check. A row deleted since the send is simply
+ * not matched. `GREATEST` keeps the date from going back when two writes commit out of order.
  */
 const STAMP_SENT_SQL = `
   UPDATE push_token p
@@ -167,21 +184,28 @@ const STAMP_SENT_SQL = `
            ORDER BY "userId", "deviceId" FOR NO KEY UPDATE) l
    WHERE p.id = l.id`;
 
-/** Stamps `lastPushFetchedAt` on one registration (see {@link stampPushFetched}). */
+/**
+ * Stamps `lastPushFetchedAt` on every registration that fetched since the last write, in ONE
+ * statement, locked in the same ("userId", "deviceId") order as {@link STAMP_SENT_SQL}.
+ */
 const STAMP_FETCHED_SQL = `
-  UPDATE push_token
-     SET "lastPushFetchedAt" = GREATEST(COALESCE("lastPushFetchedAt", '-infinity'), now())
-   WHERE "userId" = $1 AND "deviceId" = $2`;
+  UPDATE push_token p
+     SET "lastPushFetchedAt" = GREATEST(COALESCE(p."lastPushFetchedAt", '-infinity'), now())
+    FROM (SELECT t.id FROM push_token t
+            JOIN unnest($1::varchar[], $2::varchar[]) AS f("userId", "deviceId")
+              ON t."userId" = f."userId" AND t."deviceId" = f."deviceId"
+           ORDER BY t."userId", t."deviceId" FOR NO KEY UPDATE OF t) l
+   WHERE p.id = l.id`;
 
 /**
- * Writes what one send batch did: its counts, then its devices' `lastPushSentAt`. NEVER THROWS - each
- * write that fails logs at WARN with the batch's trace and what it would have written, and the other
- * is still attempted. Callers do not await it (`void`): the pushes it describes already left.
+ * Writes what one tally holds: its counts, then its devices' `lastPushSentAt`. NEVER THROWS - each
+ * write that fails logs at WARN with the trace and what it would have written, and the other is still
+ * attempted. Called by {@link PushDeliveryRecorder}, one write at a time.
  *
  * @param manager - Any manager of this service's database (a repository's `.manager`).
- * @param tally - What the batch did; an empty one writes nothing.
- * @param logger - The sender's logger, so the WARN names the path that lost the count.
- * @param traceId - The batch's trace, as its own lines print it.
+ * @param tally - What the batches did; an empty one writes nothing.
+ * @param logger - Where the WARN goes.
+ * @param traceId - The batch's trace (`<first>+<n>` when batches were folded together).
  */
 export async function recordPushDeliveries(
   manager: EntityManager,
@@ -225,28 +249,127 @@ export async function recordPushDeliveries(
 }
 
 /**
- * Stamps `lastPushFetchedAt` for the device whose native handler just fetched what a push pointed at
- * (`GET /mls/push/fetch-proto`, `GET /mls/push/wake`) - the server's own sight of the push ARRIVING,
- * which the 2026-11-21 diagnosis had to read from the edge access log. Stamped on every fetch the
- * PushSecret admitted, `gone` answers included: a `gone` still proves the push reached the handler.
+ * Stamps `lastPushFetchedAt` on the registrations whose native handler fetched what a push pointed
+ * at (`GET /mls/push/fetch-proto`, `GET /mls/push/wake`) - the server's own sight of a push ARRIVING,
+ * which the 2026-11-21 diagnosis had to read from the edge access log. NEVER THROWS: a failed stamp
+ * logs at WARN with how many devices it lost and the routes that asked.
  *
- * NEVER THROWS: a failed stamp logs at WARN and the fetch is answered as if it had succeeded.
- *
- * @param route - The fetching route, for the WARN (`fetch-proto`, `wake`).
+ * @param devices - `userId`/`deviceId` pairs, each once.
+ * @param routes - The routes the fetches came by, for the WARN.
  */
-export async function stampPushFetched(
+export async function recordPushFetches(
   manager: EntityManager,
-  userId: string,
-  deviceId: string,
+  devices: ReadonlyArray<{ userId: string; deviceId: string }>,
   logger: Logger,
-  route: string
+  routes: string
 ): Promise<void> {
+  if (devices.length === 0) return;
+  logger.debug(`[PUSH_RECORD] lastPushFetchedAt on ${devices.length} device(s) routes=${routes}`);
   try {
-    await manager.query(STAMP_FETCHED_SQL, [userId, deviceId]);
+    await manager.query(STAMP_FETCHED_SQL, [
+      devices.map((d) => d.userId),
+      devices.map((d) => d.deviceId),
+    ]);
   } catch (e) {
     logger.warn(
-      `[PUSH_RECORD] lastPushFetchedAt NOT stamped route=${route} user=${cutUserId(userId)} ` +
-        `device=${cutDeviceId(deviceId)}: ${String(e)}`
+      `[PUSH_RECORD] lastPushFetchedAt NOT stamped on ${devices.length} device(s) ` +
+        `routes=${routes}: ${String(e)}`
     );
   }
 }
+
+/**
+ * THE ONE WRITER of the push delivery record in a process. Senders and fetch routes hand it what they
+ * did and return at once; it writes ONE thing at a time, and everything handed over while a write is
+ * in flight is folded into the next one: the tallies of one kind into one tally, the fetched devices
+ * into one set. A burst of a hundred batches therefore costs a handful of writes on ONE pool
+ * connection, never a hundred autocommit upserts queued on the same hot counter rows, each holding a
+ * connection while it waits.
+ *
+ * No timer: the next write starts when the previous one ends, and the loop stops when nothing is
+ * pending - in the same synchronous step as its last check, so nothing handed over can be stranded.
+ * What is still pending when the process exits is lost, unlogged: at most what arrived during the
+ * last write.
+ */
+export class PushDeliveryRecorder {
+  private readonly logger = new Logger('PushDeliveryRecorder');
+  private readonly pendingTallies = new Map<PushDeliveryKind, PushDeliveryTally>();
+  private readonly pendingFetches = new Map<string, { userId: string; deviceId: string }>();
+  private readonly pendingRoutes = new Set<string>();
+  private firstTrace: string | null = null;
+  private foldedBatches = 0;
+  private manager: EntityManager | null = null;
+  private running: Promise<void> | null = null;
+
+  /**
+   * Hands over what one send batch did. Returns at once; the write follows.
+   *
+   * @param manager - This service's database manager (a repository's `.manager`).
+   * @param tally - The batch's tally; an empty one is dropped here.
+   * @param traceId - The batch's trace, named by a failure's WARN.
+   */
+  record(manager: EntityManager, tally: PushDeliveryTally, traceId: string): void {
+    if (tally.isEmpty) return;
+    const pending = this.pendingTallies.get(tally.kind);
+    if (pending) {
+      pending.absorb(tally);
+    } else {
+      const copy = new PushDeliveryTally(tally.kind);
+      copy.absorb(tally);
+      this.pendingTallies.set(tally.kind, copy);
+    }
+    if (this.firstTrace === null) this.firstTrace = traceId;
+    this.foldedBatches++;
+    this.kick(manager);
+  }
+
+  /** Hands over that `userId`/`deviceId` fetched what a push pointed at, by `route`. Returns at once. */
+  fetched(manager: EntityManager, userId: string, deviceId: string, route: string): void {
+    this.pendingFetches.set(`${userId} ${deviceId}`, { userId, deviceId });
+    this.pendingRoutes.add(route);
+    this.kick(manager);
+  }
+
+  /** Resolves once everything handed over so far is written, or its loss logged. */
+  async settled(): Promise<void> {
+    while (this.running) await this.running;
+  }
+
+  private kick(manager: EntityManager): void {
+    this.manager = manager;
+    if (this.running) return;
+    this.running = this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    // Hand-overs made in the same tick are folded into the first write.
+    await Promise.resolve();
+    try {
+      while (this.pendingTallies.size > 0 || this.pendingFetches.size > 0) {
+        const manager = this.manager as EntityManager;
+        const tallies = [...this.pendingTallies.values()];
+        this.pendingTallies.clear();
+        const trace =
+          this.foldedBatches > 1
+            ? `${this.firstTrace}+${this.foldedBatches - 1}`
+            : (this.firstTrace ?? 'fetch');
+        this.firstTrace = null;
+        this.foldedBatches = 0;
+        const fetches = [...this.pendingFetches.values()];
+        this.pendingFetches.clear();
+        const routes = [...this.pendingRoutes].sort().join(',');
+        this.pendingRoutes.clear();
+        for (const tally of tallies) {
+          await recordPushDeliveries(manager, tally, this.logger, trace);
+        }
+        await recordPushFetches(manager, fetches, this.logger, routes);
+      }
+    } finally {
+      // The same synchronous step as the empty check above: a hand-over after it starts a new drain.
+      this.running = null;
+    }
+  }
+}
+
+/** The process's one {@link PushDeliveryRecorder}: every send path and fetch route hands it over. */
+export const PUSH_DELIVERY_RECORDER = new PushDeliveryRecorder();

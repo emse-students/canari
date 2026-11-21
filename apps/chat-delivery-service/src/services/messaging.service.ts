@@ -45,7 +45,7 @@ import { PushToken } from '../entities/push-token.entity';
 import {
   PushDeliveryTally,
   pushFailureCode,
-  recordPushDeliveries,
+  PUSH_DELIVERY_RECORDER,
 } from '../utils/push-delivery-records';
 import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
@@ -1585,97 +1585,101 @@ export class MessagingService {
       : 'full';
     // A fan-out's devices share its batch's record; a lone send (the deferred push) records its own.
     const delivery = batch?.delivery ?? new PushDeliveryTally('message');
-    for (const pt of pushTokens) {
-      const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
-      try {
-        delivery.attempted(pt);
-        await getMessaging().send(
-          wake
-            ? this.buildWakeMessage(
-                pt,
-                { queuedMessageId: messageInput.queuedMessageId },
-                messageInput.silent,
-                !!messageInput.mentionsOnly,
-                { priority: 'high', ttl: 86_400_000 }
-              )
-            : pt.platform === 'ios'
-              ? {
-                  token: pt.token,
-                  apns: {
-                    // Built HERE and not once above: the fallback body is the one sentence this
-                    // server still composes, and only the token says which language to compose it
-                    // in. Everything else in the payload is identical across devices.
-                    payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
-                    headers: {
-                      'apns-push-type': apnsPushType,
-                      'apns-priority': String(apnsPriority),
+    try {
+      for (const pt of pushTokens) {
+        const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
+        try {
+          delivery.attempted(pt);
+          await getMessaging().send(
+            wake
+              ? this.buildWakeMessage(
+                  pt,
+                  { queuedMessageId: messageInput.queuedMessageId },
+                  messageInput.silent,
+                  !!messageInput.mentionsOnly,
+                  { priority: 'high', ttl: 86_400_000 }
+                )
+              : pt.platform === 'ios'
+                ? {
+                    token: pt.token,
+                    apns: {
+                      // Built HERE and not once above: the fallback body is the one sentence this
+                      // server still composes, and only the token says which language to compose it
+                      // in. Everything else in the payload is identical across devices.
+                      payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
+                      headers: {
+                        'apns-push-type': apnsPushType,
+                        'apns-priority': String(apnsPriority),
+                      },
                     },
-                  },
-                }
-              : {
-                  token: pt.token,
-                  data: dataFields,
-                  android: {
-                    priority: 'high',
-                    ttl: 86_400_000,
-                  },
-                }
-        );
-        delivery.accepted(pt);
-        if (batch) {
-          // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
-          // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
-          batch.pushed++;
-          if (wake) batch.woken++;
-        } else {
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} ` +
-              (wake
-                ? `mode=wake`
-                : `mode=full inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`)
+                  }
+                : {
+                    token: pt.token,
+                    data: dataFields,
+                    android: {
+                      priority: 'high',
+                      ttl: 86_400_000,
+                    },
+                  }
           );
-        }
-      } catch (e) {
-        delivery.failed(pt, pushFailureCode(e));
-        if (isTerminalPushTokenError(e)) {
-          await this.pushTokenRepo.delete({ id: pt.id });
-          delivery.pruned(pt);
-          this.logger.warn(
-            `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
+          delivery.accepted(pt);
+          if (batch) {
+            // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
+            // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
+            batch.pushed++;
+            if (wake) batch.woken++;
+          } else {
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} ` +
+                (wake
+                  ? `mode=wake`
+                  : `mode=full inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`)
+            );
+          }
+        } catch (e) {
+          delivery.failed(pt, pushFailureCode(e));
+          if (isTerminalPushTokenError(e)) {
+            await this.pushTokenRepo.delete({ id: pt.id });
+            delivery.pruned(pt);
+            this.logger.warn(
+              `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
+            );
+          }
+          const failure = describeFcmFailure(e);
+          this.logger[failure.level](
+            `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} ${failure.text}`
           );
-        }
-        const failure = describeFcmFailure(e);
-        this.logger[failure.level](
-          `[PUSH_SEND][${traceId}] FCM failed user=${queued.recipientId} device=${pt.deviceId} ${failure.text}`
-        );
-        // A size refusal is the one failure whose cause is entirely in our hands, and the error
-        // FCM returns names no quantity at all - ten of them in one run said only "too large".
-        // The payload is right here, so report what was actually sent: the data map as FCM counts
-        // it, the APNs payload it is ALSO spread into (whether that duplication counts towards the
-        // same 4096 is the open question), and the largest single field.
-        if (this.isPayloadTooLargeError(e)) {
-          const [largestKey, largestValue] = Object.entries(dataFields).reduce((a, b) =>
-            Buffer.byteLength(b[1], 'utf8') > Buffer.byteLength(a[1], 'utf8') ? b : a
-          );
-          this.logger.warn(
-            `[PUSH_SIZE][${traceId}] refused over size on ${pt.platform}: ` +
-              `sent=${pt.platform === 'ios' ? apnsBytes : dataBytes}B (limit ${FCM_DATA_LIMIT}) ` +
-              `data=${dataBytes}B apnsPayload=${apnsBytes}B ` +
-              `largest=${largestKey}:${Buffer.byteLength(largestValue, 'utf8')}B inlineProto=${!!inlineProto}`
-          );
+          // A size refusal is the one failure whose cause is entirely in our hands, and the error
+          // FCM returns names no quantity at all - ten of them in one run said only "too large".
+          // The payload is right here, so report what was actually sent: the data map as FCM counts
+          // it, the APNs payload it is ALSO spread into (whether that duplication counts towards the
+          // same 4096 is the open question), and the largest single field.
+          if (this.isPayloadTooLargeError(e)) {
+            const [largestKey, largestValue] = Object.entries(dataFields).reduce((a, b) =>
+              Buffer.byteLength(b[1], 'utf8') > Buffer.byteLength(a[1], 'utf8') ? b : a
+            );
+            this.logger.warn(
+              `[PUSH_SIZE][${traceId}] refused over size on ${pt.platform}: ` +
+                `sent=${pt.platform === 'ios' ? apnsBytes : dataBytes}B (limit ${FCM_DATA_LIMIT}) ` +
+                `data=${dataBytes}B apnsPayload=${apnsBytes}B ` +
+                `largest=${largestKey}:${Buffer.byteLength(largestValue, 'utf8')}B inlineProto=${!!inlineProto}`
+            );
+          }
         }
       }
+    } finally {
+      if (!batch) this.recordDeliveries(delivery, traceId);
     }
-    if (!batch) this.recordDeliveries(delivery, traceId);
   }
 
   /**
-   * Hands a send batch's record to {@link recordPushDeliveries} WITHOUT awaiting it (migration 054):
-   * the pushes it counts already left, and a write that fails logs at WARN and is dropped. THE ONE
-   * HOOK every push path of this service flushes through.
+   * Hands a send batch's record to the process's one writer, {@link PUSH_DELIVERY_RECORDER}, without
+   * waiting for the database (migration 054): the pushes it counts already left. Called from a
+   * `finally`, so a token prune that throws does not lose the batch. THE ONE HOOK every push path of
+   * this service flushes through.
    */
   private recordDeliveries(tally: PushDeliveryTally, traceId: string): void {
-    void recordPushDeliveries(this.pushTokenRepo.manager, tally, this.logger, traceId);
+    PUSH_DELIVERY_RECORDER.record(this.pushTokenRepo.manager, tally, traceId);
   }
 
   /**
@@ -8457,44 +8461,47 @@ export class MessagingService {
     }
 
     const delivery = new PushDeliveryTally('welcome_request');
-    await Promise.all(
-      tokens.map(async (pt) => {
-        const refusal = withheld.get(pt.id);
-        // Not woken, and never the full push instead. Each reason already has its ONE line, under
-        // this send's trace: `failed` accused at ERROR once for the send (switch unreadable) or once
-        // for the account (envelope not stored); `registration-gone` and `evicted` written by
-        // `storeEnvelopes` (`[PUSH_ENVELOPE] registration gone`, the cap line naming "this push").
-        if (refusal) return;
-        const envelopeId = envelopes.get(pt.id);
-        try {
-          delivery.attempted(pt);
-          await getMessaging().send(
-            envelopeId
-              ? this.buildWakeMessage(pt, { envelopeId }, true, false, android)
-              : { token: pt.token, data, android }
-          );
-          delivery.accepted(pt);
-          this.logger.log(
-            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId} ` +
-              (envelopeId ? `mode=wake envelope=${envelopeId.slice(0, 8)}` : 'mode=full')
-          );
-        } catch (e) {
-          delivery.failed(pt, pushFailureCode(e));
-          if (isTerminalPushTokenError(e)) {
-            await this.pushTokenRepo.delete({ id: pt.id });
-            delivery.pruned(pt);
-            this.logger.warn(
-              `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
+    try {
+      await Promise.all(
+        tokens.map(async (pt) => {
+          const refusal = withheld.get(pt.id);
+          // Not woken, and never the full push instead. Each reason already has its ONE line, under
+          // this send's trace: `failed` accused at ERROR once for the send (switch unreadable) or once
+          // for the account (envelope not stored); `registration-gone` and `evicted` written by
+          // `storeEnvelopes` (`[PUSH_ENVELOPE] registration gone`, the cap line naming "this push").
+          if (refusal) return;
+          const envelopeId = envelopes.get(pt.id);
+          try {
+            delivery.attempted(pt);
+            await getMessaging().send(
+              envelopeId
+                ? this.buildWakeMessage(pt, { envelopeId }, true, false, android)
+                : { token: pt.token, data, android }
+            );
+            delivery.accepted(pt);
+            this.logger.log(
+              `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId} ` +
+                (envelopeId ? `mode=wake envelope=${envelopeId.slice(0, 8)}` : 'mode=full')
+            );
+          } catch (e) {
+            delivery.failed(pt, pushFailureCode(e));
+            if (isTerminalPushTokenError(e)) {
+              await this.pushTokenRepo.delete({ id: pt.id });
+              delivery.pruned(pt);
+              this.logger.warn(
+                `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
+              );
+            }
+            const failure = describeFcmFailure(e);
+            this.logger[failure.level](
+              `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
             );
           }
-          const failure = describeFcmFailure(e);
-          this.logger[failure.level](
-            `[WELCOME_REQ][${traceId}] FCM failed user=${pt.userId} device=${pt.deviceId} ${failure.text}`
-          );
-        }
-      })
-    );
-    this.recordDeliveries(delivery, traceId);
+        })
+      );
+    } finally {
+      this.recordDeliveries(delivery, traceId);
+    }
   }
 
   /**
@@ -8732,107 +8739,110 @@ export class MessagingService {
     let sent = 0;
     let failed = 0;
     const delivery = new PushDeliveryTally('social');
-    for (const pt of pushTokens) {
-      const refusal = withheld.get(pt.id);
-      if (refusal === 'failed') {
-        failed++;
-        continue;
-      }
-      // Not woken, and not a failure: the registration went, or the cap took the new envelope.
-      if (refusal) continue;
-      // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
-      // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
-      // same fields are spread into, so an inlined ciphertext travelled twice in one message and
-      // FCM sized the pair. iOS needs the APNs block (a data-only push never wakes the extension);
-      // Android reads the data map (onMessageReceived fires in the background) and nothing else.
-      try {
-        const envelopeId = envelopes.get(pt.deviceId);
-        delivery.attempted(pt);
-        if (envelopeId) {
-          // The content-free wake: the device fetches the envelope and runs it through the path
-          // this full push would have taken. Android keeps the full push's options.
-          await getMessaging().send(
-            this.buildWakeMessage(
-              pt,
-              { envelopeId },
-              isInternalSilent(data),
-              false,
-              { priority: 'high' },
-              // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
-              // wake and no ring carries, so it cannot be checked against a guess
-              // (`reactionCollapseId`) - and what makes its push and the page's notification one.
-              // A post's names the post (`post_activity_<id>`), which a wake must never carry.
-              data.reaction === 'true'
-                ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
-                : undefined
-            )
-          );
+    try {
+      for (const pt of pushTokens) {
+        const refusal = withheld.get(pt.id);
+        if (refusal === 'failed') {
+          failed++;
+          continue;
+        }
+        // Not woken, and not a failure: the registration went, or the cap took the new envelope.
+        if (refusal) continue;
+        // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
+        // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
+        // same fields are spread into, so an inlined ciphertext travelled twice in one message and
+        // FCM sized the pair. iOS needs the APNs block (a data-only push never wakes the extension);
+        // Android reads the data map (onMessageReceived fires in the background) and nothing else.
+        try {
+          const envelopeId = envelopes.get(pt.deviceId);
+          delivery.attempted(pt);
+          if (envelopeId) {
+            // The content-free wake: the device fetches the envelope and runs it through the path
+            // this full push would have taken. Android keeps the full push's options.
+            await getMessaging().send(
+              this.buildWakeMessage(
+                pt,
+                { envelopeId },
+                isInternalSilent(data),
+                false,
+                { priority: 'high' },
+                // A REACTION's collapse id is kept: a hash of the reacted-to message's id - which no
+                // wake and no ring carries, so it cannot be checked against a guess
+                // (`reactionCollapseId`) - and what makes its push and the page's notification one.
+                // A post's names the post (`post_activity_<id>`), which a wake must never carry.
+                data.reaction === 'true'
+                  ? buildInternalApnsRequest(title, body, data, pt.locale).collapseId
+                  : undefined
+              )
+            );
+            sent++;
+            delivery.accepted(pt);
+            this.logger.log(
+              `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
+                `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
+            );
+            continue;
+          }
+          let half: { inlined: boolean; bytes: number };
+          if (pt.platform === 'ios') {
+            const ios = buildInternalApnsHalf(title, body, data, inline, pt.locale);
+            half = ios;
+            await getMessaging().send({
+              token: pt.token,
+              apns: {
+                payload: ios.payload.payload,
+                headers: {
+                  'apns-push-type': ios.payload.pushType,
+                  'apns-priority': String(ios.payload.priority),
+                  // One live notification per post: the new alert replaces the delivered one.
+                  ...(ios.payload.collapseId ? { 'apns-collapse-id': ios.payload.collapseId } : {}),
+                },
+              },
+            });
+          } else {
+            const android = buildInternalAndroidHalf(title, body, data, inline);
+            half = android;
+            await getMessaging().send({
+              token: pt.token,
+              data: android.payload,
+              android: { priority: 'high' },
+            });
+          }
           sent++;
           delivery.accepted(pt);
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-              `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
+              `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
           );
-          continue;
-        }
-        let half: { inlined: boolean; bytes: number };
-        if (pt.platform === 'ios') {
-          const ios = buildInternalApnsHalf(title, body, data, inline, pt.locale);
-          half = ios;
-          await getMessaging().send({
-            token: pt.token,
-            apns: {
-              payload: ios.payload.payload,
-              headers: {
-                'apns-push-type': ios.payload.pushType,
-                'apns-priority': String(ios.payload.priority),
-                // One live notification per post: the new alert replaces the delivered one.
-                ...(ios.payload.collapseId ? { 'apns-collapse-id': ios.payload.collapseId } : {}),
-              },
-            },
-          });
-        } else {
-          const android = buildInternalAndroidHalf(title, body, data, inline);
-          half = android;
-          await getMessaging().send({
-            token: pt.token,
-            data: android.payload,
-            android: { priority: 'high' },
-          });
-        }
-        sent++;
-        delivery.accepted(pt);
-        this.logger.log(
-          `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
-        );
-        if (Object.keys(inline).length > 0 && !half.inlined) {
-          // Not a failure - the device fetches the message and draws the fallback - but a budget
-          // that is routinely too small is the fixed fields growing, and nothing else watches them.
-          this.logger.log(
-            `[PUSH_SIZE][${traceId}] inline group not inlined on ${pt.platform}: ${half.bytes}B without it, ` +
-              Object.entries(inline)
-                .map(([k, v]) => `${k}=${Buffer.byteLength(v, 'utf8')}B`)
-                .join(' ')
+          if (Object.keys(inline).length > 0 && !half.inlined) {
+            // Not a failure - the device fetches the message and draws the fallback - but a budget
+            // that is routinely too small is the fixed fields growing, and nothing else watches them.
+            this.logger.log(
+              `[PUSH_SIZE][${traceId}] inline group not inlined on ${pt.platform}: ${half.bytes}B without it, ` +
+                Object.entries(inline)
+                  .map(([k, v]) => `${k}=${Buffer.byteLength(v, 'utf8')}B`)
+                  .join(' ')
+            );
+          }
+        } catch (e) {
+          failed++;
+          delivery.failed(pt, pushFailureCode(e));
+          if (isTerminalPushTokenError(e)) {
+            await this.pushTokenRepo.delete({ id: pt.id });
+            delivery.pruned(pt);
+            this.logger.warn(
+              `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
+            );
+          }
+          const failure = describeFcmFailure(e);
+          this.logger[failure.level](
+            `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} ${failure.text}`
           );
         }
-      } catch (e) {
-        failed++;
-        delivery.failed(pt, pushFailureCode(e));
-        if (isTerminalPushTokenError(e)) {
-          await this.pushTokenRepo.delete({ id: pt.id });
-          delivery.pruned(pt);
-          this.logger.warn(
-            `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
-          );
-        }
-        const failure = describeFcmFailure(e);
-        this.logger[failure.level](
-          `[SOCIAL_PUSH][${traceId}] FCM failed user=${userId} device=${pt.deviceId} ${failure.text}`
-        );
       }
+    } finally {
+      this.recordDeliveries(delivery, traceId);
     }
-    this.recordDeliveries(delivery, traceId);
     return { sent, failed };
   }
 }

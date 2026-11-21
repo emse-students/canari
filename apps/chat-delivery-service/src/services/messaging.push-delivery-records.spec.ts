@@ -15,6 +15,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import type { PushMessageInput } from './push-payload';
+import { PUSH_DELIVERY_RECORDER } from '../utils/push-delivery-records';
 
 const fcmSend = jest.fn();
 jest.mock('firebase-admin/app', () => ({ getApps: jest.fn(() => [{}]) }));
@@ -60,7 +61,10 @@ describe('MessagingService - the push delivery record', () => {
     code: 'messaging/registration-token-not-registered',
   });
   /** The record is written without being awaited: let it run. */
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const settle = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await PUSH_DELIVERY_RECORDER.settled();
+  };
   const writes = (pattern: RegExp) =>
     manager.query.mock.calls.filter(([sql]) => pattern.test(sql as string));
 
@@ -134,6 +138,26 @@ describe('MessagingService - the push delivery record', () => {
       const lines = warn.mock.calls.map(([m]) => String(m));
       expect(lines.some((l) => l.includes('daily counts NOT recorded kind=social'))).toBe(true);
       expect(lines.some((l) => l.includes('lastPushSentAt NOT stamped kind=social'))).toBe(true);
+    });
+
+    it('a token prune that throws still records the batch - in a finally', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t-ios', 'u1', 'iphone', 'ios')]);
+      fcmSend.mockRejectedValue(notRegistered);
+      pushTokenRepo.delete.mockRejectedValueOnce(new Error('connection terminated'));
+
+      await expect(push()).rejects.toThrow('connection terminated');
+      await settle();
+
+      const increments = writes(/push_delivery_daily/);
+      expect(increments).toHaveLength(1);
+      // Failed, never pruned: the row is still there.
+      expect(increments[0][1]).toEqual([
+        'social',
+        ['ios', 'ios'],
+        ['attempted', 'failed'],
+        ['', 'messaging/registration-token-not-registered'],
+        [1, 1],
+      ]);
     });
 
     it('writes nothing when no push was attempted', async () => {

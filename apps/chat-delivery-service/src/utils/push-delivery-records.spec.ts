@@ -6,8 +6,8 @@ import {
   APNS_VOIP_GONE,
   PushDeliveryTally,
   pushFailureCode,
+  PushDeliveryRecorder,
   recordPushDeliveries,
-  stampPushFetched,
 } from './push-delivery-records';
 
 /**
@@ -160,22 +160,103 @@ describe('push delivery records', () => {
     });
   });
 
-  describe('stampPushFetched', () => {
-    it('stamps the one registration that fetched', async () => {
-      const query = jest.fn().mockResolvedValue([]);
-      await stampPushFetched(managerOf(query), 'user-1', 'phone-1', logger, 'wake');
-      expect(query.mock.calls[0][0]).toMatch(/SET "lastPushFetchedAt"/);
-      expect(query.mock.calls[0][1]).toEqual(['user-1', 'phone-1']);
+  describe('PushDeliveryRecorder', () => {
+    /** A query that stays pending until the test releases it, so a write is provably in flight. */
+    const gatedQuery = () => {
+      const releases: Array<() => void> = [];
+      const query = jest.fn(
+        (_sql: string, _params?: unknown[]): Promise<unknown[]> =>
+          new Promise<unknown[]>((resolve) => {
+            releases.push(() => resolve([]));
+          })
+      );
+      const release = () => releases.splice(0).forEach((r) => r());
+      return { query, release };
+    };
+    const batch = (kind: 'message' | 'social', id: string) => {
+      const tally = new PushDeliveryTally(kind);
+      tally.attempted(android(id));
+      tally.accepted(android(id));
+      return tally;
+    };
+
+    it('folds every batch handed over during a write into ONE next write per kind', async () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const { query, release } = gatedQuery();
+      const manager = managerOf(query);
+
+      recorder.record(manager, batch('message', 't1'), 'tr-1');
+      await new Promise((resolve) => setImmediate(resolve));
+      // The first write is in flight: these three wait, and become one write.
+      recorder.record(manager, batch('message', 't2'), 'tr-2');
+      recorder.record(manager, batch('message', 't3'), 'tr-3');
+      recorder.record(manager, batch('message', 't2'), 'tr-4');
+      let done = false;
+      void recorder.settled().then(() => {
+        done = true;
+      });
+      while (!done) {
+        release();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      const increments = query.mock.calls.filter(([sql]) =>
+        String(sql).includes('push_delivery_daily')
+      );
+      expect(increments.map(([, p]) => (p as unknown[])[4])).toEqual([
+        [1, 1],
+        [3, 3],
+      ]);
+      const stamps = query.mock.calls.filter(([sql]) => String(sql).includes('"lastPushSentAt"'));
+      expect(stamps.map(([, p]) => p)).toEqual([[['t1']], [['t2', 't3']]]);
     });
 
-    it('a failed stamp is a WARN naming the route, never a throw', async () => {
-      const query = jest.fn().mockRejectedValue(new Error('down'));
-      await expect(
-        stampPushFetched(managerOf(query), 'user-1', 'phone-1', logger, 'fetch-proto')
-      ).resolves.toBeUndefined();
-      expect(warn.mock.calls[0][0]).toContain(
-        '[PUSH_RECORD] lastPushFetchedAt NOT stamped route=fetch-proto'
+    it('stamps every device that fetched since the last write in ONE statement, each once', async () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const query = jest.fn().mockResolvedValue([]);
+      const manager = managerOf(query);
+
+      recorder.fetched(manager, 'user-1', 'phone-1', 'wake');
+      recorder.fetched(manager, 'user-2', 'tablet', 'fetch-proto');
+      recorder.fetched(manager, 'user-1', 'phone-1', 'wake');
+      await recorder.settled();
+
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(query.mock.calls[0][0]).toMatch(/SET "lastPushFetchedAt"/);
+      expect(query.mock.calls[0][0]).toMatch(
+        /ORDER BY t\."userId", t\."deviceId" FOR NO KEY UPDATE/
       );
+      expect(query.mock.calls[0][1]).toEqual([
+        ['user-1', 'user-2'],
+        ['phone-1', 'tablet'],
+      ]);
+    });
+
+    it('a failed fetch stamp is a WARN naming the devices and routes, never a throw', async () => {
+      const warnAll = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const query = jest.fn().mockRejectedValue(new Error('down'));
+      recorder.fetched(managerOf(query), 'user-1', 'phone-1', 'fetch-proto');
+      await expect(recorder.settled()).resolves.toBeUndefined();
+      expect(String(warnAll.mock.calls[0][0])).toContain(
+        '[PUSH_RECORD] lastPushFetchedAt NOT stamped on 1 device(s) routes=fetch-proto'
+      );
+    });
+
+    it('starts a new write for a hand-over that arrives after the last one ended', async () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const query = jest.fn().mockResolvedValue([]);
+      const manager = managerOf(query);
+      recorder.record(manager, batch('social', 't1'), 'a');
+      await recorder.settled();
+      recorder.record(manager, batch('social', 't2'), 'b');
+      await recorder.settled();
+      const stamps = query.mock.calls.filter(([sql]) => String(sql).includes('"lastPushSentAt"'));
+      expect(stamps.map(([, p]) => p)).toEqual([[['t1']], [['t2']]]);
     });
   });
 });

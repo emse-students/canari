@@ -24,9 +24,10 @@ import { PushToken } from '../entities/push-token.entity';
 import {
   PushDeliveryTally,
   recordPushDeliveries,
-  stampPushFetched,
+  PushDeliveryRecorder,
+  recordPushFetches,
 } from '../utils/push-delivery-records';
-import { deleteAccountPushTokens } from '../utils/push-envelope';
+import { deleteAccountPushTokens, deleteStalePushTokens } from '../utils/push-envelope';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -212,10 +213,43 @@ maybe('migration 054 (push delivery records) against PostgreSQL', () => {
   it('stamps lastPushFetchedAt on the registration that fetched, and nowhere else', async () => {
     const fetched = await register('u1', 'pixel');
     const other = await register('u1', 'tablet');
-    await stampPushFetched(ds.manager, 'u1', 'pixel', logger, 'wake');
+    await recordPushFetches(ds.manager, [{ userId: 'u1', deviceId: 'pixel' }], logger, 'wake');
     expect((await datesOf(fetched)).fetched).toBeInstanceOf(Date);
     expect((await datesOf(other)).fetched).toBeNull();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the recorder folds a burst into few writes, and every count lands', async () => {
+    const ids = await Promise.all(['a', 'b'].map((d) => register('u1', d)));
+    const recorder = new PushDeliveryRecorder();
+    for (let i = 0; i < 50; i++) {
+      const tally = new PushDeliveryTally('message');
+      tally.attempted({ id: ids[i % 2], platform: 'android' });
+      tally.accepted({ id: ids[i % 2], platform: 'android' });
+      recorder.record(ds.manager, tally, `burst-${i}`);
+      recorder.fetched(ds.manager, 'u1', i % 2 === 0 ? 'a' : 'b', 'wake');
+    }
+    await recorder.settled();
+
+    expect(await today()).toEqual(['message/android/accepted=50', 'message/android/attempted=50']);
+    for (const id of ids) {
+      const dates = await datesOf(id);
+      expect(dates.sent).toBeInstanceOf(Date);
+      expect(dates.fetched).toBeInstanceOf(Date);
+    }
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the 90-day sweep deletes exactly the registrations not renewed since the cutoff', async () => {
+    const old = await register('u1', 'old');
+    const fresh = await register('u2', 'fresh');
+    await q(`UPDATE push_token SET "updatedAt" = now() - interval '91 days' WHERE id = $1`, [old]);
+    const deleted = await deleteStalePushTokens(
+      ds.manager,
+      new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+    );
+    expect(deleted).toBe(1);
+    expect(await q(`SELECT id FROM push_token ORDER BY id`)).toEqual([{ id: fresh }]);
   });
 
   it("an account's erasure takes both dates with its registrations, and leaves the totals", async () => {
@@ -224,7 +258,7 @@ maybe('migration 054 (push delivery records) against PostgreSQL', () => {
     tally.attempted({ id, platform: 'android' });
     tally.accepted({ id, platform: 'android' });
     await recordPushDeliveries(ds.manager, tally, logger, 'it');
-    await stampPushFetched(ds.manager, 'u1', 'pixel', logger, 'wake');
+    await recordPushFetches(ds.manager, [{ userId: 'u1', deviceId: 'pixel' }], logger, 'wake');
 
     await deleteAccountPushTokens(ds.manager, 'u1');
 

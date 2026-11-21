@@ -18,6 +18,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import type { PushMessageInput } from '../services/push-payload';
 import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
+import { PUSH_DELIVERY_RECORDER } from '../utils/push-delivery-records';
 
 jest.mock('../utils/push-envelope', () => ({
   serveEnvelope: jest.fn(),
@@ -100,7 +101,12 @@ describe('PushController - the wake-up push', () => {
     controller = module.get(PushController);
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(async () => {
+    // The fetch stamp is written after the answer, by the process's one recorder: let it finish so
+    // no write of one test lands in the next one's mocks.
+    await PUSH_DELIVERY_RECORDER.settled();
+    jest.restoreAllMocks();
+  });
 
   describe('POST mls/push/register', () => {
     const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
@@ -377,18 +383,30 @@ describe('PushController - the wake-up push', () => {
       queuedRepo.findOne.mockResolvedValue(null);
       serve.mockResolvedValue({ kind: 'gone' });
       await fetch();
-      expect(stamps().map(([, params]) => params)).toEqual([['user-1', 'phone-1']]);
+      await PUSH_DELIVERY_RECORDER.settled();
+      expect(stamps().map(([, params]) => params)).toEqual([[['user-1'], ['phone-1']]]);
     });
 
-    it('answers the fetch exactly the same when the stamp cannot be written, and accuses it', async () => {
+    it('answers WITHOUT waiting for the stamp, and a stamp that fails is accused, never the fetch', async () => {
       queuedRepo.findOne.mockResolvedValue(null);
-      pushTokenRepo.manager.query.mockRejectedValueOnce(new Error('connection terminated'));
+      // The registration row is held elsewhere: the stamp waits, the answer must not.
+      let refuse: (e: Error) => void = () => {};
+      pushTokenRepo.manager.query.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            refuse = reject;
+          })
+      );
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
       await expect(controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false')).resolves.toEqual({
         status: 'gone',
       });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stamps()).toHaveLength(1);
+      refuse(new Error('connection terminated'));
+      await PUSH_DELIVERY_RECORDER.settled();
       expect(warn.mock.calls.map(([m]) => String(m)).join(' ')).toContain(
-        'lastPushFetchedAt NOT stamped route=wake'
+        'lastPushFetchedAt NOT stamped on 1 device(s) routes=wake'
       );
     });
 
@@ -396,6 +414,7 @@ describe('PushController - the wake-up push', () => {
       await expect(
         controller.fetchProtoForPush('PushSecret wrong', Q, 'user-1', 'phone-1')
       ).rejects.toBeInstanceOf(ForbiddenException);
+      await PUSH_DELIVERY_RECORDER.settled();
       expect(stamps()).toEqual([]);
     });
   });

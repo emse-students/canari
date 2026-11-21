@@ -2114,21 +2114,36 @@ kept in the database (migration `054`, additive; `utils/push-delivery-records.ts
 **Where they are written, and what it costs a send.** Each send path fills a `PushDeliveryTally` in
 memory while it sends (`attempted` before the provider call, then `accepted` or `failed` /
 `pruned`) - no I/O. Once the batch has settled, the ONE hook (`recordDeliveries` in
-`MessagingService` and `CallsService`) hands it to `recordPushDeliveries` **without awaiting it**: two
-statements per batch whatever its size - one multi-row upsert of the counters, one UPDATE stamping
-`lastPushSentAt` on the accepted registrations. A message fan-out flushes once, when its last push
-settled (beside the `FCM sent batch` line); a lone deferred push flushes its own. The fetch stamp is
-one single-row UPDATE on the fetch request. **A write that fails logs `[PUSH_RECORD] ... NOT
-recorded|stamped` at WARN, naming what was lost, and never fails a send or a fetch.** No timer, no
-retry: a lost count is a WARN, and the next batch counts afresh.
+`MessagingService` and `CallsService`) hands it to the process's one writer, `PUSH_DELIVERY_RECORDER`,
+and returns. It is called from a `finally`, so a token prune that throws (the provider said the token
+is gone, the DELETE failed) still records the batch - as `failed`, never `pruned`. A message fan-out
+hands over once, when its last push settled (beside the `FCM sent batch` line); a lone deferred push
+hands over its own. The fetch routes hand over the device the same way and answer at once: the
+handler's answer never waits on its registration row, which an envelope store, a send's stamp or an
+erasure may hold while the OS counts the handler's background budget.
+
+**What it costs the database.** The recorder writes ONE thing at a time per process and folds
+everything handed over meanwhile into the next write: the tallies of one kind into one tally, the
+fetched devices into one set. So each write is at most one counter upsert per kind (a handful of
+rows), one UPDATE stamping `lastPushSentAt` on the accepted registrations and one UPDATE stamping
+`lastPushFetchedAt` on the devices that fetched - on ONE pool connection, however many batches
+arrived. Without it, every batch was its own un-awaited autocommit upsert on the same few hot
+counter rows of the day, each holding a pool connection while it queued on the row lock. The bound
+is per process: N replicas write N at a time, which is what the deadlock rule below is for. **A write
+that fails logs `[PUSH_RECORD] ... NOT recorded|stamped` at WARN, naming what was lost, and never
+fails a send or a fetch.** No timer, no retry: the next write starts when the previous one ends. What
+is still pending when a process exits is lost without a line - at most what arrived during its last
+write.
 
 **Why it cannot deadlock.** The counter rows are inserted in one order (platform, outcome, code,
-`WITH ORDINALITY ... ORDER BY`), so two flushes over the same rows wait for each other. The stamp
-locks its registrations in `("userId", "deviceId")` order with `FOR NO KEY UPDATE` - the order
-`deleteAccountPushTokens` and `storeEnvelopes` lock a user's rows in, and the strength the UPDATE
-itself takes, so it blocks no foreign-key check. `GREATEST` keeps a date from going back when two
-flushes commit out of order; the day and the dates are the DATABASE's clock (UTC), one for every
-replica.
+`WITH ORDINALITY ... ORDER BY`), so two replicas' writes over the same rows wait for each other.
+Both stamps lock their registrations in `("userId", "deviceId")` order with `FOR NO KEY UPDATE` (the
+strength the UPDATE itself takes, so it blocks no foreign-key check). Every other statement that
+locks SEVERAL `push_token` rows takes them in that order too: `deleteAccountPushTokens` and
+`storeEnvelopes` (one account, `deviceId` order) and the 90-day sweep `deleteStalePushTokens`, which
+locked in scan order until this change. The rest touch one row each, and a statement holding one
+lock cannot close a cycle. `GREATEST` keeps a date from going back when two writes commit out of
+order; the day and the dates are the DATABASE's clock (UTC), one for every replica.
 
 **The lead's queries** (read-only; production access is in the private operations notes). Member X,
 per device - the account id is the core-service user id:
@@ -2166,12 +2181,14 @@ SELECT "day", kind, platform,
 A measurement taken from these names roles and counts, never people, when it is written into this
 repository ([durable-rules](../durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
 
-Tests: `utils/push-delivery-records.spec.ts` (the tally, the two statements, the WARNs),
-`services/messaging.push-delivery-records.spec.ts` (`sendPushToUser` and a fan-out write once per
-batch, a failed write changes no answer), `services/calls.service.spec.ts` (a ring with a gone VoIP
-token), `controllers/push.controller.wake.spec.ts` (the fetch stamp on both routes),
-`migrations/054_push_delivery_records.integration.spec.ts` (the SQL against PostgreSQL: counts add,
-concurrent flushes lose nothing, the stamp never goes back, the erasure takes the dates).
+Tests: `utils/push-delivery-records.spec.ts` (the tally, the statements, the WARNs, the recorder
+folding a burst into one write), `services/messaging.push-delivery-records.spec.ts` (`sendPushToUser`
+and a fan-out hand over once per batch, a failed write changes no answer, a prune that throws still
+records), `services/calls.service.spec.ts` (a ring with a gone VoIP token, and its clear throwing),
+`controllers/push.controller.wake.spec.ts` (the fetch stamp on both routes, the answer not waiting
+for it), `migrations/054_push_delivery_records.integration.spec.ts` (the SQL against PostgreSQL:
+counts add, concurrent writes lose nothing, the recorder's burst lands whole, the stamp never goes
+back, the 90-day sweep, the erasure takes the dates).
 
 #### Transport — single gateway (FCM)
 

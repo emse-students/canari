@@ -53,7 +53,7 @@ import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
 import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 import { RouteParams } from '../common/route-params';
-import { stampPushFetched } from '../utils/push-delivery-records';
+import { PUSH_DELIVERY_RECORDER } from '../utils/push-delivery-records';
 
 /**
  * Max size of an encrypted media blob the push proxy will relay for a notification thumbnail
@@ -187,12 +187,14 @@ export class PushController {
   }
 
   /**
-   * Stamps `lastPushFetchedAt` for a device whose native handler fetched what a push pointed at
-   * (migration 054, `stampPushFetched`): one UPDATE of its registration row, which never fails the
-   * fetch - a failed stamp logs at WARN.
+   * Hands the process's one writer ({@link PUSH_DELIVERY_RECORDER}, migration 054) that this device's
+   * native handler fetched what a push pointed at, and returns at once: the answer never waits on the
+   * registration row, which an envelope store, a send's stamp or an erasure may hold - the handler
+   * runs on a background budget the OS counts. The write folds every fetch since the last one into ONE
+   * statement; a failed one logs at WARN there.
    */
-  private async stampFetched(userId: string, deviceId: string, route: string): Promise<void> {
-    await stampPushFetched(this.pushTokenRepo.manager, userId, deviceId, this.logger, route);
+  private stampFetched(userId: string, deviceId: string, route: string): void {
+    PUSH_DELIVERY_RECORDER.fetched(this.pushTokenRepo.manager, userId, deviceId, route);
   }
 
   /**
@@ -507,7 +509,7 @@ export class PushController {
     const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
 
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
-    await this.stampFetched(userId, deviceId, 'fetch-proto');
+    this.stampFetched(userId, deviceId, 'fetch-proto');
 
     const found = await this.queuedMessageRepo.findOne({
       where: { id: messageId, recipientId: userId, deviceId },
@@ -580,7 +582,7 @@ export class PushController {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
     const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
     // The PushSecret is proven by the guard: whatever this answers, the push reached the handler.
-    await this.stampFetched(userId, deviceId, 'wake');
+    this.stampFetched(userId, deviceId, 'wake');
     if (envelopeIdRaw !== undefined) {
       if (messageIdRaw !== undefined) {
         throw new BadRequestException('name messageId or envelopeId, not both');
