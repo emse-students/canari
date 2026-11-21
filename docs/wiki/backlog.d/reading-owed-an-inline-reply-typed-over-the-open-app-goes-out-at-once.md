@@ -39,11 +39,18 @@ the banner answered. Mechanism:
    cours` for good. Then the same, signing OUT instead of killing: the in-app log reads
    `[QuickReply] sign-out: the account's unsettled replies are settled`.
 
-**Sitting of 2026-11-21 on `1.7.3-alpha.3` (dev build `dev.0d2bc4b`): NO ROW TAKEN, all stay owed.** The Mi 9T
-had no network: Wi-Fi scans found no access point (scan results frozen, not refreshed), no SIM, and
-a toggle, an airplane cycle and the one allowed reboot did not bring it back; an inline reply needs
-a peer message to arrive, so none of the rows could start. A USB-tethering attempt
-(`svc usb setFunctions rndis`, without `adb`) then dropped the adb transport until the cable is
-replugged: **never switch the USB function without keeping `adb` in the list**
-(`svc usb setFunctions rndis,adb`). The `1.7.3-alpha.3` APK (versionCode 100700303) is installed on
-the phone, signed in and unlocked. Take these rows when the phone is on a working Wi-Fi.
+**Readings of 2026-11-21 on `1.7.3-alpha.3` (Mi 9T, dev, `dev.0d2bc4b`): rows 1, 2, 3 and 5 OWED, row 4 PASS.**
+The precondition of rows 1-3 and 5 - a banner on screen while the app is in front - could not be
+produced on this build, three ways tried: (a) with the app in front the push is never shown
+(`[PUSH_SHOW] outcome=suppressed-foreground-guard`, also with the page's socket cut by Wi-Fi off for
+75 s); (b) a banner posted while the app was in the background is REMOVED within one second of the
+app coming to the front (`am start`, polled each second: gone at t+1 s), with the network up or
+with a failing private DNS, and **no Canari log line says why** (a silent dismissal - the
+2026-11-20 `Every swallowed branch logs` rule); (c) a force-stop clears them anyway. The route
+`PAGE` (`handReplyToPage`) was therefore never reached, and nothing of rows 1, 2, 3 or 5 was
+read. What is left to try: a banner and the front edge racing (the push landing between the
+activity's start and the guard being held), which no sitting here could time.
+- **Row 4 (control, background) PASS:** `CanariNotifAction: handleReply: route NATIVE, the foreground
+  guard is released`, `handleReply: queued id=...`, `drainOutboxBackground: sent id=...` (HTTP 201),
+  the banner kept with the answer (`answerReplyNotification: answered - KEPT_UNTIL_READ`); the
+  peer's pane holds the reply.

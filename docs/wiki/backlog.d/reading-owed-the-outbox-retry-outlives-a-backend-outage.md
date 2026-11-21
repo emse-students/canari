@@ -32,11 +32,27 @@ the mirror holds an entry. Mechanism:
    read `can still go - retry` - never `the app must open`. DNS restored, A's reply leaves; opening the
    app shows the refused reply failed, with "Réessayer".
 
-**Sitting of 2026-11-21 on `1.7.3-alpha.3` (dev build `dev.0d2bc4b`): NO ROW TAKEN, all stay owed.** The Mi 9T
-had no network: Wi-Fi scans found no access point (scan results frozen, not refreshed), no SIM, and
-a toggle, an airplane cycle and the one allowed reboot did not bring it back; an inline reply needs
-a peer message to arrive, so none of the rows could start. A USB-tethering attempt
-(`svc usb setFunctions rndis`, without `adb`) then dropped the adb transport until the cable is
-replugged: **never switch the USB function without keeping `adb` in the list**
-(`svc usb setFunctions rndis,adb`). The `1.7.3-alpha.3` APK (versionCode 100700303) is installed on
-the phone, signed in and unlocked. Take these rows when the phone is on a working Wi-Fi.
+**Readings of 2026-11-21 on `1.7.3-alpha.3` (Mi 9T, dev): row 2 PASS, row 3 PARTIAL, row 4 PARTIAL, row 1 OWED.**
+- **A blocker for rows 1 and 3's first half, found by reading:** the reading's way of producing an
+  outage - a private DNS that does not resolve - leaves the network UNVALIDATED, and
+  `OutboxRetryWorker` requires `INTERNET&TRUSTED&VALIDATED`, so the system never runs it
+  (`dumpsys jobscheduler`: `Unsatisfied constraints: CONNECTIVITY`; no `doWork` line in 11 minutes,
+  from 18:15 to 18:26). No run exists to say `still queued, each can still go - retry`. The reading
+  needs an outage that keeps the network validated (a backend that answers 5xx or does not answer
+  while the internet is up); the DNS recipe cannot produce one.
+- **Row 2 PASS:** private DNS restored after 12 minutes: `doWork: drain run 0 (1 queued)`,
+  `sendQueuedMessagePush: HTTP 201`, `drainOutboxBackground: sent`, `doWork: outbox drained - success`
+  (the next job run after the network validated, 2 s after the setting changed).
+- **Row 3 PARTIAL:** at the background edge `enqueueIfMirrorHolds: 1 queued as the app leaves the
+  front - retry enqueued` and the reply left on that run (`outbox drained - success`, about 2 minutes
+  later, when the DNS was restored). NOT READ: the in-front line `the outbox is the page's, this
+  request ends` (the worker never ran in front, same blocker).
+- **Row 4 PARTIAL:** two replies queued (a DM and a group the account had been removed from), DNS
+  restored: the DM left (HTTP 201); the other `sendQueuedMessagePush: HTTP 403 is a refusal of this
+  frame - kept, and no background retry will send it`, `1 message(s) will not go from here - kept,
+  marked, the member told`, the nudge posted (`id=999, queued=1`), `doWork: 1 message(s) left, none
+  can go from here - marked and told, the request ends`. NOT READ: the runs that follow a refusal
+  while another entry can still go (the DM left in the same run), and "Réessayer" in the app: the
+  refused entry's conversation was a removed one ("Cette conversation a été supprimée", no composer),
+  where no failed line or Réessayer showed after opening the app, and the nudge was gone. A refused
+  reply in a conversation that still exists was not produced.
