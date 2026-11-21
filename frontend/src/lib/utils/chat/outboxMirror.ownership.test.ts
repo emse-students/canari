@@ -427,7 +427,7 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     const storage = makeStorage([textEntry('queued')]);
     const { outbox, sendMessage } = controllerOver(storage);
     outbox.flush();
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 0));
     expect(sendMessage).not.toHaveBeenCalled();
     outbox.flush();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
