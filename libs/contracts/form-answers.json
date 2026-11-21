@@ -30,6 +30,7 @@
     "answerLocked": "FORM_ANSWER_LOCKED",
     "answerNotEditable": "FORM_ANSWER_NOT_EDITABLE",
     "answerNotFound": "FORM_ANSWER_NOT_FOUND",
-    "answerPaid": "FORM_ANSWER_PAID"
+    "answerPaid": "FORM_ANSWER_PAID",
+    "blockInvalid": "FORM_BLOCK_INVALID"
   }
 }

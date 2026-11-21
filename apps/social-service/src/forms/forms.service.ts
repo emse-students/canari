@@ -51,6 +51,7 @@ import {
   type FormDraftState,
 } from './form-draft-revision';
 import { plainToInstance } from 'class-transformer';
+import { normaliseFormBlocks, questionItemsOf, withoutBlockAnswers } from './form-blocks';
 import { validate, type ValidationError } from 'class-validator';
 
 /** Every constraint a validation refused, nested ones (a question, an option) included, as the pipe says them. */
@@ -981,6 +982,8 @@ export class FormsService {
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
+    // A text or image block keeps a block's fields alone, and no question may depend on one.
+    input = { ...input, items: normaliseFormBlocks(input.items) };
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     assertMultipleChoiceGridOneGroup(
@@ -1573,14 +1576,16 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
-    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
-    const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
     if (input.items !== undefined) {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
+      // A text or image block keeps a block's fields alone, and no question may depend on one.
+      input = { ...input, items: normaliseFormBlocks(input.items) };
     }
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
     // The form as this edit WILL save it: an absent field keeps the stored value, for every field a
     // rule reads, or an edit sending only `isPublic: true` would publish a stored cotisation grant or
     // an audience restriction nobody re-checked - and a rule judged on the edit alone would depend on
@@ -2638,7 +2643,14 @@ export class FormsService {
 
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
-    input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
+    // A block takes no answer: a key naming one is dropped before anything below reads the answers.
+    input = {
+      ...input,
+      answers: withNormalisedGridAnswers(
+        form.items ?? [],
+        withoutBlockAnswers(form.items, input.answers ?? {}, `submit ${formTag(form)}`)
+      ),
+    };
 
     // The files this answer cites: their SHAPE here, their ownership inside the transaction below
     // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
@@ -3392,7 +3404,10 @@ export class FormsService {
   ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
     const items = form.items ?? [];
     const locked = rowLockedItemIds(form, row);
-    const sent = withNormalisedGridAnswers(items, answersIn);
+    const sent = withNormalisedGridAnswers(
+      items,
+      withoutBlockAnswers(items, answersIn, `edit ${tag}`)
+    );
     const merged: Record<string, unknown> = { ...sent };
     for (const itemId of locked) {
       if (itemId in sent && !sameAnswer(sent[itemId], row.answers?.[itemId])) {
@@ -4731,7 +4746,9 @@ export class FormsService {
       });
     }
 
-    form.items.forEach((item: FormItemLike) => {
+    // One column per QUESTION: a text or image block takes no answer, so it has no column.
+    const questions = questionItemsOf<FormItemLike>(form.items);
+    questions.forEach((item) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
     });
 
@@ -4788,7 +4805,7 @@ export class FormsService {
       if (editedColumn) row.editedAt = sub.editedAt ? new Date(sub.editedAt) : null;
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
-      form.items.forEach((item: FormItemLike) => {
+      questions.forEach((item) => {
         row[item.id] = answerText(sub.answers[item.id], item, words, sub.lines);
       });
 

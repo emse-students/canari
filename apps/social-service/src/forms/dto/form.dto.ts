@@ -17,6 +17,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
   registerDecorator,
   ValidationOptions,
@@ -28,6 +29,7 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
+import { isFormBlock } from '../form-blocks';
 import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-item-images.service';
 import {
   ANSWER_MAX_SELECTIONS,
@@ -91,6 +93,12 @@ export class FormOptionDto {
 }
 
 export class FormItemDto {
+  /**
+   * The question's text. A block's (`form-blocks.ts`) is its optional heading or caption, so it may
+   * be empty there - and is checked to be text by `normaliseFormBlocks`, since `ValidateIf` lifts
+   * every rule of this field for a block.
+   */
+  @ValidateIf((item: { type?: unknown }) => !isFormBlock(item))
   @IsString()
   @IsNotEmpty()
   label: string;

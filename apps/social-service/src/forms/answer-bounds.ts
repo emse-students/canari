@@ -84,6 +84,12 @@ export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
  * answer is refunded or cancelled instead - its payment stays on the record (owner, 2026-11-14).
  */
 export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
+/**
+ * A text or image block (`form-blocks.ts`) carries what only a question may - `required`, options,
+ * rows, a priced grid, a condition - or nothing to show, or a question's condition names a block.
+ * Refused at save; `itemId` names the item.
+ */
+export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
 /** The payment statuses of an answer whose money was received and kept: it is never deleted. */
 export const PAID_SUBMISSION_STATUSES = ['paid', 'paid_over_capacity'] as const;
 

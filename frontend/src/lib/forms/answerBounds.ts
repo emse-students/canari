@@ -4,6 +4,7 @@ import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRe
 import { productGridDefinitionMessage } from './productGridEditor';
 import { productGridRefusalMessage } from './productGridFill';
 import { FORM_CLOSE_BEFORE_OPEN, FORM_CLOSE_NOT_OPEN_YET } from './formWindow';
+import { formBlockProblem, isFormBlock } from './formBlocks';
 
 /**
  * THE BOUNDS OF A FORM AND OF AN ANSWER, AND THE SENTENCE FOR EACH CODED REFUSAL OF A FORM.
@@ -76,6 +77,11 @@ export const FORM_ANSWER_NOT_FOUND = 'FORM_ANSWER_NOT_FOUND';
  * @public Read through the namespace import by answerBounds.test.ts (contract codes).
  */
 export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
+/**
+ * A text or image block is empty or carries a question's setting, or a question depends on a block
+ * (refused at save, `itemId` names the item; `formBlocks.ts`).
+ */
+export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
@@ -132,6 +138,8 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_answer_not_editable();
     case FORM_ANSWER_PAID:
       return m.form_refusal_answer_paid();
+    case FORM_BLOCK_INVALID:
+      return m.form_refusal_block_invalid();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);
@@ -189,6 +197,8 @@ export function formItemsProblem(
   items: readonly {
     type?: string;
     label?: string;
+    description?: string;
+    imageUrl?: string;
     rows?: readonly EditorRow[];
     options?: readonly { label?: string }[];
   }[]
@@ -197,6 +207,12 @@ export function formItemsProblem(
     return m.form_builder_too_many_questions({ max: FORM_MAX_QUESTIONS });
   }
   for (const item of items) {
+    // An empty text block, an image block with no image (`FORM_BLOCK_INVALID` at save).
+    if (isFormBlock(item)) {
+      const problem = formBlockProblem(item);
+      if (problem) return problem;
+      continue;
+    }
     if (item.type !== 'matrix_single' && item.type !== 'matrix_multiple') continue;
     const rows = gridRowLabels(item.rows).filter(Boolean);
     if (rows.length > GRID_MAX_ROWS)
