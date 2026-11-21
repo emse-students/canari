@@ -841,6 +841,8 @@ EVERY line the conversation's notification holds, on the same clock rule. Each l
 instants in its extras (`LINE_SENT_AT`, `LINE_SERVER_AT`, written by `showMessageNotification`,
 re-injected with the line on every later post - androidx core keeps a message's extras - and
 restamped when a second trigger of the same message knows the server instant the first did not).
+A REACTION's line is the exception: it carries no server instant (its `LINE_SERVER_AT` is 0), so no
+mark weighs it - its notification follows the conversation instead (below, round 14).
 
 **THE BANNER IS WHAT THIS PROCESS POSTED, NOT WHAT THE SHADE ANSWERS.** `notify` returns before
 NotificationManagerService has enqueued the record (it posts a runnable to its handler), so the shade
@@ -905,7 +907,10 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   id goes - every peer line stays for a later read to weigh, and every other reply still queued
   stays pending. With no line left the banner goes - NOT its reaction notification, which a peer
   may not have seen (round-9 correction); otherwise it is rebuilt silently (`setOnlyAlertOnce`) from
-  its own template, and left as it was - logged at WARN - when it has none.
+  its own template, and left as it was - logged at WARN - when it has none. A banner the platform
+  holds is re-posted with what the delivery LEFT, never with the delivered line (round 14, S-a: r0
+  failed offline, the network came back, r2 was answered inline, and the drain delivered both - the
+  held re-post used to draw r0's "non envoyé" again).
 - **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
   the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
   watermark. Answering is reading, so the peer lines its watermark covers go and the reaction goes - but a line of
@@ -969,12 +974,13 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     is left to the next post. Otherwise the switch's cancel would be dropped, and the re-enqueued old
     record would bury the new line.
   - The app's start takes ONE shade snapshot for every "held?" (only the system sets the flag) and
-    leaves held banners out of its sweep. One the record did not hold (a fresh process) is decided by
-    its FRESH shade copy: released since, it is cancelled; still held, it is rebuilt and recorded under
-    its conversation (`releaseUnrecordedHold`). A banner the record has just cancelled is never
-    rebuilt.
-  - A held banner with no line to re-post is kept and reported at WARN. No answer text is known
-    outside the answer itself.
+    leaves held banners out of its sweep. `releaseUnrecordedHold` then asks THE RECORD FIRST (round
+    14, B2): a banner it holds was re-posted and kept by `forgetAll`, and that re-post may land at
+    once and read as released - cancelling it then left a record of a banner that was gone. Only one
+    the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
+    is cancelled; still held, it is rebuilt and recorded under its conversation.
+  - A held banner with no line to re-post is posted again as it is, from its template (round 14):
+    any app post ends the hold, and it stays recorded.
 
   What the answer shows (round-12, S-b) is posted the standard way: the lines that stay (newer than
   the watermark, or another reply still queued), then the answer as this account's own line
@@ -995,12 +1001,15 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
 - **Answering is reading UP TO THE WATERMARK** (round-11 review, S2). The answer records the instants
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
-  sent is newer and stays, and the banner is rebuilt silently with it. The conversation's REACTION
-  notification goes too only when the mark covers every line it holds. This applies after an answer
-  and after a read (rounds 12-13; `ReadElsewhereMarks.cancelReactionIfCovered`). It weighs a RECORD
-  of the stamped lines this process posted (`rememberReaction`, under the record's lock), not the
-  shade, which lags a `notify`. An unstamped line, from an older build, is never covered. A dismissal
-  with no mark ("mark as read", a silent-from-self push) cannot weigh, and removes it as before.
+  sent is newer and stays, and the banner is rebuilt silently with it.
+- **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
+  `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
+  its reaction notification too: an answer, a read that cancels the banner or finds it held after
+  covering every line (`holds` is asked only then), a dismissal ("mark as read", a silent-from-self
+  push). A late delivery is not a read and leaves it. Why not weigh it on its own, as rounds 12-13
+  did: a reaction line carries no server instant (`LINE_SERVER_AT` 0), so a server-clock mark never
+  covered it and the reaction stayed after every read. Principle 2 holds: the reaction itself stays
+  in the conversation - only its alert goes, when the conversation it belongs to is read.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
