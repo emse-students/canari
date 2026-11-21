@@ -397,27 +397,50 @@ export function reactionContent(
   };
 }
 
-/** A watched form opens in five minutes. Nobody acted, so there is no actor. */
-export function formOpeningSoonContent(): PushContent {
+/**
+ * What a form reminder names (owner, 2026-11-17, "the reminder names who and what"): the
+ * association that runs the form (the actor, so the row and the push stop reading "Canari") and the
+ * form's title. Both empty for a form that has neither, and the sentence then reads as it always did.
+ */
+export interface FormReminderSubject {
+  formTitle?: string | null;
+  associationName?: string | null;
+}
+
+const quoted = (title: string) => `« ${title} »`;
+
+/**
+ * A watched form opens in five minutes. The actor is the association, when the form has one: it is
+ * who runs the form, and nobody acted on the person.
+ */
+export function formOpeningSoonContent(subject: FormReminderSubject = {}): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
   return {
     key: 'form_opening_soon',
-    actorName: '',
-    arg: '',
-    // English, unlike every other sentence here, and for the same underlying reason: whoever wrote
-    // it picked a language for everyone. It goes out with the shim like the rest.
-    legacyTitle: 'Formulaire bientôt ouvert',
-    legacyBody: 'Un formulaire que vous suivez ouvre dans 5 minutes !',
+    actorName: association,
+    arg: title,
+    legacyTitle: association
+      ? `${association} : formulaire bientôt ouvert`
+      : 'Formulaire bientôt ouvert',
+    legacyBody: title
+      ? `${quoted(title)} ouvre dans 5 minutes !`
+      : 'Un formulaire que vous suivez ouvre dans 5 minutes !',
   };
 }
 
-/** A watched form is now open. */
-export function formOpenContent(): PushContent {
+/** A watched form is now open: names its association and its title (same subject as above). */
+export function formOpenContent(subject: FormReminderSubject = {}): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
   return {
     key: 'form_open',
-    actorName: '',
-    arg: '',
-    legacyTitle: 'Formulaire ouvert !',
-    legacyBody: 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
+    actorName: association,
+    arg: title,
+    legacyTitle: association ? `${association} : formulaire ouvert !` : 'Formulaire ouvert !',
+    legacyBody: title
+      ? `${quoted(title)} est disponible - dépêchez-vous, les places sont limitées !`
+      : 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
   };
 }
 

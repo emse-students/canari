@@ -403,6 +403,15 @@ describe('NotificationRow sentence', () => {
     expect(hidden.textContent).toContain(m.notif_booking_open_text());
   });
 
+  // Owner, 2026-11-17: the reminder names who - the association's logo, never the system actor's profile.
+  it("draws a form's opening reminder with the association's logo, and the system actor's avatar without one", () => {
+    const named = renderRow({ ...postRow('form_reminder'), associationId: 'asso-1' });
+    expect(named.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    expect(named.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+    const old = renderRow(postRow('form_reminder'));
+    expect(old.querySelector('[aria-label^="Avatar de"]')).not.toBeNull();
+  });
+
   it('says a person asks to follow you, and that a person accepted your request', () => {
     const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });
     const asked = renderRow(follow('follow_request'));
