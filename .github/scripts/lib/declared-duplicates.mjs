@@ -218,7 +218,7 @@ export const DECLARED_GROUPS = [
   {
     what: 'where the cursus of an anonymous form answer came from (the account or the respondent), and when the list and the export say so',
     compare: 'exact',
-    why: 'the export (server) and the responses list (screen) read ONE snapshot key by ONE rule, so a certified promo is never mixed silently with a declared one (owner review, 2026-11-21). No shared TS package, for the reason the option rule above gives; the file imports nothing. Its specs sit beside both copies.',
+    why: 'the export (server) and the responses list (screen) read ONE snapshot key by ONE rule, so a certified promo is never mixed silently with a declared one (review, 2026-11-21). No shared TS package, for the reason the option rule above gives; the file imports nothing. Its specs sit beside both copies.',
     files: [
       'frontend/src/lib/forms/respondentSource.ts',
       'apps/social-service/src/forms/respondent-source.ts',

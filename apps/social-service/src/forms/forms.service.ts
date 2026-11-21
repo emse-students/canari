@@ -4473,7 +4473,7 @@ export class FormsService {
   }
 
   /**
-   * A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE TOLD THEM (principle 1, owner review 2026-11-21).
+   * A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE TOLD THEM (principle 1, review 2026-11-21).
    * The page sends the account fields it displayed (`announcedFields`); a form whose join changed
    * since it loaded (an organiser ticked a box on a live form) is refused
    * `FORM_RESPONDENT_FIELDS_CHANGED` before anything is read or written, and the page reloads and
@@ -4636,7 +4636,7 @@ export class FormsService {
       identityColumns.length > 0
         ? { ...LEGACY_IDENTITY_EXPORT_LABELS, ...labels.identity }
         : undefined;
-    // Certified and declared promos are never mixed silently (owner review, 2026-11-21): once an
+    // Certified and declared promos are never mixed silently (review, 2026-11-21): once an
     // answer's cursus came from the account, each row says which it is.
     const sourceColumn = showsCursusSource(form, submissions);
 

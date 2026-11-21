@@ -552,7 +552,7 @@ so it shows its generic failure. The cause is the join it cannot see; the answer
 the organiser editing from a current build).
 The fill page of an old build asks the member the cursus (the cursus stays in `guestFields` for guests),
 which the server accepts for it.
-**A second shim, the same removal (owner review, 2026-11-21): a submit announcing nothing.** The page
+**A second shim, the same removal (review, 2026-11-21): a submit announcing nothing.** The page
 sends `announcedFields` (the join it displayed) and the server refuses `FORM_RESPONDENT_FIELDS_CHANGED`
 when the form changed since. A build older than `1.7.3` sends none: on an ANONYMOUS form it is never
 joined (above); on a NAMED form it is joined as before, logged `[LEGACY] a submit to a form joining

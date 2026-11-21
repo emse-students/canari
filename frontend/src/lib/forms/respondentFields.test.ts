@@ -26,7 +26,7 @@ import {
 } from './respondentFields';
 import { cursusSourceOf, showsCursusSource } from './respondentSource';
 
-describe('where the cursus of an answer came from (owner review, 2026-11-21)', () => {
+describe('where the cursus of an answer came from (review, 2026-11-21)', () => {
   const account: RespondentIdentity = {
     source: 'account',
     cursus: [{ promo: 2024, formation: 'ICM' }],

@@ -139,7 +139,7 @@ export class InternalUsersController {
       this.logger.warn(`internal respondent-identity miss id=${id.slice(0, 8)}`);
       throw new NotFoundException({ code: RESPONDENT_UNKNOWN, message: 'No such account.' });
     }
-    // No id here (owner review, 2026-11-21): only a form submit calls this route, so a line naming
+    // No id here (review, 2026-11-21): only a form submit calls this route, so a line naming
     // the account would pair it, within the second, with the access log's submit URL - on an
     // ANONYMOUS form that would name who answered. The miss above stays: it is the accusation.
     this.logger.debug('internal respondent-identity read');

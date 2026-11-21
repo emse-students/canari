@@ -331,7 +331,7 @@ function carriesDeclared(input: DeclaredIdentityInput): boolean {
 }
 
 /**
- * How a log line names a form. An ANONYMOUS form is never named on its submit path (owner review,
+ * How a log line names a form. An ANONYMOUS form is never named on its submit path (review,
  * 2026-11-21): a line with the form and a line with the account would pair them, so the caller passes
  * an empty id ({@link identityFormId}) and the line says only that the form is anonymous.
  */

@@ -141,7 +141,7 @@ export class PricingFactsService {
     userId: string,
     context: { anonymous?: boolean } = {}
   ): Promise<readonly CursusView[]> {
-    // An ANONYMOUS form's submit names nobody in its logs (owner review, 2026-11-21), as in
+    // An ANONYMOUS form's submit names nobody in its logs (review, 2026-11-21), as in
     // `accountIdentity`: no line of this read pairs a person with the form.
     const who = context.anonymous ? 'an anonymous respondent' : `user=${userId.slice(0, 8)}`;
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
@@ -213,7 +213,7 @@ export class PricingFactsService {
     userId: string,
     context: { anonymous?: boolean } = {}
   ): Promise<AccountIdentity | null> {
-    // An ANONYMOUS form's submit names nobody in its logs (owner review, 2026-11-21): the account id
+    // An ANONYMOUS form's submit names nobody in its logs (review, 2026-11-21): the account id
     // is left out of every line of this read, so no line pairs a person with the form.
     const who = context.anonymous ? 'an anonymous respondent' : `user=${userId.slice(0, 8)}`;
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/respondent-identity`);

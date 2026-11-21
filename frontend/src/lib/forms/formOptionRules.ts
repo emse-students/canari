@@ -55,7 +55,7 @@ export interface FormOptionState {
   joinsAccountBeyondCursus: boolean;
   /**
    * The save asks an anonymous form to read the cursus from the account WITHOUT also asking it: a
-   * guest has no account and would never be asked the promo and formation (owner review, 2026-11-21).
+   * guest has no account and would never be asked the promo and formation (review, 2026-11-21).
    */
   joinsCursusUnasked: boolean;
 }

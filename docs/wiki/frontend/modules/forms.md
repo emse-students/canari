@@ -1443,7 +1443,7 @@ would be a separate decision.
    a profile field and NOT joined; it is a question the organiser asks in the form, declared like any
    answer.
 
-6. **A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE ANNOUNCED** (owner review, 2026-11-21, principle 1; named
+6. **A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE ANNOUNCED** (review, 2026-11-21, principle 1; named
    forms too). The fill page sends the account fields it displayed (`announcedFields`, the served
    `respondentFields`); the server compares them with the form's join AT SUBMIT and, on any difference,
    refuses `FORM_RESPONDENT_FIELDS_CHANGED` before reading the account or writing a row. The page reads
@@ -1452,13 +1452,13 @@ would be a separate decision.
    notice. A build announcing nothing (older than `1.7.3`): on an anonymous form it is never joined; on a
    NAMED form it is joined as before, logged `[LEGACY]`
    ([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-173---an-anonymous-form-that-reads-the-cursus-from-the-account-seen-by-a-build-that-cannot-announce-it-2026-11-21)).
-7. **The Source of a cursus is never mixed silently** (owner review, 2026-11-21). Once any answer of an
+7. **The Source of a cursus is never mixed silently** (review, 2026-11-21). Once any answer of an
    ANONYMOUS form carries a cursus read from the account, the responses list and the XLSX export add a
    **"Source"** column after "Formation" (`showsCursusSource`, `cursusSourceOf`), per row, "compte" or
    "déclaré" in the client's words (`identity.source`, `sourceAccount`, `sourceDeclared`; a build sending none
    gets the French ones). A per-row column rather than a suffix, because the export splits promo and
    formation into columns and a suffix would break the filter on them. Named forms keep their columns.
-8. **No log line pairs a person with an anonymous form** (owner review, 2026-11-21; Nest's default logger
+8. **No log line pairs a person with an anonymous form** (review, 2026-11-21; Nest's default logger
    emits debug in production). On an anonymous submit social-service names the form as "an anonymous form"
    (`formTag`, `identityFormId`: the "priced on" line, the audience, grid and file refusals, the identity
    refusals and the [LEGACY] lines) and the account read (`accountIdentity` with `{ anonymous: true }`) says

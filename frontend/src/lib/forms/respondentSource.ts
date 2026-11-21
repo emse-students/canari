@@ -1,5 +1,5 @@
 /**
- * WHERE AN ANSWER'S CURSUS CAME FROM - ONE RULE, READ BY THE EXPORT AND BY THE LIST (owner review,
+ * WHERE AN ANSWER'S CURSUS CAME FROM - ONE RULE, READ BY THE EXPORT AND BY THE LIST (review,
  * 2026-11-21).
  *
  * An ANONYMOUS form may read a member's promo and formation from the account instead of asking them
