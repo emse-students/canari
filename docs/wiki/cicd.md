@@ -3474,14 +3474,17 @@ each `id package version`:
 | State | Verdict |
 | --- | --- |
 | the advisory is reported on that package version | needed, silent |
-| not reported, but an image still carries that package version | **notice**, naming the Trivy DB version: the feed dropped it, the image did not move |
+| not reported, but an image still carries that package version | **kept, one plain log line** (never an annotation) naming the Trivy DB version: the advisory was dropped, rescored below HIGH or lost its fixed version (the scan filters on `--severity` and `--ignore-unfixed`, so the causes are not told apart), the image did not move |
 | not reported, and NO image carries that package version | **dead, the run fails**: the reviewed code is gone |
 
-**Why this keeps the protection.** A stale `--ignore` is dangerous because it hides a FUTURE finding.
-An entry here is scoped to one advisory id on one package version, so a different advisory, or the same
-package at a new version, is outside it - the entry can only suppress what was assessed. The moment
-the image moves (a pin, an authentik release) the covered version leaves the inventory and the entry
-fails. The alternative considered, failing only after N runs "unseen in the DB for the digest", needs
+**Why this keeps the protection, and where it is weaker.** A stale `--ignore` is dangerous because it
+hides a FUTURE finding. A `purls:` entry is enforced by Trivy itself: one advisory id on one package
+version, so a new version is outside it. **A `paths:`-scoped or id-only entry is not**: Trivy ignores
+`covers:`, so it still suppresses its id on ANY version at that path (or anywhere), and `covers:` only
+tells the retirement check what the entry was reviewed on. The inventory is also pooled across all
+scanned images, so a covered package present in another image keeps an entry alive. Both gaps close by
+moving the version into `purls:` (follow-up). Either way, when the image moves (a pin, an authentik
+release) the covered version leaves the inventory and the entry fails. The alternative considered, failing only after N runs "unseen in the DB for the digest", needs
 state kept between runs (a clock by another name); the inventory is read from the run itself.
 
 **What lifts a refusal.** Delete the entry, or show that `trivy image --list-all-pkgs --format json
@@ -3489,7 +3492,7 @@ state kept between runs (a clock by another name); the inventory is read from th
 `image-allowlist-retirement.test.sh` (reported, feed-dropped with the package present, package gone,
 silent scan, no inventory) and `image-scan-allowlist.test.mjs` (every entry covers a package; the bash
 reader agrees with a YAML parse). Cost: an advisory withdrawn upstream leaves a harmless entry behind
-that shows up as a notice, not a failure.
+that shows up as a log line, not a failure.
 
 ### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 

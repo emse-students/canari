@@ -13,13 +13,17 @@
 # `image-scan-allowlist.yaml`). An entry is judged on that `id package version` triple, against what
 # the scan JSON carries (`--list-all-pkgs`):
 #   - the triple is REPORTED                    -> the entry is needed. Silent.
-#   - NOT reported, package still in an image   -> NOTICE only. The scanner's data dropped (or never
-#       listed) the advisory, but the package version the entry was reviewed on still ships, so the
-#       suppression still covers exactly what was assessed. The notice names the database version.
+#   - NOT reported, package still in an image   -> a plain log line, no failure. The advisory was
+#       dropped, rescored below HIGH or lost its fixed version (the scan filters on both), but the package version the entry was reviewed on still ships, so the
+#       suppression still covers exactly what was assessed. The line names the database version.
 #   - NOT reported, package version in NO image -> DEAD, exit 1. The image moved: the reviewed code
 #       is gone, and a suppression left behind would hide that advisory on whatever replaced it.
-# A stale entry cannot hide a NEW finding either way: it is scoped to one advisory id on one package
-# version, so a new advisory, or a new version of the package, is outside it.
+# HOW FAR THE SCOPE REACHES, honestly. A `purls:` entry is enforced by Trivy itself: one advisory id on
+# one package version, so a new version is outside it. A `paths:`-scoped or id-only entry is NOT:
+# Trivy ignores `covers:`, so such an entry still suppresses that id on ANY version at that path (or
+# anywhere), and `covers:` only tells THIS check what the entry was reviewed on. The inventory is also
+# pooled across all scanned images: a covered package present in another image keeps the entry alive.
+# Both are closed by putting the version into `purls:` (follow-up).
 #
 # THE TEST THAT LIFTS A REFUSAL: delete the entry (the image no longer carries what it covers), or, if
 # you believe the image still carries it, show it - `trivy image --list-all-pkgs --format json <image>`
@@ -27,13 +31,13 @@
 #
 # Usage: image-allowlist-retirement.sh <scan json (one or many objects)> <covers file> [database note]
 #   covers file: one `<id> <package> <version>` per line (`image-scan.sh --allowlist-covers`)
-# Exit:  0 no entry is dead (notices may have been printed); 1 one is dead, or the scan JSON is empty
+# Exit:  0 no entry is dead (kept-entry lines may have been printed); 1 one is dead, or the scan JSON is empty
 #        or the covers file names nothing (an empty answer is a silent registry, never proof).
 set -uo pipefail
 
 json="${1:?usage: image-allowlist-retirement.sh <scan json> <covers file> [database note]}"
 covers="${2:?usage: image-allowlist-retirement.sh <scan json> <covers file> [database note]}"
-db="${3:-an unknown database version}"
+db="${3:-an unreadable Trivy database}"
 
 [ -s "$json" ] || { echo "::error::the un-ignored scan printed nothing, so it cannot say whether any allowlist entry is still needed. Not granted."; exit 1; }
 [ -s "$covers" ] || { echo "::error::no allowlist entry names a package it covers, so there is nothing to check"; exit 1; }
@@ -50,7 +54,10 @@ while read -r id name version; do
   if grep -qxF -- "$id $name $version" <<<"$reported"; then
     continue
   elif grep -qxF -- "$name $version" <<<"$inventory"; then
-    echo "::notice title=Image scan allowlist::$id is not reported on $name $version by $db, but that package version is still in a scanned image: the entry stays (the advisory feed dropped it, the image did not move)."
+    # A plain log line, never an annotation: it is expected, and a line every run prints as a warning
+    # is noise. The causes are NOT told apart here: the scan runs with --severity HIGH,CRITICAL and
+    # --ignore-unfixed, so a dropped advisory, a rescore below HIGH and a lost fixed version look alike.
+    echo "    $id: not reported on $name $version by $db (dropped, rescored below HIGH, or no fixed version any more), but that package version is still in a scanned image: kept."
     unlisted=$((unlisted + 1))
   else
     dead="$dead
@@ -63,4 +70,4 @@ if [ -n "$dead" ]; then
   echo "::error::an allowlist entry covers a package version that NO scanned image carries any more - the image moved, so delete that entry (or purl). To keep it, the scan inventory (trivy image --list-all-pkgs) must list that package at that version."
   exit 1
 fi
-echo "    every allowlist entry covers a package version an image still carries ($unlisted not reported by the current advisory data, noticed above)."
+echo "    every allowlist entry covers a package version an image still carries ($unlisted not reported by the current advisory data, listed above)."

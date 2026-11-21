@@ -15,7 +15,7 @@
 # on a fact about OUR image and not about the advisory feed: every image is scanned a second time
 # WITHOUT the allowlist, with its package inventory, and an entry whose covered package version is in
 # no image any more fails the run (`image-allowlist-retirement.sh`). An entry the feed merely stopped
-# reporting, on a package that still ships, is a notice: the feed flapped three times on one entry.
+# reporting, on a package that still ships, is a plain log line: the feed flapped three times on one entry.
 #
 # Exit, the same three codes as `audit-dependencies.sh`:
 #   0  every image was scanned and nothing outside the allowlist was found, and every entry is needed
@@ -36,9 +36,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 allowlist="$here/../image-scan-allowlist.yaml"
 [ -f "$allowlist" ] || { echo "::error::$allowlist is missing"; exit 1; }
 
-# The advisory ids the allowlist names, one per line. The retirement check below asks about exactly
-# these, so `image-scan-allowlist.test.mjs` compares them with a real YAML parse of the file: an entry
-# this reader missed would be an ignore nothing ever retires.
+# The advisory ids the allowlist names, one per line. Only the empty-allowlist guard below reads
+# them (the retirement check reads `allowlist_covers`); `image-scan-allowlist.test.mjs` still compares
+# them with a real YAML parse of the file, so an entry this grep missed cannot hide from that guard.
 allowlist_ids() {
   grep -oE "^[[:space:]]*-[[:space:]]*id:[[:space:]]*[\"']?(CVE|GHSA)-[A-Za-z0-9-]+" "$allowlist" |
     grep -oE '(CVE|GHSA)-[A-Za-z0-9-]+' | sort -u
@@ -329,9 +329,9 @@ else
   echo "--- every allowlist entry still covers a package an image carries"
   cat "$work"/raw-*.json > "$work/all.json"
   allowlist_covers > "$work/covers.txt"
-  # What the advisory data was: the evidence a notice names (never a verdict by itself).
-  dbnote="$(trivy version --format json 2>/dev/null | jq -r '.VulnerabilityDB | "Trivy DB v\(.Version) (updated \(.UpdatedAt), downloaded \(.DownloadedAt))"' 2>/dev/null || true)"
-  bash "$here/image-allowlist-retirement.sh" "$work/all.json" "$work/covers.txt" "${dbnote:-an unreadable Trivy database version}" || retired=1
+  # What the advisory data was: the evidence the kept-entry line names (never a verdict by itself).
+  dbnote="$(trivy version --format json 2>/dev/null | jq -r '.VulnerabilityDB // empty | "Trivy DB v\(.Version) (updated \(.UpdatedAt), downloaded \(.DownloadedAt))"' 2>/dev/null || true)"
+  bash "$here/image-allowlist-retirement.sh" "$work/all.json" "$work/covers.txt" "${dbnote:-an unreadable Trivy database}" || retired=1
 fi
 
 if [ -n "$found" ]; then
@@ -346,4 +346,4 @@ fi
 if [ -n "$unread" ]; then
   outage "these images could not be read:$unread"
 fi
-echo "every image is clean outside its allowlist, and every allowlist entry is still needed."
+echo "every image is clean outside its allowlist, and no allowlist entry covers a package version that left the images."
