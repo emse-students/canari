@@ -69,10 +69,14 @@ package fr.emse.canari.push
  * server time, or an older sender's bare `at`). Each only rises.
  *
  * Generic over the message type [M] so the JVM suite drives it with its own fake messages; [lineOf]
- * says what each message counts as. Compiled by the JVM test project too, so nothing here may import
- * Android - see [PushRecoveryLadder] for why that is the guard.
+ * says what each message counts as, and [warn] is where a state worth accusing is reported (the
+ * service's `Log.w`). Compiled by the JVM test project too, so nothing here may import Android - see
+ * [PushRecoveryLadder] for why that is the guard.
  */
-class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
+class ReadElsewhereMarks<M>(
+    private val warn: (String) -> Unit = {},
+    private val lineOf: (M) -> Line,
+) {
 
     /** One conversation's mark on each clock; 0 = not known on that clock. */
     data class Mark(val stamped: Long, val server: Long)
@@ -179,6 +183,16 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     private var allWithdrawn = false
 
     /**
+     * The REACTION notification this process last posted, per conversation - its stamped lines, so a
+     * read weighs what was really posted and not the shade's lagging copy ([cancelReactionIfCovered],
+     * round-13 review). Guarded by [lock].
+     */
+    private val reactions = HashMap<String, Banner<M>>()
+
+    /** The conversations whose reaction THIS process removed: the shade's copy is stale. Guarded by [lock]. */
+    private val reactionsWithdrawn = HashSet<String>()
+
+    /**
      * Raises [conversationId]'s mark to [read]'s instant, on its clock. A lower or non-positive
      * instant changes nothing.
      */
@@ -219,7 +233,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
     ): Withdrawal = synchronized(lock) {
         val banner = bannerOfLocked(conversationId, shade)
         if (banner == null) {
-            if (!keepPendingReply && stableId != null) cancel(stableId)
+            if (!keepPendingReply && stableId != null) cancelUnlessHeldUnknownLocked(stableId, holds, cancel)
             return@synchronized Withdrawal.NONE
         }
         if (keepPendingReply && banner.messages.any { lineOf(it).pendingReply }) {
@@ -281,7 +295,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         val at = banner.messages.indexOfFirst { lineOf(it).pendingReplyId == messageId }
         if (at < 0) return@synchronized Delivery.NONE
         val kept = banner.messages.filterIndexed { i, _ -> i != at }
-        if (kept.isEmpty()) {
+        if (onlyOwnLocked(kept)) {
             return@synchronized if (cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)) {
                 Delivery.CANCELLED
             } else {
@@ -323,7 +337,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         watermark.forEach { recordLocked(conversationId, it) }
         val banner = bannerOfLocked(conversationId, shade)
         if (banner == null) {
-            if (stableId != null) cancel(stableId)
+            if (stableId != null) cancelUnlessHeldUnknownLocked(stableId, holds, cancel)
             return@synchronized Delivery.NONE
         }
         val kept = banner.messages.filter {
@@ -335,7 +349,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
             }
         }
         val held = holds(banner.notifId)
-        if (kept.isEmpty() && !held) {
+        if (onlyOwnLocked(kept) && !held) {
             cancel(banner.notifId)
             withdrawnLocked(conversationId)
             return@synchronized Delivery.CANCELLED
@@ -424,8 +438,57 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         posted.clear()
         posted.putAll(kept)
         withdrawn.clear()
+        reactions.clear()
+        reactionsWithdrawn.clear()
         allWithdrawn = true
         cancelled
+    }
+
+    /**
+     * Records [banner] as the REACTION notification posted for [conversationId] - called by the
+     * reaction's post under [lock], as a banner's post records its banner.
+     */
+    fun rememberReaction(conversationId: String, banner: Banner<M>) {
+        synchronized(lock) {
+            reactions[conversationId] = banner
+            reactionsWithdrawn.remove(conversationId)
+        }
+    }
+
+    /**
+     * Cancels [conversationId]'s reaction notification only when the conversation's mark covers
+     * EVERY line it holds - the rule a banner's read follows: a reaction newer than the read may be
+     * unseen (principle 2). It weighs what this process posted ([rememberReaction]), else - when this
+     * process has neither posted nor removed one - what [shade] answers. A line with no stamp is not
+     * covered. Called after the read or the answer has recorded its mark, under [lock].
+     *
+     * @return whether [cancel] ran.
+     */
+    fun cancelReactionIfCovered(
+        conversationId: String,
+        shade: () -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
+    ): Boolean = synchronized(lock) {
+        val reaction = reactions[conversationId]
+            ?: (if (allWithdrawn || conversationId in reactionsWithdrawn) null else shade())
+            ?: return@synchronized false
+        val covered = reaction.messages.isNotEmpty() && reaction.messages.all {
+            val line = lineOf(it)
+            !line.pendingReply && coversLocked(conversationId, line.sentAt, line.serverAt)
+        }
+        if (!covered) return@synchronized false
+        cancel(reaction.notifId)
+        reactions.remove(conversationId)
+        reactionsWithdrawn.add(conversationId)
+        true
+    }
+
+    /** Drops [conversationId]'s reaction record: it was removed another way (a cancel with no mark). */
+    fun forgetReaction(conversationId: String) {
+        synchronized(lock) {
+            reactions.remove(conversationId)
+            reactionsWithdrawn.add(conversationId)
+        }
     }
 
     /** The mark held for [conversationId], or null. */
@@ -458,7 +521,13 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         cancel: (notifId: Int) -> Unit,
     ): Boolean {
         if (holds(banner.notifId)) {
-            if (banner.messages.isNotEmpty()) repost(banner, banner.messages)?.let { postedLocked(conversationId, it) }
+            if (banner.messages.isNotEmpty()) {
+                repost(banner, banner.messages)?.let { postedLocked(conversationId, it) }
+            } else {
+                // Nothing to draw, so nothing can be posted to end the hold: no answer text is known
+                // outside the answer itself. Kept, and the next event asks again.
+                warn("held banner id=${banner.notifId} has no line to re-post - its hold stays until the next event or the user")
+            }
             if (conversationId !in posted) postedLocked(conversationId, banner)
             return false
         }
@@ -466,6 +535,25 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         withdrawnLocked(conversationId)
         return true
     }
+
+    /**
+     * Cancels [notifId] - a conversation's stable id, for a banner the record does not know - unless
+     * the platform [holds] it: that cancel would be dropped and re-extend it, and with no record
+     * there is nothing to re-post, so it is left as it is and reported.
+     */
+    private fun cancelUnlessHeldUnknownLocked(notifId: Int, holds: (notifId: Int) -> Boolean, cancel: (notifId: Int) -> Unit) {
+        if (holds(notifId)) {
+            warn("held banner id=$notifId is not recorded - not cancelled, left for the next post or the user")
+            return
+        }
+        cancel(notifId)
+    }
+
+    /**
+     * Whether [lines] hold nothing but this account's own answers ([Line.own]) - a banner left with
+     * those alone says nothing new and counts as empty wherever lines that stay are weighed.
+     */
+    private fun onlyOwnLocked(lines: List<M>): Boolean = lines.all { lineOf(it).own }
 
     private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()

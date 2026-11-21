@@ -960,15 +960,29 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   start in `forgetAll`) first asks the shade whether the platform holds it. A held banner is posted
   again, silently and through the one rebuild (`rebuildBanner`), which ends the hold, and it STAYS
   recorded. The next event asks again, and either finds it released and cancels it, or updates it
-  again. None forgets it. The app's start also leaves a held banner out of its shade sweep. One the
-  record did not hold (a fresh process) is rebuilt from the shade's copy and recorded under its
-  conversation (`releaseUnrecordedHold`).
+  again. None forgets it. The other app cancels follow the same rule (round 13):
+  - A stable-id cancel for a banner the record does not know (`withdraw`'s NONE, the answer with no
+    banner) is not sent to a held one. With nothing recorded, there is nothing to re-post, so it is
+    left and reported at WARN.
+  - A message post that would switch a held banner's channel (a mention arriving during a slow
+    inline reply) posts on the held banner's channel instead. That post ends the hold, and the switch
+    is left to the next post. Otherwise the switch's cancel would be dropped, and the re-enqueued old
+    record would bury the new line.
+  - The app's start takes ONE shade snapshot for every "held?" (only the system sets the flag) and
+    leaves held banners out of its sweep. One the record did not hold (a fresh process) is decided by
+    its FRESH shade copy: released since, it is cancelled; still held, it is rebuilt and recorded under
+    its conversation (`releaseUnrecordedHold`). A banner the record has just cancelled is never
+    rebuilt.
+  - A held banner with no line to re-post is kept and reported at WARN. No answer text is known
+    outside the answer itself.
 
   What the answer shows (round-12, S-b) is posted the standard way: the lines that stay (newer than
   the watermark, or another reply still queued), then the answer as this account's own line
   (`answerLine`, `LINE_OWN`). Every read covers that line. The record holds exactly what is shown. A
   held banner with nothing else left shows the answer alone and is `KEPT_UNTIL_READ`. A swipe of it
-  forgets it, so the next peer message alerts with only that message.
+  forgets it, so the next peer message alerts with only that message. A banner whose remaining
+  lines are all own answers counts as empty wherever lines are weighed (round 13). A delivery of r0
+  next to "Vous: r2" removes the banner instead of leaving the answer alone.
 
   What is truly left:
   - A held banner stays until an event about its conversation happens (a read anywhere, a
@@ -982,9 +996,11 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
   sent is newer and stays, and the banner is rebuilt silently with it. The conversation's REACTION
-  notification goes too only when the same mark covers every line it holds (round-12, S-c). Its lines
-  carry the stamps of a message line (`LINE_SENT_AT`, `LINE_SERVER_AT`), set when it was posted. An
-  unstamped one, from an older build, stays.
+  notification goes too only when the mark covers every line it holds. This applies after an answer
+  and after a read (rounds 12-13; `ReadElsewhereMarks.cancelReactionIfCovered`). It weighs a RECORD
+  of the stamped lines this process posted (`rememberReaction`, under the record's lock), not the
+  shade, which lags a `notify`. An unstamped line, from an older build, is never covered. A dismissal
+  with no mark ("mark as read", a silent-from-self push) cannot weigh, and removes it as before.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and

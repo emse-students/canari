@@ -611,7 +611,7 @@ class ReadElsewhereMarksTest {
             marks.answerReply(
                 "g1", "r3", watermarkM2, 1001,
                 shade = { fail("removed by this process"); null },
-                holds = { throw AssertionError("no banner") },
+                holds = notHeld,
                 ownLine = { throw AssertionError("no banner") },
                 repost = { _, _ -> null },
                 cancel = { cancelled += it },
@@ -710,5 +710,95 @@ class ReadElsewhereMarksTest {
         val cancelled = mutableListOf<Int>()
         assertEquals(Withdrawal.CANCELLED, marks.withdraw("g1", keepPendingReply = true, stableId = 1001, shade = { null }, holds = notHeld, repost = noRepost) { cancelled += it })
         assertEquals(listOf(1001), cancelled)
+    }
+    // Round-13 review (S3): a delivery must not leave a banner showing nothing but the user's own
+    // answer. [r0 pending, "Vous: r2"], r0 delivered: nothing new is left, so it goes.
+    @Test
+    fun `a delivery that leaves only the user's own answer cancels the banner`() {
+        val marks = marks()
+        val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
+        marks.remember("g1", Banner(1001, "messages", listOf(r0, answer)))
+        val cancelled = mutableListOf<Int>()
+        assertEquals(
+            Delivery.CANCELLED,
+            marks.replyDelivered("g1", "r0", shade = { null }, cancel = { cancelled += it }, holds = notHeld) { _, _ -> throw AssertionError("only the answer is left") },
+        )
+        assertEquals(listOf(1001), cancelled)
+    }
+
+    // Round-13 review (S5): a stable-id cancel for a banner the record does not know is guarded too -
+    // a held one is left (and reported), never sent a cancel the platform would drop.
+    @Test
+    fun `a stable-id cancel is not sent to a banner the platform holds`() {
+        val warnings = mutableListOf<String>()
+        val marks = ReadElsewhereMarks<Msg>(warn = { warnings += it }) { Line.of(it.pendingReply, it.sentAt, it.serverAt, it.replyId, it.own) }
+        val cancelled = mutableListOf<Int>()
+        assertEquals(
+            Delivery.NONE,
+            marks.answerReply(
+                "g1", "r2", watermarkM2, 1001,
+                shade = { null },
+                holds = { it == 1001 },
+                ownLine = { throw AssertionError("no banner") },
+                repost = { _, _ -> throw AssertionError("no banner") },
+                cancel = { cancelled += it },
+            ),
+        )
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, 1001, shade = { null }, holds = { it == 1001 }, repost = noRepost) { cancelled += it })
+        assertEquals(emptyList<Int>(), cancelled)
+        assertEquals(2, warnings.size)
+        // Released: the stable id is cancelled as before.
+        assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, 1001, shade = { null }, holds = notHeld, repost = noRepost) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+    }
+
+    @Test
+    fun `a held banner with no line to re-post is kept and reported`() {
+        val warnings = mutableListOf<String>()
+        val marks = ReadElsewhereMarks<Msg>(warn = { warnings += it }) { Line.of(it.pendingReply, it.sentAt, it.serverAt, it.replyId, it.own) }
+        marks.remember("g1", Banner(1001, "messages", emptyList()))
+        assertEquals(Withdrawal.HELD, marks.withdraw("g1", false, 1001, shade = { null }, holds = { true }, repost = noRepost) { fail("held") })
+        assertEquals(1, warnings.size)
+        assertEquals(1001, marks.bannerOf("g1") { null }?.notifId)
+    }
+
+    // Round-13 review (S4, principle 2): a reaction newer than the read or the answer may be unseen.
+    // Its record - the stamped lines this process posted - is weighed under the lock, on both paths.
+    private val r1 = Msg(sentAt = 900L, serverAt = 1_000L)
+    private val r2 = Msg(sentAt = 2_900L, serverAt = 3_000L)
+
+    @Test
+    fun `a reaction newer than the answer's watermark is kept`() {
+        val marks = marks()
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, m2)))
+        marks.rememberReaction("g1", Banner(2001, "reactions", listOf(r2)))
+        marks.answerReply(
+            "g1", "r9", watermarkM2, 1001,
+            shade = { null },
+            holds = notHeld,
+            ownLine = { answer },
+            repost = { b, kept -> b.copy(messages = kept) },
+            cancel = {},
+        )
+        assertFalse(marks.cancelReactionIfCovered("g1", shade = { fail("recorded: the shade is not asked"); null }) { fail("R2 is newer than the answer") })
+    }
+
+    @Test
+    fun `a reaction newer than a read is kept, and one the read covers goes once`() {
+        val marks = marks()
+        marks.rememberReaction("g1", Banner(2001, "reactions", listOf(r2)))
+        marks.record("g1", Read(2_000L, serverClock = true))
+        assertFalse(marks.cancelReactionIfCovered("g1", shade = { fail("recorded"); null }) { fail("R2 is newer than the read") })
+        marks.rememberReaction("g2", Banner(2002, "reactions", listOf(r1)))
+        marks.record("g2", Read(2_000L, serverClock = true))
+        val cancelled = mutableListOf<Int>()
+        assertTrue(marks.cancelReactionIfCovered("g2", shade = { fail("recorded"); null }) { cancelled += it })
+        assertEquals(listOf(2002), cancelled)
+        // Removed by this process: the shade's stale copy is not asked again.
+        assertFalse(marks.cancelReactionIfCovered("g2", shade = { fail("removed by this process"); null }) { cancelled += it })
+        // An unstamped reaction is never covered.
+        marks.rememberReaction("g3", Banner(2003, "reactions", listOf(Msg(null, null))))
+        marks.record("g3", Read(Long.MAX_VALUE, serverClock = true))
+        assertFalse(marks.cancelReactionIfCovered("g3", shade = { null }) { fail("unstamped") })
     }
 }

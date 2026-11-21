@@ -287,13 +287,46 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const forget = all.indexOf('READ_ELSEWHERE.forgetAll(');
     expect(forget).toBeGreaterThan(-1);
     expect(forget).toBeLessThan(all.indexOf('CallRingPlayer.rings'));
-    expect(all.slice(forget, forget + 400)).toContain('holds = { holdsDirectReply(manager, it) }');
+    // ONE snapshot answers every "held?" of the sweep (round-13 review).
+    expect(all).toContain(
+      'val heldIds = snapshot.filter { isHeldByDirectReply(it.notification) }.map { it.id }.toSet()'
+    );
+    expect(all.slice(forget, forget + 400)).toContain('holds = { it in heldIds }');
     expect(all).toContain(
       'if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)'
     );
-    expect(
-      all.indexOf('for (id in held) releaseUnrecordedHold(context, manager, id)')
-    ).toBeGreaterThan(forget);
+    // Never re-posts what the record just cancelled, and the FRESH copy decides (round-13, S2).
+    const release = all.indexOf(
+      'for (id in held) if (id !in cancelledByRecord) releaseUnrecordedHold(context, manager, id)'
+    );
+    expect(release).toBeGreaterThan(forget);
+    const unrecorded = source.slice(source.indexOf('private fun releaseUnrecordedHold('));
+    const fresh = unrecorded.indexOf('if (!holdsDirectReply(manager, notifId)) {');
+    expect(fresh).toBeGreaterThan(-1);
+    expect(fresh).toBeLessThan(unrecorded.indexOf('rebuildBanner('));
+  });
+
+  // Round-13 review (S1): a channel switch cancels the old post - an app cancel, dropped on a
+  // banner the platform holds, which then re-enqueues the old record over the new line.
+  it('never sends a channel switch cancel to a held banner', () => {
+    const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
+    const shade = fn.indexOf('val postToShade = {');
+    expect(shade).toBeGreaterThan(-1);
+    const body = fn.slice(shade, fn.indexOf('\n                }', shade));
+    expect(body.split('manager.cancel(').length - 1).toBe(1);
+    expect(body).toContain('if (switchesChannel) manager.cancel(notifId)');
+    const held = fn.indexOf(
+      'val heldByReply = held != null && channel != CHANNEL_REACTIONS && holdsDirectReply(manager, notifId)'
+    );
+    const channel = fn.indexOf(
+      'val postChannel = if (heldByReply) held?.channelId ?: channel else channel'
+    );
+    const switches = fn.indexOf('held.channelId != postChannel');
+    expect(held).toBeGreaterThan(-1);
+    expect(channel).toBeGreaterThan(held);
+    expect(switches).toBeGreaterThan(channel);
+    expect(switches).toBeLessThan(shade);
+    expect(fn).toContain('NotificationCompat.Builder(this, postChannel)');
   });
 
   it('restamps a re-injected line when the second trigger knows the server instant', () => {
@@ -501,19 +534,26 @@ describe('the builder records what it posted and keeps the stamps current', () =
     }
   });
 
-  // Round-12 review (S-c): an answer removes the conversation's reaction only when the reply's
-  // watermark covers it - a reaction newer than what the banner showed may be unseen.
-  it('cancels the reaction after an answer only when the watermark covers it', () => {
+  // Round-12/13 review (S-c, S4): an answer or a read removes the conversation's reaction only when
+  // the mark covers every line this process posted for it, weighed under the record's lock.
+  it('cancels the reaction only when the mark covers its recorded lines, on both paths', () => {
+    const weigh =
+      'READ_ELSEWHERE.cancelReactionIfCovered(groupId, shade = { shadeBannerOf(manager, reactionId) }) { manager.cancel(it) }';
     const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
     const body = answer.slice(0, answer.indexOf('when (outcome)'));
     const reaction = body.indexOf('prefs.getInt(reactionNotifKey(groupId), -1)');
     expect(reaction).toBeGreaterThan(-1);
-    const after = body.slice(reaction);
-    const covered = after.indexOf('READ_ELSEWHERE.covers(groupId, line.sentAt, line.serverAt)');
-    const cancel = after.indexOf('manager.cancel(reactionId)');
-    expect(covered).toBeGreaterThan(-1);
-    expect(cancel).toBeGreaterThan(covered);
-    expect(after.slice(0, cancel)).toContain('if (covered) {');
+    expect(body.slice(reaction)).toContain(weigh);
+    expect(body.slice(reaction)).not.toContain('manager.cancel(reactionId)');
+    const read = source.slice(source.indexOf('internal fun cancelConversationNotification('));
+    const tail = read.slice(
+      read.indexOf('val reactionId = prefs.getInt(reactionNotifKey(groupId), -1)')
+    );
+    const branch = tail.indexOf('if (read != null) {');
+    expect(branch).toBeGreaterThan(-1);
+    expect(tail.slice(branch, tail.indexOf('} else {', branch))).toContain(weigh);
+    // The reaction's post records its stamped lines.
+    expect(source).toContain('READ_ELSEWHERE.rememberReaction(');
   });
 
   // Round-11 review (S3): a reply not seen delivered is logged at WARN in every case, naming what

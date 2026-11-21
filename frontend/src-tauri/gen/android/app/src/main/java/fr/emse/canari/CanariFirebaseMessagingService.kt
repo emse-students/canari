@@ -530,8 +530,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 synchronized(READ_ELSEWHERE.lock) {
                     // A banner the platform holds after an inline answer is NOT cancelled - the
                     // cancel would be dropped and re-extend it ([ReadElsewhereMarks]'s class comment).
+                    // ONE snapshot answers every "held?" of this sweep: only the system sets the flag.
+                    val snapshot = manager.activeNotifications
+                    val heldIds = snapshot.filter { isHeldByDirectReply(it.notification) }.map { it.id }.toSet()
                     val held = mutableListOf<Int>()
-                    for (sbn in manager.activeNotifications) {
+                    for (sbn in snapshot) {
                         val channelId =
                             if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
                         // Only touch message notifications (leave social/forms alone; the mentions
@@ -548,13 +551,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // What the record holds is cancelled BY ID too: the sweep above reads a shade that
                     // lags a `notify`, and after this the shade is never asked again. A held one is
                     // updated and kept.
-                    READ_ELSEWHERE.forgetAll(
-                        holds = { holdsDirectReply(manager, it) },
+                    val cancelledByRecord = READ_ELSEWHERE.forgetAll(
+                        holds = { it in heldIds },
                         repost = { conversationId, banner, kept -> rebuildBanner(context, manager, conversationId)(banner, kept) },
-                    ) { manager.cancel(it) }
+                    ) { manager.cancel(it) }.toSet()
                     // A held banner the record did not hold (a fresh process): updated from the
-                    // shade's copy and recorded, so the next event for its conversation weighs it.
-                    for (id in held) releaseUnrecordedHold(context, manager, id)
+                    // shade's copy and recorded, so the next event for its conversation weighs it -
+                    // never one the record just cancelled (round-13 review).
+                    for (id in held) if (id !in cancelledByRecord) releaseUnrecordedHold(context, manager, id)
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
                 // and so does each ring's call screen, which must never outlive its ring. Under the
@@ -576,12 +580,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * The swept banner [notifId] the platform holds, when the record did not hold it: rebuilt
-         * silently from the shade's copy (the update that ends the hold) and recorded under its
-         * conversation, found by its stable id. A banner whose conversation is not known here is
-         * left as it is, logged at WARN: its cancel would be dropped, and nothing could weigh it.
+         * The swept banner [notifId] the platform held in the sweep's snapshot, when the record did
+         * not hold it. The FRESH shade copy decides (round-13 review): released since, it is
+         * cancelled as the sweep would have; still held, it is rebuilt silently from that copy (the
+         * update that ends the hold) and recorded under its conversation, found by its stable id. A
+         * held banner whose conversation is not known here is left as it is, logged at WARN: its
+         * cancel would be dropped, and nothing could weigh it.
          */
         private fun releaseUnrecordedHold(context: Context, manager: NotificationManager, notifId: Int) {
+            if (!holdsDirectReply(manager, notifId)) {
+                manager.cancel(notifId)
+                Log.d(TAG, "releaseUnrecordedHold: id=$notifId released since the sweep - cancelled")
+                return
+            }
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
             val groupId = prefs.all.entries.firstOrNull { (key, value) -> value == notifId && key != "__counter__" && ':' !in key }?.key
             if (groupId == null) {
@@ -1010,7 +1021,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (android.os.Build.VERSION.SDK_INT < 35) return false
             val shown = try {
                 manager.activeNotifications.firstOrNull { it.id == notifId && it.tag == null }?.notification
-            } catch (e: Exception) {
+            } catch (e: RuntimeException) {
+                // What `getActiveNotifications` throws: the binder's RemoteException rethrown by
+                // `rethrowFromSystemServer` (a DeadSystemRuntimeException when the system died).
                 Log.e(TAG, "holdsDirectReply: activeNotifications unavailable - read as not held, a held banner's cancel would be dropped: ${throwableSite(e)}")
                 return false
             } ?: return false
@@ -1051,8 +1064,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * silently the standard way, with the answer ([replyText]) as this account's own line -
          * and that alone when the platform holds the banner after the inline answer, which the
          * update releases ([holdsDirectReply]); it stays recorded for the next read. Its reaction
-         * goes only when the watermark covers it (round-12 review): its lines carry the stamps a
-         * message line does, set when it was posted. Called by the receiver's success action,
+         * goes only when the watermark covers every line this process posted for it
+         * ([ReadElsewhereMarks.cancelReactionIfCovered]). Called by the receiver's success action,
          * beside the watermark.
          */
         internal fun answerReplyNotification(
@@ -1090,13 +1103,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 },
             )
             prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { reactionId ->
-                val reaction = shadeBannerOf(manager, reactionId)
-                val covered = reaction != null && reaction.messages.isNotEmpty() &&
-                    reaction.messages.all { lineOfMessage(it).let { line -> READ_ELSEWHERE.covers(groupId, line.sentAt, line.serverAt) } }
-                if (covered) {
-                    manager.cancel(reactionId)
-                } else if (reaction != null) {
-                    Log.d(TAG, "answerReplyNotification: reaction kept - newer than the answer's watermark, or unstamped group=${ConversationRef.of(groupId)}")
+                if (!READ_ELSEWHERE.cancelReactionIfCovered(groupId, shade = { shadeBannerOf(manager, reactionId) }) { manager.cancel(it) }) {
+                    Log.d(TAG, "answerReplyNotification: reaction kept - none, newer than the answer's watermark, or unstamped group=${ConversationRef.of(groupId)}")
                 }
             }
             when (outcome) {
@@ -1278,7 +1286,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     ReadElsewhereMarks.Withdrawal.NONE -> {
                         // No message banner, but a reaction may stand alone: the conversation is
                         // read, so it goes too (idempotent - a reaction already gone costs nothing).
-                        prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }
+                        prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let {
+                            manager.cancel(it)
+                            READ_ELSEWHERE.forgetReaction(groupId)
+                        }
                         Log.d(TAG, "cancelConversationNotification: no notif for group=${ConversationRef.of(groupId)}")
                         return
                     }
@@ -1294,10 +1305,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // the conversation is read, and it lives under its own id since 2026-09-17 - so it
             // needs cancelling explicitly. `getInt` rather than [getStableNotifId]: never mint an
             // id here, exactly as the message half above does not.
+            // A READ weighs it as it weighs the banner: only a reaction every line of which the mark
+            // covers goes - a newer one may be unseen (principle 2, round-13 review). A dismissal
+            // with no mark ("mark as read", a silent-from-self push) cannot weigh, and removes it.
             val reactionId = prefs.getInt(reactionNotifKey(groupId), -1)
             if (reactionId != -1) {
-                manager.cancel(reactionId)
-                Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${ConversationRef.of(groupId)} id=$reactionId")
+                if (read != null) {
+                    if (READ_ELSEWHERE.cancelReactionIfCovered(groupId, shade = { shadeBannerOf(manager, reactionId) }) { manager.cancel(it) }) {
+                        Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${ConversationRef.of(groupId)} id=$reactionId")
+                    } else {
+                        Log.d(TAG, "cancelConversationNotification: reaction kept - newer than the read, or unstamped group=${ConversationRef.of(groupId)}")
+                    }
+                } else {
+                    manager.cancel(reactionId)
+                    READ_ELSEWHERE.forgetReaction(groupId)
+                    Log.d(TAG, "cancelConversationNotification: reaction notif removed group=${ConversationRef.of(groupId)} id=$reactionId")
+                }
             }
 
             // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
@@ -2701,7 +2724,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * [readElsewhereFromWebSocket], asked by every post.
          */
         private val READ_ELSEWHERE =
-            ReadElsewhereMarks<NotificationCompat.MessagingStyle.Message> { lineOfMessage(it) }
+            ReadElsewhereMarks<NotificationCompat.MessagingStyle.Message>(
+                warn = { Log.w(TAG, "ReadElsewhereMarks: $it") }, // log-safe: built by ReadElsewhereMarks from notification ids only
+            ) { lineOfMessage(it) }
 
         /**
          * Posts the SAME notification a push would, for a message that arrived over the WEBSOCKET.
@@ -3626,8 +3651,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // the old post first - the rebuilt MessagingStyle above already carries its history.
                 // The cancel itself runs WITH the post, below: a post refused as already read must not
                 // have taken the previous banner down first.
+                // NEVER ON A BANNER THE PLATFORM HOLDS (round-13 review): after an inline answer
+                // Android 15+ drops the switch's cancel and re-enqueues the old record behind this
+                // post - the new line (a mention) would vanish. So a held banner is posted on ITS
+                // channel - the post ends the hold - and the switch is left to the next post.
+                val heldByReply = held != null && channel != CHANNEL_REACTIONS && holdsDirectReply(manager, notifId)
+                val postChannel = if (heldByReply) held?.channelId ?: channel else channel
+                if (heldByReply && postChannel != channel) {
+                    Log.d(TAG, "showMessageNotification: held after an inline answer -> posted on its channel, the switch left to the next post (groupId=${ConversationRef.of(groupId)})")
+                }
                 val switchesChannel = held != null && android.os.Build.VERSION.SDK_INT >= 26 &&
-                    held.channelId != channel
+                    held.channelId != postChannel
                 // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
                 // see [RepostAlert].
                 val repostMode = RepostAlert.of(
@@ -3671,7 +3705,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 style.isGroupConversation = shape.groupConversation
                 Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} declaredGroup=$declaredGroup shortcut=${conversationShortcutId != null} (groupId=${ConversationRef.of(groupId)})")
 
-                val notifBuilder = NotificationCompat.Builder(this, channel)
+                val notifBuilder = NotificationCompat.Builder(this, postChannel)
                     .setSmallIcon(R.drawable.ic_notification)
                     .setStyle(style)
                     .setAutoCancel(true)
@@ -3757,11 +3791,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val readElsewhere = if (isReactionNotif) {
                     postToShade()
+                    // Its stamped lines, for a read or an answer to weigh (round-13 review).
+                    READ_ELSEWHERE.rememberReaction(
+                        groupId,
+                        ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif),
+                    )
                     false
                 } else {
                     !READ_ELSEWHERE.postUnlessRead(
                         groupId, sentAt, serverAt,
-                        ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif),
+                        ReadElsewhereMarks.Banner(notifId, postChannel, style.messages.toList(), notif),
                         postToShade,
                     )
                 }
