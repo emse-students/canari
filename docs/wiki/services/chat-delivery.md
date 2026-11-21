@@ -2398,9 +2398,12 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   back, holds every such line, adopts what the queue lacks, writes the mirror and draws the statuses.
   A mirror or queue it cannot read is a FAILURE (`MirrorAdoptionError`), never "nothing to adopt".
   **A pass that fails holds only what could still be native** - the entries carrying the durable
-  `adoptedFromMirror` mark, set when an entry is adopted from the mirror and cleared by the first
+  `adoptedFromMirror` mark, set when an entry is adopted from the mirror (and by a pass that finds a
+  queued entry still native with no mark, adopted before the mark existed) and cleared by the first
   mirror write that lands (from then the line is the page's) - draws them failed with their Retry,
-  tells the member once per run of failures (`chat_outbox_native_queue_unreachable`, an ERROR), and
+  tells the member once per run of failures in the words of the side that failed, read from the
+  error's TYPE (`MirrorAdoptionError.side`: `chat_outbox_native_queue_unreachable` for the mirror,
+  `chat_outbox_queue_unreadable` for the queue), logs ERROR once per run and debug after, and
   the flush goes on with the page's own entries: one broken non-essential file never decides whether
   any message leaves. NO TIMER reruns the pass - the next real trigger does (an enqueue, a resume or
   `canari:foreground`, a reconnect, a mirror write that lands, a Retry tap). The login's adoption goes through
@@ -2425,7 +2428,8 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   page life holds what the mirror still names native, the start pass writes before the first flush,
   a send not waiting for the mirror, an already-sent line dropped, an unreadable line told to the
   member, a read failure never "nothing to adopt", a failed start pass run again by the next trigger,
-  a fold that keeps failing holding only the adopted entries - told once, the rest sent - and a
+  a fold that keeps failing holding only the adopted entries - told once, accused once, the rest
+  sent - the queue side told as the queue, an unmarked native entry marked by the pass, and a
   landed claim clearing the adopted mark), `outboxMirrorOwnership.test.ts` (the lock, the stamp, the journal doors and the `@try` in
   Kotlin, iOS and Rust).
 

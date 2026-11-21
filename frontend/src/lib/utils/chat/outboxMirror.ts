@@ -365,26 +365,38 @@ export function adoptMirrorEntry(
   return null;
 }
 
+/** Which side a start pass could not read: the native mirror file, or the page's own queue. */
+export type MirrorAdoptionSide = 'mirror' | 'queue';
+
 /**
- * THE MEMBER IS TOLD WHEN THE NATIVE QUEUE CANNOT BE REACHED, once per failure: the mirror cannot be
- * read or folded, so what was queued from the notifications is held - drawn failed, with its Retry -
- * and the background sender sends nothing. What the member sends from the app still goes.
+ * THE MEMBER IS TOLD WHEN A START PASS CANNOT RUN, once per run of failures, in the words of the
+ * side that failed. `mirror`: what was queued from the notifications is held - drawn failed, with its
+ * Retry - and what the member sends from the app still goes. `queue`: the page's own queue cannot be
+ * read, so nothing queued on this device can be compared or sent until it reads again.
  */
-export function reportNativeQueueUnreachable(held: number): void {
+export function reportNativeQueueUnreachable(held: number, side: MirrorAdoptionSide): void {
   console.error(
-    `[OUTBOX_MIRROR] the native queue cannot be reached - ${held} adopted entr(y/ies) held, the member is told`
+    `[OUTBOX_MIRROR] start pass blocked on the ${side} - ${held} adopted entr(y/ies) held, the member is told`
   );
-  showToast(m.chat_outbox_native_queue_unreachable(), 'error', 8000);
+  showToast(
+    side === 'queue' ? m.chat_outbox_queue_unreadable() : m.chat_outbox_native_queue_unreachable(),
+    'error',
+    8000
+  );
 }
 
 /**
  * The adoption could not read what it decides on - the mirror, or the queue it compares it with.
  * THROWN, never answered as "nothing to adopt": the controller's start pass that sees it did not
- * run, and runs again (`claimAtStart` in outbox.ts).
+ * run, and runs again (`claimAtStart` in outbox.ts). `side` is the TYPED discriminator the member's
+ * message is chosen from - never the error's text.
  */
 export class MirrorAdoptionError extends Error {
-  constructor(what: 'mirror' | 'queue', cause: unknown) {
-    super(`the ${what} could not be read: ${String(cause)}`);
+  constructor(
+    readonly side: MirrorAdoptionSide,
+    cause: unknown
+  ) {
+    super(`the ${side} could not be read: ${String(cause)}`);
     this.name = 'MirrorAdoptionError';
   }
 }
@@ -440,15 +452,16 @@ export async function adoptOrphanedMirrorEntries(
   }
   if (!mirror.length) return [];
 
-  const known = await storage
+  const queued = await storage
     .getOutboxQueue(deviceKeyB64)
-    .then((entries) => new Set(entries.map((e) => e.id)))
+    .then((entries) => new Map(entries.map((e) => [e.id, e])))
     .catch((e) => {
       // Treating a failed read as an empty queue here would re-adopt the whole live queue, so this
       // is the one branch that must give up rather than guess - and say so to its caller.
       appendLog(`[OUTBOX_MIRROR] Outbox read failed, adoption skipped: ${String(e)}`);
       throw new MirrorAdoptionError('queue', e);
     });
+  const known = new Set(queued.keys());
 
   // NATIVE LINES THE QUEUE ALREADY HOLDS: adopted by a page life whose claim never landed (it is in
   // memory only). Still native in the file, so a background drain may send them - held again.
@@ -458,6 +471,21 @@ export async function adoptOrphanedMirrorEntries(
     appendLog(
       `[OUTBOX_MIRROR] ${unclaimedNative.length} queued entr(y/ies) still native in the mirror - held until claimed`
     );
+    // MARKED AS ADOPTED, DURABLY: an entry adopted before the mark existed carries none, and a later
+    // start pass that fails holds only marked entries - this one, still native, would be sent.
+    for (const line of unclaimedNative) {
+      if (queued.get(line.id)?.adoptedFromMirror) continue;
+      await storage
+        .updateOutboxEntry(line.id, { adoptedFromMirror: true }, deviceKeyB64)
+        .then(() =>
+          appendLog(`[OUTBOX_MIRROR] ${line.id.slice(0, 8)}… still native, marked as adopted`)
+        )
+        .catch((e) =>
+          appendLog(
+            `[OUTBOX_MIRROR] ${line.id.slice(0, 8)}… still native, NOT marked as adopted (a failed start pass would not hold it): ${String(e)}`
+          )
+        );
+    }
   }
 
   const stale = mirror.filter((e) => e.owner === 'page' && !known.has(e.id));

@@ -76,6 +76,7 @@ import type { OutboxEntry } from '$lib/db';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
 import { toBase64 } from '$lib/utils/hex';
+import { m } from '$lib/paraglide/messages';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
@@ -464,20 +465,27 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     }
     const { outbox, conversations, sendMessage } = controllerOver(storage);
     await outbox.applyPendingStatuses();
+    const errors = vi.spyOn(console, 'error');
+    const accused = () =>
+      errors.mock.calls.filter((c) => String(c[0]).startsWith('[OUTBOX] start pass failed')).length;
 
     outbox.flush();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
     expect(storage._queue.has('mine')).toBe(false);
     expect(storage._queue.has('shade')).toBe(true);
-    const row = () => conversations.get('g1')!.messages.find((m) => m.id === 'shade');
+    const row = () => conversations.get('g1')!.messages.find((msg) => msg.id === 'shade');
     expect(row()?.status).toBe('error');
-    expect(toast.shown).toHaveLength(1);
+    expect(toast.shown).toEqual([m.chat_outbox_native_queue_unreachable()]);
+    expect(accused()).toBe(1);
 
-    // Every later trigger runs the pass again - still failing, told no more, still nothing extra.
+    // Every later trigger runs the pass again - still failing, told no more, accused no more (an
+    // ERROR per flush would be noise), still nothing extra.
     outbox.flush();
     await new Promise((r) => setTimeout(r, 0));
     expect(toast.shown).toHaveLength(1);
+    expect(accused()).toBe(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
 
     // The file heals: the Retry claims it, and it goes - its adopted mark cleared by the claim.
     tauri.failReads = 0;
@@ -485,6 +493,28 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     tauri.mirror = [line('shade')];
     outbox.retryUpload('shade');
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+  });
+
+  // The member is told the side that failed, chosen from the error's TYPE: an unreadable queue is
+  // not "replies from your notifications".
+  it('a start pass blocked on the queue says so, not the mirror', async () => {
+    tauri.mirror = [line('elsewhere')];
+    const storage = makeStorage();
+    storage.getOutboxQueue.mockRejectedValue(new Error('the queue could not be read'));
+    const { outbox } = controllerOver(storage);
+    outbox.flush();
+    await vi.waitFor(() => expect(toast.shown).toEqual([m.chat_outbox_queue_unreadable()]));
+  });
+
+  // An entry adopted before the mark existed (a page life older than the mark) is still native in the
+  // mirror: the pass that reads it there marks it, so a later failing pass holds it too.
+  it('a queued entry still native in the mirror is marked as adopted by the start pass', async () => {
+    tauri.failWrites = true;
+    const storage = makeStorage([textEntry('older')]);
+    tauri.mirror = [line('older')];
+    const { outbox } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.get('older')?.adoptedFromMirror).toBe(true);
   });
 
   // The adopted mark goes with the first write that lands: from then the line is the page's, and a

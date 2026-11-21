@@ -65,9 +65,11 @@ import { recordEviction } from '$lib/utils/chat/eviction';
 import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
 import {
   adoptOrphanedMirrorEntries,
+  MirrorAdoptionError,
   mirrorHoldsSentLines,
   reportNativeQueueUnreachable,
   syncOutboxMirror,
+  type MirrorAdoptionSide,
   type MirrorClaims,
 } from '$lib/utils/chat/outboxMirror';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -1288,12 +1290,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * After a failed start pass: holds every queued entry adopted from the mirror ({@link unclaimed}),
    * draws it failed with its Retry, and tells the member once per run of failures.
    */
-  async function holdAdoptedEntries(): Promise<void> {
+  async function holdAdoptedEntries(side: MirrorAdoptionSide): Promise<void> {
     const adopted = (await readQueue('start pass failed')).filter((e) => e.adoptedFromMirror);
     for (const entry of adopted) unclaimed.add(entry.id);
     if (!unreachableTold) {
       unreachableTold = true;
-      reportNativeQueueUnreachable(adopted.length);
+      reportNativeQueueUnreachable(adopted.length, side);
     }
     if (adopted.length > 0) await controller.applyPendingStatuses();
   }
@@ -3490,10 +3492,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // pass again: the next real trigger does (an enqueue, a resume, a reconnect, a mirror write
       // that lands, a Retry tap).
       startPass = null;
-      console.error(
-        `[OUTBOX] start pass failed - the adopted entries are held, the page's own still go: ${String(e)}`
-      );
-      await holdAdoptedEntries();
+      // ERROR ONCE PER RUN OF FAILURES (reset by the pass that succeeds, as the toast is): every
+      // later flush of the same run repeats a fact already accused, so it is debug.
+      const side: MirrorAdoptionSide = e instanceof MirrorAdoptionError ? e.side : 'mirror';
+      const line = `[OUTBOX] start pass failed (${e instanceof MirrorAdoptionError ? side : 'unclassified'}) - the adopted entries are held, the page's own still go: ${String(e)}`;
+      if (unreachableTold) log(line);
+      else console.error(line);
+      await holdAdoptedEntries(side);
     }
     // LEADERSHIP HAS THREE STATES AND THIS USED TO READ TWO. `getIsTabLeader()` answers false while
     // the election is still running, and the follower branch below took that as "another tab will
