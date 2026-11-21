@@ -50,6 +50,14 @@ export function effectiveWakeVersion(token: { wakeVersion: number; wakeCapable: 
 }
 
 /**
+ * Whether a token's binary understands the ENVELOPE wake (`envelopeId`), by its effective version -
+ * the one test every envelope sender applies.
+ */
+export function isEnvelopeCapable(token: { wakeVersion: number; wakeCapable: boolean }): boolean {
+  return effectiveWakeVersion(token) >= ENVELOPE_WAKE_VERSION;
+}
+
+/**
  * The wake version a registration declares, from its body.
  *
  * - `wakeVersion`, an integer from 0 up: the declaration of a binary that knows versions. A version

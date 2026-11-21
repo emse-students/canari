@@ -268,6 +268,223 @@ describe('MessagingService - the envelope wake', () => {
     expect(fcmSend).not.toHaveBeenCalled();
   });
 
+  describe('the welcome-request-pending wake (WP-W3b)', () => {
+    const GROUP = '00000000-0000-4000-8000-00000000c0a5';
+    const welcome = {
+      type: 'welcome_request_pending',
+      groupId: GROUP,
+      requesterUserId: 'req-user',
+      requesterDeviceId: 'req-device',
+    };
+    const wakeMembers = () =>
+      (
+        service as unknown as {
+          sendFcmWelcomeRequestPending: (
+            g: string,
+            m: string[],
+            r: string,
+            t: string
+          ) => Promise<void>;
+        }
+      ).sendFcmWelcomeRequestPending(
+        GROUP,
+        ['u1:pixel', 'u2:tablet', 'req-user:req-device', 'req-user:req-phone'],
+        'req-user:req-device',
+        'trace'
+      );
+    const named = (i = 0) => {
+      const serialised = JSON.stringify(sent(i));
+      return [GROUP, 'req-user', 'req-device', 'welcome_request_pending'].filter((id) =>
+        serialised.includes(id)
+      );
+    };
+    const of = (t: ReturnType<typeof token>, userId: string) => ({ ...t, userId });
+    const lines = (level: 'log' | 'warn' | 'debug') =>
+      (Logger.prototype[level] as unknown as jest.SpyInstance).mock.calls.map(([m]) => String(m));
+    /** Every line this send's caller wrote about one device, at any level. */
+    const callerLinesAbout = (deviceId: string) =>
+      (['log', 'warn', 'debug'] as const)
+        .flatMap(lines)
+        .filter((m) => m.startsWith('[WELCOME_REQ]') && m.includes(`device=${deviceId} `));
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+    });
+    const modeReads = () =>
+      manager.query.mock.calls.filter(([sql]) => /push_mode/.test(String(sql))).length;
+
+    it('stores the four fields, then sends Android a silent wake naming nobody', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(store).toHaveBeenCalledWith(
+        manager,
+        'u1',
+        ['pixel'],
+        { title: '', body: '', data: welcome, inline: {} },
+        expect.anything(),
+        'trace'
+      );
+      expect(store.mock.invocationCallOrder[0]).toBeLessThan(fcmSend.mock.invocationCallOrder[0]);
+      expect(sent().data).toEqual({ type: 'wake', envelopeId: E1, silent: 'true' });
+      expect(sent().android).toEqual({ priority: 'high', ttl: 3_600_000 });
+      expect(sent().apns).toBeUndefined();
+      expect(named()).toEqual([]);
+    });
+
+    it.each(['wake', 'full'])(
+      'never sends an iOS token anything, whatever its version, with the switch at %s',
+      async (pushMode) => {
+        modeRows = [{ push_mode: pushMode }];
+        pushTokenRepo.find.mockResolvedValue([
+          token('t1', 'iphone', 'ios', 2),
+          token('t2', 'old-iphone', 'ios', 1),
+          token('t3', 'older-iphone', 'ios', 0),
+        ]);
+        await wakeMembers();
+        expect(fcmSend).not.toHaveBeenCalled();
+        expect(store).not.toHaveBeenCalled();
+        expect(modeReads()).toBe(0);
+        // A fixed decision, so debug: an INFO line on nearly every welcome request is noise.
+        expect(lines('debug')).toContainEqual(
+          expect.stringContaining('3 iOS token(s) not sent welcome_request_pending')
+        );
+        expect(lines('log').filter((m) => m.includes('iOS token'))).toEqual([]);
+      }
+    );
+
+    it("never sends the requester's own device, and still sends the requester's other one", async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        of(token('t1', 'req-device', 'android', 1), 'req-user'),
+        of(token('t2', 'req-phone', 'android', 1), 'req-user'),
+      ]);
+      await wakeMembers();
+      expect(fcmSend).toHaveBeenCalledTimes(1);
+      expect(sent().token).toBe('tok-req-phone');
+      expect(lines('debug')).toContainEqual(
+        expect.stringContaining("requester's own device not sent")
+      );
+    });
+
+    it('sends an Android binary below version 2 the full push, and reads neither switch nor envelope', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 1)]);
+      await wakeMembers();
+      expect(sent()).toEqual({
+        token: 'tok-pixel',
+        data: welcome,
+        android: { priority: 'high', ttl: 3_600_000 },
+      });
+      expect(modeReads()).toBe(0);
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('sends a version-2 binary the full push while the switch is full', async () => {
+      modeRows = [{ push_mode: 'full' }];
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(sent().data).toEqual(welcome);
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('wakes the version-2 device and sends the version-1 one the full push, on one account', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        token('t2', 'old-pixel', 'android', 1),
+      ]);
+      await wakeMembers();
+      expect(store.mock.calls.map((c) => c[2])).toEqual([['pixel']]);
+      const byToken = new Map(
+        fcmSend.mock.calls.map(([m]: [{ token: string; data: unknown }]) => [m.token, m.data])
+      );
+      expect(byToken.get('tok-pixel')).toEqual({ type: 'wake', envelopeId: E1, silent: 'true' });
+      expect(byToken.get('tok-old-pixel')).toEqual(welcome);
+    });
+
+    it('reads the switch ONCE for a send reaching several accounts', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        of(token('t2', 'tablet', 'android', 2), 'u2'),
+        of(token('t3', 'phone', 'android', 2), 'u3'),
+      ]);
+      await wakeMembers();
+      expect(modeReads()).toBe(1);
+      expect(store).toHaveBeenCalledTimes(3);
+    });
+
+    it('stores one account at a time, never two transactions at once', async () => {
+      let inFlight = 0;
+      let most = 0;
+      store.mockImplementation(async (_m, _u, deviceIds) => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        await new Promise((resolve) => setImmediate(resolve));
+        inFlight--;
+        return { ids: new Map(deviceIds.map((d) => [d, E1])), notWoken: new Map() };
+      });
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        of(token('t2', 'tablet', 'android', 2), 'u2'),
+      ]);
+      await wakeMembers();
+      expect(store.mock.calls.map((c) => [c[1], c[2]])).toEqual([
+        ['u1', ['pixel']],
+        ['u2', ['tablet']],
+      ]);
+      expect(most).toBe(1);
+    });
+
+    it('sends a capable device NOTHING when the switch cannot be read, accused ONCE under its own tag', async () => {
+      modeRows = new Error('connection reset');
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        of(token('t2', 'tablet', 'android', 2), 'u2'),
+        token('t3', 'old-pixel', 'android', 0),
+      ]);
+      await wakeMembers();
+      expect(fcmSend).toHaveBeenCalledTimes(1);
+      expect(sent().token).toBe('tok-old-pixel');
+      const unreadable = errorLog.mock.calls
+        .map(([m]) => String(m))
+        .filter((m) => m.includes('push_mode unreadable'));
+      expect(unreadable).toHaveLength(1);
+      expect(unreadable[0]).toContain('[WELCOME_REQ]');
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('sends a capable device NOTHING when its envelope cannot be stored - never the full push', async () => {
+      store.mockRejectedValue(new Error('FK violation'));
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('[PUSH_ENVELOPE]'));
+    });
+
+    // `storeEnvelopes` writes the ONE line of each (registration gone, the cap): the caller adds none,
+    // so one event is one line.
+    it('does not wake a device whose envelope the cap took at once, and adds no line of its own', async () => {
+      store.mockResolvedValue({ ids: new Map(), notWoken: new Map([['pixel', 'evicted']]) });
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(callerLinesAbout('pixel')).toEqual([]);
+      expect(lines('warn')).toEqual([]);
+    });
+
+    it("wakes the account's other device when one registration went since it was read", async () => {
+      store.mockResolvedValue({
+        ids: new Map([['tablet', E2]]),
+        notWoken: new Map([['pixel', 'registration-gone']]),
+      });
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        token('t2', 'tablet', 'android', 2),
+      ]);
+      await wakeMembers();
+      expect(fcmSend).toHaveBeenCalledTimes(1);
+      expect(sent().data).toEqual({ type: 'wake', envelopeId: E2, silent: 'true' });
+      expect(callerLinesAbout('pixel')).toEqual([]);
+    });
+  });
+
   it('never forwards the server-only floor into the envelope', async () => {
     pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
     unusedRepo.find.mockResolvedValueOnce([]);

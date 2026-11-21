@@ -663,12 +663,38 @@ export interface EnvelopeContent {
   inline: Record<string, string>;
 }
 
+/** The `type` of the push that wakes a member's phone to admit a device (`welcome_request_pending`). */
+export const WELCOME_REQUEST_PENDING_TYPE = 'welcome_request_pending';
+
 /**
- * Whether an internal push draws nothing: a salon read frame, or one its caller marked silent. The
- * ONE rule, read by the full APNs request and by the envelope's eviction order alike.
+ * Whether an internal push draws nothing: a salon read frame, a `welcome_request_pending` wake (it
+ * only lets a member's phone admit a device in the background - WP-W3b), or one its caller marked
+ * silent. The ONE rule, read by the full APNs request, the envelope's eviction order and the wake's
+ * `silent` bit alike.
  */
 export function isInternalSilent(data: Record<string, string>): boolean {
-  return data.type === 'channel_read' || data.silent === 'true';
+  return (
+    data.type === 'channel_read' ||
+    data.type === WELCOME_REQUEST_PENDING_TYPE ||
+    data.silent === 'true'
+  );
+}
+
+/**
+ * The data map of a `welcome_request_pending` push - the ONE map, sent as is by the full push and
+ * stored as is in the envelope a version-2 device fetches (content-free push WP-W3b), so the fetched
+ * fields are the full push's by construction. The receiver reads exactly these three ids.
+ *
+ * @param groupId - The conversation the requester's device is to be admitted to.
+ * @param requesterUserId - The requester's account.
+ * @param requesterDeviceId - The device awaiting its Welcome.
+ */
+export function welcomeRequestPendingData(
+  groupId: string,
+  requesterUserId: string,
+  requesterDeviceId: string
+): Record<string, string> {
+  return { type: WELCOME_REQUEST_PENDING_TYPE, groupId, requesterUserId, requesterDeviceId };
 }
 
 /**

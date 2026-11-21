@@ -413,8 +413,10 @@ describe('a token for another account than the local identity', () => {
 /** A sign-in completing while a refresh is in flight must not turn the stale answer into a split. */
 describe('a refresh superseded by a sign-in as another account', () => {
   it('is dropped: no split latched, the new session token stands', async () => {
-    const claims = (sub: string) =>
-      `h.${btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }))}.s`;
+    // ONE expiry, read once: a token rebuilt after `refresh()` must be the same string, and a clock
+    // read per call changes `exp` whenever the test crosses a second boundary.
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const claims = (sub: string) => `h.${btoa(JSON.stringify({ sub, exp }))}.s`;
     setToken(claims('new-user'));
     currentUserId.mockReturnValue('old-user');
     fetchMock.mockImplementation(async () => {
