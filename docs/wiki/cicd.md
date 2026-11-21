@@ -3596,6 +3596,81 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 
 **The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
 
+### The plan page is generated where it is read (2026-11-21)
+
+**THE DEFECT.** [plan](plan.md) is derived from the `target:` line of every
+[backlog.d](backlog.d/README.md) entry by `tools/backlog-plan/plan.mjs`. From 2026-11-13 it was
+COMMITTED, and `backlog-plan.test.mjs` failed a pull request whose copy was stale. Nearly every pull
+request touches an entry, so every merge to `main` left the other open pull requests CONFLICTING on
+`plan.md` - on 2026-11-16 alone #3676, #3678, #3683, #3684, and #3682 three times - and the
+automatic merge stalled until somebody merged `main` by hand and regenerated. A queue nobody drains.
+It is the conflict `backlog.d/` was created to remove from `backlog.md`, brought back by its own
+index.
+
+**WHY IT WAS CERTAIN, MEASURED.** The page lists each version's entries oldest first, and a new
+entry is the youngest of its group, so two pull requests each filing one insert at the SAME line -
+and git conflicts on two insertions between the same neighbours, always. Rendering the plan before
+and after pairs of independent changes and merging them with `git merge-file` (292 entries, the
+tree of 2026-11-16):
+
+| Change pair | Committed page, oldest first | Re-sorted by file name, a blank line between entries | Page not committed |
+| --- | --- | --- | --- |
+| two pull requests each filing one P2 entry the same day (15 pairs) | **15 conflict** | 2 conflict | 0 - nothing to merge |
+| random pairs, half filing an entry and half deleting one (300 pairs) | 18 conflict | 26 conflict | 0 |
+
+**THE OPTIONS, AND WHY THIS ONE.**
+
+- **A page conflict-free by construction** (option b: entry-local lines, file-name order, no counts)
+  is not possible in a text file: two insertions between the same two neighbours conflict whatever
+  the order, so a re-sort only MOVES the collisions (the second column) - and the file-name order
+  would drop the owner's order (P1 first, then the oldest, 2026-11-11), which is what makes the page
+  a queue. Rejected: it lowers a rate and keeps the mechanism.
+- **A regeneration after the merge** (option c) is a commit onto `main`, and `main` takes no direct
+  push (ruleset `22152902`). Pushing the regenerated page into every open branch instead is a bot
+  healing a race after the fact - a ledger, never a fix (CLAUDE.md, "a race that heals cleanly is
+  still a defect") - and a fifth visible workflow. A `merge=union` attribute is not honoured by
+  GitHub's merge, and would produce a page nobody generated. Rejected.
+- **The page is not committed** (option a, CHOSEN). A file no commit carries cannot conflict and
+  cannot be stale in git: the conflict is not made rarer, its cause is deleted. It is the rule this
+  repository already applies to the WASM and the protobuf bindings (`.gitignore`, "Generated sources
+  - built, never committed": a generated file in git is a copy of the truth).
+
+**HOW THE READER KEEPS THE PAGE.** The reader of [plan](plan.md) is an agent or a developer in a
+checkout - CLAUDE.md calls it the queue - and the page is written there:
+
+- `.husky/post-checkout` (a `git worktree add`, a `git switch`), `.husky/post-merge` (a `git pull`,
+  any merge) and `.husky/post-rewrite` (a rebase, `git pull --rebase` included: a rebase runs
+  `post-checkout` once, on the upstream commit, BEFORE replaying the branch - measured) run
+  `bun tools/backlog-plan/plan.mjs`, silently, in about 0.4 s;
+  the commit tier (`local-ci.sh plan`) rewrites it when the commit touches an entry and stages
+  nothing. `husky-hookspath.test.mjs` asserts all three hooks are tracked and executable.
+- **A hook never fails the git operation** (2026-11-21): with no `bun` on the PATH, or a generator
+  error, each hook prints ONE stderr line (`plan.md not refreshed: bun missing`) and exits 0 - a
+  failing `post-checkout` would break `git switch` and `git worktree add` for every script, and the
+  page is only a copy.
+- **A hook-less operation leaves a stale page, and the page says so**: `rebase --abort`,
+  `reset --hard`, `stash pop`, `cherry-pick` and `restore` fire no hook. The page header carries the
+  commit it was generated from and whether `backlog.d` was dirty; `plan.mjs --check` warns
+  `page generated from X, HEAD is Y`; CLAUDE.md tells the reader to run the command before reading.
+- **A fresh clone runs no hook** - none is armed until the install sets `core.hooksPath` - so
+  `make install` (`install-frontend`, `install-hooks`) writes the page once. By hand, in any
+  checkout, the one command: `bun tools/backlog-plan/plan.mjs`.
+- **A pull request open when this merged and still editing `plan.md` conflicts once**
+  (modify/delete) when it merges `main`: resolve with `git rm --cached docs/wiki/plan.md` - the
+  file stays on disk, ignored - and commit.
+- `wiki-links.test.mjs` resolves a link into `plan.md` - the `plan.md#readings-owed` links - against
+  what `render()` WOULD write from the tree, so a runner, which has no copy, checks the anchors, and
+  a copy that is stale on a workstation cannot make a dead link look alive.
+- `backlog-plan.test.mjs` keeps every check that mattered (a target on every entry, the readings in
+  the earliest version) and adds three: the rendered page lists every entry exactly once, under the
+  version it targets; the `Readings owed` heading is there while readings exist; and `plan.md` is
+  neither tracked nor un-ignored - recommitting it is what would bring the conflicts back.
+
+**WHAT IT COSTS, SAID PLAINLY.** On github.com the link to `plan.md` is a 404: a human there reads
+the [backlog.d](backlog.d/README.md) directory, and the owner the private tracking page the lead
+republishes at every milestone (CLAUDE.md, WORKFLOW CYCLE), which is generated from a checkout like
+any other reader's. No workflow file changed.
+
 ## Checks at commit, at push, and in CI only
 
 **The owner's decision, 2026-11-15:** *"tout ce qui est vérifié à la PR devrait être vérifié au
@@ -3694,7 +3769,7 @@ matches it; a commit touching none of them pays nothing.
 | --- | --- | --- |
 | a `.md`, or any deletion or rename | `wiki-links.test.mjs` (reads `git ls-files`, no disk walk) | 0.4 s |
 | a `.md` | `docs-merge-artefacts.test.mjs` | 0.3 s |
-| `docs/wiki/backlog.d/`, `backlog.md`, `plan.md`, `tools/backlog-plan/` | `plan.mjs` re-run and `plan.md` staged, then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
+| `docs/wiki/backlog.d/`, `backlog.md`, `tools/backlog-plan/` | `plan.mjs` re-run (the checkout's `plan.md`, gitignored, [never staged](#the-plan-page-is-generated-where-it-is-read-2026-11-21)), then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
 | `CLAUDE.md` | `claude-md-cap.test.mjs` | 0.05 s |
 | `.md`, `.sh`, `.yml`, `.ts`, `.mjs`, `.env.example` | `docs-private-guard.test.mjs` | 3.3 s |
 | a `.sh` or `.husky/` | `executable-bit`; `pipefail-early-reader`; shellcheck on the staged scripts of the set CI lints (`make lint-ci-scripts FILES=...`, `-x` follows what they source) | 0.15 s, 0.16 s, ~1 s (the whole set, 15-37 s, is the push's) |
