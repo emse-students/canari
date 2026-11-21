@@ -3383,7 +3383,7 @@ asserted per target, never assumed from the file name.
   `libuuid` advisories: **the digest moved** to the current `18-alpine` build, same major.
 - `nginx:1.31.7-alpine` (the edge, production and dev) carried `libexpat` and `libx11`: **moved to
   `1.31.8-alpine`**, which carries neither.
-- `gosu` in both postgres images (26 Go standard-library advisories): **allowlisted** - it runs once
+- `gosu` in both postgres images (27 Go standard-library advisories; CVE-2026-97054 added 2026-11-21: net/http server code, gosu serves no HTTP, and gosu 1.20 is still built on Go 1.24.6): **allowlisted** - it runs once
   in the entrypoint to drop privileges and `exec`s postgres, so that code never runs; the newest
   upstream image still ships the same build.
 - npm bundled in `node:24-alpine` (3): **allowlisted** - `frontend-ssr` runs `node index.js` and never
