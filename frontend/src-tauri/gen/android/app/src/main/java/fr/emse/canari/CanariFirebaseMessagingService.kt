@@ -703,8 +703,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
                             channelId == CHANNEL_REACTIONS
                         ) {
-                            if (isHeldByDirectReply(sbn.notification)) held += sbn.id else {
-                                manager.cancel(sbn.id)
+                            if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)
+                            if (sbn.id !in held) {
                                 // EVERY REMOVAL SAYS WHY: this sweep removes a banner whose conversation
                                 // was NOT necessarily read (opening the app is the whole rule), and it
                                 // used to leave no line - a banner gone a second after the app came to
