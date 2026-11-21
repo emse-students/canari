@@ -469,13 +469,14 @@ describe('a reply whose acknowledgement was lost is settled from what the page h
     expect(store.file()).toHaveLength(1);
   });
 
-  it('a lost reply the native side was not told of at sign-out is shown by the page', async () => {
+  it('never toasts a sign-out loss to the session in front by then - the banner and the log say it', async () => {
     const session = as(async () => 'sent');
     setNativeQuickReplySender(session);
     await settle();
     store.unclaimed = vi.fn(async () => ['nothing-held']);
     vi.mocked(store.acknowledge).mockResolvedValueOnce(false);
     await settleNativeQuickRepliesAtSignOut(ME, async () => null);
-    expect(session.told).toEqual([['lost', null]]);
+    expect(store.acks).toEqual([]);
+    expect(session.told).toEqual([]);
   });
 });

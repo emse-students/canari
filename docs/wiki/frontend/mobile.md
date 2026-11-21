@@ -1199,7 +1199,10 @@ Notification Center over an open app was lost. The fix:
   replies still recorded and absent from the file (ids read under the take's lock,
   `quick_reply_ids_waiting_in`) and draws nothing; the page settles each one from its store
   (`heldAs` -> `settlementHeld`): an outbox entry is `pending` (or `failed` once parked), a message
-  row with no entry is `sent` (or `failed` with an unsent reason), and only NOTHING held is `lost` -
+  row with no entry is `sent` ONLY when it carries what a delivery writes on it (this device's
+  `authorship`, or the server's time, both written before the entry is deleted) and `failed`
+  otherwise - an echo whose entry was never written (the TAB-5 orphan) never left, so it is shown
+  with its Retry, never drawn answered (round-3 review) - and only NOTHING held is `lost` -
   drawn `non envoyé, réécrivez-le`, at ERROR. Review of #3927: deciding "lost" natively from the file
   alone drew "retype it" over a reply sent whose acknowledgement failed, or whose WebView reloaded
   between the write and the ack - and the member sent it twice. A reply whose state cannot be read is
@@ -1208,7 +1211,8 @@ Notification Center over an open app was lost. The fix:
   first take; and at its SIGN-OUT (`settleNativeQuickRepliesAtSignOut`, from `handleSignedOut`, with
   the leaving account's store captured before the teardown lets go of it, and not awaited -
   `clearAuth` needs the teardown synchronous), so an account that left keeps no `envoi en cours`
-  banner. The settlements run one at a time, after every take in flight has ended, and skip the
+  banner. Its losses are never toasted to the session in front by then: the banner line and a WARN
+  say them. The settlements run one at a time, after every take in flight has ended, and skip the
   replies this page is still sending (`handling`): none of those can be called lost while their send
   runs. Replies still WAITING in the file at a sign-out stay there: the account's next session takes
   them, and another account's take drops them, said. A FROZEN process is not a loss: its banner stays

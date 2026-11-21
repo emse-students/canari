@@ -480,7 +480,20 @@ export async function settleNativeQuickRepliesAtSignOut(
     appendLog('[QuickReply] sign-out: no session of this account sent replies - nothing to settle');
     return;
   }
-  const lost = await settleUnclaimed({ ...lastSender, heldAs }, 'sign-out');
+  // THE LEAVING ACCOUNT'S LOSS IS NEVER TOASTED TO WHOEVER IS SIGNED IN BY THEN (round-3 review):
+  // shown only while that account is still the one sending, else left to the banner line the
+  // native side draws and to this WARN.
+  const leaving = lastSender;
+  const tell: Tell = (kind, reply) => {
+    if (sender?.accountId === accountId) {
+      leaving.tell(kind, reply);
+      return;
+    }
+    appendLog(
+      `[QuickReply] WARN sign-out: reply ${reply?.replyId ?? '(no id)'} is ${kind} and its account left - not shown to the session now in front`
+    );
+  };
+  const lost = await settleUnclaimed({ ...leaving, heldAs, tell }, 'sign-out');
   appendLog(`[QuickReply] sign-out: the account's unsettled replies are settled (${lost} lost)`);
 }
 

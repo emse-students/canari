@@ -27,9 +27,17 @@ describe('settlementHeld', () => {
     );
   });
 
-  it('a row with no entry left is sent, or failed when an unsent reason was recorded', () => {
-    expect(settlementHeld(null, {})).toBe('sent');
-    expect(settlementHeld(null, { unsentReason: 'not-a-member' })).toBe('failed');
+  it('a row is sent only when it carries what a delivery writes on it', () => {
+    const signed = { authorship: {} as never };
+    expect(settlementHeld(null, signed)).toBe('sent');
+    expect(settlementHeld(null, { serverTimestamp: 42 })).toBe('sent');
+    expect(settlementHeld(null, { ...signed, unsentReason: 'not-a-member' })).toBe('failed');
+  });
+
+  it('a row with no entry and no delivery on it NEVER LEFT - failed, with its Retry (round-3 review)', () => {
+    // The TAB-5 orphan: the echo written, the process dead before its entry was. Drawing it
+    // answered would tell the member a reply went that never did.
+    expect(settlementHeld(null, {})).toBe('failed');
   });
 
   it('nothing held is null - the one case a reply is lost', () => {
