@@ -365,6 +365,18 @@ export function adoptMirrorEntry(
 }
 
 /**
+ * The adoption could not read what it decides on - the mirror, or the queue it compares it with.
+ * THROWN, never answered as "nothing to adopt": the controller's start pass that sees it did not
+ * run, and runs again (`claimAtStart` in outbox.ts).
+ */
+export class MirrorAdoptionError extends Error {
+  constructor(what: 'mirror' | 'queue', cause: unknown) {
+    super(`the ${what} could not be read: ${String(cause)}`);
+    this.name = 'MirrorAdoptionError';
+  }
+}
+
+/**
  * The page's claims on native mirror lines, kept by the outbox controller (`unclaimed` in
  * outbox.ts). `hold` is called BEFORE an adopted entry is written to the queue - so no flush can
  * read it before it is held - and for every native line the queue ALREADY holds (adopted by an
@@ -411,20 +423,19 @@ export async function adoptOrphanedMirrorEntries(
     reportUnreadableLines(read.unreadable, 'mirror read');
   } catch (e) {
     appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
-    return [];
+    throw new MirrorAdoptionError('mirror', e);
   }
   if (!mirror.length) return [];
 
   const known = await storage
     .getOutboxQueue(deviceKeyB64)
+    .then((entries) => new Set(entries.map((e) => e.id)))
     .catch((e) => {
       // Treating a failed read as an empty queue here would re-adopt the whole live queue, so this
-      // is the one branch that must give up rather than guess.
+      // is the one branch that must give up rather than guess - and say so to its caller.
       appendLog(`[OUTBOX_MIRROR] Outbox read failed, adoption skipped: ${String(e)}`);
-      return null;
-    })
-    .then((entries) => (entries ? new Set(entries.map((e) => e.id)) : null));
-  if (!known) return [];
+      throw new MirrorAdoptionError('queue', e);
+    });
 
   // NATIVE LINES THE QUEUE ALREADY HOLDS: adopted by a page life whose claim never landed (it is in
   // memory only). Still native in the file, so a background drain may send them - held again.

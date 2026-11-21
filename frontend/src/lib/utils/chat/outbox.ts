@@ -3452,9 +3452,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await claimAtStart();
     } catch (e) {
       // Nothing is flushed past a start pass that did not run: what it would have held could be
-      // sent here AND by a background drain. The next flush runs it again.
+      // sent here AND by a background drain. NO TIMER runs it again: the next real trigger does -
+      // an enqueue, a resume or `canari:foreground`, a reconnect, a mirror write that lands, a
+      // Retry tap - each of which raises a flush. Meanwhile the queue shows what it holds: pending,
+      // or failed with its Retry where its own failure says so.
       startPass = null;
-      console.error(`[OUTBOX] start pass failed - this flush is skipped: ${String(e)}`);
+      console.error(
+        `[OUTBOX] start pass failed - this flush is skipped, the next trigger runs it again: ${String(e)}`
+      );
       return;
     }
     // LEADERSHIP HAS THREE STATES AND THIS USED TO READ TWO. `getIsTabLeader()` answers false while

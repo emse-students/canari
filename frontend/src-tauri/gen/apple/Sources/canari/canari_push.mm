@@ -2159,14 +2159,14 @@ static BOOL CanariAppendOutboxJournal(CanariOutboxEntry *entry) {
   return YES;
 }
 
+/// Rewrites the mirror with `remaining` (deletes it when empty) through Rust's ONE durable write
+/// (`canari_outbox_write_mirror`: a temp file, synced, renamed over, the directory synced), so a
+/// power loss never leaves a half mirror. A failure leaves the mirror as it was, logged: a delivered
+/// entry still in it is sent again, and the receiver drops it by its messageId.
 static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
-    return;
-  }
-  NSString *path = [dir stringByAppendingPathComponent:kOutboxPendingFileName];
-  if (remaining.count == 0) {
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    NSLog(@"[CanariPush] ERROR rewriteOutboxMirror: no data dir - the mirror is left as it was");
     return;
   }
   NSMutableArray<NSString *> *lines = [NSMutableArray array];
@@ -2176,8 +2176,11 @@ static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
       [lines addObject:line];
     }
   }
-  NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-  [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  NSString *body =
+      lines.count == 0 ? @"" : [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+  if (canari_outbox_write_mirror(dir.UTF8String, body.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR rewriteOutboxMirror: NOT written - the mirror is left as it was");
+  }
 }
 
 static void CanariAppendOutboxSent(NSArray<NSString *> *ids) {
@@ -2352,10 +2355,13 @@ static int CanariDrainOutboxBackgroundLocked(
     CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
   // What was appended meanwhile, into the mirror first (`canari_outbox_fold`): read after this, the
   // journal holds only what is appended DURING this drain, which the next holder folds.
+  // A FOLD THAT FAILS STOPS THE DRAIN: nothing is sent or dropped on it, or a line dropped here could
+  // come back as native from a source the fold could not delete (`fold_into_mirror`).
   NSString *foldDir = CanariTauriDataDir();
-  if (foldDir != nil && canari_outbox_fold(foldDir.UTF8String) != 1) {
-    NSLog(@"[CanariPush] ERROR drainOutbox: the outbox journal was not folded - its lines wait for "
-          @"the next holder of the mirror lock");
+  if (foldDir == nil || canari_outbox_fold(foldDir.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR drainOutbox: the outbox journal was not folded - nothing sent, the "
+          @"next holder of the mirror lock folds again");
+    return (int)MAX((NSUInteger)1, CanariReadOutboxMirror().count);
   }
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {

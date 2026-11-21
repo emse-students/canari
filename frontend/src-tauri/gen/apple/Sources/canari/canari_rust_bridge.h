@@ -127,6 +127,11 @@ int canari_outbox_journal_append(const char *data_dir, const char *line);
 /// holds the mirror lock. 1 when folded, 0 (logged) otherwise: the journal is kept.
 int canari_outbox_fold(const char *data_dir);
 
+/// Replaces `outbox_pending.ndjson` in `data_dir` with `body` DURABLY (a temp file, synced, renamed
+/// over, the directory synced); an empty `body` deletes it. The caller holds the mirror lock.
+/// 1 when written, 0 (logged) otherwise: the mirror is then as it was.
+int canari_outbox_write_mirror(const char *data_dir, const char *body);
+
 char *canari_native_build_call_hangup_proto(
     const char *message_id,
     long long sent_at,

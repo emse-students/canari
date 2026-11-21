@@ -44,7 +44,12 @@
 //! the first free `outbox_pending.unreadable.<n>.ndjson` ([`set_aside`]); the fold reads every one
 //! lossily, takes each line that is an entry, and deletes the file only once the mirror holding
 //! them is written. What still cannot be read is counted and returned to the page, which tells the
-//! member (principle 2: the essential is never lost, or never lost silently).
+//! member (principle 2: the essential is never lost, or never lost silently) - once per fact.
+//!
+//! **EVERY WRITE SURVIVES A POWER LOSS, AND NO FOLDED SOURCE STAYS READABLE AS NEW.** Each write is
+//! a temp file, synced, renamed over ([`write_durably`]); the journal is renamed to a folding name
+//! before it is read, and a source the fold cannot delete FAILS the fold, so no caller sends and
+//! drops a line that could then come back from it ([`fold_into_mirror`]).
 
 use std::collections::HashSet;
 
@@ -260,22 +265,83 @@ fn short_name(path: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// The prefix and suffix of a file moved aside ([`set_aside`]): `outbox_pending.unreadable.<n>.ndjson`.
-const ASIDE_PREFIX: &str = "outbox_pending.unreadable.";
-const ASIDE_SUFFIX: &str = ".ndjson";
+// ── Durable writes: a power loss never empties the queue ─────────────────────────────────────────
 
-/// The files moved aside in `dir`, in their order of `n`. Removed with the account's other files
-/// (`remove_user_push_files`).
-pub(crate) fn aside_files(dir: &std::path::Path) -> Vec<String> {
+/// Syncs `dir`'s entries to the disk, so a rename or a delete in it survives a power loss. Unix
+/// only: elsewhere a directory cannot be opened for it (the desktop builds), and nothing is owed.
+fn sync_dir(dir: &std::path::Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)
+            .and_then(|d| d.sync_all())
+            .map_err(|e| format!("directory not synced: {e}"))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
+/// THE ONE DURABLE WRITE of a mirror file: `body` to `<name>.tmp`, synced, RENAMED over `path`
+/// (atomic: a reader sees the old file or the new one), then the directory synced; `None` deletes
+/// the file, durably too. A truncate-then-write lost the whole queue to a power loss between the
+/// two. `Err` leaves `path` as it was. Kotlin's `DurableFile.replace` is the twin.
+fn write_durably(path: &std::path::Path, body: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    let dir = path.parent().ok_or("a mirror path with no directory")?;
+    match body {
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("{} delete failed: {e}", short_name(path)));
+            }
+            _ => {}
+        },
+        Some(body) => {
+            let tmp = dir.join(format!("{}.tmp", short_name(path)));
+            std::fs::File::create(&tmp)
+                .and_then(|mut f| {
+                    f.write_all(body.as_bytes())?;
+                    f.sync_all()
+                })
+                .and_then(|()| std::fs::rename(&tmp, path))
+                .map_err(|e| {
+                    let _ = std::fs::remove_file(&tmp);
+                    format!("{} write failed: {e}", short_name(path))
+                })?;
+        }
+    }
+    sync_dir(dir)
+}
+
+/// Writes `lines` as the mirror at `path`, durably ([`write_durably`]); no line deletes the file,
+/// so the native side sees "nothing pending" without parsing it.
+fn write_lines(path: &std::path::Path, lines: &[String]) -> Result<(), String> {
+    let body = (!lines.is_empty()).then(|| lines.join("\n") + "\n");
+    write_durably(path, body.as_deref())
+}
+
+// ── The side files: what is moved aside, what is being folded ────────────────────────────────────
+
+/// A mirror that could not be read, moved aside ([`set_aside`]): `outbox_pending.unreadable.<n>.ndjson`.
+const ASIDE_PREFIX: &str = "outbox_pending.unreadable.";
+/// The journal while it is folded ([`fold_into_mirror`]): `outbox_journal.folding.<n>.ndjson`.
+const FOLDING_PREFIX: &str = "outbox_journal.folding.";
+/// The suffix of every numbered side file.
+const SIDE_SUFFIX: &str = ".ndjson";
+/// Appended to a side file that cannot be read once it has been REPORTED to the member: no fold
+/// lists it again, so it is told once, and it stays for the account's deletion.
+const REPORTED_SUFFIX: &str = ".reported";
+
+/// The numbered side files `<prefix><n>.ndjson` in `dir`, in their order of `n`.
+fn numbered_files(dir: &std::path::Path, prefix: &str) -> Vec<String> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut found: Vec<(u64, String)> = read
         .filter_map(|e| e.ok()?.file_name().into_string().ok())
         .filter_map(|name| {
-            let n = name
-                .strip_prefix(ASIDE_PREFIX)?
-                .strip_suffix(ASIDE_SUFFIX)?;
+            let n = name.strip_prefix(prefix)?.strip_suffix(SIDE_SUFFIX)?;
             Some((n.parse().ok()?, name))
         })
         .collect();
@@ -283,15 +349,44 @@ pub(crate) fn aside_files(dir: &std::path::Path) -> Vec<String> {
     found.into_iter().map(|(_, name)| name).collect()
 }
 
-/// Moves `path` aside under the first FREE `outbox_pending.unreadable.<n>.ndjson` - never over an
-/// earlier one - for [`fold_into_mirror`] to read again. Called under the mirror lock, so no other
-/// writer picks the same name.
+/// The first FREE `<prefix><n>.ndjson` in `dir` - never an existing one. Called under the mirror
+/// lock (and the journal lock for a folding name), so no other writer picks the same name.
+fn first_free(dir: &std::path::Path, prefix: &str) -> Result<String, String> {
+    (1u64..)
+        .map(|n| format!("{prefix}{n}{SIDE_SUFFIX}"))
+        .find(|name| {
+            !dir.join(name).exists() && !dir.join(format!("{name}{REPORTED_SUFFIX}")).exists()
+        })
+        .ok_or_else(|| format!("no free {prefix}<n> name"))
+}
+
+/// The files moved aside in `dir`, in their order of `n`.
+pub(crate) fn aside_files(dir: &std::path::Path) -> Vec<String> {
+    numbered_files(dir, ASIDE_PREFIX)
+}
+
+/// EVERY side file of the mirror in `dir` - moved aside, being folded, reported, a temp file a crash
+/// left - for the account's deletion (`remove_user_push_files`): the same account's protos.
+pub(crate) fn mirror_side_files(dir: &std::path::Path) -> Vec<String> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let tmp = format!("{OUTBOX_PENDING_FILE}.tmp");
+    let mut found: Vec<String> = read
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| {
+            name.starts_with(ASIDE_PREFIX) || name.starts_with(FOLDING_PREFIX) || *name == tmp
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Moves `path` aside under the first free `outbox_pending.unreadable.<n>.ndjson` - never over an
+/// earlier one - for [`fold_into_mirror`] to read again.
 fn set_aside(path: &std::path::Path) -> Result<String, String> {
     let dir = path.parent().ok_or("a mirror path with no directory")?;
-    let name = (1u64..)
-        .map(|n| format!("{ASIDE_PREFIX}{n}{ASIDE_SUFFIX}"))
-        .find(|name| !dir.join(name).exists())
-        .ok_or("no free name to move the mirror aside")?;
+    let name = first_free(dir, ASIDE_PREFIX)?;
     std::fs::rename(path, dir.join(&name)).map_err(|e| format!("not moved aside ({e})"))?;
     Ok(name)
 }
@@ -313,20 +408,6 @@ fn read_or_set_aside(path: &std::path::Path) -> Result<String, String> {
     Ok(String::new())
 }
 
-/// Writes `lines` as the mirror at `path`; no line deletes the file, so the native side sees
-/// "nothing pending" without parsing it.
-fn write_lines(path: &std::path::Path, lines: &[String]) -> Result<(), String> {
-    if lines.is_empty() {
-        return match std::fs::remove_file(path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(format!("mirror delete failed: {e}"))
-            }
-            _ => Ok(()),
-        };
-    }
-    std::fs::write(path, lines.join("\n") + "\n").map_err(|e| format!("mirror write failed: {e}"))
-}
-
 // ── The journal: a native append never waits behind a drain ─────────────────────────────────────
 
 /// The append-only journal the native side queues into (`outbox_journal.ndjson`), beside the mirror.
@@ -338,9 +419,10 @@ fn write_lines(path: &std::path::Path, lines: &[String]) -> Result<(), String> {
 /// folds the journal into the mirror first ([`fold_into_mirror`]). Removed with the account's files.
 pub(crate) const OUTBOX_JOURNAL_FILE: &str = "outbox_journal.ndjson";
 
-/// Serialises the journal's appends and its fold, in this process - every writer of it is in the
-/// app process on both phones (the iOS notification extension never names these files). A LEAF:
-/// taken under the mirror lock by a fold, alone by an append, and nothing is taken under it.
+/// Serialises the journal's appends, its reads and its fold, in this process - every writer of it
+/// is in the app process on both phones (the iOS notification extension never names these files).
+/// A LEAF: taken under the mirror lock by a fold, alone by an append or a read, and nothing is
+/// taken under it.
 static JOURNAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Takes [`JOURNAL_LOCK`]; a panic under it leaves no half-state (each holder writes whole lines or
@@ -370,14 +452,40 @@ pub(crate) fn append_journal(dir: &std::path::Path, line: &str) -> Result<(), St
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("no data directory: {e}"))?;
     let _held = journal_lock();
+    let journal = dir.join(OUTBOX_JOURNAL_FILE);
+    let created = !journal.exists();
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join(OUTBOX_JOURNAL_FILE))
+        .open(&journal)
         .map_err(|e| format!("journal not opened: {e}"))?;
     file.write_all(format!("{entry}\n").as_bytes())
         .and_then(|()| file.sync_data())
-        .map_err(|e| format!("journal not written: {e}"))
+        .map_err(|e| format!("journal not written: {e}"))?;
+    // A journal this append created is a new directory entry: on the disk only once its directory
+    // is. The line itself is synced and WILL be folded, so a failure here is no "not queued".
+    if created {
+        if let Err(e) = sync_dir(dir) {
+            log::error!("[OUTBOX_MIRROR] journal created, {e} - the line is queued, its file may not survive a power loss");
+        }
+    }
+    Ok(())
+}
+
+/// The journal's lines not folded yet, for a native caller that only LOOKS (Kotlin's
+/// `readOutboxQueuedOrNull`): every file being folded, then the journal, read under
+/// [`JOURNAL_LOCK`] so no append is half-read.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn read_journal_text(dir: &std::path::Path) -> Result<String, String> {
+    let _held = journal_lock();
+    let mut text = String::new();
+    for name in numbered_files(dir, FOLDING_PREFIX)
+        .into_iter()
+        .chain(std::iter::once(OUTBOX_JOURNAL_FILE.to_owned()))
+    {
+        text.push_str(&read_text(&dir.join(name))?);
+    }
+    Ok(text)
 }
 
 /// What a fold did, for its log line and for the member.
@@ -385,9 +493,9 @@ pub(crate) fn append_journal(dir: &std::path::Path, line: &str) -> Result<(), St
 pub(crate) struct Fold {
     /// Lines moved into the mirror, from the journal and the files moved aside.
     pub folded: usize,
-    /// Lines that are no entry: nobody can send them, and the member is told.
+    /// Lines of a folded source that are no entry, dropped with it in THIS fold: the member is told.
     pub unreadable_lines: usize,
-    /// Files moved aside that still cannot be read: kept, and the member is told.
+    /// Side files found unreadable in THIS fold and marked reported: the member is told, once.
     pub unreadable_files: usize,
 }
 
@@ -407,19 +515,40 @@ fn collect_new(text: &str, known: &mut HashSet<String>, out: &mut Vec<String>, f
 }
 
 /// Folds the journal, and every file moved aside, into the mirror in `dir`. **THE CALLER HOLDS THE
-/// MIRROR LOCK** - the page's commands, a native drain, a native presence check.
+/// MIRROR LOCK** - the page's commands, a native drain - and goes on only on `Ok`.
 ///
-/// A line already in the mirror (by id) is not added again, so a fold that died after its write
-/// and before its deletes is repeated harmlessly. A source is deleted only once the mirror holding
-/// its lines is written; an aside file that cannot be read is kept, counted, and read again next
-/// time.
+/// **NO FOLDED SOURCE STAYS READABLE AS NEW.** The journal is first RENAMED to a folding name, so
+/// nothing appended after this fold began lands in what it deletes. The sources are read, the
+/// mirror holding their lines is written DURABLY, and only then are they deleted. A folding file a
+/// crash left is folded again by the next holder - harmlessly, by id, since the mirror holding its
+/// lines was written before any delete and no holder sends before its fold. **A SOURCE THAT CANNOT
+/// BE DELETED FAILS THE FOLD**: its caller then sends nothing and drops nothing, so a line sent and
+/// dropped from the mirror can never come back from it as native; the next fold tries again.
+///
+/// A side file that cannot be read is marked `.reported` and counted ONCE: the page tells the
+/// member, and no later fold counts it again.
 pub(crate) fn fold_into_mirror(dir: &std::path::Path) -> Result<Fold, String> {
+    fold_with(dir, &|path| std::fs::remove_file(path))
+}
+
+/// [`fold_into_mirror`] with the delete of a folded source given, for a test to make it fail.
+fn fold_with(
+    dir: &std::path::Path,
+    remove: &dyn Fn(&std::path::Path) -> std::io::Result<()>,
+) -> Result<Fold, String> {
     let mut fold = Fold::default();
     let _held = journal_lock();
     let journal_path = dir.join(OUTBOX_JOURNAL_FILE);
-    let journal = read_or_set_aside(&journal_path)?;
-    let asides = aside_files(dir);
-    if journal.is_empty() && asides.is_empty() {
+    if journal_path.exists() {
+        let folding = first_free(dir, FOLDING_PREFIX)?;
+        std::fs::rename(&journal_path, dir.join(&folding))
+            .map_err(|e| format!("journal not renamed for its fold: {e}"))?;
+    }
+    let sources: Vec<String> = numbered_files(dir, FOLDING_PREFIX)
+        .into_iter()
+        .chain(aside_files(dir))
+        .collect();
+    if sources.is_empty() {
         return Ok(fold);
     }
     let path = dir.join(OUTBOX_PENDING_FILE);
@@ -439,29 +568,43 @@ pub(crate) fn fold_into_mirror(dir: &std::path::Path) -> Result<Fold, String> {
                 .map(str::to_owned)
         })
         .collect();
-    collect_new(&journal, &mut known, &mut lines, &mut fold);
-    let mut read_asides = Vec::new();
-    for name in &asides {
+    let mut folded = Vec::new();
+    for name in &sources {
         match read_text(&dir.join(name)) {
             Ok(text) => {
                 collect_new(&text, &mut known, &mut lines, &mut fold);
-                read_asides.push(name);
+                folded.push(name);
             }
             Err(e) => {
-                log::error!("[OUTBOX_MIRROR] {e} - the file stays aside, the member is told");
                 fold.unreadable_files += 1;
+                let reported = format!("{name}{REPORTED_SUFFIX}");
+                match std::fs::rename(dir.join(name), dir.join(&reported)) {
+                    Ok(()) => log::error!(
+                        // log-safe: an io error and a side file's name.
+                        "[OUTBOX_MIRROR] {e} - kept as {reported}, the member is told once"
+                    ),
+                    Err(r) => log::error!(
+                        // log-safe: two io errors and a side file's name.
+                        "[OUTBOX_MIRROR] {e}, and not marked reported ({r}) - the member is told again by the next fold"
+                    ),
+                }
             }
         }
     }
     write_lines(&path, &lines)?;
-    for source in std::iter::once(OUTBOX_JOURNAL_FILE).chain(read_asides.iter().map(|n| n.as_str()))
-    {
-        match std::fs::remove_file(dir.join(source)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => log::error!(
-                "[OUTBOX_MIRROR] {source} folded but not deleted: {e} - the next fold skips its lines by id"
-            ),
-            _ => {}
-        }
+    let undeleted: Vec<String> = folded
+        .iter()
+        .filter_map(|name| match remove(&dir.join(name)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Some(format!("{name} ({e})")),
+            _ => None,
+        })
+        .collect();
+    sync_dir(dir)?;
+    if !undeleted.is_empty() {
+        return Err(format!(
+            "folded but NOT deleted: {} - nothing may be sent on this fold, the next one tries again",
+            undeleted.join(", ")
+        ));
     }
     if fold != Fold::default() {
         log::info!(
@@ -487,10 +630,35 @@ fn write_page_lines(
     Ok(merge)
 }
 
+/// The page's write in `dir`, the caller holding the mirror lock: the fold, then the page's lines.
+/// Answers what was LOST IN THIS WRITE - lines dropped as no entry, side files found unreadable -
+/// which the page tells the member, once per fact: a dropped line is gone after it, a side file is
+/// marked reported.
+fn page_write(
+    dir: &std::path::Path,
+    entries: Vec<Value>,
+    held: &HashSet<String>,
+) -> Result<usize, String> {
+    let fold = fold_into_mirror(dir)?;
+    let merge = write_page_lines(&dir.join(OUTBOX_PENDING_FILE), entries, held)?;
+    let lost = merge.unreadable + fold.unreadable_lines + fold.unreadable_files;
+    if lost > 0 {
+        log::error!(
+            // log-safe: `MirrorMerge` and `Fold` are counts, no id and no content.
+            "[OUTBOX_MIRROR] {lost} line(s) or file(s) lost in this write, the member is told: {merge:?} {fold:?}"
+        );
+    } else {
+        log::debug!(
+            // log-safe: `MirrorMerge` is counts, no id and no content.
+            "[OUTBOX_MIRROR] page write done: {merge:?}"
+        );
+    }
+    Ok(lost)
+}
+
 /// The page's write of its outbox queue into the mirror: `entries` are its mirrored lines, `held`
 /// the id of every entry it queues - after the journal and the files moved aside are folded in.
-/// Answers how many lines could not be kept (no entry), which the page TELLS the member: nobody
-/// will ever send them. See the module doc for what is kept and why.
+/// Answers what was lost in this write ([`page_write`]). See the module doc for what is kept.
 #[tauri::command]
 pub(crate) async fn store_outbox_mirror(
     app: tauri::AppHandle,
@@ -505,37 +673,46 @@ pub(crate) async fn store_outbox_mirror(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-        let path = data_dir.join(OUTBOX_PENDING_FILE);
         let held: HashSet<String> = held.into_iter().collect();
-        let (fold, merge) = under_outbox_lock(|| {
-            let fold = fold_into_mirror(&data_dir)?;
-            Ok::<_, String>((fold, write_page_lines(&path, entries, &held)?))
-        })?
-        .inspect_err(|e| log::error!("[OUTBOX_MIRROR] page write NOT done: {e}"))?;
-        let lost = merge.unreadable + fold.unreadable_lines + fold.unreadable_files;
-        if lost > 0 {
-            log::error!(
-                // log-safe: `MirrorMerge` and `Fold` are counts, no id and no content.
-                "[OUTBOX_MIRROR] {lost} line(s) or file(s) are no entry, the member is told: {merge:?} {fold:?}"
-            );
-        } else {
-            log::debug!(
-                // log-safe: `MirrorMerge` is counts, no id and no content.
-                "[OUTBOX_MIRROR] page write done: {merge:?}"
-            );
-        }
-        Ok(lost)
+        under_outbox_lock(|| page_write(&data_dir, entries, &held))?
+            .inspect_err(|e| log::error!("[OUTBOX_MIRROR] page write NOT done: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// What the page reads of the mirror: its entries, and how many lines or files could not be read -
-/// which the page TELLS the member, since nobody can send them.
+/// What the page reads of the mirror: its entries, and what THIS read's fold lost - which the page
+/// TELLS the member, since nobody can send it.
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct MirrorRead {
     entries: Vec<Value>,
     unreadable: usize,
+}
+
+/// The page's read in `dir`, the caller holding the mirror lock: the fold, then the mirror. A
+/// mirror line that is no entry is skipped here and NOT counted: it stays in the file until the
+/// page's next write drops it, which reports it - once.
+fn page_read(dir: &std::path::Path) -> Result<MirrorRead, String> {
+    let fold = fold_into_mirror(dir)?;
+    let text = read_text(&dir.join(OUTBOX_PENDING_FILE))?;
+    let mut skipped = 0usize;
+    let entries: Vec<Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).inspect_err(|_| skipped += 1).ok())
+        .collect();
+    let unreadable = fold.unreadable_lines + fold.unreadable_files;
+    if unreadable > 0 {
+        log::error!("[OUTBOX_MIRROR] {unreadable} folded line(s) or file(s) lost in this read - the member is told");
+    }
+    log::debug!(
+        "[OUTBOX_MIRROR] {} mirror line(s) read, {skipped} not an entry (reported by the write that drops them)",
+        entries.len()
+    );
+    Ok(MirrorRead {
+        entries,
+        unreadable,
+    })
 }
 
 /// Reads the mirror WITHOUT clearing it, under the same lock as its writers and after folding the
@@ -548,30 +725,8 @@ pub(crate) struct MirrorRead {
 pub(crate) async fn read_outbox_mirror(app: tauri::AppHandle) -> Result<MirrorRead, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        let path = data_dir.join(OUTBOX_PENDING_FILE);
-        let (fold, text) = under_outbox_lock(|| {
-            let fold = fold_into_mirror(&data_dir)?;
-            Ok::<_, String>((fold, read_text(&path)?))
-        })?
-        .inspect_err(|e| log::error!("[OUTBOX_MIRROR] page read NOT done: {e}"))?;
-        let mut unreadable = fold.unreadable_lines + fold.unreadable_files;
-        let entries: Vec<Value> = text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter_map(|l| {
-                serde_json::from_str(l)
-                    .inspect_err(|_| unreadable += 1)
-                    .ok()
-            })
-            .collect();
-        if unreadable > 0 {
-            log::error!("[OUTBOX_MIRROR] {unreadable} mirror line(s) or file(s) unreadable, not adopted - the member is told");
-        }
-        log::debug!("[OUTBOX_MIRROR] {} mirror line(s) read", entries.len());
-        Ok(MirrorRead {
-            entries,
-            unreadable,
-        })
+        under_outbox_lock(|| page_read(&data_dir))?
+            .inspect_err(|e| log::error!("[OUTBOX_MIRROR] page read NOT done: {e}"))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -617,7 +772,7 @@ pub extern "C" fn canari_outbox_journal_append(
 }
 
 /// iOS: [`fold_into_mirror`], for a drain that holds the mirror lock - 1 when folded, 0 (logged)
-/// when not: the journal then stays for the next holder.
+/// when not: the drain then sends nothing, and the journal stays for the next holder.
 #[cfg(any(target_os = "ios", test))]
 #[no_mangle]
 pub extern "C" fn canari_outbox_fold(data_dir: *const std::ffi::c_char) -> i32 {
@@ -630,6 +785,28 @@ pub extern "C" fn canari_outbox_fold(data_dir: *const std::ffi::c_char) -> i32 {
             log::error!(
                 "[OUTBOX_MIRROR] fold NOT done: {e} - the journal waits for the next holder"
             );
+            0
+        }
+    }
+}
+
+/// iOS: [`write_durably`] of the mirror, for `CanariRewriteOutboxMirror` under the mirror lock - an
+/// empty `body` deletes it. 1 when written, 0 (logged) when not: the mirror is then as it was.
+#[cfg(any(target_os = "ios", test))]
+#[no_mangle]
+pub extern "C" fn canari_outbox_write_mirror(
+    data_dir: *const std::ffi::c_char,
+    body: *const std::ffi::c_char,
+) -> i32 {
+    let (Some(dir), Some(body)) = (c_arg(data_dir, "mirror write"), c_arg(body, "mirror write"))
+    else {
+        return 0;
+    };
+    let path = std::path::Path::new(&dir).join(OUTBOX_PENDING_FILE);
+    match write_durably(&path, (!body.is_empty()).then_some(body.as_str())) {
+        Ok(()) => 1,
+        Err(e) => {
+            log::error!("[OUTBOX_MIRROR] native mirror write NOT done: {e}");
             0
         }
     }
@@ -671,8 +848,37 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
     }
 }
 
+/// Android: [`read_journal_text`], for Kotlin's `readOutboxQueuedOrNull` - the text, or null
+/// (logged) when it could not be read.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeReadOutboxJournal<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+) -> jni::sys::jstring {
+    let Some(dir) = jni_arg(&mut env, &data_dir, "journal read") else {
+        return std::ptr::null_mut();
+    };
+    match read_journal_text(std::path::Path::new(&dir)) {
+        Ok(text) => env
+            .new_string(text)
+            .map(jni::objects::JString::into_raw)
+            .unwrap_or_else(|e| {
+                log::error!("[OUTBOX_MIRROR] journal read: jni-string ({e})");
+                std::ptr::null_mut()
+            }),
+        Err(e) => {
+            log::error!("[OUTBOX_MIRROR] journal read NOT done: {e}");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Android: [`fold_into_mirror`], for a caller holding `OUTBOX_LOCK` - true when folded; false
-/// (logged) leaves the journal for the next holder.
+/// (logged): the caller sends nothing on it, and the journal waits for the next holder.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeFoldOutboxMirror<
@@ -921,9 +1127,7 @@ mod tests {
     #[test]
     fn the_files_moved_aside_are_folded_back_and_the_unreadable_rest_is_counted() {
         let dir = scratch("aside-fold");
-        let mut lossy = b"not json
-"
-        .to_vec();
+        let mut lossy = b"not json\n".to_vec();
         lossy.extend(text(&[line("kept", None)]).into_bytes());
         std::fs::write(dir.join("outbox_pending.unreadable.1.ndjson"), lossy).unwrap();
         std::fs::create_dir_all(dir.join("outbox_pending.unreadable.2.ndjson")).unwrap();
@@ -944,10 +1148,135 @@ mod tests {
             "folded: deleted"
         );
         assert!(
-            dir.join("outbox_pending.unreadable.2.ndjson").exists(),
-            "unreadable: kept"
+            dir.join("outbox_pending.unreadable.2.ndjson.reported")
+                .exists(),
+            "unreadable: kept, marked reported"
         );
-        assert_eq!(aside_files(&dir), ["outbox_pending.unreadable.2.ndjson"]);
+        assert!(aside_files(&dir).is_empty());
+        assert_eq!(
+            mirror_side_files(&dir),
+            ["outbox_pending.unreadable.2.ndjson.reported"],
+            "the reported file is still the account's, for its deletion"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// TOLD ONCE PER FACT (review of #3929): a side file that stays unopenable is counted by the
+    /// write that finds it, never by the writes after; a mirror line that is no entry is counted by
+    /// the write that drops it, never by a read.
+    #[test]
+    fn repeated_writes_over_one_stuck_file_report_it_once() {
+        let dir = scratch("told-once");
+        std::fs::create_dir_all(dir.join("outbox_pending.unreadable.1.ndjson")).unwrap();
+        std::fs::write(
+            dir.join(OUTBOX_PENDING_FILE),
+            "not an entry\n".to_owned() + &text(&[line("native", None)]),
+        )
+        .unwrap();
+        // A read neither counts the mirror's bad line nor drops it.
+        let read = page_read(&dir).unwrap();
+        assert_eq!(read.unreadable, 1, "the stuck file, found by this read");
+        assert_eq!(read.entries.len(), 1);
+        assert_eq!(page_read(&dir).unwrap().unreadable, 0);
+        // The write drops the bad line and says so once.
+        assert_eq!(page_write(&dir, vec![], &held(&[])).unwrap(), 1);
+        assert_eq!(page_write(&dir, vec![], &held(&[])).unwrap(), 0);
+        assert_eq!(page_write(&dir, vec![], &held(&[])).unwrap(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// NO FOLDED SOURCE STAYS READABLE AS NEW (review of #3929): a source that cannot be deleted
+    /// fails the fold, so its caller sends and drops nothing on it; the next fold deletes it, and a
+    /// line sent and dropped after that never comes back as native.
+    #[test]
+    fn a_sent_line_is_never_resurrected_when_the_delete_fails() {
+        let dir = scratch("no-resurrection");
+        append_journal(&dir, &line("reply", None).to_string()).unwrap();
+        let refuse = |_: &std::path::Path| -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "held",
+            ))
+        };
+        assert!(
+            fold_with(&dir, &refuse).is_err(),
+            "an undeleted source fails the fold"
+        );
+        assert!(
+            !dir.join(OUTBOX_JOURNAL_FILE).exists(),
+            "the journal was renamed before it was read: never readable as new"
+        );
+        assert!(
+            fold_with(&dir, &refuse).is_err(),
+            "and again, while it lasts"
+        );
+        // The delete works again: folded by id (once), and the folding file goes.
+        let fold = fold_into_mirror(&dir).unwrap();
+        assert_eq!(fold.folded, 0, "already in the mirror: not added twice");
+        assert!(mirror_side_files(&dir).is_empty());
+        // The drain sends it and drops it from the mirror.
+        write_lines(&dir.join(OUTBOX_PENDING_FILE), &[]).unwrap();
+        fold_into_mirror(&dir).unwrap();
+        assert!(
+            !dir.join(OUTBOX_PENDING_FILE).exists(),
+            "the sent line never comes back"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folding file a crash left (renamed, maybe folded, not deleted) is folded again by id, beside
+    /// a journal appended since - each line once.
+    #[test]
+    fn a_folding_file_left_by_a_crash_is_folded_again_once() {
+        let dir = scratch("crash-folding");
+        std::fs::write(
+            dir.join("outbox_journal.folding.1.ndjson"),
+            text(&[line("before", None)]),
+        )
+        .unwrap();
+        std::fs::write(dir.join(OUTBOX_PENDING_FILE), text(&[line("before", None)])).unwrap();
+        append_journal(&dir, &line("after", None).to_string()).unwrap();
+        let fold = fold_into_mirror(&dir).unwrap();
+        assert_eq!(fold.folded, 1);
+        let mirror = std::fs::read_to_string(dir.join(OUTBOX_PENDING_FILE)).unwrap();
+        assert_eq!(mirror.matches("\"before\"").count(), 1);
+        assert_eq!(mirror.matches("\"after\"").count(), 1);
+        assert!(mirror_side_files(&dir).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The durable write replaces the file whole through a temp file it never leaves behind, and an
+    /// empty result deletes it.
+    #[test]
+    fn the_durable_write_replaces_whole_and_leaves_no_temp_file() {
+        let dir = scratch("durable");
+        let path = dir.join(OUTBOX_PENDING_FILE);
+        std::fs::write(&path, "old\n").unwrap();
+        write_durably(&path, Some("new\n")).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        assert!(mirror_side_files(&dir).is_empty(), "no temp file left");
+        // A temp name taken by a directory: the write fails, the file is as it was.
+        std::fs::create_dir_all(dir.join(format!("{OUTBOX_PENDING_FILE}.tmp"))).unwrap();
+        assert!(write_durably(&path, Some("lost\n")).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+        std::fs::remove_dir_all(dir.join(format!("{OUTBOX_PENDING_FILE}.tmp"))).unwrap();
+        write_durably(&path, None).unwrap();
+        assert!(!path.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What Kotlin's read-only checkers see of the journal: the folding files, then the journal.
+    #[test]
+    fn the_journal_read_covers_what_is_being_folded() {
+        let dir = scratch("journal-read");
+        std::fs::write(
+            dir.join("outbox_journal.folding.1.ndjson"),
+            text(&[line("folding", None)]),
+        )
+        .unwrap();
+        append_journal(&dir, &line("new", None).to_string()).unwrap();
+        let read = read_journal_text(&dir).unwrap();
+        assert!(read.contains("\"folding\"") && read.contains("\"new\""));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -969,6 +1298,18 @@ mod tests {
         assert!(std::fs::read_to_string(dir.join(OUTBOX_PENDING_FILE))
             .unwrap()
             .contains("\"c\""));
+        // The durable rewrite door: a body replaces the mirror, an empty one deletes it.
+        let body = std::ffi::CString::new(text(&[line("left", None)])).unwrap();
+        assert_eq!(canari_outbox_write_mirror(c_dir.as_ptr(), body.as_ptr()), 1);
+        assert!(std::fs::read_to_string(dir.join(OUTBOX_PENDING_FILE))
+            .unwrap()
+            .contains("\"left\""));
+        let empty = std::ffi::CString::new("").unwrap();
+        assert_eq!(
+            canari_outbox_write_mirror(c_dir.as_ptr(), empty.as_ptr()),
+            1
+        );
+        assert!(!dir.join(OUTBOX_PENDING_FILE).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -2318,10 +2318,25 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   fails the write, and nothing is written over it. Every holder of the lock folds the asides back
   (`fold_into_mirror`): each is read lossily, each line that is an entry is taken in (by id, the
   mirror's own line first), and the file is deleted only once the mirror holding its lines is
-  written. **What still cannot be read is shown to the member**, not only logged: both page commands
-  return the count (lines that are no entry, aside files that cannot be opened, which are kept), and
-  the page shows a toast (`chat_outbox_lines_unreadable`) asking them to check their latest messages.
-  The asides and the journal are removed with the account's files.
+  written. **What still cannot be read is shown to the member**, not only logged, and ONCE PER
+  FACT: both page commands return what was lost IN THAT CALL - the lines a fold or a write dropped
+  as no entry, the side files a fold found unopenable, which it renames `.reported` so no later fold
+  counts them again - and the page shows a toast (`chat_outbox_lines_unreadable`) asking the member
+  to check their latest messages. A read skips a mirror line that is no entry without counting it:
+  the write that drops it reports it. The side files are removed with the account's files
+  (`mirror_side_files`).
+- **Every write of the mirror survives a power loss.** A temp file, synced, renamed over the mirror,
+  then the directory synced where the platform allows (Unix): `write_durably` in Rust (the page's
+  writes, the fold, and iOS through `canari_outbox_write_mirror`), `DurableFile.replace` in Kotlin
+  (`rewriteOutboxMirror`). A truncate-then-write lost the whole queue to a power loss between the
+  two.
+- **No folded source stays readable as new.** The fold first renames the journal to
+  `outbox_journal.folding.<n>.ndjson`, reads it and the asides, writes the mirror durably, and only
+  then deletes them. A folding file a crash left is folded again by the next holder, by id - safe,
+  since the mirror was written before any delete and no holder sends before its fold. **A source
+  that cannot be deleted fails the fold** (an ERROR): the page's command fails, and a native drain
+  sends and drops nothing on it, so a line sent and dropped from the mirror can never come back from
+  that source as native. The next fold tries the delete again.
 - **Under the native writers' lock (Android).** Kotlin's `OUTBOX_LOCK` is a JVM monitor, so the
   Rust command takes THAT monitor over JNI (`outboxLock()`, `JNIEnv::lock_obj`); a file lock could
   not serialise with it, `FileChannel.lock` being per process and the page and the service one
@@ -2343,7 +2358,8 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   then `JOURNAL_LOCK`; an appender takes the leaf alone. A drain reads the mirror ALONE after its
   fold - a line appended during its POSTs waits in the journal for the next holder, never sent twice;
   the read-only checkers (the reply's `mirrorPresence`, the nudge, the boot receiver, the retry
-  worker) read mirror plus journal (`readOutboxQueuedOrNull`). An append that fails is reported:
+  worker) read mirror plus journal (`readOutboxQueuedOrNull`, the journal read through Rust under
+  `JOURNAL_LOCK`, `nativeReadOutboxJournal`). An append that fails is reported:
   the shade reply is drawn "not sent, type it again" on both phones.
 - **A send never waits for the mirror.** The enqueue reads the queue, raises the flusher, and
   writes the mirror WITHOUT awaiting it: the write may wait for a background drain's POSTs, and a
@@ -2374,8 +2390,11 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
 - **`unclaimed` is rebuilt from the file, at every page life's start.** It is memory; the durable
   record is the mirror, where a claim that never landed leaves the line NATIVE under an id the
   queue holds. The controller's START PASS (`claimAtStart`, before its first flush) reads the mirror
-  back, holds every such line, adopts what the queue lacks, writes the mirror and draws the statuses;
-  a pass that throws skips that flush and runs again with the next. The login's adoption goes through
+  back, holds every such line, adopts what the queue lacks, writes the mirror and draws the statuses.
+  A mirror or queue it cannot read is a FAILURE (`MirrorAdoptionError`), never "nothing to adopt": a
+  pass that fails skips its flush (an ERROR) and NO TIMER reruns it - the next real trigger does (an
+  enqueue, a resume or `canari:foreground`, a reconnect, a mirror write that lands, a Retry tap),
+  and the queue meanwhile shows what it holds, pending or failed with its Retry. The login's adoption goes through
   the same controller (`adoptNativeOutboxEntries`). The cost, accepted: a page life's FIRST flush
   waits for a background drain in progress, since what it holds could otherwise be sent twice.
 - **Upgrade, and a send that outran the last write.** A line a page wrote before 1.7.3 carries no
@@ -2388,13 +2407,14 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
 - Tests: `outbox_mirror.rs` (the merge: a native-only line survives a page write, an empty queue
   keeps it, an unsendable one keeps its mark, a held one is the page's, a verdict on a page line is
   carried; a lossy read; an unreadable file moved aside, never over an earlier one, folded back and
-  the rest counted; a journal line folded once; the C doors; the ObjC door runs under the page's
-  lock), `outboxMirror.ownership.test.ts` (the whole queue held, writes in order, a page line never
+  the rest counted; a journal line folded once; repeated writes over one stuck file report it once;
+  a sent line never resurrected when a delete fails; a folding file a crash left folded once; the
+  durable write; the C doors; the ObjC door runs under the page's lock), `DurableFileTest`, `outboxMirror.ownership.test.ts` (the whole queue held, writes in order, a page line never
   adopted, held before queued, the return to the front adopts, shows and flushes, an unsendable one
   failed, an unclaimed one failed and not sent until its claim lands, its Retry claims again, a new
   page life holds what the mirror still names native, the start pass writes before the first flush,
   a send not waiting for the mirror, an already-sent line dropped, an unreadable line told to the
-  member), `outboxMirrorOwnership.test.ts` (the lock, the stamp, the journal doors and the `@try` in
+  member, a read failure never "nothing to adopt", a failed start pass run again by the next trigger), `outboxMirrorOwnership.test.ts` (the lock, the stamp, the journal doors and the `@try` in
   Kotlin, iOS and Rust).
 
 #### App-icon unread badge

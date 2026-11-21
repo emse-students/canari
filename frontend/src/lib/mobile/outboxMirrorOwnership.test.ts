@@ -27,12 +27,53 @@ describe('the outbox mirror - one lock, and the owner survives every native rewr
   });
 
   it('both page commands touch the file under that lock only, folding the journal first', () => {
-    expect(rust).toMatch(
-      /under_outbox_lock\(\|\| \{\s+let fold = fold_into_mirror\(&data_dir\)\?;\s+Ok::<_, String>\(\(fold, write_page_lines\(/
+    expect(rust).toContain('under_outbox_lock(|| page_write(&data_dir, entries, &held))');
+    expect(rust).toContain('under_outbox_lock(|| page_read(&data_dir))');
+    for (const fn of ['fn page_write(', 'fn page_read(']) {
+      const body = rust.slice(rust.indexOf(fn));
+      expect(body.slice(0, 300)).toContain('let fold = fold_into_mirror(dir)?;');
+    }
+  });
+
+  // Review of #3929: a truncate-then-write lost the whole queue to a power loss between the two.
+  // Every write of the mirror goes through the ONE durable helper of its language.
+  it('every write of the mirror is crash-safe: a temp file, synced, renamed over', () => {
+    expect(rust).toMatch(/fn write_lines\([^]*?write_durably\(path, body\.as_deref\(\)\)/);
+    expect(rust).not.toMatch(/std::fs::write\(path, lines/);
+    const rewrite = fcm.slice(fcm.indexOf('internal fun rewriteOutboxMirror('));
+    expect(rewrite.slice(0, 900)).toContain('DurableFile.replace(file, body)');
+    expect(rewrite.slice(0, 900)).not.toContain('writeText');
+    const objc = ios.slice(ios.indexOf('static void CanariRewriteOutboxMirror('));
+    expect(objc.slice(0, 900)).toContain(
+      'canari_outbox_write_mirror(dir.UTF8String, body.UTF8String)'
     );
-    expect(rust).toMatch(
-      /under_outbox_lock\(\|\| \{\s+let fold = fold_into_mirror\(&data_dir\)\?;\s+Ok::<_, String>\(\(fold, read_text\(/
+    expect(objc.slice(0, 900)).not.toContain('writeToFile');
+    expect(bridge).toContain(
+      'int canari_outbox_write_mirror(const char *data_dir, const char *body);'
     );
+  });
+
+  // Review of #3929: a fold that fails (a source it could not delete) stops its drain - a line the
+  // drain dropped could otherwise come back from that source as native.
+  it('a drain whose fold failed sends nothing', () => {
+    expect(fcm).toMatch(
+      /if \(!foldOutboxJournalLocked\(context, "drainOutbox"\)\) \{[^]{0,200}?return List\(/
+    );
+    const definition = ios.search(/static int CanariDrainOutboxBackgroundLocked\([^;{]*\)\s*\{/);
+    expect(ios.slice(definition, definition + 1200)).toMatch(
+      /canari_outbox_fold\(foldDir\.UTF8String\) != 1\) \{[^}]*return /
+    );
+  });
+
+  // Review of #3929: Kotlin's read-only checkers read the journal under its own lock (a leaf).
+  it('Kotlin reads the journal through Rust, under the journal lock', () => {
+    const queued = fcm.slice(fcm.indexOf('internal fun readOutboxQueuedOrNull('));
+    expect(queued.slice(0, 600)).toContain('nativeReadOutboxJournal(dir.absolutePath)');
+    expect(rust).toContain(
+      'Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeReadOutboxJournal'
+    );
+    const read = rust.slice(rust.indexOf('pub(crate) fn read_journal_text('));
+    expect(read.slice(0, 200)).toContain('let _held = journal_lock();');
   });
 
   // Review of #3929: a drain holds the lock through its POSTs, and a shade reply that waited for it
@@ -43,7 +84,7 @@ describe('the outbox mirror - one lock, and the owner survives every native rewr
     expect(enqueue.slice(0, 400)).toContain('nativeAppendOutboxJournal(dir, outboxLineJson(entry)');
     expect(enqueue.slice(0, 400)).not.toContain('OUTBOX_LOCK');
     expect(fcm).toMatch(
-      /foldOutboxJournalLocked\(context, "drainOutbox"\)\s+val mirror = readOutboxMirror\(context\)/
+      /foldOutboxJournalLocked\(context, "drainOutbox"\)[^]{0,300}?val mirror = readOutboxMirror\(context\)/
     );
     expect(rust).toContain(
       'Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeAppendOutboxJournal'
@@ -80,10 +121,13 @@ describe('the outbox mirror - one lock, and the owner survives every native rewr
     const reads = ios.split('CanariReadOutboxMirror()').length - 1;
     const definition = ios.search(/static int CanariDrainOutboxBackgroundLocked\([^;{]*\)\s*\{/);
     expect(definition).toBeGreaterThan(-1);
-    expect(ios.slice(definition, definition + 800)).toMatch(
+    expect(ios.slice(definition, definition + 1500)).toMatch(
       /canari_outbox_fold\(foldDir\.UTF8String\)[^]*?CanariReadOutboxMirror\(\)/
     );
-    expect(reads).toBe(1);
+    // Both in the locked drain: the read after its fold, and the count it answers when the fold failed.
+    const drain = ios.slice(definition, definition + 1500);
+    expect(drain.split('CanariReadOutboxMirror()').length - 1).toBe(reads);
+    expect(reads).toBe(2);
     expect(ios).toContain('remaining = CanariDrainOutboxBackgroundLocked(ctx, receivedAtOut);');
   });
 

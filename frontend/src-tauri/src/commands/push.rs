@@ -3426,8 +3426,8 @@ fn remove_user_push_files_proved(
     for (_, name) in taken_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
-    // The mirror files moved aside unreadable (`outbox_mirror::set_aside`): the same account's protos.
-    for name in crate::commands::outbox_mirror::aside_files(data_dir) {
+    // The mirror's side files (moved aside, being folded, reported, a temp file): the same account's protos.
+    for name in crate::commands::outbox_mirror::mirror_side_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);

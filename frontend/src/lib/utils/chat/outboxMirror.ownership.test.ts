@@ -24,6 +24,8 @@ const tauri = vi.hoisted(() => ({
   failHolding: null as string | null,
   /** What the native fold could not read back, as both commands report it. */
   unreadable: 0,
+  /** Reads of the mirror still to fail, as the command does when the file cannot be read. */
+  failReads: 0,
 }));
 
 const toast = vi.hoisted(() => ({ shown: [] as string[] }));
@@ -45,8 +47,13 @@ vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
 }));
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string, args: Record<string, unknown>) => {
-    if (cmd === 'read_outbox_mirror')
+    if (cmd === 'read_outbox_mirror') {
+      if (tauri.failReads > 0) {
+        tauri.failReads--;
+        throw new Error('the mirror could not be read');
+      }
       return { entries: tauri.mirror, unreadable: tauri.unreadable };
+    }
     if (cmd === 'store_outbox_mirror') {
       const gate = tauri.gate;
       tauri.gate = null;
@@ -74,6 +81,7 @@ import {
   type OutboxController,
 } from './outbox';
 import {
+  MirrorAdoptionError,
   adoptOrphanedMirrorEntries,
   syncOutboxMirror,
   type OutboxMirrorEntry,
@@ -148,6 +156,7 @@ beforeEach(() => {
   tauri.gate = null;
   tauri.failHolding = null;
   tauri.unreadable = 0;
+  tauri.failReads = 0;
   toast.shown = [];
 });
 
@@ -200,6 +209,15 @@ describe('adoptOrphanedMirrorEntries - only the native lines', () => {
     });
     expect(order).toEqual(['hold native', 'save native', 'hold broken', 'save broken']);
     expect([...held]).toEqual(['native']);
+  });
+
+  // Review of #3929: a read that failed answered "nothing to adopt", and the start pass took that
+  // for a pass that ran.
+  it('a mirror it could not read is a failure, never "nothing to adopt"', async () => {
+    tauri.failReads = 1;
+    await expect(adoptOrphanedMirrorEntries(makeStorage(), 'key', 'me')).rejects.toBeInstanceOf(
+      MirrorAdoptionError
+    );
   });
 
   // A queued entry whose line is still native was adopted by a page life whose claim never landed:
@@ -398,6 +416,20 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
 
     tauri.failHolding = null;
     outbox.retryUpload('earlier');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+  });
+
+  // Review of #3929: a start pass that fails sends nothing, and NO TIMER runs it again - the next
+  // real trigger does (here a flush, as an enqueue, a resume or a reconnect raises one).
+  it('a start pass that fails sends nothing, and the next trigger runs it again', async () => {
+    connectivity.reset();
+    tauri.failReads = 1;
+    const storage = makeStorage([textEntry('queued')]);
+    const { outbox, sendMessage } = controllerOver(storage);
+    outbox.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sendMessage).not.toHaveBeenCalled();
+    outbox.flush();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
   });
 
