@@ -1815,14 +1815,32 @@ static void CanariWriteNotificationDeliveryState(void) {
           @"badge" : CanariNotificationSettingName(s.badgeSetting),
           @"timeSensitive" : timeSensitive,
         };
-        NSData *json = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
-        if (json == nil) return;
-        NSError *err = nil; // not logged: an error text can carry a path
+        NSError *serializeErr = nil;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:&serializeErr];
+        if (json == nil) {
+          // Domain and code only: an error's text can carry a path.
+          NSLog(@"[CanariIOS] notification state not serialized (%@ %ld)", serializeErr.domain,
+                (long)serializeErr.code);
+          return;
+        }
+        NSError *err = nil;
         if (![json writeToFile:[dir stringByAppendingPathComponent:@"notification_delivery_state.json"]
                        options:NSDataWritingAtomic
                          error:&err]) {
-          NSLog(@"[CanariIOS] notification state not written (the atomic write failed)");
+          NSLog(@"[CanariIOS] notification state not written (%@ %ld)", err.domain, (long)err.code);
+          return;
         }
+        // The fresh snapshot is on disk: tell the page, so a permission answered in the system
+        // dialog or a switch flipped in Settings reaches the server now (event, never a clock).
+        dispatch_async(dispatch_get_main_queue(), ^{
+          WKWebView *webView = CanariFindWebView();
+          if (webView == nil) {
+            NSLog(@"[CanariIOS] notification state event not published: no WebView yet");
+            return;
+          }
+          [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:notification-state'));"
+                    completionHandler:nil];
+        });
       }];
 }
 

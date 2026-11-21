@@ -10,7 +10,7 @@
 //!
 //! READ-ONLY, NO PROMPT: nothing here asks the OS for anything. A missing, unreadable or malformed
 //! snapshot answers `None` - UNKNOWN, never "granted" - and says why at WARN, since a native writer
-//! that never ran is a defect to find. Two consumers: the `register-device` report
+//! that never ran is a defect to find. Two consumers: the `register-device` report (and the page's update when the state changes)
 //! (`notificationReport.ts`) and the in-app banner that will read the same shape.
 //!
 //! The file name and the keys are shared with `NotificationDeliveryState.kt` and `canari_ios.mm` -
@@ -40,6 +40,11 @@ pub(crate) struct AndroidDeliveryState {
     pub notifications_enabled: bool,
     /// `POST_NOTIFICATIONS` granted; always true below Android 13, where no such permission exists.
     pub post_notifications_granted: bool,
+    /// `shouldShowRequestPermissionRationale(POST_NOTIFICATIONS)`: true after a refusal the system
+    /// lets us explain. `postNotificationsGranted: false` says DENIED before the first prompt too, so
+    /// "never asked" is told from "refused" by this plus the page's own durable "prompt shown" flag
+    /// (`notificationReport.ts`). Always false below Android 13.
+    pub should_show_rationale: bool,
     pub channels: ChannelImportances,
     /// `PowerManager.isIgnoringBatteryOptimizations` - true means the app is EXEMPT from Doze limits.
     pub is_ignoring_battery_optimizations: bool,
@@ -106,7 +111,10 @@ pub(crate) fn notification_delivery_state(
         match read_delivery_state(&data_dir) {
             Ok(Some(state)) => Some(state),
             Ok(None) => {
-                log::warn!("[NotifState] no snapshot yet - the native writer has not run");
+                // EXPECTED, said at info: the first snapshot is written asynchronously at launch, so a
+                // read in the first moments of a cold start finds none. The writer then fires the page's
+                // `canari:notification-state` event, which re-reads and reports - nothing is ordered by a clock.
+                log::info!("[NotifState] no snapshot yet - the first native write has not landed (the page is told when it does)");
                 None
             }
             Err(e) => {
@@ -127,7 +135,7 @@ mod tests {
     use super::*;
 
     const ANDROID: &str = r#"{"platform":"android","notificationsEnabled":true,
-        "postNotificationsGranted":true,"channels":{"messages":"high","posts":"default"},
+        "postNotificationsGranted":true,"shouldShowRationale":false,"channels":{"messages":"high","posts":"default"},
         "isIgnoringBatteryOptimizations":false,"manufacturer":"Xiaomi"}"#;
     const IOS: &str = r#"{"platform":"ios","authorization":"granted","alert":"enabled",
         "sound":"enabled","badge":"disabled","timeSensitive":"not-supported"}"#;
@@ -140,6 +148,7 @@ mod tests {
             NotificationDeliveryState::Android(AndroidDeliveryState {
                 notifications_enabled: true,
                 post_notifications_granted: true,
+                should_show_rationale: false,
                 channels: ChannelImportances {
                     messages: "high".into(),
                     posts: "default".into()

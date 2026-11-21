@@ -23,3 +23,6 @@ mobile-browser-only members are one information line; the page reads the state t
 3. The next `[PUSH_COVERAGE]` line on dev counts the phone under `[PUSH_PERMISSION_OFF]` while it
    holds its push row, and no `web-` device appears in the `[PUSH_MISSING]` or WARN lines.
 4. An old build (no state) leaves the column NULL.
+5. Without unlocking again: grant the permission that was denied (or fresh install: answer the dialog) and
+   come back to the app; the row follows within the foreground (`[DEVICE_METADATA] ... notificationState=`
+   on dev), not at the next unlock.

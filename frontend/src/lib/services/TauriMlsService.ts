@@ -53,7 +53,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
-import { notificationStateReport } from './notificationReport';
+import { notificationStateReport, watchNotificationState } from './notificationReport';
 import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
@@ -1924,7 +1924,17 @@ export class TauriMlsService extends BaseMlsService {
     });
     // The delivery service's push row is the fact a registration is owed against - this call runs at
     // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.
-    if (pushes) reconcilePushRegistration(answer.pushRegistered);
+    if (pushes) {
+      reconcilePushRegistration(answer.pushRegistered);
+      // A state that changes between two unlocks reaches the server when the native side says so.
+      watchNotificationState(
+        (report) =>
+          this.delivery
+            .updateDeviceMetadata(this.userId, this.deviceId, { notificationState: report })
+            .then(() => undefined),
+        notificationState
+      );
+    }
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */

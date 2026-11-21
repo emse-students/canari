@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * WHAT THE OS LETS THIS APP'S NOTIFICATIONS DO, WRITTEN FOR THE PAGE (2026-11-21).
@@ -47,7 +48,7 @@ object NotificationDeliveryState {
     }
 
     /** The snapshot as the Rust command parses it. */
-    fun snapshot(context: Context): JSONObject {
+    fun snapshot(context: Context, rationale: Boolean): JSONObject {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         val permissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -57,6 +58,10 @@ object NotificationDeliveryState {
             .put("platform", "android")
             .put("notificationsEnabled", NotificationManagerCompat.from(context).areNotificationsEnabled())
             .put("postNotificationsGranted", permissionGranted)
+            // True after a refusal the system lets us explain: with the page's own durable "prompt
+            // shown" flag it tells "refused" from "never asked", which `checkSelfPermission` cannot
+            // (it says DENIED before the first prompt too). Always false below Android 13.
+            .put("shouldShowRationale", rationale)
             .put(
                 "channels",
                 JSONObject()
@@ -67,18 +72,42 @@ object NotificationDeliveryState {
             .put("manufacturer", Build.MANUFACTURER ?: "")
     }
 
+    private fun shouldShowRationale(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false
+        val activity = context as? android.app.Activity ?: return false
+        return activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /** One thread, in order: a snapshot is a few Binder calls and a file write, never the UI thread's. */
+    private val executor = Executors.newSingleThreadExecutor { Thread(it, "canari-notif-state") }
+
+    /**
+     * Writes the snapshot OFF the main thread, then runs [onWritten] on the caller's behalf (on that
+     * background thread) - the moment the page may read a fresh answer, so it is told by an event and
+     * never by a clock. The rationale flag needs the activity, so it is read here, on the caller's
+     * thread, and travels as an argument.
+     */
+    fun writeAsync(context: Context, onWritten: () -> Unit) {
+        val rationale = shouldShowRationale(context)
+        val app = context.applicationContext
+        executor.execute { if (write(app, rationale)) onWritten() }
+    }
+
     /** Writes the snapshot; a failure is logged and leaves the previous one (or none: unknown). */
-    fun write(context: Context) {
+    private fun write(context: Context, rationale: Boolean): Boolean {
         try {
             val dir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }
-            val json = snapshot(context).toString()
+            val json = snapshot(context, rationale).toString()
             val tmp = File(dir, "$FILE.tmp")
             tmp.writeText(json)
             if (!tmp.renameTo(File(dir, FILE))) {
                 Log.w(TAG, "snapshot not moved into place")
+                return false
             }
+            return true
         } catch (e: Exception) {
             Log.w(TAG, "snapshot not written: ${e.javaClass.simpleName}") // log-safe: class name only
+            return false
         }
     }
 }

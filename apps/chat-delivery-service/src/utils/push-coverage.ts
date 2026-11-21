@@ -101,7 +101,8 @@ SELECT u."os", u."build", count(*)::int AS "devices",
  * INFORMATION, NEVER AN ALARM: the members whose only devices that ran in the window are mobile
  * browsers - they cannot be pushed by design, and no install prompt exists to change that. Same
  * liveness and ban rules as {@link PUSH_COVERAGE_SQL}; `$1` window start, `$2` ban cutoff,
- * `$3` now. A member who also holds ANY installed-app device is not counted.
+ * `$3` now. A member who also holds a LIVE installed android/ios app (not revoked, with a live session) is
+ * not counted; a desktop install or a dead phone does not make a browser member reachable.
  */
 export const PUSH_BROWSER_ONLY_SQL = `
 SELECT count(DISTINCT k."userId")::int AS "members"
@@ -117,7 +118,14 @@ SELECT count(DISTINCT k."userId")::int AS "members"
                   AND s."expiresAt" > $3)
    AND NOT EXISTS (SELECT 1 FROM key_package a
                     WHERE a."userId" = k."userId"
-                      AND a."deviceId" LIKE '${INSTALLED_APP_DEVICE_PREFIX}%')`;
+                      AND a."deviceId" LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+                      AND a."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+                      AND NOT EXISTS (SELECT 1 FROM revoked_device r2
+                                       WHERE r2."userId" = a."userId" AND r2."deviceId" = a."deviceId"
+                                         AND r2."revokedAt" > $2)
+                      AND EXISTS (SELECT 1 FROM auth_sessions s2
+                                   WHERE s2."deviceId" = a."deviceId" AND s2."userId" = a."userId"
+                                     AND s2."expiresAt" > $3))`;
 
 /** One (platform, build) row of the count. */
 export interface PushCoverageRow {

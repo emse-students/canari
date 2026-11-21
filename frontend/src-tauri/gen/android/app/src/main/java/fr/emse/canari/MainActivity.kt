@@ -961,7 +961,19 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
-        NotificationDeliveryState.write(this)
+        // Off the main thread; the page is told once the fresh snapshot is on disk, so a permission
+        // answered in the system dialog or a switch flipped in the settings reaches the server now.
+        NotificationDeliveryState.writeAsync(this) {
+            runOnUiThread {
+                try {
+                    liveWebView?.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('canari:notification-state'));", null
+                    )
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "notification-state event failed: ${e.javaClass.simpleName}") // log-safe: class name only
+                }
+            }
+        }
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
         // Opening the app clears lingering message notifications (read here or on another

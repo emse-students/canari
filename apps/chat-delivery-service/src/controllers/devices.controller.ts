@@ -601,7 +601,17 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body()
-    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
+    body: {
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+      /**
+       * What the OS lets notifications do - `parseNotificationState`. Sent when the state CHANGES
+       * (a permission answered, a switch flipped in the settings), so the daily count does not
+       * read a stale one until the next unlock.
+       */
+      notificationState?: unknown;
+    },
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -614,7 +624,23 @@ export class DevicesController {
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
 
-    if (deviceName === undefined && deviceOs === undefined && deviceAppVersion === undefined) {
+    const notification =
+      body.notificationState === undefined ? null : parseNotificationState(body.notificationState);
+    if (notification?.state === 'invalid' || notification?.state === 'unknown') {
+      // STATED and unreadable: a current client sent it, so the caller is told - unlike
+      // register-device, where an old client's silence is ordinary.
+      this.logger.warn(
+        `[DEVICE_METADATA] NOTIFICATION_STATE_INVALID user=${safeUserId} device=${safeDeviceId}`
+      );
+      throw new BadRequestException('notificationState is not readable');
+    }
+
+    if (
+      deviceName === undefined &&
+      deviceOs === undefined &&
+      deviceAppVersion === undefined &&
+      notification === null
+    ) {
       throw new BadRequestException('At least one metadata field is required');
     }
 
@@ -634,6 +660,14 @@ export class DevicesController {
     if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
     if (deviceAppVersion !== undefined) {
       keyPackage.deviceAppVersion = deviceAppVersion;
+    }
+    if (notification) {
+      keyPackage.notificationState = notification.state;
+      keyPackage.notificationChannels = notification.channels;
+      this.logger.log(
+        `[DEVICE_METADATA] user=${safeUserId} device=${safeDeviceId} notificationState=${notification.state}` +
+          ` channels=${notification.channels ?? 'none'}`
+      );
     }
     await this.keyPackageRepo.save(keyPackage);
 

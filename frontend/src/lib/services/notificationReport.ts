@@ -21,6 +21,7 @@ export interface AndroidDeliveryState {
   platform: 'android';
   notificationsEnabled: boolean;
   postNotificationsGranted: boolean;
+  shouldShowRationale: boolean;
   channels: { messages: ChannelImportance; posts: ChannelImportance };
   isIgnoringBatteryOptimizations: boolean;
   manufacturer: string;
@@ -62,14 +63,49 @@ export async function readNotificationDeliveryState(): Promise<NotificationDeliv
   }
 }
 
-/** The wire report of a snapshot - a pure mapping, so the two platforms' meaning is pinned in one place. */
+/** The page's durable "the OS permission dialog was shown on this install" flag. */
+const PROMPT_SHOWN_KEY = 'canari.notificationPromptShown';
+
+/** Records that the OS permission dialog was opened - called once `requestPermission` answers. */
+export function markPermissionPromptShown(): void {
+  try {
+    localStorage.setItem(PROMPT_SHOWN_KEY, '1');
+  } catch (err) {
+    console.warn('[Push] could not record that the permission prompt was shown', err);
+  }
+}
+
+/** Whether the OS permission dialog was ever opened on this install; false when unreadable. */
+export function permissionPromptShown(): boolean {
+  try {
+    return localStorage.getItem(PROMPT_SHOWN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The wire report of a snapshot - a pure mapping, so the two platforms' meaning is pinned in one place.
+ *
+ * ANDROID, `permission`: `granted` when POST_NOTIFICATIONS is granted; else `denied` once the dialog
+ * was shown (`promptShown`, the page's durable flag) or the system offers a rationale (it only does
+ * after a refusal); else `not-determined`, because `checkSelfPermission` says DENIED before the first
+ * prompt too. A phone refused before the flag existed and out of rationales reads `not-determined`
+ * (the server counts it `not-asked`, off all the same).
+ */
 export function notificationStateForReport(
-  state: NotificationDeliveryState | null
+  state: NotificationDeliveryState | null,
+  promptShown: boolean = permissionPromptShown()
 ): NotificationStateReport | undefined {
   if (!state) return undefined;
   if (state.platform === 'android') {
+    const refused = promptShown || state.shouldShowRationale;
     return {
-      permission: state.postNotificationsGranted ? 'granted' : 'denied',
+      permission: state.postNotificationsGranted
+        ? 'granted'
+        : refused
+          ? 'denied'
+          : 'not-determined',
       enabled: state.notificationsEnabled,
       channels: { ...state.channels },
     };
@@ -85,4 +121,49 @@ export function notificationStateForReport(
 /** Reads and maps in one step: what `register-device` sends, or `undefined` for unknown. */
 export async function notificationStateReport(): Promise<NotificationStateReport | undefined> {
   return notificationStateForReport(await readNotificationDeliveryState());
+}
+
+/** The page's event after the native side wrote a fresh snapshot (launch, foreground, a dialog closing). */
+export const NOTIFICATION_STATE_EVENT = 'canari:notification-state';
+
+let lastReported: string | null = null;
+let removeWatch: (() => void) | null = null;
+
+/**
+ * Sends the state to the server WHEN IT CHANGES - the daily count would otherwise read, until the
+ * next unlock, a state the user already changed (first launch `not-asked`, then granted). Driven by
+ * the native event that follows a fresh snapshot, never a timer. `seed` is what `register-device`
+ * just sent, so the first event does not repeat it. A failed send is logged and left: the next event
+ * or the next `register-device` carries the state again.
+ */
+export function watchNotificationState(
+  send: (report: NotificationStateReport) => Promise<void>,
+  seed?: NotificationStateReport
+): void {
+  if (seed) lastReported = JSON.stringify(seed);
+  if (removeWatch || typeof window === 'undefined') return;
+  const onEvent = () => {
+    void (async () => {
+      const report = await notificationStateReport();
+      if (!report) return;
+      const key = JSON.stringify(report);
+      if (key === lastReported) return;
+      try {
+        await send(report);
+        lastReported = key;
+        console.info('[Push] notification state changed - reported', report.permission);
+      } catch (err) {
+        console.warn('[Push] notification state change not reported - the next event retries', err);
+      }
+    })();
+  };
+  window.addEventListener(NOTIFICATION_STATE_EVENT, onEvent);
+  removeWatch = () => window.removeEventListener(NOTIFICATION_STATE_EVENT, onEvent);
+}
+
+/** Test seam: forgets the watcher's memory. */
+export function resetNotificationStateWatchForTest(): void {
+  lastReported = null;
+  removeWatch?.();
+  removeWatch = null;
 }

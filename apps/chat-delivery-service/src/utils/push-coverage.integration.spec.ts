@@ -135,11 +135,14 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     await phone('u10', 'tauri-u10', { session: 'other-account' });
     // COUNTED, permissionOff: holds its row and states the OS will not show a notification.
     await phone('u11', 'tauri-u11', { row: true, state: 'off' });
-    // KEPT from the coverage: a mobile browser reporting android - and the ONLY browser-only member.
+    // KEPT from the coverage: a mobile browser reporting android - a browser-only member.
     await phone('u12', 'web-u12');
     // KEPT: a browser too, but its member also holds an installed app (counted, holds its row, on).
     await phone('u13', 'web-u13');
     await phone('u13', 'tauri-u13', { row: true, state: 'on' });
+    // COUNTED browser-only: its only installed app is a desktop one, which no push reaches.
+    await phone('u14', 'web-u14');
+    await phone('u14', 'tauri-u14', { os: 'windows' });
   });
 
   afterAll(async () => {
@@ -174,7 +177,7 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     expect(logger.warn).toHaveBeenCalledTimes(3);
     expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 3 }]);
     expect(logger.log).toHaveBeenCalledWith(
-      expect.stringMatching(/only through a mobile browser.*: 1$/)
+      expect.stringMatching(/only through a mobile browser.*: 2$/)
     );
   });
 });

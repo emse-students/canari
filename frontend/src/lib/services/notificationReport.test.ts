@@ -1,10 +1,15 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }));
 
 import {
+  markPermissionPromptShown,
+  NOTIFICATION_STATE_EVENT,
   notificationStateForReport,
+  resetNotificationStateWatchForTest,
+  watchNotificationState,
   notificationStateReport,
   readNotificationDeliveryState,
   type AndroidDeliveryState,
@@ -20,6 +25,7 @@ const ANDROID: AndroidDeliveryState = {
   platform: 'android',
   notificationsEnabled: true,
   postNotificationsGranted: true,
+  shouldShowRationale: false,
   channels: { messages: 'high', posts: 'default' },
   isIgnoringBatteryOptimizations: false,
   manufacturer: 'Xiaomi',
@@ -58,11 +64,14 @@ describe('notification state', () => {
       channels: { messages: 'high', posts: 'default' },
     });
     expect(
-      notificationStateForReport({
-        ...ANDROID,
-        postNotificationsGranted: false,
-        notificationsEnabled: false,
-      })
+      notificationStateForReport(
+        {
+          ...ANDROID,
+          postNotificationsGranted: false,
+          notificationsEnabled: false,
+        },
+        true
+      )
     ).toMatchObject({ permission: 'denied', enabled: false });
   });
 
@@ -86,5 +95,80 @@ describe('notification state', () => {
 
   it('reports nothing for no state: unknown is never granted', () => {
     expect(notificationStateForReport(null)).toBeUndefined();
+  });
+});
+
+describe('Android: never asked is told from refused', () => {
+  const denied = { ...ANDROID, postNotificationsGranted: false, notificationsEnabled: false };
+
+  it('denied before any prompt is not-determined, never denied', () => {
+    expect(notificationStateForReport(denied, false)?.permission).toBe('not-determined');
+  });
+
+  it('denied after the dialog was shown (the durable flag) is denied', () => {
+    expect(notificationStateForReport(denied, true)?.permission).toBe('denied');
+  });
+
+  it('denied with a system rationale on offer is denied: it only comes after a refusal', () => {
+    expect(
+      notificationStateForReport({ ...denied, shouldShowRationale: true }, false)?.permission
+    ).toBe('denied');
+  });
+
+  it('granted stays granted whatever the flag says', () => {
+    expect(notificationStateForReport(ANDROID, false)?.permission).toBe('granted');
+  });
+
+  it('marking the prompt shown flips the default reading', () => {
+    localStorage.clear();
+    expect(notificationStateForReport(denied)?.permission).toBe('not-determined');
+    markPermissionPromptShown();
+    expect(notificationStateForReport(denied)?.permission).toBe('denied');
+  });
+});
+
+describe('the state is re-reported when it changes, driven by the native event', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  beforeEach(() => {
+    invoke.mockReset();
+    resetNotificationStateWatchForTest();
+  });
+
+  it('sends on a change, not on the state already reported, and not twice for one state', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    watchNotificationState(send, notificationStateForReport(ANDROID, true));
+    invoke.mockResolvedValue(ANDROID);
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+
+    invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ enabled: false });
+  });
+
+  it('keeps the old state when the send fails, so the next event retries', async () => {
+    const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+    watchNotificationState(send, notificationStateForReport(ANDROID, true));
+    invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('says nothing when there is no snapshot', async () => {
+    const send = vi.fn();
+    watchNotificationState(send);
+    invoke.mockResolvedValue(null);
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(send).not.toHaveBeenCalled();
   });
 });

@@ -1827,7 +1827,12 @@ export class MlsDeliveryApi {
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
-    metadata: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+    metadata: {
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+      notificationState?: object;
+    }
   ): Promise<{
     status: string;
     deviceName: string | null;

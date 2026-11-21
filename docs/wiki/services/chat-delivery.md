@@ -2080,10 +2080,27 @@ foreground - `NotificationDeliveryState.kt` on Android, `CanariWriteNotification
 `canari_ios.mm` - and the command reads it; no snapshot is `None`, unknown. The answer is tagged by
 `platform`:
 
-- `android`: `notificationsEnabled`, `postNotificationsGranted`, `channels: { messages, posts }`
+- `android`: `notificationsEnabled`, `postNotificationsGranted`, `shouldShowRationale`, `channels: { messages, posts }`
   (`none|min|low|default|high|unspecified|absent`), `isIgnoringBatteryOptimizations`, `manufacturer`.
 - `ios`: `authorization` (`not-determined|denied|granted|provisional|ephemeral`), `alert`, `sound`,
   `badge`, `timeSensitive` (`enabled|disabled|not-supported`).
+
+**Stale state, and how it is kept fresh without a clock.** `register-device` runs at unlock and at
+renewal, so a state the user changes in between (first launch `not-asked`, then granted) would stay
+wrong until the next unlock. The native writer therefore runs OFF the main thread and, once the fresh
+snapshot is on disk, dispatches the page event `canari:notification-state` (a permission dialog closing,
+a switch flipped in the settings and the app coming back, a cold start). The page re-reads, and when the
+report differs from the last one sent it `PATCH`es `mls/devices/:userId/:deviceId/metadata` with
+`notificationState` (owner-bound, a state it cannot read is a 400; the row's other columns and
+`createdAt` are untouched). A failed send is logged and the next event retries. On a cold start the
+first read may find no snapshot yet: that is EXPECTED, logged at info by the Rust command, and
+the writer's event re-reads it - no register is ordered after a write by a clock.
+
+**Android `permission`.** `checkSelfPermission` answers DENIED before the first prompt too, so
+`granted` -> `granted`; else `denied` when the OS dialog was shown on this install (a durable page
+flag set when `requestPermission` answers) or the system offers a rationale (`shouldShowRationale`,
+only after a refusal); else `not-determined` (the server's `not-asked`). A phone refused before the
+flag existed and out of rationales reads `not-asked` - counted off all the same.
 
 The maker and battery fields are for the page's own use (the banner owed next) and are NOT reported
 to the server ([register](../compliance/register-of-processing.md)).
