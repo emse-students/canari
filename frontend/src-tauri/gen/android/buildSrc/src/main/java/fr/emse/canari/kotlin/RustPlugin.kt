@@ -65,10 +65,13 @@ open class RustPlugin : Plugin<Project> {
                     val targetArchCapitalized = targetArch.replaceFirstChar { it.uppercase() }
                     val targetBuildTask = project.tasks.maybeCreate(
                         "rustBuild$targetArchCapitalized$profileCapitalized",
-                        DefaultTask::class.java
+                        BuildTask::class.java
                     ).apply {
                         group = TASK_GROUP
                         description = "Build dynamic library in $profile mode for $targetArch"
+                        rootDirRel = config.rootDirRel
+                        target = targetName
+                        release = profile == "release"
                     }
 
                     buildTask.dependsOn(targetBuildTask)
