@@ -230,10 +230,11 @@ class ReadElsewhereMarksTest {
         val legacy = Banner(1001, "messages", listOf(Msg(sentAt = null, serverAt = null)))
         assertEquals(ReadOutcome.UNREAD, marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { legacy }, holds = notHeld, repost = noRepost) {})
 
-        // A read covering every peer line leaves a banner whose pending reply has not gone out.
+        // A read covering every peer line leaves a banner whose pending reply has not gone out - and
+        // says the conversation is read (round-16 review, S1).
         val pending = Banner(1002, "messages", listOf(m1, Msg(null, null, pendingReply = true)))
-        assertEquals(ReadOutcome.UNREAD, marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = true), shade = { pending }, holds = notHeld, repost = noRepost) {})
-        assertEquals(ReadOutcome.UNREAD, marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = false), shade = { pending }, holds = notHeld, repost = noRepost) {})
+        assertEquals(ReadOutcome.PENDING_ONLY, marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = true), shade = { pending }, holds = notHeld, repost = noRepost) {})
+        assertEquals(ReadOutcome.PENDING_ONLY, marks.recordThenCancel("g2", Read(Long.MAX_VALUE, serverClock = false), shade = { pending }, holds = notHeld, repost = noRepost) {})
     }
 
     // Round-6 item 1: a swipe names the notification it removed; another notification of the same
@@ -481,7 +482,9 @@ class ReadElsewhereMarksTest {
         marks.post(shade, "g1", 1001, m1)
         val pending = Msg(null, null, pendingReply = true, replyId = "r1")
         marks.remember("g1", Banner(1001, "messages", listOf(m1, pending)))
-        assertFalse(marks.readOn(shade, "g1", Read(Long.MAX_VALUE, serverClock = true)))
+        // A read short of m1 (a covering one would be kept by the pending reply and honoured by the
+        // delivery below - round-16 review, S2).
+        assertFalse(marks.readOn(shade, "g1", Read(500L, serverClock = true)))
 
         assertEquals(Delivery.NONE, marks.replyDelivered("g1", "other", shade = { null }, cancel = { fail("not this reply") }, holds = notHeld) { _, _ -> throw AssertionError("not this reply") })
         var rebuilt: List<Msg>? = null
@@ -507,7 +510,7 @@ class ReadElsewhereMarksTest {
         marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("lines stay") }, holds = notHeld) { held, kept -> held.copy(messages = kept) }
         assertEquals(listOf(m1, after, r2), marks.bannerOf("g1") { null }?.messages)
         // r2 is still queued: a read covering every peer line keeps the banner.
-        assertEquals(ReadOutcome.UNREAD, marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) { fail("r2 is not sent") })
+        assertEquals(ReadOutcome.PENDING_ONLY, marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) { fail("r2 is not sent") })
     }
 
     @Test
@@ -754,10 +757,10 @@ class ReadElsewhereMarksTest {
         assertEquals(listOf(1001), cancelled)
     }
 
-    // Round-14 review (nit): a held banner with no line is re-posted as it is - any app post ends the
-    // hold - and kept, never left held and reported.
+    // Round-14/15 reviews: a held banner with no line is re-posted EMPTY - any app post ends the hold -
+    // and kept, never left held and reported.
     @Test
-    fun `a held banner with no line is re-posted as it is and kept`() {
+    fun `a held banner with no line is re-posted empty and kept`() {
         val warnings = mutableListOf<String>()
         val marks = ReadElsewhereMarks<Msg>(warn = { warnings += it }) { Line.of(it.pendingReply, it.sentAt, it.serverAt, it.replyId, it.own) }
         marks.remember("g1", Banner(1001, "messages", emptyList()))
@@ -870,14 +873,76 @@ class ReadElsewhereMarksTest {
         assertEquals(stale, marks.reactionBaseOf("g1") { stale })
         marks.reactionWithdrawn("g1")
         assertNull(marks.reactionBaseOf("g1") { stale })
-        marks.reactionPosted("g1")
+        marks.reactionPosted("g1", 2001)
         assertEquals(stale, marks.reactionBaseOf("g1") { stale })
         // The app's start sweeps every reaction: none is asked of the shade until it posts again.
         marks.forgetAll(holds = notHeld, repost = noRepostAll) {}
         assertNull(marks.reactionBaseOf("g1") { stale })
         assertNull(marks.reactionBaseOf("g2") { stale })
-        marks.reactionPosted("g2")
+        marks.reactionPosted("g2", 2002)
         assertEquals(stale, marks.reactionBaseOf("g2") { stale })
         assertNull(marks.reactionBaseOf("g1") { stale })
+    }
+
+    // Round-16 review (S1): a pending reply is a send that has not gone out, not an unread message.
+    // A read covering every message line says the conversation is read - PENDING_ONLY, the banner
+    // kept for the reply - and the dismissal keeps it the same way.
+    @Test
+    fun `a read covering every message line but a pending reply says the conversation is read`() {
+        val marks = marks()
+        val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, r0)))
+        assertEquals(
+            ReadOutcome.PENDING_ONLY,
+            marks.recordThenCancel("g1", Read(2_000L, serverClock = true), shade = { null }, holds = { throw AssertionError("kept: never asked") }, repost = noRepost) { fail("r0 is not sent") },
+        )
+        // A message newer than the read is still UNREAD, pending reply or not.
+        marks.remember("g2", Banner(1002, "messages", listOf(m2, r0)))
+        assertEquals(
+            ReadOutcome.UNREAD,
+            marks.recordThenCancel("g2", Read(1_000L, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) { fail("m2 is unread") },
+        )
+    }
+
+    // Round-16 review (S2): a delivery honours the read already recorded. [m1, r0 pending], a read
+    // covering m1 (kept for r0), then r0 delivered: nothing is left to say - cancelled, or re-posted
+    // EMPTY when held - and m1 is never shown again.
+    @Test
+    fun `a delivery after a read covering the peer lines leaves nothing of them`() {
+        val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
+        val read = Read(2_000L, serverClock = true)
+
+        val marks = marks()
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, r0)))
+        assertEquals(ReadOutcome.PENDING_ONLY, marks.recordThenCancel("g1", read, shade = { null }, holds = notHeld, repost = noRepost) { fail("kept for r0") })
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r0", shade = { null }, cancel = { cancelled += it }, holds = notHeld) { _, _ -> throw AssertionError("m1 was read: nothing is re-posted") })
+        assertEquals(listOf(1001), cancelled)
+
+        val heldMarks = marks()
+        heldMarks.remember("g1", Banner(1001, "messages", listOf(m1, r0)))
+        heldMarks.record("g1", read)
+        val drawn = mutableListOf<List<Msg>>()
+        assertEquals(
+            Delivery.KEPT_UNTIL_READ,
+            heldMarks.replyDelivered("g1", "r0", shade = { null }, cancel = { fail("held") }, holds = { true }) { b, kept -> drawn += kept; b.copy(messages = kept) },
+        )
+        assertEquals(listOf(emptyList<Msg>()), drawn)
+        assertEquals(emptyList<Msg>(), heldMarks.bannerOf("g1") { null }?.messages)
+    }
+
+    // Round-16 review: the app's start cancels BY ID every reaction this process posted since the
+    // last sweep - the sweep's shade read lags a `notify`, as for the banners.
+    @Test
+    fun `forgetAll cancels by id the reactions posted since the last sweep`() {
+        val marks = marks()
+        marks.reactionPosted("g1", 2001)
+        marks.reactionPosted("g2", 2002)
+        val cancelled = mutableListOf<Int>()
+        marks.forgetAll(holds = notHeld, repost = noRepostAll) { cancelled += it }
+        assertEquals(setOf(2001, 2002), cancelled.toSet())
+        cancelled.clear()
+        marks.forgetAll(holds = notHeld, repost = noRepostAll) { cancelled += it }
+        assertEquals(emptyList<Int>(), cancelled)
     }
 }

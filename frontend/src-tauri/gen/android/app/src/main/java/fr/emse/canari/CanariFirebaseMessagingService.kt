@@ -602,7 +602,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "releaseUnrecordedHold: held banner id=$notifId names no conversation here - left as it is")
                 return
             }
-            val banner = shadeBannerOf(manager, notifId) ?: return
+            val banner = shadeBannerOf(manager, notifId) ?: run {
+                Log.d(TAG, "releaseUnrecordedHold: id=$notifId gone from the shade since the snapshot - nothing to re-post")
+                return
+            }
             // The app is in front: every line was seen, so the re-post that ends the hold is EMPTY.
             rebuildBanner(context, manager, groupId)(banner, emptyList())?.let { READ_ELSEWHERE.remember(groupId, it) }
         }
@@ -822,10 +825,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         return null
                     }
                     val style = NotificationCompat.MessagingStyle(previous.user)
-                    previous.conversationTitle?.let {
-                        style.conversationTitle = it
-                        style.isGroupConversation = previous.isGroupConversation
-                    }
+                    previous.conversationTitle?.let { style.conversationTitle = it }
+                    style.isGroupConversation = previous.isGroupConversation
                     // Attributed to US, like the in-flight reply Android was drawing, so the thread
                     // reads as the user's own pending message and not as a new incoming one - and
                     // marked so ([LINE_PENDING_REPLY]): no read elsewhere covers it, so the banner
@@ -983,10 +984,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // ALWAYS AN EXPLICIT STYLE, `kept` and nothing else - the template's own would redraw
                 // its old lines.
                 val style = NotificationCompat.MessagingStyle(previous.user)
-                previous.conversationTitle?.let {
-                    style.conversationTitle = it
-                    style.isGroupConversation = previous.isGroupConversation
-                }
+                previous.conversationTitle?.let { style.conversationTitle = it }
+                style.isGroupConversation = previous.isGroupConversation
                 kept.forEach { style.addMessage(it) }
                 // SILENT: nothing new arrived, one of our own sends went out. The template's text is
                 // cleared too: an empty conversation says nothing it said before.
@@ -1289,6 +1288,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - a line newer than the read stays unread")
                             return
                         }
+                        ReadElsewhereMarks.ReadOutcome.PENDING_ONLY -> {
+                            Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - read, but it holds a reply not sent yet")
+                            return
+                        }
                         ReadElsewhereMarks.ReadOutcome.HELD -> {
                             Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - read, but held after an inline answer, re-posted empty for the next event")
                             return
@@ -1305,6 +1308,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
                     when (READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, holds, repost, cancelById)) {
                         ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> {
+                            // The conversation is read; only the send that has not gone out stays.
+                            cancelReactionNotification(prefs, manager, groupId)
                             Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - it holds a reply not sent yet")
                             return
                         }
@@ -1369,7 +1374,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             notifId: Int,
         ): ReadElsewhereMarks.Banner<NotificationCompat.MessagingStyle.Message>? {
             val shown = try {
-                manager.activeNotifications.firstOrNull { it.id == notifId }?.notification
+                manager.activeNotifications.firstOrNull { it.id == notifId && it.tag == null }?.notification
             } catch (e: RuntimeException) {
                 // ONLY the system server's failure, as [holdsDirectReply] reads it: anything else is a
                 // defect here, and is not read as "nothing posted".
@@ -3822,7 +3827,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val readElsewhere = if (isReactionNotif) {
                     postToShade()
-                    READ_ELSEWHERE.reactionPosted(groupId)
+                    READ_ELSEWHERE.reactionPosted(groupId, notifId)
                     false
                 } else {
                     !READ_ELSEWHERE.postUnlessRead(

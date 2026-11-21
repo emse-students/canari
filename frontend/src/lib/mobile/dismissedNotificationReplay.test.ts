@@ -597,7 +597,9 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(readCancel).toBeGreaterThan(outcome);
     expect(fn.slice(outcome, readCancel)).toMatch(/^val outcome[^\n]*\n\s*$/);
     // The dismissal: HELD, NONE and CANCELLED each cancel it, inside the same lock.
+    // KEPT_PENDING_REPLY too: a send that has not gone out is not an unread message (round 16, S1).
     for (const branch of [
+      'ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> {',
       'ReadElsewhereMarks.Withdrawal.HELD -> {',
       'ReadElsewhereMarks.Withdrawal.NONE -> {',
     ]) {
@@ -618,7 +620,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(source).toContain(
       'READ_ELSEWHERE.reactionBaseOf(groupId) { shadeBannerOf(manager, notifId) }'
     );
-    expect(source).toContain('READ_ELSEWHERE.reactionPosted(groupId)');
+    expect(source).toContain('READ_ELSEWHERE.reactionPosted(groupId, notifId)');
   });
 
   // Round-11 review (S3): a reply not seen delivered is logged at WARN in every case, naming what

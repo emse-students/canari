@@ -910,7 +910,10 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its own template, and left as it was - logged at WARN - when it has none. A banner the platform
   holds is re-posted with what the delivery LEFT, never with the delivered line (round 14, S-a: r0
   failed offline, the network came back, r2 was answered inline, and the drain delivered both - the
-  held re-post used to draw r0's "non envoyé" again).
+  held re-post used to draw r0's "non envoyé" again). A delivery also honours the read ALREADY
+  recorded (round 16): a peer line the mark covers goes with the delivered line - [m1, r0], a read
+  covering m1 kept the banner for r0, then r0 delivered: the banner is cancelled (re-posted empty
+  when held), and m1 is never shown again.
 - **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
   the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
   watermark. Answering is reading, so the peer lines its watermark covers go and the reaction goes - but a line of
@@ -1007,6 +1010,19 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     always did.
   - A held banner the app's start finds but cannot name a conversation for is left as it is, logged
     at WARN.
+
+  Accepted residuals (round-16 review), each with the reason it is not worth a mechanism:
+  - **A held banner waits for an event.** Nothing wakes it on a clock - a timer would be the
+    "pansement" the standing directive refuses - and it shows only what was answered.
+  - **An unreadable shade reads as "not held" / "nothing posted".** It happens only when the system
+    server failed (`RemoteException` cause, typed at the catch); the cancel then goes as before and
+    the line accuses at ERROR. Anything else is rethrown, not read as an answer.
+  - **A reaction post right after `reactionPosted` still reads the shade.** If both the withdrawal's
+    cancel and the fresh post are still queued, it may rebuild on the stale copy once. The window is
+    one queued post wide, and the next read or sweep removes it.
+  - **A banner with no template or no MessagingStyle is not rebuilt.** Every conversation banner is
+    built with both; no fallback sender is invented, the record keeps what was posted, and the
+    rebuild says so at WARN.
 - **Answering is reading UP TO THE WATERMARK** (round-11 review, S2). The answer records the instants
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
@@ -1020,8 +1036,11 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   covered it and the reaction stayed after every read. Principle 2 holds: the reaction itself stays
   in the conversation - only its alert goes, when the conversation it belongs to is read.
   - THE READ'S OUTCOME DECIDES (`ReadElsewhereMarks.ReadOutcome`, round 15): `CANCELLED`, `HELD`
-    (every line covered) and `NO_BANNER` remove the reaction; only `UNREAD` - a line newer than the
-    read - keeps it. So a read of a conversation with no message banner standing removes a LONE
+    (every line covered), `PENDING_ONLY` and `NO_BANNER` remove the reaction; only `UNREAD` - a
+    MESSAGE line newer than the read - keeps it. A pending reply is a send of this account's that
+    has not gone out, not an unread message: a read covering every other line is `PENDING_ONLY`,
+    the banner stays for the reply and the reaction goes, as on a dismissal's `KEPT_PENDING_REPLY`
+    (round 16). So a read of a conversation with no message banner standing removes a LONE
     reaction, as a dismissal always did (round-15 decision).
   - The cancel runs IN THE DECISION'S CRITICAL SECTION (`READ_ELSEWHERE.lock`), on the answer, read
     and dismissal paths alike, so a reaction post cannot fall between the decision and the cancel.
@@ -1029,7 +1048,9 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     came back with the next one. The record now says when the shade's copy is stale
     (`reactionWithdrawn` on every cancel, every reaction at the app's start sweep): the next post
     builds on nothing (`reactionBaseOf`), and the shade answers again once one was posted on that
-    fresh base (`reactionPosted`).
+    fresh base (`reactionPosted`). The app's start also cancels BY ID every reaction this process
+    posted since the last sweep (`forgetAll`), as it does the banners: its sweep reads a shade that
+    lags a `notify` (round 16).
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and

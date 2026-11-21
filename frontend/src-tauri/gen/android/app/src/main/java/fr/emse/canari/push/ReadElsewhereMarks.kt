@@ -150,7 +150,13 @@ class ReadElsewhereMarks<M>(
         /** The read covered every line, but the platform holds the banner: re-posted empty and kept. */
         HELD,
 
-        /** A line the read does not cover stays unread: the banner stands as it was. */
+        /**
+         * The read covered every MESSAGE line; only a pending reply ([Line.pendingReply]) - a send of
+         * this account's that has not gone out - keeps the banner. The conversation is read.
+         */
+        PENDING_ONLY,
+
+        /** A message line the read does not cover stays unread: the banner stands as it was. */
         UNREAD,
     }
 
@@ -210,7 +216,13 @@ class ReadElsewhereMarks<M>(
      * since. Guarded by [lock].
      */
     private var reactionsSwept = false
-    private val reactionsPostedSinceSweep = HashSet<String>()
+
+    /**
+     * The REACTION notification id each conversation posted since the last sweep (or since this
+     * process started): [forgetAll] cancels them BY ID, as it does the message banners - the
+     * caller's sweep reads a shade that lags a `notify`. Guarded by [lock].
+     */
+    private val reactionsPostedSinceSweep = HashMap<String, Int>()
 
     /**
      * Raises [conversationId]'s mark to [read]'s instant, on its clock. A lower or non-positive
@@ -269,9 +281,10 @@ class ReadElsewhereMarks<M>(
      * ITS id only when the mark covers EVERY line - all in ONE critical section, so no post can fall
      * between them. A line the mark does not cover - a message newer than the read, or one comparable
      * on neither clock, or a pending reply - keeps the banner: it is a message this account has not
-     * read, or a send that has not gone out. An own line ([Line.own]) is covered by any read. A
-     * covered banner the platform [holds] is re-posted EMPTY through [repost] - every line it showed
-     * is read - and kept (class comment).
+     * read ([ReadOutcome.UNREAD]), or a send that has not gone out ([ReadOutcome.PENDING_ONLY]: the
+     * conversation itself is read). An own line ([Line.own]) is covered by any read. A covered
+     * banner the platform [holds] is re-posted EMPTY through [repost] - every line it showed is read
+     * - and kept (class comment).
      */
     fun recordThenCancel(
         conversationId: String,
@@ -283,9 +296,10 @@ class ReadElsewhereMarks<M>(
     ): ReadOutcome = synchronized(lock) {
         recordLocked(conversationId, read)
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized ReadOutcome.NO_BANNER
-        val lines = banner.messages.map(lineOf)
+        val uncovered = banner.messages.map(lineOf).filterNot { it.own || coversLocked(conversationId, it.sentAt, it.serverAt) }
         when {
-            !lines.all { it.own || coversLocked(conversationId, it.sentAt, it.serverAt) } -> ReadOutcome.UNREAD
+            uncovered.any { !it.pendingReply } -> ReadOutcome.UNREAD
+            uncovered.isNotEmpty() -> ReadOutcome.PENDING_ONLY
             cancelUnlessHeldLocked(conversationId, banner, emptyList(), holds, repost, cancel) -> ReadOutcome.CANCELLED
             else -> ReadOutcome.HELD
         }
@@ -298,7 +312,7 @@ class ReadElsewhereMarks<M>(
      */
     fun reactionBaseOf(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         synchronized(lock) {
-            val stale = conversationId in reactionsWithdrawn || (reactionsSwept && conversationId !in reactionsPostedSinceSweep)
+            val stale = conversationId in reactionsWithdrawn || (reactionsSwept && conversationId !in reactionsPostedSinceSweep.keys)
             if (stale) null else shade()
         }
 
@@ -307,11 +321,14 @@ class ReadElsewhereMarks<M>(
         synchronized(lock) { reactionsWithdrawn += conversationId }
     }
 
-    /** A reaction of [conversationId] was posted on a fresh base: the shade answers again from now on. */
-    fun reactionPosted(conversationId: String) {
+    /**
+     * A reaction of [conversationId] was posted as [notifId]: the shade answers again from now on, and
+     * the next [forgetAll] cancels it by id.
+     */
+    fun reactionPosted(conversationId: String, notifId: Int) {
         synchronized(lock) {
             reactionsWithdrawn -= conversationId
-            reactionsPostedSinceSweep += conversationId
+            reactionsPostedSinceSweep[conversationId] = notifId
         }
     }
 
@@ -324,7 +341,9 @@ class ReadElsewhereMarks<M>(
      * 2). The banner is cancelled when no line is left, else [repost] rebuilds it with the lines that
      * stay and returns what it posted (null: it could not, and the banner is left as it was). All in
      * one critical section with the record. (A quick reply whose handler still runs learned of the
-     * delivery earlier, at the send, through [AwaitedReplies].) With no line left, a banner the
+     * delivery earlier, at the send, through [AwaitedReplies].) A peer line the conversation's mark
+     * ALREADY covers - a read that came while the reply was queued - goes with it: it was read, and a
+     * re-post must not show it again. With no line left, a banner the
      * platform [holds] - answered inline again since the pending re-post - is updated WITHOUT the
      * delivered line and kept ([Delivery.KEPT_UNTIL_READ]): that later answer's own [answerReply]
      * sets what it shows.
@@ -340,7 +359,12 @@ class ReadElsewhereMarks<M>(
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Delivery.NONE
         val at = banner.messages.indexOfFirst { lineOf(it).pendingReplyId == messageId }
         if (at < 0) return@synchronized Delivery.NONE
-        val kept = banner.messages.filterIndexed { i, _ -> i != at }
+        // A peer line a read ALREADY covers is not shown again (round-16 review): [m1, r0], a read
+        // covering m1, then r0 delivered - m1 was read, and the banner has nothing left to say.
+        val kept = banner.messages.filterIndexed { i, msg ->
+            val line = lineOf(msg)
+            i != at && (line.own || line.pendingReply || !coversLocked(conversationId, line.sentAt, line.serverAt))
+        }
         if (onlyOwnLocked(kept)) {
             return@synchronized if (cancelUnlessHeldLocked(conversationId, banner, kept, holds, repost, cancel)) {
                 Delivery.CANCELLED
@@ -402,8 +426,9 @@ class ReadElsewhereMarks<M>(
         }
         val shown = kept + listOfNotNull(ownLine(banner))
         if (shown.isEmpty()) {
-            // Held, and nothing to show: its template re-posted as it is, kept.
-            cancelUnlessHeldLocked(conversationId, banner, emptyList(), holds, repost, cancel)
+            // Held (an unheld one was cancelled above), and nothing to show: re-posted EMPTY, kept.
+            // The `held` already read decides - the platform is not asked twice.
+            postedLocked(conversationId, repost(banner, emptyList()) ?: banner)
             return@synchronized Delivery.KEPT_UNTIL_READ
         }
         val rebuilt = repost(banner, shown) ?: return@synchronized Delivery.NOT_REBUILT
@@ -487,7 +512,12 @@ class ReadElsewhereMarks<M>(
         posted.putAll(kept)
         withdrawn.clear()
         allWithdrawn = true
-        // The caller's sweep removed every reaction notification too.
+        // The caller's sweep removed every reaction notification too - and the ones this process
+        // posted are cancelled BY ID, ordered after their `notify`, like the banners above.
+        for (reactionId in reactionsPostedSinceSweep.values) {
+            cancel(reactionId)
+            cancelled += reactionId
+        }
         reactionsWithdrawn.clear()
         reactionsPostedSinceSweep.clear()
         reactionsSwept = true
