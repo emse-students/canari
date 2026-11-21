@@ -25,5 +25,4 @@ path ran):
    sender.
 
 If a row fails while the app was alive rather than killed, check first which composer drew the
-banner: the app's own (`canari_push.mm` `CanariShowMessageNotification`) is not converted. The
-setting question is parked in [open questions](../open-questions.md).
+banner: the app's own (`canari_push.mm` `CanariShowMessageNotification`) is not converted.

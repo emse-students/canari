@@ -1585,10 +1585,16 @@ What this adds, and where it goes:
   Spotlight, Siri suggestions), as the iOS share suggestions' already are (register row C22, the
   privacy policy's iPhone row - both updated), and they are erased at sign-out.
 
+**The share-suggestions setting does not stop these donations** - owner, 2026-11-21:
+*"Non, comme sur Android"*. "Suggestions dans le partage" covers the share suggestions only, as on Android, where
+the notifications' `chat_<group>` conversation shortcuts are published whatever the setting. Weighed
+against principle 1 ([principes](../../principes.md)): the donations hold no message and never leave the phone, the member is TOLD -
+register row C22 and the privacy policy's iPhone row say that message notifications hand iOS their
+sender's name and face whatever that setting, and that only a sign-out erases them - and turning the
+setting off still removes the share sheet's own suggestions.
+
 **What is NOT covered.** A banner the APP draws while it is alive (`canari_push.mm`
-`CanariShowMessageNotification`) stays plain; the extension draws the push banners. Whether the
-"Suggestions dans le partage" setting should also stop these donations is parked for the owner
-([open questions](../open-questions.md#decision-owed---does-the-share-suggestions-setting-also-stop-the-iphones-communication-notifications-2026-11-21)).
+`CanariShowMessageNotification`) stays plain; the extension draws the push banners.
 **Compiled by CI only; owed on the iPhone 12** - Focus with Canari allowed lets a message through,
 Focus without it holds it back, the avatar shows, groups show their name
 ([backlog](../backlog.d/ios-communication-notifications.md)).

@@ -1247,11 +1247,13 @@
               l'identifiant de la conversation et, pour un groupe, son nom - jamais le contenu du
               message - pour l'afficher avec la photo de l'expéditeur et la laisser passer un mode
               Concentration si vous l'y autorisez ; iOS peut ensuite les suggérer de la même façon.
-              Rien de cela n'est envoyé à nos serveurs
+              Le réglage « Suggestions dans le partage » ne concerne que le menu Partager : il
+              n'empêche pas cette transmission, comme sur Android. Rien de cela n'est envoyé à nos
+              serveurs
             </td>
             <td
               >Effacés à la déconnexion ; les suggestions de partage aussi à la désactivation du
-              réglage</td
+              réglage, pas les données des notifications de message</td
             >
           </tr>
           <tr>
