@@ -11,7 +11,7 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import { galleryCommand } from '$lib/services/galleryCommands';
-import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
 
 /** Every suggestion's shortcut id is this prefix and a conversation id. */
@@ -204,19 +204,19 @@ export function clearShareTargets(
 /**
  * Everything of THIS account the system holds as shortcuts, erased at every sign-out (an account
  * switch included; user, 2026-10-22): the share suggestions, ALWAYS asked of the native side, and
- * on Android the `chat_<group>` conversation shortcuts the message notifications publish (names
- * and faces). iOS has no second set: its notification extension donates no intent and publishes no
- * shortcut, so the suggestions' donations are all the system holds of an account there. Queued
- * after any publish in flight. Phone apps only; a failure is said, never thrown.
+ * what the message notifications handed the system (names and faces) - on Android the
+ * `chat_<group>` conversation shortcuts, on iOS the interactions the notification extension
+ * donates for its communication notifications (owner, 2026-11-21), one command on both phones.
+ * Queued after any publish in flight. Phone apps only; a failure is said, never thrown.
  */
 export function eraseAccountShortcuts(reason: string): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
-  const suggestions = clearShareTargets(reason, { force: true });
-  if (!isAndroidTauriRuntime()) return suggestions;
+  void clearShareTargets(reason, { force: true });
   return enqueue(async () => {
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
-      Log.d('ShareTargets', `${removed} conversation shortcut(s) erased (${reason})`);
+      // iOS deletes a donation group without counting it, so it always answers 0.
+      Log.d('ShareTargets', `conversation shortcuts erased, ${removed} counted (${reason})`);
     } catch (err) {
       console.error(`[share-targets] the conversation shortcuts were not erased (${reason})`, err);
     }

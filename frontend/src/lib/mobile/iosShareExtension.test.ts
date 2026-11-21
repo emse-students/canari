@@ -451,7 +451,10 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     // ONE delete, the group's: never `deleteAll`, which would take what the system learned of the
     // app beyond the suggestions.
     expect(suggestions).not.toContain('deleteAll');
-    expect(suggestions.match(/INInteraction\.delete\(with: groupIdentifier\b/g)?.length).toBe(1);
+    // ONE delete call, parametrised by the group: the suggestions' own by default, the notification
+    // extension's for `clearMessageNotifications` (iosCommunicationNotifications.test.ts).
+    expect(suggestions.match(/INInteraction\.delete\(with: /g)?.length).toBe(1);
+    expect(suggestions).toContain('deleteGroup(_ group: String = groupIdentifier)');
     const publish = capture(
       suggestions,
       /static func publish\(([\s\S]*?)\n {2}\/\/\/ Deletes every/
@@ -515,11 +518,14 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     expect(swiftRules).toContain('id.hasPrefix("c:") && (3...200).contains(id.count)');
   });
 
-  it('erases the suggestions at sign-out on iOS too, and no conversation shortcut it never had', () => {
+  it('erases the suggestions at sign-out on iOS too, and the notification donations with them', () => {
     const erase = capture(native, /(export function eraseAccountShortcuts[\s\S]*?\n\})/);
     expect(erase).toContain('if (!isMobileTauriRuntime()) return Promise.resolve();');
     expect(erase).toContain('clearShareTargets(reason, { force: true })');
-    expect(erase).toContain('if (!isAndroidTauriRuntime()) return suggestions;');
+    // Both phones since the iPhone's communication notifications (owner, 2026-11-21): no
+    // platform gate before the conversation shortcuts' command.
+    expect(erase).not.toContain('isAndroidTauriRuntime');
+    expect(erase).toContain("galleryCommand('clearConversationShortcuts')");
     const auth = read(resolve(here, '../stores/auth.ts'));
     expect(auth).toContain("eraseAccountShortcuts('signed out')");
   });

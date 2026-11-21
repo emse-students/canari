@@ -297,8 +297,12 @@ and the picker still opens**. What differs is only what the platform holds.
   label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
 - **Erased at sign-out**, an account switch included (on one install, B signs in only after A
   signed out, [backlog](../plan.md#readings-owed)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
-  (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
-  notification extension donates no intent and publishes no shortcut, so there is no second set.
+  (`force`), and since 2026-11-21 `clear_conversation_shortcuts` too: the iOS notification
+  extension now donates an INCOMING `INSendMessageIntent` per message banner (a sender's name and
+  face, the conversation's id and name - [communication
+  notifications](mobile.md#communication-notifications-owner-2026-11-21)) in its own group,
+  `fr.emse.canari.message-notifications`, which that command deletes
+  (`ShareSuggestions.clearMessageNotifications`). It answers 0: the platform does not count a group.
 - **The pick comes back through the Share Extension.** Its `Info.plist` declares
   `IntentsSupported` = [`INSendMessageIntent`] under `NSExtensionAttributes` - without it the sheet
   offers none of the donations. When the member picks a suggestion, `extensionContext.intent` is

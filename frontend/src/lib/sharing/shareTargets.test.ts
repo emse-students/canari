@@ -338,10 +338,12 @@ describe('on iOS', () => {
     expect(calls(PUBLISH)[0][1]).toMatchObject({ targets: [{ id: 'c:a', label: 'A' }] });
   });
 
-  it('erases the suggestions at sign-out, and asks for no conversation shortcut it never had', async () => {
+  it('erases the suggestions AND the notification donations at sign-out (owner, 2026-11-21)', async () => {
+    // The notification extension donates an interaction per communication notification (a
+    // sender's name and face): the same command Android's conversation shortcuts use erases them.
     platform = 'ios';
     await eraseAccountShortcuts('signed out');
-    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR]);
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, CLEAR_CONVERSATIONS]);
   });
 });
 

@@ -692,3 +692,21 @@ C5 already says what they read ([register](compliance/register-of-processing.md)
 policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
 owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
 
+### DECISION OWED - does the share-suggestions setting also stop the iPhone's communication notifications? (2026-11-21)
+
+*The question.* Since 2026-11-21 the iPhone's notification extension donates an incoming
+`INSendMessageIntent` for every message banner - Apple's condition for a communication notification
+(the sender's face, the group's name, a sender a Focus may let through;
+[mobile](frontend/mobile.md#communication-notifications-owner-2026-11-21)). Those donations name the
+sender and the group to the system, which may then suggest them in the share sheet, Spotlight and
+Siri suggestions - the exposure the "Suggestions dans le partage" setting lets a member turn off for
+the share suggestions. Today the setting does not stop these donations (they are erased at sign-out
+only), exactly as Android's `chat_<group>` conversation shortcuts are published whatever the setting.
+
+*The options.* (a) Keep it so, and say in the setting's text and the privacy policy that message
+notifications still name their senders to the system. (b) The setting also stops the donations: the
+app mirrors it into the App Group, the extension reads it and then delivers the plain banner (no
+avatar, no Focus allowance for that member), and turning it off also deletes the donation group.
+Not decided by the lead: principle 1 (the member's explicit choice) and the owner's decision (every
+message a communication notification) pull opposite ways, and the answer changes what a member was
+told. The pull request carrying the feature is held for the owner's portal step anyway.

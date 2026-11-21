@@ -1484,7 +1484,7 @@ altool failure, a validation rejection included, still fails the step.
 
 - Decrypts MLS ciphertext via Rust FFI (`canari_native_decrypt_message`)
 - Decrypts media thumbnails via Rust FFI (`canari_native_decrypt_media`)
-- Builds visible notification content (title, body, attachment, category, badge)
+- Builds visible notification content (title, body, attachment, category, badge) and, for a DM or group message, redraws it as a communication notification (see "Communication notifications" below)
 - Writes decrypted messages to `fcm_message_cache.ndjson` in the App Group container, which the app drains into its own `app_data_dir` and pre-injects at boot (see "FCM message cache")
 - Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for genuinely absent ones → nothing at all when the locality is `UNKNOWN`)
 - Budget: ~30 seconds; 2 MB media cap
@@ -1500,6 +1500,98 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 (`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
+
+### Communication notifications (owner, 2026-11-21)
+
+**The decision.** A chat message on the iPhone is a *communication notification*, as WhatsApp's are:
+the banner shows the sender's face as its avatar and the group's name, and the member can let Canari
+(or chosen people) through a Focus. Posts, social notifications, reactions and salons stay as they
+were (salons: a community channel is not a conversation between people in Apple's sense - a
+reversible choice, taken because the owner named "messages"; one line in `dispatch` changes it).
+
+**The mechanism** (`canari_NSE/NotificationService.swift`, `applyMessageContent` ->
+`applyCommunicationStyle`), in Apple's order ([Implementing communication
+notifications](https://developer.apple.com/documentation/usernotifications/implementing-communication-notifications)):
+
+1. The plain notification is built exactly as before - title, subtitle, body, thread, category,
+   level, thumbnail or face attachment, badge. **It is complete before the step starts**, so an
+   expiry (`serviceExtensionTimeWillExpire`) delivers it whatever the step is doing.
+2. `messageIntent` builds an incoming `INSendMessageIntent`: the sender as an `INPerson` (handle and
+   custom id = their user id, the display name the banner already shows - the conversation nickname
+   when there is one -, the image = the face file the attachment used, else the initials disc as PNG
+   bytes); `conversationIdentifier` = `c:<groupId>`, the share suggestions' id, so a conversation the
+   share sheet offers from these donations reaches the Share Extension in the shape it reads; for a
+   group, `speakableGroupName` = the title the banner uses (an unnamed group's "Conversation de
+   groupe") and ONE recipient standing for "the others" (below); `content` nil. A proven mention of
+   the member sets `INSendMessageIntentDonationMetadata.mentionsCurrentUser`.
+3. `INInteraction(intent:)`, direction `.incoming`, group identifier
+   `fr.emse.canari.message-notifications`, `donate`. **Only in the donation's completion** is the
+   content redrawn: `adoptCommunicationContent` copies the plain content without the avatar
+   attachment (the face moves to the banner's left; a media thumbnail stays), calls
+   `updating(from: intent)`, and swaps the result in as the best attempt, under `deliveryLock` and
+   only while the run is unanswered. Then `finish`.
+
+**No clock, no new fetch.** The step's one end is the donation's completion; if it never comes,
+the system's expiry is the bound, it delivers the plain notification, and the trace's stage reads
+`donate` - so a donation that hangs is visible in `nse_outcomes`, not hidden behind a timeout. The
+face is read from local files only: the run that fetched the avatar for the attachment (unchanged,
+as before) hands that file over, and a run whose attachment slot a thumbnail took reads the 24h App
+Group cache alone (`cachedAvatar`) - it never fetches.
+
+**The degraded path, and it is a signal.** A refused donation or a refused `updating(from:)` delivers
+the plain notification (exactly the pre-2026-11-21 banner) and logs `WARN communication style not
+applied - ...` with the error's type, domain and code, never its text. A payload that names nobody to
+draw (no conversation id, no sender id, no sender name) is not a failure: `communication style
+skipped reason=...` at `notice`. The applied case logs `communication style applied isGroup=...`.
+No line carries a name or a message (`nativeLogContent.test.ts`).
+
+**A group's one recipient stands for the others.** Apple draws a group only when `recipients` names
+someone besides the sender and the member, and the extension does not know the members - the push
+names the sender and the conversation only, and adding the member list to it would hand Google and
+Apple what content-free push removes ([content-free push](../protocols/content-free-push.md)). So
+the one recipient is an `INPerson` whose handle is the conversation id and whose name is the group's,
+with no face. Reversible; the iPhone row "groups show their name" is its proof.
+
+**What the app declares.** `com.apple.developer.usernotifications.communication` in
+`canari_iOS.entitlements` - on the APP target only, as Apple asks; the extension's entitlements are
+unchanged - and `INSendMessageIntent` in `NSUserActivityTypes` (`canari_iOS/Info.plist`, already
+there for the share suggestions). Intents is autolinked by the extension's `import Intents`.
+**The App ID needs the capability** - the profiles are named, manual and stored as secrets
+(`APPLE_PROVISIONING_PROFILE`, see "iOS project"), so CI's signing cannot add it: the "Communication
+Notifications" capability enabled on `fr.emse.canari` in the Apple Developer portal, then the
+"Canari" App Store profile regenerated and its secret replaced (and the bench development profile
+`app.mobileprovision` regenerated for `tools/ios-device`). Until then a release fails at codesign
+("profile doesn't include the ... entitlement") - the pull request's unsigned compile cannot see it.
+
+**Erased at sign-out.** The donations name senders and carry faces, so they leave with the account:
+`eraseAccountShortcuts` asks `clear_conversation_shortcuts` on iOS too (Android's command for its
+`chat_<group>` shortcuts), which deletes the donation group
+(`ShareSuggestions.clearMessageNotifications`, [sharing](sharing.md#share-suggestions-ios---lot-s5)).
+
+**Principle 1 - "Vos messages sont à vous"** ([principes](../../principes.md), the first and the one that wins).
+What this adds, and where it goes:
+
+- **No request leaves the phone that did not before.** The step makes no network call; the face is a
+  file the extension already had.
+- **The donation stays on the device.** `INInteraction.donate` writes to the system's on-device
+  interaction store (what Siri suggestions, the share sheet and Focus read); Apple documents no
+  upload of a donation, and nothing here asks for one. What Apple says beyond that - Siri
+  suggestions synced between the member's own devices through iCloud, end-to-end encrypted - is
+  Apple's statement, not measured here.
+- **What the donation holds is what the banner already shows**: the sender's name and face, the
+  group's name, and two opaque ids. **Never the message**: `content` is nil. The banner's body, which
+  iOS already held before this change, is unchanged.
+- **What changes for the member**: those names may now be suggested by the system (share sheet,
+  Spotlight, Siri suggestions), as the iOS share suggestions' already are (register row C22, the
+  privacy policy's iPhone row - both updated), and they are erased at sign-out.
+
+**What is NOT covered.** A banner the APP draws while it is alive (`canari_push.mm`
+`CanariShowMessageNotification`) stays plain; the extension draws the push banners. Whether the
+"Suggestions dans le partage" setting should also stop these donations is parked for the owner
+([open questions](../open-questions.md#decision-owed---does-the-share-suggestions-setting-also-stop-the-iphones-communication-notifications-2026-11-21)).
+**Compiled by CI only; owed on the iPhone 12** - Focus with Canari allowed lets a message through,
+Focus without it holds it back, the avatar shows, groups show their name
+([backlog](../backlog.d/ios-communication-notifications.md)).
 
 ### The extension's copy of the state follows every write (2026-11-05)
 
