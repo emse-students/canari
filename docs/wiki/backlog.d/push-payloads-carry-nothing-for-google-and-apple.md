@@ -251,8 +251,11 @@ puts the readings before WP-W4 and before any lasting flip.
 
 1. **Readings 1 and 3 + the device row CFP-W3** - one Mi 9T sitting on dev with `push_mode = wake`
    for the sitting (about 1 hour).
-2. **WP-W3b** - the welcome-request-pending push as a silent envelope wake, server only, inert
-   until a version-2 client (about 1 day, jest + the PostgreSQL integration suite).
+2. ~~**WP-W3b**~~ - **BUILT 2026-11-21, switch OFF**: the welcome-request-pending push is a silent
+   envelope wake for a `wakeVersion >= 2` token, server only, inert until a version-2 client
+   ([as built](../protocols/content-free-push.md#2-the-target)). Its Mi 9T reading (a new device's
+   admission still wakes a closed member's phone) is read with WP-W4's sitting, the first build that
+   declares version 2.
 3. **WP-W1, then WP-W2** - the flips, Android; WP-W2 then needs reading 4 over **a week** of
    production and reading 5 (register + privacy policy) in the same change.
 4. **WP-W4** - Android envelope wakes, `wakeVersion: 2` (3 to 5 days, then a Mi 9T sitting).
@@ -267,6 +270,11 @@ This is why the owner moved the entry after `1.7.0` (2026-11-17): steps 3 and 7 
 windows counted in days of production.
 
 ### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
+
+_2026-11-21: WP-W3b built (item 2 of "What is left"); it adds no reading before WP-W4, since no
+client declares version 2. With the switch on on dev, the step-1 readings 1 and 3 are unchanged; a
+re-read on the Mi 9T confirms only that a `wakeVersion = 1` device still receives the full
+`welcome_request_pending` (`[WELCOME_REQ] ... mode=full`)._
 
 _2026-11-20, sitting [S15](../device-verification.md#the-readings-of-2026-11-20-s15-171-alpha7-content-free-push-on-the-mi-9t-the-miconnect-terms-stage-the-admission-card-not-reached): **readings 1 and 3 PASSED on the Mi 9T** (`1.7.0` build `100700106`, dev `1.7.1-alpha.7`): the 1:1 and group banners with text, `[PUSH_WAKE] fetched` before the decrypt, `mode=wake` sends each with one `served`, the salon `mode=full`; and with airplane mode right after a send, `fetch FAILED stage=transport` and the not-loaded notification (id 9995). The Mi row reads `wakeVersion = 1` and `push_envelope` holds 0 rows. Readings 2 (iPhone) and 4 (a production week) stay owed._
 

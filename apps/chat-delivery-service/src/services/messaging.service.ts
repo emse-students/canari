@@ -154,6 +154,7 @@ import {
   buildWakeApnsRequest,
   buildWakeDataFields,
   isInternalSilent,
+  welcomeRequestPendingData,
   type EnvelopeContent,
   type WakeKey,
   LONGEST_FALLBACK_LOCALE,
@@ -8326,12 +8327,19 @@ export class MessagingService {
   }
 
   /**
-   * Sends a silent FCM data push to every registered device of each group member
-   * (except the requester) to wake them up when a welcome_request is pending and
-   * no peer was online to handle it.
+   * Sends a silent push to every registered device of each group member (except the requester) to
+   * wake them up when a welcome_request is pending and no peer was online to handle it.
    *
-   * On reception, the Kotlin service reconnects the WebSocket; the normal
-   * welcome-drain flow then forwards the pending welcome_request automatically.
+   * On reception, the Kotlin service admits the device in the background (or reconnects the
+   * WebSocket); the normal welcome-drain flow then forwards the pending welcome_request.
+   *
+   * CONTENT-FREE FOR A VERSION-2 BINARY (WP-W3b, docs/wiki/protocols/content-free-push.md section
+   * 2): the three ids it carries tell Google and Apple that a given person's new device is joining a
+   * given conversation. While `push_mode = wake`, a token at `wakeVersion >= 2` is sent a SILENT
+   * envelope wake instead - the map stored through the same envelope as `sendPushToUser`
+   * ({@link envelopesForWake}), so the device fetches exactly the map below. A device that could not
+   * be prepared (switch unreadable, envelope not stored) is sent NOTHING, accused at ERROR there;
+   * never the full push in its place. Every other token keeps the full push, unchanged.
    */
   private async sendFcmWelcomeRequestPending(
     groupId: string,
@@ -8358,25 +8366,58 @@ export class MessagingService {
       where: { userId: In(uniqueUserIds) },
     });
 
+    // THE ONE MAP, for the full push and the envelope alike.
+    const data = welcomeRequestPendingData(groupId, requesterUserId ?? '', requesterDeviceId ?? '');
+    // 1 h < the 24 h Redis TTL of the request it announces: a wake delivered later has nothing left
+    // to drain. The wake keeps it - it announces the same request.
+    const android = { priority: 'high' as const, ttl: 3_600_000 };
+
+    // One envelope decision per ACCOUNT: an envelope belongs to one account's devices.
+    const tokensByUser = new Map<string, PushToken[]>();
+    for (const pt of allTokens) {
+      tokensByUser.set(pt.userId, [...(tokensByUser.get(pt.userId) ?? []), pt]);
+    }
+    const decisions = new Map(
+      await Promise.all(
+        [...tokensByUser].map(
+          async ([userId, tokens]) =>
+            [
+              userId,
+              await this.envelopesForWake(
+                userId,
+                tokens,
+                { title: '', body: '', data, inline: {} },
+                traceId
+              ),
+            ] as const
+        )
+      )
+    );
+
     await Promise.all(
       allTokens.map(async (pt) => {
+        const decision = decisions.get(pt.userId);
+        // Not woken: `failed` was accused at ERROR by `envelopesForWake`; a registration gone or an
+        // envelope the cap took at once was logged by `storeEnvelopes`. Never the full push instead.
+        if (decision?.withheld.has(pt.id)) return;
+        const envelopeId = decision?.envelopes.get(pt.deviceId);
         try {
-          await getMessaging().send({
-            token: pt.token,
-            data: {
-              type: 'welcome_request_pending',
-              groupId,
-              requesterUserId: requesterUserId ?? '',
-              requesterDeviceId: requesterDeviceId ?? '',
-            },
-            android: { priority: 'high', ttl: 3_600_000 }, // 1 h < 24 h Redis TTL
-            apns: {
-              payload: { aps: { contentAvailable: true } },
-              headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
-            },
-          });
+          await getMessaging().send(
+            envelopeId
+              ? this.buildWakeMessage(pt, { envelopeId }, true, false, android)
+              : {
+                  token: pt.token,
+                  data,
+                  android,
+                  apns: {
+                    payload: { aps: { contentAvailable: true } },
+                    headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+                  },
+                }
+          );
           this.logger.log(
-            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId}`
+            `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId} ` +
+              (envelopeId ? `mode=wake envelope=${envelopeId.slice(0, 8)}` : 'mode=full')
           );
         } catch (e) {
           if (isTerminalPushTokenError(e)) {

@@ -268,6 +268,129 @@ describe('MessagingService - the envelope wake', () => {
     expect(fcmSend).not.toHaveBeenCalled();
   });
 
+  describe('the welcome-request-pending wake (WP-W3b)', () => {
+    const GROUP = '00000000-0000-4000-8000-00000000c0a5';
+    const welcome = {
+      type: 'welcome_request_pending',
+      groupId: GROUP,
+      requesterUserId: 'req-user',
+      requesterDeviceId: 'req-device',
+    };
+    const wakeMembers = () =>
+      (
+        service as unknown as {
+          sendFcmWelcomeRequestPending: (
+            g: string,
+            m: string[],
+            r: string,
+            t: string
+          ) => Promise<void>;
+        }
+      ).sendFcmWelcomeRequestPending(
+        GROUP,
+        ['u1:pixel', 'req-user:req-device'],
+        'req-user:req-device',
+        'trace'
+      );
+    const named = (i = 0) => {
+      const serialised = JSON.stringify(sent(i));
+      return [GROUP, 'req-user', 'req-device', 'welcome_request_pending'].filter((id) =>
+        serialised.includes(id)
+      );
+    };
+
+    it('stores the four fields, then sends Android a silent wake naming nobody', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(store).toHaveBeenCalledWith(
+        manager,
+        'u1',
+        ['pixel'],
+        { title: '', body: '', data: welcome, inline: {} },
+        expect.anything(),
+        'trace'
+      );
+      expect(store.mock.invocationCallOrder[0]).toBeLessThan(fcmSend.mock.invocationCallOrder[0]);
+      expect(sent().data).toEqual({ type: 'wake', envelopeId: E1, silent: 'true' });
+      expect(sent().android).toEqual({ priority: 'high', ttl: 3_600_000 });
+      expect(sent().apns).toBeUndefined();
+      expect(named()).toEqual([]);
+    });
+
+    it('sends iOS a background wake naming nobody', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'iphone', 'ios', 2)]);
+      await wakeMembers();
+      expect(sent().apns!.payload).toEqual({
+        aps: { 'content-available': 1 },
+        type: 'wake',
+        envelopeId: E1,
+        silent: 'true',
+      });
+      expect(sent().apns!.headers).toEqual({
+        'apns-push-type': 'background',
+        'apns-priority': '5',
+      });
+      expect(named()).toEqual([]);
+    });
+
+    it('sends a binary below version 2 the full push, unchanged, and reads neither switch nor envelope', async () => {
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 1)]);
+      await wakeMembers();
+      expect(sent()).toEqual({
+        token: 'tok-pixel',
+        data: welcome,
+        android: { priority: 'high', ttl: 3_600_000 },
+        apns: {
+          payload: { aps: { contentAvailable: true } },
+          headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+        },
+      });
+      expect(manager.query).not.toHaveBeenCalledWith(expect.stringMatching(/push_mode/));
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('sends a version-2 binary the full push while the switch is full', async () => {
+      modeRows = [{ push_mode: 'full' }];
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(sent().data).toEqual(welcome);
+      expect(store).not.toHaveBeenCalled();
+    });
+
+    it('sends a capable device NOTHING when the switch cannot be read - never the full push', async () => {
+      modeRows = new Error('connection reset');
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        token('t2', 'old-iphone', 'ios', 0),
+      ]);
+      await wakeMembers();
+      expect(fcmSend).toHaveBeenCalledTimes(1);
+      expect(sent().token).toBe('tok-old-iphone');
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('push_mode unreadable'));
+    });
+
+    it('sends a capable device NOTHING when its envelope cannot be stored - never the full push', async () => {
+      store.mockRejectedValue(new Error('FK violation'));
+      pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
+      await wakeMembers();
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('[PUSH_ENVELOPE]'));
+    });
+
+    it('decides the envelope once per account, never across two accounts', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        token('t1', 'pixel', 'android', 2),
+        { ...token('t2', 'tablet', 'android', 2), userId: 'u2' },
+      ]);
+      await wakeMembers();
+      expect(store.mock.calls.map((c) => [c[1], c[2]])).toEqual([
+        ['u1', ['pixel']],
+        ['u2', ['tablet']],
+      ]);
+      expect(fcmSend).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('never forwards the server-only floor into the envelope', async () => {
     pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
     unusedRepo.find.mockResolvedValueOnce([]);

@@ -21,6 +21,7 @@ import {
   buildInternalApnsHalf,
   presentationOf,
   isInternalSilent,
+  welcomeRequestPendingData,
   type EnvelopeContent,
   reactionCollapseId,
 } from './push-payload';
@@ -793,6 +794,38 @@ describe('buildEnvelopeAnswer - the same push as the full one', () => {
     if (answer.status !== 'push') throw new Error('not a push answer');
     expect(answer.fields.ciphertext).toHaveLength(10_000);
     expect(answer.fields.seedFrame).toBe('S');
+  });
+});
+
+describe('the welcome-request-pending envelope (WP-W3b)', () => {
+  const data = welcomeRequestPendingData('g-1', 'req-user', 'req-device');
+  const content: EnvelopeContent = { title: '', body: '', data, inline: {} };
+
+  it('is the four fields the full push has always carried', () => {
+    expect(data).toEqual({
+      type: 'welcome_request_pending',
+      groupId: 'g-1',
+      requesterUserId: 'req-user',
+      requesterDeviceId: 'req-device',
+    });
+  });
+
+  it('is silent, so its wake is a background push and its envelope is evicted before a banner', () => {
+    expect(isInternalSilent(data)).toBe(true);
+    expect(buildInternalApnsRequest('', '', data, 'fr').pushType).toBe('background');
+  });
+
+  it('answers iOS exactly the four fields, presenting nothing', () => {
+    const answer = buildEnvelopeAnswer(content, 'ios', 'fr');
+    if (answer.status !== 'push') throw new Error('not a push answer');
+    expect(answer.fields).toEqual(data);
+    expect(answer.presentation).toBeNull();
+  });
+
+  it('answers Android the four fields plus the empty title and body every Android answer carries', () => {
+    const answer = buildEnvelopeAnswer(content, 'android', 'fr');
+    if (answer.status !== 'push') throw new Error('not a push answer');
+    expect(answer.fields).toEqual({ ...data, title: '', body: '' });
   });
 });
 
