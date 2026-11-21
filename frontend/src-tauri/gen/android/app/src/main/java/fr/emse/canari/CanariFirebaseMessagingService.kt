@@ -839,9 +839,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** A quick reply's handler ends ([AwaitedReplies.settle]). */
         internal fun settleReplyDelivery(messageId: String) = AWAITED_REPLIES.settle(messageId)
 
-        /** Whether [messageId] is still in the outbox mirror - read under the outbox lock, whole. */
-        internal fun isQueued(context: Context, messageId: String): Boolean =
-            synchronized(OUTBOX_LOCK) { readOutboxMirror(context).any { it.id == messageId } }
+        /** Where a quick reply stands in the outbox mirror ([mirrorPresence]). */
+        enum class MirrorPresence {
+            /** Still queued: its send failed. */
+            QUEUED,
+
+            /**
+             * Not there, and not seen delivered: adopted by the app's outbox, or ERASED by its whole
+             * rewrite (`store_outbox_mirror` writes without [OUTBOX_LOCK]) - not distinguishable here.
+             */
+            ABSENT,
+
+            /** The mirror could not be read: whether it is queued is unknown. */
+            UNREADABLE,
+        }
+
+        /** Where [messageId] stands in the outbox mirror - read under the outbox lock, whole. */
+        internal fun mirrorPresence(context: Context, messageId: String): MirrorPresence =
+            synchronized(OUTBOX_LOCK) {
+                val entries = readOutboxMirrorOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE
+                if (entries.any { it.id == messageId }) MirrorPresence.QUEUED else MirrorPresence.ABSENT
+            }
 
         /**
          * A reply this device queued was DELIVERED: the banner stops showing it as "not sent yet"
@@ -874,7 +892,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 repost = rebuildBanner(context, manager, groupId),
             )
             when (outcome) {
-                ReadElsewhereMarks.Delivery.NONE, ReadElsewhereMarks.Delivery.NOT_REBUILT -> Unit
+                // KEPT_UNTIL_READ is answerReply's alone: a late delivery follows a re-post as
+                // pending, an app post, which already ended any direct-reply hold.
+                ReadElsewhereMarks.Delivery.NONE, ReadElsewhereMarks.Delivery.NOT_REBUILT, ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ -> Unit
                 ReadElsewhereMarks.Delivery.CANCELLED -> {
                     // NOT its reaction: a late delivery is not a read, and a peer's reaction may be
                     // unseen (principle 2). Only the quick reply's first-try success cancels it.
@@ -923,61 +943,84 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * `Notification.FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (API 35), `@hide` in the SDK and so
          * named here: the bit `NotificationManagerService` sets on a record it keeps after an
-         * inline reply, read back from the shade's own copy by [cancelAnsweredBanner].
+         * inline reply, read back from the shade's own copy by [endDirectReplyExtension].
          */
         private const val FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY = 0x00010000
 
         /**
-         * Cancels the banner a quick reply answered, first ENDING THE DIRECT-REPLY LIFETIME
-         * EXTENSION Android 15+ puts on it (read on the Mi 9T, SDK 36: `notif removed` logged, the
-         * record kept with `LIFETIME_EXTENDED_BY_DIRECT_REPLY`, the "Vous ..." line on screen).
+         * ENDS THE DIRECT-REPLY LIFETIME EXTENSION Android 15+ puts on a banner answered inline,
+         * when - and only when - the shade's copy of [held] carries it; returns the banner as
+         * updated, or null when there was nothing to end (the caller then cancels as always).
          *
-         * The platform's own rules, from `NotificationManagerService`: an app's cancel carries
-         * `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` in its must-NOT-have flags, so it is DROPPED on
-         * an extended record; an app's post strips that flag ("Apps cannot post notifications that
-         * are lifetime extended"); and a cancel finds the record in the enqueued list as well as the
-         * posted one. So the order is a silent re-post of what the shade shows, then the cancel -
-         * the update the platform itself waits for after an action click. The flag is READ from
-         * the shade, never assumed: a record without it is cancelled as it always was.
+         * Read on the Mi 9T, SDK 36: `notif removed` logged, the record kept with
+         * `LIFETIME_EXTENDED_BY_DIRECT_REPLY`, the "Vous ..." line on screen. AOSP
+         * `NotificationManagerService`: `cancelNotificationWithTag` puts the flag in an app cancel's
+         * must-NOT-have flags, and a cancel so blocked re-enqueues the flagged record
+         * (`maybeNotifySystemUiListenerLifetimeExtendedLocked`); `enqueueNotificationInternal`
+         * strips the flag from an app's post. So the shade's copy is posted back silently - the
+         * update the platform waits for - and NOT cancelled after it: the post lands on the
+         * handler later (`PostNotificationRunnable`, up to 200 ms behind an assistant), and a
+         * cancel queued now would meet the old flagged record. `setTimeoutAfter` cannot order it
+         * either: its alarm is armed in `EnqueueNotificationRunnable`, before the post lands, and
+         * the `REASON_TIMEOUT` cancel looks in the posted list first - its duration would carry
+         * the ordering. The updated banner stays for the next read to remove ([ReadElsewhereMarks.answerReply]).
          */
-        private fun cancelAnsweredBanner(manager: NotificationManager, id: Int) {
-            if (android.os.Build.VERSION.SDK_INT >= 35) {
-                val shown = try {
-                    manager.activeNotifications.firstOrNull { it.id == id && it.tag == null }?.notification
-                } catch (e: Exception) {
-                    Log.e(TAG, "cancelAnsweredBanner: activeNotifications unavailable - cancelling without ending an extension: ${throwableSite(e)}")
-                    null
-                }
-                if (shown != null && shown.flags and FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY != 0) {
-                    shown.flags = shown.flags or android.app.Notification.FLAG_ONLY_ALERT_ONCE
-                    manager.notify(id, shown)
-                    Log.d(TAG, "cancelAnsweredBanner: direct-reply extension ended by a silent re-post id=$id")
-                }
+        private fun endDirectReplyExtension(
+            manager: NotificationManager,
+            held: ReadElsewhereMarks.Banner<NotificationCompat.MessagingStyle.Message>,
+        ): ReadElsewhereMarks.Banner<NotificationCompat.MessagingStyle.Message>? {
+            if (android.os.Build.VERSION.SDK_INT < 35) return null
+            val shown = try {
+                manager.activeNotifications.firstOrNull { it.id == held.notifId && it.tag == null }?.notification
+            } catch (e: Exception) {
+                Log.e(TAG, "endDirectReplyExtension: activeNotifications unavailable - an extended banner would stay: ${throwableSite(e)}")
+                return null
             }
-            manager.cancel(id)
+            if (shown == null || shown.flags and FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY == 0) return null
+            shown.flags = (shown.flags or android.app.Notification.FLAG_ONLY_ALERT_ONCE) and FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY.inv()
+            manager.notify(held.notifId, shown)
+            Log.d(TAG, "endDirectReplyExtension: answered banner updated silently - extension ended, left for the next read id=${held.notifId}")
+            return held.copy(posted = shown)
         }
 
         /**
          * THE BANNER SIDE OF A QUICK REPLY'S SUCCESS ([ReadElsewhereMarks.answerReply]): the user
-         * answered from it, so it goes - but a line of ANOTHER reply still queued stays, the banner
-         * rebuilt silently with only those (principle 2). Its reaction goes in every case: answering
-         * is reading. Called by the receiver's success action, beside the watermark.
+         * answered from it, so what the watermark ([notifiedAt], [notifiedServerAt]) covers goes -
+         * but a line newer than it, or of ANOTHER reply still queued, stays, the banner rebuilt
+         * silently with only those (principle 2). A banner the platform holds after an inline answer
+         * is updated and left for the next read ([endDirectReplyExtension]). Its reaction goes in
+         * every case: answering is reading. Called by the receiver's success action, beside the
+         * watermark.
          */
-        internal fun answerReplyNotification(context: Context, groupId: String, messageId: String) {
+        internal fun answerReplyNotification(
+            context: Context,
+            groupId: String,
+            messageId: String,
+            notifiedAt: Long,
+            notifiedServerAt: Long,
+        ) {
             val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
             var cancelledId = 0
+            // What the reply's watermark announces ([CanariNotificationActionReceiver]): only the
+            // lines it covers count as read.
+            val watermark = buildList {
+                if (notifiedServerAt > 0L) add(ReadElsewhereMarks.Read(notifiedServerAt, serverClock = true))
+                if (notifiedAt > 0L) add(ReadElsewhereMarks.Read(notifiedAt, serverClock = false))
+            }
             val outcome = READ_ELSEWHERE.answerReply(
                 groupId,
                 messageId,
+                watermark,
                 stableId,
                 shade = { stableId?.let { shadeBannerOf(manager, it) } },
                 cancel = { id ->
                     cancelledId = id
-                    cancelAnsweredBanner(manager, id)
+                    manager.cancel(id)
                 },
                 repost = rebuildBanner(context, manager, groupId),
+                endExtension = { held -> endDirectReplyExtension(manager, held) },
             )
             prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }
             when (outcome) {
@@ -987,7 +1030,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     refreshBadgeSummary(context, justCancelled = cancelledId)
                 }
                 ReadElsewhereMarks.Delivery.REPOSTED ->
-                    Log.d(TAG, "answerReplyNotification: answered - another reply still queued keeps the banner group=${ConversationRef.of(groupId)}")
+                    Log.d(TAG, "answerReplyNotification: answered - a line newer than the watermark or another queued reply keeps the banner group=${ConversationRef.of(groupId)}")
+                ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ ->
+                    Log.d(TAG, "answerReplyNotification: answered - the platform held the banner, updated and left for the next read group=${ConversationRef.of(groupId)}")
                 ReadElsewhereMarks.Delivery.NONE ->
                     Log.d(TAG, "answerReplyNotification: answered - no banner known, stable id cancelled group=${ConversationRef.of(groupId)}")
                 ReadElsewhereMarks.Delivery.NOT_REBUILT -> Unit
@@ -2352,7 +2397,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /** Reads the cleartext outbox mirror written by the TS. Returns [] if absent/unreadable. */
-        internal fun readOutboxMirror(context: Context): List<OutboxMirrorEntry> {
+        internal fun readOutboxMirror(context: Context): List<OutboxMirrorEntry> =
+            readOutboxMirrorOrNull(context) ?: emptyList()
+
+        /**
+         * The outbox mirror, or NULL when the file exists and could not be read - the failure told
+         * apart where it is thrown, for a caller that must not read it as an empty queue
+         * ([mirrorPresence]). [readOutboxMirror] is this with the failure read as nothing queued.
+         */
+        internal fun readOutboxMirrorOrNull(context: Context): List<OutboxMirrorEntry>? {
             return try {
                 val file = File(MlsContextLoader.tauriDataDir(context), OUTBOX_PENDING_FILE)
                 if (!file.exists()) return emptyList()
@@ -2380,7 +2433,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "readOutboxMirror: ${e.javaClass.simpleName}")
-                emptyList()
+                null
             }
         }
 

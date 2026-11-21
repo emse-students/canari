@@ -254,8 +254,8 @@ describe('the builder records what it posted and keeps the stamps current', () =
       const fns = [...before.matchAll(/fun (?:\w+\.)?(\w+)\(/g)];
       const name = fns[fns.length - 1][1];
       if (notConversation.has(name)) continue;
-      // Re-posts the shade's OWN record (built here already) and cancels it at once - pinned below.
-      if (name === 'cancelAnsweredBanner') continue;
+      // Re-posts the shade's OWN record (built here already) to end a direct-reply hold - pinned below.
+      if (name === 'endDirectReplyExtension') continue;
       posters.push(name);
       const fn = source.slice(fns[fns.length - 1].index);
       const call = source.slice(m.index, source.indexOf('\n', m.index));
@@ -266,6 +266,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
         fn.indexOf('\n', fn.indexOf('val notif = '))
       );
       expect(built).toContain('conversationBanner(');
+      expect(fn.indexOf('val notif = ')).toBeGreaterThan(-1);
       expect(fn.indexOf('val notif = ')).toBeLessThan(m.index - fns[fns.length - 1].index);
     }
     expect(posters.sort()).toEqual([
@@ -333,10 +334,22 @@ describe('the builder records what it posted and keeps the stamps current', () =
     // ...only with a network (#3912 F2): a drain run offline must not spend one of its attempts,
     // and a failed drain below the cap is a retry, never a failure.
     const enqueue = worker.slice(worker.indexOf('fun enqueueIfHealthy('));
-    const request = enqueue.slice(0, enqueue.indexOf('.build()\n            WorkManager'));
-    expect(request).toContain(
+    const build = enqueue.indexOf('.build()\n            workManager.enqueueUniqueWork(');
+    expect(build).toBeGreaterThan(-1);
+    expect(enqueue.slice(0, build)).toContain(
       '.setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())'
     );
+    // ...under ONE unique name, each enqueue owed a drain after it (round-11 review, S4), and the
+    // earlier builds' unconstrained requests cancelled once, by their class tag, BEFORE it.
+    const unique = enqueue.indexOf(
+      'workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)'
+    );
+    const legacy = enqueue.indexOf(
+      'workManager.cancelAllWorkByTag(OutboxRetryWorker::class.java.name).result.get()'
+    );
+    expect(legacy).toBeGreaterThan(-1);
+    expect(unique).toBeGreaterThan(legacy);
+    expect(worker).not.toContain('.enqueue(request)');
     const tail = worker.slice(worker.indexOf('if (attempt >= MAX_DRAIN_ATTEMPTS) {'));
     expect(tail.indexOf('return Result.failure()')).toBeGreaterThan(-1);
     expect(tail.slice(tail.indexOf('return Result.failure()') + 1)).toContain(
@@ -410,34 +423,76 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const answered = handle.slice(handle.indexOf('private fun replyAnswered('));
     const body = answered.slice(0, answered.indexOf('private fun sendReadWatermark('));
     // ...through the answer, which keeps ANOTHER reply's line still queued (round-10 review, S2).
-    expect(body).toContain('answerReplyNotification(context, groupId, messageId)');
+    expect(body).toContain(
+      'answerReplyNotification(context, groupId, messageId, notifiedAt, notifiedServerAt)'
+    );
     expect(body).not.toContain('cancelConversationNotification(');
     expect(body).toContain('sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)');
     expect(fn).not.toContain('cancelConversationNotification(');
     expect(fn).not.toContain('sendReadWatermark(');
   });
 
-  it('ends the direct-reply lifetime extension before cancelling an answered banner (#3912 F1)', () => {
-    // Android 15+ drops an app's cancel on a record flagged LIFETIME_EXTENDED_BY_DIRECT_REPLY and
-    // strips that flag from an app's post: read the flag, re-post silently, THEN cancel.
-    const fn = source.slice(source.indexOf('private fun cancelAnsweredBanner('));
-    expect(fn.indexOf('private fun cancelAnsweredBanner(')).toBe(0);
+  // Round-11 review (B1): Android 15+ drops an app's cancel on a record flagged
+  // LIFETIME_EXTENDED_BY_DIRECT_REPLY and strips that flag from an app's post, which lands LATER
+  // than a cancel queued behind it. So the answered banner is updated silently and NOT cancelled.
+  it('ends the direct-reply hold by a silent update and never cancels in the same breath (#3912 F1)', () => {
+    const fn = source.slice(source.indexOf('private fun endDirectReplyExtension('));
+    expect(fn.indexOf('private fun endDirectReplyExtension(')).toBe(0);
     const body = fn.slice(0, fn.indexOf('/**'));
-    const flag = body.indexOf('FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY != 0');
+    const flag = body.indexOf('FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY == 0) return null');
     const silent = body.indexOf('FLAG_ONLY_ALERT_ONCE');
-    const repost = body.indexOf('manager.notify(id, shown)');
-    const cancel = body.indexOf('manager.cancel(id)');
+    const update = body.indexOf('manager.notify(held.notifId, shown)');
     expect(flag).toBeGreaterThan(-1);
     expect(silent).toBeGreaterThan(flag);
-    expect(repost).toBeGreaterThan(silent);
-    expect(cancel).toBeGreaterThan(repost);
+    expect(update).toBeGreaterThan(silent);
     expect(body.split('manager.notify(').length - 1).toBe(1);
-    // The answer path - and only it - cancels through it.
+    expect(body).not.toContain('.cancel(');
+    expect(body).not.toContain('setTimeoutAfter');
+    // The answer hands it over; its own cancel is the plain one, for a banner nothing holds.
     const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
-    const lambda = answer.slice(answer.indexOf('cancel = { id ->'), answer.indexOf('repost = '));
-    expect(lambda).toContain('cancelAnsweredBanner(manager, id)');
-    expect(lambda).not.toContain('manager.cancel(');
-    expect(source.split('cancelAnsweredBanner(manager, id)').length - 1).toBe(1);
+    const call = answer.slice(
+      answer.indexOf('READ_ELSEWHERE.answerReply('),
+      answer.indexOf('when (outcome)')
+    );
+    expect(call).toContain('endExtension = { held -> endDirectReplyExtension(manager, held) }');
+    expect(call).toContain('watermark,');
+    expect(source.split('endDirectReplyExtension(manager, held)').length - 1).toBe(1);
+    // The record: an updated banner is kept with no line and is NOT withdrawn.
+    const marks = readFileSync(resolve(dirname(SERVICE), 'push/ReadElsewhereMarks.kt'), 'utf8');
+    const reply = marks.slice(marks.indexOf('    fun answerReply('));
+    const replyBody = reply.slice(0, reply.indexOf('    /**'));
+    const kept = replyBody.indexOf('val updated = endExtension(banner)');
+    expect(kept).toBeGreaterThan(-1);
+    const branch = replyBody.slice(kept, replyBody.indexOf('cancel(banner.notifId)', kept));
+    expect(branch).toContain('postedLocked(conversationId, updated.copy(messages = emptyList()))');
+    expect(branch).not.toContain('withdrawnLocked(');
+  });
+
+  // Round-11 review (S3): a reply not seen delivered is logged at WARN in every case, naming what
+  // is known - a failed mirror read told apart by type where it is thrown, not read as empty.
+  it('names where an undelivered quick reply stands, never calling an absence a takeover', () => {
+    const receiver = readFileSync(
+      resolve(dirname(SERVICE), 'CanariNotificationActionReceiver.kt'),
+      'utf8'
+    );
+    const handle = receiver.slice(receiver.indexOf('private fun handleReply('));
+    const fn = handle.slice(0, handle.indexOf('private fun replyAnswered('));
+    const when = fn.indexOf(
+      'when (CanariFirebaseMessagingService.mirrorPresence(context, messageId)) {'
+    );
+    expect(when).toBeGreaterThan(-1);
+    const branches = fn.slice(when, fn.indexOf('repostReplyPending(', when));
+    for (const presence of ['QUEUED', 'ABSENT', 'UNREADABLE']) {
+      expect(branches).toContain(`MirrorPresence.${presence} ->`);
+    }
+    expect(branches.split('Log.w(TAG,').length - 1).toBe(3);
+    expect(branches).not.toContain('Log.i(');
+    expect(branches).toContain('not distinguishable here');
+    const presence = source.slice(source.indexOf('internal fun mirrorPresence('));
+    expect(presence.slice(0, 400)).toContain(
+      'readOutboxMirrorOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE'
+    );
+    expect(source).toContain('readOutboxMirrorOrNull(context) ?: emptyList()');
   });
 
   it('commits the announced-message record and rebuilds the summary after the lock', () => {

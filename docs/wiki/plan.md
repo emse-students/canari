@@ -88,6 +88,7 @@ earliest version, as a checklist.
 - [P2 - a frame read before a browser kill is called "never read here" on the next cold start](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)
 - [P2 - a replay's bar dragged twice while it loads throws the playhead back to the first target: reading owed](backlog.d/replay-seek-decoupled-from-loading.md)
 - [P2 - the retention durations a sweep applies are not yet admin settings](backlog.d/retention-durations-not-yet-settings.md)
+- [P2 - the background outbox retry ends on a count, not on durable state](backlog.d/p2-the-outbox-retry-ends-on-a-count-not-on-durable-state.md)
 
 **P3 - hygiene**
 

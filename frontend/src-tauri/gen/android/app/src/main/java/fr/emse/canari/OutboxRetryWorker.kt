@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
@@ -30,6 +31,12 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         const val PREFS_WORKER = "canari_outbox_retry_prefs"
         const val KEY_FAILED = "outbox_retry_failed"
 
+        /** The ONE unique work name every enqueue goes under. */
+        private const val UNIQUE_WORK = "canari_outbox_retry"
+
+        /** Set once the requests of the builds before [UNIQUE_WORK] have been cancelled. */
+        private const val KEY_LEGACY_CANCELLED = "outbox_retry_legacy_cancelled"
+
         /** Real drain attempts (never foreground deferrals) before the "open the app" nudge. */
         private const val MAX_DRAIN_ATTEMPTS = 3
 
@@ -50,22 +57,41 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         }
 
         /**
-         * Enqueues a one-shot expedited work request with exponential backoff (30s → 60s → 120s …).
-         * No-op when the persistent failure flag is set: the user must open the app to reset it.
+         * Enqueues the retry under ONE unique name, with exponential backoff (30s -> 60s -> 120s
+         * ...). No-op when the persistent failure flag is set: the user must open the app to reset it.
          *
-         * ONLY WITH A NETWORK (`NetworkType.CONNECTED`): a drain run offline fails by construction,
-         * and each one used to count as one of [MAX_DRAIN_ATTEMPTS]. Read on a Mi 9T during the
-         * #3912 sitting: after a reconnect, one run failed on a DNS miss and ended in FAILURE with
-         * the "open the app" nudge, over a reply still marked as retrying and nothing scheduled.
-         * A failed drain ends in FAILURE only at the cap, so the attempts before it had been spent
-         * with nothing to reach. WorkManager now runs the request when a network exists, so an
-         * attempt is a drain that could have succeeded; a transport failure below the cap is still
-         * a `Result.retry()`.
+         * ONLY WITH A NETWORK (`NetworkType.CONNECTED`, as the iOS twin's
+         * `requiresNetworkConnectivity`): a drain run offline fails by construction and would spend
+         * one of [MAX_DRAIN_ATTEMPTS]. Read on a Mi 9T during the #3912 sitting: after a reconnect
+         * one run failed on a DNS miss and ended in FAILURE with the nudge - a failed drain ends so
+         * only at the cap. That makes an offline run no longer an attempt; it does NOT make the cap
+         * right - a server down for two minutes while online still spends it
+         * ([backlog](docs/wiki/backlog.d/p2-the-outbox-retry-ends-on-a-count-not-on-durable-state.md)).
+         *
+         * UNIQUE, `APPEND_OR_REPLACE`: each enqueue owes one drain AFTER it. `KEEP` would drop an
+         * enqueue that arrives while a run is past its drain, and that run's success would leave the
+         * new entry unretried; appended, it runs once the current one ends (a failed or cancelled
+         * one is replaced). The plain `enqueue` of earlier builds left unconstrained requests behind:
+         * they carry WorkManager's default tag, the worker's class name, and are cancelled ONCE,
+         * before the first unique enqueue, recorded in [PREFS_WORKER].
          */
         fun enqueueIfHealthy(context: Context) {
             if (isInFailureState(context)) {
                 Log.w(TAG, "enqueueIfHealthy: persistent failure — ignored (user must open the app)")
                 return
+            }
+            val workManager = WorkManager.getInstance(context)
+            val prefs = context.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+            if (!prefs.getBoolean(KEY_LEGACY_CANCELLED, false)) {
+                try {
+                    // Waited on: the cancel must land before the unique enqueue, which carries
+                    // the same class tag.
+                    workManager.cancelAllWorkByTag(OutboxRetryWorker::class.java.name).result.get()
+                    prefs.edit().putBoolean(KEY_LEGACY_CANCELLED, true).commit()
+                    Log.i(TAG, "enqueueIfHealthy: the requests of earlier builds were cancelled once")
+                } catch (e: Exception) {
+                    Log.e(TAG, "enqueueIfHealthy: cancelling the earlier builds' requests failed - tried again at the next enqueue: ${e.javaClass.simpleName}")
+                }
             }
             val request = OneTimeWorkRequestBuilder<OutboxRetryWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -76,7 +102,7 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
                     TimeUnit.MILLISECONDS
                 )
                 .build()
-            WorkManager.getInstance(context).enqueue(request)
+            workManager.enqueueUniqueWork(UNIQUE_WORK, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
             Log.d(TAG, "enqueueIfHealthy: worker enqueued")
         }
     }

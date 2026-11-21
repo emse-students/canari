@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
+import fr.emse.canari.CanariFirebaseMessagingService.Companion.MirrorPresence
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.throwableSite
@@ -155,13 +156,19 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    that failed waited for the next LOGIN.
             // A drain may still deliver it before the re-post: the re-post asks under the record's
             // lock and hands back the receive time - the first-try success then runs here.
-            // WORDED ON WHAT IS KNOWN, at the level the state deserves: a reply still in the outbox
-            // is a send that failed (WARN); one no longer there and not seen delivered was taken
-            // over by the app's own outbox (`store_outbox_mirror` rewrites the mirror) - not a fault.
-            if (CanariFirebaseMessagingService.isQueued(context, messageId)) {
-                Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered by this drain, still queued (remaining=$remaining) - re-posted as pending, retry scheduled")
-            } else {
-                Log.i(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and no longer in the native outbox (taken over by the app) - re-posted as pending")
+            // WORDED ON WHAT IS KNOWN, and at WARN in every case - each is a reply not seen
+            // delivered. Still in the mirror: its send failed. Absent: adopted by the app's outbox
+            // or erased by its whole rewrite (`store_outbox_mirror`, outside the outbox lock) - not
+            // distinguishable here, and nothing native will clear that pending line
+            // ([backlog](docs/wiki/backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
+            // Unreadable: unknown.
+            when (CanariFirebaseMessagingService.mirrorPresence(context, messageId)) {
+                MirrorPresence.QUEUED ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered by this drain, still queued (remaining=$remaining) - re-posted as pending, retry scheduled")
+                MirrorPresence.ABSENT ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and absent from the mirror - adopted or rewritten by the app, not distinguishable here - re-posted as pending")
+                MirrorPresence.UNREADABLE ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and the outbox mirror could not be read - whether it is queued is unknown - re-posted as pending")
             }
             CanariFirebaseMessagingService.repostReplyPending(context, groupId, messageId, text, notifiedAt, notifiedServerAt)
                 ?.let { late -> replyAnswered(context, groupId, pushCtx, messageId, text, sentAt, late, notifiedAt, notifiedServerAt) }
@@ -194,7 +201,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         CanariFirebaseMessagingService.writeSentMessageToCache(
             context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
         )
-        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId)
+        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId, notifiedAt, notifiedServerAt)
         sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
     }
 

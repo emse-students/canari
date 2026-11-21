@@ -20,3 +20,11 @@ cancelled if `outbox_sent` lists it; or the shade read in a fresh process recogn
 last post carries the reply action's in-flight state. The first is deterministic and testable on
 the JVM; the second depends on what SystemUI keeps of a `RemoteInput` history. Closed by a test that
 kills the handler between the enqueue and the decision and asserts the next process ends the spinner.
+
+A second pending line no native path can resolve (round-11 review, S3): a reply not seen delivered
+whose entry is ABSENT from `outbox_pending.ndjson` when the handler looks. The app's outbox may have
+adopted it, or `store_outbox_mirror` (`push.rs`) may have ERASED it, since it rewrites the mirror
+whole and without the native outbox lock. The handler cannot tell the two apart. It re-posts the
+reply as pending and logs that at WARN, and from then on no native drain will ever deliver that id
+and clear the line. The same durable "in flight" record would close it: the app, adopting or
+dropping an entry, would clear the line by that record.

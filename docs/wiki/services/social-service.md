@@ -908,7 +908,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its own template, and left as it was - logged at WARN - when it has none.
 - **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
   the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
-  watermark. Answering is reading, so the peer lines go and the reaction goes - but a line of
+  watermark. Answering is reading, so the peer lines its watermark covers go and the reaction goes - but a line of
   ANOTHER reply still queued stays, the banner rebuilt silently with only those (round-10 review,
   principle 2: answering r2 never erases r0's "not sent yet"). `handleReply` runs it when THIS reply
   went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart on a Mi
@@ -921,22 +921,52 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   nothing under the leaf. The re-post's own check under the record's lock covers only a drain that
   took the outbox lock after the handler's - a genuinely later delivery, whose late step clears the
   pending line the re-post put up. A drain that throws still ends in that decision. The log says
-  what is known: WARN only when the reply is really still in the outbox, INFO when the app's own
-  outbox took it over. The map holds only replies whose handler is running (removed in a
+  what is known, at WARN in every case (`mirrorPresence`, round-11 review): still QUEUED (the send
+  failed); ABSENT, meaning adopted by the app's outbox or erased by `store_outbox_mirror`'s whole
+  rewrite outside the outbox lock, which cannot be told apart here and leaves a pending line no
+  native path clears ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md));
+  or UNREADABLE, a failed mirror read told apart by type (`readOutboxMirrorOrNull`) and not read as
+  an empty queue. The map holds only replies whose handler is running (removed in a
   `finally`), so it needs no cap. The in-memory record decides rather than the outbox files: both
   are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login. A process
   that dies between the enqueue and the decision cannot be resolved in-process
   ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
-- **An answered banner ends its direct-reply lifetime extension before it is cancelled**
-  (`cancelAnsweredBanner`, the answer's only cancel). Android 15+ keeps a banner answered inline
-  with `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (`@hide`, `0x00010000`), and its
-  `NotificationManagerService` DROPS an app's cancel on such a record (`mustNotHaveFlags`) while
-  stripping the flag from an app's post - read on a Mi 9T, SDK 36: `notif removed` logged, the
-  record kept in dumpsys with the "Vous ..." line on screen. So when the shade's copy carries the
-  flag it is re-posted as is (`FLAG_ONLY_ALERT_ONCE`), then cancelled; the cancel finds it in the
-  enqueued list. That is the update the platform itself waits for after an action click (it
-  schedules its own cancel, which the update voids). A record without the flag is cancelled as
-  before.
+- **A banner the platform holds after an inline answer is updated, NOT cancelled** (round-11
+  review; `endDirectReplyExtension`, `ReadElsewhereMarks.answerReply` -> `KEPT_UNTIL_READ`). Android
+  15+ keeps a banner answered inline with `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (`@hide`,
+  `0x00010000`). Read on a Mi 9T, SDK 36: `notif removed` logged, and the record kept in dumpsys with
+  the "Vous ..." line on screen. What AOSP `NotificationManagerService` does (android15-release,
+  android16-release and main):
+  - `cancelNotificationWithTag` puts the flag in an app cancel's must-NOT-have flags.
+    `CancelNotificationRunnable` looks the record up with `findNotificationLocked`, which searches the
+    POSTED list (`mNotificationList`) before the enqueued one. A cancel that meets the flag returns
+    and calls `maybeNotifySystemUiListenerLifetimeExtendedLocked`, which posts an
+    `EnqueueNotificationRunnable` of the old, still-flagged record (`isAppProvided = false`, so the
+    flag is not stripped).
+  - `enqueueNotificationInternal` strips the flag from an app's post ("Apps cannot post
+    notifications that are lifetime extended"). Its `EnqueueNotificationRunnable` then posts
+    `PostNotificationRunnable`, delayed by `DELAY_FOR_ASSISTANT_TIME` (200 ms) when an assistant is
+    enabled. So a cancel sent right after the update meets the OLD flagged record and re-extends it.
+    The first attempt (31904d65) did exactly that.
+  - `setTimeoutAfter` was weighed and REFUSED. Its alarm is armed in `EnqueueNotificationRunnable`
+    (`scheduleTimeoutLocked` / `mTtlHelper.scheduleTimeoutLocked`), before `PostNotificationRunnable`
+    lands. The `REASON_TIMEOUT` cancel (`mNotificationTimeoutReceiver`) looks the record up with
+    `findNotificationByKeyLocked`, posted list first, and excludes the flag. A timeout shorter than
+    the post delay would meet the old record, so the duration would carry the ordering.
+
+  So when the shade's copy carries the flag and no line is left, that copy is posted back
+  (`FLAG_ONLY_ALERT_ONCE`, the flag cleared): this is the update the platform waits for, and it ends
+  the hold. It is NOT cancelled in the same breath and NOT withdrawn. It stays recorded with NO line,
+  so the next read elsewhere (`recordThenCancel`: every line of an empty banner is covered), a
+  dismissal (`withdraw`), or a new message (which builds on no answered line) removes or replaces
+  it. A banner without the flag is cancelled as before. Residuals:
+  - A read that arrives within the post delay of the update still meets the flagged record.
+  - `forgetAll` (the app coming to the front) cancels a held banner it records without updating it
+    first.
+- **Answering is reading UP TO THE WATERMARK** (round-11 review, S2). The answer records the instants
+  its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
+  mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
+  sent is newer and stays, and the banner is rebuilt silently with it.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and

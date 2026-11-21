@@ -520,6 +520,9 @@ class ReadElsewhereMarksTest {
         assertEquals(held, marks.bannerOf("g2") { null })
     }
 
+    /** The watermark a reply sent from a banner whose newest line is [m2] announces. */
+    private val watermarkM2 = listOf(Read(2_000L, serverClock = true), Read(1_900L, serverClock = false))
+
     // Round-10 review (S2, principle 2): answering r2 must not erase ANOTHER reply's line still
     // queued - r0 pending, r2 answered, r0 still failing: r0's line stays, the peer lines go.
     @Test
@@ -528,13 +531,45 @@ class ReadElsewhereMarksTest {
         val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
         marks.remember("g1", Banner(1001, "messages", listOf(m1, r0, m2)))
         var rebuilt: List<Msg>? = null
-        val outcome = marks.answerReply("g1", "r2", 1001, shade = { null }, cancel = { fail("r0 is not sent") }) { held, kept ->
-            rebuilt = kept
-            held.copy(messages = kept)
-        }
+        val outcome = marks.answerReply(
+            "g1", "r2", watermarkM2, 1001,
+            shade = { null },
+            cancel = { fail("r0 is not sent") },
+            repost = { held, kept ->
+                rebuilt = kept
+                held.copy(messages = kept)
+            },
+            endExtension = { throw AssertionError("a line stays: a repost, not an update") },
+        )
         assertEquals(Delivery.REPOSTED, outcome)
         assertEquals(listOf(r0), rebuilt)
         assertEquals(listOf(r0), marks.bannerOf("g1") { null }?.messages)
+    }
+
+    // Round-11 review (S2, principle 2): answering is reading UP TO THE WATERMARK. m3 arrived while
+    // the reply's drain ran - newer than what the banner showed when the user answered - and stays.
+    @Test
+    fun `a peer line newer than the answer's watermark stays, the banner rebuilt with it`() {
+        val marks = marks()
+        val m3 = Msg(sentAt = 2_900L, serverAt = 3_000L)
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, m2)))
+        // m3 is posted while the reply is being sent.
+        assertTrue(marks.postUnlessRead("g1", 2_900L, 3_000L, Banner(1001, "messages", listOf(m1, m2, m3))) {})
+        var rebuilt: List<Msg>? = null
+        val outcome = marks.answerReply(
+            "g1", "r2", watermarkM2, 1001,
+            shade = { null },
+            cancel = { fail("m3 was never seen") },
+            repost = { held, kept ->
+                rebuilt = kept
+                held.copy(messages = kept)
+            },
+            endExtension = { throw AssertionError("m3 stays: a repost, not an update") },
+        )
+        assertEquals(Delivery.REPOSTED, outcome)
+        assertEquals(listOf(m3), rebuilt)
+        // The watermark is a read this device made: a late post of m2 is refused.
+        assertFalse(marks.postUnlessRead("g1", 1_900L, 2_000L, Banner(1001, "messages", listOf(m2))) { fail("m2 was read") })
     }
 
     @Test
@@ -543,10 +578,73 @@ class ReadElsewhereMarksTest {
         val r2 = Msg(null, null, pendingReply = true, replyId = "r2")
         marks.remember("g1", Banner(1001, "messages", listOf(m1, r2)))
         val cancelled = mutableListOf<Int>()
-        assertEquals(Delivery.CANCELLED, marks.answerReply("g1", "r2", 1001, shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("nothing stays") })
+        assertEquals(
+            Delivery.CANCELLED,
+            marks.answerReply(
+                "g1", "r2", watermarkM2, 1001,
+                shade = { null },
+                cancel = { cancelled += it },
+                repost = { _, _ -> throw AssertionError("nothing stays") },
+                endExtension = { null },
+            ),
+        )
         assertEquals(listOf(1001), cancelled)
         // Nothing known: the stable id is cancelled, ordered after any `notify`.
-        assertEquals(Delivery.NONE, marks.answerReply("g1", "r3", 1001, shade = { fail("removed by this process"); null }, cancel = { cancelled += it }) { _, _ -> null })
+        assertEquals(
+            Delivery.NONE,
+            marks.answerReply(
+                "g1", "r3", watermarkM2, 1001,
+                shade = { fail("removed by this process"); null },
+                cancel = { cancelled += it },
+                repost = { _, _ -> null },
+                endExtension = { throw AssertionError("no banner") },
+            ),
+        )
         assertEquals(listOf(1001, 1001), cancelled)
+    }
+
+    // Round-11 review (B1): Android 15+ holds a banner answered inline and drops an app's cancel on
+    // it. The silent update ends the hold; nothing is cancelled in the same breath, and the banner
+    // is NOT withdrawn - the next read removes it.
+    @Test
+    fun `a banner the platform holds after the answer is updated, kept recorded with no line, and removed by the next read`() {
+        val marks = marks()
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, m2)))
+        val updated = mutableListOf<Int>()
+        val outcome = marks.answerReply(
+            "g1", "r2", watermarkM2, 1001,
+            shade = { null },
+            cancel = { fail("a cancel now would meet the held record") },
+            repost = { _, _ -> throw AssertionError("nothing stays") },
+            endExtension = { held ->
+                updated += held.notifId
+                held
+            },
+        )
+        assertEquals(Delivery.KEPT_UNTIL_READ, outcome)
+        assertEquals(listOf(1001), updated)
+        val kept = marks.bannerOf("g1") { fail("still recorded: the shade is not asked"); null }
+        assertEquals(1001, kept?.notifId)
+        assertEquals(emptyList<Msg>(), kept?.messages)
+        // The next read elsewhere - any mark - removes it.
+        val cancelled = mutableListOf<Int>()
+        assertTrue(marks.recordThenCancel("g1", Read(2_000L, serverClock = true), shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+    }
+
+    @Test
+    fun `a held banner is also removed by a dismissal that keeps pending replies, having none`() {
+        val marks = marks()
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, m2)))
+        marks.answerReply(
+            "g1", "r2", watermarkM2, 1001,
+            shade = { null },
+            cancel = { fail("held") },
+            repost = { _, _ -> null },
+            endExtension = { it },
+        )
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Withdrawal.CANCELLED, marks.withdraw("g1", keepPendingReply = true, stableId = 1001, shade = { null }) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
     }
 }
