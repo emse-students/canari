@@ -15,9 +15,9 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function render(respondentFields: string[] | undefined) {
+function render(respondentFields: string[] | undefined, anonymous = false) {
   const target = document.body.appendChild(document.createElement('div'));
-  const instance = mount(RespondentNotice, { target, props: { respondentFields } });
+  const instance = mount(RespondentNotice, { target, props: { respondentFields, anonymous } });
   mounted.push(() => unmount(instance));
   flushSync();
   return target;
@@ -34,6 +34,13 @@ describe('RespondentNotice', () => {
           m.form_respondent_field_campus(),
         ].join(', '),
       })
+    );
+  });
+
+  it('says an anonymous form stays anonymous while it reads the cursus from the account', () => {
+    const target = render(['cursus'], true);
+    expect(target.querySelector('[data-testid="respondent-notice"]')?.textContent?.trim()).toBe(
+      m.form_respondent_notice_anonymous({ fields: m.form_respondent_field_cursus() })
     );
   });
 

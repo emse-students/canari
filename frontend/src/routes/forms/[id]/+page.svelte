@@ -56,7 +56,7 @@
   import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
   import RespondentNotice from '$lib/components/forms/RespondentNotice.svelte';
   import {
-    askedDeclaredFields,
+    askedOfMember,
     declaredPayload,
     emptyDeclaredValues,
     firstDeclaredProblem,
@@ -174,9 +174,11 @@
   /**
    * What an ANONYMOUS form asks each respondent to declare (owner, 2026-11-16): its answers are
    * joined to no account, so the promo and formation, status and campus it wants are typed here.
-   * A named form asks nothing: the server reads them from the account (`RespondentNotice`).
+   * A named form asks nothing: the server reads them from the account (`RespondentNotice`). The
+   * cursus is left out when the form reads it from the account too (owner, 2026-11-21): one field,
+   * one source.
    */
-  const askedDeclared = $derived(form?.anonymous ? askedDeclaredFields(form.guestFields) : []);
+  const askedDeclared = $derived(form?.anonymous ? askedOfMember(form) : []);
   let declared = $state(emptyDeclaredValues());
   let declaredChecked = $state(false);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
@@ -1270,7 +1272,10 @@
         anonymous
         disabled={submitting || preview}
       />
-      <RespondentNotice respondentFields={form.respondentFields} />
+      <RespondentNotice
+        respondentFields={form.respondentFields}
+        anonymous={form.anonymous ?? false}
+      />
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->

@@ -526,6 +526,26 @@ data's meaning, not a shim - the cell keeps reading "not declared" after the rem
 absent from production for a week. Then delete the `olderClient` branch, `predatesDeclaredFields`, the
 header plumbing of the two submit routes, their tests and this entry; keep `notDeclared` on the read
 side.
+### Removal once `minClientVersion` passes `1.7.3` - an anonymous form that reads the cursus from the account, seen by a build that cannot announce it (2026-11-21)
+
+**Site:** `predatesAnonymousCursusJoin` and the first branch of `respondentIdentityFor`
+(`apps/social-service/src/forms/forms.service.ts`, `respondent-identity.ts`), logged `[LEGACY] anonymous
+form=... joins the cursus; a build older than 1.7.3 is asked it instead`.
+**What it humours:** a form can read an anonymous member's promo and formation from the account
+(owner, 2026-11-21). A build older than `ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION` (`1.7.3`) - or naming
+none - cannot SAY so before sending (principle 1: nothing leaves the account unannounced), so the join
+is not made for it: it is asked the cursus like a guest, its answer stored `declared` (or "not
+declared" before `1.7.0`). Two more facts about such builds: its editor opens the form with the
+cursus ticked (the server serves `respondentFields: ['cursus']`, the editor unions both lists) and a
+save from it sends `respondentFields: []`, so the join turns into "asked" - the SAFE direction, written
+to the form, never a silent loss of what leaves the account; and its fill page asks the member the
+cursus (the cursus stays in `guestFields` for guests), which the server accepts for it.
+**The cost while it stands:** one branch; an organiser editing from an old build silently turns the
+join off.
+**Removal condition:** `minClientVersion` on both estates passes `1.7.3` and the `[LEGACY]` line is
+absent from production for a week. Then delete the branch, `predatesAnonymousCursusJoin`, the
+constant, their test and this entry.
+
 The answers given before migration 174 carry no snapshot and read the account's name live, as every
 answer always did: that is the data's meaning, not a client shim, and has no removal date.
 

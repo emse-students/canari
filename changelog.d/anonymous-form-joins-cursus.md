@@ -1,0 +1,3 @@
+### Added - an anonymous form can read the respondent's promo and formation from the account, as an option the respondent is told about
+
+A box "Promo et formation lues sur le compte (certifiées)" in the editor of an anonymous form: a member no longer declares their promo and formation, the account certifies them, and the fill page says so before sending ("Votre réponse reste anonyme. Seules votre promo et votre formation, lues sur votre compte, l'accompagnent"). Never the name, the status or the campus; a guest still declares; an older build is asked as before ([forms](docs/wiki/frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).

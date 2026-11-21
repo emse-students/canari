@@ -143,11 +143,16 @@ import {
 import {
   DEFAULT_ACCOUNT_FIELDS,
   accountSnapshot,
+  anonymousMemberSnapshot,
   askedDeclaredFields,
+  askedOfMember,
   declaredIdentityFor,
   joinedAccountFields,
+  joinsBeyondCursus,
   joinsNeedCore,
   legacyNameIds,
+  ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION,
+  predatesAnonymousCursusJoin,
   predatesDeclaredFields,
   identityCells,
   identityColumnsOf,
@@ -368,6 +373,7 @@ function formOptionStateOf(input: CreateFormDto & { anonymous?: boolean }): Form
       input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion),
     hasFileQuestion: hasFileQuestion(input.items),
     allowsAnswerEdit: input.allowAnswerEdit === true,
+    joinsAccountBeyondCursus: joinsBeyondCursus(input.respondentFields),
   };
 }
 
@@ -394,6 +400,8 @@ const FORM_CONFLICT_MESSAGE: Record<FormSaveConflict, string> = {
     'An anonymous form cannot grant a cotisation: a cotisation is granted to an account.',
   FORM_ANONYMOUS_FILE:
     'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
+  FORM_ANONYMOUS_ACCOUNT_FIELDS:
+    'An anonymous form can read only the promo and formation from an account: a name, a status or a campus would name the person (they are asked instead).',
   FORM_ANONYMOUS_ANSWER_EDIT:
     'An anonymous form cannot let an answer be changed: its answers name nobody who could reopen one.',
   FORM_PUBLIC_AUDIENCE:
@@ -4386,6 +4394,9 @@ export class FormsService {
    *
    * - A guest, or any respondent of an ANONYMOUS form, is read from no account: the declared fields
    *   the form asks are judged (every one required, none unasked), else null.
+   * - EXCEPT the cursus of an anonymous form that ticked it (owner, 2026-11-21): a member's is read
+   *   from the account, the rest declared, and a guest (no account) still declares it. Only for a
+   *   build that announces it (`predatesAnonymousCursusJoin`).
    * - A member of a NAMED form is never asked: a declared field is refused, and the fields the form
    *   joins are read from core-service at this moment - never from the request - and stored as a
    *   snapshot. A form that joins nothing reads nothing and stores `{ source: 'account' }`.
@@ -4395,6 +4406,24 @@ export class FormsService {
     input: SubmitFormDto & SubmitClient,
     guest: boolean
   ): Promise<RespondentIdentity | null> {
+    if (!guest && form.anonymous && joinedAccountFields(form).includes('cursus')) {
+      // The form reads the cursus from the account (owner, 2026-11-21) - for a member whose build can
+      // SAY so before sending. An older build cannot, so it is asked the cursus as it always was.
+      if (predatesAnonymousCursusJoin(input.clientVersion)) {
+        this.logger.log(
+          `[LEGACY] anonymous form=${form.id.slice(0, 8)} joins the cursus; a build older than ` +
+            `${ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION} is asked it instead`
+        );
+      } else {
+        const declared = declaredIdentityFor(askedOfMember(form), input, form.id);
+        const account = input.userId ? await this.pricingFacts.accountIdentity(input.userId) : null;
+        this.logger.debug(
+          `[FORMS] submit form=${form.id.slice(0, 8)} anonymous: cursus read from the account ` +
+            `(core-service), ${declared ? 'rest declared' : 'nothing else asked'}`
+        );
+        return anonymousMemberSnapshot(declared, account);
+      }
+    }
     if (guest || form.anonymous) {
       return declaredIdentityFor(
         askedDeclaredFields(form.guestFields),

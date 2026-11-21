@@ -33,6 +33,8 @@ export function editorOptionState(form: {
       form.submitCondition != null || form.items.some((item) => conditionNamesProfile(item.showIf)),
     hasFileQuestion: hasFileQuestion(form.items),
     allowsAnswerEdit: form.allowAnswerEdit,
+    // The editor can offer only the cursus on an anonymous form (`respondentSettingsPayload`).
+    joinsAccountBeyondCursus: false,
   };
 }
 
@@ -50,6 +52,8 @@ export function formConflictMessage(code: FormConfigConflict): string {
       return m.form_option_conflict_anonymous_file();
     case 'FORM_ANONYMOUS_ANSWER_EDIT':
       return m.form_option_conflict_anonymous_answer_edit();
+    case 'FORM_ANONYMOUS_ACCOUNT_FIELDS':
+      return m.form_option_conflict_anonymous_account_fields();
     case 'FORM_PUBLIC_AUDIENCE':
       return m.form_option_conflict_public_audience();
     case 'FORM_PUBLIC_COTISATION_GRANT':

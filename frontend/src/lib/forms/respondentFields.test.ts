@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
+  askedOfMember,
   declaredPayload,
   declaredProblem,
   editorChoicesOf,
@@ -15,6 +16,7 @@ import {
   identityCellText,
   identityColumnsOf,
   identityFilterValues,
+  joinsCursusFromAccount,
   matchesIdentityFilter,
   offeredChoices,
   respondentSettingsPayload,
@@ -42,8 +44,58 @@ describe('the editor saves one set of ticks as two lists', () => {
         anonymous: true,
       })
     ).toEqual({ respondentFields: [], guestFields: ['status', 'campus'] });
-    expect(offeredChoices(false, true)).toEqual(['cursus', 'status', 'campus']);
+    expect(offeredChoices(false, true)).toEqual([
+      'cursus',
+      'status',
+      'campus',
+      'cursusFromAccount',
+    ]);
     expect(offeredChoices(false, false)).not.toContain('email');
+    expect(offeredChoices(false, false)).not.toContain('cursusFromAccount');
+  });
+
+  it('joins the cursus alone on an anonymous form that ticked the box, the cursus still asked', () => {
+    const form = { isPublic: true, anonymous: true };
+    expect(respondentSettingsPayload(['cursus', 'status', 'cursusFromAccount'], form)).toEqual({
+      respondentFields: ['cursus'],
+      guestFields: ['cursus', 'status'],
+    });
+    // The box without the cursus ticked joins nothing: a field nobody ticked is never read.
+    expect(respondentSettingsPayload(['status', 'cursusFromAccount'], form)).toEqual({
+      respondentFields: [],
+      guestFields: ['status'],
+    });
+    // On a named form the box is not offered: it is never sent.
+    expect(
+      respondentSettingsPayload(['cursus', 'cursusFromAccount'], {
+        isPublic: true,
+        anonymous: false,
+      })
+    ).toEqual({ respondentFields: ['cursus'], guestFields: ['cursus'] });
+  });
+
+  it('reads the join back as its own box on an anonymous form, as the cursus on a named one', () => {
+    expect(
+      editorChoicesOf({ anonymous: true, respondentFields: ['cursus'], guestFields: ['cursus'] })
+    ).toEqual(['cursus', 'cursusFromAccount']);
+    expect(
+      editorChoicesOf({ anonymous: true, respondentFields: [], guestFields: ['cursus'] })
+    ).toEqual(['cursus']);
+    expect(editorChoicesOf({ anonymous: false, respondentFields: ['cursus'] })).toEqual(['cursus']);
+  });
+
+  it('asks a member of such a form what is not read from the account: one field, one source', () => {
+    const form = {
+      anonymous: true,
+      respondentFields: ['cursus'],
+      guestFields: ['cursus', 'status'],
+    };
+    expect(joinsCursusFromAccount(form)).toBe(true);
+    expect(askedOfMember(form)).toEqual(['status']);
+    const asking = { ...form, respondentFields: [] };
+    expect(joinsCursusFromAccount(asking)).toBe(false);
+    expect(askedOfMember(asking)).toEqual(['cursus', 'status']);
+    expect(joinsCursusFromAccount({ anonymous: false, respondentFields: ['cursus'] })).toBe(false);
   });
 
   it('reads a stored form back as the one set, a legacy form included', () => {

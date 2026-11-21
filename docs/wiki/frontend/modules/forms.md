@@ -1285,18 +1285,18 @@ saved as the two lists the server keeps (`respondentSettingsPayload`,
 
 | Column | Holds | Read for |
 |---|---|---|
-| `forms.respondentFields` (migration 174, jsonb, default `["lastName","firstName"]`) | what is JOINED from the account: `lastName`, `firstName`, `cursus`, `status`, `campus` | a member of a NAMED form; stored `[]` and read empty on an anonymous form (`joinedAccountFields`) |
+| `forms.respondentFields` (migration 174, jsonb, default `["lastName","firstName"]`) | what is JOINED from the account: `lastName`, `firstName`, `cursus`, `status`, `campus` | a member of a NAMED form; on an anonymous form stored `[]` or `['cursus']` and read so (`joinedAccountFields`, [2026-11-21](#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)) |
 | `forms.guestFields` (migration 138, same column, wider list) | what is ASKED: a guest's `lastName`, `firstName`, `email`, and the declared `cursus`, `status`, `campus` | a guest on a public form; EVERY respondent of an anonymous form (declared fields only) |
 
 | Form | Offered boxes | A member | A guest |
 |---|---|---|---|
 | named, not public | names, promo / formation, status, campus | joined from the account, listed in the notice | - |
 | named, public | the same and the e-mail | joined (the e-mail is a guest's: Canari keeps none for a member) | asked, each required |
-| anonymous | promo / formation, status, campus | ASKED, declared, never joined | asked, declared |
+| anonymous | promo / formation, status, campus, and the box "lue sur le compte" (cursus only) | ASKED, declared; the cursus READ from the account when the box is ticked (2026-11-21) | asked, declared (a guest has no account) |
 
 **The snapshot** (`submissions.respondentIdentity`, migration 174,
 `apps/social-service/src/forms/respondent-identity.ts`): `{ source: 'account' | 'declared', lastName?,
-firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus? }`, holding only the
+firstName?, cursus?: [{promo, formation}], status?: ('student'|'staff')[], campus?, fromAccount?: ['cursus'] }`, holding only the
 fields the form joined or asked. For a member of a named form the values are read from the ACCOUNT AT
 SUBMIT TIME, never from the request: a member's body carrying a declared field is refused
 `FORM_GUEST_IDENTITY_NOT_ASKED`. **Where they are read decides what the submit depends on** (lead,
@@ -1385,6 +1385,59 @@ answer taken "not declared"),
 lists, the declared values, the columns, cells and filter), `GuestIdentitySettings.svelte.test.ts`,
 `RespondentNotice.svelte.test.ts`, `DeclaredIdentityFields.svelte.test.ts`,
 `FormResponsesPanel.svelte.test.ts` (the columns and filters).
+
+## An anonymous form may read the cursus from the account (owner, 2026-11-21)
+
+**The decision** (owner, 2026-11-21, asked whether an anonymous form could have "Promo et formation"
+certified: *"Oui, en option, avec avis"*). On an anonymous form the organiser may tick a box, **"Promo
+et formation lues sur le compte (certifiées)"**, beside "Promo et formation". A member then does not
+answer that question: the server reads their cursus from the account (core-service `respondent-identity`,
+the same `cursusViewsOf` rule as the named form) and the fill page tells them *before sending* - "Votre
+réponse reste anonyme. Seules votre promo et votre formation, lues sur votre compte, l'accompagnent" (`RespondentNotice`, its
+`anonymous` wording). It is **opt-in**; the default form and every stored one are unchanged.
+
+**Principle 1 of the charter** ([docs/principes.md](../../../principes.md), "chaque donnée que nous
+gardons est déclarée"): the join is ticked by the organiser AND announced to the respondent first; a
+build that cannot announce it is never joined (below). **Nothing that names the person is joined on an
+anonymous form**: not the name, not the status, not the campus (status and campus stay declared when
+asked), and the row keeps no `userId` (`form_respondents` is unchanged - the one-answer-per-account
+guard). The register (C8) and the privacy policy name the exception.
+
+**Small groups can re-identify** (owner told, 2026-11-21): in a form answered by ten people, "2024 ISMIN"
+may be one person. The certified value makes that no worse than the declared one, but the editor says
+it under the box ("dans un petit groupe, une promo et une formation peuvent suffire à reconnaître la
+personne") and the organiser decides. Nothing here suppresses small cells; that would be a separate
+decision.
+
+**What the choices are, and why** (each a one-line change):
+
+1. **ONE FIELD, ONE SOURCE, PER RESPONDENT.** The editor saves the box as `respondentFields: ['cursus']`
+   and the cursus stays ticked in `guestFields` (a guest has no account and is asked it, `declared`).
+   `askedOfMember` (server and client) removes the cursus from what a MEMBER is asked, so a declared
+   cursus from a member is refused `FORM_GUEST_IDENTITY_NOT_ASKED` - the cursus is never joined AND
+   declared for the same person. The box without the cursus ticked joins nothing (`respondentSettingsPayload`).
+2. **The snapshot's `source` is per snapshot, so a mixed one says which key is the account's.** A member
+   whose form joins the cursus only: `{ source: 'account', cursus }`. A member whose form also asks status
+   or campus: `{ source: 'declared', status, campus, cursus, fromAccount: ['cursus'] }` - `source` names what
+   the respondent typed, `fromAccount` the keys the account certified. A guest: `{ source: 'declared', cursus }`,
+   no `fromAccount`. A reader that ignores `fromAccount` still reads the right values (the columns read keys).
+3. **Typed refusal, mirrored.** An anonymous form SAVED with `respondentFields` naming anything but
+   `cursus` is refused `FORM_ANONYMOUS_ACCOUNT_FIELDS`, a pair of the shared option rule
+   (`formOptionRules.ts`, `joinsAccountBeyondCursus`, byte-copied in `form-option-rules.ts`; the editor
+   never produces it, its sentence `form_option_conflict_anonymous_account_fields` words the refusal). An ABSENT list is
+   not one: the create default (the two names) is normalised away on an anonymous form as before.
+4. **An older build is never joined** (`predatesAnonymousCursusJoin`, floor `1.7.3`,
+   [legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-173---an-anonymous-form-that-reads-the-cursus-from-the-account-seen-by-a-build-that-cannot-announce-it-2026-11-21)):
+   it cannot tell the member, so it is asked the cursus as before, and its editor's save turns the
+   join into "asked" (the safe direction, never a silent leak). The fail-closed rule is the named
+   form's: core-service down is a 503, an unknown account is joined empty and accused.
+5. **The admission route stays out of the profile** (owner, 2026-11-21): "Classique / Fusion / AST" is NOT
+   a profile field and NOT joined; it is a question the organiser asks in the form, declared like any
+   answer.
+
+Tests: `forms.service.respondent-identity.spec.ts` ("an anonymous form that reads the cursus from the
+account", the rule, the create and the refusal), `respondentFields.test.ts`, `formOptionRules.test.ts`,
+`GuestIdentitySettings.svelte.test.ts`, `RespondentNotice.svelte.test.ts`.
 
 ## A respondent changes their own answer (owner, 2026-11-13)
 

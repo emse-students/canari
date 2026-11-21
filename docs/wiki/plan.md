@@ -145,6 +145,7 @@ earliest version, as a checklist.
 - [ ] [the organiser alert for a payment over capacity (switched on 2026-11-20)](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)
 - [ ] [the owner adds himself as a Lydia Vendeur of an association, then removes himself (production, 1.7.1)](backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)
 - [ ] [the owner hands the Lydia Responsable over in production, then takes it back](backlog.d/reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md)
+- [ ] [an anonymous form that reads the cursus from the account](backlog.d/reading-owed-anonymous-form-joins-cursus.md)
 
 ## 1.8.0
 
