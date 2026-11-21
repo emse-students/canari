@@ -2634,6 +2634,12 @@ developer's real file is never overwritten, and it takes the NDK from the runner
 its own Rust cache: `test-rust` caches the repository-root `target`, which `frontend/src-tauri`
 does not build into, with host-triple artefacts an `aarch64-linux-android` check cannot use.
 
+**The 32-bit target is checked in the same job (2026-11-21).** Releases ship `armeabi-v7a` as well as
+`arm64-v8a` (#3932), so the script runs a second `cargo check --locked --lib --target
+armv7-linux-androideabi` right after the aarch64 one, with the NDK's `armv7a-linux-androideabi24-clang`
+as CC and linker. It is a check, not a build: no link, no APK, and the Gradle tasks stay arm64. The
+Setup Rust step installs both targets.
+
 It is path-filtered (`android_app` in `changes`: `gen/android`, the app crate's sources, manifest,
 lock, `build.rs`, `tauri.conf.json`, `mls-core`, the native plugins, the toolchain and the script;
 the crate's `src/` is there because this is the only pull-request Rust compile for an Android
