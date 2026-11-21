@@ -21,3 +21,16 @@ no cap, while every remaining entry is "not yet" (WorkManager's backoff already 
 up to five hours between runs). It ends, and nudges, only on a "never" entry or an unreadable push
 context, which is durable state saying the retry cannot succeed. Closed by a JVM test: three
 transport failures in a row still end in `retry`, and one 4xx ends in the nudge.
+
+A second window of the same worker, named here deliberately (round-12 review, S-d). The unique
+work is `APPEND_OR_REPLACE`, and a run that finds the app in front returns `Result.retry()` without
+counting an attempt: the outbox belongs to the app while it is visible. Each such deferral still
+grows WorkManager's exponential backoff, and a request appended behind the chain waits for the run
+ahead of it to end. So a reply queued after a long foreground session can wait for hours. Ending
+the chain when the app comes to the front (`cancelUniqueWork`) is NOT provably safe today. Once the
+app has adopted the mirror, nothing native enqueues a retry when it goes back to the background, so
+an entry the app had not sent by then would lose its only background retry until the next push. The
+durable-state design above closes both: a deferral that is not an attempt ends the request
+(`Result.success()`), and the app's move to the background enqueues a fresh retry whenever the mirror
+still holds an entry. Closed by a test that defers three times in front and then, in the background,
+runs the drain without waiting out a grown backoff.

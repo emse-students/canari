@@ -167,9 +167,11 @@ describe('the read-elsewhere cancel reads the shade inside its critical section'
     expect(body).toContain(
       'val shade = { prefs.getInt(groupId, -1).takeIf { it != -1 }?.let { shadeBannerOf(manager, it) } }'
     );
-    expect(body).toContain('READ_ELSEWHERE.recordThenCancel(groupId, read, shade, cancelById)');
     expect(body).toContain(
-      'READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, cancelById)'
+      'READ_ELSEWHERE.recordThenCancel(groupId, read, shade, holds, repost, cancelById)'
+    );
+    expect(body).toContain(
+      'READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, holds, repost, cancelById)'
     );
     expect(body).toContain('manager.cancel(id)');
     expect(body).not.toContain('manager.cancel(notifId)');
@@ -254,8 +256,6 @@ describe('the builder records what it posted and keeps the stamps current', () =
       const fns = [...before.matchAll(/fun (?:\w+\.)?(\w+)\(/g)];
       const name = fns[fns.length - 1][1];
       if (notConversation.has(name)) continue;
-      // Re-posts the shade's OWN record (built here already) to end a direct-reply hold - pinned below.
-      if (name === 'endDirectReplyExtension') continue;
       posters.push(name);
       const fn = source.slice(fns[fns.length - 1].index);
       const call = source.slice(m.index, source.indexOf('\n', m.index));
@@ -280,12 +280,20 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const all = source.slice(source.indexOf('fun cancelAllMessageNotifications('));
     const lock = all.indexOf('synchronized(READ_ELSEWHERE.lock) {');
     expect(lock).toBeGreaterThan(-1);
+    expect(all.indexOf('manager.cancel(sbn.id)')).toBeGreaterThan(-1);
     expect(lock).toBeLessThan(all.indexOf('manager.cancel(sbn.id)'));
-    // ...and what the record holds is cancelled by id there too (round-7 review, S1).
-    expect(all).toContain('READ_ELSEWHERE.forgetAll { manager.cancel(it) }');
-    expect(all.indexOf('READ_ELSEWHERE.forgetAll {')).toBeLessThan(
-      all.indexOf('CallRingPlayer.rings')
+    // ...and what the record holds is cancelled by id there too (round-7 review, S1) - except a
+    // banner the platform holds, updated and kept (round-12 review, S-a).
+    const forget = all.indexOf('READ_ELSEWHERE.forgetAll(');
+    expect(forget).toBeGreaterThan(-1);
+    expect(forget).toBeLessThan(all.indexOf('CallRingPlayer.rings'));
+    expect(all.slice(forget, forget + 400)).toContain('holds = { holdsDirectReply(manager, it) }');
+    expect(all).toContain(
+      'if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)'
     );
+    expect(
+      all.indexOf('for (id in held) releaseUnrecordedHold(context, manager, id)')
+    ).toBeGreaterThan(forget);
   });
 
   it('restamps a re-injected line when the second trigger knows the server instant', () => {
@@ -424,7 +432,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const body = answered.slice(0, answered.indexOf('private fun sendReadWatermark('));
     // ...through the answer, which keeps ANOTHER reply's line still queued (round-10 review, S2).
     expect(body).toContain(
-      'answerReplyNotification(context, groupId, messageId, notifiedAt, notifiedServerAt)'
+      'answerReplyNotification(context, groupId, messageId, text, sentAt, receivedAt, notifiedAt, notifiedServerAt)'
     );
     expect(body).not.toContain('cancelConversationNotification(');
     expect(body).toContain('sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)');
@@ -432,40 +440,80 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(fn).not.toContain('sendReadWatermark(');
   });
 
-  // Round-11 review (B1): Android 15+ drops an app's cancel on a record flagged
-  // LIFETIME_EXTENDED_BY_DIRECT_REPLY and strips that flag from an app's post, which lands LATER
-  // than a cancel queued behind it. So the answered banner is updated silently and NOT cancelled.
-  it('ends the direct-reply hold by a silent update and never cancels in the same breath (#3912 F1)', () => {
-    const fn = source.slice(source.indexOf('private fun endDirectReplyExtension('));
-    expect(fn.indexOf('private fun endDirectReplyExtension(')).toBe(0);
-    const body = fn.slice(0, fn.indexOf('/**'));
-    const flag = body.indexOf('FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY == 0) return null');
-    const silent = body.indexOf('FLAG_ONLY_ALERT_ONCE');
-    const update = body.indexOf('manager.notify(held.notifId, shown)');
-    expect(flag).toBeGreaterThan(-1);
-    expect(silent).toBeGreaterThan(flag);
-    expect(update).toBeGreaterThan(silent);
-    expect(body.split('manager.notify(').length - 1).toBe(1);
-    expect(body).not.toContain('.cancel(');
-    expect(body).not.toContain('setTimeoutAfter');
-    // The answer hands it over; its own cancel is the plain one, for a banner nothing holds.
+  // Round-11/12 review (B1, S-a, S-b): Android 15+ drops an app's cancel on a record flagged
+  // LIFETIME_EXTENDED_BY_DIRECT_REPLY and strips that flag from an app's post, which lands LATER than
+  // a cancel queued behind it. So EVERY cancel of a recorded banner asks the shade first, and a held
+  // banner is updated - the standard way, through the one rebuild - and kept, never cancelled.
+  it('never app-cancels a banner the platform holds: every path asks the shade first (#3912 F1)', () => {
+    const held = source.slice(source.indexOf('private fun holdsDirectReply('));
+    const heldBody = held.slice(0, held.indexOf('/**'));
+    expect(heldBody).toContain('isHeldByDirectReply(shown)');
+    expect(heldBody).not.toContain('.cancel(');
+    expect(heldBody).not.toContain('.notify(');
+    expect(heldBody).not.toContain('setTimeoutAfter');
+    // Every call into the record that may cancel passes the fact and the rebuild.
     const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
     const call = answer.slice(
       answer.indexOf('READ_ELSEWHERE.answerReply('),
       answer.indexOf('when (outcome)')
     );
-    expect(call).toContain('endExtension = { held -> endDirectReplyExtension(manager, held) }');
+    expect(call).toContain('holds = { holdsDirectReply(manager, it) }');
+    expect(call).toContain('ownLine = { held -> answerLine(held, replyText, sentAt, receivedAt) }');
+    expect(call).toContain('repost = rebuildBanner(context, manager, groupId)');
     expect(call).toContain('watermark,');
-    expect(source.split('endDirectReplyExtension(manager, held)').length - 1).toBe(1);
-    // The record: an updated banner is kept with no line and is NOT withdrawn.
+    const delivered = source.slice(source.indexOf('private fun replyDelivered('));
+    expect(delivered.slice(0, delivered.indexOf('when (outcome)'))).toContain(
+      'holds = { holdsDirectReply(manager, it) }'
+    );
+    const dismiss = source.slice(source.indexOf('internal fun cancelConversationNotification('));
+    expect(dismiss).toContain(
+      'READ_ELSEWHERE.recordThenCancel(groupId, read, shade, holds, repost, cancelById)'
+    );
+    expect(dismiss).toContain(
+      'READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, holds, repost, cancelById)'
+    );
+    // The answer is drawn as the user's own line, covered by any read.
+    const line = source.slice(source.indexOf('private fun answerLine('));
+    expect(line.slice(0, 1500)).toContain('extras.putBoolean(LINE_OWN, true)');
+    // The record: a held banner is re-posted and KEPT, never withdrawn, on every path.
     const marks = readFileSync(resolve(dirname(SERVICE), 'push/ReadElsewhereMarks.kt'), 'utf8');
-    const reply = marks.slice(marks.indexOf('    fun answerReply('));
-    const replyBody = reply.slice(0, reply.indexOf('    /**'));
-    const kept = replyBody.indexOf('val updated = endExtension(banner)');
-    expect(kept).toBeGreaterThan(-1);
-    const branch = replyBody.slice(kept, replyBody.indexOf('cancel(banner.notifId)', kept));
-    expect(branch).toContain('postedLocked(conversationId, updated.copy(messages = emptyList()))');
-    expect(branch).not.toContain('withdrawnLocked(');
+    const helper = marks.slice(marks.indexOf('    private fun cancelUnlessHeldLocked('));
+    const helperBody = helper.slice(0, helper.indexOf('    /**'));
+    const ask = helperBody.indexOf('if (holds(banner.notifId)) {');
+    const ret = helperBody.indexOf('return false', ask);
+    const cancel = helperBody.indexOf('cancel(banner.notifId)');
+    expect(ask).toBeGreaterThan(-1);
+    expect(ret).toBeGreaterThan(ask);
+    expect(cancel).toBeGreaterThan(ret);
+    expect(helperBody.slice(ask, ret)).not.toContain('withdrawnLocked(');
+    for (const fn of [
+      '    fun withdraw(',
+      '    fun recordThenCancel(',
+      '    fun replyDelivered(',
+    ]) {
+      const at = marks.indexOf(fn);
+      expect(at).toBeGreaterThan(-1);
+      const body = marks.slice(at, marks.indexOf('    /**', at));
+      expect(body).toContain(
+        'cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)'
+      );
+      expect(body).not.toContain('withdrawnLocked(');
+    }
+  });
+
+  // Round-12 review (S-c): an answer removes the conversation's reaction only when the reply's
+  // watermark covers it - a reaction newer than what the banner showed may be unseen.
+  it('cancels the reaction after an answer only when the watermark covers it', () => {
+    const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
+    const body = answer.slice(0, answer.indexOf('when (outcome)'));
+    const reaction = body.indexOf('prefs.getInt(reactionNotifKey(groupId), -1)');
+    expect(reaction).toBeGreaterThan(-1);
+    const after = body.slice(reaction);
+    const covered = after.indexOf('READ_ELSEWHERE.covers(groupId, line.sentAt, line.serverAt)');
+    const cancel = after.indexOf('manager.cancel(reactionId)');
+    expect(covered).toBeGreaterThan(-1);
+    expect(cancel).toBeGreaterThan(covered);
+    expect(after.slice(0, cancel)).toContain('if (covered) {');
   });
 
   // Round-11 review (S3): a reply not seen delivered is logged at WARN in every case, naming what

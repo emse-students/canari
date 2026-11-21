@@ -201,7 +201,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         CanariFirebaseMessagingService.writeSentMessageToCache(
             context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
         )
-        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId, notifiedAt, notifiedServerAt)
+        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId, text, sentAt, receivedAt, notifiedAt, notifiedServerAt)
         sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
     }
 

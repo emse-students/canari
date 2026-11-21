@@ -52,6 +52,15 @@ package fr.emse.canari.push
  * re-post asks [AwaitedReplies] under it - a leaf lock, which the drain also takes under the outbox
  * lock and under which nothing is taken.
  *
+ * A BANNER THE PLATFORM HOLDS IS NEVER CANCELLED BY THIS PROCESS (round-12 review of #3912). Android
+ * 15+ keeps a banner answered inline (`FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY`), DROPS an app's
+ * cancel on it and re-extends the record; only an app's post ends the hold, and that post lands on
+ * the system's queue later than a cancel sent behind it would. So every cancel of a recorded banner
+ * asks the shade first (`holds`, a fact read from the shade's copy, never a guess about latency): a
+ * held banner is posted again, silently, with what it shows (`repost`), and STAYS recorded - the
+ * next event (a read, a dismissal, a post, the app's start) weighs it again. Each such event either
+ * finds it no longer held and cancels it, or updates it again; none forgets it.
+ *
  * IN MEMORY, ON PURPOSE. The races it closes are between a post still being built, a read this
  * process was told about, and the system's own queue; all of them die with the process.
  *
@@ -76,13 +85,16 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * sender's instant and the server's (0 when unknown, and both 0 for a line that carries no
      * stamp - never covered), and whether it is this account's PENDING REPLY - which no read covers
      * and no cancel that cannot weigh lines removes ([withdraw]) - with the id of the message it
-     * stands for, so its delivery, whenever and by whichever path, clears it ([replyDelivered]).
+     * stands for, so its delivery, whenever and by whichever path, clears it ([replyDelivered]). An
+     * [own] line is this account's ANSWER, shown on the banner after a quick reply ([answerReply]):
+     * nothing in it is unread, so every read covers it.
      */
     data class Line(
         val sentAt: Long,
         val serverAt: Long,
         val pendingReply: Boolean = false,
         val pendingReplyId: String? = null,
+        val own: Boolean = false,
     ) {
         companion object {
             /**
@@ -92,8 +104,9 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
              * only place that says "not sent yet"), and for a banner from a build that did not stamp
              * its lines (not proven read by any mark, so it is kept).
              */
-            fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?, pendingReplyId: String? = null): Line = when {
+            fun of(pendingReply: Boolean, sentAt: Long?, serverAt: Long?, pendingReplyId: String? = null, own: Boolean = false): Line = when {
                 pendingReply -> Line(0L, 0L, pendingReply = true, pendingReplyId = pendingReplyId)
+                own -> Line(sentAt ?: 0L, serverAt ?: 0L, own = true)
                 sentAt == null -> Line(0L, 0L)
                 else -> Line(sentAt, serverAt ?: 0L)
             }
@@ -117,9 +130,12 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
 
         /** The banner was cancelled. */
         CANCELLED,
+
+        /** The platform holds the banner (answered inline): updated silently, kept for the next event. */
+        HELD,
     }
 
-    /** What a [replyDelivered] did. */
+    /** What a [replyDelivered] or an [answerReply] did. */
     enum class Delivery {
         /** No banner holds that pending reply: nothing to clear. */
         NONE,
@@ -134,9 +150,9 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         NOT_REBUILT,
 
         /**
-         * [answerReply] only: no line was left, but the platform keeps the banner (Android 15+,
-         * answered inline - a cancel would be dropped). It was updated silently instead, which ends
-         * that hold, and stays recorded with NO line: the next read, dismissal or post replaces it.
+         * The platform holds the banner (Android 15+, answered inline - a cancel would be dropped):
+         * it was updated silently instead, which ends that hold, and stays recorded with what it
+         * shows - the next read, dismissal or post weighs it again.
          */
         KEPT_UNTIL_READ,
     }
@@ -189,13 +205,16 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * With no banner known ([Withdrawal.NONE]) and nothing to keep, [stableId] is still cancelled -
      * a cancel by id is ordered after its `notify` by the system, so a banner the record lost sight
      * of (posted just before a [forgetAll]) cannot outlive a dismissal. A dismissal that must keep a
-     * pending reply cannot cancel what it cannot see.
+     * pending reply cannot cancel what it cannot see. A banner the platform [holds] is updated
+     * through [repost] and kept ([Withdrawal.HELD], see the class comment).
      */
     fun withdraw(
         conversationId: String,
         keepPendingReply: Boolean,
         stableId: Int?,
         shade: () -> Banner<M>?,
+        holds: (notifId: Int) -> Boolean,
+        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
     ): Withdrawal = synchronized(lock) {
         val banner = bannerOfLocked(conversationId, shade)
@@ -206,9 +225,7 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         if (keepPendingReply && banner.messages.any { lineOf(it).pendingReply }) {
             return@synchronized Withdrawal.KEPT_PENDING_REPLY
         }
-        cancel(banner.notifId)
-        withdrawnLocked(conversationId)
-        Withdrawal.CANCELLED
+        if (cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)) Withdrawal.CANCELLED else Withdrawal.HELD
     }
 
     /**
@@ -216,7 +233,8 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * ITS id only when the mark covers EVERY line - all in ONE critical section, so no post can fall
      * between them. A line the mark does not cover - a message newer than the read, or one comparable
      * on neither clock, or a pending reply - keeps the banner: it is a message this account has not
-     * read, or a send that has not gone out.
+     * read, or a send that has not gone out. An own line ([Line.own]) is covered by any read. A
+     * covered banner the platform [holds] is updated through [repost] and kept (class comment).
      *
      * @return whether [cancel] ran.
      */
@@ -224,15 +242,15 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         conversationId: String,
         read: Read,
         shade: () -> Banner<M>?,
+        holds: (notifId: Int) -> Boolean,
+        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
     ): Boolean = synchronized(lock) {
         recordLocked(conversationId, read)
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized false
         val lines = banner.messages.map(lineOf)
-        if (lines.all { coversLocked(conversationId, it.sentAt, it.serverAt) }) {
-            cancel(banner.notifId)
-            withdrawnLocked(conversationId)
-            true
+        if (lines.all { it.own || coversLocked(conversationId, it.sentAt, it.serverAt) }) {
+            cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)
         } else {
             false
         }
@@ -247,13 +265,16 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * 2). The banner is cancelled when no line is left, else [repost] rebuilds it with the lines that
      * stay and returns what it posted (null: it could not, and the banner is left as it was). All in
      * one critical section with the record. (A quick reply whose handler still runs learned of the
-     * delivery earlier, at the send, through [AwaitedReplies].)
+     * delivery earlier, at the send, through [AwaitedReplies].) With no line left, a banner the
+     * platform [holds] - answered inline again since the pending re-post - is updated as it shows
+     * and kept ([Delivery.KEPT_UNTIL_READ]): that later answer's own [answerReply] sets what it shows.
      */
     fun replyDelivered(
         conversationId: String,
         messageId: String,
         shade: () -> Banner<M>?,
         cancel: (notifId: Int) -> Unit,
+        holds: (notifId: Int) -> Boolean,
         repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
     ): Delivery = synchronized(lock) {
         val banner = bannerOfLocked(conversationId, shade) ?: return@synchronized Delivery.NONE
@@ -261,9 +282,11 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         if (at < 0) return@synchronized Delivery.NONE
         val kept = banner.messages.filterIndexed { i, _ -> i != at }
         if (kept.isEmpty()) {
-            cancel(banner.notifId)
-            withdrawnLocked(conversationId)
-            return@synchronized Delivery.CANCELLED
+            return@synchronized if (cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)) {
+                Delivery.CANCELLED
+            } else {
+                Delivery.KEPT_UNTIL_READ
+            }
         }
         val rebuilt = repost(banner, kept) ?: return@synchronized Delivery.NOT_REBUILT
         postedLocked(conversationId, rebuilt)
@@ -275,18 +298,16 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * the banner, and answering is reading UP TO WHAT THE BANNER SHOWED. [watermark] - the instants
      * the reply's own read watermark announces - is recorded as a mark, and a peer line goes only
      * when that mark covers it: a message that arrived while the reply was being sent is newer than
-     * the watermark and stays (round-11 review, principle 2). This reply's own line goes; ANOTHER
-     * reply's pending line - one still queued - stays. With lines left, [repost] rebuilds the banner
-     * with only them (null: it could not, and the banner is left as it was).
+     * the watermark and stays (round-11 review, principle 2). This reply's own pending line and any
+     * earlier answer go; ANOTHER reply's pending line - one still queued - stays.
      *
-     * With none left, the banner goes - unless the platform holds it: Android 15+ keeps a banner
-     * answered inline (`FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY`) and drops an app's cancel on it.
-     * [endExtension] reads that from the shade and, when it holds, posts the silent update that
-     * ends the hold and returns it ([Delivery.KEPT_UNTIL_READ]): it is recorded with NO line and NOT
-     * withdrawn, so the next read, dismissal or post - which comes after the update has landed -
-     * removes or replaces it. It is never cancelled in the same breath: the platform's post lands
-     * later than the cancel would (a cancel meeting the old record is dropped and re-extends it).
-     * With no banner known, [stableId] is cancelled. All in one critical section with the record.
+     * What the banner then shows is posted the standard way, silently ([repost]): the lines that
+     * stay, then the answer as this account's own line ([ownLine], covered by any read) - and the
+     * record holds exactly that. With no line staying, the banner is cancelled instead - unless the
+     * platform [holds] it (Android 15+, answered inline: a cancel would be dropped, see the class
+     * comment), when the update with the answer alone is what ends the hold and it stays recorded
+     * ([Delivery.KEPT_UNTIL_READ]) for the next event. With no banner known, [stableId] is
+     * cancelled. All in one critical section with the record.
      */
     fun answerReply(
         conversationId: String,
@@ -294,9 +315,10 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         watermark: List<Read>,
         stableId: Int?,
         shade: () -> Banner<M>?,
-        cancel: (notifId: Int) -> Unit,
+        holds: (notifId: Int) -> Boolean,
+        ownLine: (held: Banner<M>) -> M?,
         repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
-        endExtension: (held: Banner<M>) -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
     ): Delivery = synchronized(lock) {
         watermark.forEach { recordLocked(conversationId, it) }
         val banner = bannerOfLocked(conversationId, shade)
@@ -306,21 +328,27 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
         }
         val kept = banner.messages.filter {
             val line = lineOf(it)
-            if (line.pendingReply) line.pendingReplyId != messageId else !coversLocked(conversationId, line.sentAt, line.serverAt)
-        }
-        if (kept.isEmpty()) {
-            val updated = endExtension(banner)
-            if (updated != null) {
-                postedLocked(conversationId, updated.copy(messages = emptyList()))
-                return@synchronized Delivery.KEPT_UNTIL_READ
+            when {
+                line.own -> false
+                line.pendingReply -> line.pendingReplyId != messageId
+                else -> !coversLocked(conversationId, line.sentAt, line.serverAt)
             }
+        }
+        val held = holds(banner.notifId)
+        if (kept.isEmpty() && !held) {
             cancel(banner.notifId)
             withdrawnLocked(conversationId)
             return@synchronized Delivery.CANCELLED
         }
-        val rebuilt = repost(banner, kept) ?: return@synchronized Delivery.NOT_REBUILT
+        val shown = kept + listOfNotNull(ownLine(banner))
+        if (shown.isEmpty()) {
+            // Held, and nothing to show: updated as it is, kept.
+            cancelUnlessHeldLocked(conversationId, banner, holds, repost, cancel)
+            return@synchronized Delivery.KEPT_UNTIL_READ
+        }
+        val rebuilt = repost(banner, shown) ?: return@synchronized Delivery.NOT_REBUILT
         postedLocked(conversationId, rebuilt)
-        Delivery.REPOSTED
+        if (held) Delivery.KEPT_UNTIL_READ else Delivery.REPOSTED
     }
 
     /**
@@ -372,17 +400,32 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      * RECORDED banner is [cancel]led by its id here, under the lock: the caller's sweep of the shade
      * misses a banner posted just before it (the shade lags a `notify`), and once this returns the
      * shade is never asked again - so that banner would stand for good. The system orders a cancel
-     * by id after its `notify`.
+     * by id after its `notify`. A banner the platform [holds] is updated through [repost] (given its
+     * conversation) and KEPT recorded instead - the class comment's rule.
      *
      * @return the ids cancelled.
      */
-    fun forgetAll(cancel: (notifId: Int) -> Unit): List<Int> = synchronized(lock) {
-        val ids = posted.values.map { it.notifId }
-        ids.forEach(cancel)
+    fun forgetAll(
+        holds: (notifId: Int) -> Boolean,
+        repost: (conversationId: String, held: Banner<M>, kept: List<M>) -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
+    ): List<Int> = synchronized(lock) {
+        val cancelled = mutableListOf<Int>()
+        val kept = HashMap<String, Banner<M>>()
+        for ((conversationId, banner) in posted) {
+            if (holds(banner.notifId)) {
+                val shown = if (banner.messages.isEmpty()) null else repost(conversationId, banner, banner.messages)
+                kept[conversationId] = shown ?: banner
+            } else {
+                cancel(banner.notifId)
+                cancelled += banner.notifId
+            }
+        }
         posted.clear()
+        posted.putAll(kept)
         withdrawn.clear()
         allWithdrawn = true
-        ids
+        cancelled
     }
 
     /** The mark held for [conversationId], or null. */
@@ -398,6 +441,31 @@ class ReadElsewhereMarks<M>(private val lineOf: (M) -> Line) {
      */
     fun covers(conversationId: String, sentAt: Long, serverAt: Long): Boolean =
         synchronized(lock) { coversLocked(conversationId, sentAt, serverAt) }
+
+    /**
+     * Cancels [banner] and forgets it - unless the platform [holds] it, when it is posted again as
+     * it shows ([repost], silent: the update that ends the hold) and STAYS recorded (the class
+     * comment's rule). A banner that cannot be rebuilt stays recorded as it was; the next event asks
+     * again.
+     *
+     * @return whether [cancel] ran.
+     */
+    private fun cancelUnlessHeldLocked(
+        conversationId: String,
+        banner: Banner<M>,
+        holds: (notifId: Int) -> Boolean,
+        repost: (held: Banner<M>, kept: List<M>) -> Banner<M>?,
+        cancel: (notifId: Int) -> Unit,
+    ): Boolean {
+        if (holds(banner.notifId)) {
+            if (banner.messages.isNotEmpty()) repost(banner, banner.messages)?.let { postedLocked(conversationId, it) }
+            if (conversationId !in posted) postedLocked(conversationId, banner)
+            return false
+        }
+        cancel(banner.notifId)
+        withdrawnLocked(conversationId)
+        return true
+    }
 
     private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()
