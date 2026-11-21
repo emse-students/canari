@@ -1628,7 +1628,7 @@ the convenience asked for wherever the two meet.
 |---|---|---|
 | named, one answer, `paid` / `free` | drawn read-only (`GET :id/submission`) | the same, from `myAnswers`; the price-fixing questions carry the lock line |
 | named, one answer, `pending_cash`, `pending` or `paid_over_capacity` | **an EMPTY disabled form** (`GET :id/submission` reads `paid`/`free` only) | drawn read-only, lock line included |
-| named, several answers | nothing unless `allowAnswerEdit` and open ("Vos réponses" listed only changeable rows) | "Vos réponses" lists EVERY answer, open or closed, switch on or off: "Voir" draws it read-only (banner + "Fermer", no send bar), "Modifier" where the edit is offered |
+| named, several answers | nothing unless `allowAnswerEdit` and open ("Vos réponses" listed only changeable rows) | "Vos réponses" lists EVERY answer, open or closed, switch on or off, each with its payment status as a chip (`statusLabel` / `statusClass`, the responses table's own words and colours): "Voir" draws it read-only (banner with the same chip, "Fermer", no send bar), "Modifier" where the edit is offered |
 | anonymous, one answer, already answered | **an EMPTY disabled form** under "Réponse envoyée" - the owner's report | no questions: "Vous avez déjà répondu" and a note that the form is anonymous and Canari keeps no link between the account and the answer |
 | anonymous, several answers | a blank form (correct: it takes another) | unchanged |
 
@@ -1643,7 +1643,8 @@ first, each the submitter's allowlist (`toSubmitterView`) plus `lockedItemIds` (
 the edit's own lock rule). Only when asked: the feed's cards call the same check and do not ask. On
 an ANONYMOUS form it is always `[]` and no submission is read (`noOwnAnswerOnAnonymous`): its rows
 name nobody. No new route, no migration, no version flag: an estate older than the field omits it,
-and the page then reads the single answer through `GET :id/submission` as it always did
+and the page then reads the single answer through `GET :id/submission` as it always did, logging
+`[LEGACY] myAnswers not served` at warn
 ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---own-answers-read-back---myanswers-2026-11-21)).
 
 **Anonymous forms: no copy of the answer on the device - owner decision, 2026-11-21.** A device

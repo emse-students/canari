@@ -944,10 +944,12 @@ estates deployed past 1.6.9), the client branch for `false` may go; the field st
 the field ignores `answers=1` and answers the check without it.
 **What the client does.** An ABSENT `myAnswers` is "not served": the page reads the single answer
 through `GET :id/submission` as before, and lists only the changeable answers of a form taking several.
-Nothing is learned from a refusal. Pinned by `page.ownAnswer.svelte.test.ts` ("an estate older than
-myAnswers").
-**Removal condition:** when no estate older than the release carrying `myAnswers` is served, the
-`getSubmission` branch of the fill page may go (the route stays for older apps until their own floor).
+Nothing is learned from a refusal. The branch ACCUSES: it logs at warn `[LEGACY] myAnswers not served`
+(`ownAnswersOf`). Pinned by `page.ownAnswer.svelte.test.ts` ("an estate older than myAnswers", the
+tag included).
+**Removal condition:** once `[LEGACY] myAnswers not served` has been absent from production for a
+week, the `getSubmission` branch of the fill page may go (the route stays for older apps until their
+own floor).
 
 ### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
 

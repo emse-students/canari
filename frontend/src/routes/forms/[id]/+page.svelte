@@ -95,6 +95,7 @@
     Eye,
   } from '@lucide/svelte';
   import { ownAnswersOf, shownOwnAnswer, type OwnAnswer } from '$lib/forms/ownAnswers';
+  import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
   import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
@@ -241,6 +242,7 @@
     (ownAnswers ?? editableAnswers).map((a) => ({
       id: a.id,
       createdAt: a.createdAt,
+      paymentStatus: a.paymentStatus,
       own: ownAnswers ? (a as OwnAnswer) : null,
       editable: editableAnswers.find((e) => e.id === a.id) ?? null,
     }))
@@ -1075,6 +1077,14 @@
   </Button>
 {/snippet}
 
+<!-- Where one of their answers' payment stands, worded and coloured as the responses table does. -->
+{#snippet statusChip(status: string)}
+  <span
+    class="rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap {statusClass(status)}"
+    data-testid="form-own-answer-status">{statusLabel(status)}</span
+  >
+{/snippet}
+
 <!-- Who is answering and at which price category: a form whose grids price by category. -->
 {#snippet viewerTier()}
   <FormViewerTier name={getSavedDisplayName()} {tierLabels} />
@@ -1292,8 +1302,9 @@
         role="status"
         data-testid="form-own-answer-banner"
       >
-        <p class="text-text-main text-sm font-medium">
+        <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-medium">
           {m.form_view_answer_view_banner({ date: formatFormOpensAt(shownAnswer.createdAt) })}
+          {@render statusChip(shownAnswer.paymentStatus)}
         </p>
         <Button variant="ghost" size="compact" class="shrink-0" onclick={closeOwnAnswer}>
           {m.form_view_answer_view_close()}
@@ -1309,8 +1320,9 @@
         <ul class="space-y-1">
           {#each answerRows as row (row.id)}
             <li class="flex items-center justify-between gap-3">
-              <span class="text-text-muted text-sm">
+              <span class="text-text-muted flex flex-wrap items-center gap-2 text-sm">
                 {m.form_view_my_answer_row({ date: formatFormOpensAt(row.createdAt) })}
+                {@render statusChip(row.paymentStatus)}
               </span>
               <span class="flex shrink-0 items-center gap-1">
                 {#if row.own}

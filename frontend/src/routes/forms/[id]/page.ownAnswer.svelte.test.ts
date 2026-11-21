@@ -13,6 +13,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
+import { statusLabel } from '$lib/forms/paymentStatus';
 
 const state = vi.hoisted(() => ({
   form: {} as Record<string, unknown>,
@@ -52,6 +53,9 @@ vi.mock('$lib/forms/api', async (orig) => ({
   checkSubmission: () => Promise.resolve(state.check),
   getSubmission: () => Promise.resolve(state.legacySubmission),
   getMyEditableAnswers: () => Promise.resolve([]),
+  // A pending answer is read once on load: still pending, so the page keeps it as it is.
+  confirmSubmissionPayment: (id: string) =>
+    Promise.resolve({ id, formId: 'f1', paymentStatus: 'pending' }),
   submitForm: (_id: string, body: Record<string, unknown>) => {
     state.submitted.push(body);
     return Promise.resolve({ submissionId: 's-new' });
@@ -192,11 +196,53 @@ describe('a named form', () => {
     expect(textInput()?.disabled).toBe(false);
   });
 
+  it('draws a pending online answer read-only, as it was sent', async () => {
+    state.form = formOf({ requiresPayment: true });
+    state.check = checkOf({
+      hasSubmitted: true,
+      paymentStatus: 'pending',
+      submissionId: 's1',
+      myAnswers: [row('s1', 'En attente', { paymentStatus: 'pending', lockedItemIds: ['q2'] })],
+    });
+    await render();
+    expect(textInput()?.value).toBe('En attente');
+    expect(textInput()?.disabled).toBe(true);
+    expect(document.body.textContent).toContain(m.form_view_edit_locked_note());
+  });
+
+  it('a list of mixed statuses says each one, and the opened answer says its own', async () => {
+    state.form = formOf({ allowMultipleSubmissions: true, requiresPayment: true });
+    const statuses = ['pending_cash', 'pending', 'paid', 'free', 'paid_over_capacity'];
+    state.check = checkOf({
+      myAnswers: statuses.map((st, i) => row(`s${i}`, `A${i}`, { paymentStatus: st })),
+    });
+    await render();
+    const chips = [
+      ...document.querySelectorAll(
+        '[data-testid="form-own-answers"] [data-testid="form-own-answer-status"]'
+      ),
+    ].map((c) => c.textContent?.trim());
+    expect(chips).toEqual(statuses.map(statusLabel));
+    document
+      .querySelectorAll<HTMLButtonElement>('[data-testid="form-own-answers"] button')[0]
+      .click();
+    await settle();
+    expect(
+      byTestId('form-own-answer-banner')?.querySelector('[data-testid="form-own-answer-status"]')
+        ?.textContent
+    ).toContain(statusLabel('pending_cash'));
+  });
+
   it('an estate older than myAnswers: the single answer is read as before', async () => {
     state.form = formOf();
     state.check = checkOf({ hasSubmitted: true, paymentStatus: 'free' });
     state.legacySubmission = { answers: { q1: 'Ancien' } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await render();
+    // The fallback accuses, under the tag the removal condition is read from.
+    expect(
+      warn.mock.calls.some((c) => String(c[0]).startsWith('[LEGACY] myAnswers not served'))
+    ).toBe(true);
     expect(textInput()?.value).toBe('Ancien');
     expect(textInput()?.disabled).toBe(true);
   });

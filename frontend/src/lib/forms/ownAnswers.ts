@@ -10,7 +10,6 @@
  * through the planned conversation with oneself) - the page says "already answered" instead.
  */
 import type { EditableAnswer } from './api';
-import { Log } from '$lib/utils/Log';
 
 /** One answer of the respondent, as the page draws it read-only. */
 export interface OwnAnswer {
@@ -19,6 +18,8 @@ export interface OwnAnswer {
   answers: Record<string, unknown>;
   /** The questions that fixed the price: drawn with the lock line. */
   lockedItemIds: string[];
+  /** Where its payment stands (`paid`, `free`, `pending`, `pending_cash`, `paid_over_capacity`): the chip. */
+  paymentStatus: string;
 }
 
 /**
@@ -27,7 +28,11 @@ export interface OwnAnswer {
  */
 export function ownAnswersOf(served: readonly EditableAnswer[] | undefined): OwnAnswer[] | null {
   if (!served) {
-    Log.d('FormView', 'own answers not served by this estate (older than myAnswers)');
+    // A fallback is a signal: this tag is what says an estate older than `myAnswers` is still served
+    // (legacy-compatibility.md, its removal condition).
+    console.warn(
+      '[LEGACY] myAnswers not served: the single answer is read through GET :id/submission'
+    );
     return null;
   }
   return served.map((row) => ({
@@ -35,6 +40,7 @@ export function ownAnswersOf(served: readonly EditableAnswer[] | undefined): Own
     createdAt: row.createdAt,
     answers: row.answers,
     lockedItemIds: row.lockedItemIds ?? [],
+    paymentStatus: row.paymentStatus,
   }));
 }
 
