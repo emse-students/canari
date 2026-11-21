@@ -58,6 +58,13 @@
       ? m.form_respondent_settings_hint_anonymous()
       : m.form_respondent_settings_hint()}
   />
+  {#if anonymous && choices.includes('cursusFromAccount')}
+    <p class={CONTROL_HINT_CLASS} data-testid="cursus-from-account-note">
+      {choices.includes('cursus')
+        ? m.form_respondent_cursus_from_account_note()
+        : m.form_respondent_cursus_from_account_needs_cursus()}
+    </p>
+  {/if}
   {#if advice === 'paid'}
     <p
       class="border-accent/30 bg-accent/5 text-text-main rounded-xl border px-3 py-2 text-xs font-semibold"

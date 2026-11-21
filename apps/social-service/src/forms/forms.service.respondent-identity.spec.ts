@@ -1,18 +1,32 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  ServiceUnavailableException,
+  ValidationPipe,
+} from '@nestjs/common';
+import { SubmitFormDto } from './dto/form.dto';
 import * as ExcelJS from 'exceljs';
-import { FORM_GUEST_IDENTITY_MISSING, FORM_GUEST_IDENTITY_NOT_ASKED } from './answer-bounds';
+import {
+  FORM_GUEST_IDENTITY_MISSING,
+  FORM_GUEST_IDENTITY_NOT_ASKED,
+  FORM_RESPONDENT_FIELDS_CHANGED,
+} from './answer-bounds';
 import type { ExportLabels } from './export-labels';
 import { FormsService } from './forms.service';
 import { legacyGuestFieldsMerge, storedGuestFields } from './guest-identity';
 import {
   accountSnapshot,
   accountStatuses,
+  announcedMatchesJoined,
+  askedOfMember,
   declaredIdentityFor,
   identityColumnsOf,
   joinedAccountFields,
+  joinsBeyondCursus,
   storedRespondentFields,
   type AccountIdentity,
 } from './respondent-identity';
+import { cursusSourceOf, showsCursusSource } from './respondent-source';
 
 /**
  * THE RESPONDENT'S ACCOUNT FIELDS A FORM JOINS TO EACH ANSWER (owner, 2026-11-16).
@@ -127,12 +141,28 @@ describe('the respondent account fields of a form', () => {
   };
 
   describe('the rule', () => {
-    it('joins nothing from an account on an anonymous form, and stores it so', () => {
+    it('joins at most the cursus from an account on an anonymous form, and stores it so', () => {
       expect(joinedAccountFields({ anonymous: true, respondentFields: ['lastName'] })).toEqual([]);
+      expect(
+        joinedAccountFields({ anonymous: true, respondentFields: ['campus', 'cursus', 'status'] })
+      ).toEqual(['cursus']);
+      expect(storedRespondentFields(['cursus', 'lastName'], true)).toEqual(['cursus']);
+      expect(joinsBeyondCursus(['cursus'])).toBe(false);
+      expect(joinsBeyondCursus([])).toBe(false);
+      expect(joinsBeyondCursus(undefined)).toBe(false);
+      expect(joinsBeyondCursus(['cursus', 'campus'])).toBe(true);
+      // One field, one source: a member is not asked the cursus the form reads from the account.
+      expect(
+        askedOfMember({ guestFields: ['cursus', 'status'], respondentFields: ['cursus'] })
+      ).toEqual(['status']);
+      expect(askedOfMember({ guestFields: ['cursus', 'status'], respondentFields: [] })).toEqual([
+        'cursus',
+        'status',
+      ]);
       expect(
         joinedAccountFields({ anonymous: false, respondentFields: ['campus', 'lastName'] })
       ).toEqual(['lastName', 'campus']);
-      expect(storedRespondentFields(['cursus'], true)).toEqual([]);
+      expect(storedRespondentFields(['campus'], true)).toEqual([]);
       expect(storedRespondentFields(['status', 'nickname'], false)).toEqual(['status']);
     });
 
@@ -371,8 +401,445 @@ describe('the respondent account fields of a form', () => {
       const base = { title: 'T', items: [], ownerId: 'u-owner', draft: true } as any;
       await service.create({ ...base }, false);
       expect(formRepo.save.mock.calls[0][0].respondentFields).toEqual(['lastName', 'firstName']);
-      await service.create({ ...base, anonymous: true, respondentFields: ['campus'] }, false);
+      await service.create({ ...base, anonymous: true }, false);
       expect(formRepo.save.mock.calls[1][0].respondentFields).toEqual([]);
+      await service.create(
+        { ...base, anonymous: true, respondentFields: ['cursus'], guestFields: ['cursus'] },
+        false
+      );
+      expect(formRepo.save.mock.calls[2][0].respondentFields).toEqual(['cursus']);
+    });
+
+    it('refuses an anonymous form that joins the cursus without asking it, by its typed code', async () => {
+      const { service, formRepo } = makeService(baseForm());
+      formRepo.findOne = jest.fn(() => Promise.resolve(null));
+      const base = {
+        title: 'T',
+        items: [],
+        ownerId: 'u-owner',
+        draft: true,
+        anonymous: true,
+      } as any;
+      expect(
+        await code(
+          service.create({ ...base, respondentFields: ['cursus'], guestFields: ['status'] }, false)
+        )
+      ).toBe('FORM_ANONYMOUS_CURSUS_NOT_ASKED');
+      expect(formRepo.save).not.toHaveBeenCalled();
+      await service.create(
+        { ...base, respondentFields: ['cursus'], guestFields: ['cursus'] },
+        false
+      );
+      expect(formRepo.save).toHaveBeenCalledTimes(1);
+    });
+
+    describe('an edit of a draft', () => {
+      const draft = (over: Record<string, unknown> = {}) =>
+        baseForm({
+          status: 'draft',
+          anonymous: false,
+          respondentFields: ['lastName', 'cursus'],
+          guestFields: ['cursus'],
+          ...over,
+        });
+      const edit = (over: Record<string, unknown> = {}) =>
+        ({ title: 'T', items: [], ownerId: 'u-owner', ...over }) as any;
+      const asManager = (service: FormsService, form: unknown) =>
+        jest.spyOn(service, 'assertFormManager').mockResolvedValue(form as any);
+
+      it('stores no join when it turns anonymous and sends no respondentFields (a named draft held the cursus)', async () => {
+        const form = draft();
+        const { service, formRepo } = makeService(form);
+        asManager(service, form);
+        await service.update('f1', edit({ anonymous: true }), 'u-owner', false);
+        expect(formRepo.save.mock.calls[0][0].respondentFields).toEqual([]);
+        // Nothing sent, nothing changed in anonymity: the stored join is kept as it was.
+        const kept = draft({ anonymous: true, respondentFields: ['cursus'] });
+        const second = makeService(kept);
+        asManager(second.service, kept);
+        await second.service.update('f1', edit(), 'u-owner', false);
+        expect(second.formRepo.save.mock.calls[0][0].respondentFields).toEqual(['cursus']);
+      });
+
+      it('stores no join when a joining anonymous draft goes back to named without respondentFields', async () => {
+        const form = draft({ anonymous: true, respondentFields: ['cursus'] });
+        const { service, formRepo } = makeService(form);
+        asManager(service, form);
+        await service.update('f1', edit({ anonymous: false }), 'u-owner', false);
+        expect(formRepo.save.mock.calls[0][0].respondentFields).toEqual([]);
+      });
+
+      it('refuses, by the same typed codes, an anonymous form that joins what it may not', async () => {
+        const form = draft({ anonymous: true, respondentFields: [] });
+        const { service, formRepo } = makeService(form);
+        asManager(service, form);
+        expect(
+          await code(
+            service.update('f1', edit({ respondentFields: ['cursus', 'status'] }), 'u-owner', false)
+          )
+        ).toBe('FORM_ANONYMOUS_ACCOUNT_FIELDS');
+        expect(
+          await code(
+            service.update(
+              'f1',
+              edit({ respondentFields: ['cursus'], guestFields: ['status'] }),
+              'u-owner',
+              false
+            )
+          )
+        ).toBe('FORM_ANONYMOUS_CURSUS_NOT_ASKED');
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+    });
+
+    it('refuses an anonymous form that joins a name, a status or a campus, by its typed code', async () => {
+      const { service, formRepo } = makeService(baseForm());
+      formRepo.findOne = jest.fn(() => Promise.resolve(null));
+      const base = {
+        title: 'T',
+        items: [],
+        ownerId: 'u-owner',
+        draft: true,
+        anonymous: true,
+      } as any;
+      for (const field of ['lastName', 'firstName', 'status', 'campus']) {
+        expect(
+          await code(service.create({ ...base, respondentFields: ['cursus', field] }, false))
+        ).toBe('FORM_ANONYMOUS_ACCOUNT_FIELDS');
+      }
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an anonymous form that reads the cursus from the account (owner, 2026-11-21)', () => {
+    /** A build that announces the join (`ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION`). */
+    const ANNOUNCING = '1.7.3';
+    const joining = (over: Record<string, unknown> = {}) =>
+      baseForm({ anonymous: true, guestFields: ['cursus'], respondentFields: ['cursus'], ...over });
+    /** How many transactions the submit opened (the seat lock and the registry live inside). */
+    const manager = (service: FormsService): number =>
+      ((service as any).submissionRepo.manager.transaction as jest.Mock).mock.calls.length;
+    const CURSUS = [
+      { promo: 2024, formation: 'ISMIN' },
+      { promo: 2022, formation: 'Autre' },
+    ];
+
+    it('reads the cursus of a member from the account, snapshot "account", nobody named', async () => {
+      const { service, saved, accountIdentity } = makeService(joining());
+      await service.submit(
+        'f1',
+        { answers: {}, userId: 'u1', clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+        'member'
+      );
+      expect(accountIdentity).toHaveBeenCalledWith('u1', { anonymous: true });
+      expect(saved[0]).toMatchObject({
+        userId: null,
+        respondentIdentity: { source: 'account', cursus: CURSUS },
+      });
+      const identity = saved[0].respondentIdentity as Record<string, unknown>;
+      expect(Object.keys(identity).sort()).toEqual(['cursus', 'source']);
+    });
+
+    it('marks which key came from the account when the rest is declared', async () => {
+      const { service, saved } = makeService(
+        joining({ guestFields: ['cursus', 'status', 'campus'] })
+      );
+      expect(
+        await code(
+          service.submit(
+            'f1',
+            { answers: {}, userId: 'u1', clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+            'member'
+          )
+        )
+      ).toBe(FORM_GUEST_IDENTITY_MISSING);
+      await service.submit(
+        'f1',
+        {
+          answers: {},
+          userId: 'u1',
+          declaredStatus: 'staff',
+          declaredCampus: 'gardanne',
+          clientVersion: ANNOUNCING,
+          announcedFields: ['cursus'],
+        },
+        'member'
+      );
+      expect(saved[0].respondentIdentity).toEqual({
+        source: 'declared',
+        status: ['staff'],
+        campus: 'gardanne',
+        cursus: CURSUS,
+        fromAccount: ['cursus'],
+      });
+    });
+
+    it('refuses a declared cursus from a member: one field, one source', async () => {
+      const { service, saved } = makeService(joining());
+      expect(
+        await code(
+          service.submit(
+            'f1',
+            {
+              answers: {},
+              userId: 'u1',
+              declaredFormation: 'ICM',
+              declaredPromo: 2020,
+              clientVersion: ANNOUNCING,
+              announcedFields: ['cursus'],
+            },
+            'member'
+          )
+        )
+      ).toBe(FORM_GUEST_IDENTITY_NOT_ASKED);
+      expect(saved).toHaveLength(0);
+    });
+
+    it('asks a guest the cursus, declared, and reads no account', async () => {
+      const { service, saved, accountIdentity } = makeService(joining({ isPublic: true }));
+      expect(
+        await code(
+          service.submit(
+            'f1',
+            { answers: {}, clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+            'guest'
+          )
+        )
+      ).toBe(FORM_GUEST_IDENTITY_MISSING);
+      await service.submit(
+        'f1',
+        {
+          answers: {},
+          declaredFormation: 'ICM',
+          declaredPromo: 2020,
+          clientVersion: ANNOUNCING,
+          announcedFields: ['cursus'],
+        },
+        'guest'
+      );
+      expect(accountIdentity).not.toHaveBeenCalled();
+      expect(saved[0].respondentIdentity).toEqual({
+        source: 'declared',
+        cursus: [{ promo: 2020, formation: 'ICM' }],
+      });
+    });
+
+    it('fails closed when core-service is down: 503, no answer and no registry row', async () => {
+      const { service, saved, accountIdentity } = makeService(joining());
+      accountIdentity.mockRejectedValueOnce(new ServiceUnavailableException('core-service down'));
+      await expect(
+        service.submit(
+          'f1',
+          { answers: {}, userId: 'u1', clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+          'member'
+        )
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(saved).toHaveLength(0);
+      // The seat lock and the registry are statements of the transaction: it never opened.
+      expect(manager(service)).toBe(0);
+    });
+
+    describe('a member is joined only to what their page announced (principle 1)', () => {
+      const asMember = (over: Record<string, unknown> = {}) => ({
+        answers: {},
+        userId: 'u1',
+        clientVersion: ANNOUNCING,
+        ...over,
+      });
+
+      it('refuses a form that began joining the cursus after the page loaded, then accepts the reload', async () => {
+        const { service, saved, accountIdentity, formRepo } = makeService(joining());
+        // The page loaded while the form joined nothing: it announced [].
+        expect(await code(service.submit('f1', asMember({ announcedFields: [] }), 'member'))).toBe(
+          FORM_RESPONDENT_FIELDS_CHANGED
+        );
+        expect(saved).toHaveLength(0);
+        expect(accountIdentity).not.toHaveBeenCalled();
+        // The page read the form again (its notice now names the cursus) and sends again.
+        expect(formRepo.findOne).toHaveBeenCalled();
+        await service.submit('f1', asMember({ announcedFields: ['cursus'] }), 'member');
+        expect(saved[0].respondentIdentity).toMatchObject({ source: 'account' });
+      });
+
+      it('refuses a named form whose joined fields changed, in either direction', async () => {
+        const { service, saved } = makeService(
+          baseForm({ respondentFields: ['lastName', 'campus'] })
+        );
+        for (const announcedFields of [['lastName'], ['lastName', 'firstName', 'campus'], []]) {
+          expect(await code(service.submit('f1', asMember({ announcedFields }), 'member'))).toBe(
+            FORM_RESPONDENT_FIELDS_CHANGED
+          );
+        }
+        expect(saved).toHaveLength(0);
+        await service.submit('f1', asMember({ announcedFields: ['campus', 'lastName'] }), 'member');
+        expect(saved).toHaveLength(1);
+      });
+
+      it('humours a named form from a build announcing nothing, [LEGACY]', async () => {
+        const { service, saved } = makeService(baseForm());
+        await service.submit('f1', asMember(), 'member');
+        expect(saved[0].respondentIdentity).toMatchObject({ source: 'account' });
+      });
+
+      it('compares canonically', () => {
+        expect(announcedMatchesJoined(['campus', 'lastName'], ['lastName', 'campus'])).toBe(true);
+        expect(announcedMatchesJoined([], [])).toBe(true);
+        expect(announcedMatchesJoined(['cursus'], [])).toBe(false);
+      });
+    });
+
+    it('says where each cursus came from once an anonymous form holds a certified one', () => {
+      const account = { source: 'account', cursus: CURSUS } as const;
+      const mixed = {
+        source: 'declared',
+        status: ['staff'],
+        cursus: CURSUS,
+        fromAccount: ['cursus'],
+      } as const;
+      const declared = { source: 'declared', cursus: [{ promo: 2020, formation: 'ICM' }] } as const;
+      expect(cursusSourceOf(account as any)).toBe('account');
+      expect(cursusSourceOf(mixed as any)).toBe('account');
+      expect(cursusSourceOf(declared as any)).toBe('declared');
+      expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' } as any)).toBeNull();
+      expect(cursusSourceOf(null)).toBeNull();
+      const rows = [{ respondentIdentity: declared as any }];
+      expect(showsCursusSource({ anonymous: true }, rows)).toBe(false);
+      expect(
+        showsCursusSource({ anonymous: true }, [...rows, { respondentIdentity: account as any }])
+      ).toBe(true);
+      // A named form never mixes in this column: its own columns stay as they were.
+      expect(
+        showsCursusSource({ anonymous: false }, [{ respondentIdentity: account as any }])
+      ).toBe(false);
+    });
+
+    it('never joins an anonymous form for a new build that announces nothing: it is asked', async () => {
+      const { service, saved, accountIdentity } = makeService(joining());
+      await service.submit(
+        'f1',
+        {
+          answers: {},
+          userId: 'u1',
+          clientVersion: ANNOUNCING,
+          declaredPromo: 2020,
+          declaredFormation: 'ICM',
+        },
+        'member'
+      );
+      expect(accountIdentity).not.toHaveBeenCalled();
+      expect(saved[0].respondentIdentity).toMatchObject({ source: 'declared' });
+    });
+
+    it('keeps announcedFields through the real ValidationPipe whitelist', async () => {
+      const pipe = new ValidationPipe({ whitelist: true, transform: true });
+      const dto = await pipe.transform(
+        { answers: {}, announcedFields: ['cursus'] },
+        { type: 'body', metatype: SubmitFormDto }
+      );
+      expect(dto.announcedFields).toEqual(['cursus']);
+      await expect(
+        pipe.transform(
+          { answers: {}, announcedFields: [1] },
+          { type: 'body', metatype: SubmitFormDto }
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    describe('no log line pairs a person with the anonymous form', () => {
+      const FORM = 'f1-DISTINCTIVE-form-id';
+      const USER = 'u1-DISTINCTIVE-user-id';
+      let lines: string[];
+      const spies: jest.SpyInstance[] = [];
+      beforeEach(() => {
+        lines = [];
+        for (const level of ['log', 'debug', 'warn', 'error', 'verbose'] as const) {
+          spies.push(
+            jest
+              .spyOn(Logger.prototype, level)
+              .mockImplementation(
+                (...args: unknown[]) => void lines.push(args.map(String).join(' '))
+              )
+          );
+        }
+      });
+      afterEach(() => spies.splice(0).forEach((s) => s.mockRestore()));
+      const names = () =>
+        lines.filter((l) => l.includes(FORM.slice(0, 8)) || l.includes(USER.slice(0, 8)));
+
+      it('on a joined answer', async () => {
+        const { service } = makeService(joining({ id: FORM }));
+        await service.submit(
+          FORM,
+          { answers: {}, userId: USER, clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+          'member'
+        );
+        expect(lines.length).toBeGreaterThan(0);
+        expect(names()).toEqual([]);
+      });
+
+      it('on a refused answer (page out of date) and a declared one', async () => {
+        const { service } = makeService(joining({ id: FORM }));
+        await code(
+          service.submit(
+            FORM,
+            { answers: {}, userId: USER, clientVersion: ANNOUNCING, announcedFields: [] },
+            'member'
+          )
+        );
+        await code(
+          service.submit(
+            FORM,
+            {
+              answers: {},
+              userId: USER,
+              clientVersion: ANNOUNCING,
+              announcedFields: ['cursus'],
+              declaredPromo: 2020,
+            } as any,
+            'member'
+          )
+        );
+        // A member carrying a guest name is refused too: that line names no anonymous form.
+        await code(
+          service.submit(
+            FORM,
+            {
+              answers: {},
+              userId: USER,
+              clientVersion: ANNOUNCING,
+              announcedFields: ['cursus'],
+              guestFirstName: 'Ada',
+            } as any,
+            'member'
+          )
+        );
+        expect(names()).toEqual([]);
+      });
+    });
+
+    it('reads nothing for a build that cannot announce it: it is asked as before', async () => {
+      for (const clientVersion of [undefined, '1.6.12']) {
+        const { service, saved, accountIdentity } = makeService(joining());
+        await service.submit('f1', { answers: {}, userId: 'u1', clientVersion }, 'member');
+        expect(accountIdentity).not.toHaveBeenCalled();
+        expect(saved[0].respondentIdentity).toMatchObject({ source: 'declared' });
+      }
+      const { service, saved } = makeService(joining());
+      await service.submit(
+        'f1',
+        {
+          answers: {},
+          userId: 'u1',
+          declaredFormation: 'ICM',
+          declaredPromo: 2020,
+          clientVersion: '1.7.2',
+        },
+        'member'
+      );
+      expect(saved[0].respondentIdentity).toEqual({
+        source: 'declared',
+        cursus: [{ promo: 2020, formation: 'ICM' }],
+      });
     });
   });
 
@@ -440,6 +907,46 @@ describe('the respondent account fields of a form', () => {
       paymentStatus: 'free',
       createdAt: new Date(2026, 10, 16, 12, 0),
       ...over,
+    });
+
+    it('adds a Source column once an anonymous form holds a certified cursus, in the client words', async () => {
+      const labels = {
+        ...LABELS,
+        identity: {
+          ...LABELS.identity!,
+          source: 'Source',
+          sourceAccount: 'compte',
+          sourceDeclared: 'declare',
+        },
+      };
+      const form = baseForm({
+        anonymous: true,
+        guestFields: ['cursus'],
+        respondentFields: ['cursus'],
+      });
+      const { service } = exporter(form, [
+        sub({
+          id: 's1',
+          respondentIdentity: { source: 'account', cursus: [{ promo: 2024, formation: 'ISMIN' }] },
+        }),
+        sub({
+          id: 's2',
+          respondentIdentity: { source: 'declared', cursus: [{ promo: 2020, formation: 'ICM' }] },
+        }),
+      ]);
+      const [header, first, second] = await rows(service, labels);
+      expect(header).toEqual(['Date', 'Promo', 'Formation', 'Source', 'Menu']);
+      expect(first.slice(1)).toEqual(['2024', 'ISMIN', 'compte', 'vege']);
+      expect(second.slice(1)).toEqual(['2020', 'ICM', 'declare', 'vege']);
+      // Declared alone: no column, nothing to tell apart. A build sending no source words gets the French ones.
+      const declaredOnly = exporter(form, [
+        sub({ respondentIdentity: { source: 'declared', cursus: [] } }),
+      ]);
+      expect((await rows(declaredOnly.service, labels))[0]).not.toContain('Source');
+      const legacy = exporter(form, [
+        sub({ respondentIdentity: { source: 'account', cursus: [] } }),
+      ]);
+      expect((await rows(legacy.service))[0]).toContain('Source');
     });
 
     it('writes the snapshot as columns, in the words the client sent', async () => {

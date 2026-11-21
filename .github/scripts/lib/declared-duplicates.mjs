@@ -216,6 +216,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'where the cursus of an anonymous form answer came from (the account or the respondent), and when the list and the export say so',
+    compare: 'exact',
+    why: 'the export (server) and the responses list (screen) read ONE snapshot key by ONE rule, so a certified promo is never mixed silently with a declared one (review, 2026-11-21). No shared TS package, for the reason the option rule above gives; the file imports nothing. Its specs sit beside both copies.',
+    files: [
+      'frontend/src/lib/forms/respondentSource.ts',
+      'apps/social-service/src/forms/respondent-source.ts',
+    ],
+  },
+  {
     what: 'the priced grid (`product_grid`): its stored shape, its refusal codes, the rule a definition and an answer obey, and how a quantity becomes a priced line',
     compare: 'exact',
     why: 'the editor refuses what the save refuses, and the fill page totals what the submit charges, so both must read the grid by one rule; the server still recomputes every amount. No shared TS package, and the file imports nothing. Its spec sits beside the social-service copy.',

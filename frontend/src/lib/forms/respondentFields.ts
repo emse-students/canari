@@ -8,6 +8,7 @@ import {
   type Formation,
 } from '$lib/profile/miconnectProfile';
 import type { Submission } from './api';
+import { cursusSourceOf } from './respondentSource';
 
 /**
  * THE RESPONDENT'S ACCOUNT FIELDS A FORM JOINS TO EACH ANSWER (owner, 2026-11-16) - the client half
@@ -25,6 +26,12 @@ import type { Submission } from './api';
  *
  * The respondent is told, before sending, which fields will reach the organiser (principle 1 of
  * the charter, docs/principes.md).
+ *
+ * ONE exception on an anonymous form (owner, 2026-11-21: "Oui, en option, avec avis"): the
+ * organiser may have a MEMBER's "Promo et formation" read from the account instead of declared -
+ * certified, and announced before sending. It is the box `cursusFromAccount`, saved as
+ * `respondentFields: ['cursus']` beside `guestFields` still asking the cursus (a guest has no
+ * account and declares it). Never the name, the status or the campus.
  */
 
 /** Every choice the editor offers, in the order it and the respondent notice show them. */
@@ -35,6 +42,7 @@ const RESPONDENT_CHOICES = [
   'cursus',
   'status',
   'campus',
+  'cursusFromAccount',
 ] as const;
 export type RespondentChoice = (typeof RESPONDENT_CHOICES)[number];
 
@@ -67,6 +75,8 @@ export interface RespondentIdentity {
   cursus?: RespondentCursus[];
   status?: RespondentStatus[];
   campus?: string | null;
+  /** The keys read from the account in a snapshot that also holds declared ones (the server's). */
+  fromAccount?: AccountField[];
   /**
    * The asked declared fields a store build older than the questions could not send: the server
    * took its answer without them (`predatesDeclaredFields`), and the list reads them as such.
@@ -95,20 +105,51 @@ export function joinedAccountFields(stored: readonly string[] | null | undefined
 /**
  * The editor's ticks, from a stored form: what it joins and what it asks, as one set. A form saved
  * before the account fields joined the two names and asked guests separately; both show here, and
- * the next save applies the one set to both (a guest is then asked what a member gives).
+ * the next save applies the one set to both (a guest is then asked what a member gives). On an
+ * anonymous form a joined cursus is its own box (`cursusFromAccount`), the cursus staying asked.
  */
 export function editorChoicesOf(form: {
+  anonymous?: boolean | null;
   respondentFields?: readonly string[] | null;
   guestFields?: readonly string[] | null;
 }): RespondentChoice[] {
-  const all = [...(form.respondentFields ?? []), ...(form.guestFields ?? [])];
+  const joined = form.respondentFields ?? [];
+  const all: string[] = [...joined, ...(form.guestFields ?? [])];
+  if (form.anonymous && joined.includes('cursus')) all.push('cursusFromAccount');
   return pick(all, RESPONDENT_CHOICES);
 }
 
-/** Which choices a form can offer: an anonymous form asks no name nor e-mail; the e-mail is a guest's. */
+/**
+ * Which choices a form can offer: an anonymous form asks no name nor e-mail and may read the cursus
+ * from the account; the e-mail is a guest's.
+ */
 export function offeredChoices(isPublic: boolean, anonymous: boolean): RespondentChoice[] {
-  if (anonymous) return [...DECLARED_FIELDS];
-  return RESPONDENT_CHOICES.filter((c) => c !== 'email' || isPublic);
+  if (anonymous) return [...DECLARED_FIELDS, 'cursusFromAccount'];
+  return RESPONDENT_CHOICES.filter((c) =>
+    c === 'cursusFromAccount' ? false : c !== 'email' || isPublic
+  );
+}
+
+/** Whether an anonymous form reads its members' cursus from the account (`respondentFields`). */
+export function joinsCursusFromAccount(form: {
+  anonymous?: boolean | null;
+  respondentFields?: readonly string[] | null;
+}): boolean {
+  return form.anonymous === true && (form.respondentFields ?? []).includes('cursus');
+}
+
+/**
+ * What a MEMBER of an anonymous form is asked to declare: the form's declared fields without the
+ * cursus when the form reads it from the account - one field, one source. A guest declares it all
+ * (`askedDeclaredFields`).
+ */
+export function askedOfMember(form: {
+  anonymous?: boolean | null;
+  respondentFields?: readonly string[] | null;
+  guestFields?: readonly string[] | null;
+}): DeclaredField[] {
+  const asked = askedDeclaredFields(form.guestFields);
+  return joinsCursusFromAccount(form) ? asked.filter((f) => f !== 'cursus') : asked;
 }
 
 /**
@@ -121,9 +162,20 @@ export function respondentSettingsPayload(
   form: { isPublic: boolean; anonymous: boolean }
 ): { respondentFields: AccountField[]; guestFields: RespondentChoice[] } {
   const offered = pick(choices, offeredChoices(form.isPublic, form.anonymous));
+  // The join needs the cursus ticked too: a guest of the form is asked it, and the box without it
+  // would join a field nobody ticked.
+  const joinsCursus = offered.includes('cursusFromAccount') && offered.includes('cursus');
   return {
-    respondentFields: form.anonymous ? [] : pick(offered, ACCOUNT_FIELDS),
-    guestFields: form.anonymous ? pick(offered, DECLARED_FIELDS) : form.isPublic ? offered : [],
+    respondentFields: form.anonymous
+      ? joinsCursus
+        ? ['cursus']
+        : []
+      : pick(offered, ACCOUNT_FIELDS),
+    guestFields: form.anonymous
+      ? pick(offered, DECLARED_FIELDS)
+      : form.isPublic
+        ? offered.filter((c) => c !== 'cursusFromAccount')
+        : [],
   };
 }
 
@@ -142,6 +194,8 @@ export function respondentChoiceLabel(choice: RespondentChoice): string {
       return m.form_respondent_field_status();
     case 'campus':
       return m.form_respondent_field_campus();
+    case 'cursusFromAccount':
+      return m.form_respondent_field_cursus_from_account();
   }
 }
 
@@ -295,6 +349,14 @@ export function identityCellText(
     case 'campus':
       return identity?.campus ? campusWord(identity.campus) : '';
   }
+}
+
+/** The word of a cursus source in the list ("compte" / "declare"); blank when the answer has none. */
+export function cursusSourceText(identity: RespondentIdentity | null | undefined): string {
+  const source = cursusSourceOf(identity);
+  if (source === 'account') return m.form_respondent_source_account();
+  if (source === 'declared') return m.form_respondent_source_declared();
+  return '';
 }
 
 /** The responses list's identity filter: a value per criterion, '' for "every". */
