@@ -1580,11 +1580,29 @@ donate the leaving account's sender again. So:
 - **Strip first, erase second.** `clearAuthUnderway` hands `endPushRegistration`'s promise (which
   strips the context and never rejects) to `eraseAccountShortcuts`, whose notifications' half runs
   only once it settled.
+- **The erase is OWED ON DISK, not in that promise** (re-review of #3938). The promise settles only
+  after the FCM token deletion and a fresh token fetch - seconds offline - and an app swiped away
+  meanwhile never runs what is chained on it. So the sign-out writes
+  `notification_shortcuts_erase_owed` (`owed <n>`) with its two push marks, BEFORE the strip
+  (`end_push_registration_files`, `push_registration.rs`); the erase reads `n` before asking the
+  native side and settles exactly that `n` once it answered (`done <n>`, the count only grows, so an
+  erase begun for one sign-out never settles a later one's), and a failed erase stays owed.
+  `honourOwedNotificationErase` completes one still owed **at launch** (the root layout) and
+  **before a session's push context is stored** (`storeSessionPushContext`) - before the extension's
+  proof of an account exists again. The wipe of a revoked device keeps the mark, as it keeps the
+  other two. Same mark and same honouring on Android, for the `chat_<group>` shortcuts.
 - **A donation the sign-out overtook withdraws itself.** Each interaction carries its own id; when
   its donation completes, the extension reads the context again (`signedInUserId`) and, if it no
-  longer names the donor, deletes exactly that interaction and delivers the plain banner. A donation
-  that completed before the strip was taken by the group delete; one completing after it is seen
-  here - every order is covered, none by a clock.
+  longer names the donor, deletes exactly that interaction. A donation that completed before the
+  strip was taken by the group delete; one completing after it is seen here - every order is
+  covered, none by a clock. **The run is answered inside the delete's completion**, on its success
+  and its error alike (an error logs `ERROR` with its type): answered beside it, the extension could
+  be reaped with the delete still in flight.
+- **And its banner is blanked, the iOS form of a push dropped after a sign-out.** The plain banner
+  would still name the account that left's sender; an extension cannot suppress an alert push
+  without the filtering entitlement (`LevelDecision`), so `blankSignedOutContent` delivers it with
+  no title, body, face or sound, `passive` - what `applyCallControlContent` does for a call signal.
+  Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one.
 - **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
   and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
   same erase.

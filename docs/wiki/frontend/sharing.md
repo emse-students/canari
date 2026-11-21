@@ -225,7 +225,10 @@ preselection, never a destination by itself.
   suggestions (only the native record knows for certain; the setting's own clear may skip when the
   page knows it published nothing), resets the "last told" state so the next account publishes its
   own, and calls `clear_conversation_shortcuts`. The calls are queued, so they land after any
-  publish already in flight.
+  publish already in flight. That last erase is OWED ON DISK from before the sign-out strips the
+  push context (`notification_shortcuts_erase_owed`), settled once the native side answered, and
+  completed at the next launch or before the next session's context if the app did not live to
+  finish it ([mobile](mobile.md#communication-notifications-owner-2026-11-21)).
 - **The conversation shortcuts** (`chat_<group>`, long-lived, a name and a Person each): the
   messaging service pushes them only through `ConversationShortcuts.push` (in the plugin, which the
   app module depends on), which records the id before pushing - an unrecorded push is refused - and

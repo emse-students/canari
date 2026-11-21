@@ -53,6 +53,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { honourOwedNotificationErase } from '$lib/sharing/shareTargetsNative';
 import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
@@ -1399,7 +1400,16 @@ export class TauriMlsService extends BaseMlsService {
   ): void {
     void after
       .then(() => getToken())
-      .then((pushToken: string) => {
+      .then(async (pushToken: string) => {
+        if (signOutGeneration() !== generation) {
+          console.log(
+            `[MLS][Tauri] push_context write after ${site} dropped - a sign-out began since it was asked`
+          );
+          return;
+        }
+        // What a previous account's notifications handed the system goes BEFORE this context
+        // exists: it is the proof the iPhone's extension donates on (review of #3938).
+        await honourOwedNotificationErase(`before the push context after ${site}`);
         if (signOutGeneration() !== generation) {
           console.log(
             `[MLS][Tauri] push_context write after ${site} dropped - a sign-out began since it was asked`

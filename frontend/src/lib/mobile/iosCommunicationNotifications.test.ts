@@ -87,8 +87,8 @@ describe('the extension donates, THEN redraws', () => {
   });
 
   it('every way out of the step delivers, and the degraded path says WARN with the error type', () => {
-    // A skip and the completion both end in `finish`.
-    expect(styleStep.match(/finish\(\)/g)?.length).toBe(2);
+    // A skip, a refused donation, a withdrawal's completion and a redraw each end in `finish`.
+    expect(styleStep.match(/finish\(\)/g)?.length).toBe(4);
     expect(styleStep).toMatch(/WARN communication style not applied[^\n]*degraded path/);
     expect(adopt).toMatch(
       /catch \{[\s\S]*?type\(of: error\)[\s\S]*?WARN communication style not applied/
@@ -138,11 +138,38 @@ describe('no donation outlives the account it named (review of #3938)', () => {
     expect(nse).toContain('signedInUserId: ctx?.userId)');
   });
 
-  it('a donation the sign-out overtook withdraws exactly itself, and the plain banner goes out', () => {
+  it('a donation the sign-out overtook withdraws exactly itself, blanked, and answers only after', () => {
     expect(styleStep).toContain('interaction.identifier = donationId');
-    expect(styleStep).toMatch(
-      /else if Self\.signedInUserId\(\) != donor \{[\s\S]*?INInteraction\.delete\(with: \[donationId\]\)[\s\S]*?\} else \{\s*self\.adoptCommunicationContent/
+    const withdrawn = capture(
+      styleStep,
+      /else if Self\.signedInUserId\(\) != donor \{([\s\S]*?)\n {6}\} else \{\s*self\.adoptCommunicationContent/
     );
+    // Blanked BEFORE the delete, so an expiry meanwhile delivers the blank one.
+    expect(withdrawn.indexOf('self.blankSignedOutContent()')).toBeGreaterThan(-1);
+    expect(withdrawn.indexOf('self.blankSignedOutContent()')).toBeLessThan(
+      withdrawn.indexOf('INInteraction.delete(with: [donationId])')
+    );
+    // `finish` runs inside the delete's completion, on both its paths - never beside it.
+    const completion = capture(
+      withdrawn,
+      /INInteraction\.delete\(with: \[donationId\]\) \{ error in([\s\S]*)\}\s*$/
+    );
+    expect(completion).toMatch(
+      /if let error = error \{[\s\S]*?ERROR[\s\S]*?\}[\s\S]*?self\.finish\(\)/
+    );
+    expect(withdrawn.match(/finish\(\)/g)?.length).toBe(1);
+    const blank = capture(nse, /private func blankSignedOutContent\(\) \{([\s\S]*?)\n {2}\}\n/);
+    expect(blank).toContain('deliveryLock.lock()');
+    expect(blank).toContain('guard contentHandler != nil');
+    for (const field of [
+      'title = ""',
+      'subtitle = ""',
+      'body = ""',
+      'sound = nil',
+      'attachments = []',
+    ]) {
+      expect(blank).toContain(`blank.${field}`);
+    }
   });
 
   it('the sign-out strips the context BEFORE it erases the donations', () => {
@@ -151,8 +178,25 @@ describe('no donation outlives the account it named (review of #3938)', () => {
     expect(auth).toContain("void eraseAccountShortcuts('signed out', pushEnded);");
     const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
     expect(native).toContain(
-      'return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason));'
+      "return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason, 'always'));"
     );
+  });
+
+  it('the erase is OWED on disk from before the strip, and honoured before the next proof exists', () => {
+    const rust = read(resolve(TAURI, 'src/commands/push_registration.rs'));
+    const files = capture(rust, /fn end_push_registration_files_then\(([\s\S]*?)\n\}\n/);
+    expect(files.indexOf('mark_notification_erase_owed(data_dir)')).toBeGreaterThan(-1);
+    expect(files.indexOf('mark_notification_erase_owed(data_dir)')).toBeLessThan(
+      files.indexOf('keep_device_context_only(data_dir, extension_dir)')
+    );
+    // Honoured before a session's context is stored, and at launch.
+    const mls = read(resolve(here, '../services/TauriMlsService.ts'));
+    expect(mls.indexOf('await honourOwedNotificationErase(')).toBeGreaterThan(-1);
+    expect(mls.indexOf('await honourOwedNotificationErase(')).toBeLessThan(
+      mls.indexOf("invoke('store_push_context'")
+    );
+    const layout = read(resolve(here, '../../routes/+layout.svelte'));
+    expect(layout).toContain("void honourOwedNotificationErase('launch');");
   });
 
   it('a group mention declares a recipient count, which would otherwise draw it as a DM', () => {

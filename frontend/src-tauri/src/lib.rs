@@ -89,7 +89,8 @@ use crate::commands::push::{
     take_key_group_push_joins, unclaimed_quick_replies,
 };
 use crate::commands::push_registration::{
-    complete_owed_push_token_deletion, end_push_registration,
+    complete_owed_push_token_deletion, end_push_registration, notification_shortcuts_erase_owed,
+    settle_notification_shortcuts_erase,
 };
 use crate::commands::storage::{
     clear_app_data, delete_user_database, get_installer_package, get_local_storage_usage,
@@ -1908,6 +1909,8 @@ pub fn run() {
             preclaim_device_notices,
             end_push_registration,
             complete_owed_push_token_deletion,
+            notification_shortcuts_erase_owed,
+            settle_notification_shortcuts_erase,
             clear_app_data,
             delete_user_database,
             delete_user_mls_state,

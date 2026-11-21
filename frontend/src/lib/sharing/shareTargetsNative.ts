@@ -215,6 +215,12 @@ export function clearShareTargets(
  * donate the leaving account's sender again, after the erase. Strip first, erase second: a donation
  * completing before the strip is taken by the erase, one completing after it withdraws itself
  * (`NotificationService.signedInUserId`). `pushEnded` never rejects.
+ *
+ * AND THE ERASE IS OWED ON DISK, NOT IN THIS PROMISE. `pushEnded` settles only after the FCM network
+ * step (seconds offline), and an app swiped away meanwhile never runs what is chained on it. So the
+ * sign-out writes `notification_shortcuts_erase_owed` BEFORE it strips (`push_registration.rs`),
+ * this erase settles it once the native side answered, and {@link honourOwedNotificationErase}
+ * completes one still owed at the next launch and before the next session's context is stored.
  */
 export function eraseAccountShortcuts(
   reason: string,
@@ -222,18 +228,55 @@ export function eraseAccountShortcuts(
 ): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
   void clearShareTargets(reason, { force: true });
-  return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason));
+  return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason, 'always'));
 }
 
-/** The notifications' half of {@link eraseAccountShortcuts}, queued like every native call here. */
-function eraseNotificationShortcuts(reason: string): Promise<void> {
+/**
+ * Completes the notifications' erase a sign-out left OWED (`notification_shortcuts_erase_owed`):
+ * at launch, and before a session's push context is stored - the context the iPhone's extension
+ * reads as its proof of an account, so the leaving account's donations are gone before a new proof
+ * exists. Does nothing when none is owed. Phone apps only; never throws.
+ */
+export function honourOwedNotificationErase(reason: string): Promise<void> {
+  if (!isMobileTauriRuntime()) return Promise.resolve();
+  return eraseNotificationShortcuts(reason, 'if-owed');
+}
+
+/**
+ * The notifications' half of {@link eraseAccountShortcuts} and of
+ * {@link honourOwedNotificationErase}, queued like every native call here. Reads the erase owed
+ * BEFORE asking the native side and settles exactly that one after it answered, so an erase begun
+ * for one sign-out never settles a later one's. An erase that failed stays owed.
+ */
+function eraseNotificationShortcuts(reason: string, when: 'always' | 'if-owed'): Promise<void> {
   return enqueue(async () => {
+    let owed: number | null = null;
+    try {
+      owed = (await invoke<number | null>('notification_shortcuts_erase_owed')) ?? null;
+    } catch (err) {
+      // Nothing says whether one is owed: erasing is the safe side, and nothing can be settled.
+      console.error(`[share-targets] the owed erase could not be read (${reason})`, err);
+    }
+    if (when === 'if-owed' && owed === null) {
+      Log.d('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
+      return;
+    }
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
       // iOS deletes a donation group without counting it, so it always answers 0.
       Log.d('ShareTargets', `conversation shortcuts erased, ${removed} counted (${reason})`);
     } catch (err) {
-      console.error(`[share-targets] the conversation shortcuts were not erased (${reason})`, err);
+      console.error(
+        `[share-targets] the conversation shortcuts were not erased - still owed (${reason})`,
+        err
+      );
+      return;
+    }
+    if (owed === null) return;
+    try {
+      await invoke<boolean>('settle_notification_shortcuts_erase', { owed });
+    } catch (err) {
+      console.error(`[share-targets] the erase was done but not settled (${reason})`, err);
     }
   });
 }

@@ -69,6 +69,7 @@
   import { bindPeerNames } from '$lib/utils/users/peerNameStore';
   import { bindLocalCopies } from '$lib/localCopies/localCopyStore.svelte';
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
+  import { honourOwedNotificationErase } from '$lib/sharing/shareTargetsNative';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
@@ -219,6 +220,9 @@
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
+    // A sign-out the app did not live to finish still owes the erase of what the message
+    // notifications handed the system (`honourOwedNotificationErase`). Nothing when none is owed.
+    void honourOwedNotificationErase('launch');
     // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
     dropRetiredKlipyCustomerId();
     // A DM read mark a killed process still owed goes to the outbox the moment one is registered,

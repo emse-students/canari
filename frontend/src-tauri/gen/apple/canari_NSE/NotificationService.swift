@@ -1982,24 +1982,58 @@ class NotificationService: UNNotificationServiceExtension {
         let kind = String(describing: type(of: error))
         NseLog.log.warning(
           "[CanariNSE] WARN communication style not applied - the donation was refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+        self.finish()
       } else if Self.signedInUserId() != donor {
-        // THE SIGN-OUT OVERTOOK THE DONATION. The app strips the context BEFORE it deletes the
-        // donation group (`eraseAccountShortcuts` waits for `endPushRegistration`), so a donation
-        // that completed before the strip was taken by the group delete, and one completing after
-        // it is seen here - every order is covered, none by a clock. It withdraws itself.
+        // THE SIGN-OUT OVERTOOK THE DONATION. The app writes the erase it owes and strips the
+        // context BEFORE it deletes the donation group (`push_registration.rs`,
+        // `eraseAccountShortcuts`), so a donation that completed before the strip is taken by that
+        // delete, and one completing after it is seen here - every order is covered, none by a
+        // clock. It withdraws itself, and the banner of the account that left is blanked: the iOS
+        // form of a push dropped after a sign-out (no filtering entitlement - see `LevelDecision`).
+        // The run is answered only once the withdrawal answered: answered before, the extension
+        // may be reaped with the delete still in flight (review of #3938).
         NseLog.log.notice(
-          "[CanariNSE] communication style withdrawn - the account signed out during the donation; the plain notification is delivered")
+          "[CanariNSE] communication style withdrawn - the account signed out during the donation; the banner is blanked")
+        self.blankSignedOutContent()
         INInteraction.delete(with: [donationId]) { error in
           if let error = error {
+            let kind = String(describing: type(of: error))
             NseLog.log.error(
-              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(errorReason(error), privacy: .public))")
+              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the app's erase owed on disk takes it")
+          } else {
+            NseLog.log.debug("[CanariNSE] the overtaken donation is withdrawn")
           }
+          self.finish()
         }
       } else {
         self.adoptCommunicationContent(intent, isGroup: isGroup)
+        self.finish()
       }
-      self.finish()
     }
+  }
+
+  /// Blanks the best-attempt content of a run whose account signed out while it ran: no name, no
+  /// text, no face, no sound, passive - an extension cannot suppress an alert push, so this is the
+  /// nearest it comes to dropping one (`applyCallControlContent` does the same). Under
+  /// `deliveryLock`, and nothing when the run was already answered (an expiry delivered it).
+  private func blankSignedOutContent() {
+    deliveryLock.lock()
+    defer { deliveryLock.unlock() }
+    guard contentHandler != nil,
+      let blank = bestAttemptContent?.mutableCopy() as? UNMutableNotificationContent
+    else {
+      NseLog.log.notice("[CanariNSE] the run was already answered - nothing blanked")
+      return
+    }
+    blank.title = ""
+    blank.subtitle = ""
+    blank.body = ""
+    blank.sound = nil
+    blank.attachments = []
+    if #available(iOS 15.0, *) {
+      blank.interruptionLevel = .passive
+    }
+    bestAttemptContent = blank
   }
 
   /// The account `push_context.json` says is signed in, or nil when none is: the file absent,
