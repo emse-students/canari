@@ -16,7 +16,8 @@
  * to the system camera app - the capture screen is the app's own (R3).
  */
 import { facingConstraint, lensIsExact, type CameraFacing } from '$lib/utils/cameraFacing';
-import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
+import { RECORDING_AUDIO_CONSTRAINTS } from '$lib/utils/audio/recordingConstraints';
+import { cameraVideoConstraints } from './framedCapture';
 import { captureUserMedia } from '$lib/utils/audioSession';
 import { logCaptureAudioLayout } from '$lib/utils/audioLayout';
 import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
@@ -128,7 +129,7 @@ export async function openReelCamera(
           height: { ideal: wanted.height },
           frameRate: { ideal: wanted.frameRate },
         },
-        audio: withAudio ? REEL_AUDIO_CONSTRAINTS : false,
+        audio: withAudio ? RECORDING_AUDIO_CONSTRAINTS : false,
       },
       'reel-camera'
     );
@@ -191,7 +192,7 @@ export function postCameraOpener(): (
     try {
       const mic = await captureUserMedia(
         navigator.mediaDevices,
-        { audio: REEL_AUDIO_CONSTRAINTS },
+        { audio: RECORDING_AUDIO_CONSTRAINTS },
         'post-camera'
       );
       logCaptureAudioLayout('camera', mic);
