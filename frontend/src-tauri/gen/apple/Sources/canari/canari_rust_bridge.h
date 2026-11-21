@@ -132,6 +132,10 @@ int canari_outbox_fold(const char *data_dir);
 /// 1 when written, 0 (logged) otherwise: the mirror is then as it was.
 int canari_outbox_write_mirror(const char *data_dir, const char *body);
 
+/// The SENDABLE entries queued in `data_dir` - the mirror and the journal not folded yet, each id
+/// once. -1 (logged) when they could not be read.
+int canari_outbox_queued_count(const char *data_dir);
+
 char *canari_native_build_call_hangup_proto(
     const char *message_id,
     long long sent_at,

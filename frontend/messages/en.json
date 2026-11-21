@@ -133,6 +133,7 @@
   "chat_search_placeholder": "Search…",
   "chat_new_channel_title": "New channel",
   "chat_new_discussion_title": "New discussion",
+  "chat_outbox_native_queue_unreachable": "Replies sent from your notifications cannot be read right now: they are held and shown as not sent, with a retry. Messages you send from the app still go.",
   "chat_outbox_lines_unreadable": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

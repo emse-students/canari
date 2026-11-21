@@ -66,6 +66,7 @@ import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
 import {
   adoptOrphanedMirrorEntries,
   mirrorHoldsSentLines,
+  reportNativeQueueUnreachable,
   syncOutboxMirror,
   type MirrorClaims,
 } from '$lib/utils/chat/outboxMirror';
@@ -987,6 +988,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * runs it again.
    */
   let startPass: Promise<void> | null = null;
+  /** Whether the member was told of the current run of failed start passes (once per run). */
+  let unreachableTold = false;
   /**
    * Consecutive upload attempts per entry that ended with NO ANSWER (typed: a stall, an unanswered
    * body, a rejected `fetch`). At {@link UPLOAD_NO_ANSWER_ATTEMPTS} the entry is parked as `failed`.
@@ -1223,6 +1226,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function writeMirror(queue: OutboxEntry[]): Promise<boolean> {
     const landed = await syncOutboxMirror(queue);
+    // A WRITE THAT LANDS MAKES EVERY LINE IT HOLDS THE PAGE'S: an adopted entry is no longer one a
+    // background drain may send, so its durable mark goes - before the claim raises a flush, so a
+    // start pass failing meanwhile never holds it again ({@link holdAdoptedEntries}).
+    if (landed && storage) {
+      for (const entry of queue.filter((e) => e.adoptedFromMirror)) {
+        await storage
+          .updateOutboxEntry(entry.id, { adoptedFromMirror: undefined }, deviceKey())
+          .catch((e) =>
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… claimed, its adopted mark not cleared (held again only by a failed start pass): ${String(e)}`
+            )
+          );
+      }
+    }
     if (landed && unclaimed.size > 0) {
       const claimed = queue.filter((e) => unclaimed.delete(e.id));
       if (claimed.length > 0) {
@@ -1265,6 +1282,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // On screen, pending - or failed with its Retry: unclaimed, or marked unsendable natively.
     await controller.applyPendingStatuses();
     return adopted;
+  }
+
+  /**
+   * After a failed start pass: holds every queued entry adopted from the mirror ({@link unclaimed}),
+   * draws it failed with its Retry, and tells the member once per run of failures.
+   */
+  async function holdAdoptedEntries(): Promise<void> {
+    const adopted = (await readQueue('start pass failed')).filter((e) => e.adoptedFromMirror);
+    for (const entry of adopted) unclaimed.add(entry.id);
+    if (!unreachableTold) {
+      unreachableTold = true;
+      reportNativeQueueUnreachable(adopted.length);
+    }
+    if (adopted.length > 0) await controller.applyPendingStatuses();
   }
 
   /** {@link startPass}, started by the first flush and awaited by every flush until it settles. */
@@ -3450,17 +3481,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!storage) return;
     try {
       await claimAtStart();
+      unreachableTold = false;
     } catch (e) {
-      // Nothing is flushed past a start pass that did not run: what it would have held could be
-      // sent here AND by a background drain. NO TIMER runs it again: the next real trigger does -
-      // an enqueue, a resume or `canari:foreground`, a reconnect, a mirror write that lands, a
-      // Retry tap - each of which raises a flush. Meanwhile the queue shows what it holds: pending,
-      // or failed with its Retry where its own failure says so.
+      // A BROKEN SIDE FILE NEVER DECIDES WHETHER A MESSAGE LEAVES. What the pass would have held is
+      // what may still be native in the mirror - the entries ADOPTED from it, which say so durably
+      // (`adoptedFromMirror`): those are held, drawn failed with their Retry, and the member is told.
+      // Everything the page queued itself is its own, and this flush sends it. NO TIMER runs the
+      // pass again: the next real trigger does (an enqueue, a resume, a reconnect, a mirror write
+      // that lands, a Retry tap).
       startPass = null;
       console.error(
-        `[OUTBOX] start pass failed - this flush is skipped, the next trigger runs it again: ${String(e)}`
+        `[OUTBOX] start pass failed - the adopted entries are held, the page's own still go: ${String(e)}`
       );
-      return;
+      await holdAdoptedEntries();
     }
     // LEADERSHIP HAS THREE STATES AND THIS USED TO READ TWO. `getIsTabLeader()` answers false while
     // the election is still running, and the follower branch below took that as "another tab will

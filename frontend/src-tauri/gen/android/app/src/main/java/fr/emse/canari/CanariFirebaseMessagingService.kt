@@ -39,7 +39,6 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.AwaitedReplies
-import fr.emse.canari.push.DurableFile
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
@@ -177,6 +176,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * held (Rust `outbox_mirror::read_journal_text`). Null when it could not be read.
          */
         external fun nativeReadOutboxJournal(dataDir: String): String?
+
+        /**
+         * Replaces the outbox mirror in [dataDir] with [body] DURABLY - a temp file, synced, renamed
+         * over, the directory synced - or deletes it when [body] is empty (Rust
+         * `outbox_mirror::write_durably`, the one durable write of every platform). Rust's, because
+         * a JVM directory sync is refused on Android. The caller holds [OUTBOX_LOCK].
+         */
+        external fun nativeWriteOutboxMirror(dataDir: String, body: String): Boolean
 
         /**
          * The ids of the quick replies waiting in `pending_quick_replies.ndjson`, one per line, read
@@ -2543,8 +2550,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // What the native side queued meanwhile, into the mirror first: read after this, the
             // journal holds only what is appended DURING this drain, folded by the next holder.
             if (!foldOutboxJournalLocked(context, "drainOutbox")) {
+                // What is really queued, the journal included: none when nothing is (no phantom
+                // nudge), one "not yet" when it cannot even be read - unknown is not empty.
                 val queued = readOutboxQueuedOrNull(context)?.count { !it.unsendable } ?: 1
-                return List(maxOf(queued, 1)) { OutboxRetry.Prospect.NOT_YET }
+                return List(queued) { OutboxRetry.Prospect.NOT_YET }
             }
             val mirror = readOutboxMirror(context)
             // AN ENTRY ALREADY MARKED UNSENDABLE IS NEVER SENT AGAIN FROM HERE - not re-encrypted, not
@@ -2964,13 +2973,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Rewrites the outbox mirror with the remaining entries (deletes the file if empty). */
         internal fun rewriteOutboxMirror(context: Context, remaining: List<OutboxMirrorEntry>) {
             try {
-                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_PENDING_FILE)
-                // CRASH-SAFE: a temp file, synced, renamed over ([DurableFile]) - a truncate-then-write
-                // lost the whole queue to a power loss between the two.
-                val body = remaining.takeIf { it.isNotEmpty() }
-                    ?.joinToString("\n", postfix = "\n") { e -> outboxLineJson(e).toString() }
-                if (!DurableFile.replace(file, body)) {
-                    Log.w(TAG, "rewriteOutboxMirror: the directory could not be synced - the rename may not survive a power loss")
+                val dir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }
+                // CRASH-SAFE, through Rust ([nativeWriteOutboxMirror]): a truncate-then-write lost the
+                // whole queue to a power loss between the two.
+                val body = if (remaining.isEmpty()) "" else
+                    remaining.joinToString("\n", postfix = "\n") { e -> outboxLineJson(e).toString() }
+                if (!nativeWriteOutboxMirror(dir.absolutePath, body)) {
+                    Log.e(TAG, "rewriteOutboxMirror: NOT written - the mirror is left as it was")
                 }
             } catch (e: Exception) {
                 // The mirror stays as it was: a delivered entry still in it is sent again by the

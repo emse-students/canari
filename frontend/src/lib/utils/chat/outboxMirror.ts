@@ -306,6 +306,7 @@ export function adoptMirrorEntry(
     status: 'pending' as const,
     attempts: 0,
     createdAt: entry.sentAt || now,
+    adoptedFromMirror: true as const,
   };
   // Typed entries only: a control frame has no Retry to park it behind.
   const parked = entry.unsendable
@@ -362,6 +363,18 @@ export function adoptMirrorEntry(
     `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… is neither text nor reply - cannot adopt it`
   );
   return null;
+}
+
+/**
+ * THE MEMBER IS TOLD WHEN THE NATIVE QUEUE CANNOT BE REACHED, once per failure: the mirror cannot be
+ * read or folded, so what was queued from the notifications is held - drawn failed, with its Retry -
+ * and the background sender sends nothing. What the member sends from the app still goes.
+ */
+export function reportNativeQueueUnreachable(held: number): void {
+  console.error(
+    `[OUTBOX_MIRROR] the native queue cannot be reached - ${held} adopted entr(y/ies) held, the member is told`
+  );
+  showToast(m.chat_outbox_native_queue_unreachable(), 'error', 8000);
 }
 
 /**

@@ -286,7 +286,8 @@ fn sync_dir(dir: &std::path::Path) -> Result<(), String> {
 /// THE ONE DURABLE WRITE of a mirror file: `body` to `<name>.tmp`, synced, RENAMED over `path`
 /// (atomic: a reader sees the old file or the new one), then the directory synced; `None` deletes
 /// the file, durably too. A truncate-then-write lost the whole queue to a power loss between the
-/// two. `Err` leaves `path` as it was. Kotlin's `DurableFile.replace` is the twin.
+/// two. `Err` leaves `path` as it was. THE ONE durable write: Kotlin and iOS write the mirror through
+/// it too (`nativeWriteOutboxMirror`, `canari_outbox_write_mirror`).
 fn write_durably(path: &std::path::Path, body: Option<&str>) -> Result<(), String> {
     use std::io::Write;
     let dir = path.parent().ok_or("a mirror path with no directory")?;
@@ -358,6 +359,24 @@ fn first_free(dir: &std::path::Path, prefix: &str) -> Result<String, String> {
             !dir.join(name).exists() && !dir.join(format!("{name}{REPORTED_SUFFIX}")).exists()
         })
         .ok_or_else(|| format!("no free {prefix}<n> name"))
+}
+
+/// The side files REPORTED unreadable in `dir` (`<prefix><n>.ndjson.reported`), in name order:
+/// read again by every fold, never counted again.
+fn reported_files(dir: &std::path::Path) -> Vec<String> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let suffix = format!("{SIDE_SUFFIX}{REPORTED_SUFFIX}");
+    let mut found: Vec<String> = read
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|name| {
+            (name.starts_with(ASIDE_PREFIX) || name.starts_with(FOLDING_PREFIX))
+                && name.ends_with(&suffix)
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// The files moved aside in `dir`, in their order of `n`.
@@ -475,7 +494,7 @@ pub(crate) fn append_journal(dir: &std::path::Path, line: &str) -> Result<(), St
 /// The journal's lines not folded yet, for a native caller that only LOOKS (Kotlin's
 /// `readOutboxQueuedOrNull`): every file being folded, then the journal, read under
 /// [`JOURNAL_LOCK`] so no append is half-read.
-#[cfg(any(target_os = "android", test))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn read_journal_text(dir: &std::path::Path) -> Result<String, String> {
     let _held = journal_lock();
     let mut text = String::new();
@@ -486,6 +505,27 @@ pub(crate) fn read_journal_text(dir: &std::path::Path) -> Result<String, String>
         text.push_str(&read_text(&dir.join(name))?);
     }
     Ok(text)
+}
+
+/// How many SENDABLE entries are queued in `dir` - the mirror and the journal not folded yet, each
+/// id once, `unsendable` ones left out: what a drain whose fold failed answers as left, so it never
+/// reports a pending entry that is not there (and never 0 when one is).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn queued_count(dir: &std::path::Path) -> Result<usize, String> {
+    let text = read_text(&dir.join(OUTBOX_PENDING_FILE))? + "\n" + &read_journal_text(dir)?;
+    let mut ids = HashSet::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if entry.get("unsendable").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        if let Some(id) = entry.get("id").and_then(Value::as_str) {
+            ids.insert(id.to_owned());
+        }
+    }
+    Ok(ids.len())
 }
 
 /// What a fold did, for its log line and for the member.
@@ -544,9 +584,12 @@ fn fold_with(
         std::fs::rename(&journal_path, dir.join(&folding))
             .map_err(|e| format!("journal not renamed for its fold: {e}"))?;
     }
+    // A file REPORTED unreadable is still read by every fold: an unreadable file may be a passing
+    // fault, and a folding file holds shade replies. It is only never COUNTED again.
     let sources: Vec<String> = numbered_files(dir, FOLDING_PREFIX)
         .into_iter()
         .chain(aside_files(dir))
+        .chain(reported_files(dir))
         .collect();
     if sources.is_empty() {
         return Ok(fold);
@@ -575,6 +618,10 @@ fn fold_with(
                 collect_new(&text, &mut known, &mut lines, &mut fold);
                 folded.push(name);
             }
+            Err(e) if name.ends_with(REPORTED_SUFFIX) => log::debug!(
+                // log-safe: an io error and a side file's name.
+                "[OUTBOX_MIRROR] {e} - still unreadable, already reported, read again by the next fold"
+            ),
             Err(e) => {
                 fold.unreadable_files += 1;
                 let reported = format!("{name}{REPORTED_SUFFIX}");
@@ -808,6 +855,52 @@ pub extern "C" fn canari_outbox_write_mirror(
         Err(e) => {
             log::error!("[OUTBOX_MIRROR] native mirror write NOT done: {e}");
             0
+        }
+    }
+}
+
+/// iOS: [`queued_count`], for a drain whose fold failed - the count, or -1 (logged) when it could
+/// not be read.
+#[cfg(any(target_os = "ios", test))]
+#[no_mangle]
+pub extern "C" fn canari_outbox_queued_count(data_dir: *const std::ffi::c_char) -> i32 {
+    let Some(dir) = c_arg(data_dir, "queued count") else {
+        return -1;
+    };
+    match queued_count(std::path::Path::new(&dir)) {
+        Ok(n) => i32::try_from(n).unwrap_or(i32::MAX),
+        Err(e) => {
+            log::error!("[OUTBOX_MIRROR] queued count NOT read: {e}");
+            -1
+        }
+    }
+}
+
+/// Android: [`write_durably`] of the mirror, for `rewriteOutboxMirror` under `OUTBOX_LOCK` - an
+/// empty `body` deletes it. THE ONE DURABLE WRITE for Kotlin too: a JVM directory sync is refused
+/// on Android (`FileChannel.open` on a directory is `EISDIR` there), and Rust's works on Unix.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeWriteOutboxMirror<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    body: jni::objects::JString<'a>,
+) -> jni::sys::jboolean {
+    let (Some(dir), Some(body)) = (
+        jni_arg(&mut env, &data_dir, "mirror write"),
+        jni_arg(&mut env, &body, "mirror write"),
+    ) else {
+        return jni::sys::JNI_FALSE;
+    };
+    let path = std::path::Path::new(&dir).join(OUTBOX_PENDING_FILE);
+    match write_durably(&path, (!body.is_empty()).then_some(body.as_str())) {
+        Ok(()) => jni::sys::JNI_TRUE,
+        Err(e) => {
+            log::error!("[OUTBOX_MIRROR] native mirror write NOT done: {e}");
+            jni::sys::JNI_FALSE
         }
     }
 }
@@ -1262,6 +1355,53 @@ mod tests {
         std::fs::remove_dir_all(dir.join(format!("{OUTBOX_PENDING_FILE}.tmp"))).unwrap();
         write_durably(&path, None).unwrap();
         assert!(!path.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file reported unreadable is READ AGAIN by every later fold - a passing fault never turns a
+    /// shade reply into a loss - and counted once only.
+    #[test]
+    fn a_reported_file_is_read_again_and_folded_once_it_reads() {
+        let dir = scratch("reported-again");
+        let folding = dir.join("outbox_journal.folding.1.ndjson");
+        std::fs::create_dir_all(&folding).unwrap();
+        assert_eq!(fold_into_mirror(&dir).unwrap().unreadable_files, 1);
+        assert_eq!(
+            fold_into_mirror(&dir).unwrap().unreadable_files,
+            0,
+            "still unreadable: not counted again"
+        );
+        // The fault passes: the reported file now reads.
+        let reported = dir.join("outbox_journal.folding.1.ndjson.reported");
+        std::fs::remove_dir_all(&reported).unwrap();
+        std::fs::write(&reported, text(&[line("shade", None)])).unwrap();
+        let fold = fold_into_mirror(&dir).unwrap();
+        assert_eq!(fold.folded, 1);
+        assert!(std::fs::read_to_string(dir.join(OUTBOX_PENDING_FILE))
+            .unwrap()
+            .contains("\"shade\""));
+        assert!(mirror_side_files(&dir).is_empty(), "folded: deleted");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What a drain whose fold failed answers as left: the sendable entries of the mirror and the
+    /// journal, each once - 0 when nothing is queued, never a phantom.
+    #[test]
+    fn the_queued_count_covers_the_journal_and_is_zero_when_empty() {
+        let dir = scratch("queued-count");
+        assert_eq!(queued_count(&dir).unwrap(), 0);
+        let mut stuck = line("stuck", None);
+        stuck["unsendable"] = json!(true);
+        std::fs::write(
+            dir.join(OUTBOX_PENDING_FILE),
+            text(&[line("a", None), stuck]),
+        )
+        .unwrap();
+        append_journal(&dir, &line("b", None).to_string()).unwrap();
+        append_journal(&dir, &line("a", None).to_string()).unwrap();
+        assert_eq!(queued_count(&dir).unwrap(), 2);
+        let c_dir = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(canari_outbox_queued_count(c_dir.as_ptr()), 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

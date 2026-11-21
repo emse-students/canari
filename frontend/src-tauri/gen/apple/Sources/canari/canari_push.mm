@@ -2361,7 +2361,10 @@ static int CanariDrainOutboxBackgroundLocked(
   if (foldDir == nil || canari_outbox_fold(foldDir.UTF8String) != 1) {
     NSLog(@"[CanariPush] ERROR drainOutbox: the outbox journal was not folded - nothing sent, the "
           @"next holder of the mirror lock folds again");
-    return (int)MAX((NSUInteger)1, CanariReadOutboxMirror().count);
+    // What is really queued, the journal included: 0 when nothing is (no phantom pending), 1 when it
+    // cannot even be read - unknown is not empty.
+    int queued = foldDir == nil ? -1 : canari_outbox_queued_count(foldDir.UTF8String);
+    return queued < 0 ? 1 : queued;
   }
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {

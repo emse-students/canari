@@ -26,6 +26,8 @@ const tauri = vi.hoisted(() => ({
   unreadable: 0,
   /** Reads of the mirror still to fail, as the command does when the file cannot be read. */
   failReads: 0,
+  /** Every write fails while set: the fold cannot delete a source, so no page write lands. */
+  failWrites: false,
 }));
 
 const toast = vi.hoisted(() => ({ shown: [] as string[] }));
@@ -58,6 +60,7 @@ vi.mock('@tauri-apps/api/core', () => ({
       const gate = tauri.gate;
       tauri.gate = null;
       if (gate) await gate;
+      if (tauri.failWrites) throw new Error('folded but NOT deleted');
       if (tauri.failHolding && (args.held as string[]).includes(tauri.failHolding)) {
         throw new Error('the outbox lock could not be taken');
       }
@@ -157,6 +160,7 @@ beforeEach(() => {
   tauri.failHolding = null;
   tauri.unreadable = 0;
   tauri.failReads = 0;
+  tauri.failWrites = false;
   toast.shown = [];
 });
 
@@ -421,16 +425,85 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
 
   // Review of #3929: a start pass that fails sends nothing, and NO TIMER runs it again - the next
   // real trigger does (here a flush, as an enqueue, a resume or a reconnect raises one).
-  it('a start pass that fails sends nothing, and the next trigger runs it again', async () => {
+  it('a start pass that fails holds an adopted entry, and the next trigger runs it again', async () => {
     connectivity.reset();
-    tauri.failReads = 1;
-    const storage = makeStorage([textEntry('queued')]);
+    // The fold fails: the read and every write with it, as the commands do.
+    tauri.failReads = Number.POSITIVE_INFINITY;
+    tauri.failWrites = true;
+    const storage = makeStorage([textEntry('queued', { adoptedFromMirror: true })]);
     const { outbox, sendMessage } = controllerOver(storage);
     outbox.flush();
     await new Promise((r) => setTimeout(r, 0));
     expect(sendMessage).not.toHaveBeenCalled();
+    tauri.failReads = 0;
+    tauri.failWrites = false;
     outbox.flush();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+  });
+
+  // Review of #3929: a source the fold can never delete failed EVERY start pass, and the flush
+  // returned before sending anything - every conversation pending, nobody told. Now the page's own
+  // entries go, only the adopted ones (still possibly native) are held, failed with their Retry, and
+  // the member is told once.
+  it('a fold that keeps failing holds only the adopted entries, tells once, and the rest goes', async () => {
+    connectivity.reset();
+    tauri.failReads = Number.POSITIVE_INFINITY;
+    tauri.failWrites = true;
+    const storage = makeStorage([
+      textEntry('mine'),
+      textEntry('shade', { adoptedFromMirror: true }),
+    ]);
+    for (const id of ['mine', 'shade']) {
+      storage._rows.set(id, {
+        id,
+        conversationId: 'g1',
+        senderId: 'me',
+        content: `hello ${id}`,
+        timestamp: 1_000,
+      });
+    }
+    const { outbox, conversations, sendMessage } = controllerOver(storage);
+    await outbox.applyPendingStatuses();
+
+    outbox.flush();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(storage._queue.has('mine')).toBe(false);
+    expect(storage._queue.has('shade')).toBe(true);
+    const row = () => conversations.get('g1')!.messages.find((m) => m.id === 'shade');
+    expect(row()?.status).toBe('error');
+    expect(toast.shown).toHaveLength(1);
+
+    // Every later trigger runs the pass again - still failing, told no more, still nothing extra.
+    outbox.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(toast.shown).toHaveLength(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // The file heals: the Retry claims it, and it goes - its adopted mark cleared by the claim.
+    tauri.failReads = 0;
+    tauri.failWrites = false;
+    tauri.mirror = [line('shade')];
+    outbox.retryUpload('shade');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+  });
+
+  // The adopted mark goes with the first write that lands: from then the line is the page's, and a
+  // later failed start pass never holds it again.
+  it('a claim that lands clears the adopted mark', async () => {
+    const storage = makeStorage([textEntry('adopted', { adoptedFromMirror: true })]);
+    const { outbox } = controllerOver(storage);
+    tauri.mirror = [line('adopted')];
+    await outbox.adoptNativeEntries();
+    await vi.waitFor(() =>
+      expect(storage.updateOutboxEntry).toHaveBeenCalledWith(
+        'adopted',
+        { adoptedFromMirror: undefined },
+        'key'
+      )
+    );
+    // Settled - sent, and every write it raised landed - before the next case reads the writes.
+    await vi.waitFor(() => expect(storage._queue.has('adopted')).toBe(false));
+    await syncOutboxMirror([]);
   });
 
   it('the start pass writes the mirror once before the first flush sends anything', async () => {

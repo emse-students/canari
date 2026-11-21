@@ -133,6 +133,7 @@
   "chat_search_placeholder": "Rechercher…",
   "chat_new_channel_title": "Nouveau canal",
   "chat_new_discussion_title": "Nouvelle discussion",
+  "chat_outbox_native_queue_unreachable": "Les réponses envoyées depuis vos notifications ne peuvent pas être relues pour l'instant : elles sont retenues et affichées comme non envoyées, avec un bouton pour réessayer. Les messages envoyés depuis l'application partent normalement.",
   "chat_outbox_lines_unreadable": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
