@@ -4029,19 +4029,32 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   mirror again, so a drain that emptied the queue between a caller's drain and its ask has the last
   word, in both orders. This is why the settle is INSIDE the lock, where the backlog entry had
   proposed after it: unlike `replyDelivered`, the nudge has no record and so no lock order to keep,
-  and outside the lock a post and a withdrawal could land in the wrong order. A drain that found
-  nothing and sent nothing withdraws without a line - it runs on every push. The retry worker that
+  and outside the lock a post and a withdrawal could land in the wrong order. Under the lock it takes
+  only leaf locks: `AwaitedReplies`' own and, through the post's `callHoldsSound`,
+  `RingSequencer.lock`. The retry worker that
   finds the mirror already empty (emptied by the app's own flush while its WebView ran in the
   background) settles too (`settleOutboxNudge`).
+- **A withdrawal says what stood, and nothing when nothing did** (review of #3922).
+  `withdrawOutboxNudge` reads the shade ONCE (`OutboxNudge.withdrawal`): every drain that empties
+  the mirror lands there - each quick reply, each read mark (`sendReadWatermark` queues and drains),
+  each worker run on an empty queue - so an unconditional "withdrawn" line would be false on nearly
+  all of them, and it is the line the device reading takes as evidence. One line per record that
+  stood: `outbox mirror empty - nudge withdrawn (id=999)`, `a nudge posted before 1.7.3 withdrawn
+  (id=9998)`, `id=9998 is the worker's notice - left`. The cancel of 999 is unconditional
+  (idempotent, and it also takes a post the read lags behind); only the line follows the read. The
+  cost is one `activeNotifications` binder call per drain that leaves the mirror empty.
 - **Its own id: `FixedNotifIds.OUTBOX_NUDGE` = 999.** It shared 9998 with `MlsBackgroundWorker`'s
   foreground notice, now `FixedNotifIds.WORKER_FOREGROUND`, so a blind cancel would have taken that
   notice down. 999 is below the conversation counter's start (1000, only ever growing), so no install
   has ever persisted it for a conversation - which an id inside the counter's range could not promise,
-  since an id already stored is never moved. The badge count excludes every `FixedNotifIds.ALL` id
-  rather than a hand-kept list, so the nudge and the worker's notice (both on the messages channel)
-  are never counted as conversations.
-- **A nudge posted under 9998 before the update.** Withdrawn with the new one, by
-  `withdrawPreUpdateNudge`, on every logged withdrawal: the record standing at 9998 is cancelled only
+  since an id already stored is never moved. The badge count (`countUnreadConversations`) excludes
+  every `FixedNotifIds.ALL` id rather than a hand-kept list, so the nudge and the worker's notice
+  (both on the messages channel) are never counted as conversations. **A behaviour change with it:**
+  the new-device notice (9996) and the worker's failure notice (9997), also on the messages channel,
+  each raised the launcher badge by one before 1.7.3 and no longer do. Pinned by
+  `androidOutboxNudge.test.ts` and `UnreadBadgeCountTest`.
+- **A nudge posted under 9998 before the update.** Withdrawn by the same read, on every
+  withdrawal: the record standing at 9998 is cancelled only
   when it is neither ongoing nor a foreground-service record (`OutboxNudge.isPreUpdateNudge`). The
   worker's notice is always ongoing, and a foreground-service record once promoted; the nudge was
   never either. The platform also refuses `cancel` on a foreground-service record, which covers a

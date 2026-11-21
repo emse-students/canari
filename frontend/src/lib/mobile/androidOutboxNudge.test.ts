@@ -51,8 +51,12 @@ describe('the outbox nudge', () => {
     const settle = body(service, 'private fun settleOutboxNudgeLocked(');
     expect(settle).toContain('val queued = readOutboxMirrorOrNull(context)?.size');
     expect(settle).toContain('OutboxNudge.decide(queued, asked)');
-    expect(settle).toContain('manager.cancel(OUTBOX_NUDGE_NOTIF_ID)');
+    expect(settle).toContain('withdrawOutboxNudge(manager, where)');
     expect(settle).toContain('postOutboxNudge(context, manager)');
+    // Only the withdrawal cancels.
+    expect(body(service, 'private fun withdrawOutboxNudge(')).toContain(
+      'manager.cancel(OUTBOX_NUDGE_NOTIF_ID)'
+    );
     // Only the settle posts.
     expect(service.match(/postOutboxNudge\(context, manager\)/g)).toHaveLength(1);
     // The ask takes the lock and goes through the settle.
@@ -77,15 +81,32 @@ describe('the outbox nudge', () => {
     );
   });
 
-  it('withdraws a pre-update nudge under 9998 only when the record is not the worker notice', () => {
-    const legacy = body(service, 'private fun withdrawPreUpdateNudge(');
-    expect(legacy).toContain('Notification.FLAG_ONGOING_EVENT');
-    expect(legacy).toContain('Notification.FLAG_FOREGROUND_SERVICE');
-    const guard = legacy.indexOf('OutboxNudge.isPreUpdateNudge(');
-    const cancel = legacy.indexOf('manager.cancel(FixedNotifIds.WORKER_FOREGROUND)');
-    expect(guard).toBeGreaterThan(-1);
-    expect(cancel).toBeGreaterThan(guard);
+  it('withdraws reading the shade once, logging only what stood', () => {
+    const withdraw = body(service, 'private fun withdrawOutboxNudge(');
+    expect(withdraw.match(/manager\.activeNotifications/g)).toHaveLength(1);
+    expect(withdraw).toContain('Notification.FLAG_ONGOING_EVENT');
+    expect(withdraw).toContain('Notification.FLAG_FOREGROUND_SERVICE');
+    expect(withdraw).toContain('val stood = OutboxNudge.withdrawal(shade)');
+    // The cancel of the nudge is unconditional; the 9998 cancel needs the pre-update verdict.
+    expect(withdraw).toContain('            manager.cancel(OUTBOX_NUDGE_NOTIF_ID)\n');
+    expect(withdraw).toContain(
+      'if (stood.preUpdateNudgeStood) manager.cancel(FixedNotifIds.WORKER_FOREGROUND)'
+    );
+    // The withdrawal line exists only behind what the shade showed.
+    expect(withdraw).toContain(
+      'if (stood.nudgeStood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")'
+    );
+    expect(service.match(/nudge withdrawn \(id=/g)).toHaveLength(1);
     // The only cancel of the worker's id anywhere in the service.
     expect(service.match(/cancel\(FixedNotifIds\.WORKER_FOREGROUND\)/g)).toHaveLength(1);
+    expect(service).toContain(
+      'OutboxNudge.Decision.WITHDRAW -> withdrawOutboxNudge(manager, where)'
+    );
+  });
+
+  it('keeps every fixed id out of the unread badge, through the one table', () => {
+    const count = body(service, 'internal fun countUnreadConversations(');
+    expect(count).toContain('sbn.id !in FixedNotifIds.ALL &&');
+    expect(count).not.toMatch(/sbn\.id != /);
   });
 });

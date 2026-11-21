@@ -69,4 +69,38 @@ class OutboxNudgeTest {
         // Any other id is never the leftover.
         assertFalse(OutboxNudge.isPreUpdateNudge(FixedNotifIds.OUTBOX_NUDGE, ongoing = false, foregroundService = false))
     }
+
+    private val nudge = OutboxNudge.Standing(FixedNotifIds.OUTBOX_NUDGE, ongoing = false, foregroundService = false)
+    private val oldNudge = OutboxNudge.Standing(FixedNotifIds.WORKER_FOREGROUND, ongoing = false, foregroundService = false)
+    private val workerNotice = OutboxNudge.Standing(FixedNotifIds.WORKER_FOREGROUND, ongoing = true, foregroundService = true)
+    private val conversation = OutboxNudge.Standing(1000, ongoing = false, foregroundService = false)
+
+    @Test
+    fun `a withdrawal over a shade holding nothing of ours says nothing stood`() {
+        // Every quick reply and every read mark empties the mirror: no line may claim a withdrawal.
+        assertEquals(
+            OutboxNudge.Withdrawal(nudgeStood = false, preUpdateNudgeStood = false, workerNoticeStood = false),
+            OutboxNudge.withdrawal(listOf(conversation)),
+        )
+        assertEquals(
+            OutboxNudge.Withdrawal(nudgeStood = false, preUpdateNudgeStood = false, workerNoticeStood = false),
+            OutboxNudge.withdrawal(emptyList()),
+        )
+    }
+
+    @Test
+    fun `a withdrawal names the nudge that really stood, whoever drained`() {
+        assertTrue(OutboxNudge.withdrawal(listOf(conversation, nudge)).nudgeStood)
+    }
+
+    @Test
+    fun `a pre-update nudge is withdrawn, the worker's notice is left`() {
+        val old = OutboxNudge.withdrawal(listOf(oldNudge))
+        assertTrue(old.preUpdateNudgeStood)
+        assertFalse(old.workerNoticeStood)
+        val worker = OutboxNudge.withdrawal(listOf(workerNotice, nudge))
+        assertFalse(worker.preUpdateNudgeStood)
+        assertTrue(worker.workerNoticeStood)
+        assertTrue(worker.nudgeStood)
+    }
 }

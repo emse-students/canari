@@ -143,6 +143,23 @@ class UnreadBadgeCountTest {
         )
     }
 
+    /**
+     * Since 1.7.3 the filter is `FixedNotifIds.ALL`, so the new-device notice (9996) and the
+     * worker's failure notice (9997), both on the messages channel, are no longer counted as
+     * unread conversations - before, they raised the badge by one each.
+     */
+    @Test
+    fun `the new-device and the worker-failure notices are not conversations`() {
+        val shade = listOf(
+            Posted(FixedNotifIds.NEW_DEVICE, messages),
+            Posted(FixedNotifIds.BACKGROUND_FAILURE, messages),
+            Posted(1000, messages),
+        )
+        assertEquals(9996, FixedNotifIds.NEW_DEVICE)
+        assertEquals(9997, FixedNotifIds.BACKGROUND_FAILURE)
+        assertEquals(1, count(shade))
+    }
+
     /** Both corrections in one call: one conversation read while another arrives. */
     @Test
     fun `a post and a cancel in flight at once resolve independently`() {
