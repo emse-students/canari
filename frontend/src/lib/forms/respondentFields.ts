@@ -74,6 +74,8 @@ export interface RespondentIdentity {
   cursus?: RespondentCursus[];
   status?: RespondentStatus[];
   campus?: string | null;
+  /** The keys read from the account in a snapshot that also holds declared ones (the server's). */
+  fromAccount?: AccountField[];
   /**
    * The asked declared fields a store build older than the questions could not send: the server
    * took its answer without them (`predatesDeclaredFields`), and the list reads them as such.
@@ -346,6 +348,38 @@ export function identityCellText(
     case 'campus':
       return identity?.campus ? campusWord(identity.campus) : '';
   }
+}
+
+/** Where an answer's cursus came from (the server's `cursusSourceOf`). */
+export function cursusSourceOf(
+  identity: RespondentIdentity | null | undefined
+): 'account' | 'declared' | null {
+  if (!identity) return null;
+  if (identity.fromAccount?.includes('cursus')) return 'account';
+  if (identity.cursus === undefined && !identity.notDeclared?.includes('cursus')) return null;
+  return identity.source;
+}
+
+/**
+ * Whether the list says where the cursus came from (the server's `showsCursusSource`): on an
+ * anonymous form, once any answer carries one read from the account - certified and declared values
+ * are never mixed silently in one column.
+ */
+export function showsCursusSource(
+  form: { anonymous?: boolean | null },
+  rows: readonly Pick<Submission, 'respondentIdentity'>[]
+): boolean {
+  return (
+    form.anonymous === true && rows.some((r) => cursusSourceOf(r.respondentIdentity) === 'account')
+  );
+}
+
+/** The word of a cursus source in the list ("compte" / "declare"); blank when the answer has none. */
+export function cursusSourceText(identity: RespondentIdentity | null | undefined): string {
+  const source = cursusSourceOf(identity);
+  if (source === 'account') return m.form_respondent_source_account();
+  if (source === 'declared') return m.form_respondent_source_declared();
+  return '';
 }
 
 /** The responses list's identity filter: a value per criterion, '' for "every". */

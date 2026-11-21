@@ -83,6 +83,14 @@ export interface IdentityExportLabels {
   campuses: Record<string, string>;
   /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
   notDeclared: string;
+  /**
+   * The "Source" of the cursus on an anonymous form that reads it from an account (2026-11-21): the
+   * header, and what each source reads as. Optional: a build older than that sends none and gets the
+   * French defaults ({@link LEGACY_IDENTITY_EXPORT_LABELS}).
+   */
+  source?: string;
+  sourceAccount?: string;
+  sourceDeclared?: string;
 }
 
 const IDENTITY_KEYS: readonly Exclude<keyof IdentityExportLabels, 'campuses'>[] = [
@@ -111,6 +119,9 @@ export const LEGACY_IDENTITY_EXPORT_LABELS: IdentityExportLabels = {
   staff: 'Personnel',
   campuses: { 'saint-etienne': 'Saint-Étienne', gardanne: 'Gardanne' },
   notDeclared: 'Non déclaré',
+  source: 'Source',
+  sourceAccount: 'compte',
+  sourceDeclared: 'déclaré',
 };
 
 /** The words of the "Articles" and "Totaux" sheets, every one required when the object is sent. */
@@ -206,6 +217,9 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
     for (const key of IDENTITY_KEYS)
       if (typeof words[key] !== 'string' || words[key] === '')
         throw new BadRequestException(`export label "identity.${key}" is missing`);
+    for (const key of ['source', 'sourceAccount', 'sourceDeclared'] as const)
+      if (words[key] !== undefined && (typeof words[key] !== 'string' || words[key] === ''))
+        throw new BadRequestException(`export label "identity.${key}" must be a non-empty string`);
     const campuses = words.campuses;
     if (
       typeof campuses !== 'object' ||

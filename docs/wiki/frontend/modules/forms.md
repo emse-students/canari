@@ -1392,9 +1392,10 @@ lists, the declared values, the columns, cells and filter), `GuestIdentitySettin
 certified: *"Oui, en option, avec avis"*). On an anonymous form the organiser may tick a box, **"Promo
 et formation lues sur le compte (certifiées)"**, beside "Promo et formation". A member then does not
 answer that question: the server reads their cursus from the account (core-service `respondent-identity`,
-the same `cursusViewsOf` rule as the named form) and the fill page tells them *before sending* - "Votre
-réponse reste anonyme. Seules votre promo et votre formation, lues sur votre compte, l'accompagnent" (`RespondentNotice`, its
-`anonymous` wording). It is **opt-in**; the default form and every stored one are unchanged.
+the same `cursusViewsOf` rule as the named form) and the fill page tells them *before sending*, naming exactly what goes with the
+answer - "Votre réponse reste anonyme : elle ne porte pas votre nom. Ce qui part avec elle : Promo et
+formation, lues sur votre compte, et Statut, que vous indiquez vous-même" (`RespondentNotice`, its
+`anonymous` wording, the declared fields of `askedOfMember` included; never "seules"). It is **opt-in**; the default form and every stored one are unchanged.
 
 **Principle 1 of the charter** ([docs/principes.md](../../../principes.md), "chaque donnée que nous
 gardons est déclarée"): the join is ticked by the organiser AND announced to the respondent first; a
@@ -1403,11 +1404,14 @@ anonymous form**: not the name, not the status, not the campus (status and campu
 asked), and the row keeps no `userId` (`form_respondents` is unchanged - the one-answer-per-account
 guard). The register (C8) and the privacy policy name the exception.
 
-**Small groups can re-identify** (owner told, 2026-11-21): in a form answered by ten people, "2024 ISMIN"
-may be one person. The certified value makes that no worse than the declared one, but the editor says
-it under the box ("dans un petit groupe, une promo et une formation peuvent suffire à reconnaître la
-personne") and the organiser decides. Nothing here suppresses small cells; that would be a separate
-decision.
+**Small groups can re-identify, and EVERY cursus is read** (owner told, 2026-11-21): in a form
+answered by ten people, "2024 ISMIN" may be one person. The join keeps **every** cursus of the account
+(`cursusViewsOf`, as a price reads it), so a person with several reveals all of them; a declared answer
+would let the person pick one. Decision: keep every cursus - nobody has two today, and a rule picking
+"the" cursus would be a second spelling of the pricing one. The editor says both under the box ("une
+personne qui en a plusieurs les révèle toutes", "dans un petit groupe, une promo et une formation peuvent
+suffire à reconnaître la personne") and the organiser decides. Nothing here suppresses small cells; that
+would be a separate decision.
 
 **What the choices are, and why** (each a one-line change):
 
@@ -1421,11 +1425,15 @@ decision.
    or campus: `{ source: 'declared', status, campus, cursus, fromAccount: ['cursus'] }` - `source` names what
    the respondent typed, `fromAccount` the keys the account certified. A guest: `{ source: 'declared', cursus }`,
    no `fromAccount`. A reader that ignores `fromAccount` still reads the right values (the columns read keys).
-3. **Typed refusal, mirrored.** An anonymous form SAVED with `respondentFields` naming anything but
-   `cursus` is refused `FORM_ANONYMOUS_ACCOUNT_FIELDS`, a pair of the shared option rule
-   (`formOptionRules.ts`, `joinsAccountBeyondCursus`, byte-copied in `form-option-rules.ts`; the editor
-   never produces it, its sentence `form_option_conflict_anonymous_account_fields` words the refusal). An ABSENT list is
-   not one: the create default (the two names) is normalised away on an anonymous form as before.
+3. **Typed refusals, mirrored.** Two pairs of the shared option rule (`formOptionRules.ts`, byte-copied in
+   `form-option-rules.ts`, the editor never produces either - its sentences word the refusal):
+   `FORM_ANONYMOUS_ACCOUNT_FIELDS` (`joinsAccountBeyondCursus`) refuses an anonymous form SAVED with
+   `respondentFields` naming anything but `cursus`; `FORM_ANONYMOUS_CURSUS_NOT_ASKED` (`joinsCursusUnasked`)
+   refuses one that joins the cursus without ASKING it - a guest has no account and would never be asked.
+   Both are judged on the form as it WILL be saved (an edit merges onto the stored one), on create and
+   update alike. An ABSENT list is not the first: the create default (the two names) is normalised away.
+   **When a draft's anonymity changes in a save that sends no `respondentFields`, none is stored** (`[]`): a
+   named draft's cursus must not become a join on an anonymous form nobody ticked.
 4. **An older build is never joined** (`predatesAnonymousCursusJoin`, floor `1.7.3`,
    [legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-173---an-anonymous-form-that-reads-the-cursus-from-the-account-seen-by-a-build-that-cannot-announce-it-2026-11-21)):
    it cannot tell the member, so it is asked the cursus as before, and its editor's save turns the
@@ -1435,9 +1443,31 @@ decision.
    a profile field and NOT joined; it is a question the organiser asks in the form, declared like any
    answer.
 
+6. **A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE ANNOUNCED** (owner review, 2026-11-21, principle 1; named
+   forms too). The fill page sends the account fields it displayed (`announcedFields`, the served
+   `respondentFields`); the server compares them with the form's join AT SUBMIT and, on any difference,
+   refuses `FORM_RESPONDENT_FIELDS_CHANGED` before reading the account or writing a row. The page reads
+   the form again, keeps what the member typed, and the notice now shows what will go; the member sends
+   again. Without it an organiser ticking a box on a live form would join a member who never saw the
+   notice. A build announcing nothing (older than `1.7.3`): on an anonymous form it is never joined; on a
+   NAMED form it is joined as before, logged `[LEGACY]`
+   ([legacy-compatibility](../../legacy-compatibility.md#removal-once-minclientversion-passes-173---an-anonymous-form-that-reads-the-cursus-from-the-account-seen-by-a-build-that-cannot-announce-it-2026-11-21)).
+7. **The Source of a cursus is never mixed silently** (owner review, 2026-11-21). Once any answer of an
+   ANONYMOUS form carries a cursus read from the account, the responses list and the XLSX export add a
+   **"Source"** column after "Formation" (`showsCursusSource`, `cursusSourceOf`), per row, "compte" or
+   "déclaré" in the client's words (`identity.source`, `sourceAccount`, `sourceDeclared`; a build sending none
+   gets the French ones). A per-row column rather than a suffix, because the export splits promo and
+   formation into columns and a suffix would break the filter on them. Named forms keep their columns.
+8. **Service logs carry no form id on this path.** The anonymous submit's lines name neither the form nor
+   the user, so no log links a person to an anonymous form; the row itself is never tied to an account
+   (`userId` empty; register C8).
+
 Tests: `forms.service.respondent-identity.spec.ts` ("an anonymous form that reads the cursus from the
-account", the rule, the create and the refusal), `respondentFields.test.ts`, `formOptionRules.test.ts`,
-`GuestIdentitySettings.svelte.test.ts`, `RespondentNotice.svelte.test.ts`.
+account", the rule, the create, both refusals on create and update, the draft's anonymity switch, the
+announced fields, core-service down: 503 with no transaction opened, the Source column),
+`respondentFields.test.ts`, `formOptionRules.test.ts`, `GuestIdentitySettings.svelte.test.ts`,
+`RespondentNotice.svelte.test.ts`, `page.respondentJoin.svelte.test.ts` (the fill page hides the cursus
+question and draws the notice; a form changed between load and submit is refused, read again and sent).
 
 ## A respondent changes their own answer (owner, 2026-11-13)
 

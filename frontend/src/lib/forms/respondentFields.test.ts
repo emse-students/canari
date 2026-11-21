@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
   askedOfMember,
+  cursusSourceOf,
+  cursusSourceText,
   declaredPayload,
   declaredProblem,
   editorChoicesOf,
@@ -20,9 +22,48 @@ import {
   matchesIdentityFilter,
   offeredChoices,
   respondentSettingsPayload,
+  showsCursusSource,
   transmittedFieldLabels,
   type RespondentIdentity,
 } from './respondentFields';
+
+describe('where the cursus of an answer came from (owner review, 2026-11-21)', () => {
+  const account: RespondentIdentity = {
+    source: 'account',
+    cursus: [{ promo: 2024, formation: 'ICM' }],
+  };
+  const mixed: RespondentIdentity = {
+    source: 'declared',
+    status: ['staff'],
+    cursus: [{ promo: 2024, formation: 'ICM' }],
+    fromAccount: ['cursus'],
+  };
+  const declared: RespondentIdentity = {
+    source: 'declared',
+    cursus: [{ promo: 2020, formation: 'ICM' }],
+  };
+
+  it('reads each source, per key, never from the snapshot alone', () => {
+    expect(cursusSourceOf(account)).toBe('account');
+    expect(cursusSourceOf(mixed)).toBe('account');
+    expect(cursusSourceOf(declared)).toBe('declared');
+    expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' })).toBeNull();
+    expect(cursusSourceText(account)).toBe(m.form_respondent_source_account());
+    expect(cursusSourceText(declared)).toBe(m.form_respondent_source_declared());
+    expect(cursusSourceText(null)).toBe('');
+  });
+
+  it('draws the Source column only on an anonymous form holding a certified cursus', () => {
+    expect(showsCursusSource({ anonymous: true }, [{ respondentIdentity: declared }])).toBe(false);
+    expect(
+      showsCursusSource({ anonymous: true }, [
+        { respondentIdentity: declared },
+        { respondentIdentity: mixed },
+      ])
+    ).toBe(true);
+    expect(showsCursusSource({ anonymous: false }, [{ respondentIdentity: account }])).toBe(false);
+  });
+});
 
 describe('the editor saves one set of ticks as two lists', () => {
   it('joins from the account on a named form, and asks guests the same on a public one', () => {

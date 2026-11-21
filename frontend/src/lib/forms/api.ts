@@ -738,6 +738,10 @@ export interface IdentityExportLabels {
   campuses: Record<string, string>;
   /** A declared field an older build could not send (`RespondentIdentity.notDeclared`). */
   notDeclared: string;
+  /** The "Source" column of an anonymous form reading the cursus from the account, and its words. */
+  source: string;
+  sourceAccount: string;
+  sourceDeclared: string;
 }
 
 /** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
@@ -783,6 +787,9 @@ export function exportLabels(): ExportLabels {
       staff: m.form_respondent_status_staff(),
       campuses: Object.fromEntries(CAMPUSES.map((c) => [c, campusLabel(c)])),
       notDeclared: m.form_respondent_not_declared(),
+      source: m.form_respondent_source_header(),
+      sourceAccount: m.form_respondent_source_account(),
+      sourceDeclared: m.form_respondent_source_declared(),
     },
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
@@ -1001,6 +1008,12 @@ export async function submitForm(
     declaredPromo?: number;
     declaredStatus?: string;
     declaredCampus?: string;
+    /**
+     * The account fields the page displayed as joined to this answer (`joinedAccountFields` of the
+     * served form): the server joins only what was announced, and refuses
+     * `FORM_RESPONDENT_FIELDS_CHANGED` when the form changed since (principle 1).
+     */
+    announcedFields?: string[];
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {

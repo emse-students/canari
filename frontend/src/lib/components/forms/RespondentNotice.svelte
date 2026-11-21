@@ -2,8 +2,10 @@
   import { UserRound } from '@lucide/svelte';
   import {
     joinedAccountFields,
+    respondentChoiceLabel,
     transmittedFieldLabels,
     type AccountField,
+    type DeclaredField,
   } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
@@ -21,9 +23,14 @@
      * anonymous, only the promo and formation, read from the account, go with it (owner, 2026-11-21).
      */
     anonymous?: boolean;
+    /**
+     * What this member is ASKED to declare on an anonymous form beside what is read from the account
+     * (`askedOfMember`): the notice names it too, so it says exactly what goes with the answer.
+     */
+    declared?: readonly DeclaredField[];
   }
 
-  let { respondentFields, anonymous = false }: Props = $props();
+  let { respondentFields, anonymous = false, declared = [] }: Props = $props();
 
   const joined = $derived<AccountField[]>(joinedAccountFields(respondentFields));
 </script>
@@ -35,7 +42,12 @@
   >
     <UserRound size={16} class="mt-0.5 shrink-0" />
     <span>
-      {#if anonymous}
+      {#if anonymous && declared.length > 0}
+        {m.form_respondent_notice_anonymous_mixed({
+          fields: transmittedFieldLabels(joined).join(', '),
+          declared: declared.map((f) => respondentChoiceLabel(f)).join(', '),
+        })}
+      {:else if anonymous}
         {m.form_respondent_notice_anonymous({ fields: transmittedFieldLabels(joined).join(', ') })}
       {:else}
         {m.form_respondent_notice({ fields: transmittedFieldLabels(joined).join(', ') })}

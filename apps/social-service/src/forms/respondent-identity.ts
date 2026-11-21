@@ -209,6 +209,18 @@ export function joinsBeyondCursus(sent: unknown): boolean {
   );
 }
 
+/**
+ * Whether the account fields a page ANNOUNCED are exactly what the form joins now (principle 1: a
+ * member is joined only to what they were shown). Canonical on both sides, so order never matters.
+ */
+export function announcedMatchesJoined(
+  announced: unknown,
+  joined: readonly AccountField[]
+): boolean {
+  const said = accountFieldsOf(announced);
+  return said.length === joined.length && said.every((f, i) => f === joined[i]);
+}
+
 /** The declared fields a form asks (`forms.guestFields`, whose names and e-mail are the guest's). */
 export function askedDeclaredFields(stored: unknown): DeclaredField[] {
   return canonical(stored, DECLARED_FIELDS, 'guestFields', ['lastName', 'firstName', 'email']);
@@ -464,6 +476,30 @@ export function identityColumnsOf(
           r.respondentIdentity?.[field] !== undefined ||
           r.respondentIdentity?.notDeclared?.includes(field)
       )
+  );
+}
+
+/** Where an answer's cursus came from: the account (certified), the respondent (declared), or none. */
+export function cursusSourceOf(
+  identity: RespondentIdentity | null | undefined
+): 'account' | 'declared' | null {
+  if (!identity) return null;
+  if (identity.fromAccount?.includes('cursus')) return 'account';
+  if (identity.cursus === undefined && !identity.notDeclared?.includes('cursus')) return null;
+  return identity.source;
+}
+
+/**
+ * Whether the list and the export say WHERE the cursus came from (owner review, 2026-11-21): on an
+ * anonymous form, once any answer carries one read from the account - certified and declared values
+ * are never mixed silently in one column.
+ */
+export function showsCursusSource(
+  form: { anonymous?: boolean | null },
+  rows: readonly { respondentIdentity?: RespondentIdentity | null }[]
+): boolean {
+  return (
+    form.anonymous === true && rows.some((r) => cursusSourceOf(r.respondentIdentity) === 'account')
   );
 }
 

@@ -53,6 +53,11 @@ export interface FormOptionState {
    * which name nobody (owner, 2026-11-21), and nothing else.
    */
   joinsAccountBeyondCursus: boolean;
+  /**
+   * The save asks an anonymous form to read the cursus from the account WITHOUT also asking it: a
+   * guest has no account and would never be asked the promo and formation (owner review, 2026-11-21).
+   */
+  joinsCursusUnasked: boolean;
 }
 
 /** One option, by its key in `FormOptionState`. */
@@ -74,6 +79,7 @@ export const FORM_OPTION_CONFLICTS = {
   FORM_ANONYMOUS_FILE: ['anonymous', 'hasFileQuestion'],
   FORM_ANONYMOUS_ANSWER_EDIT: ['anonymous', 'allowsAnswerEdit'],
   FORM_ANONYMOUS_ACCOUNT_FIELDS: ['anonymous', 'joinsAccountBeyondCursus'],
+  FORM_ANONYMOUS_CURSUS_NOT_ASKED: ['anonymous', 'joinsCursusUnasked'],
   FORM_PUBLIC_AUDIENCE: ['isPublic', 'restrictsAudience'],
   FORM_PUBLIC_COTISATION_GRANT: ['isPublic', 'grantsCotisation'],
   FORM_PUBLIC_FILE: ['isPublic', 'hasFileQuestion'],

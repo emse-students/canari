@@ -277,4 +277,12 @@ export const ACKNOWLEDGED_IDIOMS = [
       'apps/core-service/src/platform/lydia-contract.ts',
     ],
   },
+  {
+    what: 'where the cursus of an answer came from (`cursusSourceOf`): the account, the respondent, or none',
+    why: 'a four-line reading of one snapshot key, written once for the export (server) and once for the list (screen) because they share no package. The two readings answer the same question over the same stored shape and are specified with the same cases on both sides (`forms.service.respondent-identity.spec.ts`, `respondentFields.test.ts`); a TS library between `frontend/` and `apps/` is the open entry the other form copies already cite.',
+    files: [
+      'apps/social-service/src/forms/respondent-identity.ts',
+      'frontend/src/lib/forms/respondentFields.ts',
+    ],
+  },
 ];

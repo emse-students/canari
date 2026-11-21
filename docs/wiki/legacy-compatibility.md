@@ -526,28 +526,41 @@ data's meaning, not a shim - the cell keeps reading "not declared" after the rem
 absent from production for a week. Then delete the `olderClient` branch, `predatesDeclaredFields`, the
 header plumbing of the two submit routes, their tests and this entry; keep `notDeclared` on the read
 side.
+The answers given before migration 174 carry no snapshot and read the account's name live, as every
+answer always did: that is the data's meaning, not a client shim, and has no removal date.
+
 ### Removal once `minClientVersion` passes `1.7.3` - an anonymous form that reads the cursus from the account, seen by a build that cannot announce it (2026-11-21)
 
 **Site:** `predatesAnonymousCursusJoin` and the first branch of `respondentIdentityFor`
-(`apps/social-service/src/forms/forms.service.ts`, `respondent-identity.ts`), logged `[LEGACY] anonymous
-form=... joins the cursus; a build older than 1.7.3 is asked it instead`.
+(`apps/social-service/src/forms/forms.service.ts`, `respondent-identity.ts`), logged `[LEGACY] an anonymous
+form joining the cursus, answered by a build older than 1.7.3 (or announcing nothing): asked it instead` (no
+form id: the logs of an anonymous submit name neither the form nor the user).
 **What it humours:** a form can read an anonymous member's promo and formation from the account
 (owner, 2026-11-21). A build older than `ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION` (`1.7.3`) - or naming
 none - cannot SAY so before sending (principle 1: nothing leaves the account unannounced), so the join
 is not made for it: it is asked the cursus like a guest, its answer stored `declared` (or "not
-declared" before `1.7.0`). Two more facts about such builds: its editor opens the form with the
-cursus ticked (the server serves `respondentFields: ['cursus']`, the editor unions both lists) and a
-save from it sends `respondentFields: []`, so the join turns into "asked" - the SAFE direction, written
-to the form, never a silent loss of what leaves the account; and its fill page asks the member the
-cursus (the cursus stays in `guestFields` for guests), which the server accepts for it.
-**The cost while it stands:** one branch; an organiser editing from an old build silently turns the
-join off.
+declared" before `1.7.0`). Three more facts about such builds: an editor older than `1.7.3` opens the form with the cursus ticked
+(the server serves `respondentFields: ['cursus']`, the editor unions both lists) and a save from it
+sends `respondentFields: []`, so the join turns into "asked" - the SAFE direction, written to the
+form, never a silent loss of what leaves the account. **A pre-`1.7.0` editor is different, and the join
+STANDS:** it sends `guestFields` alone (the [LEGACY] merge above), so the stored `respondentFields` is
+kept - it can neither show nor remove the join. That is harmless to principle 1 (only a build announcing
+the join is joined) but the organiser on that build cannot turn it off; the floor raise below ends it.
+The fill page of an old build asks the member the cursus (the cursus stays in `guestFields` for guests),
+which the server accepts for it.
+**A second shim, the same removal (owner review, 2026-11-21): a submit announcing nothing.** The page
+sends `announcedFields` (the join it displayed) and the server refuses `FORM_RESPONDENT_FIELDS_CHANGED`
+when the form changed since. A build older than `1.7.3` sends none: on an ANONYMOUS form it is never
+joined (above); on a NAMED form it is joined as before, logged `[LEGACY] a submit to a form joining
+account fields announces none`, because refusing an old client's ordinary named submit would break
+forms for no reason - the notice it drew was the form's at load, which is the very gap the new build
+closes.
+**The cost while it stands:** two branches; an organiser editing from a `1.7.0`..`1.7.2` build silently
+turns the join off, and one on a pre-`1.7.0` build cannot.
 **Removal condition:** `minClientVersion` on both estates passes `1.7.3` and the `[LEGACY]` line is
-absent from production for a week. Then delete the branch, `predatesAnonymousCursusJoin`, the
-constant, their test and this entry.
-
-The answers given before migration 174 carry no snapshot and read the account's name live, as every
-answer always did: that is the data's meaning, not a client shim, and has no removal date.
+absent from production for a week. Then make `announcedFields` required on the member submit, delete the `[LEGACY]` branch of
+`assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
+entry.
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 

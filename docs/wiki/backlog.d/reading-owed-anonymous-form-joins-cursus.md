@@ -13,3 +13,7 @@ anonymous form with the box ticked and "Statut" asked; as a member on a phone, r
 only the status is asked, send, and read the manager's list (promo and formation present, no name);
 then as a guest on the public link, see the cursus asked. An older build (`1.7.2`) on the same form
 must be asked the cursus and log `[LEGACY]`.
+
+Also read: with the form open on the phone, tick another box on the live form from the web, then
+press "Envoyer" - the page must say the form changed, redraw the notice with the new field, keep what
+was typed, and send on the second press (named form and anonymous form alike).

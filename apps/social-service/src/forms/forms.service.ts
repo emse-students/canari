@@ -143,6 +143,7 @@ import {
 import {
   DEFAULT_ACCOUNT_FIELDS,
   accountSnapshot,
+  announcedMatchesJoined,
   anonymousMemberSnapshot,
   askedDeclaredFields,
   askedOfMember,
@@ -154,9 +155,11 @@ import {
   ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION,
   predatesAnonymousCursusJoin,
   predatesDeclaredFields,
+  cursusSourceOf,
   identityCells,
   identityColumnsOf,
   respondentNames,
+  showsCursusSource,
   storedRespondentFields,
   type RespondentIdentity,
   type SharedAccountFields,
@@ -206,6 +209,7 @@ import {
   FORM_ANSWER_TOO_LONG,
   FORM_ANSWER_TOO_MANY_SELECTIONS,
   FORM_CLOSED,
+  FORM_RESPONDENT_FIELDS_CHANGED,
   FORM_COMBINATION_UNAVAILABLE,
   FORM_FILE_NEEDS_ACCOUNT,
   FORM_FULL,
@@ -374,6 +378,12 @@ function formOptionStateOf(input: CreateFormDto & { anonymous?: boolean }): Form
     hasFileQuestion: hasFileQuestion(input.items),
     allowsAnswerEdit: input.allowAnswerEdit === true,
     joinsAccountBeyondCursus: joinsBeyondCursus(input.respondentFields),
+    joinsCursusUnasked:
+      input.anonymous === true &&
+      joinedAccountFields({ anonymous: true, respondentFields: input.respondentFields }).includes(
+        'cursus'
+      ) &&
+      !askedDeclaredFields(input.guestFields).includes('cursus'),
   };
 }
 
@@ -401,7 +411,9 @@ const FORM_CONFLICT_MESSAGE: Record<FormSaveConflict, string> = {
   FORM_ANONYMOUS_FILE:
     'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
   FORM_ANONYMOUS_ACCOUNT_FIELDS:
-    'An anonymous form can read only the promo and formation from an account: a name, a status or a campus would name the person (they are asked instead).',
+    'An anonymous form can read only the promo and formation from an account: a name, a status or a campus read from it would name the person. A status or a campus can be asked of the respondent; a name never is.',
+  FORM_ANONYMOUS_CURSUS_NOT_ASKED:
+    'An anonymous form that reads the cursus from the account must also ask it: a guest has no account and declares it.',
   FORM_ANONYMOUS_ANSWER_EDIT:
     'An anonymous form cannot let an answer be changed: its answers name nobody who could reopen one.',
   FORM_PUBLIC_AUDIENCE:
@@ -1551,10 +1563,22 @@ export class FormsService {
     // which switch the manager touched last. Anonymity is the stored value: it is fixed above.
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about the
     // answers already stored.
+    // WHAT THE FORM WILL JOIN from the account: the sent list; else the stored one - EXCEPT when the
+    // draft's anonymity changes in this save, which must not carry a join nobody ticked for the new
+    // kind of form (a named draft's cursus would join an anonymous form unseen): `[]`.
+    const anonymityChanged = anonymous !== (form.anonymous === true);
+    const respondentFieldsAfter =
+      input.respondentFields ?? (anonymityChanged ? [] : form.respondentFields);
+    if (input.respondentFields === undefined && anonymityChanged) {
+      this.logger.log(
+        `[FORMS] edit of ${formId.slice(0, 8)} changes anonymity without respondentFields: the join is cleared`
+      );
+    }
     const effective = {
       ...input,
       items,
       anonymous,
+      respondentFields: respondentFieldsAfter,
       // The guest fields the form WILL ask: the sent list, else the stored one.
       guestFields: input.guestFields ?? form.guestFields,
       isPublic: input.isPublic ?? form.isPublic,
@@ -1678,10 +1702,7 @@ export class FormsService {
                 : storedGuestFields(input.guestFields),
           }
         : {}),
-      respondentFields: storedRespondentFields(
-        input.respondentFields ?? form.respondentFields,
-        anonymous
-      ),
+      respondentFields: storedRespondentFields(respondentFieldsAfter, anonymous),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtAfter,
@@ -4406,20 +4427,22 @@ export class FormsService {
     input: SubmitFormDto & SubmitClient,
     guest: boolean
   ): Promise<RespondentIdentity | null> {
+    if (!guest) this.assertJoinAnnounced(form, input);
     if (!guest && form.anonymous && joinedAccountFields(form).includes('cursus')) {
       // The form reads the cursus from the account (owner, 2026-11-21) - for a member whose build can
       // SAY so before sending. An older build cannot, so it is asked the cursus as it always was.
-      if (predatesAnonymousCursusJoin(input.clientVersion)) {
+      // No form id on this path: the logs of an anonymous submit must not link a person to a form.
+      if (predatesAnonymousCursusJoin(input.clientVersion) || input.announcedFields === undefined) {
         this.logger.log(
-          `[LEGACY] anonymous form=${form.id.slice(0, 8)} joins the cursus; a build older than ` +
-            `${ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION} is asked it instead`
+          '[LEGACY] an anonymous form joining the cursus, answered by a build older than ' +
+            `${ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION} (or announcing nothing): asked it instead`
         );
       } else {
         const declared = declaredIdentityFor(askedOfMember(form), input, form.id);
         const account = input.userId ? await this.pricingFacts.accountIdentity(input.userId) : null;
         this.logger.debug(
-          `[FORMS] submit form=${form.id.slice(0, 8)} anonymous: cursus read from the account ` +
-            `(core-service), ${declared ? 'rest declared' : 'nothing else asked'}`
+          `[FORMS] anonymous submit: cursus read from the account (core-service), ` +
+            (declared ? 'rest declared' : 'nothing else asked')
         );
         return anonymousMemberSnapshot(declared, account);
       }
@@ -4446,6 +4469,36 @@ export class FormsService {
         `(${core ? 'core-service' : 'shared users table'})`
     );
     return accountSnapshot(joined, account);
+  }
+
+  /**
+   * A MEMBER IS JOINED ONLY TO WHAT THEIR PAGE TOLD THEM (principle 1, owner review 2026-11-21).
+   * The page sends the account fields it displayed (`announcedFields`); a form whose join changed
+   * since it loaded (an organiser ticked a box on a live form) is refused
+   * `FORM_RESPONDENT_FIELDS_CHANGED` before anything is read or written, and the page reloads and
+   * keeps the answer. A build that sends nothing is humoured on a NAMED form ([LEGACY]); on an
+   * anonymous one it is never joined (`respondentIdentityFor`).
+   */
+  private assertJoinAnnounced(form: Form, input: SubmitFormDto & SubmitClient): void {
+    const joined = joinedAccountFields(form);
+    if (input.announcedFields === undefined) {
+      if (joined.length > 0 && !form.anonymous) {
+        this.logger.log(
+          '[LEGACY] a submit to a form joining account fields announces none (a build older than ' +
+            `${ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION}): joined as before`
+        );
+      }
+      return;
+    }
+    if (announcedMatchesJoined(input.announcedFields, joined)) return;
+    this.logger.log(
+      '[FORMS] submit refused: the form joins other account fields than its page announced ' +
+        `(announced ${input.announcedFields.length}, joined ${joined.length})`
+    );
+    throw formRefusal(
+      FORM_RESPONDENT_FIELDS_CHANGED,
+      'What this form joins from your account changed since you opened it.'
+    );
   }
 
   /**
@@ -4579,7 +4632,12 @@ export class FormsService {
       );
     }
     const identityWords =
-      identityColumns.length > 0 ? (labels.identity ?? LEGACY_IDENTITY_EXPORT_LABELS) : undefined;
+      identityColumns.length > 0
+        ? { ...LEGACY_IDENTITY_EXPORT_LABELS, ...labels.identity }
+        : undefined;
+    // Certified and declared promos are never mixed silently (owner review, 2026-11-21): once an
+    // answer's cursus came from the account, each row says which it is.
+    const sourceColumn = showsCursusSource(form, submissions);
 
     const workbook = new ExcelJS.Workbook();
     // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).
@@ -4620,6 +4678,9 @@ export class FormsService {
         if (field === 'cursus') {
           headers.push({ header: identityWords.promo, key: 'promo', width: 10 });
           headers.push({ header: identityWords.formation, key: 'formation', width: 14 });
+          if (sourceColumn) {
+            headers.push({ header: identityWords.source, key: 'cursusSource', width: 12 });
+          }
         } else {
           headers.push({ header: identityWords[field], key: field, width: 16 });
         }
@@ -4674,6 +4735,15 @@ export class FormsService {
         row.lastName = names.lastName ?? '';
       }
       if (identityWords) Object.assign(row, identityCells(sub.respondentIdentity, identityWords));
+      if (identityWords && sourceColumn) {
+        const source = cursusSourceOf(sub.respondentIdentity);
+        row.cursusSource =
+          source === 'account'
+            ? identityWords.sourceAccount
+            : source === 'declared'
+              ? identityWords.sourceDeclared
+              : '';
+      }
       if (guestColumn) row.guest = sub.userId ? '' : guestReference(sub.id);
       if (emailColumn) row.guestEmail = sub.guestEmail ?? '';
       if (form.requiresPayment) {
