@@ -1237,6 +1237,114 @@ pub fn process_welcome_background_with_key(
     Ok(())
 }
 
+/// Whether a LATER drain can send what this one could not - classified where the failure is thrown,
+/// and handed to the platform drains as a token (`"prospect"`, `OutboxRetry.Prospect` on Android),
+/// never as prose they would have to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendProspect {
+    /// A retry may succeed: a refused write, a staged commit, a failure nothing types as permanent.
+    NotYet,
+    /// No retry from this device's state will: the group is not held here, this device was removed
+    /// from it, the entry is malformed, or the key cannot open the state.
+    Never,
+}
+
+impl SendProspect {
+    /// The token the platform drains read.
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::NotYet => "not-yet",
+            Self::Never => "never",
+        }
+    }
+
+    /// What a failed state LOAD means for every entry of the batch. Exhaustive on purpose: a new
+    /// variant must be placed on one side, never defaulted.
+    ///
+    /// NEVER: the key does not open the state (sealed under another key, altered, undecryptable,
+    /// another identity's), no key at all, a state that does not parse, or one declared
+    /// unrecoverable - only the app, opened, can act on it. NOT_YET: `OpenMls` and `InvalidData`
+    /// carry no type that says permanent (they are prose today), and the rest are not load errors.
+    pub fn of_state_load(error: &mls_core::MlsError) -> Self {
+        use mls_core::MlsError as E;
+        match error {
+            E::StateUndecryptable(_)
+            | E::StateIdentityMismatch(_)
+            | E::StateSealedUnderAnotherKey(_)
+            | E::StateAltered(_)
+            | E::KeystoreKeyUnavailable(_)
+            | E::Serialization(_)
+            | E::Unrecoverable(_) => Self::Never,
+            E::OpenMls(_)
+            | E::GroupNotFound(_)
+            | E::InvalidData
+            | E::AlreadyMember(_)
+            | E::Evicted(_)
+            | E::NoSuchMember(_)
+            | E::GroupAlreadyHeld(_)
+            | E::ForeignExternalRemove(_) => Self::NotYet,
+        }
+    }
+
+    /// What a failed ENCRYPT of one entry means for that entry. Exhaustive on purpose.
+    ///
+    /// NEVER: the group is not held on this device, or this device was removed from it - the same
+    /// state sends nothing to it again. NOT_YET: everything else; `OpenMls` in particular is the
+    /// untyped catch-all of openmls, and nothing in it says permanent.
+    pub fn of_encrypt(error: &mls_core::MlsError) -> Self {
+        use mls_core::MlsError as E;
+        match error {
+            E::GroupNotFound(_) | E::Evicted(_) | E::Unrecoverable(_) => Self::Never,
+            E::OpenMls(_)
+            | E::Serialization(_)
+            | E::InvalidData
+            | E::AlreadyMember(_)
+            | E::NoSuchMember(_)
+            | E::GroupAlreadyHeld(_)
+            | E::StateUndecryptable(_)
+            | E::StateIdentityMismatch(_)
+            | E::StateSealedUnderAnotherKey(_)
+            | E::StateAltered(_)
+            | E::KeystoreKeyUnavailable(_)
+            | E::ForeignExternalRemove(_) => Self::NotYet,
+        }
+    }
+}
+
+/// Why a WHOLE batch failed - nothing may then be posted - with whether a later drain can do better.
+#[derive(Debug)]
+pub struct SendBatchError {
+    pub prospect: SendProspect,
+    pub message: String,
+}
+
+impl SendBatchError {
+    pub fn not_yet(message: impl Into<String>) -> Self {
+        Self {
+            prospect: SendProspect::NotYet,
+            message: message.into(),
+        }
+    }
+
+    pub fn never(message: impl Into<String>) -> Self {
+        Self {
+            prospect: SendProspect::Never,
+            message: message.into(),
+        }
+    }
+
+    /// The answer the platform drains read: `{"ok":false,"error":..,"prospect":..}`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "ok": false, "error": self.message, "prospect": self.prospect.token() })
+    }
+}
+
+impl std::fmt::Display for SendBatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.message, self.prospect.token())
+    }
+}
+
 /// One entry of an outbox drain batch, as the platform mirrors store it. `id` is echoed back
 /// untouched so a caller can never mis-zip its own list against the results.
 #[derive(serde::Deserialize)]
@@ -1269,8 +1377,12 @@ pub struct OutboxEntry {
 /// rewinds and the peer can never decrypt what follows. Undelivered entries simply stay in the
 /// mirror and are re-encrypted at a fresh generation on the next drain, which is harmless.
 ///
-/// A per-entry failure (typically `GroupNotFound`: the group is not joined on this device yet) is
+/// A per-entry failure (typically `GroupNotFound`: the group is not held on this device) is
 /// isolated and reported in its own result, never allowed to abort the rest of the batch.
+///
+/// EVERY FAILURE SAYS WHETHER A LATER DRAIN CAN DO BETTER ([`SendProspect`]), classified here where
+/// it is thrown: an entry's result carries `"prospect"`, a whole-batch failure is a
+/// [`SendBatchError`]. A drain that retried on a permanent failure looped for good, and told no one.
 pub fn send_messages_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
@@ -1279,13 +1391,21 @@ pub fn send_messages_background_with_key(
     device_id: &str,
     entries: &[OutboxEntry],
     max_attempts: usize,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, SendBatchError> {
     if entries.is_empty() {
         return Ok(serde_json::json!({ "ok": true, "results": [] }));
     }
 
-    // The one load for the whole batch.
-    let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
+    // The one load for the whole batch, its failure classified by its type.
+    let key = decode_base64_to_32_bytes(key_b64.trim())
+        .map_err(|e| SendBatchError::never(format!("device key: {e}")))?;
+    let mut manager =
+        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key).map_err(
+            |e| SendBatchError {
+                prospect: SendProspect::of_state_load(&e),
+                message: e.to_string(),
+            },
+        )?;
 
     let mut results = Vec::with_capacity(entries.len());
     let mut encrypted = 0usize;
@@ -1300,6 +1420,7 @@ pub fn send_messages_background_with_key(
                 "id": entry.id,
                 "ok": false,
                 "error": "commit-pending: the group's staged commit is not settled - kept queued",
+                "prospect": SendProspect::NotYet.token(),
             }));
             continue;
         }
@@ -1321,16 +1442,18 @@ pub fn send_messages_background_with_key(
                     "authorProof": STANDARD.encode(&frame.author_proof),
                 }));
             }
-            Err(e) => {
+            Err((prospect, e)) => {
                 // Isolated on purpose: one unjoined group must not strand the rest of the backlog.
                 log::warn!(
-                    "[BG_SEND] entry skipped group={} : {e}",
-                    entry.group_id.chars().take(8).collect::<String>()
+                    "[BG_SEND] entry skipped group={} ({}): {e}",
+                    entry.group_id.chars().take(8).collect::<String>(),
+                    prospect.token()
                 );
                 results.push(serde_json::json!({
                     "id": entry.id,
                     "ok": false,
                     "error": e,
+                    "prospect": prospect.token(),
                 }));
             }
         }
@@ -1348,10 +1471,12 @@ pub fn send_messages_background_with_key(
     }
 
     // The one save for the whole batch - and it happens before any ciphertext leaves this function.
+    // Both failures are NOT_YET: a serialise that failed carries no type saying permanent, and a
+    // refused write (the foreground active, the file moved) is a "later" by construction.
     let enc = manager
         .save_encrypted_with_key(&key)
-        .map_err(|e| e.to_string())?;
-    write_over_loaded_state(files_dir, state_bytes, &enc)?;
+        .map_err(|e| SendBatchError::not_yet(format!("save: {e}")))?;
+    write_over_loaded_state(files_dir, state_bytes, &enc).map_err(SendBatchError::not_yet)?;
     log::info!(
         "[BG_SEND] batch encrypted {encrypted}/{attempted} attempted, {held} held behind a staged commit, {} left for the next drain (mls.bin {} bytes, 1 load, 1 save)",
         entries.len() - attempted - held,
@@ -1371,13 +1496,19 @@ pub fn send_messages_background_with_key(
 fn encrypt_one(
     manager: &mut MlsManager,
     entry: &OutboxEntry,
-) -> Result<mls_core::authorship::AuthoredFrame, String> {
+) -> Result<mls_core::authorship::AuthoredFrame, (SendProspect, String)> {
+    // A proto that does not decode never will: the entry is malformed.
     let proto_bytes = STANDARD
         .decode(entry.proto.trim())
-        .map_err(|e| format!("base64 decode proto: {e}"))?;
+        .map_err(|e| (SendProspect::Never, format!("base64 decode proto: {e}")))?;
     manager
         .send_authored_message(&entry.group_id, &proto_bytes)
-        .map_err(|e| format!("send_authored_message: {e:?}"))
+        .map_err(|e| {
+            (
+                SendProspect::of_encrypt(&e),
+                format!("send_authored_message: {e:?}"),
+            )
+        })
 }
 
 /// Parses the batch JSON the platform drains pass across the FFI boundary:
@@ -2177,15 +2308,80 @@ mod tests {
             &[entry("id-0", &group_id, b"late")],
             100,
         );
-        assert!(
-            out.is_err(),
-            "the drain must not persist over a re-sealed state"
-        );
+        let refused = out.expect_err("the drain must not persist over a re-sealed state");
+        // A refused write is a "later": the next drain loads the re-sealed state.
+        assert_eq!(refused.prospect, SendProspect::NotYet);
         assert_eq!(
             std::fs::read(dir.join("mls.bin")).expect("mls.bin"),
             re_sealed,
             "the state under the new key survives"
         );
+    }
+
+    /// A KEY THAT DOES NOT OPEN THE STATE IS NEVER: every later drain loads the same bytes with the
+    /// same key, so the batch says so as a token and the drain stops retrying it.
+    #[test]
+    fn a_state_the_key_does_not_open_fails_the_batch_for_good() {
+        let _fg = quiet_foreground();
+        let (alice, _bob, group_id) = joined_pair("wrong-key");
+        let sealed = alice
+            .save_encrypted_with_key(&decode_base64_to_32_bytes(&key_b64(41)).expect("key"))
+            .expect("seal");
+        let dir = dir_holding("wrong-key", &sealed);
+        let refused = send_messages_background_with_key(
+            &dir,
+            &sealed,
+            &key_b64(42),
+            "wrong-key-alice",
+            "dev-a",
+            &[entry("id-0", &group_id, b"x")],
+            100,
+        )
+        .expect_err("another key opens nothing");
+        assert_eq!(refused.prospect, SendProspect::Never);
+        assert_eq!(refused.to_json()["prospect"], "never");
+    }
+
+    /// AN ENTRY FOR A GROUP THIS DEVICE DOES NOT HOLD IS NEVER, beside an entry that encrypts.
+    #[test]
+    fn an_entry_for_a_group_not_held_is_never_and_the_rest_goes() {
+        let _fg = quiet_foreground();
+        let (alice, _bob, group_id) = joined_pair("not-held");
+        let sealed = alice
+            .save_encrypted_with_key(&decode_base64_to_32_bytes(&key_b64(43)).expect("key"))
+            .expect("seal");
+        let dir = dir_holding("not-held", &sealed);
+        let out = send_messages_background_with_key(
+            &dir,
+            &sealed,
+            &key_b64(43),
+            "not-held-alice",
+            "dev-a",
+            &[
+                entry("id-0", "no-such-group", b"x"),
+                entry("id-1", &group_id, b"y"),
+            ],
+            100,
+        )
+        .expect("the batch");
+        let results = out["results"].as_array().expect("results");
+        assert_eq!(results[0]["ok"], false);
+        assert_eq!(results[0]["prospect"], "never");
+        assert_eq!(results[1]["ok"], true);
+    }
+
+    #[test]
+    fn a_malformed_proto_is_never() {
+        let (mut alice, _bob, group_id) = joined_pair("malformed");
+        let bad = OutboxEntry {
+            id: "bad".into(),
+            group_id,
+            proto: "%%% not base64".into(),
+        };
+        let Err((prospect, _)) = encrypt_one(&mut alice, &bad) else {
+            panic!("not a proto");
+        };
+        assert_eq!(prospect, SendProspect::Never);
     }
 
     #[test]

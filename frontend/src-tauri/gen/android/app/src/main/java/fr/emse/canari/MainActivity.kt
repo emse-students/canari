@@ -997,6 +997,17 @@ class MainActivity : TauriActivity() {
         pushForeground(false)
         CallForegroundService.appOnScreenChanged(false)
         Log.d("MainActivity", "onPause: isInForeground=false")
+        // THE OUTBOX GOES BACK TO THE RETRY WORKER: a run that found the app in front ended its
+        // request, so an entry the page has not sent gets a fresh one now (off the main thread: it
+        // reads the mirror).
+        val appContext = applicationContext
+        Thread({
+            try {
+                OutboxRetryWorker.enqueueIfMirrorHolds(appContext)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "onPause: the outbox retry was not handed back - the next push or boot drains it: ${e.javaClass.simpleName}")
+            }
+        }, "canari-outbox-handback").start()
         abandonTurn(TurnAbandon.PAUSED)
         CookieManager.getInstance().flush()
     }

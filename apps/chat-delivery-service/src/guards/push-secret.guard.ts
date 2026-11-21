@@ -18,9 +18,21 @@ import { sanitizeQueryValue } from '../utils/sanitize';
 export const PUSH_SECRET_USER = 'pushSecretUserId';
 
 /**
+ * The `error` every refusal of a PushSecret is typed with. A native background sender reads it to
+ * tell "this DEVICE's credential is refused, nothing it holds will go" from a refusal of one frame
+ * (`QueuedSendAnswer.kt`, `CREDENTIAL_REFUSED`) - a type, never the prose beside it.
+ */
+export const PUSH_SECRET_REJECTED = 'push_secret_rejected';
+
+/** The `403` a refused PushSecret answers: typed by {@link PUSH_SECRET_REJECTED}. */
+function pushSecretRefusal(message: string): ForbiddenException {
+  return new ForbiddenException({ error: PUSH_SECRET_REJECTED, message });
+}
+
+/**
  * Verifies a `PushSecret` header against the secret stored for `userId:deviceId`, and throws a
- * `403` on any failure. THE one implementation: the push controller's routes and
- * {@link PushSecretGuard} both call it.
+ * `403` typed {@link PUSH_SECRET_REJECTED} on any failure. THE one implementation: the push
+ * controller's routes and {@link PushSecretGuard} both call it.
  *
  * A legacy plaintext secret is accepted once and migrated to its SHA-256 on the spot.
  */
@@ -36,13 +48,13 @@ export async function verifyPushSecret(
     : null;
   if (!secret) {
     logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=header_missing`);
-    throw new ForbiddenException('PushSecret header required');
+    throw pushSecretRefusal('PushSecret header required');
   }
   const pt = await pushTokenRepo.findOne({ where: { userId, deviceId } });
   const stored = pt?.pushSecret;
   if (!stored) {
     logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=no_stored_secret`);
-    throw new ForbiddenException('Invalid push secret');
+    throw pushSecretRefusal('Invalid push secret');
   }
 
   // Try SHA-256 hash first (new format)
@@ -72,7 +84,7 @@ export async function verifyPushSecret(
   }
 
   logger.warn(`[PUSH_SECRET] rejected user=${userId} device=${deviceId} reason=mismatch`);
-  throw new ForbiddenException('Invalid push secret');
+  throw pushSecretRefusal('Invalid push secret');
 }
 
 /**

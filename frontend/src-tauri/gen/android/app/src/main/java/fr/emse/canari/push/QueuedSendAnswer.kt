@@ -37,17 +37,54 @@ object QueuedSendAnswer {
         data class TransportFailed(val message: String?) : BodyRead
     }
 
-    /** Why a message stays queued. */
-    enum class KeptCause {
-        /** The status was not 200 or 201: a refusal or a server fault. */
-        NOT_ACCEPTED_STATUS,
+    /**
+     * Why a message stays queued, and with it whether a later drain can send it
+     * ([OutboxRetry.Prospect]) - classified here, where the answer is read.
+     */
+    enum class KeptCause(val prospect: OutboxRetry.Prospect) {
+        /** A status that is neither an acceptance nor a final refusal: a server fault, a "later". */
+        NOT_ACCEPTED_STATUS(OutboxRetry.Prospect.NOT_YET),
+
+        /** A 4xx refusal of this frame or credential ([OutboxRetry.isFinalRefusal]): never from here. */
+        REFUSED(OutboxRetry.Prospect.NEVER),
+
+        /**
+         * 403 `sender_not_active` with the device's row `pending`: a re-add of this device is in
+         * flight, and once it lands the same frame is accepted - read from the server's TYPED body
+         * (`messaging.service.ts`, `error` and `status`), never from its prose.
+         */
+        SENDER_BEING_READDED(OutboxRetry.Prospect.NOT_YET),
+
+        /**
+         * A 401, or a 403 typed [PUSH_SECRET_REJECTED]: the server refused this DEVICE's push secret
+         * (revoked, rotated, never stored), not the frame. Every other entry would meet the same
+         * refusal, so it is [OutboxRetry.Prospect.BLOCKED]: the drain stops, the entries stay
+         * sendable, and the member is asked to open the app, whose registration writes a new secret.
+         */
+        CREDENTIAL_REFUSED(OutboxRetry.Prospect.BLOCKED),
 
         /** A 2xx whose body is not JSON: no answer from the server. */
-        BODY_NOT_JSON,
+        BODY_NOT_JSON(OutboxRetry.Prospect.NOT_YET),
 
         /** A 2xx whose body could not be read: a transport failure after the status. */
-        BODY_READ_FAILED,
+        BODY_READ_FAILED(OutboxRetry.Prospect.NOT_YET),
+
+        /** No answer at all: DNS, connect, timeout, a reset before the status. */
+        TRANSPORT_FAILED(OutboxRetry.Prospect.NOT_YET),
     }
+
+    /** The typed fields of a refusal's JSON body (`error`, `status`); null when absent or unread. */
+    data class Refusal(val error: String?, val status: String?) {
+        companion object {
+            val UNREAD = Refusal(null, null)
+        }
+    }
+
+    /**
+     * The `error` the server types a refused push secret with (`PUSH_SECRET_REJECTED` in
+     * `push-secret.guard.ts`). A server older than it answers an untyped 403, read as [KeptCause.REFUSED].
+     */
+    const val PUSH_SECRET_REJECTED = "push_secret_rejected"
 
     /** The decision. */
     sealed interface Outcome {
@@ -59,11 +96,24 @@ object QueuedSendAnswer {
     }
 
     /**
-     * Decides from the status [code] and, only when it is 200 or 201, the body [readBody] produces -
-     * a refused status never reads its body.
+     * Decides from the status [code] and, only when it is 200 or 201, the body [readBody] produces.
+     * A 401 is the device's credential refused, whatever its body. A 403 reads only its typed fields
+     * ([readRefusal]): [PUSH_SECRET_REJECTED] is the credential too, and `sender_not_active` is a
+     * "later" while a re-add is in flight. Any other final refusal is this frame's.
      */
-    fun classify(code: Int, readBody: () -> BodyRead): Outcome {
-        if (code != 200 && code != 201) return Outcome.Kept(KeptCause.NOT_ACCEPTED_STATUS)
+    fun classify(code: Int, readRefusal: () -> Refusal = { Refusal.UNREAD }, readBody: () -> BodyRead): Outcome {
+        if (code != 200 && code != 201) {
+            if (!OutboxRetry.isFinalRefusal(code)) return Outcome.Kept(KeptCause.NOT_ACCEPTED_STATUS)
+            if (code == 401) return Outcome.Kept(KeptCause.CREDENTIAL_REFUSED)
+            if (code == 403) {
+                val refusal = readRefusal()
+                if (refusal.error == PUSH_SECRET_REJECTED) return Outcome.Kept(KeptCause.CREDENTIAL_REFUSED)
+                if (refusal.error == "sender_not_active" && refusal.status == "pending") {
+                    return Outcome.Kept(KeptCause.SENDER_BEING_READDED)
+                }
+            }
+            return Outcome.Kept(KeptCause.REFUSED)
+        }
         return when (val body = readBody()) {
             is BodyRead.Json -> Outcome.Sent(body.receivedAt.coerceAtLeast(0L))
             BodyRead.NotJson -> Outcome.Kept(KeptCause.BODY_NOT_JSON)

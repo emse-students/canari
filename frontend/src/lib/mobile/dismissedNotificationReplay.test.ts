@@ -386,7 +386,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(underLock).toContain('val left = drainOutboxLocked(');
     // The retry worker and the push-woken drains go through it.
     const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
-    expect(worker).toContain('CanariFirebaseMessagingService.drainOutboxBackground(');
+    expect(worker).toContain('CanariFirebaseMessagingService.drainOutbox(');
     // ...only with a network (#3912 F2): a drain run offline must not spend one of its attempts,
     // and a failed drain below the cap is a retry, never a failure.
     const enqueue = worker.slice(worker.indexOf('fun enqueueIfHealthy('));
@@ -406,11 +406,11 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(legacy).toBeGreaterThan(-1);
     expect(unique).toBeGreaterThan(legacy);
     expect(worker).not.toContain('.enqueue(request)');
-    const tail = worker.slice(worker.indexOf('if (attempt >= MAX_DRAIN_ATTEMPTS) {'));
-    expect(tail.indexOf('return Result.failure()')).toBeGreaterThan(-1);
-    expect(tail.slice(tail.indexOf('return Result.failure()') + 1)).toContain(
-      'still queued — retry")\n        return Result.retry()'
-    );
+    // ...and it ends on durable state, never on a count (`OutboxRetryTest`): a drain whose
+    // leftovers can all still go is a retry, one refused for good is the nudge.
+    expect(worker).not.toContain('MAX_DRAIN_ATTEMPTS');
+    expect(worker).toContain('OutboxRetry.Decision.RETRY -> {');
+    expect(worker).toContain('OutboxRetry.Decision.GIVE_UP -> {');
     expect(source).toContain('drainOutboxBackground(this, this, drainCtx)');
     // The pending line names its message.
     expect(source).toContain('extras.putString(LINE_PENDING_REPLY_ID, messageId)');
