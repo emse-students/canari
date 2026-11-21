@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import fr.emse.canari.push.FixedNotifIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,9 +24,10 @@ import org.junit.Test
  */
 class UnreadBadgeCountTest {
 
-    /** The app's reserved ids, which are never conversations. */
-    private val groupSummaryId = 9999
-    private val pendingSyncId = 9998
+    /** The app's reserved ids, which are never conversations - read from the app's own table. */
+    private val groupSummaryId = FixedNotifIds.GROUP_SUMMARY
+    private val outboxNudgeId = FixedNotifIds.OUTBOX_NUDGE
+    private val workerForegroundId = FixedNotifIds.WORKER_FOREGROUND
 
     /** A record as `activeNotifications` reports it: an id and the channel it was filed under. */
     data class Posted(val id: Int, val channel: String)
@@ -41,7 +43,7 @@ class UnreadBadgeCountTest {
      */
     private fun count(shade: List<Posted>, justPosted: Int = 0, justCancelled: Int = 0): Int {
         val ids = shade
-            .filter { it.id != groupSummaryId && it.id != pendingSyncId }
+            .filter { it.id !in FixedNotifIds.ALL }
             .filter { it.channel == messages || it.channel == mentions }
             .mapTo(mutableSetOf()) { it.id }
         if (justPosted != 0) ids.add(justPosted)
@@ -122,16 +124,40 @@ class UnreadBadgeCountTest {
         )
     }
 
-    /** The two reserved ids are not conversations whichever channel they were filed under. */
+    /**
+     * The reserved ids are not conversations whichever channel they were filed under: the summary,
+     * the outbox nudge, and the worker's foreground notice (all on the messages channel).
+     */
     @Test
-    fun `the summary and the pending-sync nudge are never counted`() {
-        val shade = listOf(Posted(groupSummaryId, messages), Posted(pendingSyncId, messages))
+    fun `the summary, the outbox nudge and the worker's notice are never counted`() {
+        val shade = listOf(
+            Posted(groupSummaryId, messages),
+            Posted(outboxNudgeId, messages),
+            Posted(workerForegroundId, messages),
+        )
 
         assertEquals(0, count(shade))
         assertTrue(
             "so an empty bundle stays empty and the summary is cancelled, which is correct here",
             count(shade) == 0
         )
+    }
+
+    /**
+     * Since 1.7.3 the filter is `FixedNotifIds.ALL`, so the new-device notice (9996) and the
+     * worker's failure notice (9997), both on the messages channel, are no longer counted as
+     * unread conversations - before, they raised the badge by one each.
+     */
+    @Test
+    fun `the new-device and the worker-failure notices are not conversations`() {
+        val shade = listOf(
+            Posted(FixedNotifIds.NEW_DEVICE, messages),
+            Posted(FixedNotifIds.BACKGROUND_FAILURE, messages),
+            Posted(1000, messages),
+        )
+        assertEquals(9996, FixedNotifIds.NEW_DEVICE)
+        assertEquals(9997, FixedNotifIds.BACKGROUND_FAILURE)
+        assertEquals(1, count(shade))
     }
 
     /** Both corrections in one call: one conversation read while another arrives. */

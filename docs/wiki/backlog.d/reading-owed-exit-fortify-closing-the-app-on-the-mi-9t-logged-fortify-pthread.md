@@ -29,3 +29,8 @@ the same thirteen exits show no `FORTIFY` line.
 **Owed, moved here from the Root Back entry (fixed by #3544, merged):** `MainActivity.kt` is compiled by no PR gate, so on the Mi 9T after the next pre-release read that Back at a root tab with no history sends the app to the background (`moveTaskToBack`, log "moving the task to the background") and leaves the process alive, so the next launch is warm ([mobile](../frontend/mobile.md#back-at-a-root-tab-goes-to-the-background-owner-2026-11-14)). It also changes this entry's own reading: two Back presses no longer reach `onDestroy` from a root tab, so the FORTIFY line now needs another way out of the app.
 
 **Mi 9T, 2026-11-16 (`1.7.0-alpha.2`): #3544 READ, FORTIFY unreachable from Back.** Four warm relaunches then Back at the root: `MainActivity: Back at the root with no history on API 36 - moving the task to the background`, the same pid kept, the launcher in focus, no `onDestroy`, 0 `FORTIFY` lines. The "Back at a root tab goes to the background" part of this entry is therefore closed; **what is left is a way out of the app that reaches `onDestroy` with the WebView's render thread alive** (an OS-initiated finish, not Back), and none was found that needs no swipe from a screen edge.
+
+**Mi 9T, 2026-11-21 (`1.7.3-alpha.1`, sitting r173a2): the #3544 part PASS again.** Four cycles of
+Back at a root tab, the pid the same throughout, each logging `MainActivity: Back at the root with no
+history on API 36 - moving the task to the background`; 0 `onDestroy`, 0 `FORTIFY`. **Still owed:** a
+way out of the app that reaches `onDestroy` with the WebView's render thread alive.

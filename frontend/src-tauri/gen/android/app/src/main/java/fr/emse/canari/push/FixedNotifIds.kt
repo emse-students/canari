@@ -28,8 +28,21 @@ object FixedNotifIds {
     /** The background MLS worker's failure notice. */
     const val BACKGROUND_FAILURE = 9997
 
-    /** "Messages pending sync", and the background worker's foreground notice (one id, shared). */
-    const val PENDING_SYNC = 9998
+    /**
+     * The background MLS worker's foreground notice. Until 1.7.3 the "messages en attente" nudge
+     * shared it, so a nudge posted before the update may still stand here: [OUTBOX_NUDGE] says
+     * how it is told apart ([OutboxNudge.isPreUpdateNudge]).
+     */
+    const val WORKER_FOREGROUND = 9998
+
+    /**
+     * "Vous avez peut-etre des messages en attente": the outbox nudge, withdrawn when the outbox
+     * mirror empties. ITS OWN ID, so withdrawing it can never take the worker's foreground notice
+     * down - one id, one meaning. BELOW 1000 ON PURPOSE: the conversation counter starts at 1000 and
+     * only grows, so no install has ever persisted this id for a conversation, which an id inside
+     * the counter's range could not promise (an id already stored is never moved).
+     */
+    const val OUTBOX_NUDGE = 999
 
     /** The message group summary. */
     const val GROUP_SUMMARY = 9999
@@ -38,7 +51,7 @@ object FixedNotifIds {
     const val CALL_FOREGROUND = 0x0CA11
 
     /** Every id above: none may be handed to a conversation. */
-    val ALL: Set<Int> = setOf(WAKE_UNAVAILABLE, NEW_DEVICE, BACKGROUND_FAILURE, PENDING_SYNC, GROUP_SUMMARY, CALL_FOREGROUND)
+    val ALL: Set<Int> = setOf(OUTBOX_NUDGE, WAKE_UNAVAILABLE, NEW_DEVICE, BACKGROUND_FAILURE, WORKER_FOREGROUND, GROUP_SUMMARY, CALL_FOREGROUND)
 
     /** The first id at or after [candidate] that is not a fixed one. */
     fun skipReserved(candidate: Int): Int {

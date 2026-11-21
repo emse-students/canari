@@ -53,3 +53,10 @@ together with [the launch pass's own reading](reading-owed-ios-local-data-out-of
 one passed in the same sitting.
 
 **2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, iPhone 12): step 3 PASS, the rest not recorded.** A full `backup2`: `AppDomain-fr.emse.canari` and `AppDomainGroup-group.fr.emse.canari` hold 0 files (35 on `1.7.2-alpha.1`). A killed-app push decrypted (step 2, push half). The extension domains of the manifest were not examined. **Left:** the 6/6 launch line, the share extension's path, the relaunch and the downgrade path; the extension domains' files.
+
+**2026-11-21, on `1.7.3-alpha.1` (build 100700301), iPhone 12: steps 3 and 4 PASS, and step 1's
+verdict.** `[BACKUP_EXCLUSION] 6/6 ... flag read back` on two launches, with no ERROR; an unencrypted
+full backup's `Manifest.db` holds only directory rows for the app domains and none of the App Group's
+files (35 on `1.7.2-alpha.1`). **Still owed:** the first launch after the update over an older build
+(the move's WARN, step 1), the share extension's path and the push half of step 2, and the downgrade
+path (step 5).

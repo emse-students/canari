@@ -125,6 +125,9 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         val queued = CanariFirebaseMessagingService.readOutboxMirror(applicationContext).size
         if (queued == 0) {
             Log.d(TAG, "doWork: outbox empty - nothing owed (run $runAttemptCount)")
+            // Emptied by something that is not a native drain (the app's own flush while the WebView
+            // ran in the background): the nudge follows the mirror here too.
+            CanariFirebaseMessagingService.settleOutboxNudge(applicationContext, "OutboxRetryWorker")
             forgetAttempts()
             return Result.success()
         }

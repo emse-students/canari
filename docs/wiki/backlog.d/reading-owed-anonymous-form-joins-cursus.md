@@ -17,3 +17,14 @@ must be asked the cursus and log `[LEGACY]`.
 Also read: with the form open on the phone, tick another box on the live form from the web, then
 press "Envoyer" - the page must say the form changed, redraw the notice with the new field, keep what
 was typed, and send on the second press (named form and anonymous form alike).
+
+**2026-11-21, on `1.7.3-alpha.1`: PASS** - on the web, the refusal and the reload (submit `POST`
+400, then the reload `GET` 200, the notice redrawn with the new field, the typed answer kept, the
+second submit 201); the same refusal and reload on the iPhone; on the iPhone the notice shown, no
+cursus question, the submit accepted; on Android the notice shown and no cursus question; the
+manager's list and the xlsx export carry a Source column (`compte` / `déclaré`) and no name column;
+a guest answer through the public API reads `déclaré`. Then on the Mi 9T (sitting r173a2), Android **PASS**: the phone submit succeeded, its notice saying
+the promo and formation are read from the account, and the manager's list shows source `compte`;
+with the joined fields changed on the live form, the first "Envoyer" showed the changed-form message,
+the notice was redrawn, the typed answer kept, and the second press succeeded. **Still owed:** only
+the guest PAGE in a signed-out browser (the cursus asked).

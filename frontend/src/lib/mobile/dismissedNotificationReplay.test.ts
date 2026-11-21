@@ -246,7 +246,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     const notConversation = new Set([
       'showIncomingCallNotification',
       'refreshBadgeSummary',
-      'showPendingSyncNotification',
+      'postOutboxNudge',
       'showNewDeviceNotification',
       'showWakeUnavailableNotification',
       'showSimpleNotification',
@@ -382,7 +382,8 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(record - send).toBeLessThan(500);
     expect(body).not.toContain('AWAITED_REPLIES.delivered(');
     const outer = body.slice(0, body.indexOf('for (entry in delivered)'));
-    expect(outer).toContain('synchronized(OUTBOX_LOCK) { drainOutboxLocked(');
+    const underLock = outer.slice(outer.indexOf('synchronized(OUTBOX_LOCK) {'));
+    expect(underLock).toContain('val left = drainOutboxLocked(');
     // The retry worker and the push-woken drains go through it.
     const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
     expect(worker).toContain('CanariFirebaseMessagingService.drainOutboxBackground(');

@@ -664,7 +664,7 @@ I CanariFCM: [PUSH_SHOW] outcome=<token> conv=<g:8 | ch:8 | ?> channel=<id | ?> 
 
 | Where it ends | Outcome |
 | --- | --- |
-| `showMessageNotification`, whichever trigger reached it (MLS push, salon push, WebSocket frame, reaction) | `posted`, `posted-silent-call`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`. `already-in-shade` (the second trigger of one message refreshing its line) and `suppressed-already-alerted` (a later trigger of a message already announced) are decided too but stay in logcat: the log already carries that message's post, and a second line would spend the budget on nothing. `threw` - an ERROR - when an exception escaped the locked post section before it decided. |
+| `showMessageNotification`, whichever trigger reached it (MLS push, salon push, WebSocket frame, reaction) | `posted`, `posted-silent-call`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`. `already-in-shade` (the second trigger of one message refreshing its line) and `suppressed-already-alerted` (a later trigger of a message already announced) are decided too but stay in logcat: the log already carries that message's post, and a second line would spend the budget on nothing. `threw` - an ERROR - when an exception escaped the locked post section. It does NOT prove nothing was posted: the record writes after `postToShade` are inside the section, so a `threw` may follow a banner that already reached the shade. |
 | `dispatchPush`'s foreground guard, for a visible `message`, `channel` or reaction push | `suppressed-foreground-guard`, `why: type=<type> reaction=<bool>` |
 | `onWakePush`'s foreground guard, for a visible wake | `suppressed-foreground-wake` (a wake names no conversation: `conv=?`) |
 | The decrypt yielded to the foreground engine, which holds the frame | `yielded` |
@@ -685,6 +685,12 @@ lines out, so they stay in logcat.
 | A dismissal with no mark (`withdraw`, `Withdrawal`) | `withdraw-none`, `withdraw-kept-pending-reply`, `withdraw-cancelled`, `withdraw-held` |
 | A reply delivered by a drain, or answered inline (`replyDelivered` / `answerReply`, `Delivery`) | `delivery-none`, `delivery-cancelled`, `delivery-reposted`, `delivery-not-rebuilt`, `delivery-kept-until-read`, with `why: by=reply-delivered` or `why: by=answer-reply` |
 | `holdsDirectReply` (Android 15+: the platform holds a banner answered inline) | its `true` answer IS the `read-held`, `withdraw-held` and `delivery-kept-until-read` outcomes; for a post it rides on the post's line as `why: heldByReply=true`. Its failure branch is already an ERROR. |
+
+**The owner's case, read on a release build (#3912; Mi 9T, `1.7.3-alpha.1`, sitting r173a2,
+2026-11-21): PASS.** A DM, the app in the FOREGROUND on another conversation: the WebSocket
+`read_watermark` path alone removed the banner about 1.4 s after the read on the web, and no FCM push
+arrived within about 2 minutes. A salon: the WebSocket `channel.read` removed it 12 ms before the FCM
+`channel_read`, which then found nothing to cancel.
 
 **Recorded once the lock is released.** These decisions, and the end of the post section of
 `showMessageNotification`, are taken under `READ_ELSEWHERE.lock`; the OS reads behind a record are
@@ -710,11 +716,11 @@ that stops anywhere else (a signed-out device, a frame with nothing to render) i
 | Part | Decision |
 | --- | --- |
 | Outcomes | `PushShowOutcome.kt`, pure, pinned by `PushShowOutcomeTest` in `android-tests`. |
-| Conversation | `ConversationRef.of` - the one scheme every service log line uses since #3912: `ch:` and 8 characters of a salon's own id (`channel_` stripped first, or every salon read `channel_`), `g:` and 8 of an MLS conversation. The incoming-message lines (`onMessageReceived`, `thread:`, `showNotification:`, `type=channel`, `channel_read`, `handleChannelMessage`, `postChannelNotification`) and the outbox's `sent` line go through it too, so a `[PUSH_SHOW]` line and the lines around it name a conversation alike. So do the WARN/ERROR lines that reach the in-app log with a conversation or salon id (the welcome, catch-up, seed-frame, blind-banner and salon-read lines); a salon named by its bare id goes through `ConversationRef.ofSalon`, the same `ch:` reference. |
+| Conversation | `ConversationRef.of` - the one scheme every service log line uses since #3912: `ch:` and 8 characters of a salon's own id (`channel_` stripped first, or every salon read `channel_`), `g:` and 8 of an MLS conversation. The incoming-message lines (`onMessageReceived`, `thread:`, `showNotification:`, `type=channel`, `channel_read`, `handleChannelMessage`, `postChannelNotification`) and the outbox's `sent` line go through it too, so a `[PUSH_SHOW]` line and the lines around it name a conversation alike. So do the WARN/ERROR lines that reach the in-app log with a conversation or salon id (the welcome, catch-up, seed-frame, blind-banner and salon-read lines); a salon named by its bare id goes through `ConversationRef.ofSalon`, which equals `of("channel_" + id)` for a well-formed id only - non-empty and not itself carrying the `channel_` prefix (an empty one reads `?` where `of` reads `ch:`, a prefixed one is stripped once where `of` keeps the second prefix). |
 | OS state | Read at the decision (`recordShowOutcome`): `areNotificationsEnabled`, `areNotificationsPaused` (the app suspended), the importance of the channel it posts on - the CONVERSATION's own channel when its shortcut has one (`getNotificationChannel(channel, shortcutId)`, API 30+), since a member can silence one conversation alone - the DND interruption filter, `UsageStatsManager.appStandbyBucket` (a `rare` or `restricted` bucket defers high-priority FCM) and `PowerManager.isPowerSaveMode`. A field the platform would not answer is `?`, never guessed. |
 | Level | **INFO by design, through `FcmLog.iRecorded`**, the one deliberate path past the W/E gate (`NativePushLog.recordInfo`): a plain `Log.i` still stays in logcat, and no WARN is spent on an end that accuses nothing. **WARN** - with ` -> the OS drops it` - exactly when the decision posted and the app's notifications are off, paused, or the channel is blocked (`NONE`). A `LOW` channel still shows it, quietly: the member's choice, reported in `importance=` and not accused. |
 | Budget | **Its own pair of files**, `native_push_info.txt` / `native_push_info.1.txt`, with the same 32 KiB rotation (`Stream::Info` in `native_push_log.rs`, JNI `nativeAppendPushLog(..., info)`). Many ordinary INFO lines in the WARN/ERROR pair would rotate the warnings out whole; in their own pair they never can. A take merges the two streams by the service's stamp. Pinned by `info_lines_never_evict_a_warning`. |
-| Wiring | `pushShowOutcome.test.ts` reads the code (comments stripped): every `return` of `showMessageNotification` (`?: return` and `-> return` counted) is preceded by its own `recordShowOutcome` or, inside the locked section, its own `ended = ...` that the `finally` records - and the counts match; each earlier end above records once before its return; `cancelConversationNotification`, `replyDelivered` and `answerReplyNotification` record their decision outside the lock. A builder that throws inside the locked section records `threw` (ERROR); one that throws before it records nothing - its caller's WARN says so. |
+| Wiring | `pushShowOutcome.test.ts` reads the code (comments stripped): every `return` of `showMessageNotification` (`?: return` and `-> return` counted) is preceded by its own `recordShowOutcome` or, inside the locked section, its own `ended = ...` that the `finally` records - and the counts match; each earlier end above records once before its return; `cancelConversationNotification`, `replyDelivered` and `answerReplyNotification` record their decision outside the lock. A builder that throws inside the locked section records `threw` (ERROR) - possibly after its post reached the shade, since the record writes that follow `postToShade` are inside the section; one that throws before it records nothing - its caller's WARN says so. |
 | Content | An outcome token, an 8-character id prefix, a channel id, platform constants by name, and a system-worded reason; never message text, never a name. The line passes `redactLogLine` unchanged (pinned). `drainNativePushLog`'s count line counts `info=` beside `errors=` and `warnings=`. |
 
 ## The app owns which URLs its own WebView may load
@@ -4002,6 +4008,64 @@ quick-reply send and the worker 5 ms apart both posted `f79aac25`, each under it
 generation. Every native read-modify-write of the mirror (the drain, and `enqueueOutboxMirror`,
 which the shade actions append through) now holds one process lock, `OUTBOX_LOCK`, taken before
 `MlsStateLock`; the second drain waits and reads the mirror the first one rewrote.
+
+#### The outbox nudge
+
+**THE NUDGE FOLLOWS THE MIRROR, UNDER ITS OWN ID (1.7.3).** Seen on the Mi 9T, 2026-11-21: a quick
+reply queued offline was delivered by `OutboxRetryWorker`, and "Vous avez peut-etre des messages en
+attente" stayed in the shade until the app opened. Every drain that left sends posted the nudge
+(`maybeNotifyPendingSync`, the worker's cap) and no path withdrew it; `replyDelivered` cleared each
+reply's own "not sent yet" line, and the nudge had no counterpart.
+
+- **One decision, from durable state.** `settleOutboxNudgeLocked` is the only place the nudge is
+  posted or cancelled. It runs under `OUTBOX_LOCK`, reads the mirror (`readOutboxMirrorOrNull`) and
+  applies `OutboxNudge.decide` (`push/`, pinned by `OutboxNudgeTest`): an empty mirror WITHDRAWS (an
+  idempotent cancel), sends still queued KEEP what stands, an ask with sends queued POSTS, and an
+  unreadable mirror withdraws nothing (`UNKNOWN`, a WARN - an unreadable file is not an empty queue).
+  No timer and no "was it shown" flag.
+- **Every drain withdraws, whoever drained** - the worker, a push-woken drain, the boot drain, a
+  quick reply's first try: `drainOutboxBackground` settles inside the same `synchronized(OUTBOX_LOCK)`
+  that rewrote the mirror. `showPendingSyncNotification` (the ask) takes the lock too and reads the
+  mirror again, so a drain that emptied the queue between a caller's drain and its ask has the last
+  word, in both orders. This is why the settle is INSIDE the lock, where the backlog entry had
+  proposed after it: unlike `replyDelivered`, the nudge has no record and so no lock order to keep,
+  and outside the lock a post and a withdrawal could land in the wrong order. Under the lock it takes
+  only leaf locks: `AwaitedReplies`' own and, through the post's `callHoldsSound`,
+  `RingSequencer.lock`. The retry worker that
+  finds the mirror already empty (emptied by the app's own flush while its WebView ran in the
+  background) settles too (`settleOutboxNudge`).
+- **A withdrawal says what stood, and nothing when nothing did** (review of #3922).
+  `withdrawOutboxNudge` reads the shade ONCE (`OutboxNudge.withdrawal`): every drain that empties
+  the mirror lands there - each quick reply, each read mark (`sendReadWatermark` queues and drains),
+  each worker run on an empty queue - so an unconditional "withdrawn" line would be false on nearly
+  all of them, and it is the line the device reading takes as evidence. One line per record that
+  stood: `outbox mirror empty - nudge withdrawn (id=999)`, `a nudge posted before 1.7.3 withdrawn
+  (id=9998)`, `id=9998 is the worker's notice - left`. The cancel of 999 is unconditional
+  (idempotent, and it also takes a post the read lags behind); only the line follows the read. A read that throws is caught and logged as an ERROR, and the cancel still runs after it (only the lines and the 9998 check are skipped). The
+  cost is one `activeNotifications` binder call per drain that leaves the mirror empty.
+- **Its own id: `FixedNotifIds.OUTBOX_NUDGE` = 999.** It shared 9998 with `MlsBackgroundWorker`'s
+  foreground notice, now `FixedNotifIds.WORKER_FOREGROUND`, so a blind cancel would have taken that
+  notice down. 999 is below the conversation counter's start (1000, only ever growing), so no install
+  has ever persisted it for a conversation - which an id inside the counter's range could not promise,
+  since an id already stored is never moved. The badge count (`countUnreadConversations`) excludes
+  every `FixedNotifIds.ALL` id rather than a hand-kept list, so the nudge and the worker's notice
+  (both on the messages channel) are never counted as conversations. **A behaviour change with it:**
+  the new-device notice (9996) and the worker's failure notice (9997), also on the messages channel,
+  each raised the launcher badge by one before 1.7.3 and no longer do. Pinned by
+  `androidOutboxNudge.test.ts` and `UnreadBadgeCountTest`.
+- **A nudge posted under 9998 before the update.** Withdrawn by the same read, on every
+  withdrawal: the record standing at 9998 is cancelled only
+  when it is neither ongoing nor a foreground-service record (`OutboxNudge.isPreUpdateNudge`). The
+  worker's notice is always ongoing, and a foreground-service record once promoted; the nudge was
+  never either. The platform also refuses `cancel` on a foreground-service record, which covers a
+  promotion landing between the read and the cancel. Whether Android already drops the app's
+  notifications on the update itself was not measured; the guard makes the answer irrelevant. The app's
+  open clears either id anyway (the messages-channel sweep). Removal date:
+  [legacy-compatibility](../legacy-compatibility.md#removal-once-minclientversion-passes-173---a-pending-sync-nudge-posted-under-9998-before-the-update-2026-11-21).
+- **Residual.** The app's own `store_outbox_mirror` rewrite does not settle the nudge: a mirror the
+  WebView empties in the background leaves the nudge up until the next drain, worker run or open.
+- **Owed on the Mi 9T**: queue a reply offline, let the worker deliver it, and see the nudge leave
+  without opening the app ([backlog](../backlog.d/reading-owed-the-outbox-nudge-leaves-with-the-delivered-reply.md)).
 
 **A RESIDUE AFTER A DRAIN WAITS FOR THE NEXT TRIGGER, AND MAY WAIT A LONG TIME.** Observed on A1,
 2026-08-11: a 110-message backlog drained to **3** and then stopped, with the app foregrounded,
