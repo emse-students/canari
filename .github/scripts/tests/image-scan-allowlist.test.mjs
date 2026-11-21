@@ -39,7 +39,7 @@ if (!Array.isArray(entries)) {
   process.exit(1);
 }
 
-const allowedKeys = new Set(['id', 'paths', 'purls', 'statement']);
+const allowedKeys = new Set(['id', 'paths', 'purls', 'covers', 'statement']);
 const seen = new Set();
 console.log(`every one of the ${entries.length} allowlist entries is legitimate:`);
 for (const [i, e] of entries.entries()) {
@@ -55,6 +55,13 @@ for (const [i, e] of entries.entries()) {
   }
   for (const key of Object.keys(e ?? {})) {
     if (!allowedKeys.has(key)) fail(`${where}: unknown key \`${key}\` (Trivy would ignore it silently)`);
+  }
+  const coverCount = (e?.purls?.length ?? 0) + (e?.covers?.length ?? 0);
+  if (coverCount === 0) {
+    fail(`${where}: names no package it covers (\`purls:\` or \`covers: ["name@version"]\`) - without one the retirement check cannot tell when it is dead`);
+  }
+  for (const c of e?.covers ?? []) {
+    if (typeof c !== 'string' || c.lastIndexOf('@') < 1 || c.endsWith('@')) fail(`${where}: covers ${JSON.stringify(c)} is not name@version`);
   }
   const identity = `${e?.id}|${JSON.stringify(e?.paths ?? [])}|${JSON.stringify(e?.purls ?? [])}`;
   if (seen.has(identity)) fail(`${where}: listed twice`);
@@ -100,6 +107,28 @@ if (purlRun.exitCode !== 0) {
   if (missed.length) fail(`image-scan.sh does not read ${missed.join(', ')}, so that purl would never retire`);
   if (invented.length) fail(`image-scan.sh reads ${invented.join(', ')}, which no entry names`);
   if (!missed.length && !invented.length) console.log(`  ok   image-scan.sh reads the same ${read.length} purls a YAML parse does`);
+}
+
+// The whole retirement input: purls and `covers:` together, as `id package version`.
+console.log('the retirement check reads every covered package of every entry:');
+const covered = [
+  ...new Set([
+    ...triples,
+    ...entries.flatMap((e) =>
+      (e?.covers ?? []).map((c) => `${e?.id} ${String(c).slice(0, String(c).lastIndexOf('@'))} ${String(c).slice(String(c).lastIndexOf('@') + 1)}`),
+    ),
+  ]),
+].sort();
+const coverRun = Bun.spawnSync(['bash', scanScript, '--allowlist-covers']);
+if (coverRun.exitCode !== 0) {
+  fail(`image-scan.sh --allowlist-covers exited ${coverRun.exitCode}: ${coverRun.stderr.toString().trim()}`);
+} else {
+  const read = coverRun.stdout.toString().split('\n').filter(Boolean).sort();
+  const missed = covered.filter((t) => !read.includes(t));
+  const invented = read.filter((t) => !covered.includes(t));
+  if (missed.length) fail(`image-scan.sh does not read ${missed.join(', ')}, so that entry would never retire`);
+  if (invented.length) fail(`image-scan.sh reads ${invented.join(', ')}, which no entry names`);
+  if (!missed.length && !invented.length) console.log(`  ok   image-scan.sh reads the same ${read.length} covered packages a YAML parse does`);
 }
 
 if (failures) {
