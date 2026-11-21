@@ -40,6 +40,29 @@ describe('toFormItemsPayload', () => {
   });
 });
 
+describe('the comment of a choice question on the wire', () => {
+  it('keeps the comment switch and the "Autre" mark of a choice', () => {
+    const [item] = toFormItemsPayload(
+      [
+        {
+          id: 'q1',
+          type: 'single_choice',
+          allowComment: true,
+          options: [{ id: 'o', label: 'Autre', priceModifier: 0, other: true }],
+        },
+      ],
+      true
+    );
+    expect(item.allowComment).toBe(true);
+    expect(item.options?.[0].other).toBe(true);
+  });
+
+  it('switches the comment off on a question turned into another type', () => {
+    const [item] = toFormItemsPayload([{ id: 'q1', type: 'long_text', allowComment: true }], true);
+    expect(item.allowComment).toBe(false);
+  });
+});
+
 describe('a priced grid on the wire', () => {
   const grid = () => ({
     rows: [{ id: 'r1', label: 'Vert' }],

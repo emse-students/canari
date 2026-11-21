@@ -41,6 +41,7 @@ import {
   type FormAnswerValue,
 } from '../answer-bounds';
 import { ASKED_FIELDS, type AskedField } from '../guest-identity';
+import { noteKeyOwner } from '../answer-text';
 import { ACCOUNT_FIELDS, type AccountField } from '../respondent-identity';
 
 /**
@@ -61,7 +62,11 @@ export function IsValidAnswers(options?: ValidationOptions) {
         validate(value: unknown): boolean {
           if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
           const entries = Object.entries(value as Record<string, unknown>);
-          if (entries.length > FORM_MAX_QUESTIONS) return false;
+          // The comment and "Autre" texts ride beside their question's key (`choice-notes.ts`): they
+          // are bounded on their own, never counted against the questions' cap.
+          const questionKeys = entries.filter(([key]) => noteKeyOwner(key) === null);
+          if (questionKeys.length > FORM_MAX_QUESTIONS) return false;
+          if (entries.length - questionKeys.length > 2 * FORM_MAX_QUESTIONS) return false;
           return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
@@ -88,6 +93,15 @@ export class FormOptionDto {
   @IsString()
   @IsOptional()
   id?: string;
+
+  /**
+   * The "Autre : precisez" option of a choice question: picking it lets the respondent type what
+   * they mean, kept beside the answer (`choice-notes.ts`). At most one per question, choice types
+   * only - normalised at save. Absent on every option written before 2026-11-21.
+   */
+  @IsBoolean()
+  @IsOptional()
+  other?: boolean;
 }
 
 export class FormItemDto {
@@ -124,6 +138,14 @@ export class FormItemDto {
   @IsBoolean()
   @IsOptional()
   requireEveryRow?: boolean;
+
+  /**
+   * A CHOICE question takes an optional free comment beside its answer (`choice-notes.ts`), stored
+   * under `<id>#comment`. Absent or false: no comment box. Normalised off on any other type.
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowComment?: boolean;
 
   @IsOptional()
   scale?: {

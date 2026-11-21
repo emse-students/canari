@@ -93,7 +93,16 @@ import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
 import { safeWorksheetName } from '../utils/worksheet-name';
-import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
+import {
+  answerText,
+  commentKey,
+  otherKey,
+  commentText,
+  otherText,
+  type AnswerQuestion,
+  type AnswerWords,
+} from './answer-text';
+import { normaliseChoiceNotes, settleAnswerNotes } from './choice-notes';
 import { LEGACY_IDENTITY_EXPORT_LABELS, type ExportLabels } from './export-labels';
 import {
   conditionNamesProfile,
@@ -981,6 +990,7 @@ export class FormsService {
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
+    input = { ...input, items: normaliseChoiceNotes(input.items) };
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     assertMultipleChoiceGridOneGroup(
@@ -1573,6 +1583,9 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
+    // A choice question's comment and "Autre" mark are normalised BEFORE anything reads the list
+    // (`choice-notes.ts`); an absent list keeps the stored one untouched.
+    if (input.items !== undefined) input = { ...input, items: normaliseChoiceNotes(input.items) };
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
@@ -2678,10 +2691,14 @@ export class FormsService {
     // neither charged nor required, so it is not kept either - it would read as a choice nobody
     // paid for. A question the form does not declare is kept as it always was.
     const declaredIds = new Set((form.items ?? []).map((item) => item.id));
-    const storedAnswers = Object.fromEntries(
-      Object.entries(input.answers ?? {}).filter(
-        ([key]) => !declaredIds.has(key) || visible.has(key)
-      )
+    const storedAnswers = settleAnswerNotes(
+      form.items ?? [],
+      Object.fromEntries(
+        Object.entries(input.answers ?? {}).filter(
+          ([key]) => !declaredIds.has(key) || visible.has(key)
+        )
+      ),
+      visible
     );
     const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
@@ -3401,6 +3418,11 @@ export class FormsService {
       }
       delete merged[itemId];
       if (row.answers?.[itemId] !== undefined) merged[itemId] = row.answers[itemId];
+      // What was typed beside the locked "Autre" describes the locked choice: it stays with it.
+      delete merged[otherKey(itemId)];
+      if (row.answers?.[otherKey(itemId)] !== undefined) {
+        merged[otherKey(itemId)] = row.answers[otherKey(itemId)];
+      }
     }
 
     const fileAnswers = fileAnswersOf(items, merged);
@@ -3418,10 +3440,14 @@ export class FormsService {
     // As at submit, an answer the person cannot see is not kept - except a locked one, which is
     // what was priced and stays whatever their profile says today.
     const declared = new Set(items.map((item) => item.id));
-    const stored = Object.fromEntries(
-      Object.entries(merged).filter(
-        ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
-      )
+    const stored = settleAnswerNotes(
+      items,
+      Object.fromEntries(
+        Object.entries(merged).filter(
+          ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
+        )
+      ),
+      new Set([...visible, ...locked])
     );
     for (const item of items) {
       if (!editable.has(item.id) || isProductGridItem(item)) continue;
@@ -4731,8 +4757,29 @@ export class FormsService {
       });
     }
 
+    // A choice question's free comment is a column of its own, right after its answer: the answer
+    // column stays one value per row to count, and the comment is read beside it. Written when the
+    // question takes a comment now or an answer holds one from when it did (`choice-notes.ts`).
+    const commentColumns = new Set(
+      form.items
+        .filter(
+          (item: FormItemLike) =>
+            item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
+        )
+        .map((item: FormItemLike) => item.id)
+    );
+    if (commentColumns.size > 0 && !labels.comment) {
+      throw new BadRequestException('export label "comment" is required');
+    }
     form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
+      if (commentColumns.has(item.id)) {
+        headers.push({
+          header: `${item.label} - ${labels.comment}`,
+          key: commentKey(item.id),
+          width: 30,
+        });
+      }
     });
 
     sheet.columns = headers;
@@ -4789,7 +4836,16 @@ export class FormsService {
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
       form.items.forEach((item: FormItemLike) => {
-        row[item.id] = answerText(sub.answers[item.id], item, words, sub.lines);
+        row[item.id] = answerText(
+          sub.answers[item.id],
+          item,
+          words,
+          sub.lines,
+          otherText(sub.answers, item.id)
+        );
+        if (commentColumns.has(item.id)) {
+          row[commentKey(item.id)] = commentText(sub.answers, item.id);
+        }
       });
 
       sheet.addRow(row);

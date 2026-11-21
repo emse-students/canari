@@ -56,6 +56,11 @@
      * space) passes false: every grid there would be refused `PRODUCT_GRID_REQUIRES_PAYMENT`.
      */
     offerPricedGrid?: boolean;
+    /**
+     * Whether a choice question may take a free comment and an "Autre" option: a builder whose
+     * answers the forms service does not store (a booking space) passes false.
+     */
+    offerChoiceNotes?: boolean;
     /** A priced grid was added (or a question became one): the page switches several answers on. */
     onPricedGridAdded?: () => void;
     /**
@@ -83,6 +88,7 @@
     fileHint,
     reveal = null,
     offerPricedGrid = true,
+    offerChoiceNotes = true,
     onPricedGridAdded,
     onPricedGridGone,
     formTiers = null,
@@ -213,6 +219,7 @@
           onRemove={() => removeItem(i)}
           showPriceModifier={requiresPayment}
           pricedByGrid={gridQuestionIds.includes(items[i]?.id)}
+          {offerChoiceNotes}
           questionIndex={i + 1}
           onMoveUp={() => moveItem(i, 'up')}
           onMoveDown={() => moveItem(i, 'down')}

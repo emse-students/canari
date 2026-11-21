@@ -5,6 +5,7 @@
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import ProductGridEditor from './ProductGridEditor.svelte';
   import ChoiceOptionsEditor from './ChoiceOptionsEditor.svelte';
+  import ChoiceNotesEditor from './ChoiceNotesEditor.svelte';
   import ScaleEditor from './ScaleEditor.svelte';
   import MatrixGridEditor from './MatrixGridEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -77,6 +78,7 @@
     orderedCells = [],
     isPublic = false,
     gridProblem = null,
+    offerChoiceNotes = true,
   }: {
     item: any;
     onRemove: () => void;
@@ -128,6 +130,11 @@
     isPublic?: boolean;
     /** The sentence of a refused save about this priced grid. */
     gridProblem?: string | null;
+    /**
+     * Whether a choice question may take a free comment and an "Autre" option. A builder whose
+     * answers are not stored by the forms service (a booking space) passes false.
+     */
+    offerChoiceNotes?: boolean;
   } = $props();
 
   /** Apple platforms use Cmd for shortcuts; read once, a platform does not change. */
@@ -591,6 +598,9 @@
       <MatrixGridEditor {item} />
     {:else if hasOptions}
       <ChoiceOptionsEditor {item} {showPriceModifier} {pricedByGrid} />
+      {#if offerChoiceNotes}
+        <ChoiceNotesEditor {item} />
+      {/if}
     {/if}
 
     <!-- "Plus d'options": the two conditions, rare, folded unless one is set. -->

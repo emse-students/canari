@@ -78,6 +78,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { commentKey, otherKey } from '$lib/forms/answerText';
   import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
@@ -1254,6 +1255,8 @@
             {item}
             index={qi}
             bind:value={selections[item.id]}
+            bind:other={selections[otherKey(item.id)]}
+            bind:comment={selections[commentKey(item.id)]}
             disabled={(submitted && !editing) ||
               isNotOpenYet ||
               isClosed ||

@@ -2,6 +2,7 @@ import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { intlLocale } from '$lib/utils/intlLocale';
 import type { FormItem } from './api';
+import { commentKey, otherKey } from './answerText';
 import { hasOrderedUnits, isProductGrid } from './productGridFill';
 import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 
@@ -266,6 +267,7 @@ export function visibleAnswers(visible: FormItem[], selections: Selections): Sel
   const out: Selections = {};
   for (const item of visible) {
     const value = selections[item.id];
+    const notes = noteAnswers(item, selections);
     if (isProductGrid(item)) {
       // An order holds only its ordered cells already (`withCellQuantity`); an empty one stays out.
       if (hasOrderedUnits(value)) out[item.id] = value;
@@ -278,6 +280,37 @@ export function visibleAnswers(visible: FormItem[], selections: Selections): Sel
     } else if (hasValue(value)) {
       out[item.id] = value;
     }
+    Object.assign(out, notes);
+  }
+  return out;
+}
+
+/** The question types that may carry a comment and an "Autre" (`choice-notes.ts` on the server). */
+const CHOICE_TYPES = new Set(['single_choice', 'multiple_choice', 'dropdown']);
+
+/** Whether the answer to a choice question names its "Autre" option. */
+export function pickedOther(item: FormItem, value: unknown): boolean {
+  const otherIds = (item.options ?? []).filter((option) => option.other).map((option) => option.id);
+  if (otherIds.length === 0) return false;
+  const chosen = Array.isArray(value) ? value : [value];
+  return chosen.some((id) => otherIds.includes(id));
+}
+
+/**
+ * The free texts of one choice question, as the server is sent them: its comment when the question
+ * takes one, and what was typed beside "Autre" only while "Autre" is the picked answer (a text left
+ * behind by a changed mind is not an answer). Empty and blank texts are left out - the absence is
+ * the answer, as for every unanswered question.
+ */
+function noteAnswers(item: FormItem, selections: Selections): Selections {
+  const out: Selections = {};
+  if (!CHOICE_TYPES.has(item.type)) return out;
+  const comment = item.allowComment ? selections[commentKey(item.id)] : undefined;
+  if (typeof comment === 'string' && comment.trim() !== '')
+    out[commentKey(item.id)] = comment.trim();
+  const other = selections[otherKey(item.id)];
+  if (typeof other === 'string' && other.trim() !== '' && pickedOther(item, selections[item.id])) {
+    out[otherKey(item.id)] = other.trim();
   }
   return out;
 }
@@ -295,7 +328,9 @@ export function editedAnswers(
 ): Selections {
   const locked = new Set(lockedItemIds);
   return Object.fromEntries(
-    Object.entries(visibleAnswers(visible, selections)).filter(([id]) => !locked.has(id))
+    Object.entries(visibleAnswers(visible, selections)).filter(
+      ([id]) => !locked.has(id) && ![...locked].some((lockedId) => id === otherKey(lockedId))
+    )
   );
 }
 

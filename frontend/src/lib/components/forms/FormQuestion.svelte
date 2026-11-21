@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { FormItem, FormOption } from '$lib/forms/api';
-  import { formatAmount } from '$lib/forms/fillAnswers';
+  import { formatAmount, pickedOther } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { Ban, CircleAlert, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -32,6 +33,10 @@
     index: number;
     /** The answer, bound: a string, a number, an id list, or a row map for a matrix. */
     value: any;
+    /** What is typed beside the "Autre" option, bound (a choice question with one). */
+    other?: string;
+    /** The free comment, bound (a choice question that takes one, `item.allowComment`). */
+    comment?: string;
     /** No input accepts a change - the form is sent, or not open yet. */
     disabled: boolean;
     /** Scopes the radio groups, so two forms on one screen never share a `name`. */
@@ -70,6 +75,8 @@
     item,
     index,
     value = $bindable(),
+    other = $bindable(),
+    comment = $bindable(),
     disabled,
     formId,
     currency = 'eur',
@@ -173,7 +180,7 @@
    * supplement. An option saved without an id falls back to its label, as a `<select>` did.
    */
   function dropdownOptions(): PickerOption[] {
-    return (item.options ?? []).map((opt) => {
+    return orderedOptions.map((opt) => {
       const closed = optionClosed(opt);
       const modifier = optionModifier(item, opt);
       const suffix = closed
@@ -186,6 +193,14 @@
       return { value: opt.id ?? opt.label, label: `${opt.label}${suffix}`, disabled: closed };
     });
   }
+
+  /** The options as drawn: the "Autre" one always last, wherever the manager put it. */
+  const orderedOptions = $derived([
+    ...(item.options ?? []).filter((opt) => !opt.other),
+    ...(item.options ?? []).filter((opt) => opt.other),
+  ]);
+  /** The text box beside "Autre" shows while "Autre" is what the person picked. */
+  const otherPicked = $derived(pickedOther(item, value));
 
   const scaleValues = $derived(
     Array.from(
@@ -294,7 +309,7 @@
   {:else if item.type === 'single_choice' || item.type === 'multiple_choice'}
     {@const multiple = item.type === 'multiple_choice'}
     <div class="space-y-2">
-      {#each item.options ?? [] as opt (opt.id)}
+      {#each orderedOptions as opt (opt.id)}
         {@const selected = multiple ? (value ?? []).includes(opt.id) : value === opt.id}
         <label
           class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selected
@@ -466,6 +481,33 @@
       <!-- A type this build does not know (the coming product_grid): never an empty card. -->
       {m.form_view_update_app_to_answer()}
     </div>
+  {/if}
+
+  {#if otherPicked && (item.type === 'single_choice' || item.type === 'multiple_choice' || item.type === 'dropdown')}
+    <!-- What "Autre" means, in the person's words: optional, never blocks the send. -->
+    <Input
+      class="mt-2"
+      bind:value={other}
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
+      placeholder={m.form_fill_other_placeholder()}
+      aria-label={m.form_fill_other_label({
+        label: orderedOptions.find((opt) => opt.other)?.label ?? '',
+      })}
+      data-testid="choice-other"
+      {disabled}
+    />
+  {/if}
+
+  {#if item.allowComment && (item.type === 'single_choice' || item.type === 'multiple_choice' || item.type === 'dropdown')}
+    <textarea
+      rows="2"
+      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-accent-icon mt-3 w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+      bind:value={comment}
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
+      placeholder={m.form_fill_comment_label()}
+      aria-label={m.form_fill_comment_label()}
+      data-testid="choice-comment"
+      {disabled}></textarea>
   {/if}
 
   {#if error}

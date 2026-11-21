@@ -282,9 +282,9 @@
     <p class="text-text-muted text-xs">{m.form_list_answers_none()}</p>
   {:else}
     <dl class="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-      {#each answered as { item, text } (item.id)}
+      {#each answered as { item, text, comment = "" } (item.id)}
         {@const file = liveFile(sub, item)}
-        <div class={text.length > 80 ? 'sm:col-span-2' : ''}>
+        <div class={text.length > 80 || comment.length > 80 ? 'sm:col-span-2' : ''}>
           <dt class="text-text-muted text-2xs font-semibold whitespace-pre-line">
             {item.label}
           </dt>
@@ -302,7 +302,18 @@
               </button>
             </dd>
           {:else}
-            <dd class="text-text-main mt-0.5 text-sm break-words whitespace-pre-wrap">{text}</dd>
+            {#if text !== ''}
+              <dd class="text-text-main mt-0.5 text-sm break-words whitespace-pre-wrap">{text}</dd>
+            {/if}
+            {#if comment !== ''}
+              <dd
+                class="text-text-muted border-cn-border mt-0.5 border-l-2 pl-2 text-sm break-words whitespace-pre-wrap"
+                data-testid="answer-comment"
+                title={m.form_list_answer_comment()}
+              >
+                {comment}
+              </dd>
+            {/if}
           {/if}
         </div>
       {/each}

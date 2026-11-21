@@ -26,6 +26,7 @@
     type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
+  import { commentKey, otherKey } from '$lib/forms/answerText';
   import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
@@ -400,6 +401,8 @@
               {item}
               {index}
               bind:value={selections[item.id]}
+              bind:other={selections[otherKey(item.id)]}
+              bind:comment={selections[commentKey(item.id)]}
               disabled={isNotOpenYet || isClosed || form.formFull || submitting}
               formId={form.id}
               currency={form.currency}
