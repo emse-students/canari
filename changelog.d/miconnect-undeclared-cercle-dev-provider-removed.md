@@ -1,0 +1,3 @@
+### Removed - an undeclared Le Cercle dev client is gone from production MiConnect
+
+An unused Le Cercle development provider, declared by no blueprint and so left out of the terms stage, was deleted with its application (owner's yes, 2026-11-21); every provider on MiConnect is now one the blueprint binds to `miconnect-authorization` ([authentik](docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16), [reading](docs/wiki/device-verification.md#the-production-readings-of-2026-11-21-the-admission-count-and-the-miconnect-terms-stage-after-the-172-apply)).
