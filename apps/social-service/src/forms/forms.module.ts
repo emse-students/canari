@@ -16,6 +16,7 @@ import { FormItemImagesService } from './form-item-images.service';
 import { FormFilesService } from './form-files.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
+import { StaleOpenFormScheduler } from './stale-open-form.scheduler';
 import { AssociationsModule } from '../associations/associations.module';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 import { PushService } from '../push/push.service';
@@ -59,6 +60,7 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
     FormItemImagesService,
     FormReminderScheduler,
     FormFileRetentionScheduler,
+    StaleOpenFormScheduler,
     LydiaReconciliationService,
     LydiaReconciliationScheduler,
     PushService,

@@ -2907,3 +2907,86 @@ with and without unpaid cash, a closed cell, the bars, the refund control),
 ## The order bar rests on the bottom of the screen (2026-11-07)
 
 Measured on dev 1.6.6-alpha.4: the grid's order bar (`ProductGridOrderBar`) floated at 65-80 % of the height with the next card visible under it. Cause: `position: sticky; bottom: 0` stops at the scroll container's PADDING edge, and `.page-scroll-wrap` reserved `--bottom-nav-reserve` (4rem + safe area) on every page, including `/f/:id` which renders no bottom navigation. `pageScrollPaddingClass` (`$lib/components/layout/pageScrollPadding.ts`) now applies the reserve only where `routes/+layout.svelte` mounts the app chrome (`!isLoginPage`). The guest wrapper clears the home indicator with `max(0.75rem, var(--safe-area-inset-bottom))`. Inside the app the member page's bar rests on the reserve's edge, and since 2026-11-07 that edge IS the navigation's top (owner: "la coller a la navigation"): the reserve had stayed 4rem after #648 cut the bar to 3rem, so it was 1rem of nothing; both now read `--bottom-nav-height` (`app.css`), the reserve adding the bar's 1px border and the safe area. Pinned by `pageScrollPadding.test.ts` and the wrapper test in `f/[id]/page.productGrid.svelte.test.ts`.
+
+## The question put to a form left open (owner, 2026-11-21, migration 178)
+
+**Why.** A read-only survey of production on 2026-11-21 (21 forms, 721 answers): 17 forms (81%) had no
+closing date, 9 of them had had no answer for 14 days or more and 3 never got one; only 4 forms had a
+closing date. Nothing ever told their managers. **The owner's answer** (2026-11-21, to the lead's
+questions): launch a stale-open-form nudge now, with the other launch-now forms; no opens counter.
+**Charter, principle 3 (your attention is not for sale)**, which is why this is ONE notice: a single
+bell row per manager per question, **no push**, no counter, never re-sent on a timer, told to the form's
+owner and its `MANAGE_FORMS` holders only, and it clears for all of them the moment one of them answers.
+
+### Two things
+
+1. **At publication** the editor OFFERS a closing date when the form has none (`FormSaveBar`,
+   `forms/closingSuggestion.ts`): "Sans date de clôture, ce formulaire restera ouvert jusqu'à ce que vous
+   le fermiez." with "Fermer le <date>" and "Laisser ouvert". Either button publishes, so keeping the
+   form open is one tap and nothing is forced; the offer is made once per page (a publication refused
+   afterwards is pressed again without asking twice), only at the FIRST publication of a draft (a
+   published form's edits are not asked), and never when a date is already there. The default comes from
+   the form's nature, read off the same survey: **quick** (capped or anonymous: every answer within 3
+   days) **7 days**; **charges money** (payments settle after the answer; two paid forms lived 8 and 56
+   days) **21 days**; **anything else** (answered over 1 to 16 days, median 5; the managers who set an end
+   chose 7 to 11) **14 days**. Counted from the opening when it is still to come, else from now, ending
+   at 23:59.
+2. **Afterwards** a daily sweep asks the managers of a published form with no closing date and no
+   answer for **21 days** "Ce formulaire est toujours ouvert. Le fermer ?" - **why 21**: the longest gap
+   between two answers of a form that went on living was 17 days (p99 13.8, every other form under 13), so
+   14 would have asked a living form in the middle of its own rhythm. The card on the managers' list
+   (`FormStaleOpenCard`, the landing of the bell row `/forms?responses=<id>`) offers **Fermer** (the list's
+   own close, confirmation included), **Garder ouvert** and **Fixer une date** (`POST /forms/:id/closing-date`,
+   future instants only, `FORM_CLOSING_DATE_PAST` otherwise).
+
+### The memory is two columns, and the sweep's claim is its only write
+
+`forms."staleAskedAt"` (when the question was last asked) and `forms."staleKeptAt"` ("Garder ouvert"),
+both `select: false`, NULL on every form. `stale-open-forms.ts` holds the predicate (`STALE_OPEN_WHERE`),
+the claim (`STALE_OPEN_CLAIM_SQL`: the due forms `FOR UPDATE SKIP LOCKED`, stamped in ONE statement, so two
+replicas, a re-run or a restart cannot ask a form twice) and the read both the card and the bell row's gate
+use (`staleOpenAskedSql`, so they clear together).
+
+- **Asked once.** A form with `staleAskedAt` set is never asked again by the passing of time.
+- **"Keep open" silences it until a new answer arrives** (decided: "for good" would silence a form that
+  later dies, a timer would re-ask what was just answered). It is re-armed ONLY by an answer on or after
+  the day of the last question (UTC day granularity: an anonymous form stores the UTC day of its answers)
+  AND the whole window of silence again. "Keep open" therefore needs no state for the sweep - the question
+  is already spent; `staleKeptAt` only hides the card and the bell row. Closing or dating the form sets
+  `closedAt`, which is not the predicate.
+- **"Silent"** is the newest of the form's creation, its last edit and its last answer: a manager editing
+  is a sign of life, and a draft published today is not asked about on its first day.
+- **A notice that cannot be written releases its claim** (`releaseStaleOpenClaim`, conditional on the
+  claim still being the form's own), so a failed write is retried tomorrow instead of counted as asked.
+- **The trigger is the app's own scheduled-job mechanism**: `StaleOpenFormScheduler`, a `@Cron('30 9 * * *')`
+  of social-service, like the other sweeps of `forms/` (not a workflow: `scheduled.yml` holds repository
+  jobs, not service jobs; no fifth workflow).
+
+### The notice, and how an old app renders it
+
+A NEW bell type, `form_stale_open` (`postId` is the FORM, `text` its title), a bell row only: no push key,
+so none of the native tables. Its floor is **`1.8.0`** (`FORM_STALE_OPEN_MIN_CLIENT_VERSION`): the bell
+read serves it only to a build that draws it, so **an older app is never sent it and renders nothing
+unknown** ([legacy-compatibility](../../legacy-compatibility.md)). The bell row's gate (`BELL_ROW_GATE`)
+shows it while the reader still owns or manages the form AND the question is still put. An older app
+still gets the new `staleOpenAsk` field on the list and ignores it; an old server sends none and the card
+never draws; the publish offer needs no server support (it writes the ordinary `closedAt`).
+
+### Measured on production, read-only, 2026-11-21 (what the first sweep will do)
+
+The same predicate (with the day-one stamps all NULL) selects **7 forms** (4 personal, 3 of 2
+associations; 3 never answered, 4 silent 30 to 62 days), i.e. **20 bell rows for 12 people** (the owners
+plus the `MANAGE_FORMS` holders), and none of them before they run a `1.8.0` build. **Why "9 forms silent
+14+ days" became 7:** the window is 21 days, not 14. The existing `form_reminders` table has 0 rows
+because migration 152 moved it into `opening_reminders` (72 rows for forms): the feature is used - it
+is the "Me prévenir" bell on a form's OPENING - and **no reminder about a form's CLOSING ever existed**,
+which is the gap this fills.
+
+### Proven by
+
+`stale-open-forms.integration.spec.ts` (the predicate over every exclusion, the window to the instant,
+the claim, idempotence across clocks, two concurrent sweeps, the re-arming by an answer incl. the UTC-day
+case, the release on a failed notice, "keep open" and the card's read; runs in CI only, like every
+integration file), the bell gate in `bell-target-rows.integration.spec.ts`, `forms.service.close.spec.ts`
+(the two routes), `closingSuggestion.test.ts`, `FormSaveBar.svelte.test.ts` and `page.draft.svelte.test.ts`
+(the offer, once, either answer), `FormStaleOpenCard.svelte.test.ts`, `FormsManagerList.svelte.test.ts`.

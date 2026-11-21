@@ -231,6 +231,12 @@ export interface Form extends CreateFormPayload {
    * says so, and its "Voir le formulaire" opens the preview of those edits.
    */
   hasUnpublishedChanges?: boolean;
+  /**
+   * The question put to a form left open is still waiting for its answer (the managers' list only,
+   * migration 178): the row draws "Ce formulaire est toujours ouvert. Le fermer ?" with its three
+   * answers.
+   */
+  staleOpenAsk?: boolean;
 }
 
 /**
@@ -511,6 +517,31 @@ export async function setFormClosed(
     method: 'POST',
   });
   if (!res.ok) throw await refusal(res, closed ? 'Failed to close form' : 'Failed to reopen form');
+  return res.json();
+}
+
+/**
+ * "Fixer une date" (the question put to a form left open): writes a closing date in the future,
+ * apart from the editor's unpublished revision, like "Clore". Refused with `FORM_CLOSING_DATE_PAST`
+ * for an instant that is not in the future.
+ */
+export async function setFormClosingDate(
+  id: string,
+  closedAtIso: string
+): Promise<{ id: string; closedAt: string | null; windowState?: Form['windowState'] }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/closing-date`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ closedAt: closedAtIso }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to set the closing date');
+  return res.json();
+}
+
+/** "Garder ouvert": answers the question put to a form left open and leaves the form as it is. */
+export async function keepFormOpen(id: string): Promise<{ id: string; changed: boolean }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/keep-open`, { method: 'POST' });
+  if (!res.ok) throw await refusal(res, 'Failed to keep the form open');
   return res.json();
 }
 

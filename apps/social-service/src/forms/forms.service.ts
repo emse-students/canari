@@ -31,9 +31,11 @@ import {
   FORM_WINDOW_NOT_YET,
   FORM_WINDOW_OPEN,
   assertMayCloseAt,
+  FORM_CLOSING_DATE_PAST,
   assertWindowOrdered,
   formWindowState,
 } from './form-window';
+import { formsAskedStillOpen, keepFormOpen } from './stale-open-forms';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import { managesForm } from './form-ownership';
 import {
@@ -1187,17 +1189,18 @@ export class FormsService {
    * marks it, and its "Voir le formulaire" opens the preview of those edits.
    */
   private async withAssociationNames(forms: Form[]) {
-    const [names, changed] = await Promise.all([
+    const ids = forms.map((f) => f.id);
+    const [names, changed, asked] = await Promise.all([
       this.associationNamesOf(forms),
-      formsWithUnpublishedChanges(
-        this.formRepo.manager,
-        forms.map((f) => f.id)
-      ),
+      formsWithUnpublishedChanges(this.formRepo.manager, ids),
+      formsAskedStillOpen(this.formRepo.manager, ids),
     ]);
     return forms.map((form) => ({
       ...form,
       associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
       hasUnpublishedChanges: changed.has(form.id),
+      // The question put to a form left open is still waiting for its answer (`stale-open-forms.ts`).
+      staleOpenAsk: asked.has(form.id),
       windowState: formWindowState(form),
     }));
   }
@@ -2077,6 +2080,49 @@ export class FormsService {
       closedAt,
       windowState: formWindowState({ opensAt: form.opensAt, closedAt }, now),
     };
+  }
+
+  /**
+   * "Fixer une date" (the question put to a form left open, `stale-open-forms.ts`): writes a closing
+   * date IN THE FUTURE on an open form, apart from the revision like "Clore" (the end is not part of
+   * it). A past or present instant is a close and is refused (400 `FORM_CLOSING_DATE_PAST`: the
+   * button "Fermer" is for that); an end that does not fall after the opening is refused by
+   * `assertWindowOrdered`. The same rights as an edit (`assertFormManager`).
+   */
+  async setClosingDate(formId: string, closedAt: Date, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const now = new Date();
+    if (Number.isNaN(closedAt.getTime()) || closedAt.getTime() <= now.getTime()) {
+      throw formRefusal(
+        FORM_CLOSING_DATE_PAST,
+        'The closing date must be in the future: use "Clore le formulaire" to close it now.'
+      );
+    }
+    assertWindowOrdered(form.opensAt, closedAt);
+    this.logger.log(
+      `[FORMS] closing date form=${formId.slice(0, 8)} by=${userId.slice(0, 8)} at=${closedAt.toISOString()}`
+    );
+    await this.formRepo.update({ id: formId }, { closedAt });
+    return {
+      id: formId,
+      closedAt,
+      windowState: formWindowState({ opensAt: form.opensAt, closedAt }, now),
+    };
+  }
+
+  /**
+   * "Garder ouvert": answers the question put to a form left open without changing the form. It hides
+   * the question and clears its bell rows; the form is asked about again only after a new answer
+   * arrives and the silence has lasted the whole window again (`stale-open-forms.ts`). Gated by
+   * `assertFormManager`; a form nobody asked about is left as it is (`changed: false`).
+   */
+  async keepOpen(formId: string, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const changed = await keepFormOpen(this.formRepo.manager, formId, new Date());
+    this.logger.log(`[FORMS] keep open form=${formId.slice(0, 8)} by=${userId.slice(0, 8)}`);
+    return { id: formId, changed };
   }
 
   /**

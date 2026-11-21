@@ -50,6 +50,7 @@
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
+  import { suggestClosingDate } from '$lib/forms/closingSuggestion';
   import Input from '$lib/components/ui/Input.svelte';
   import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
@@ -698,6 +699,9 @@
           onPublish: handlePublish,
           blockedReason: blockedReason ?? unsavedReason,
           busy: isPublishing,
+          closingSuggestion: () =>
+            suggestClosingDate(buildPayload(), { opensAt, closedAt }, new Date()),
+          onAcceptClosing: (value) => (closedAt = value),
         }
       : null}
   />

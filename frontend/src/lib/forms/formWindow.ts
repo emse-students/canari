@@ -15,6 +15,12 @@ export const FORM_CLOSE_BEFORE_OPEN = 'FORM_CLOSE_BEFORE_OPEN';
 export const FORM_CLOSE_NOT_OPEN_YET = 'FORM_CLOSE_NOT_OPEN_YET';
 
 /**
+ * The 400 refusing "Fixer une date" with an instant that is not in the future (`form-window.ts` on
+ * the server): a close is what "Fermer" is for.
+ */
+export const FORM_CLOSING_DATE_PAST = 'FORM_CLOSING_DATE_PAST';
+
+/**
  * Whether a form's window is impossible: both bounds typed (`datetime-local` strings, `''` for none)
  * and the end NOT after the opening. One bound alone is never invalid.
  */

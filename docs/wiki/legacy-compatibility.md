@@ -765,6 +765,10 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
    the `PushContentKey` union) disagree.
 **Removal condition:** none; this is a floor requirement, not a shim.
 
+**`form_stale_open` (owner, 2026-11-21)**: the question put to a form left open, a bell row only (no push key,
+no native table), floor `1.8.0` (`FORM_STALE_OPEN_MIN_CLIENT_VERSION`): a build below it is never served the
+row, so it draws nothing unknown ([forms](frontend/modules/forms.md#the-question-put-to-a-form-left-open-owner-2026-11-21-migration-178)).
+
 ### The client floor of every notification type (owner, 2026-11-10)
 
 **The rule: the server never sends a notification type to a client too old to render it.** The 1.6.9

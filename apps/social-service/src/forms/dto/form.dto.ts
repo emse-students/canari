@@ -611,6 +611,12 @@ export class SubmitFormDto extends DeclaredIdentityDto {
   paymentMethod?: string;
 }
 
+/** The body of "Fixer une date": the closing instant, an ISO 8601 string. */
+export class SetClosingDateDto {
+  @IsDateString()
+  closedAt: string;
+}
+
 /**
  * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 166): the answers
  * as the fill page holds them, validated like a submit's (`IsValidAnswers`). Nothing about payment

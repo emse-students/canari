@@ -17,6 +17,12 @@ const api = vi.hoisted(() => ({
     closedAt: closed ? '2026-11-16T10:00:00.000Z' : null,
     windowState: closed ? 'closed' : 'open',
   })),
+  setFormClosingDate: vi.fn(async (id: string, closedAt: string) => ({
+    id,
+    closedAt,
+    windowState: 'open',
+  })),
+  keepFormOpen: vi.fn(async (id: string) => ({ id, changed: true })),
   deleteSubmission: vi.fn(),
   listPendingCashSubmissions: vi.fn(async (): Promise<unknown[]> => []),
   validateCashSubmission: vi.fn(async () => ({ ok: true })),
@@ -550,5 +556,80 @@ describe('FormsManagerList - closing a form (owner, 2026-11-16)', () => {
     await openMenu(target, 'f1');
     expect(entry('close')).toBeNull();
     expect(entry('reopen')).toBeNull();
+  });
+});
+
+describe('FormsManagerList - the question put to a form left open', () => {
+  const card = (target: HTMLElement) =>
+    target.querySelector<HTMLElement>('#form-f1 [data-testid="form-stale-open-card"]');
+  const press = (target: HTMLElement, id: string) =>
+    target.querySelector<HTMLButtonElement>(`#form-f1 [data-testid="${id}"]`)!.click();
+
+  it('draws the card only on an open published form the server says is still asked about', async () => {
+    const target = await render([
+      form({ staleOpenAsk: true }),
+      form({ id: 'f2', staleOpenAsk: false }),
+      form({ id: 'f3', staleOpenAsk: true, status: 'draft' }),
+      form({
+        id: 'f4',
+        staleOpenAsk: true,
+        closedAt: '2026-01-01T00:00:00Z',
+        windowState: 'closed',
+      }),
+    ]);
+    expect(card(target)).not.toBeNull();
+    for (const other of ['f2', 'f3', 'f4']) {
+      expect(
+        target.querySelector(`#form-${other} [data-testid="form-stale-open-card"]`)
+      ).toBeNull();
+    }
+  });
+
+  it('"Garder ouvert" tells the server and takes the card away, leaving the form open', async () => {
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-keep');
+    await vi.waitFor(() => expect(api.keepFormOpen).toHaveBeenCalledWith('f1'));
+    await vi.waitFor(() => expect(card(target)).toBeNull());
+    expect(api.setFormClosed).not.toHaveBeenCalled();
+  });
+
+  it('"Fermer" is the close of the list itself, confirmation included, and takes the card away', async () => {
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-close');
+    await vi.waitFor(() => expect(api.setFormClosed).toHaveBeenCalledWith('f1', true));
+    expect(confirm.showConfirm).toHaveBeenCalled();
+    await vi.waitFor(() => expect(card(target)).toBeNull());
+  });
+
+  it('keeps the card when the close is refused at the confirmation', async () => {
+    confirm.showConfirm.mockResolvedValueOnce(false);
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-close');
+    await vi.waitFor(() => expect(confirm.showConfirm).toHaveBeenCalled());
+    expect(api.setFormClosed).not.toHaveBeenCalled();
+    expect(card(target)).not.toBeNull();
+  });
+
+  it('"Fixer une date" sends the chosen instant as ISO and takes the card away', async () => {
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-date');
+    flushSync();
+    press(target, 'form-stale-open-date-confirm');
+    await vi.waitFor(() => expect(api.setFormClosingDate).toHaveBeenCalledTimes(1));
+    const [id, iso] = api.setFormClosingDate.mock.calls[0] as unknown as [string, string];
+    expect(id).toBe('f1');
+    expect(iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    await vi.waitFor(() => expect(card(target)).toBeNull());
+  });
+
+  it('keeps the card and says so when the server refuses an answer', async () => {
+    api.keepFormOpen.mockRejectedValueOnce(new Error('network'));
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-keep');
+    await vi.waitFor(() => expect(api.keepFormOpen).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(toastStore.toasts.some((t) => t.message === m.form_stale_open_error())).toBe(true)
+    );
+    expect(card(target)).not.toBeNull();
   });
 });
