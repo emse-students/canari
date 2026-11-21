@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { isPinnedToBottom } from './threadAnchor';
+import { isPinnedToBottom, stickToBottomAfterScroll } from './threadAnchor';
 import { motionMs, observeThreadGrowth } from './threadGrowthObserver';
 
 /**
@@ -123,6 +123,71 @@ describe('observeThreadGrowth - a reader at the bottom', () => {
   });
 });
 
+/**
+ * THE PHOTO DM THAT LANDS ON OLDER MESSAGES (chat.md, "the flag is only ever the reader's", 2026-11-21).
+ *
+ * The stick-to-bottom flag is written by a scroll measurement that runs in an animation callback,
+ * BEFORE the frame's `ResizeObserver` entries. A thread that SHRINKS in one frame (photos under a
+ * shorter `svh` ceiling: the browser clamps `scrollTop`, the observer pins it) and GROWS BACK in the
+ * next is measured in the second frame as: a `scrollTop` lower than the last measurement, and
+ * further than the slack from the bottom - which `stickToBottomAfterScroll` reads as the reader
+ * going UP. The flag fell, every later change was `keep-row`, and the reader stayed
+ * 429-643 px above the newest rows with the scroll-down arrow up (reproduced in Chrome, 2026-11-21).
+ * The pane's own placements (`onPlaced`) are the baseline the measurement compares against.
+ */
+describe('observeThreadGrowth - a thread that shrinks then grows back under a reader at the bottom', () => {
+  const PHOTOS = [36, 37, 38];
+  const heights = () => Array.from({ length: 40 }, (_, i) => (PHOTOS.includes(i) ? 567 : 60));
+
+  /** One run; `baselineFromPlacements` is the fix (the old baseline is the last measurement). */
+  function replay(baselineFromPlacements: boolean) {
+    const { scroller, layout, relayout, reach } = makeThread(heights(), 945);
+    scroller.scrollTop = reach();
+    let nearBottom = true;
+    let lastMeasured: number | null = scroller.scrollTop;
+    const measure = () => {
+      nearBottom = stickToBottomAfterScroll({
+        pinned: isPinnedToBottom(scroller),
+        scrollTop: scroller.scrollTop,
+        wasNearBottom: nearBottom,
+        previousScrollTop: lastMeasured,
+      });
+      lastMeasured = scroller.scrollTop;
+    };
+    const stop = observeThreadGrowth(
+      scroller,
+      () => ({ wasNearBottom: nearBottom, isLoadingOlder: false, isEntering: false }),
+      null,
+      baselineFromPlacements ? (top) => (lastMeasured = top) : undefined
+    );
+    // Frame A: the box loses the keyboard and every photo its ceiling (60svh of a shorter viewport).
+    layout.box -= KEYBOARD;
+    for (const i of PHOTOS) layout.heights[i] -= Math.round(0.6 * KEYBOARD);
+    relayout();
+    // Frame B: the ceiling is restored (the held viewport height). The scroll measurement of the
+    // pin made in A runs HERE, after B's layout and before B's observers.
+    for (const i of PHOTOS) layout.heights[i] += Math.round(0.6 * KEYBOARD);
+    layout.scrollTop = Math.min(layout.scrollTop, reach());
+    measure();
+    relayout();
+    stop();
+    return {
+      nearBottom,
+      distance: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+    };
+  }
+
+  it('keeps the flag and ends at the bottom', () => {
+    expect(replay(true)).toEqual({ nearBottom: true, distance: 0 });
+  });
+
+  it('the last measurement as a baseline reads the thread own move as the reader leaving', () => {
+    const run = replay(false);
+    expect(run.nearBottom).toBe(false);
+    expect(run.distance).toBeGreaterThan(0);
+  });
+});
+
 describe('observeThreadGrowth - a reader in history', () => {
   it('keeps the row at the top of the viewport through the same changes', () => {
     const { scroller, layout, relayout } = makeThread(rowsWithPhoto(), 711);
@@ -197,7 +262,7 @@ describe('observeThreadGrowth - a conversation being entered', () => {
 
 /**
  * AN OLDER PAGE LANDING WHILE THE PANE CHANGED UNDER IT (the photo DM of 2026-11-14,
- * backlog.d/p2-a-dm-ending-in-photos-lands-on-older-messages-when-the-keyboard-opens.md).
+ * docs/wiki/frontend/modules/chat.md, the flag is only ever the reader's).
  * `loadOlderGroups` used to restore `scrollTop` itself, from offsets captured BEFORE awaiting the
  * store: a keyboard rising meanwhile (and the thread taken to its end for it) was undone by that
  * write, and the reader landed one keyboard height up, on older messages. The observer's row anchor
