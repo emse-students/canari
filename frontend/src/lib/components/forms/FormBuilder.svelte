@@ -75,6 +75,7 @@
     onLeftPricedGrid,
     formTiers = null,
     orderedCells = [],
+    allOrderedCells = {},
     isPublic = false,
     gridProblem = null,
   }: {
@@ -124,6 +125,8 @@
     formTiers?: ProductGridTierDimension | null;
     /** A priced grid's cells already ordered in an answer (removing their row or column warns). */
     orderedCells?: string[];
+    /** Every priced grid's ordered cells by question id: a shared column warns on any grid's orders. */
+    allOrderedCells?: Record<string, string[]>;
     /** A public form: a priced grid's guest pays "everyone else". */
     isPublic?: boolean;
     /** The sentence of a refused save about this priced grid. */
@@ -576,6 +579,9 @@
         {formations}
         {formTiers}
         {orderedCells}
+        questions={allItems}
+        questionId={item.id}
+        orderedByQuestion={allOrderedCells}
         {isPublic}
         problem={gridProblem}
         title={item.label}

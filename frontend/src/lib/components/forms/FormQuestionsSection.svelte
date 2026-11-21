@@ -239,6 +239,7 @@
           onLeftPricedGrid={onPricedGridGone}
           {formTiers}
           orderedCells={orderedCells[_item.id] ?? []}
+          allOrderedCells={orderedCells}
           {isPublic}
           gridProblem={gridFault?.itemId === _item.id ? (gridFault?.message ?? null) : null}
         />
