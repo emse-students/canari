@@ -4035,14 +4035,20 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   finds the mirror already empty (emptied by the app's own flush while its WebView ran in the
   background) settles too (`settleOutboxNudge`).
 - **A withdrawal says what stood, and nothing when nothing did** (review of #3922).
-  `withdrawOutboxNudge` reads the shade ONCE (`OutboxNudge.withdrawal`): every drain that empties
+  `withdrawOutboxNudge` reads the shade ONCE (`OutboxNudge.nudgeStood`): every drain that empties
   the mirror lands there - each quick reply, each read mark (`sendReadWatermark` queues and drains),
   each worker run on an empty queue - so an unconditional "withdrawn" line would be false on nearly
-  all of them, and it is the line the device reading takes as evidence. One line per record that
-  stood: `outbox mirror empty - nudge withdrawn (id=999)`, `a nudge posted before 1.7.3 withdrawn
-  (id=9998)`, `id=9998 is the worker's notice - left`. The cancel of 999 is unconditional
-  (idempotent, and it also takes a post the read lags behind); only the line follows the read. A read that throws is caught and logged as an ERROR, and the cancel still runs after it (only the lines and the 9998 check are skipped). The
-  cost is one `activeNotifications` binder call per drain that leaves the mirror empty.
+  all of them, and it is the line the device reading takes as evidence. One line, only when the
+  nudge stood: `outbox mirror empty - nudge withdrawn (id=999)`. The cancel of 999 is unconditional
+  (idempotent, and it also takes a post the read lags behind); only the line follows the read. A
+  read that throws is caught and logged as an ERROR, and the cancel still runs after it. The cost is
+  one `activeNotifications` binder call per drain that leaves the mirror empty.
+- **A quick reply sent online is TWO queued sends, and that is expected.** `replyAnswered`
+  (`CanariNotificationActionReceiver`) runs `sendReadWatermark` once the reply is delivered -
+  answering is reading (product decision, 2026-08-31) - which queues a silent, durable
+  `read_watermark` frame under a fresh UUID and drains it at once; its `✓ sent` line comes BEFORE
+  `sendReadWatermark: queued+drained`, and no `handleReply` line names it (the second send seen on
+  the 1.7.3-alpha.2 reading, 201 within a second of the reply).
 - **Its own id: `FixedNotifIds.OUTBOX_NUDGE` = 999.** It shared 9998 with `MlsBackgroundWorker`'s
   foreground notice, now `FixedNotifIds.WORKER_FOREGROUND`, so a blind cancel would have taken that
   notice down. 999 is below the conversation counter's start (1000, only ever growing), so no install
@@ -4053,19 +4059,31 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   the new-device notice (9996) and the worker's failure notice (9997), also on the messages channel,
   each raised the launcher badge by one before 1.7.3 and no longer do. Pinned by
   `androidOutboxNudge.test.ts` and `UnreadBadgeCountTest`.
-- **A nudge posted under 9998 before the update.** Withdrawn by the same read, on every
-  withdrawal: the record standing at 9998 is cancelled only
-  when it is neither ongoing nor a foreground-service record (`OutboxNudge.isPreUpdateNudge`). The
-  worker's notice is always ongoing, and a foreground-service record once promoted; the nudge was
-  never either. The platform also refuses `cancel` on a foreground-service record, which covers a
-  promotion landing between the read and the cancel. Whether Android already drops the app's
-  notifications on the update itself was not measured; the guard makes the answer irrelevant. The app's
-  open clears either id anyway (the messages-channel sweep). Removal date:
-  [legacy-compatibility](../legacy-compatibility.md#removal-once-minclientversion-passes-173---a-pending-sync-nudge-posted-under-9998-before-the-update-2026-11-21).
+- **No nudge posted under 9998 before the update survives it, so nothing cancels 9998** (settled
+  2026-11-21, from AOSP; the guard #3922 shipped for it was deleted). The claim that a pre-1.7.3
+  nudge could still stand needs a mechanism that keeps a package's notifications across its own
+  update, and there is none on API 28-36: every update (adb `install -r` and Play alike, both
+  through `PackageInstaller` into the package manager's post-install step) sends
+  `ACTION_PACKAGE_ADDED` with `EXTRA_REPLACING` to every running receiver for a package that is not
+  a static shared library - `PackageManagerService.handlePackagePostInstall` (`android-9.0.0_r61`),
+  `InstallPackageHelper.handlePackagePostInstall` (`android14-release`),
+  `BroadcastHelper.sendPostInstallBroadcasts` (`android16-release`), with `killApp` and
+  `INSTALL_DONT_KILL_APP` deciding nothing about it. `NotificationManagerService`'s
+  `mPackageIntentReceiver` listens for `ACTION_PACKAGE_ADDED` and `ACTION_PACKAGE_REMOVED`; for
+  either, `cancelNotifications` stays `true` (only a `PACKAGE_CHANGED` to an enabled state and the
+  suspend / distraction broadcasts clear it, and `EXTRA_REPLACING` only changes `removingPackage`,
+  which is passed to the listeners and the preferences, not to the cancel), and it calls
+  `cancelAllNotificationsInt(MY_UID, MY_PID, pkg, null, 0, 0, ...)` - no flag spared, ongoing and
+  foreground-service records included. Read identically in `android-9.0.0_r61`, `android10`
+  through `android16-release` and `main`. Measured too: on the Mi 9T, a 9998 nudge standing on
+  1.7.3-alpha.1 was gone after `adb install -r` of alpha.2, and the shade held no Canari
+  notification at all. So `FixedNotifIds.WORKER_FOREGROUND` is cancelled by nobody;
+  `androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers.
 - **Residual.** The app's own `store_outbox_mirror` rewrite does not settle the nudge: a mirror the
   WebView empties in the background leaves the nudge up until the next drain, worker run or open.
-- **Owed on the Mi 9T**: queue a reply offline, let the worker deliver it, and see the nudge leave
-  without opening the app ([backlog](../backlog.d/reading-owed-the-outbox-nudge-leaves-with-the-delivered-reply.md)).
+- **Read on the Mi 9T, 1.7.3-alpha.2**: the nudge goes up under 999 and leaves with the reply a
+  push-woken drain delivers, the app never opened
+  ([backlog](../backlog.d/reading-owed-the-outbox-nudge-leaves-with-the-delivered-reply.md)).
 
 **A RESIDUE AFTER A DRAIN WAITS FOR THE NEXT TRIGGER, AND MAY WAIT A LONG TIME.** Observed on A1,
 2026-08-11: a 110-message backlog drained to **3** and then stopped, with the app foregrounded,

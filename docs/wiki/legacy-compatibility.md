@@ -566,26 +566,6 @@ absent from production for a week. Then make `announcedFields` required on the m
 `assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
 entry.
 
-### Removal once `minClientVersion` passes `1.7.3` - a pending-sync nudge posted under 9998 before the update (2026-11-21)
-
-**Site:** the 9998 half of `withdrawOutboxNudge` (`CanariFirebaseMessagingService.kt`) and
-`OutboxNudge.isPreUpdateNudge` / `Withdrawal.preUpdateNudgeStood` (`push/OutboxNudge.kt`), logged `a nudge posted before 1.7.3 withdrawn (id=9998)`.
-**What it humours:** until `1.7.3` the outbox nudge shared id 9998 with the background worker's
-foreground notice, and nothing withdrew it; a nudge up across the update would stand under the old id,
-which the new withdrawal (id 999) does not reach. So every withdrawal also cancels the record at
-9998 when it is neither ongoing nor a foreground-service record - never the worker's notice
-([mobile](frontend/mobile.md#the-outbox-nudge)).
-**The cost while it stands:** a second id to reason about in the withdrawal (the shade read itself
-serves the 999 line too).
-**Removal condition:** `minClientVersion` on both estates passes `1.7.3`. The floor does NOT prove the
-leftover is gone: an install the store updated in the background and nobody opened since can still
-hold a 9998 nudge. What clears it is the app's OPEN (the messages-channel sweep takes either id), and
-the floor only matters because an install below it cannot be used without that open. After the
-removal, such an unopened install keeps its leftover until it is opened - the pre-1.7.3 behaviour,
-for a population that has not launched the app since. Then delete the 9998 half of
-`withdrawOutboxNudge`, `isPreUpdateNudge`, `preUpdateNudgeStood`, their test cases, the pre-update
-sentence of `FixedNotifIds.WORKER_FOREGROUND`'s comment and this entry.
-
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

@@ -48,42 +48,12 @@ object OutboxNudge {
     }
 
     /**
-     * Whether the record standing under [id] is a nudge posted BEFORE 1.7.3, when the nudge shared
-     * [FixedNotifIds.WORKER_FOREGROUND] with the background worker's foreground notice. The worker's
-     * notice is always ongoing (and a foreground-service record when the worker is promoted); the
-     * nudge never was either. So [ongoing] and [foregroundService], read from the record itself,
-     * tell the two apart, and the worker's live notice is never taken for a leftover nudge.
+     * Whether the nudge stands in a shade holding [shadeIds], read ONCE for a withdrawal so its line
+     * says what actually stood: a drain that empties the mirror runs on every quick reply and every
+     * read mark, and "withdrawn" on each of them, with no nudge in the shade, would be false - and is
+     * what the device reading takes as evidence. The cancel of [FixedNotifIds.OUTBOX_NUDGE] is issued
+     * whatever this says (idempotent, and a post this read lags is still cancelled); only the LINE
+     * follows it.
      */
-    fun isPreUpdateNudge(id: Int, ongoing: Boolean, foregroundService: Boolean): Boolean =
-        id == FixedNotifIds.WORKER_FOREGROUND && !ongoing && !foregroundService
-
-    /** One record of the shade, as a withdrawal reads it: its id and the two flags that matter. */
-    data class Standing(val id: Int, val ongoing: Boolean, val foregroundService: Boolean)
-
-    /** What one read of the shade says stands, for a withdrawal. */
-    data class Withdrawal(
-        /** A nudge under [FixedNotifIds.OUTBOX_NUDGE] was in the shade. */
-        val nudgeStood: Boolean,
-        /** A pre-1.7.3 nudge stands under [FixedNotifIds.WORKER_FOREGROUND]: cancel that id too. */
-        val preUpdateNudgeStood: Boolean,
-        /** The worker's own notice stands under [FixedNotifIds.WORKER_FOREGROUND]: left alone. */
-        val workerNoticeStood: Boolean,
-    )
-
-    /**
-     * Reads [shade] ONCE for a withdrawal, so its line says what actually stood: a drain that
-     * empties the mirror runs on every quick reply and every read mark, and "withdrawn" on each of
-     * them, with no nudge in the shade, would be false - and is what the device reading takes as
-     * evidence. The cancel of [FixedNotifIds.OUTBOX_NUDGE] is issued whatever this says (idempotent,
-     * and a post this read lags is still cancelled); only the LINE follows it.
-     */
-    fun withdrawal(shade: List<Standing>): Withdrawal {
-        val old = shade.firstOrNull { it.id == FixedNotifIds.WORKER_FOREGROUND }
-        val preUpdate = old != null && isPreUpdateNudge(old.id, old.ongoing, old.foregroundService)
-        return Withdrawal(
-            nudgeStood = shade.any { it.id == FixedNotifIds.OUTBOX_NUDGE },
-            preUpdateNudgeStood = preUpdate,
-            workerNoticeStood = old != null && !preUpdate,
-        )
-    }
+    fun nudgeStood(shadeIds: Collection<Int>): Boolean = FixedNotifIds.OUTBOX_NUDGE in shadeIds
 }

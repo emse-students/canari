@@ -844,11 +844,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         extras.putBoolean(LINE_PENDING_REPLY, true)
                         extras.putString(LINE_PENDING_REPLY_ID, messageId)
                     }
-                    val channel = if (android.os.Build.VERSION.SDK_INT >= 26) {
-                        existing.channelId ?: CHANNEL_MESSAGES
-                    } else {
-                        CHANNEL_MESSAGES
-                    }
+                    val channel = existing.channelId ?: CHANNEL_MESSAGES
                     held.messages
                         .takeLast(MAX_NOTIF_MESSAGES - 1)
                         .forEach { style.addMessage(it) }
@@ -864,7 +860,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // The SAME conversation shortcut: without it the re-post drops to the legacy
                         // layout, losing the header face and - for a DM - the one-name shape
                         // ([ConversationShape]).
-                        .apply { if (android.os.Build.VERSION.SDK_INT >= 26) existing.shortcutId?.let { setShortcutId(it) } }
+                        .apply { existing.shortcutId?.let { setShortcutId(it) } }
                     if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                         builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
                         builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
@@ -1397,7 +1393,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } ?: return null
             return ReadElsewhereMarks.Banner(
                 notifId,
-                if (android.os.Build.VERSION.SDK_INT >= 26) shown.channelId else null,
+                shown.channelId,
                 NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(shown)?.messages.orEmpty(),
                 shown,
             )
@@ -2734,46 +2730,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * The mirror is empty: withdraws the nudge, reading the shade ONCE ([OutboxNudge.withdrawal])
+         * The mirror is empty: withdraws the nudge, reading the shade ONCE ([OutboxNudge.nudgeStood])
          * so the line says what actually stood. Every drain that empties the mirror lands here - each
          * quick reply, each read mark - so a line on each, with no nudge in the shade, would be false;
          * and a drain that withdraws a nudge that really stood (one the WebView's own flush left
          * behind) must say so. The cancel of [OUTBOX_NUDGE_NOTIF_ID] is issued whatever the read
          * shows: idempotent, and it also takes a post the read lags behind.
-         *
-         * LEGACY: a nudge posted BEFORE 1.7.3 stands under [FixedNotifIds.WORKER_FOREGROUND], the id
-         * it shared with the background worker's foreground notice. It is cancelled only when that
-         * record is neither ongoing nor a foreground-service record - the worker's notice is always
-         * one or the other, the nudge never was ([OutboxNudge.isPreUpdateNudge]). The platform also
-         * refuses `cancel` on a foreground-service record, which covers a promotion landing between
-         * this read and the cancel. Removal date:
-         * [legacy-compatibility](../../../../../../../../../../docs/wiki/legacy-compatibility.md).
          */
         private fun withdrawOutboxNudge(manager: NotificationManager, where: String) {
             // The read comes first - the line must know what stood BEFORE the cancel - but its
             // failure never costs the withdrawal: it is caught here, and the cancel runs after it.
             val stood = try {
-                OutboxNudge.withdrawal(
-                    manager.activeNotifications.map { sbn ->
-                        val flags = sbn.notification.flags
-                        OutboxNudge.Standing(
-                            sbn.id,
-                            ongoing = (flags and android.app.Notification.FLAG_ONGOING_EVENT) != 0,
-                            foregroundService = (flags and android.app.Notification.FLAG_FOREGROUND_SERVICE) != 0,
-                        )
-                    },
-                )
+                OutboxNudge.nudgeStood(manager.activeNotifications.map { it.id })
             } catch (e: Exception) {
-                Log.e(TAG, "$where: reading the shade failed - the nudge is withdrawn unread, a pre-1.7.3 one left: ${throwableSite(e)}")
-                null
+                Log.e(TAG, "$where: reading the shade failed - the nudge is withdrawn unread: ${throwableSite(e)}")
+                false
             }
             manager.cancel(OUTBOX_NUDGE_NOTIF_ID)
-            if (stood == null) return
-            if (stood.preUpdateNudgeStood) manager.cancel(FixedNotifIds.WORKER_FOREGROUND)
-            // A line per record that STOOD, none when the shade held nothing of ours.
-            if (stood.nudgeStood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")
-            if (stood.preUpdateNudgeStood) Log.i(TAG, "$where: a nudge posted before 1.7.3 withdrawn (id=${FixedNotifIds.WORKER_FOREGROUND})")
-            if (stood.workerNoticeStood) Log.d(TAG, "$where: id=${FixedNotifIds.WORKER_FOREGROUND} is the worker's notice - left")
+            // A line only when the nudge STOOD, none when the shade held nothing of it.
+            if (stood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")
         }
 
         /** Builds and posts the nudge; only [settleOutboxNudgeLocked] calls it. */
@@ -3869,8 +3844,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (heldByReply && postChannel != channel) {
                     Log.d(TAG, "showMessageNotification: held after an inline answer -> posted on its channel, the switch left to the next post (groupId=${ConversationRef.of(groupId)})")
                 }
-                val switchesChannel = held != null && android.os.Build.VERSION.SDK_INT >= 26 &&
-                    held.channelId != postChannel
+                val switchesChannel = held != null && held.channelId != postChannel
                 // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
                 // see [RepostAlert].
                 val repostMode = RepostAlert.of(
