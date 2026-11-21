@@ -1012,14 +1012,23 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     at WARN.
 
   Accepted residuals (round-16 review), each with the reason it is not worth a mechanism:
-  - **A held banner waits for an event.** Nothing wakes it on a clock - a timer would be the
-    "pansement" the standing directive refuses - and it shows only what was answered.
+  - **An empty held banner waits for an event.** A held banner a read covered shows the title only;
+    its actions are kept and it counts on the launcher badge. It stays until the next event for its
+    conversation: removing it sooner would need a timer, which the standing directive refuses.
+  - **A stale reaction base.** Two DISTINCT reactions within the system's processing delay, or a
+    legacy reactor sending `sentAt` 0, can make the second post rebuild on the shade's copy from
+    before the cancel (`reactionPosted` lets the shade answer again once a post went out, and both
+    may still be queued). Closing it costs a full reaction record, for a window of milliseconds.
+  - **A reaction posted milliseconds before the app's start sweep.** It is not yet in the sweep's
+    snapshot and survives it. The app is open, nothing is lost, and `forgetAll`'s cancel by id
+    (round 16) covers every reaction this process recorded.
+  - **A late read clears a newer lone reaction.** A read handed over after a reaction it predates
+    removes that reaction's notification. This is inherent to the decision that the reaction's alert
+    goes with the conversation: a reaction carries no server instant to weigh. The reaction itself
+    stays in the conversation (principle 2).
   - **An unreadable shade reads as "not held" / "nothing posted".** It happens only when the system
     server failed (`RemoteException` cause, typed at the catch); the cancel then goes as before and
     the line accuses at ERROR. Anything else is rethrown, not read as an answer.
-  - **A reaction post right after `reactionPosted` still reads the shade.** If both the withdrawal's
-    cancel and the fresh post are still queued, it may rebuild on the stale copy once. The window is
-    one queued post wide, and the next read or sweep removes it.
   - **A banner with no template or no MessagingStyle is not rebuilt.** Every conversation banner is
     built with both; no fallback sender is invented, the record keeps what was posted, and the
     rebuild says so at WARN.
