@@ -308,6 +308,15 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(recorded).toBeGreaterThan(-1);
     expect(fresh).toBeGreaterThan(recorded);
     expect(fresh).toBeLessThan(unrecorded.indexOf('rebuildBanner('));
+    // The app is in front: the re-post that ends a hold is EMPTY (round-15 review, S2).
+    expect(unrecorded).toContain('rebuildBanner(context, manager, groupId)(banner, emptyList())');
+    const marksSource = readFileSync(
+      resolve(dirname(SERVICE), 'push/ReadElsewhereMarks.kt'),
+      'utf8'
+    );
+    expect(marksSource).toContain(
+      'kept[conversationId] = repost(conversationId, banner, emptyList()) ?: banner'
+    );
   });
 
   // Round-13 review (S1): a channel switch cancels the old post - an app cancel, dropped on a
@@ -419,6 +428,19 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(rebuildBody).not.toContain(' as android.app.Notification');
     expect(rebuildBody).not.toContain('Person.Builder()');
     expect(rebuildBody).toContain('return@rebuild null');
+    // What it draws IS `kept` (round-15 review, S1): the style is set on every path - the
+    // template's own would redraw its old lines - and an empty conversation drops its text too.
+    const style = rebuildBody.indexOf(
+      'val style = NotificationCompat.MessagingStyle(previous.user)'
+    );
+    const setStyle = rebuildBody.indexOf('.setStyle(style)');
+    expect(style).toBeGreaterThan(-1);
+    expect(setStyle).toBeGreaterThan(style);
+    expect(rebuildBody.slice(0, setStyle)).not.toContain('if (kept.isEmpty()');
+    expect(rebuildBody).toContain('if (kept.isEmpty()) builder.setContentText(null)');
+    expect(rebuildBody).toContain(
+      'ReadElsewhereMarks.Banner(held.notifId, held.channelId, style.messages.toList(), notif)'
+    );
     const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
     const lock = repost.indexOf('synchronized(READ_ELSEWHERE.lock) {');
     const asked = repost.indexOf('AWAITED_REPLIES.deliveredAt(messageId)?.let { receivedAt ->');
@@ -524,10 +546,10 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(cancel).toBeGreaterThan(ret);
     expect(helperBody.slice(ask, ret)).not.toContain('withdrawnLocked(');
     // Each path re-posts what IT leaves on the banner - a delivery never the line it delivered
-    // (round-14 review, S-a).
+    // (round-14 review, S-a), a read or a dismissal nothing already read (round-15 review, S2).
     for (const [fn, shown] of [
-      ['    fun withdraw(', 'banner.messages'],
-      ['    fun recordThenCancel(', 'banner.messages'],
+      ['    fun withdraw(', 'emptyList()'],
+      ['    fun recordThenCancel(', 'emptyList()'],
       ['    fun replyDelivered(', 'kept'],
     ]) {
       const at = marks.indexOf(fn);
@@ -540,37 +562,63 @@ describe('the builder records what it posted and keeps the stamps current', () =
     }
   });
 
-  // Round-14 decision (replacing rounds 12-13, S-c/S4): a reaction's alert goes WITH the
-  // conversation. Its line carries no server instant (LINE_SERVER_AT 0, so no mark can weigh it):
-  // whatever removes OR COVERS the message banner - an answer, a read that cancels it or finds it
-  // held after covering every line, a dismissal - removes the reaction. A source pin, so the
-  // production shape (serverAt 0) is the JVM suite's fixture, not this one.
-  it('removes the reaction with the conversation, never weighing it on its own', () => {
+  // Round-14/15 decisions: a reaction's alert goes WITH the conversation. Its line carries no
+  // server instant (LINE_SERVER_AT 0, so no mark can weigh it): the read's OUTCOME decides - only
+  // UNREAD keeps it, so a read with no banner removes a lone reaction - and the cancel sits IN the
+  // decision's critical section (round 15, S3), so a reaction post cannot fall between them. A
+  // source pin: the production shape (serverAt 0) is the JVM suite's fixture.
+  it("removes the reaction with the conversation, in the decision's critical section", () => {
     expect(source).not.toContain('rememberReaction');
     expect(source).not.toContain('cancelReactionIfCovered');
     expect(source).not.toContain('forgetReaction');
     const cancel = 'cancelReactionNotification(prefs, manager, groupId)';
+    // The answer: the cancel chained on the decision, before the lock closes.
     const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
     const body = answer.slice(0, answer.indexOf('when (outcome)'));
-    expect(body).toContain(
-      'prefs.getInt(reactionNotifKey(groupId), -1).takeIf { it != -1 }?.let { manager.cancel(it) }'
-    );
+    const answerLock = body.indexOf('val outcome = synchronized(READ_ELSEWHERE.lock) {');
+    const decided = body.indexOf('READ_ELSEWHERE.answerReply(');
+    const answerCancel = body.indexOf(`).also { ${cancel} }`);
+    expect(answerLock).toBeGreaterThan(-1);
+    expect(decided).toBeGreaterThan(answerLock);
+    expect(answerCancel).toBeGreaterThan(decided);
+    expect(body.slice(answerCancel)).toMatch(/^\)\.also \{[^\n]*\}\n\s*\}\n/);
+    // The read: the decision, then on its very next line the cancel unless UNREAD, in the lock.
     const read = source.slice(source.indexOf('internal fun cancelConversationNotification('));
     const fn = read.slice(0, read.indexOf('\n        /**'));
-    // Covered but held: `holds` is asked only of a banner every line of which the read covers.
-    expect(fn).toContain(
-      'val holds = { id: Int -> holdsDirectReply(manager, id).also { if (it) heldButRead = true } }'
+    const lock = fn.indexOf('synchronized(READ_ELSEWHERE.lock) {');
+    const outcome = fn.indexOf(
+      'val outcome = READ_ELSEWHERE.recordThenCancel(groupId, read, shade, holds, repost, cancelById)'
     );
-    const kept = fn.indexOf('if (!READ_ELSEWHERE.recordThenCancel(');
-    const keptBranch = fn.slice(kept, fn.indexOf('return', kept));
-    expect(keptBranch).toContain('if (heldButRead) {');
-    expect(keptBranch.slice(keptBranch.indexOf('if (heldButRead) {'))).toContain(cancel);
-    const heldDismissal = fn.indexOf('ReadElsewhereMarks.Withdrawal.HELD -> {');
-    expect(fn.slice(heldDismissal, fn.indexOf('return', heldDismissal))).toContain(cancel);
-    // Every path that removed the banner, or found none, ends with the same cancel.
-    expect(fn.split(cancel).length - 1).toBeGreaterThanOrEqual(4);
+    const readCancel = fn.indexOf(
+      `if (outcome != ReadElsewhereMarks.ReadOutcome.UNREAD) ${cancel}`
+    );
+    expect(lock).toBeGreaterThan(-1);
+    expect(outcome).toBeGreaterThan(lock);
+    expect(readCancel).toBeGreaterThan(outcome);
+    expect(fn.slice(outcome, readCancel)).toMatch(/^val outcome[^\n]*\n\s*$/);
+    // The dismissal: HELD, NONE and CANCELLED each cancel it, inside the same lock.
+    for (const branch of [
+      'ReadElsewhereMarks.Withdrawal.HELD -> {',
+      'ReadElsewhereMarks.Withdrawal.NONE -> {',
+    ]) {
+      const at = fn.indexOf(branch);
+      expect(at).toBeGreaterThan(lock);
+      expect(fn.slice(at, fn.indexOf('return', at))).toContain(cancel);
+    }
+    expect(fn.indexOf(`ReadElsewhereMarks.Withdrawal.CANCELLED -> ${cancel}`)).toBeGreaterThan(
+      lock
+    );
+    // Nothing cancels it after the section: every call sits before what follows the lock.
+    expect(fn.lastIndexOf(cancel)).toBeLessThan(fn.indexOf('synchronized(GENERIC_BANNERS_LOCK)'));
     const helper = source.slice(source.indexOf('private fun cancelReactionNotification('));
-    expect(helper.slice(0, helper.indexOf('\n        }'))).toContain('manager.cancel(reactionId)');
+    const helperBody = helper.slice(0, helper.indexOf('\n        }'));
+    expect(helperBody).toContain('manager.cancel(reactionId)');
+    expect(helperBody).toContain('READ_ELSEWHERE.reactionWithdrawn(groupId)');
+    // A reaction post builds on a fresh base after a withdrawal (round 15, S4).
+    expect(source).toContain(
+      'READ_ELSEWHERE.reactionBaseOf(groupId) { shadeBannerOf(manager, notifId) }'
+    );
+    expect(source).toContain('READ_ELSEWHERE.reactionPosted(groupId)');
   });
 
   // Round-11 review (S3): a reply not seen delivered is logged at WARN in every case, naming what

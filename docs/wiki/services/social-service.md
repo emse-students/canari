@@ -965,7 +965,18 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   start in `forgetAll`) first asks the shade whether the platform holds it. A held banner is posted
   again, silently and through the one rebuild (`rebuildBanner`), which ends the hold, and it STAYS
   recorded. The next event asks again, and either finds it released and cancels it, or updates it
-  again. None forgets it. The other app cancels follow the same rule (round 13):
+  again. None forgets it. WHAT THE RE-POST DRAWS IS WHAT THE RECORD HOLDS (round 15):
+  - `rebuildBanner` always sets its MessagingStyle explicitly to the lines it is given:
+    `NotificationCompat.Builder(context, template)` restores the template's own style, which redrew
+    every old line - a held [r0] whose r0 was delivered drew "non envoyé" again. With no line, it
+    posts an EMPTY conversation (the title, no text).
+  - A read that covers every line, a dismissal and the app's start re-post a held banner EMPTY:
+    every line it showed was read or seen, and re-drawing them made the next post bring them back.
+    A delivery re-posts what it left; the answer, what it shows.
+  - A banner that cannot be rebuilt (no template, no MessagingStyle - no fallback sender is
+    invented) was not posted, so its record stays as it was, reported at WARN by the rebuild.
+
+  The other app cancels follow the same rule (round 13):
   - A stable-id cancel for a banner the record does not know (`withdraw`'s NONE, the answer with no
     banner) is not sent to a held one. With nothing recorded, there is nothing to re-post, so it is
     left and reported at WARN.
@@ -978,9 +989,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     14, B2): a banner it holds was re-posted and kept by `forgetAll`, and that re-post may land at
     once and read as released - cancelling it then left a record of a banner that was gone. Only one
     the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
-    is cancelled; still held, it is rebuilt and recorded under its conversation.
-  - A held banner with no line to re-post is posted again as it is, from its template (round 14):
-    any app post ends the hold, and it stays recorded.
+    is cancelled; still held, it is re-posted empty and recorded under its conversation.
 
   What the answer shows (round-12, S-b) is posted the standard way: the lines that stay (newer than
   the watermark, or another reply still queued), then the answer as this account's own line
@@ -1010,6 +1019,17 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   did: a reaction line carries no server instant (`LINE_SERVER_AT` 0), so a server-clock mark never
   covered it and the reaction stayed after every read. Principle 2 holds: the reaction itself stays
   in the conversation - only its alert goes, when the conversation it belongs to is read.
+  - THE READ'S OUTCOME DECIDES (`ReadElsewhereMarks.ReadOutcome`, round 15): `CANCELLED`, `HELD`
+    (every line covered) and `NO_BANNER` remove the reaction; only `UNREAD` - a line newer than the
+    read - keeps it. So a read of a conversation with no message banner standing removes a LONE
+    reaction, as a dismissal always did (round-15 decision).
+  - The cancel runs IN THE DECISION'S CRITICAL SECTION (`READ_ELSEWHERE.lock`), on the answer, read
+    and dismissal paths alike, so a reaction post cannot fall between the decision and the cancel.
+  - A reaction post rebuilds on the shade, which lags a `cancel`: a reaction removed a moment before
+    came back with the next one. The record now says when the shade's copy is stale
+    (`reactionWithdrawn` on every cancel, every reaction at the app's start sweep): the next post
+    builds on nothing (`reactionBaseOf`), and the shade answers again once one was posted on that
+    fresh base (`reactionPosted`).
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
