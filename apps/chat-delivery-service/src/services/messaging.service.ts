@@ -8375,13 +8375,13 @@ export class MessagingService {
       pt.userId === requesterUserId && pt.deviceId === requesterDeviceId;
     const iosSkipped = allTokens.filter((pt) => pt.platform === 'ios').length;
     if (iosSkipped > 0) {
-      this.logger.log(
+      this.logger.debug(
         `[WELCOME_REQ][${traceId}] ${iosSkipped} iOS token(s) not sent welcome_request_pending - iOS does ` +
           `not act on it, and it would hand Apple the group and the requester for nothing`
       );
     }
     if (allTokens.some(isRequesterDevice)) {
-      this.logger.log(
+      this.logger.debug(
         `[WELCOME_REQ][${traceId}] requester's own device not sent welcome_request_pending - it has nothing to admit`
       );
     }
@@ -8430,19 +8430,10 @@ export class MessagingService {
     await Promise.all(
       tokens.map(async (pt) => {
         const refusal = withheld.get(pt.id);
-        // Not woken, and never the full push instead. `failed` was accused at ERROR, once for the
-        // send (switch unreadable) or once for the account (envelope not stored).
-        if (refusal === 'evicted') {
-          this.logger.warn(
-            `[WELCOME_REQ][${traceId}] user=${pt.userId} device=${pt.deviceId} not woken - the envelope cap ` +
-              `took its welcome_request_pending at once: a device that never fetches`
-          );
-        } else if (refusal === 'registration-gone') {
-          this.logger.log(
-            `[WELCOME_REQ][${traceId}] user=${pt.userId} device=${pt.deviceId} not woken - its registration ` +
-              `was deleted since it was read`
-          );
-        }
+        // Not woken, and never the full push instead. Each reason already has its ONE line, under
+        // this send's trace: `failed` accused at ERROR once for the send (switch unreadable) or once
+        // for the account (envelope not stored); `registration-gone` and `evicted` written by
+        // `storeEnvelopes` (`[PUSH_ENVELOPE] registration gone`, the cap line naming "this push").
         if (refusal) return;
         const envelopeId = envelopes.get(pt.id);
         try {

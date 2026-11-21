@@ -299,8 +299,17 @@ describe('MessagingService - the envelope wake', () => {
       );
     };
     const of = (t: ReturnType<typeof token>, userId: string) => ({ ...t, userId });
-    const lines = (level: 'log' | 'warn') =>
+    const lines = (level: 'log' | 'warn' | 'debug') =>
       (Logger.prototype[level] as unknown as jest.SpyInstance).mock.calls.map(([m]) => String(m));
+    /** Every line this send's caller wrote about one device, at any level. */
+    const callerLinesAbout = (deviceId: string) =>
+      (['log', 'warn', 'debug'] as const)
+        .flatMap(lines)
+        .filter((m) => m.startsWith('[WELCOME_REQ]') && m.includes(`device=${deviceId} `));
+
+    beforeEach(() => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+    });
     const modeReads = () =>
       manager.query.mock.calls.filter(([sql]) => /push_mode/.test(String(sql))).length;
 
@@ -335,9 +344,11 @@ describe('MessagingService - the envelope wake', () => {
         expect(fcmSend).not.toHaveBeenCalled();
         expect(store).not.toHaveBeenCalled();
         expect(modeReads()).toBe(0);
-        expect(lines('log')).toContainEqual(
+        // A fixed decision, so debug: an INFO line on nearly every welcome request is noise.
+        expect(lines('debug')).toContainEqual(
           expect.stringContaining('3 iOS token(s) not sent welcome_request_pending')
         );
+        expect(lines('log').filter((m) => m.includes('iOS token'))).toEqual([]);
       }
     );
 
@@ -349,7 +360,7 @@ describe('MessagingService - the envelope wake', () => {
       await wakeMembers();
       expect(fcmSend).toHaveBeenCalledTimes(1);
       expect(sent().token).toBe('tok-req-phone');
-      expect(lines('log')).toContainEqual(
+      expect(lines('debug')).toContainEqual(
         expect.stringContaining("requester's own device not sent")
       );
     });
@@ -447,19 +458,18 @@ describe('MessagingService - the envelope wake', () => {
       expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('[PUSH_ENVELOPE]'));
     });
 
-    it('does not wake a device whose envelope the cap took at once, and WARNs', async () => {
+    // `storeEnvelopes` writes the ONE line of each (registration gone, the cap): the caller adds none,
+    // so one event is one line.
+    it('does not wake a device whose envelope the cap took at once, and adds no line of its own', async () => {
       store.mockResolvedValue({ ids: new Map(), notWoken: new Map([['pixel', 'evicted']]) });
       pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
       await wakeMembers();
       expect(fcmSend).not.toHaveBeenCalled();
-      expect(lines('warn')).toContainEqual(
-        expect.stringContaining(
-          '[WELCOME_REQ][trace] user=u1 device=pixel not woken - the envelope cap'
-        )
-      );
+      expect(callerLinesAbout('pixel')).toEqual([]);
+      expect(lines('warn')).toEqual([]);
     });
 
-    it("wakes the account's other device when one registration went since it was read, and says so", async () => {
+    it("wakes the account's other device when one registration went since it was read", async () => {
       store.mockResolvedValue({
         ids: new Map([['tablet', E2]]),
         notWoken: new Map([['pixel', 'registration-gone']]),
@@ -471,9 +481,7 @@ describe('MessagingService - the envelope wake', () => {
       await wakeMembers();
       expect(fcmSend).toHaveBeenCalledTimes(1);
       expect(sent().data).toEqual({ type: 'wake', envelopeId: E2, silent: 'true' });
-      expect(lines('log')).toContainEqual(
-        expect.stringContaining('device=pixel not woken - its registration was deleted')
-      );
+      expect(callerLinesAbout('pixel')).toEqual([]);
     });
   });
 
