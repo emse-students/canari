@@ -40,6 +40,13 @@ export interface FormItem {
   requireEveryRow?: boolean;
   /** A choice question that takes an optional free comment (kept under `commentKey(id)`). */
   allowComment?: boolean;
+  /** A short text question's format (`answerFormat.ts`): `number`, `phone`, `email`; absent: free text. */
+  format?: string;
+  /** A `number` format's inclusive bounds. */
+  min?: number;
+  max?: number;
+  /** A `number` format accepts decimals; absent or false: whole numbers only. */
+  allowDecimals?: boolean;
   scale?: {
     min: number;
     max: number;

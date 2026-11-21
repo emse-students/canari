@@ -42,6 +42,7 @@ import {
 } from '../answer-bounds';
 import { ASKED_FIELDS, type AskedField } from '../guest-identity';
 import { noteKeyOwner } from '../answer-text';
+import { ANSWER_FORMATS } from '../answer-format';
 import { ACCOUNT_FIELDS, type AccountField } from '../respondent-identity';
 
 /**
@@ -146,6 +147,28 @@ export class FormItemDto {
   @IsBoolean()
   @IsOptional()
   allowComment?: boolean;
+
+  /**
+   * A SHORT TEXT question's format (`answer-format.ts`): `number`, `phone` or `email`; absent or
+   * `text` is a free answer. Normalised at save (`answer-format-rules.ts`): dropped on any other type.
+   */
+  @IsIn(['text', ...ANSWER_FORMATS])
+  @IsOptional()
+  format?: string;
+
+  /** A `number` format's inclusive bounds; absent: unbounded. */
+  @IsNumber()
+  @IsOptional()
+  min?: number;
+
+  @IsNumber()
+  @IsOptional()
+  max?: number;
+
+  /** A `number` format accepts decimals; absent or false: whole numbers only. */
+  @IsBoolean()
+  @IsOptional()
+  allowDecimals?: boolean;
 
   @IsOptional()
   scale?: {

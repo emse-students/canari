@@ -47,6 +47,10 @@ export const FORM_ANSWER_MISSING = 'FORM_ANSWER_MISSING';
 export const FORM_ANSWER_TOO_LONG = 'FORM_ANSWER_TOO_LONG';
 export const FORM_ANSWER_TOO_MANY_SELECTIONS = 'FORM_ANSWER_TOO_MANY_SELECTIONS';
 export const FORM_ANSWER_NOT_AN_OPTION = 'FORM_ANSWER_NOT_AN_OPTION';
+/** A short answer does not fit its question's format; `problem` and `itemId` name why and which (`answer-format-rules.ts`). */
+export const FORM_ANSWER_FORMAT_INVALID = 'FORM_ANSWER_FORMAT_INVALID';
+/** A number question's minimum is above its maximum, refused at save (`answer-format-rules.ts`). */
+export const FORM_FORMAT_RANGE_INVALID = 'FORM_FORMAT_RANGE_INVALID';
 export const FORM_GRID_ANSWER_INVALID = 'FORM_GRID_ANSWER_INVALID';
 export const FORM_COMBINATION_UNAVAILABLE = 'FORM_COMBINATION_UNAVAILABLE';
 export const FORM_SIGN_IN_REQUIRED = 'FORM_SIGN_IN_REQUIRED';

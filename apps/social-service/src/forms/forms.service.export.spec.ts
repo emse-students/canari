@@ -229,4 +229,33 @@ describe('FormsService.exportSubmissions', () => {
       expect(first.slice(3)).toEqual(['Rouge', 'Avant']);
     });
   });
+
+  describe('a number format', () => {
+    const AGE = {
+      id: 'q_age',
+      label: 'Age',
+      required: false,
+      type: 'short_text',
+      format: 'number',
+    };
+
+    it('writes a number as a number, a skipped answer as an empty cell, and legacy text as text', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [AGE],
+        submissions: [
+          submission({ id: 's1', answers: { q_age: '21' } }),
+          submission({ id: 's2', answers: {} }),
+          submission({ id: 's3', answers: { q_age: 'vingt' } }),
+        ],
+      });
+      const { buffer } = await service.exportSubmissions('f1', LABELS);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const cells = [2, 3, 4].map((n) => workbook.worksheets[0].getRow(n).getCell(4).value);
+      expect(cells[0]).toBe(21);
+      expect(cells[1] == null || cells[1] === '').toBe(true);
+      expect(cells[2]).toBe('vingt');
+    });
+  });
 });

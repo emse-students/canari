@@ -16,6 +16,8 @@
     "answerTooLong": "FORM_ANSWER_TOO_LONG",
     "answerTooManySelections": "FORM_ANSWER_TOO_MANY_SELECTIONS",
     "answerNotAnOption": "FORM_ANSWER_NOT_AN_OPTION",
+    "answerFormatInvalid": "FORM_ANSWER_FORMAT_INVALID",
+    "formatRangeInvalid": "FORM_FORMAT_RANGE_INVALID",
     "gridAnswerInvalid": "FORM_GRID_ANSWER_INVALID",
     "combinationUnavailable": "FORM_COMBINATION_UNAVAILABLE",
     "signInRequired": "FORM_SIGN_IN_REQUIRED",
