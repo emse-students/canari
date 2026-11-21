@@ -103,6 +103,7 @@ import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isPushPreview } from '$lib/utils/chat/messageMerge';
 import { applyReactionFrame } from './reactionFrame';
 import { publishReadState } from '$lib/mls-client/tabMessageSync';
+import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
 import {
   applyNameStatement,
   applyRenameFrame,
@@ -1510,6 +1511,15 @@ export async function handleSystemEvent(
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});
+      }
+      // READ ELSEWHERE, LEARNED OVER THE SOCKET: the server pushes only an un-ACKed frame, so the
+      // push that used to be the Android cancel's only trigger never comes for a receipt this
+      // WebView took (owner's report, 2026-11-20). OUTSIDE `next !== c`: a mark this row already
+      // held (learned on a reconnect) moves nothing here, and its banner still has to go. The
+      // native side decides the cancel against the lines of its shade, not this row, which can lag
+      // behind it - a newer message keeps its banner there.
+      if (selfRead && mark) {
+        void recordNativeReadElsewhere(convoKey, 'read_watermark', mark.at, mark.clock);
       }
       if (merged) {
         log(

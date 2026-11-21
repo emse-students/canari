@@ -1622,7 +1622,7 @@ at the same deploy, so no row loses data it could still have been read with.
   `createdAt` came back for the Android de-duplication (`backlog.md`, G1) and no iOS handler reads
   it, so the gate failed - correctly, since `createdAt` is one of the three fields it measured
   drifting on 2026-08-15. But the reason it has one reader is architectural and checkable: the
-  second trigger is `notifier_message_natif` -> `notifyMessageFromWebSocket`, and that body is
+  second trigger is `notify_native_message` -> `notifyMessageFromWebSocket`, and that body is
   `#[cfg(target_os = "android")]`, so iOS posts nothing from the socket and has no two
   announcements of one salon message to reconcile. So the gate keeps **a key read by NOBODY fails**
   for every key, and a `PLATFORM_SPECIFIC` table narrows only WHICH readers are owed. Each entry

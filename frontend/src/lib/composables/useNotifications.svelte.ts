@@ -756,7 +756,7 @@ export function useNotifications() {
           // properly - its tap is `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>`, a deep link
           // the app already handles - and the plugin hardcodes `ACTION_MAIN` on the launcher
           // activity with no way to pass a link. So ONE builder posts every message notification
-          // natively and this call site asks it: `notifier_message_natif`, and
+          // natively and this call site asks it: `notify_native_message`, and
           // `nativeNotification.ts` for the pair of notifications that removed.
           if (idKey && conversationId) {
             notifTargetsById.set(stableNotifId(idKey), conversationId);

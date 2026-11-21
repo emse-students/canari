@@ -2699,7 +2699,7 @@ global reference; `find_app_class` is the one way through it.
 notifyInbound (useMessaging)
   -> sendSystemNotification (useNotifications)   -- isAndroidTauriRuntime() ? native : plugin
     -> postNativeMessageNotification (nativeNotification.ts)
-      -> invoke('notifier_message_natif')        -- commands/notifications.rs
+      -> invoke('notify_native_message')        -- commands/notifications.rs
         -> find_app_class + call_static_method
           -> CanariFirebaseMessagingService.notifyMessageFromWebSocket   -- queues on WS_NOTIF_LANE
             -> Context.showMessageNotification   -- the one builder, in the companion object
@@ -2819,7 +2819,7 @@ them. The name never rides the push and is never fetched on the push path (user 
     the first one's line is the one the shade keeps (`alreadyPosted`). So the WebSocket trigger
     (`notifyMessageFromWebSocket`) applies the same rule, `ChannelBannerAuthor.of`, to the same
     inputs: the WebView's own open says whether it proved the author (`openChannelMessageProving`:
-    a v2 session), that fact rides `notifier_message_natif` as `authorProven`, and the name comes
+    a v2 session), that fact rides `notify_native_message` as `authorProven`, and the name comes
     from the same `display_names.json`. A v2 author is named by both triggers, a v1 author by
     neither (review of #2881, which caught a first version naming nobody on the socket path while
     the push named the author).
@@ -3227,7 +3227,7 @@ same lopsided shape. The Mi 9T reading decides this before any stable.
 **GROUP OR DM IS THE SOURCE'S FACT, NOT THE NAME'S (review of #3344, M1).** `ConversationShape.isGroup`
 takes a `declared` discriminator that WINS when present: the push payload's `isGroup` (a third of
 production groups carry no name, `push-payload.ts`), the WebView's conversation type on the socket
-trigger (`notificationIsGroup`, carried through `notifier_message_natif` as a nullable
+trigger (`notificationIsGroup`, carried through `notify_native_message` as a nullable
 `java.lang.Boolean`), and `true` for every salon push. Absent (an older server, a row it could not
 read, a row with no type, a reaction), the name rule decides as before. Without it, an unnamed
 three-person group took the one-to-one shape on API 30+: no face per speaker, and the top speaker's name
@@ -3337,7 +3337,7 @@ identity makes the two posts one:
   it as `at`, forwarded by `notify-reaction`), and post the ONE composition `showReactionNotification`
   (`notif_reaction_body`, `CHANNEL_REACTIONS`, no quick actions) under the ONE key `reaction:<groupId>`
   and ONE lock (`REACTION_POST_LOCK`), so whichever lands second is recognised by `alreadyPosted` or,
-  once dismissed, by the alerted ledger. The frame reaches it through `notifier_message_natif` with
+  once dismissed, by the alerted ledger. The frame reaches it through `notify_native_message` with
   `reaction = true`.
 - **iOS**: the page posts through the plugin, whose request identifier is `"\(notification.id)"`;
   the id is `stableNotifId(reaction:<messageId>:<reactor>)` (`reactionCollapseId`), and the
@@ -3389,7 +3389,7 @@ acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
-1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notifier_message_natif` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
+1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notify_native_message` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
 4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
@@ -4890,7 +4890,7 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 
 ## Notification quick actions are on every Android message notification, whoever posts it (resolved 2026-09-18, audited 2026-10-10)
 
-The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notifier_message_natif` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
+The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notify_native_message` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
 
 ## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, built 2026-10-18)
 

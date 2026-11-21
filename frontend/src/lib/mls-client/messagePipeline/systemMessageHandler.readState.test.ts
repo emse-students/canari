@@ -1,3 +1,9 @@
+const recordNativeReadElsewhere = vi.fn();
+vi.mock('$lib/utils/nativeNotification', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/nativeNotification')>()),
+  recordNativeReadElsewhere: (...args: unknown[]) => recordNativeReadElsewhere(...args),
+}));
+
 import { handleSystemEvent } from './systemMessageHandler';
 
 /**
@@ -65,6 +71,86 @@ describe('handleSystemEvent - read_watermark', () => {
     await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
 
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
+  });
+
+  // READ ELSEWHERE, LEARNED OVER THE SOCKET (owner's report, 2026-11-20): the server pushes only a
+  // frame the device did not ACK, so the push that was the cancel's only trigger never came for a
+  // receipt the WebView took, and the Android banner of the conversation stayed for good.
+  it('our own mark from another device dismisses the native banner of that conversation', async () => {
+    recordNativeReadElsewhere.mockClear();
+    const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    // The mark travels with the cancel, so a post still on its way to Kotlin is refused there.
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark',
+      1000,
+      'stamped'
+    );
+  });
+
+  // Re-review of #3912: this row can lag behind the shade, so it does not decide the cancel - the
+  // native side weighs the mark against the shade's own lines (`ReadElsewhereMarksTest`). The mark
+  // is handed over all the same: an older message's post still on its way is refused against it.
+  it('our own mark that leaves a newer message unread is still handed over - the shade decides', async () => {
+    recordNativeReadElsewhere.mockClear();
+    const ctx = makeCtx({ senderNorm: 'me', userId: 'me' });
+    (ctx.conversations.get('g1') as any).messages.push({
+      id: 'm2',
+      senderId: 'peer',
+      timestamp: new Date(2000),
+    });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark',
+      1000,
+      'stamped'
+    );
+  });
+
+  it("a peer's mark hands nothing to the native side", async () => {
+    recordNativeReadElsewhere.mockClear();
+    await handleSystemEvent(
+      'read_watermark',
+      { at: 1000 },
+      makeCtx({ senderNorm: 'peer', userId: 'me' }) as any
+    );
+
+    expect(recordNativeReadElsewhere).not.toHaveBeenCalled();
+  });
+
+  // Review of #3912: a mark this row already held (learned on a reconnect) moves nothing here, and
+  // the banner posted for the conversation still has to go.
+  it('our own mark that moves nothing is still handed over', async () => {
+    recordNativeReadElsewhere.mockClear();
+    const conversations = new Map<string, any>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          unreadCount: 0,
+          readWatermarks: { me: 5000 },
+          messages: [{ id: 'm1', senderId: 'peer', timestamp: new Date(1000) }],
+        },
+      ],
+    ]);
+    const ctx = makeCtx({ conversations, senderNorm: 'me', userId: 'me' });
+
+    await handleSystemEvent('read_watermark', { at: 1000 }, ctx as any);
+
+    expect(ctx.saveConversation).not.toHaveBeenCalled();
+    expect(recordNativeReadElsewhere).toHaveBeenCalledExactlyOnceWith(
+      'g1',
+      'read_watermark',
+      1000,
+      'stamped'
+    );
   });
 
   it("records a peer's read state without touching our own badge", async () => {

@@ -106,7 +106,7 @@ export async function postNativeMessageNotification(
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<boolean>('notifier_message_natif', {
+    return await invoke<boolean>('notify_native_message', {
       groupId: notification.conversationId,
       senderId: notification.senderId,
       senderName: notification.senderName,
@@ -170,7 +170,7 @@ export async function postNativeReactionNotification(
   if (!isAndroidTauriRuntime()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<boolean>('notifier_message_natif', {
+    return await invoke<boolean>('notify_native_message', {
       groupId: reaction.conversationId,
       senderId: reaction.actorId,
       senderName: reaction.actorName,
@@ -189,6 +189,67 @@ export async function postNativeReactionNotification(
     // NOT a fallback: in the foreground this is the only path to the reaction's notification.
     console.error(
       `[NOTIF] The native builder threw for the reaction in ${reaction.conversationId}: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Which socket event told this device that its account read a conversation elsewhere: an own
+ * MLS `read_watermark` from another device, or an own salon `channel.read`.
+ */
+export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
+
+/**
+ * Tells the Android builder that this account read a conversation on another device, as this
+ * WebView learned it over its socket, so it REMOVES the conversation's notification once the read
+ * covers every line of it.
+ *
+ * **THE SECOND TRIGGER OF THE CANCEL**, as {@link postNativeMessageNotification} is the second
+ * trigger of the post (owner's report, 2026-11-20). The cancel had one trigger, the push - a silent
+ * self frame, or `channel_read` - and the server pushes only a frame the device did not ACK. A read
+ * receipt this WebView received and ACKed (app in front, or backgrounded and not yet frozen) was
+ * therefore never pushed, and the banner this WebView had posted for the conversation stayed in the
+ * shade for good. Same key as the post (the conversation id), so the two triggers of each meet.
+ *
+ * **THE NATIVE SIDE DECIDES, NOT THIS ROW.** The post of a message is asynchronous before it reaches
+ * Kotlin, so a read covering it may land first and find nothing to remove: Kotlin records `at` and
+ * refuses any later post at or below it (`ReadElsewhereMarks`), so the order of arrival decides
+ * nothing. And it removes the banner only when `at` covers every line the shade holds: this row can
+ * lag behind the shade (a frozen WebView drains a read from before a message the push already
+ * announced, and counts nothing unread), so whether anything is unread is not this side's to say.
+ * Handed over on EVERY own read, moved or not. `clock` says which clock `at` is on (readState.ts):
+ * `server` for a mark on the server's `createdAt`, `stamped` otherwise.
+ *
+ * Off Android there is no native banner: `false`, and nothing is invoked.
+ *
+ * @returns whether the native side queued the work.
+ */
+export async function recordNativeReadElsewhere(
+  conversationId: string,
+  event: ReadElsewhereEvent,
+  at: number,
+  clock: 'server' | 'stamped'
+): Promise<boolean> {
+  if (!isAndroidTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('record_read_elsewhere', {
+      groupId: conversationId,
+      at: Number.isFinite(at) ? Math.trunc(at) : 0,
+      serverClock: clock === 'server',
+      reason: event,
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused the read of ${conversationId} elsewhere (${event}) - a banner for it may stay.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    // Said at a level that accuses: the banner of a conversation already read may stay in the shade.
+    console.error(
+      `[NOTIF] Handing over the read of ${conversationId} elsewhere (${event}) threw - a banner for it may stay: ${String(e)}`
     );
     return false;
   }

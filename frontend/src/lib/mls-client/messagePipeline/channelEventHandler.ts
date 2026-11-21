@@ -26,6 +26,7 @@ import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
 import { salonGrants } from '$lib/utils/chat/memberRemoval';
 import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
+import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -434,6 +435,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
+    // MY OWN MARK: the salon's Android banner goes too, by the socket as well as by the
+    // `channel_read` push - the WebView posted it, and the push alone left it standing in front
+    // (owner's report, 2026-11-20). OUTSIDE `next !== convo`: a mark already held moves nothing here
+    // and its banner still has to go. The native side decides the cancel against its shade's lines.
+    if (userId.toLowerCase() === ctx.userId.toLowerCase()) {
+      void recordNativeReadElsewhere(key, 'channel.read', Number(data.at), 'stamped');
+    }
     if (next !== convo) {
       conversations.set(key, next);
       // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).

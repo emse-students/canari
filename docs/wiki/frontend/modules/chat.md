@@ -5141,7 +5141,7 @@ largest gap of the batch (`clockGapNote`). A gap of minutes on a positive sign i
 gap, or one constant per sender, is a clock.
 
 **The Android shade states the server clock too**: the push's `createdAt` (and, on the WebSocket
-trigger, the frame's server time, `notifier_message_natif`'s `server_at`) rides the notification as
+trigger, the frame's server time, `notify_native_message`'s `server_at`) rides the notification as
 `EXTRA_SERVER_AT` beside `EXTRA_SENT_AT`. The banner a shade read already covers is compared on that
 clock when both the message and the mark carry it (`coveredByShadeMark`), on the stamps otherwise. "Mark as read" and the quick reply's mark then send
 `{ at, serverAt }` (`build_read_watermark_app_message(at, server_at)`, the shape the app sends) and
