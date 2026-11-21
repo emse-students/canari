@@ -165,6 +165,23 @@ describe('FormsService - anonymous forms', () => {
       expect(res.paymentStatus).toBe('free');
       expect(submissionRepo.count).not.toHaveBeenCalled();
     });
+
+    it.each([
+      ['one answer', false],
+      ['several answers', true],
+    ])(
+      'gives back no answer of the caller (%s): the rows name nobody',
+      async (_name, allowMultipleSubmissions) => {
+        const { service, respondentRepo, submissionRepo } = makeService({
+          form: baseForm({ allowMultipleSubmissions }),
+        });
+        respondentRepo.count.mockResolvedValueOnce(1);
+        const res = await service.hasSubmission('f1', 'u-alice', true);
+        expect(res.myAnswers).toEqual([]);
+        // Not even asked for: there is no "yours" among rows stored without an author.
+        expect(submissionRepo.find).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe('configuration', () => {

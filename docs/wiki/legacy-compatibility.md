@@ -936,6 +936,19 @@ without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
 
+### No date yet - own answers read back - `myAnswers` (2026-11-21)
+
+**Site:** the fill page's load (`frontend/src/routes/forms/[id]/+page.svelte`, `ownAnswersOf` in
+`frontend/src/lib/forms/ownAnswers.ts`); the server half is `myAnswers` in `GET /api/forms/:id/check?answers=1`.
+**Why.** A store build reaches phones days before production deploys, and a social-service older than
+the field ignores `answers=1` and answers the check without it.
+**What the client does.** An ABSENT `myAnswers` is "not served": the page reads the single answer
+through `GET :id/submission` as before, and lists only the changeable answers of a form taking several.
+Nothing is learned from a refusal. Pinned by `page.ownAnswer.svelte.test.ts` ("an estate older than
+myAnswers").
+**Removal condition:** when no estate older than the release carrying `myAnswers` is served, the
+`getSubmission` branch of the fill page may go (the route stays for older apps until their own floor).
+
 ### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
 
 **Site:** `serverFormAnswerEdit()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read through
