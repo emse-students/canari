@@ -198,7 +198,13 @@ export class PricingFactsService {
    * `RESPONDENT_UNKNOWN` IS an answer (no such account - null, accused); a 404 without it is a
    * core-service older than this route (`RESPONDENT_CORE_BEHIND`).
    */
-  async accountIdentity(userId: string): Promise<AccountIdentity | null> {
+  async accountIdentity(
+    userId: string,
+    context: { anonymous?: boolean } = {}
+  ): Promise<AccountIdentity | null> {
+    // An ANONYMOUS form's submit names nobody in its logs (owner review, 2026-11-21): the account id
+    // is left out of every line of this read, so no line pairs a person with the form.
+    const who = context.anonymous ? 'an anonymous respondent' : `user=${userId.slice(0, 8)}`;
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/respondent-identity`);
     const refuse = (code?: string) =>
       new ServiceUnavailableException({
@@ -212,7 +218,7 @@ export class PricingFactsService {
       });
     } catch (e) {
       this.logger.error(
-        `[FORMS] respondent identity fetch FAILED user=${userId.slice(0, 8)} - the answer is refused ` +
+        `[FORMS] respondent identity fetch FAILED ${who} - the answer is refused ` +
           `rather than stored without the fields its form joins: ${e instanceof Error ? e.message : String(e)}`
       );
       throw refuse();
@@ -221,19 +227,19 @@ export class PricingFactsService {
       const body = (await res.json().catch(() => null)) as { code?: string } | null;
       if (body?.code === RESPONDENT_UNKNOWN) {
         this.logger.warn(
-          `[FORMS] respondent identity MISS user=${userId.slice(0, 8)} - no such account in core-service, joined empty`
+          `[FORMS] respondent identity MISS ${who} - no such account in core-service, joined empty`
         );
         return null;
       }
       this.logger.error(
-        `[FORMS] ${RESPONDENT_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service has no respondent-identity ` +
+        `[FORMS] ${RESPONDENT_CORE_BEHIND} ${who} - core-service has no respondent-identity ` +
           'route (older than this service, a rollback window); refusing the answer'
       );
       throw refuse(RESPONDENT_CORE_BEHIND);
     }
     if (!res.ok) {
       this.logger.error(
-        `[FORMS] respondent identity fetch returned ${res.status} user=${userId.slice(0, 8)} - refusing the answer`
+        `[FORMS] respondent identity fetch returned ${res.status} ${who} - refusing the answer`
       );
       throw refuse();
     }
@@ -248,7 +254,7 @@ export class PricingFactsService {
         : [],
     };
     this.logger.debug(
-      `[FORMS] respondent identity user=${userId.slice(0, 8)} cursus=${identity.cursusViews.length} ` +
+      `[FORMS] respondent identity ${who} cursus=${identity.cursusViews.length} ` +
         `posts=${identity.posts.length} campus=${identity.campus ?? 'none'}`
     );
     return identity;

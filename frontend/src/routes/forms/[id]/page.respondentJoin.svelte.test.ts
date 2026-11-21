@@ -70,7 +70,7 @@ beforeEach(() => {
     id: 'f1',
     title: 'Sondage',
     description: '',
-    items: [{ id: 'q1', label: 'q1', required: false, type: 'text' }],
+    items: [{ id: 'q1', label: 'q1', required: false, type: 'short_text' }],
     currency: 'eur',
     basePrice: 0,
     allowCashPayment: false,
@@ -164,6 +164,14 @@ describe('a form that changed what it joins after the page loaded', () => {
     state.form = { ...state.form, respondentFields: ['lastName', 'campus'] };
     state.submit = () =>
       Promise.reject(new ApiRefusalError(400, 'FORM_RESPONDENT_FIELDS_CHANGED', 'changed'));
+    // The member has already typed an answer: the reload must not cost them it.
+    const field = document.querySelector(
+      'input[type="text"], input:not([type]), textarea'
+    ) as HTMLInputElement | null;
+    expect(field).not.toBeNull();
+    field!.value = 'ma reponse';
+    field!.dispatchEvent(new Event('input', { bubbles: true }));
+    await settle();
     send()!.click();
     await settle();
     expect(state.submitted[0].announcedFields).toEqual(['lastName']);
@@ -175,5 +183,26 @@ describe('a form that changed what it joins after the page loaded', () => {
     send()!.click();
     await settle();
     expect(state.submitted[1].announcedFields).toEqual(['lastName', 'campus']);
+    expect(state.submitted[1].answers).toEqual(state.submitted[0].answers);
+    expect(JSON.stringify(state.submitted[1].answers)).toContain('ma reponse');
+  });
+
+  it('says to reload, and sends nothing more, when the form cannot be read again', async () => {
+    state.form = { ...state.form, respondentFields: ['lastName'] };
+    await render();
+    state.submit = () =>
+      Promise.reject(new ApiRefusalError(400, 'FORM_RESPONDENT_FIELDS_CHANGED', 'changed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    send()!.click();
+    await settle();
+    expect(state.getForm).toBe(2);
+    // The next read of the form fails: the notice on screen is stale.
+    const api = await import('$lib/forms/api');
+    vi.spyOn(api, 'getForm').mockRejectedValueOnce(new Error('offline'));
+    send()!.click();
+    await settle();
+    expect(document.body.textContent).toContain(m.form_refusal_respondent_fields_changed_reload());
+    expect(state.submitted).toHaveLength(2);
+    warn.mockRestore();
   });
 });

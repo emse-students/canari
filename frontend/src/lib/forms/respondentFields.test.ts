@@ -7,7 +7,6 @@ import { describe, it, expect } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
   askedOfMember,
-  cursusSourceOf,
   cursusSourceText,
   declaredPayload,
   declaredProblem,
@@ -22,10 +21,10 @@ import {
   matchesIdentityFilter,
   offeredChoices,
   respondentSettingsPayload,
-  showsCursusSource,
   transmittedFieldLabels,
   type RespondentIdentity,
 } from './respondentFields';
+import { cursusSourceOf, showsCursusSource } from './respondentSource';
 
 describe('where the cursus of an answer came from (owner review, 2026-11-21)', () => {
   const account: RespondentIdentity = {
@@ -47,7 +46,7 @@ describe('where the cursus of an answer came from (owner review, 2026-11-21)', (
     expect(cursusSourceOf(account)).toBe('account');
     expect(cursusSourceOf(mixed)).toBe('account');
     expect(cursusSourceOf(declared)).toBe('declared');
-    expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' })).toBeNull();
+    expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' } as never)).toBeNull();
     expect(cursusSourceText(account)).toBe(m.form_respondent_source_account());
     expect(cursusSourceText(declared)).toBe(m.form_respondent_source_declared());
     expect(cursusSourceText(null)).toBe('');

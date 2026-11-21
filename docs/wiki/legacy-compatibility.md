@@ -545,7 +545,11 @@ sends `respondentFields: []`, so the join turns into "asked" - the SAFE directio
 form, never a silent loss of what leaves the account. **A pre-`1.7.0` editor is different, and the join
 STANDS:** it sends `guestFields` alone (the [LEGACY] merge above), so the stored `respondentFields` is
 kept - it can neither show nor remove the join. That is harmless to principle 1 (only a build announcing
-the join is joined) but the organiser on that build cannot turn it off; the floor raise below ends it.
+the join is joined) but the organiser on that build cannot turn it off; the floor raise below ends it. **It can also be REFUSED by the new rule:** if that organiser unticks
+"Promo et formation" while the stored join stays (its save sends `guestFields` without the cursus and no
+`respondentFields`), the save is refused `FORM_ANONYMOUS_CURSUS_NOT_ASKED` - a code that build cannot word,
+so it shows its generic failure. The cause is the join it cannot see; the answer is the floor raise (or
+the organiser editing from a current build).
 The fill page of an old build asks the member the cursus (the cursus stays in `guestFields` for guests),
 which the server accepts for it.
 **A second shim, the same removal (owner review, 2026-11-21): a submit announcing nothing.** The page

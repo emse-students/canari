@@ -387,10 +387,10 @@
     try {
       form = await getForm(form.id);
     } catch (e: unknown) {
-      Log.d(
-        'FormView',
-        `reload after a changed join failed status=${refusalStatus(e) ?? 'transport'}`
-      );
+      // The form could not be read again, so the notice on screen is STILL the old one: the member is
+      // told to reload (never "reloaded"), and the answer is not sent until they have read the new one.
+      Log.w('FormView', 'reload after a changed join failed: the notice on screen is stale', e);
+      error = m.form_refusal_respondent_fields_changed_reload();
     }
   }
 

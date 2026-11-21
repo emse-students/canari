@@ -330,13 +330,32 @@ function carriesDeclared(input: DeclaredIdentityInput): boolean {
   );
 }
 
+/**
+ * How a log line names a form. An ANONYMOUS form is never named on its submit path (owner review,
+ * 2026-11-21): a line with the form and a line with the account would pair them, so the caller passes
+ * an empty id ({@link identityFormId}) and the line says only that the form is anonymous.
+ */
+function idTag(formId: string): string {
+  return formId ? `form=${formId.slice(0, 8)}` : 'an anonymous form';
+}
+
+/** How a log line names a form: its short id, or - when anonymous - nothing that identifies it. */
+export function formTag(form: { id: string; anonymous?: boolean | null }): string {
+  return idTag(identityFormId(form));
+}
+
+/** The id handed to this module's log lines: empty for an anonymous form (see {@link idTag}). */
+export function identityFormId(form: { id: string; anonymous?: boolean | null }): string {
+  return form.anonymous ? '' : form.id;
+}
+
 function notAsked(field: string, formId: string): BadRequestException {
-  logger.warn(`[FORMS] answer refused: ${field} declared but not asked form=${formId.slice(0, 8)}`);
+  logger.warn(`[FORMS] answer refused: ${field} declared but not asked ${idTag(formId)}`);
   return formRefusal(FORM_GUEST_IDENTITY_NOT_ASKED, `This form does not ask for ${field}.`);
 }
 
 function missing(field: string, formId: string): BadRequestException {
-  logger.log(`[FORMS] answer refused: ${field} missing form=${formId.slice(0, 8)}`);
+  logger.log(`[FORMS] answer refused: ${field} missing ${idTag(formId)}`);
   return formRefusal(FORM_GUEST_IDENTITY_MISSING, `This form asks for ${field}.`);
 }
 
@@ -362,7 +381,7 @@ export function declaredIdentityFor(
   // fields marked as not declared. One that sends any is judged like every other (below).
   if (olderClient && !carriesDeclared(input)) {
     logger.log(
-      `[LEGACY] answer to form=${formId.slice(0, 8)} from a build older than ` +
+      `[LEGACY] answer to ${idTag(formId)} from a build older than ` +
         `${RESPONDENT_FIELDS_MIN_CLIENT_VERSION}: ${asked.join(',')} taken as not declared`
     );
     return { source: 'declared', notDeclared: [...asked] };
@@ -476,30 +495,6 @@ export function identityColumnsOf(
           r.respondentIdentity?.[field] !== undefined ||
           r.respondentIdentity?.notDeclared?.includes(field)
       )
-  );
-}
-
-/** Where an answer's cursus came from: the account (certified), the respondent (declared), or none. */
-export function cursusSourceOf(
-  identity: RespondentIdentity | null | undefined
-): 'account' | 'declared' | null {
-  if (!identity) return null;
-  if (identity.fromAccount?.includes('cursus')) return 'account';
-  if (identity.cursus === undefined && !identity.notDeclared?.includes('cursus')) return null;
-  return identity.source;
-}
-
-/**
- * Whether the list and the export say WHERE the cursus came from (owner review, 2026-11-21): on an
- * anonymous form, once any answer carries one read from the account - certified and declared values
- * are never mixed silently in one column.
- */
-export function showsCursusSource(
-  form: { anonymous?: boolean | null },
-  rows: readonly { respondentIdentity?: RespondentIdentity | null }[]
-): boolean {
-  return (
-    form.anonymous === true && rows.some((r) => cursusSourceOf(r.respondentIdentity) === 'account')
   );
 }
 

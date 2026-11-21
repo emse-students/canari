@@ -33,13 +33,13 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
+  import { showsCursusSource } from '$lib/forms/respondentSource';
   import { m } from '$lib/paraglide/messages';
   import Select from '$lib/components/ui/Select.svelte';
   import {
     emptyIdentityFilter,
     formationWord,
     identityColumnsOf,
-    showsCursusSource,
     identityFilterValues,
     matchesIdentityFilter,
     respondentChoiceLabel,

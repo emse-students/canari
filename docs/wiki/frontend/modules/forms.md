@@ -1458,16 +1458,29 @@ would be a separate decision.
    "déclaré" in the client's words (`identity.source`, `sourceAccount`, `sourceDeclared`; a build sending none
    gets the French ones). A per-row column rather than a suffix, because the export splits promo and
    formation into columns and a suffix would break the filter on them. Named forms keep their columns.
-8. **Service logs carry no form id on this path.** The anonymous submit's lines name neither the form nor
-   the user, so no log links a person to an anonymous form; the row itself is never tied to an account
-   (`userId` empty; register C8).
+8. **No log line pairs a person with an anonymous form** (owner review, 2026-11-21; Nest's default logger
+   emits debug in production). On an anonymous submit social-service names the form as "an anonymous form"
+   (`formTag`, `identityFormId`: the "priced on" line, the audience, grid and file refusals, the identity
+   refusals and the [LEGACY] lines) and the account read (`accountIdentity` with `{ anonymous: true }`) says
+   "an anonymous respondent" - no short id of either. core-service's own debug line for that read names the
+   account (`internal respondent-identity id=...`) and never the form, so it pairs with nothing. Still
+   pairing by design, outside this path: the profile read of a form with an audience criterion
+   (`[PRICING] profile user=...`, no form id) and the review-cohort check. The row itself is never tied to
+   an account (`userId` empty; register C8). Pinned by the log test of the anonymous join in
+   `forms.service.respondent-identity.spec.ts`.
+9. **Every cursus is read, and the organiser sees where each value came from** - the notice and the privacy
+   policy say both, in the respondent's words.
+10. **A draft that switches anonymity without sending `respondentFields` stores `[]` - in BOTH directions.**
+   Anonymous to named loses the join the draft held (a named form joins the two names only if the editor
+   sends them, as it always does); named to anonymous loses a named draft's cursus. Tested both ways.
 
 Tests: `forms.service.respondent-identity.spec.ts` ("an anonymous form that reads the cursus from the
 account", the rule, the create, both refusals on create and update, the draft's anonymity switch, the
 announced fields, core-service down: 503 with no transaction opened, the Source column),
 `respondentFields.test.ts`, `formOptionRules.test.ts`, `GuestIdentitySettings.svelte.test.ts`,
 `RespondentNotice.svelte.test.ts`, `page.respondentJoin.svelte.test.ts` (the fill page hides the cursus
-question and draws the notice; a form changed between load and submit is refused, read again and sent).
+question and draws the notice; a form changed between load and submit is refused, read again with the
+typed answers and declared values kept, and sent; a reload that fails says "rechargez la page").
 
 ## A respondent changes their own answer (owner, 2026-11-13)
 

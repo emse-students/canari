@@ -155,15 +155,16 @@ import {
   ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION,
   predatesAnonymousCursusJoin,
   predatesDeclaredFields,
-  cursusSourceOf,
   identityCells,
   identityColumnsOf,
+  formTag,
+  identityFormId,
   respondentNames,
-  showsCursusSource,
   storedRespondentFields,
   type RespondentIdentity,
   type SharedAccountFields,
 } from './respondent-identity';
+import { cursusSourceOf, showsCursusSource } from './respondent-source';
 import {
   describeCursus,
   dimensionsNeedProfile,
@@ -873,9 +874,7 @@ export class FormsService {
   private assertMaySubmit(form: Form, facts: PricingFacts): void {
     const code = submitRefusalCode(form.submitCondition, facts);
     if (code === null) return;
-    this.logger.debug(
-      `[FORMS] submit refused by audience condition form=${form.id.slice(0, 8)} code=${code}`
-    );
+    this.logger.debug(`[FORMS] submit refused by audience condition ${formTag(form)} code=${code}`);
     throw new ForbiddenException({
       code,
       message:
@@ -1223,7 +1222,8 @@ export class FormsService {
     return {
       ...served,
       // What a member's answer carries from the account - the respondent notice reads it - read
-      // as the submit reads it: none on an anonymous form (`respondent-identity.ts`).
+      // as the submit reads it: on an anonymous form the cursus alone, when the organiser ticked
+      // it, else none (`respondent-identity.ts`).
       respondentFields: joinedAccountFields(form),
       // What the form asks instead, canonical (the declared fields of an anonymous form included).
       guestFields: askedFields(form.guestFields),
@@ -2584,7 +2584,7 @@ export class FormsService {
         );
       } else if (!sameSideOfReviewCohort(input.userId, form.ownerId)) {
         this.logger.log(
-          `[REVIEW_COHORT] form submission refused: form=${id.slice(0, 8)} across the boundary`
+          `[REVIEW_COHORT] form submission refused: ${formTag(form)} across the boundary`
         );
         throw new ReviewCohortBoundaryException();
       }
@@ -2618,7 +2618,7 @@ export class FormsService {
     const fileAnswers = fileAnswersOf(form.items ?? [], input.answers);
     if (fileAnswers.length > 0 && (guest || form.anonymous || !input.userId)) {
       this.logger.warn(
-        `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
+        `[FORMS] submit refused: a file answer on ${formTag(form)} without an account`
       );
       throw formRefusal(
         FORM_FILE_NEEDS_ACCOUNT,
@@ -2667,15 +2667,13 @@ export class FormsService {
     );
     const { baseCents } = quote.quote;
     this.logger.debug(
-      `[FORMS] submit form=${form.id.slice(0, 8)} priced on ${describeCursus(quote)} ` +
+      `[FORMS] submit ${formTag(form)} priced on ${describeCursus(quote)} ` +
         `total=${quote.cents ?? 'unavailable'}`
     );
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
     // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
     if (baseCents === null) {
-      this.logger.debug(
-        `[FORMS] submit refused by an unavailable grid cell form=${form.id.slice(0, 8)}`
-      );
+      this.logger.debug(`[FORMS] submit refused by an unavailable grid cell ${formTag(form)}`);
       throw new ForbiddenException({
         code: FORM_COMBINATION_UNAVAILABLE,
         message: 'This combination is not available on this form.',
@@ -2715,7 +2713,7 @@ export class FormsService {
         const priced = priceProductGridAnswer(item, answer, quote.view);
         if (item.required && !productGridOrdered(priced.answer)) {
           this.logger.debug(
-            `[FORMS] submit refused: required grid ${item.id} holds no unit form=${form.id.slice(0, 8)}`
+            `[FORMS] submit refused: required grid ${item.id} holds no unit ${formTag(form)}`
           );
           throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
         }
@@ -2748,7 +2746,7 @@ export class FormsService {
       const gridCents = productGridTotalCents(lines);
       totalCents += gridCents;
       this.logger.debug(
-        `[FORMS] submit form=${form.id.slice(0, 8)}: ${lines.length} grid line(s), ` +
+        `[FORMS] submit ${formTag(form)}: ${lines.length} grid line(s), ` +
           `${gridCents} cents, total ${totalCents} cents`
       );
       // Refused BEFORE any row is written, whichever the payment method: a total above what one
@@ -2756,7 +2754,7 @@ export class FormsService {
       if (totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
         this.logger.warn(
           `[FORMS] grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
-            `form=${form.id.slice(0, 8)}`
+            `${formTag(form)}`
         );
         throw amountOutOfRange(
           PROVIDER_MIN_AMOUNT_CENTS,
@@ -2814,7 +2812,7 @@ export class FormsService {
       !(form.allowCashPayment && input.paymentMethod === 'cash') &&
       !acceptsOnline(form)
     ) {
-      this.logger.log(`[Forms] online answer refused on ${id.slice(0, 8)}: online not offered`);
+      this.logger.log(`[Forms] online answer refused on ${formTag(form)}: online not offered`);
       throw new ConflictException({
         code: FORM_ONLINE_PAYMENT_NOT_OFFERED,
         message: 'This form is paid in cash only.',
@@ -2907,7 +2905,7 @@ export class FormsService {
         });
         if (waiting >= GUEST_PENDING_CEILING) {
           this.logger.warn(
-            `[Forms] guest answer refused on form ${id.slice(0, 8)}: this visitor already has ` +
+            `[Forms] guest answer refused on ${formTag(form)}: this visitor already has ` +
               `${waiting} answers waiting for payment (ceiling ${GUEST_PENDING_CEILING})`
           );
           throw new HttpException(
@@ -3089,7 +3087,7 @@ export class FormsService {
         if (totalCents < PROVIDER_MIN_AMOUNT_CENTS || totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
           this.logger.warn(
             `[Forms] Paid submission ${savedSubmission.id} refused: total=${totalCents} cents outside ` +
-              `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} form=${id.slice(0, 8)}`
+              `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} ${formTag(form)}`
           );
           throw amountOutOfRange(
             PROVIDER_MIN_AMOUNT_CENTS,
@@ -4438,8 +4436,10 @@ export class FormsService {
             `${ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION} (or announcing nothing): asked it instead`
         );
       } else {
-        const declared = declaredIdentityFor(askedOfMember(form), input, form.id);
-        const account = input.userId ? await this.pricingFacts.accountIdentity(input.userId) : null;
+        const declared = declaredIdentityFor(askedOfMember(form), input, identityFormId(form));
+        const account = input.userId
+          ? await this.pricingFacts.accountIdentity(input.userId, { anonymous: true })
+          : null;
         this.logger.debug(
           `[FORMS] anonymous submit: cursus read from the account (core-service), ` +
             (declared ? 'rest declared' : 'nothing else asked')
@@ -4451,7 +4451,7 @@ export class FormsService {
       return declaredIdentityFor(
         askedDeclaredFields(form.guestFields),
         input,
-        form.id,
+        identityFormId(form),
         predatesDeclaredFields(input.clientVersion)
       );
     }

@@ -1,4 +1,10 @@
-import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Logger,
+  ServiceUnavailableException,
+  ValidationPipe,
+} from '@nestjs/common';
+import { SubmitFormDto } from './dto/form.dto';
 import * as ExcelJS from 'exceljs';
 import {
   FORM_GUEST_IDENTITY_MISSING,
@@ -13,8 +19,6 @@ import {
   accountStatuses,
   announcedMatchesJoined,
   askedOfMember,
-  cursusSourceOf,
-  showsCursusSource,
   declaredIdentityFor,
   identityColumnsOf,
   joinedAccountFields,
@@ -22,6 +26,7 @@ import {
   storedRespondentFields,
   type AccountIdentity,
 } from './respondent-identity';
+import { cursusSourceOf, showsCursusSource } from './respondent-source';
 
 /**
  * THE RESPONDENT'S ACCOUNT FIELDS A FORM JOINS TO EACH ANSWER (owner, 2026-11-16).
@@ -456,6 +461,14 @@ describe('the respondent account fields of a form', () => {
         expect(second.formRepo.save.mock.calls[0][0].respondentFields).toEqual(['cursus']);
       });
 
+      it('stores no join when a joining anonymous draft goes back to named without respondentFields', async () => {
+        const form = draft({ anonymous: true, respondentFields: ['cursus'] });
+        const { service, formRepo } = makeService(form);
+        asManager(service, form);
+        await service.update('f1', edit({ anonymous: false }), 'u-owner', false);
+        expect(formRepo.save.mock.calls[0][0].respondentFields).toEqual([]);
+      });
+
       it('refuses, by the same typed codes, an anonymous form that joins what it may not', async () => {
         const form = draft({ anonymous: true, respondentFields: [] });
         const { service, formRepo } = makeService(form);
@@ -518,7 +531,7 @@ describe('the respondent account fields of a form', () => {
         { answers: {}, userId: 'u1', clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
         'member'
       );
-      expect(accountIdentity).toHaveBeenCalledWith('u1');
+      expect(accountIdentity).toHaveBeenCalledWith('u1', { anonymous: true });
       expect(saved[0]).toMatchObject({
         userId: null,
         respondentIdentity: { source: 'account', cursus: CURSUS },
@@ -687,7 +700,7 @@ describe('the respondent account fields of a form', () => {
       expect(cursusSourceOf(account as any)).toBe('account');
       expect(cursusSourceOf(mixed as any)).toBe('account');
       expect(cursusSourceOf(declared as any)).toBe('declared');
-      expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' })).toBeNull();
+      expect(cursusSourceOf({ source: 'declared', campus: 'gardanne' } as any)).toBeNull();
       expect(cursusSourceOf(null)).toBeNull();
       const rows = [{ respondentIdentity: declared as any }];
       expect(showsCursusSource({ anonymous: true }, rows)).toBe(false);
@@ -698,6 +711,96 @@ describe('the respondent account fields of a form', () => {
       expect(
         showsCursusSource({ anonymous: false }, [{ respondentIdentity: account as any }])
       ).toBe(false);
+    });
+
+    it('never joins an anonymous form for a new build that announces nothing: it is asked', async () => {
+      const { service, saved, accountIdentity } = makeService(joining());
+      await service.submit(
+        'f1',
+        {
+          answers: {},
+          userId: 'u1',
+          clientVersion: ANNOUNCING,
+          declaredPromo: 2020,
+          declaredFormation: 'ICM',
+        },
+        'member'
+      );
+      expect(accountIdentity).not.toHaveBeenCalled();
+      expect(saved[0].respondentIdentity).toMatchObject({ source: 'declared' });
+    });
+
+    it('keeps announcedFields through the real ValidationPipe whitelist', async () => {
+      const pipe = new ValidationPipe({ whitelist: true, transform: true });
+      const dto = await pipe.transform(
+        { answers: {}, announcedFields: ['cursus'] },
+        { type: 'body', metatype: SubmitFormDto }
+      );
+      expect(dto.announcedFields).toEqual(['cursus']);
+      await expect(
+        pipe.transform(
+          { answers: {}, announcedFields: [1] },
+          { type: 'body', metatype: SubmitFormDto }
+        )
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    describe('no log line pairs a person with the anonymous form', () => {
+      const FORM = 'f1-DISTINCTIVE-form-id';
+      const USER = 'u1-DISTINCTIVE-user-id';
+      let lines: string[];
+      const spies: jest.SpyInstance[] = [];
+      beforeEach(() => {
+        lines = [];
+        for (const level of ['log', 'debug', 'warn', 'error', 'verbose'] as const) {
+          spies.push(
+            jest
+              .spyOn(Logger.prototype, level)
+              .mockImplementation(
+                (...args: unknown[]) => void lines.push(args.map(String).join(' '))
+              )
+          );
+        }
+      });
+      afterEach(() => spies.splice(0).forEach((s) => s.mockRestore()));
+      const names = () =>
+        lines.filter((l) => l.includes(FORM.slice(0, 8)) || l.includes(USER.slice(0, 8)));
+
+      it('on a joined answer', async () => {
+        const { service } = makeService(joining({ id: FORM }));
+        await service.submit(
+          FORM,
+          { answers: {}, userId: USER, clientVersion: ANNOUNCING, announcedFields: ['cursus'] },
+          'member'
+        );
+        expect(lines.length).toBeGreaterThan(0);
+        expect(names()).toEqual([]);
+      });
+
+      it('on a refused answer (page out of date) and a declared one', async () => {
+        const { service } = makeService(joining({ id: FORM }));
+        await code(
+          service.submit(
+            FORM,
+            { answers: {}, userId: USER, clientVersion: ANNOUNCING, announcedFields: [] },
+            'member'
+          )
+        );
+        await code(
+          service.submit(
+            FORM,
+            {
+              answers: {},
+              userId: USER,
+              clientVersion: ANNOUNCING,
+              announcedFields: ['cursus'],
+              declaredPromo: 2020,
+            } as any,
+            'member'
+          )
+        );
+        expect(names()).toEqual([]);
+      });
     });
 
     it('reads nothing for a build that cannot announce it: it is asked as before', async () => {

@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from '@nestjs/common';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { PRICING_CORE_BEHIND, PricingFactsService } from './pricing-facts.service';
 import { NO_CURSUS } from './audience';
 import type { UserTagService } from '../users/user-tag.service';
@@ -62,5 +62,45 @@ describe('PricingFactsService - the cursus views read from core-service', () => 
     answer(500, {});
     await expect(service.cursusFor(USER, false)).resolves.toBe(NO_CURSUS);
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('PricingFactsService - the account read of an anonymous form names nobody', () => {
+  const USER = '00000000-0000-4000-8000-0000000000bb';
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+    jest.restoreAllMocks();
+  });
+
+  it('logs no user id on any outcome when the context is anonymous, and one when it is not', async () => {
+    const lines: string[] = [];
+    for (const level of ['log', 'debug', 'warn', 'error', 'verbose'] as const) {
+      jest
+        .spyOn(Logger.prototype, level)
+        .mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    }
+    const service = new PricingFactsService({} as UserTagService);
+    const answers: Array<() => Promise<unknown>> = [
+      () => Promise.reject(new Error('down')),
+      () =>
+        Promise.resolve({
+          status: 404,
+          ok: false,
+          json: async () => ({ code: 'RESPONDENT_UNKNOWN' }),
+        }),
+      () => Promise.resolve({ status: 404, ok: false, json: async () => ({}) }),
+      () => Promise.resolve({ status: 500, ok: false, json: async () => ({}) }),
+    ];
+    for (const answer of answers) {
+      global.fetch = jest.fn(answer) as unknown as typeof fetch;
+      await service.accountIdentity(USER, { anonymous: true }).catch(() => undefined);
+    }
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.filter((l) => l.includes(USER.slice(0, 8)))).toEqual([]);
+    lines.length = 0;
+    global.fetch = jest.fn(answers[0]) as unknown as typeof fetch;
+    await service.accountIdentity(USER).catch(() => undefined);
+    expect(lines.some((l) => l.includes(USER.slice(0, 8)))).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ import {
   type Formation,
 } from '$lib/profile/miconnectProfile';
 import type { Submission } from './api';
+import { cursusSourceOf } from './respondentSource';
 
 /**
  * THE RESPONDENT'S ACCOUNT FIELDS A FORM JOINS TO EACH ANSWER (owner, 2026-11-16) - the client half
@@ -348,30 +349,6 @@ export function identityCellText(
     case 'campus':
       return identity?.campus ? campusWord(identity.campus) : '';
   }
-}
-
-/** Where an answer's cursus came from (the server's `cursusSourceOf`). */
-export function cursusSourceOf(
-  identity: RespondentIdentity | null | undefined
-): 'account' | 'declared' | null {
-  if (!identity) return null;
-  if (identity.fromAccount?.includes('cursus')) return 'account';
-  if (identity.cursus === undefined && !identity.notDeclared?.includes('cursus')) return null;
-  return identity.source;
-}
-
-/**
- * Whether the list says where the cursus came from (the server's `showsCursusSource`): on an
- * anonymous form, once any answer carries one read from the account - certified and declared values
- * are never mixed silently in one column.
- */
-export function showsCursusSource(
-  form: { anonymous?: boolean | null },
-  rows: readonly Pick<Submission, 'respondentIdentity'>[]
-): boolean {
-  return (
-    form.anonymous === true && rows.some((r) => cursusSourceOf(r.respondentIdentity) === 'account')
-  );
 }
 
 /** The word of a cursus source in the list ("compte" / "declare"); blank when the answer has none. */
