@@ -55,12 +55,14 @@ HOOKS_PATH === '.husky'
 
 // A FRESH WORKTREE MUST HAVE ITS HOOKS (2026-11-15, PR #3611 was committed with none): every hook
 // git calls is a tracked file, executable in the index, so it exists - and runs on Linux - in a
-// checkout that never ran an install.
+// checkout that never ran an install. The three `post-*` hooks write the gitignored plan page
+// (2026-11-16, docs/wiki/cicd.md, "The plan page is generated where it is read"): one missing or
+// not executable, and a checkout reads a page that silently stopped following its entries.
 const indexModes = execFileSync('git', ['ls-files', '-s', '--', HOOKS_PATH], {
   cwd: repoRoot,
   encoding: 'utf8',
 });
-for (const hook of ['pre-commit', 'pre-push']) {
+for (const hook of ['pre-commit', 'pre-push', 'post-checkout', 'post-merge', 'post-rewrite']) {
   // `git ls-files -s` prints `<mode> <sha> <stage>\t<path>`.
   const line = indexModes.split(/\r?\n/).find((l) => l.endsWith(`\t${HOOKS_PATH}/${hook}`));
   if (!line) no(`${HOOKS_PATH}/${hook} is not tracked, so a fresh checkout runs no ${hook} hook`);

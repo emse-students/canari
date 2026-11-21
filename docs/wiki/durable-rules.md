@@ -1255,7 +1255,8 @@ command above, and re-derive it rather than copy it when you touch the line.
 A roadmap table copied 590 rows out of the entries and forecast engagement packages two releases
 after they had shipped. So the version lives in the entry, the plan is generated
 ([plan](plan.md), `tools/backlog-plan/plan.mjs`), and `backlog-plan.test.mjs` fails a missing or
-unknown target and a stale page. An entry is planned in the pull request that writes it; a shipped
+unknown target. **The generated page is never committed** (2026-11-21): committed, it made every open
+pull request conflict with every merge; every checkout writes its own ([cicd](cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)). An entry is planned in the pull request that writes it; a shipped
 version means the whole plan is re-read; a reading always targets the earliest version
 ([backlog.d README](backlog.d/README.md)).
 

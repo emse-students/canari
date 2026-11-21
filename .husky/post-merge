@@ -1,0 +1,11 @@
+#!/bin/sh
+# Post-merge hook - rewrite the plan page after a `git pull` or a merge brought new entries.
+#
+# `docs/wiki/plan.md` is generated where it is read and never committed (2026-11-21); this and
+# `post-checkout` keep this checkout's copy saying what the entries say. docs/wiki/cicd.md, "The
+# plan page is generated where it is read". Called by git directly (`core.hooksPath` = `.husky`).
+# A hook never fails the git operation: no bun, or a generator error, is ONE accusing stderr line
+# and exit 0 - the page is stale and says so (its header carries the commit), the checkout works.
+command -v bun >/dev/null 2>&1 || { echo "plan.md not refreshed: bun missing (run: bun tools/backlog-plan/plan.mjs)" >&2; exit 0; }
+bun tools/backlog-plan/plan.mjs >/dev/null || echo "plan.md not refreshed: plan.mjs failed" >&2
+exit 0

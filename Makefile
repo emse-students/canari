@@ -220,6 +220,8 @@ install-frontend:
 	@cd frontend && bunx svelte-kit sync
 	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
 	@cd frontend && bun run generate
+	@echo "${BLUE}🔄 Writing the plan page (gitignored, docs/wiki/cicd.md)…${RESET}"
+	@bun tools/backlog-plan/plan.mjs
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
@@ -241,6 +243,7 @@ install-services:
 install-hooks:
 	@echo "${BLUE}🪝 Installing Git hooks via Husky…${RESET}"
 	@cd frontend && bun install --frozen-lockfile
+	@bun tools/backlog-plan/plan.mjs
 	@echo "${GREEN}✅ Git hooks configurés${RESET}"
 
 # ── Environment & Secrets Management ──────────────────────────────────────────

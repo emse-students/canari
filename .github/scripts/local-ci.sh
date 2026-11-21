@@ -503,7 +503,7 @@ module_tests() {
 # THE PATH RULES, shared by both tiers: at commit over what is staged, at push over the whole pushed
 # range (merge base to HEAD) - the range CI's `changes` job reads, so a push re-proves what each of
 # its commits was checked for. <moved> lists the deleted or renamed paths; <tier> is commit or push
-# (the plan is regenerated and staged at commit, only verified at push).
+# (the plan page is rewritten in the checkout at commit, its targets only verified at push).
 commit_rules() {
   local staged="$1" all_changed="$2" moved="$3" tier="$4" t=.github/scripts/tests
   rule() {
@@ -520,7 +520,7 @@ commit_rules() {
   local backlog_check="bash .github/scripts/local-ci.sh plan"
   [ "$tier" = commit ] || backlog_check="bun $t/backlog-plan.test.mjs"
   # shellcheck disable=SC2086 # the command is words by construction
-  rule '^(docs/wiki/backlog\.d/|docs/wiki/backlog\.md$|docs/wiki/plan\.md$|tools/backlog-plan/)' "$all_changed" \
+  rule '^(docs/wiki/backlog\.d/|docs/wiki/backlog\.md$|tools/backlog-plan/)' "$all_changed" \
     backlog-plan $backlog_check
   rule '^docs/wiki/backlog' "$all_changed" backlog-fragments bun "$t/backlog-fragments.test.mjs"
   rule '^docs/wiki/backlog' "$all_changed" backlog-closed bun "$t/backlog-closed.test.mjs"
@@ -588,18 +588,12 @@ mode_commit() {
 }
 
 # ── helpers the plans call back into (so one plan line is one command) ──────────────────────────
-# Against the index THIS COMMIT is built from: `git commit -a` and `git commit -- <path>` build a
-# temporary one (GIT_INDEX_FILE), and the default index would call their own changes unstaged.
+# The plan page is generated where it is read and never committed (docs/wiki/cicd.md, "The plan page
+# is generated where it is read"): the commit rewrites this checkout's copy so it says what the
+# entries now say, stages nothing, and checks the targets. The page's own line is discarded - a
+# line every commit would print is noise.
 mode_plan() {
-  if ! commit_git diff --quiet -- docs/wiki/backlog.d || [ -n "$(git ls-files --others --exclude-standard -- docs/wiki/backlog.d)" ]; then
-    echo "docs/wiki/backlog.d has changes this commit does not stage, and the plan would be derived from them. Stage or stash them first."
-    return 1
-  fi
-  bun tools/backlog-plan/plan.mjs
-  if ! commit_git diff --quiet -- docs/wiki/plan.md; then
-    commit_git add -- docs/wiki/plan.md
-    echo "docs/wiki/plan.md regenerated from the staged entries, and staged with them"
-  fi
+  bun tools/backlog-plan/plan.mjs >/dev/null
   bun .github/scripts/tests/backlog-plan.test.mjs
 }
 
