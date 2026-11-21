@@ -14,14 +14,18 @@ conversation ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-202
 
 1. **Opened here (Mi 9T):** on the feed, have another seat react to a message the Mi wrote in a 1:1,
    then open that conversation from inside the app. The "a reagi" notification is gone at once, and
-   the WebView logs `readElsewhereFromWebSocket: queued ... (read_here)`. A message notification
+   logcat shows `readElsewhereFromWebSocket: queued ... read on this device (read_here)`. A message notification
    raised for that conversation goes too; one for ANOTHER conversation stays.
 2. **A salon's first reaction of a new seed session (Mi 9T, feed):** remove then re-add a member so
    the reactor's distribution epoch moves, then have the reactor react to a line the Mi wrote. ONE
-   "a reagi" notification on `canari_reactions_v2`, and the WebView logs `live row ... parked until
+   "a reagi" notification on `canari_reactions_v2`, and logcat (the WebView console) shows `live row ... parked until
    its seed opens it` then `[NOTIF] Reaction to my message ... asking`. A second reaction a minute
    later draws one too. None with the salon open.
 3. **The web with its tab hidden:** a signed-in seat that GRANTED notifications, tab hidden, while
    another seat reacts to a message it wrote in a 1:1: ONE browser notification, none once the tab
    shows that conversation (the rig seats report `denied`, see
    [the harness entry](p3-the-web-hidden-tab-reaction-reading-cannot-be-taken-no-rig-seat-gets-notification-permission.md)).
+4. **Opened here (iPhone 12):** the same as 1 on the iPhone, app open on the feed: the reaction's
+   notification the page raised is gone from Notification Center once the conversation is opened from
+   inside the app (one drawn by a push while the app was away is not reached, and `willPresent` already
+   keeps it out of the foreground).

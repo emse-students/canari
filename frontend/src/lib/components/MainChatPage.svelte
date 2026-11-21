@@ -36,6 +36,7 @@
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
   import { createOpenedConversationDismissal } from '$lib/utils/chat/openedConversationDismissal';
   import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
+  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
@@ -851,8 +852,18 @@
     // still holds an alert to remove - and not for an idle window, which reads nothing.
     if (verdict === 'idle') {
       openedDismissal.reset();
-    } else if (openedDismissal.take(currentSelection)) {
-      void recordNativeReadElsewhere(currentSelection, 'read_here', Math.max(held, target), clock);
+    } else if (openedDismissal.take(currentSelection, Math.max(held, target))) {
+      void notifs.dismissConversationReactions(currentSelection);
+      void recordNativeReadElsewhere(
+        currentSelection,
+        'read_here',
+        Math.max(held, target),
+        clock
+      ).then((queued) => {
+        // A refusal (or a throw) is already accused by the callee; the hand-over is not spent, so
+        // the next run of this effect retries it. Off Android there is nothing to hand over.
+        if (!queued && isAndroidTauriRuntime()) openedDismissal.unspend();
+      });
     }
     if (target <= held) return;
     // NOBODY AT THE WINDOW, NO READ (owner, 2026-11-11). A window left in front stays visible and

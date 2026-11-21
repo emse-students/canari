@@ -3303,7 +3303,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param at the mark, in ms.
          * @param serverClock whether [at] is on the server's clock (a DM or group mark from a current
          *   build) or the stamped one (a salon, whose stamp IS its server time, or an older `at`).
-         * @param reason which socket event said so (`read_watermark`, `channel.read`), for the log.
+         * @param reason which event said so, for the log: a socket event of another device
+         *   (`read_watermark`, `channel.read`) or `read_here`, THIS device's reader opening the
+         *   conversation.
          * @return whether the work was queued; `false` only with no Application context.
          */
         @JvmStatic
@@ -3313,7 +3315,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT recorded ($reason)")
                 return false
             }
-            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - read on another device ($reason)")
+            val where = if (reason == "read_here") "read on this device" else "read on another device"
+            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - $where ($reason)")
             val read = ReadElsewhereMarks.Read(at, serverClock)
             WS_NOTIF_LANE.execute {
                 try {

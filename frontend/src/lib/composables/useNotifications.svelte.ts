@@ -207,6 +207,13 @@ export function useNotifications() {
   let incomingCallNotification: Notification | null = null;
   /** Tauri notification id of the active incoming-call notification, for cancellation. */
   let incomingCallNotifId: number | null = null;
+  /**
+   * The reaction notifications THIS PAGE raised through the plugin or the browser (iOS, desktop,
+   * web), per conversation, so opening the conversation takes them down - "the reaction's alert goes
+   * with its conversation" ({@link dismissConversationReactions}). Android's are the native
+   * builder's, cancelled there. A push-drawn one is not here: the page never held it.
+   */
+  const raisedReactions = new Map<string, { id?: number; notification?: Notification }[]>();
 
   // ---------- Audio ----------
 
@@ -699,6 +706,51 @@ export function useNotifications() {
   }
 
   /**
+   * Takes down the reaction notifications this page raised for `conversationId` - the reader opened
+   * it, and the bubble now carries what the alert announced. Off Android only (see
+   * `raisedReactions`); idempotent, a notification already gone costs nothing.
+   *
+   * @returns how many were asked to go.
+   */
+  async function dismissConversationReactions(conversationId: string): Promise<number> {
+    const held = raisedReactions.get(conversationId);
+    if (!held) return 0;
+    raisedReactions.delete(conversationId);
+    const ids: { id: number }[] = [];
+    for (const r of held) {
+      if (r.id !== undefined) ids.push({ id: r.id });
+      try {
+        r.notification?.close();
+      } catch (e) {
+        console.warn(`[NOTIF] closing a reaction notification of ${conversationId} failed:`, e);
+      }
+    }
+    if (ids.length > 0) {
+      try {
+        await removeActive(ids);
+      } catch (e) {
+        console.warn(`[NOTIF] removing the reaction notifications of ${conversationId} failed:`, e);
+      }
+    }
+    console.log(
+      `[NOTIF] ${held.length} reaction notification(s) of ${conversationId} taken down - its reader opened it.`
+    );
+    return held.length;
+  }
+
+  /** Remembers a reaction notification the page raised, for {@link dismissConversationReactions}. */
+  function holdRaisedReaction(
+    channelId: string,
+    conversationId: string | undefined,
+    entry: { id?: number; notification?: Notification }
+  ) {
+    if (channelId !== CHANNEL_REACTIONS || !conversationId) return;
+    const list = raisedReactions.get(conversationId) ?? [];
+    list.push(entry);
+    raisedReactions.set(conversationId, list);
+  }
+
+  /**
    * THE PLAIN BUILDERS - the plugin (iOS, desktop) and the browser's Notification API - shared by a
    * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
    *
@@ -725,6 +777,7 @@ export function useNotifications() {
             ...androidNotificationOptions(body, channelId),
             ...(idKey ? { id: stableNotifId(idKey) } : {}),
           });
+          if (idKey) holdRaisedReaction(channelId, conversationId, { id: stableNotifId(idKey) });
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
@@ -817,6 +870,7 @@ export function useNotifications() {
           if (conversationId) notifNav.navigate(conversationId);
           n.close();
         };
+        holdRaisedReaction(channelId, conversationId, { notification: n });
         console.log(`[NOTIF] Raised for ${convKey}.`);
         setTimeout(() => n.close(), 8000);
       } catch (e) {
@@ -835,6 +889,7 @@ export function useNotifications() {
     requestSystemNotificationPermission,
     sendSystemNotification,
     sendReactionNotification,
+    dismissConversationReactions,
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
     startBlinkingTitle,

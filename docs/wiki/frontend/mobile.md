@@ -3469,14 +3469,21 @@ The native cancel had two triggers: a push (a silent self frame) and an own read
 socket from ANOTHER device. The server never reports a read back to the device that took it, and the
 activity does not resume when the app was already open, so an alert the frame trigger raised for a
 conversation the reader then opened in the same session stood on screen. The receipt effect in
-`MainChatPage` now hands the reading to the native side once per reading
-(`openedConversationDismissal.ts`, then `recordNativeReadElsewhere(..., 'read_here', ...)` ->
+`MainChatPage` now hands the reading to the native side once per reading AND per advance of its mark
+(`openedConversationDismissal.ts`: a first run can see a stale mark, which the native side keeps as
+UNREAD, and only a later hand-over removes it; a hand-over the native side refused is not spent and
+the next run retries it; then `recordNativeReadElsewhere(..., 'read_here', ...)` ->
 `readElsewhereFromWebSocket`): the same decision as a read elsewhere, so the message banner and the
 reaction go unless a message line newer than the read is unread. It runs BEFORE the effect's
 `target <= held` return - a reaction moves no mark - and not for an idle window; leaving the
 conversation, the app going away or an idle window re-arms it, so coming back dismisses what was
-raised meanwhile. Android only (the plugin and the browser post under ids the page does not keep).
-Tests: `openedConversationDismissal.test.ts`, `nativeNotification.test.ts`.
+raised meanwhile. **iOS, desktop and web too:** the page remembers the reaction notifications it
+raised through the plugin or the browser, per conversation, and `dismissConversationReactions`
+removes them by id (`removeActive`) or closes them (a browser one also closes itself after 8 s); a
+push-drawn one was never held by the page and is not reached. In split-screen the activity does not
+resume either, and this reading hand-over is what clears them there.
+Tests: `openedConversationDismissal.test.ts`, `nativeNotification.test.ts`,
+`useNotifications.dismissReactions.svelte.test.ts`.
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction
 (`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
