@@ -50,12 +50,12 @@ export class KeyPackage {
   /**
    * What the OS lets this device's notifications do (`parseNotificationState`: `on`, `off`,
    * `not-asked`, `channel-off`, `alerts-off`), as stated on its latest `register-device`; null when
-   * the build states nothing - UNKNOWN, never granted (migration 054).
+   * the build states nothing - UNKNOWN, never granted (migration 055).
    */
   @Column({ type: 'varchar', length: 16, nullable: true })
   notificationState?: string | null;
 
-  /** The Android channel importances as stated (`messages=high posts=default`); migration 054. */
+  /** The Android channel importances as stated (`messages=high posts=default`); migration 055. */
   @Column({ type: 'varchar', length: 64, nullable: true })
   notificationChannels?: string | null;
 

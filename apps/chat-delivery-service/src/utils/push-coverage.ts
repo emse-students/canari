@@ -57,7 +57,7 @@ export const NOTIFICATION_OFF_STATES = ['off', 'not-asked', 'channel-off', 'aler
  * a KNOWN state - no Play services, an APNs failure - accused once per process by
  * `[PUSH_UNAVAILABLE]` and not curable by registering again, so it is counted and never accused here.
  * `permissionOff`: devices that DO hold a row but state the OS will not show a notification
- * (`notificationState`, migration 054) - registered and still silent, the case the row cannot show.
+ * (`notificationState`, migration 055) - registered and still silent, the case the row cannot show.
  * Only INSTALLED-app devices are counted ({@link INSTALLED_APP_DEVICE_PREFIX}).
  * `$1` window start, `$2` grace cutoff, `$3` ban cutoff, `$4` now (the session liveness instant).
  * `outcomes`: the last outcome each `withoutPush` device stated (`unstated` for a build before the
@@ -126,7 +126,7 @@ export interface PushCoverageRow {
   devices: number;
   withoutPush: number;
   noOsToken: number;
-  /** Devices HOLDING a push row whose OS will not show the notification (migration 054). */
+  /** Devices HOLDING a push row whose OS will not show the notification (migration 055). */
   permissionOff: number;
   /** The last stated outcome of each `withoutPush` device; null when there is none. */
   outcomes?: string[] | null;

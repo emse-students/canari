@@ -11,17 +11,10 @@ import { invoke } from '@tauri-apps/api/core';
  */
 
 /** The importance of a channel by name, as `NotificationDeliveryState.kt` writes it. */
-export type ChannelImportance =
-  | 'none'
-  | 'min'
-  | 'low'
-  | 'default'
-  | 'high'
-  | 'unspecified'
-  | 'absent';
+type ChannelImportance = 'none' | 'min' | 'low' | 'default' | 'high' | 'unspecified' | 'absent';
 
 /** `UNNotificationSetting` by name. */
-export type IosSetting = 'enabled' | 'disabled' | 'not-supported';
+type IosSetting = 'enabled' | 'disabled' | 'not-supported';
 
 /** The command's answer on Android - the keys are the snapshot's. */
 export interface AndroidDeliveryState {

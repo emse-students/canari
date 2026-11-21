@@ -1,4 +1,4 @@
--- Migration 054: what the OS lets a phone's notifications do, as the phone states it on every
+-- Migration 055: what the OS lets a phone's notifications do, as the phone states it on every
 -- `register-device` (2026-11-21; docs/wiki/services/chat-delivery.md, "Registered is not permitted").
 --
 -- `key_package."notificationState"`: ONE category derived by `parseNotificationState` from what the

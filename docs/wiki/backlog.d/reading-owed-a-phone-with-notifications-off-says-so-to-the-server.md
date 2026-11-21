@@ -3,10 +3,10 @@
 target: 1.7.3
 
 _The owner asked for 1.8.0 (2026-11-21); a reading may only target the earliest tier
-([plan](../../../tools/backlog-plan/plan.mjs)), so it sits in 1.7.3 and is read on the pre-release that carries migration 054._
+([plan](../../../tools/backlog-plan/plan.mjs)), so it sits in 1.7.3 and is read on the pre-release that carries migration 055._
 
 **What is built.** `register-device` carries the OS notification state (`notificationState`), stored on
-the device's `key_package` row (migration 054); the daily `[PUSH_COVERAGE]` counts installed-app
+the device's `key_package` row (migration 055); the daily `[PUSH_COVERAGE]` counts installed-app
 devices only and counts "registered but the OS will not show it" apart (`[PUSH_PERMISSION_OFF]`);
 mobile-browser-only members are one information line; the page reads the state through
 `notification_delivery_state`. Mechanism:

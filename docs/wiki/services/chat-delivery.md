@@ -2065,7 +2065,7 @@ below); `parseNotificationState` allowlists it into ONE category - `on`, `off` (
 the app switched off), `not-asked` (iOS dialog never shown), `channel-off` (the messages or posts
 channel at importance `none`), `alerts-off` (iOS alerts disabled) - plus the Android channel
 importances. Both are written with the key package on every call (`key_package."notificationState"`,
-`"notificationChannels"`, migration 054, additive, nullable). **An old client states nothing: NULL,
+`"notificationChannels"`, migration 055, additive, nullable). **An old client states nothing: NULL,
 UNKNOWN, never granted**; an out-of-allowlist value is stored NULL with a WARN
 (`NOTIFICATION_STATE_INVALID`). It lives on `key_package` beside `pushOutcome`, not on `push_token`:
 the one write that carries it is `register-device`, and a device with no push row has no
