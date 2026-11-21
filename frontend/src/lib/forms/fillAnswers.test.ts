@@ -330,3 +330,40 @@ describe('the comment and "Autre" texts of a choice question', () => {
     });
   });
 });
+
+describe('the format of a short answer', () => {
+  const age = q({ id: 'age', label: 'Age', format: 'number', min: 16, max: 99 });
+  const tel = q({ id: 'tel', label: 'Tel', format: 'phone' });
+
+  it('holds the send on an answer that does not fit, required or not', () => {
+    expect(firstMissingAnswer([age], { age: 'oui' }, true)).toMatchObject({
+      itemId: 'age',
+      kind: 'format',
+      problem: 'not_a_number',
+    });
+    expect(firstMissingAnswer([age], { age: '12' }, true)).toMatchObject({
+      kind: 'format',
+      problem: 'below_min',
+      min: 16,
+      max: 99,
+    });
+  });
+
+  it('lets a fitting answer and a blank one through', () => {
+    expect(firstMissingAnswer([age, tel], { age: '21', tel: '06 12 34 56 78' }, true)).toBeNull();
+    expect(firstMissingAnswer([age, tel], { age: '', tel: '' }, true)).toBeNull();
+  });
+
+  it('says what is wrong with the bound it broke', () => {
+    const missing = firstMissingAnswer([age], { age: '120' }, true)!;
+    expect(missingAnswerMessage(missing)).toBe(
+      m.form_view_error_format_max({ label: 'Age', max: 99 })
+    );
+  });
+
+  it('judges a required blank as missing, not as a format fault', () => {
+    expect(firstMissingAnswer([{ ...age, required: true }], { age: '' }, true)).toMatchObject({
+      kind: 'answer',
+    });
+  });
+});

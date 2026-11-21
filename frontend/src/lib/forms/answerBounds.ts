@@ -36,6 +36,10 @@ export const FORM_ANSWER_MISSING = 'FORM_ANSWER_MISSING';
 export const FORM_ANSWER_TOO_LONG = 'FORM_ANSWER_TOO_LONG';
 export const FORM_ANSWER_TOO_MANY_SELECTIONS = 'FORM_ANSWER_TOO_MANY_SELECTIONS';
 export const FORM_ANSWER_NOT_AN_OPTION = 'FORM_ANSWER_NOT_AN_OPTION';
+/** A short answer does not fit its question's format (the page words it from its `problem`, `answerFormat.ts`). */
+export const FORM_ANSWER_FORMAT_INVALID = 'FORM_ANSWER_FORMAT_INVALID';
+/** A number question's minimum is above its maximum, refused at save. */
+export const FORM_FORMAT_RANGE_INVALID = 'FORM_FORMAT_RANGE_INVALID';
 export const FORM_GRID_ANSWER_INVALID = 'FORM_GRID_ANSWER_INVALID';
 export const FORM_COMBINATION_UNAVAILABLE = 'FORM_COMBINATION_UNAVAILABLE';
 export const FORM_SIGN_IN_REQUIRED = 'FORM_SIGN_IN_REQUIRED';
@@ -109,6 +113,11 @@ export function formCodeMessage(code: string | null): string | null {
     case FORM_ANSWER_NOT_AN_OPTION:
     case FORM_GRID_ANSWER_INVALID:
       return m.form_refusal_answer_invalid();
+    case FORM_ANSWER_FORMAT_INVALID:
+      // The page judges every format before it sends (`firstMissingAnswer`), so this is a stale page.
+      return m.form_refusal_answer_format();
+    case FORM_FORMAT_RANGE_INVALID:
+      return m.form_refusal_format_range();
     case FORM_COMBINATION_UNAVAILABLE:
       return m.form_refusal_combination_unavailable();
     case FORM_SIGN_IN_REQUIRED:
@@ -200,6 +209,9 @@ export function formItemsProblem(
     label?: string;
     description?: string;
     imageUrl?: string;
+    format?: string;
+    min?: number | string | null;
+    max?: number | string | null;
     rows?: readonly EditorRow[];
     options?: readonly { label?: string }[];
   }[]
@@ -213,6 +225,18 @@ export function formItemsProblem(
       const problem = formBlockProblem(item);
       if (problem) return problem;
       continue;
+    }
+    // The editor's inputs hand back a number, or an empty string once cleared.
+    const min = item.min === '' || item.min == null ? null : Number(item.min);
+    const max = item.max === '' || item.max == null ? null : Number(item.max);
+    if (
+      item.type === 'short_text' &&
+      item.format === 'number' &&
+      min !== null &&
+      max !== null &&
+      min > max
+    ) {
+      return m.form_builder_format_range_invalid({ label: item.label ?? '' });
     }
     if (item.type !== 'matrix_single' && item.type !== 'matrix_multiple') continue;
     const rows = gridRowLabels(item.rows).filter(Boolean);

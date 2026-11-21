@@ -330,4 +330,28 @@ describe('FormQuestion - a file on its way', () => {
       expect(notes.comment).toBe('Merci');
     });
   });
+
+  describe('the keyboard a formatted short answer asks for', () => {
+    const short = (over: Partial<FormItem>): FormItem => ({
+      id: 'q',
+      label: 'Q',
+      required: false,
+      type: 'short_text',
+      ...over,
+    });
+    const input = (item: FormItem) => render(item, '').target.querySelector('input')!;
+
+    it('asks a whole number for the numeric pad and a decimal one for the decimal pad', () => {
+      expect(input(short({ format: 'number' })).getAttribute('inputmode')).toBe('numeric');
+      expect(
+        input(short({ format: 'number', allowDecimals: true })).getAttribute('inputmode')
+      ).toBe('decimal');
+    });
+
+    it('draws a phone as tel and an e-mail as email, and free text as text', () => {
+      expect(input(short({ format: 'phone' })).type).toBe('tel');
+      expect(input(short({ format: 'email' })).type).toBe('email');
+      expect(input(short({})).type).toBe('text');
+    });
+  });
 });

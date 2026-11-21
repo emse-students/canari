@@ -65,3 +65,21 @@ describe('formSubmitRefusalMessage (D6)', () => {
     expect(formSubmitRefusalMessage(new Error('boom'), 'fallback')).toBe('fallback');
   });
 });
+
+describe('formItemsProblem - a number range', () => {
+  it('names a question whose minimum is above its maximum', () => {
+    const problem = bounds.formItemsProblem([
+      { type: 'short_text', label: 'Age', format: 'number', min: '50', max: 20 },
+    ]);
+    expect(problem).toBe(m.form_builder_format_range_invalid({ label: 'Age' }));
+  });
+
+  it('accepts a range, a half range and a cleared bound', () => {
+    expect(
+      bounds.formItemsProblem([
+        { type: 'short_text', label: 'a', format: 'number', min: 1, max: 9 },
+        { type: 'short_text', label: 'b', format: 'number', min: 1, max: '' },
+      ])
+    ).toBeNull();
+  });
+});

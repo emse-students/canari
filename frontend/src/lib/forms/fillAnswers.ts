@@ -3,6 +3,7 @@ import { m } from '$lib/paraglide/messages';
 import { intlLocale } from '$lib/utils/intlLocale';
 import type { FormItem } from './api';
 import { commentKey, otherKey } from './answerText';
+import { hasAnswerFormat, judgeAnswerFormat, type AnswerFormatProblem } from './answerFormat';
 import { hasOrderedUnits, isProductGrid } from './productGridFill';
 import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 import { isFormBlock } from './formBlocks';
@@ -97,6 +98,7 @@ export type MissingAnswer =
       | { kind: 'grid'; label: string }
       | { kind: 'answer'; label: string }
       | { kind: 'update'; label: string }
+      | { kind: 'format'; label: string; problem: AnswerFormatProblem; min?: number; max?: number }
     ))
   | { itemId: null; kind: 'order' };
 
@@ -124,7 +126,12 @@ export function firstMissingAnswer(
 ): MissingAnswer | null {
   for (const item of items) {
     // A block is never required (the server refuses one that says so); skipped all the same.
-    if (!item.required || isFormBlock(item)) continue;
+    if (isFormBlock(item)) continue;
+    // A typed answer that does not fit its question's format blocks the send, required or not - the
+    // server judges it with the same code (`answerFormat.ts`) and is the one that decides.
+    const faulty = formatFault(item, selections[item.id]);
+    if (faulty) return faulty;
+    if (!item.required) continue;
     if (!gridSwitch && isProductGrid(item)) continue;
     const value = selections[item.id];
     const itemId = item.id;
@@ -148,6 +155,22 @@ export function firstMissingAnswer(
   }
   if (!gridSwitch && isOrderEmpty(items, selections)) return { itemId: null, kind: 'order' };
   return null;
+}
+
+/** The format fault of one short answer, or null: nothing typed, no format, or a fitting answer. */
+function formatFault(item: FormItem, value: unknown): MissingAnswer | null {
+  if (item.type !== 'short_text' || !hasAnswerFormat(item)) return null;
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const verdict = judgeAnswerFormat(item, value);
+  if (!('problem' in verdict)) return null;
+  return {
+    itemId: item.id,
+    kind: 'format',
+    label: item.label,
+    problem: verdict.problem,
+    ...(typeof item.min === 'number' ? { min: item.min } : {}),
+    ...(typeof item.max === 'number' ? { max: item.max } : {}),
+  };
 }
 
 /**
@@ -186,6 +209,25 @@ export function allRequiredAnswered(
   return firstMissingAnswer(items, selections, gridSwitch) === null;
 }
 
+/** The sentence for an answer that does not fit its format, said with the bound it broke. */
+function formatMessage(fault: Extract<MissingAnswer, { kind: 'format' }>): string {
+  const label = fault.label;
+  switch (fault.problem) {
+    case 'not_an_integer':
+      return m.form_view_error_format_integer({ label });
+    case 'below_min':
+      return m.form_view_error_format_min({ label, min: fault.min ?? 0 });
+    case 'above_max':
+      return m.form_view_error_format_max({ label, max: fault.max ?? 0 });
+    case 'not_a_phone':
+      return m.form_view_error_format_phone({ label });
+    case 'not_an_email':
+      return m.form_view_error_format_email({ label });
+    default:
+      return m.form_view_error_format_number({ label });
+  }
+}
+
 /** The sentence for a missing answer, in the reader's language. */
 export function missingAnswerMessage(missing: MissingAnswer): string {
   switch (missing.kind) {
@@ -203,6 +245,8 @@ export function missingAnswerMessage(missing: MissingAnswer): string {
       return m.form_view_error_answer({ label: missing.label });
     case 'update':
       return m.form_view_error_update_app({ label: missing.label });
+    case 'format':
+      return formatMessage(missing);
   }
 }
 

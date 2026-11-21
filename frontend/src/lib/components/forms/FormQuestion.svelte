@@ -195,6 +195,25 @@
     });
   }
 
+  /**
+   * What a short text box asks the keyboard for: a number's decimal pad, a phone's dial pad, an
+   * e-mail's `@` key. A number stays `type=text`: `type=number` swallows a typed comma in some
+   * locales and shows spinners nobody wants on an age; the shared judgement reads `3,5` itself.
+   */
+  const shortInput = $derived(
+    item.format === 'number'
+      ? {
+          type: 'text',
+          inputmode: (item.allowDecimals ? 'decimal' : 'numeric') as 'decimal' | 'numeric',
+          autocomplete: 'off' as const,
+        }
+      : item.format === 'phone'
+        ? { type: 'tel', inputmode: 'tel' as const, autocomplete: 'tel' as const }
+        : item.format === 'email'
+          ? { type: 'email', inputmode: 'email' as const, autocomplete: 'email' as const }
+          : { type: 'text', inputmode: undefined, autocomplete: undefined }
+  );
+
   /** The options as drawn: the "Autre" one always last, wherever the manager put it. */
   const orderedOptions = $derived([
     ...(item.options ?? []).filter((opt) => !opt.other),
@@ -275,7 +294,9 @@
 
   {#if item.type === 'short_text'}
     <input
-      type="text"
+      type={shortInput.type}
+      inputmode={shortInput.inputmode}
+      autocomplete={shortInput.autocomplete}
       class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-accent-icon w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
       maxlength={ANSWER_MAX_TEXT_LENGTH}
