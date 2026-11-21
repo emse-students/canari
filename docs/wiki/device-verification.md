@@ -5030,3 +5030,21 @@ The Mi 9T by sideload (versionCode `100700203`) and the iPhone 12 from TestFligh
 ## The production reading of 2026-11-20, the `1.7.2` stable deploy
 
 `/api/version` answers `1.7.2`. The release run (the stable on the commit of `1.7.2-alpha.4`) is green: Google Play, the App Store, the deploy and "Did it reach production".
+
+## The iPhone readings of 2026-11-21, `1.7.3-alpha.3`: the invite link fragment and a banner reply
+
+Dev served `1.7.3-alpha.3` (`/api/version` build `dev.0d2bc4b`). The iPhone 12 (iOS 27.0.1) went from `1.7.3 (100700301)` to `(100700303)` through TestFlight (the list offered `...302` first; `...303` appeared about 4 minutes after the release's iOS job ended). Signed in as `gamma`; the peer was web seat W1 (`alpha`) driven by the rig's `send.mjs`. The Mi 9T and the web rows were read by another agent.
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| #3926 invite link carries the name in its fragment: link made on the phone | **PASS** | Group settings, `Generate link`: the field read `https://dev.canari-emse.fr/g/join/<token>#name=<name>` |
+| #3926 in-chat card | **PASS** | Pasted and sent: the card names the group. A forged `#name=Forged+Fragment+Name` makes the card read the forged name (fragment wins); the same token without fragment names the real group (legacy branch) |
+| #3926 join page in the app | **PASS** | Tapping the forged card opened `/g/join/<token>` showing "Forged Fragment Name" |
+| #3926 link opened on a second phone / sign-in survival / old links "a group" / `[LEGACY]` line | **OWED** | One bench phone; the app claims only production hosts; sign-in survival is the web rig's; the ring was not flushed; old-link rendering waits for the server-side part |
+| #3927 iOS side of the quick reply | **PASS (partial)** | Banner reply taken with the app suspended: `[QuickReply] the native side says a reply waits: 1 native reply(ies) taken`, sent once, delivered; the banner left the list; no loss WARN. The acknowledgement boolean's own line and a reply over the app in front were not read |
+| Push with the app suspended / killed | **PASS** | Banner text readable in both; `[NSE_OUTCOME] decrypted` for the suspended ones |
+| First launch after an update (App Group move) | **OWED** | The previous build already held `store/`; needs a pre-store install |
+| Share extension | **OWED** | The system sheet lists Canari and conversation shortcuts; a WDA tap on a cell closed the sheet with no extension screen and nothing sent. No verdict |
+| `6/6` launch line on `alpha.3` | **OWED** | The Rust log had rotated when polled |
+
+**Rig notes.** A banner is gone in about 5 s: wake, hold and tap inside ONE process (the harness send takes 5 s itself, so send first and reach Notification Center after). In the expanded reply field the Send button MOVES when the text wraps: read its rect after typing. `pymobiledevice3 apps pull` needs `MSYS_NO_PATHCONV=1` under Git Bash. **Dev data written:** one group invite token for the group `S4ADDRzhx7`, link and text messages from `gamma` and from W1, one banner reply (all in `WRITTEN-IDS.txt`). The other agent's group `R173B sealed` in `alpha`'s list is not a defect.
