@@ -56,6 +56,7 @@ import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PushRecoveryLadder
+import fr.emse.canari.push.PushShowOutcome
 import fr.emse.canari.push.QueuedSendAnswer
 import fr.emse.canari.push.ReadElsewhereMarks
 import fr.emse.canari.push.RepostAlert
@@ -941,6 +942,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 holds = { holdsDirectReply(manager, it) },
                 repost = rebuildBanner(context, manager, groupId),
             )
+            context.recordShowOutcome(PushShowOutcome.of(outcome), groupId, null, manager, detail = "by=reply-delivered")
             when (outcome) {
                 ReadElsewhereMarks.Delivery.NONE, ReadElsewhereMarks.Delivery.NOT_REBUILT -> Unit
                 ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ ->
@@ -1117,6 +1119,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     },
                 ).also { cancelReactionNotification(prefs, manager, groupId) }
             }
+            context.recordShowOutcome(PushShowOutcome.of(outcome), groupId, null, manager, detail = "by=answer-reply")
             when (outcome) {
                 ReadElsewhereMarks.Delivery.CANCELLED -> {
                     synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
@@ -1279,10 +1282,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // as the banner (round-15 review): a reaction post cannot fall between the two. Only a
             // line the read leaves UNREAD keeps it; a read with no banner standing removes a lone
             // reaction, as a dismissal does (round-15 decision).
-            synchronized(READ_ELSEWHERE.lock) {
+            // THE DECISION IS RECORDED ONCE THE LOCK IS RELEASED (`finally`), whichever branch returns.
+            var decided: PushShowOutcome.Outcome? = null
+            try { synchronized(READ_ELSEWHERE.lock) {
                 if (read != null) {
                     val outcome = READ_ELSEWHERE.recordThenCancel(groupId, read, shade, holds, repost, cancelById)
                     if (outcome != ReadElsewhereMarks.ReadOutcome.UNREAD) cancelReactionNotification(prefs, manager, groupId)
+                    decided = PushShowOutcome.of(outcome)
                     when (outcome) {
                         ReadElsewhereMarks.ReadOutcome.UNREAD -> {
                             Log.d(TAG, "cancelConversationNotification: kept group=${ConversationRef.of(groupId)} - a line newer than the read stays unread")
@@ -1306,7 +1312,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // With no banner known and nothing to keep, the stable id is still cancelled -
                     // silently: ordered after its `notify`, it reaches a banner the record lost sight of.
                     val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
-                    when (READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, holds, repost, cancelById)) {
+                    val withdrawal = READ_ELSEWHERE.withdraw(groupId, keepPendingReply, stableId, shade, holds, repost, cancelById)
+                    decided = PushShowOutcome.of(withdrawal)
+                    when (withdrawal) {
                         ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> {
                             // The conversation is read; only the send that has not gone out stays.
                             cancelReactionNotification(prefs, manager, groupId)
@@ -1328,6 +1336,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ReadElsewhereMarks.Withdrawal.CANCELLED -> cancelReactionNotification(prefs, manager, groupId)
                     }
                 }
+            } } finally {
+                decided?.let { context.recordShowOutcome(it, groupId, null, manager) }
             }
             // The real posts this notification stood for are gone: none may cover a later refused
             // push (see [GenericBannerLedger.groupCleared]).
@@ -2314,7 +2324,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // ([AwaitedReplies]). Lock order: OUTBOX_LOCK, then that leaf lock.
                     AWAITED_REPLIES.delivered(entry.id, receivedAt)
                     onSent(sent)
-                    Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
+                    Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${ConversationRef.of(entry.groupId)}")
                 } else {
                     remaining.add(entry)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued")
@@ -2500,7 +2510,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ctx = MlsContextLoader.loadPushContext(context)
             val secret = retrievePushSecret(context)
             if (ctx == null || secret == null) {
-                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${channelId.take(8)}")
+                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${ConversationRef.ofSalon(channelId)}")
                 return false
             }
             return try {
@@ -2522,10 +2532,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     if (code == 200 || code == 201) {
-                        Log.d(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at")
+                        Log.d(TAG, "postChannelRead: HTTP $code channel=${ConversationRef.ofSalon(channelId)} at=$at")
                         true
                     } else {
-                        Log.w(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at - the read mark did not move")
+                        Log.w(TAG, "postChannelRead: HTTP $code channel=${ConversationRef.ofSalon(channelId)} at=$at - the read mark did not move")
                         false
                     }
                 } finally {
@@ -3404,6 +3414,59 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return output
         }
 
+        /**
+         * Records how one visible message push ended - or what one read-elsewhere decision did to a
+         * banner - with the OS state that decides whether a post is seen, as ONE line in the in-app
+         * log ([PushShowOutcome], 2026-11-20). Every return of [showMessageNotification] records
+         * exactly once, and so does every earlier end of a visible message push and every decision of
+         * [ReadElsewhereMarks] (`pushShowOutcome.test.ts`). A WARN only when the app posted what the
+         * OS drops; an INFO line, recorded on purpose ([FcmLog.iRecorded]), for every end by design;
+         * an outcome the log does not carry ([PushShowOutcome.Outcome.recorded]) stays in logcat.
+         * NEVER CALLED UNDER [READ_ELSEWHERE]'s lock: the OS reads are binder calls.
+         *
+         * @param channel    the notification channel, null when none was chosen yet
+         * @param shortcutId the conversation's shortcut, whose own channel (API 30+) is the one that
+         *                   decides when the member silenced this conversation alone
+         * @param detail     a system-worded reason, never message text or a name
+         */
+        internal fun Context.recordShowOutcome(
+            outcome: PushShowOutcome.Outcome,
+            groupId: String?,
+            channel: String?,
+            known: NotificationManager? = null,
+            shortcutId: String? = null,
+            detail: String? = null,
+        ) {
+            val os = if (!PushShowOutcome.readsOs(outcome)) null else try {
+                val manager = known ?: getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val postedOn = channel?.let { id ->
+                    shortcutId?.takeIf { android.os.Build.VERSION.SDK_INT >= 30 }
+                        ?.let { manager.getNotificationChannel(id, it) }
+                        ?: manager.getNotificationChannel(id)
+                }
+                PushShowOutcome.OsState(
+                    notificationsEnabled = manager.areNotificationsEnabled(),
+                    paused = if (android.os.Build.VERSION.SDK_INT >= 29) manager.areNotificationsPaused() else false,
+                    channelImportance = postedOn?.importance,
+                    interruptionFilter = manager.currentInterruptionFilter,
+                    standbyBucket = (getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager)?.appStandbyBucket,
+                    powerSave = (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isPowerSaveMode,
+                )
+            } catch (e: Exception) {
+                // The decision is still recorded, its OS state as unread (`?`).
+                Log.w(TAG, "recordShowOutcome: OS notification state unreadable: ${e.javaClass.simpleName}")
+                PushShowOutcome.OsState.UNREAD
+            }
+            val line = PushShowOutcome.line(outcome, groupId, channel, os, detail)
+            val level = PushShowOutcome.level(outcome, os)
+            when {
+                !outcome.recorded -> Log.d(TAG, line) // log-safe: PushShowOutcome.line - an outcome token, an 8-character id prefix, a channel id and OS constants by name
+                level == 'E' -> Log.e(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+                level == 'W' -> Log.w(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+                else -> Log.iRecorded(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+            }
+        }
+
         /** Generates a circular bitmap with the first letter of the name (fallback when no avatar). */
         private fun generateInitialsBitmap(name: String, size: Int = 96): Bitmap {
             val bmp    = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -3526,6 +3589,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${ConversationRef.of(groupId)})")
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND, groupId, channel)
                 return 0L
             }
             // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
@@ -3536,6 +3600,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val readUpTo = shadeReadWatermark(this, groupId)
                 if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
                     Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
+                    recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SHADE_MARK, groupId, channel)
                     return 0L
                 }
             }
@@ -3545,6 +3610,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // the post itself ([ReadElsewhereMarks.postUnlessRead]), for a read landing in between.
             if (channel != CHANNEL_REACTIONS && READ_ELSEWHERE.covers(groupId, sentAt, serverAt)) {
                 Log.d(TAG, "showMessageNotification: already read on another device -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_READ_ELSEWHERE, groupId, channel, detail = "early")
                 return 0L
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -3596,7 +3662,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // one's line. The shade answers only when this process has posted nothing here (a fresh
             // process). A reaction has its own notification and no record: it reads the shade - unless
             // this process removed it since, when the shade's copy is stale (round-15 review).
-            val (postedStamp, postedAlertedKey) = synchronized(READ_ELSEWHERE.lock) {
+            // HOW THE LOCKED SECTION ENDED, recorded once it is released (`finally`): the OS reads
+            // behind the record are binder calls, never made under [READ_ELSEWHERE]'s lock.
+            var ended: PushShowOutcome.Outcome? = null
+            var endedDetail: String? = null
+            var endedShortcut: String? = null
+            // The channel the post went out on: a banner held after an inline answer keeps ITS channel.
+            var endedChannel: String? = channel
+            val (postedStamp, postedAlertedKey) = try { synchronized(READ_ELSEWHERE.lock) {
                 val held = if (channel == CHANNEL_REACTIONS) {
                     READ_ELSEWHERE.reactionBaseOf(groupId) { shadeBannerOf(manager, notifId) }
                 } else {
@@ -3679,6 +3752,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
                 if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
                     Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt)")
+                    ended = PushShowOutcome.Outcome.SUPPRESSED_ALREADY_ALERTED
                     return 0L
                 }
 
@@ -3838,10 +3912,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 if (readElsewhere) {
                     Log.d(TAG, "showMessageNotification: read on another device while building -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt serverAt=$serverAt)")
+                    ended = PushShowOutcome.Outcome.SUPPRESSED_READ_ELSEWHERE
+                    endedDetail = "at-post"
                     return 0L
                 }
                 Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
+                ended = PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds)
+                endedShortcut = conversationShortcutId
+                endedChannel = postChannel
+                // [holdsDirectReply]'s answer for this post: the platform holds the banner after an inline answer.
+                if (heldByReply) endedDetail = "heldByReply=true"
                 stamp to alertedKey
+            } } finally {
+                // Every return sets `ended`, so null means an exception escaped the section: it is
+                // recorded too, as an ERROR (the caller logs the exception itself).
+                recordShowOutcome(ended ?: PushShowOutcome.Outcome.THREW, groupId, endedChannel, manager, endedShortcut, endedDetail)
             }
 
             // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
@@ -4209,7 +4294,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         val data = remoteMessage.data
-        Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
+        val pushGroupId = data["groupId"]
+        Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${ConversationRef.of(pushGroupId)} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
         // A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`): Google carried only an opaque id. The
         // frame is fetched from our server and then goes through EXACTLY the path below - one
@@ -4282,6 +4368,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // function, [ForegroundGuard], pinned on the JVM.
         if (MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction)) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
+            if (PushShowOutcome.guardedAnnouncement(msgType, isReaction, data["silent"] == "true", data["isWelcome"] == "true")) {
+                val conversation = data["groupId"] ?: data["channelId"]?.let { "channel_$it" }
+                recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND_GUARD, conversation, null, detail = "type=$msgType reaction=$isReaction")
+            }
             return
         }
 
@@ -4397,7 +4487,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // delivery order decides: seed first and this reads the mirror, message first and this
         // opens the frame. Both draw the plaintext the first time, and neither waits on a lock.
         if (msgType == "channel") {
-            Log.d(TAG, "type=channel → groupId=${data["channelId"]} - background channel notification")
+            val salonId = data["channelId"]?.let { "channel_$it" }
+            Log.d(TAG, "type=channel → groupId=${ConversationRef.of(salonId)} - background channel notification")
             runSerializedWithWakeLock("fcm_channel") {
                 handleChannelMessage(data)
             }
@@ -4415,13 +4506,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (msgType == "channel_read") {
             val channelId = data["channelId"] ?: ""
             if (channelId.isNotEmpty()) {
-                Log.d(TAG, "type=channel_read → clearing notification for channel=$channelId")
+                val salonId = "channel_$channelId"
+                Log.d(TAG, "type=channel_read → clearing notification for channel=${ConversationRef.of(salonId)}")
                 val context = applicationContext
                 WS_NOTIF_LANE.execute {
                     try {
                         cancelConversationNotification(context, "channel_$channelId")
                     } catch (e: Exception) {
-                        Log.e(TAG, "channel_read: cancel failed for ${channelId.take(8)}: ${throwableSite(e)}")
+                        Log.e(TAG, "channel_read: cancel failed for ${ConversationRef.of(salonId)}: ${throwableSite(e)}")
                     }
                 }
             }
@@ -4491,7 +4583,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // row and to the shade's actions. 0 when absent or unreadable, which is said.
         val pushServerAt    = serverInstantOf(data["createdAt"])
 
-        Log.d(TAG, "thread: groupId=$groupId named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
+        Log.d(TAG, "thread: groupId=${ConversationRef.of(groupId)} named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
 
         // CROSS-DEVICE DISMISSAL, BEFORE ANY DECRYPTION.
         //
@@ -4657,6 +4749,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // sent down the fallback path for a frame it had already handed over.
         if (outcome is PushDecrypt.Yielded) {
             Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
+            recordShowOutcome(PushShowOutcome.Outcome.YIELDED, groupId, null)
             return
         }
 
@@ -4682,6 +4775,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
                 maybeNotifyPendingSync(drainOutboxBackground(this, this, drainCtx))
             }
+            recordShowOutcome(PushShowOutcome.Outcome.WITHHELD_LEVEL, groupId, null, detail = "cached=${decrypted != null} ${gate.reason}")
             return
         }
 
@@ -4738,7 +4832,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // (bypass-DND request) instead of the regular messages channel.
         val mentionsMe = (gate as NotificationLevelGate.Decision.Alert).mentionsMe
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
-        Log.d(TAG, "showNotification: groupId=$groupId bodyChars=${body.length} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
+        Log.d(TAG, "showNotification: groupId=${ConversationRef.of(groupId)} bodyChars=${body.length} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
         // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
         // it holds the message and posts the real banner itself. The generic line stays as the
         // floor (nobody else is proven to post), but it is REPLACED when the real one comes, or
@@ -4747,6 +4841,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         synchronized(GENERIC_BANNERS_LOCK) {
             if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
                 Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${ConversationRef.of(groupId)})")
+                recordShowOutcome(PushShowOutcome.Outcome.REFUSED_COVERED, groupId, channel)
             } else {
                 val stamp = showMessageNotification(
                     shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
@@ -4991,7 +5086,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (attempt < 2) Thread.sleep(2_000)
         }
         if (hold == null) {
-            Log.w(TAG, "processWelcomeRequestBackground: unable to acquire the lock for group=$groupId -> abort")
+            Log.w(TAG, "processWelcomeRequestBackground: unable to acquire the lock for group=${ConversationRef.of(groupId)} -> abort")
             return
         }
         Log.d(TAG, "processWelcomeRequestBackground: Redis lock acquired for group=$groupId")
@@ -5499,6 +5594,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The foreground engine drains the queue over its WebSocket; fetching here would only race it.
         if (MainActivity.isInForeground) {
             Log.d(TAG, "[PUSH_WAKE] app in foreground -> the WebSocket delivers queued=$queuedMessageId, nothing fetched")
+            // A wake names no conversation (its payload carries nothing); a silent one announces nothing.
+            if (!silent) recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_FOREGROUND_WAKE, null, null)
             return
         }
         if (queuedMessageId.isEmpty()) {
@@ -5844,7 +5941,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .build()
             enqueueWorkerIfHealthy(workRequest)
         } else {
-            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=$groupId")
+            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)}")
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,
@@ -6134,7 +6231,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         } ?: return null
         if (epoch < 0) {
-            Log.w(TAG, "catchup: epoch unknown for group=$groupId -> abort")
+            Log.w(TAG, "catchup: epoch unknown for group=${ConversationRef.of(groupId)} -> abort")
             return null
         }
 
@@ -6926,6 +7023,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun handleChannelMessage(data: Map<String, String>) {
         val channelId = data["channelId"] ?: ""
+        // The salon as its log lines name it ([ConversationRef]).
+        val salonId = "channel_$channelId"
         if (channelId.isEmpty()) {
             Log.e(TAG, "handleChannelMessage: channelId missing -> abort")
             return
@@ -6953,7 +7052,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (openable && seedGroupId != null && (WELCOMES_ON_LANE[seedGroupId] ?: 0) > 0 &&
             !graineSeedHeld(cacheKey, channelId, sessionId)
         ) {
-            Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=$channelId index=$messageIndex")
+            Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=${ConversationRef.of(salonId)} index=$messageIndex")
             runSerializedWithWakeLock("fcm_channel", requeueOfThisFrame = true) { handleChannelMessage(data.toMap()) }
             return
         }
@@ -6975,12 +7074,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             held
         })
         if (seedHeld) {
-            Log.i(TAG, "handleChannelMessage: seed source=${if (framed) "frame" else "mirror"} channel=$channelId session=$sessionId index=$messageIndex")
+            Log.i(TAG, "handleChannelMessage: seed source=${if (framed) "frame" else "mirror"} channel=${ConversationRef.of(salonId)} session=$sessionId index=$messageIndex")
         }
         if (openable && !seedHeld) {
             // A FALLBACK IS A SIGNAL. It says the key frame lost a race it was never ordered to
             // win, and the line below is how a run tells that apart from a seed that never comes.
-            Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=$channelId session=$sessionId index=$messageIndex")
+            Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=${ConversationRef.of(salonId)} session=$sessionId index=$messageIndex")
         }
 
         // A blind banner that reaches the shade is REPORTED by the post itself, whichever of its
@@ -6990,7 +7089,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // ON THE LANE, BEHIND THIS PUSH: the banner and its redraw claim below are not delayed
             // by the join's two round trips, and the join is serial with every other MLS write this
             // process makes - the lane is the push service's single writer.
-            Log.i(TAG, "handleChannelMessage: key group ${seedGroupId?.take(8)} absent -> join from the push queued channel=$channelId")
+            Log.i(TAG, "handleChannelMessage: key group ${seedGroupId?.take(8)} absent -> join from the push queued channel=${ConversationRef.of(salonId)}")
             val copy = data.toMap()
             runSerializedWithWakeLock("key_group_join", 90_000L) { joinKeyGroupFromPush(cacheKey, copy) }
         }
@@ -7016,7 +7115,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } == true
         }
         if (arrivedMeanwhile) {
-            Log.i(TAG, "handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=$channelId index=$messageIndex")
+            Log.i(TAG, "handleChannelMessage: seed landed while the generic banner was going up -> redrawing channel=${ConversationRef.of(salonId)} index=$messageIndex")
             postChannelNotification(cacheKey, data, seedHeld = true, supersedes = stamp)
         }
     }
@@ -7062,13 +7161,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Yielded is the foreground holding the state, which the WebSocket serves; everything
             // else is a frame that should have opened and did not, which is why this is a warning.
             val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
-            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
+            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=${ConversationRef.ofSalon(channelId)} session=$sessionId")
             return false
         }
         absorbGraineSeeds(cacheKey, keyMaterial.seedsJson, groupId)
         val held = graineSeedHeld(cacheKey, channelId, sessionId)
         if (!held) {
-            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
+            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${ConversationRef.of(groupId)} channel=${ConversationRef.ofSalon(channelId)} session=$sessionId")
         }
         return held
     }
@@ -7385,7 +7484,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     } else {
                         // OPENED, AND NOTHING TO DRAW - which said nothing at all until 2026-11-04,
                         // so this generic line was the one fallback no log could explain.
-                        Log.w(TAG, "handleChannelMessage: opened ok with no text type=${json.optString("type")} channel=$channelId session=$sessionId -> generic banner")
+                        Log.w(TAG, "handleChannelMessage: opened ok with no text type=${json.optString("type")} channel=${ConversationRef.of(conversationId)} session=$sessionId -> generic banner")
                         refusal = BlindBannerReport.EMPTY_TEXT
                         buildChannelFallbackText(res, channelName)
                     }
@@ -7395,16 +7494,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // silenced by name): no banner. A redraw leaves the generic line it would have
                     // replaced - the one case a held frame's line is not corrected, said here.
                     if (BlindBannerReport.postsNothing(reason)) {
-                        Log.i(TAG, "handleChannelMessage: $reason - nothing to announce, no banner channel=$channelId session=$sessionId redraw=${supersedes != 0L}")
+                        Log.i(TAG, "handleChannelMessage: $reason - nothing to announce, no banner channel=${ConversationRef.of(conversationId)} session=$sessionId redraw=${supersedes != 0L}")
                         return 0L
                     }
                     // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
                     // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
                     // naming the check goes nowhere in a killed app, so this token is the witness.
                     if (reason in GRAINE_V2_REFUSALS) {
-                        Log.e(TAG, "handleChannelMessage: REFUSED reason=$reason channel=$channelId session=$sessionId")
+                        Log.e(TAG, "handleChannelMessage: REFUSED reason=$reason channel=${ConversationRef.of(conversationId)} session=$sessionId")
                     } else {
-                        Log.w(TAG, "handleChannelMessage: decrypt ok=false reason=$reason channel=$channelId")
+                        Log.w(TAG, "handleChannelMessage: decrypt ok=false reason=$reason channel=${ConversationRef.of(conversationId)}")
                     }
                     refusal = reason
                     buildChannelFallbackText(res, channelName)
@@ -7431,7 +7530,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // anchored at both ends and `notif18.mjs` locates this frame by the same prefix, so a
             // suffix is the one shape that adds the discriminator without unclassifying the line.
             val missing = blindBannerMissing(data, seedHeld).joinToString(",")
-            Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId missing=$missing")
+            Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=${ConversationRef.of(conversationId)} session=$sessionId missing=$missing")
             buildChannelFallbackText(res, channelName)
         }
 
@@ -7440,7 +7539,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val attribution = ChannelBannerAttribution.of(showsMessage, senderId, serverSaysMentioned)
         val mentionsMe = attribution.mentionsMe
         if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
-            Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
+            Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=${ConversationRef.of(conversationId)}")
         }
         // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
         // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
@@ -7539,7 +7638,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val ctx = MlsContextLoader.loadPushContext(this)
         val secret = retrievePushSecret(this)
         if (ctx == null || secret == null) {
-            Log.w(TAG, "reportBlindBanner: no push context or secret - the blind banner goes uncounted channel=$channelId")
+            Log.w(TAG, "reportBlindBanner: no push context or secret - the blind banner goes uncounted channel=${ConversationRef.ofSalon(channelId)}")
             return
         }
         try {
@@ -7687,7 +7786,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 channelId,
                 sessionId,
             )
-            if (held < 0) Log.e(TAG, "graineSeedHeld: the seed mirror is unreadable channel=$channelId")
+            if (held < 0) Log.e(TAG, "graineSeedHeld: the seed mirror is unreadable channel=${ConversationRef.ofSalon(channelId)}")
             held == 1
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included, as in [absorbGraineSeeds].

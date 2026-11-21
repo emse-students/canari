@@ -105,7 +105,8 @@ describe('the native builder remembers what it has already announced', () => {
     const record = source.indexOf('// WRITTEN AFTER THE POST');
     expect(record).toBeGreaterThan(-1);
     expect(source.slice(record, record + 400)).toContain('rememberAlerted(it)');
-    const before = source.slice(record - 1600, record);
+    // 2400: the post's outcome record (`finally`, #3914) sits between the two.
+    const before = source.slice(record - 2400, record);
     expect(before).toContain('manager.notify(notifId, notif)');
     const refused = before.indexOf('if (readElsewhere)');
     expect(refused).toBeGreaterThan(-1);
@@ -207,7 +208,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
   it('builds on the record under its lock and hands the posted banner to it', () => {
     const fn = source.slice(source.indexOf('fun Context.showMessageNotification('));
     const lock = fn.indexOf(
-      'val (postedStamp, postedAlertedKey) = synchronized(READ_ELSEWHERE.lock) {'
+      'val (postedStamp, postedAlertedKey) = try { synchronized(READ_ELSEWHERE.lock) {'
     );
     expect(lock).toBeGreaterThan(-1);
     // The banner a post re-injects comes from the record (the shade only when there is none)...

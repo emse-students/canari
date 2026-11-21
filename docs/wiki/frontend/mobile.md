@@ -646,10 +646,76 @@ lines (`nseOutcomes.ts`):
 | --- | --- |
 | Source | The service imports `FcmLog as Log` (`NativePushLog.kt`): same signatures, and every `w`, `e` and `println` at WARN or above ALSO goes to `NativePushLog.record`. No call site was rewritten. Debug and info stay in logcat, as the in-app log keeps no debug. |
 | Line | `NativePushLogLine`: the service's own instant in the in-app log's stamp shape, `W`/`E`, the tag, the message, an exception named by its CLASS (never its message or stack), on one line. |
-| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB. Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
+| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB (the recorded INFO lines have their own pair, below). Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
 | Into the log | `take_native_push_log` (empty off Android) hands the lines over, oldest first, and removes them; `drainNativePushLog` (`nativePushLog.ts`) writes each as `[NATIVE_PUSH] <line>` through `appendLog`, plus one count line - at login, at every resume, and **at the top of `exportAppLog`, before `readAppLog`**, so an export carries what the service said since the last resume. That is the one hook in the export: what the file CONTAINS, never how it is shared. |
 | Privacy | Through `appendLog`, so through the console wrapper and `redactLogLine` like every other line: the lines leave the device under the in-app log's rules (8-character id prefixes, no secrets, no prose values). The service never logs message text; the file itself is app-private and plain, like logcat. |
 | Failure | A writer that cannot write says so ONCE to logcat (`NativePushLog`: `the push service's lines are NOT reaching the in-app log`), never through `FcmLog`, so it cannot recurse. A take that cannot read or remove a generation says so and leaves it for the next take. |
+
+**One INFO line is recorded on purpose: how each visible message push ended (2026-11-20).** A
+full-mode, high-priority push reached a Pixel, was cached (the reopen's `FCM_CACHE` pre-inject listed
+it), and no notification was seen - and nothing in the export could say why, because every way a
+message push ends without a visible banner was a logcat `Log.d`. Nor does `manager.notify` check the
+app's switch or the channel's importance, so "posted" and "posted, then dropped by the OS" looked the
+same. Now each of the ends below records exactly ONE line:
+
+```
+I CanariFCM: [PUSH_SHOW] outcome=<token> conv=<g:8 | ch:8 | ?> channel=<id | ?> os: <not read | enabled=<bool> paused=<bool> importance=<none|min|low|default|high> dnd=<all|priority|none|alarms> bucket=<active|working_set|frequent|rare|restricted> powerSave=<bool>[ -> the OS drops it]>[ why: <reason>]
+```
+
+| Where it ends | Outcome |
+| --- | --- |
+| `showMessageNotification`, whichever trigger reached it (MLS push, salon push, WebSocket frame, reaction) | `posted`, `posted-silent-call`, `redrawn` (a supersede: a blind banner's decrypted redraw), `suppressed-foreground`, `suppressed-shade-mark`. `already-in-shade` (the second trigger of one message refreshing its line) and `suppressed-already-alerted` (a later trigger of a message already announced) are decided too but stay in logcat: the log already carries that message's post, and a second line would spend the budget on nothing. `threw` - an ERROR - when an exception escaped the locked post section before it decided. |
+| `dispatchPush`'s foreground guard, for a visible `message`, `channel` or reaction push | `suppressed-foreground-guard`, `why: type=<type> reaction=<bool>` |
+| `onWakePush`'s foreground guard, for a visible wake | `suppressed-foreground-wake` (a wake names no conversation: `conv=?`) |
+| The decrypt yielded to the foreground engine, which holds the frame | `yielded` |
+| The member's level withholds it (`NotificationLevelGate`) - the message IS cached | `withheld-level`, `why: cached=<bool> <the gate's reason>` |
+| Refused for good while the real banner is already up | `refused-covered` |
+| Already read on another device ([read-elsewhere](../services/social-service.md)): before the build, or at the post itself under `READ_ELSEWHERE`'s lock | `suppressed-read-elsewhere`, `why: early` or `why: at-post` |
+
+**The read-elsewhere decisions record the same line (2026-11-21)**, so a banner that went - or
+stayed - is explained as well as one that never came. Each is one outcome of `ReadElsewhereMarks`,
+mapped one to one by `PushShowOutcome.of`. The three `*-none` outcomes found no banner to touch,
+which is how every read by this device's OWN account ends (a silent push from self, its own
+watermark over the WebSocket, a salon read): over a desktop afternoon they would rotate the useful
+lines out, so they stay in logcat.
+
+| Decision | Outcomes |
+| --- | --- |
+| A read on another device (`recordThenCancel`, `ReadOutcome`) | `read-no-banner`, `read-cancelled`, `read-held`, `read-pending-only`, `read-unread` |
+| A dismissal with no mark (`withdraw`, `Withdrawal`) | `withdraw-none`, `withdraw-kept-pending-reply`, `withdraw-cancelled`, `withdraw-held` |
+| A reply delivered by a drain, or answered inline (`replyDelivered` / `answerReply`, `Delivery`) | `delivery-none`, `delivery-cancelled`, `delivery-reposted`, `delivery-not-rebuilt`, `delivery-kept-until-read`, with `why: by=reply-delivered` or `why: by=answer-reply` |
+| `holdsDirectReply` (Android 15+: the platform holds a banner answered inline) | its `true` answer IS the `read-held`, `withdraw-held` and `delivery-kept-until-read` outcomes; for a post it rides on the post's line as `why: heldByReply=true`. Its failure branch is already an ERROR. |
+
+**Recorded once the lock is released.** These decisions, and the end of the post section of
+`showMessageNotification`, are taken under `READ_ELSEWHERE.lock`; the OS reads behind a record are
+binder calls, so the outcome is kept in a local and recorded in a `finally` after the lock - never
+under it. **And the OS is read only for a recorded post** (`PushShowOutcome.readsOs`): the state
+decides nothing for a decision that posts nothing, so those lines say `os: not read` and spend no
+binder call - including the early ends of `showMessageNotification` that run under
+`GENERIC_BANNERS_LOCK` or `REACTION_POST_LOCK`. A post's own record still runs under those two when
+its caller holds them, beside the `notify` binder call they already span. A post's line reads the
+channel it went out ON: a banner held after an inline answer keeps its own (`postChannel`), so a
+mention posted onto a held banner is not judged by the mentions channel.
+
+**What a missing line now proves.** An MLS message that is in `FCM_CACHE` with no `[PUSH_SHOW]` line
+for its conversation means the process died between the cache write and the show decision, or an
+exception escaped before the show decision was reached (its caller logs it): in `handleMlsFrame` the
+two cache writes are followed only by `withheld-level`, `refused-covered` or the show decision, and
+each records. An exception inside the locked post section is not silent: its `finally` records
+`threw`. **Two kinds of push leave no line, on purpose**: a SILENT frame
+(a commit, a receipt, a key frame - nothing was to be announced), and a conversation muted at
+`none`, which the server sends silent. The ends in the table are the ones covered; a visible push
+that stops anywhere else (a signed-out device, a frame with nothing to render) is not claimed here.
+
+| Part | Decision |
+| --- | --- |
+| Outcomes | `PushShowOutcome.kt`, pure, pinned by `PushShowOutcomeTest` in `android-tests`. |
+| Conversation | `ConversationRef.of` - the one scheme every service log line uses since #3912: `ch:` and 8 characters of a salon's own id (`channel_` stripped first, or every salon read `channel_`), `g:` and 8 of an MLS conversation. The incoming-message lines (`onMessageReceived`, `thread:`, `showNotification:`, `type=channel`, `channel_read`, `handleChannelMessage`, `postChannelNotification`) and the outbox's `sent` line go through it too, so a `[PUSH_SHOW]` line and the lines around it name a conversation alike. So do the WARN/ERROR lines that reach the in-app log with a conversation or salon id (the welcome, catch-up, seed-frame, blind-banner and salon-read lines); a salon named by its bare id goes through `ConversationRef.ofSalon`, the same `ch:` reference. |
+| OS state | Read at the decision (`recordShowOutcome`): `areNotificationsEnabled`, `areNotificationsPaused` (the app suspended), the importance of the channel it posts on - the CONVERSATION's own channel when its shortcut has one (`getNotificationChannel(channel, shortcutId)`, API 30+), since a member can silence one conversation alone - the DND interruption filter, `UsageStatsManager.appStandbyBucket` (a `rare` or `restricted` bucket defers high-priority FCM) and `PowerManager.isPowerSaveMode`. A field the platform would not answer is `?`, never guessed. |
+| Level | **INFO by design, through `FcmLog.iRecorded`**, the one deliberate path past the W/E gate (`NativePushLog.recordInfo`): a plain `Log.i` still stays in logcat, and no WARN is spent on an end that accuses nothing. **WARN** - with ` -> the OS drops it` - exactly when the decision posted and the app's notifications are off, paused, or the channel is blocked (`NONE`). A `LOW` channel still shows it, quietly: the member's choice, reported in `importance=` and not accused. |
+| Budget | **Its own pair of files**, `native_push_info.txt` / `native_push_info.1.txt`, with the same 32 KiB rotation (`Stream::Info` in `native_push_log.rs`, JNI `nativeAppendPushLog(..., info)`). Many ordinary INFO lines in the WARN/ERROR pair would rotate the warnings out whole; in their own pair they never can. A take merges the two streams by the service's stamp. Pinned by `info_lines_never_evict_a_warning`. |
+| Wiring | `pushShowOutcome.test.ts` reads the code (comments stripped): every `return` of `showMessageNotification` (`?: return` and `-> return` counted) is preceded by its own `recordShowOutcome` or, inside the locked section, its own `ended = ...` that the `finally` records - and the counts match; each earlier end above records once before its return; `cancelConversationNotification`, `replyDelivered` and `answerReplyNotification` record their decision outside the lock. A builder that throws inside the locked section records `threw` (ERROR); one that throws before it records nothing - its caller's WARN says so. |
+| Content | An outcome token, an 8-character id prefix, a channel id, platform constants by name, and a system-worded reason; never message text, never a name. The line passes `redactLogLine` unchanged (pinned). `drainNativePushLog`'s count line counts `info=` beside `errors=` and `warnings=`. |
 
 ## The app owns which URLs its own WebView may load
 

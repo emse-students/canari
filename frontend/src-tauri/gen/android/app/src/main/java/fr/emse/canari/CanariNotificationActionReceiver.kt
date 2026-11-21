@@ -290,7 +290,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             // call. `at` is the server's `createdAt` of the newest message the banner shows.
             CanariFirebaseMessagingService.postChannelRead(context, channelId, at)
         } else {
-            Log.w(TAG, "handleMarkRead: no instant on the intent for channel=${channelId.take(8)} - nothing sent")
+            Log.w(TAG, "handleMarkRead: no instant on the intent for channel=${ConversationRef.of(groupId)} - nothing sent")
         }
     }
 

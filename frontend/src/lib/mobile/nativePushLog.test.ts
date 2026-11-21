@@ -19,11 +19,12 @@ describe('formatNativePushLines', () => {
       '2026-11-04 10:00:00.000 W CanariFCM: handleChannelMessage: seed absent -> generic banner',
       '2026-11-04 10:00:01.000 E CanariFCM: handleChannelMessage: REFUSED reason=signature-refused',
       '2026-11-04 10:00:02.000 W CanariFCM: openSeedFrame: seed frame refused',
+      '2026-11-04 10:00:03.000 I CanariFCM: [PUSH_SHOW] outcome=posted conv=g:0a1b2c3d channel=canari_messages_v2',
     ]);
-    expect(out).toHaveLength(4);
-    expect(out.slice(0, 3).every((l) => l.startsWith(`${NATIVE_PUSH_TAG} 2026-11-04`))).toBe(true);
-    expect(out[3]).toContain('3 push-service line(s)');
-    expect(out[3]).toContain('errors=1 warnings=2');
+    expect(out).toHaveLength(5);
+    expect(out.slice(0, 4).every((l) => l.startsWith(`${NATIVE_PUSH_TAG} 2026-11-04`))).toBe(true);
+    expect(out[4]).toContain('4 push-service line(s)');
+    expect(out[4]).toContain('errors=1 warnings=2 info=1');
   });
 
   it('leaves the device under the in-app log rules: a carried line is redacted like any other', () => {

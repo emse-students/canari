@@ -19,4 +19,8 @@ object ConversationRef {
         conversationId.startsWith(SALON_PREFIX) -> "ch:" + conversationId.removePrefix(SALON_PREFIX).take(8)
         else -> "g:" + conversationId.take(8)
     }
+
+    /** The log reference of a salon named by its bare id (no `channel_` prefix): `ch:` and 8. */
+    fun ofSalon(salonId: String?): String =
+        if (salonId.isNullOrEmpty()) "?" else "ch:" + salonId.removePrefix(SALON_PREFIX).take(8)
 }

@@ -20,12 +20,15 @@ object NativePushLogLine {
     /** The in-app log's own stamp shape (`appLog.ts`), so the two read alike side by side. */
     private val STAMP: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
 
-    /** The levels recorded: a debug or info line stays in logcat, as the in-app log keeps no debug. */
+    /**
+     * The levels recorded on their own: a debug or info line stays in logcat, as the in-app log keeps
+     * no debug. An INFO line reaches the file only through the deliberate `FcmLog.iRecorded`.
+     */
     fun records(level: Char): Boolean = level == 'W' || level == 'E'
 
     /**
      * @param atMs  the instant the service logged it
-     * @param level `W` or `E`
+     * @param level `W` or `E`, or `I` for a deliberately recorded line
      * @param error the throwable logged with it, named by its class only
      */
     fun format(atMs: Long, level: Char, tag: String, message: String, error: Throwable?, zone: ZoneId): String {

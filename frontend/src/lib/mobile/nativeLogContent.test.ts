@@ -189,8 +189,9 @@ const SAFE_EXPRESSIONS: RegExp[] = [
   /\.(as_millis|as_secs|as_micros|as_u64|u32|sum|count|len)\(\)$/,
   // Helpers that return a fingerprint, a cache stem or a description built from ids and states.
   /^(\w*key_fingerprint|CanariDescribeDeepLink|avatar_cache_stem|copy_label|refused_of|id_of|describe)\(.*\)$/,
-  // A conversation's log reference: `ch:` or `g:` and 8 characters of its id (`ConversationRef`).
-  /^ConversationRef\.of\([\w.]+\)$/,
+  // A conversation's log reference: `ch:` or `g:` and 8 characters of its id (`ConversationRef`),
+  // or of a salon named by its bare id (`ConversationRef.ofSalon`).
+  /^ConversationRef\.of(Salon)?\([\w.]+\)$/,
   // The helpers that say an error's domain and code, and a refusal's reason, instead of its text.
   /^(CanariErrorReason|errorReason|CanariPushContextRefusal)\(.*\)$/,
   // Where a throwable was thrown (its class and its frame), never what it says.
@@ -429,7 +430,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     'a sink that forwards a line some other call assembled: its callers are scanned, so the content is judged where it is built',
     [
       '2x CanariFirebaseMessagingService.kt|it',
-      '7x NativePushLog.kt|msg',
+      '8x NativePushLog.kt|msg',
       '2x NativePushLog.kt|tr',
     ],
   ],
