@@ -91,6 +91,48 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
 
+### A PIN check with no intent still registers, unconfirmed (2026-11-20)
+
+- **What.** `POST /api/mls/security/pin-check` registers an account's first PIN only on
+  `intent: 'create'` (a first setup that asked the PIN twice) and answers `intent: 'unlock'` with
+  `not-set` ([auth](frontend/modules/auth.md#pin-and-device-key)). An app older than #3909 sends no
+  intent, so a body with none is answered as before: it REGISTERS on an account with no PIN, through
+  the same conditional write (`checkPinVerifier`, `security.controller.ts`). That branch is the
+  unconfirmed registration the PIN audit closed, kept open for those builds only.
+- **Measured by.** The two lines the service writes for a body with no intent, a registration AND
+  an unlock (an older app unlocks with no intent too):
+  `[PIN_VERIFIER] legacy client (no intent) registering for <user> - unconfirmed` and
+  `[PIN_VERIFIER] legacy client (no intent) unlocking for <user>`.
+- **Removal condition.** The client floor passes the first stable carrying #3909 (`1.7.2` at the
+  earliest), AND a week of silence of BOTH lines on production.
+- **Then delete.** The registration of a body with no intent: such a body is then treated as
+  `unlock` - never a `400`, so a build above the floor that somehow omits it still unlocks, and an
+  account with no PIN is answered `not-set`. The spec case `LEGACY: a client sending no intent still
+  registers` becomes "a body with no intent is an unlock", and both log lines go.
+
+### A PIN from before salts re-registers on its next check (2026-11-20)
+
+- **What.** A `pin_verifier` row with `salt IS NULL` holds a verifier derived from the old
+  predictable salt, which no client computes any more. `GET pin-salt` gives it a salt IN PLACE and
+  marks its verifier `LEGACY_UNSALTED_VERIFIER` (`security.controller.ts`): `pin-status` reads it as
+  registered, and the next `pin-check` - `unlock` included - re-registers the PIN typed, unconfirmed,
+  as the pre-salt check did ([auth](frontend/modules/auth.md#pin-and-device-key)). Deleting the row
+  instead told someone with a PIN that they had none.
+- **Measured by.** One `GROUP BY` on production: `SELECT salt IS NULL AS unsalted, verifier =
+  'legacy-unsalted' AS marked, count(*) FROM pin_verifier GROUP BY 1, 2`; and the service's lines
+  `[PIN_SALT] new salt minted for <user> (legacy row, ...)` and `[PIN_VERIFIER] legacy unsalted PIN
+  of <user> re-registered`.
+- **Removal condition.** Both counts at zero, OR **2027-02-20**, whichever comes first. The date
+  exists because the counts may never reach zero: an account dormant since the salts arrived (July
+  2026) never asks for its salt, and the shim would then live for ever.
+- **On that date, what is left.** One migration turns every remaining row into a placeholder: a
+  marked row loses its marker (`verifier = ''`, its salt kept), and an unsalted row is deleted (the
+  next `GET pin-salt` mints a fresh placeholder). Those accounts are then asked to CHOOSE a PIN,
+  twice, at their next unlock - their old PIN was never comparable since July, and no server fact
+  can re-register it once the marker is gone.
+- **Then delete.** The `IsNull()` branch of `getPinSalt`, the `LEGACY_UNSALTED_VERIFIER` branch of
+  `checkPinVerifier`, the constant, and the spec cases `a PIN from before salts`.
+
 ### Entries `1.7.0` retires (the floor raise of both estates, once both stores serve `1.7.0`)
 
 "Carried by" is read as for `1.6.6` below (`git tag --contains` on the squash commit found by its
@@ -386,8 +428,9 @@ The scan builds it and reads the result ([cicd](cicd.md#container-images-are-sca
 **The cost while it stands:** a tenth image built per release, and adminer replaced by every release (a
 gap on a console only a global admin opens) where a pinned image moved only with its digest.
 **Removal condition:** Dependabot moves the `FROM` (the `docker` ecosystem reads `infrastructure/local`)
-to an upstream build whose own `libpq` is `>= 18.7-r0` - read in the scan of that pull request, or with
-`trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
+to an upstream build whose own `libpq` is `>= 18.7-r0` and, since 2026-11-20, whose `libxml2` is
+`>= 2.13.9-r3` (`CVE-2026-86144`, the second package the `RUN` moves) - read in the scan of that pull
+request, or with `trivy image adminer:<tag>`. Then, in one pull request: production's service back to `image:
 adminer:<tag>@sha256:<digest>` with `canari.deploy.replace: pinned` and no `build:`; delete the
 Dockerfile, its `build.yml` and `scheduled.yml` lines, the image checks of `adminer-route.test.mjs`, and
 this entry. The scan then reads the upstream reference again (`image-scan-targets.sh`).
@@ -485,6 +528,43 @@ header plumbing of the two submit routes, their tests and this entry; keep `notD
 side.
 The answers given before migration 174 carry no snapshot and read the account's name live, as every
 answer always did: that is the data's meaning, not a client shim, and has no removal date.
+
+### Removal once `minClientVersion` passes `1.7.3` - an anonymous form that reads the cursus from the account, seen by a build that cannot announce it (2026-11-21)
+
+**Site:** `predatesAnonymousCursusJoin` and the first branch of `respondentIdentityFor`
+(`apps/social-service/src/forms/forms.service.ts`, `respondent-identity.ts`), logged `[LEGACY] an anonymous
+form joining the cursus, answered by a build older than 1.7.3 (or announcing nothing): asked it instead` (no
+form id: the logs of an anonymous submit name neither the form nor the user).
+**What it humours:** a form can read an anonymous member's promo and formation from the account
+(owner, 2026-11-21). A build older than `ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION` (`1.7.3`) - or naming
+none - cannot SAY so before sending (principle 1: nothing leaves the account unannounced), so the join
+is not made for it: it is asked the cursus like a guest, its answer stored `declared` (or "not
+declared" before `1.7.0`). Three more facts about such builds: an editor older than `1.7.3` opens the form with the cursus ticked
+(the server serves `respondentFields: ['cursus']`, the editor unions both lists) and a save from it
+sends `respondentFields: []`, so the join turns into "asked" - the SAFE direction, written to the
+form, never a silent loss of what leaves the account. **A pre-`1.7.0` editor is different, and the join
+STANDS:** it sends `guestFields` alone (the [LEGACY] merge above), so the stored `respondentFields` is
+kept - it can neither show nor remove the join. That is harmless to principle 1 (only a build announcing
+the join is joined) but the organiser on that build cannot turn it off; the floor raise below ends it. **It can also be REFUSED by the new rule:** if that organiser unticks
+"Promo et formation" while the stored join stays (its save sends `guestFields` without the cursus and no
+`respondentFields`), the save is refused `FORM_ANONYMOUS_CURSUS_NOT_ASKED` - a code that build cannot word,
+so it shows its generic failure. The cause is the join it cannot see; the answer is the floor raise (or
+the organiser editing from a current build).
+The fill page of an old build asks the member the cursus (the cursus stays in `guestFields` for guests),
+which the server accepts for it.
+**A second shim, the same removal (review, 2026-11-21): a submit announcing nothing.** The page
+sends `announcedFields` (the join it displayed) and the server refuses `FORM_RESPONDENT_FIELDS_CHANGED`
+when the form changed since. A build older than `1.7.3` sends none: on an ANONYMOUS form it is never
+joined (above); on a NAMED form it is joined as before, logged `[LEGACY] a submit to a form joining
+account fields announces none`, because refusing an old client's ordinary named submit would break
+forms for no reason - the notice it drew was the form's at load, which is the very gap the new build
+closes.
+**The cost while it stands:** two branches; an organiser editing from a `1.7.0`..`1.7.2` build silently
+turns the join off, and one on a pre-`1.7.0` build cannot.
+**Removal condition:** `minClientVersion` on both estates passes `1.7.3` and the `[LEGACY]` line is
+absent from production for a week. Then make `announcedFields` required on the member submit, delete the `[LEGACY]` branch of
+`assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
+entry.
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
@@ -773,6 +853,14 @@ Play and the App Store serve it - then a one-line pull request sets the constant
 spec that pins it. A client older than that release draws it as the neutral unknown-type row. It is a bell
 row only, no push (so no push key, category or native string is owed); the client row, the type in
 `KNOWN_NOTIFICATION_TYPES` and its link to the Lydia Pro help page (`/help/lydia-pro`) ship with lot 3.
+
+**Built 2026-11-20, floor `1.7.3`: `lydia_responsable_handed_over`**, the bell row telling the heir of a
+Lydia Responsable hand-over that they are the Responsable now (no acceptance step, owner, 2026-11-20;
+[payments](frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)). Same shape and
+switch as `lydia_cashier_added` (bell row only, no push, the Lydia Pro help page), and written only while
+the hand-over itself is switched on. Its floor is `1.7.3`, not `1.7.2`: the `1.7.2` pre-releases already
+out do not draw it, and a floor compares the version core only, so a `1.7.2` floor would serve them the
+neutral unknown-type row. `notification-client-floor.ts` keeps it from every older build.
 The type name is shared through `libs/contracts/lydia-refusal-codes.json`.
 
 **What a client older than Lydia enrolment lot 3 (1.5.1, 1.5.2) shows on the Responsable's step.**

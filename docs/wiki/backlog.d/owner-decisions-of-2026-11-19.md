@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-19
 
-target: 1.7.2
+target: 1.7.3
 
 Recorded so that no question answered here is asked again. The owner took them in person on 2026-11-19, in the morning. Each line names where its detail lives.
 
@@ -64,7 +64,7 @@ Recorded so that no question answered here is asked again. The owner took them i
 32. **An institution's "Personnel" calendar event reaches the staff of its ticked campuses**, as posts do, in `1.8.0` ([entry](institution-events-reach-staff-by-campus.md)).
 33. **A device that dropped a frame does not tell its user.** The server reports the drop to the team.
 
-34. **A post that is not published yet takes no comment** (`1.7.2`, [entry](a-scheduled-post-takes-no-comment.md)).
+34. **A post that is not published yet takes no comment** (`1.7.2`, [decision](../moderation-and-blocking.md#a-post-that-is-not-published-yet-takes-no-comment-owner-2026-11-19)).
 35. **An institution reaches the staff of its campuses beyond posts:** its shop, partnerships, directory and lives (`1.8.0`, [entry](institution-reaches-staff-by-campus-beyond-posts.md)).
 36. **The short technical durations and the backups stay constants**, and only the long retentions become settings ([entry](retention-durations-not-yet-settings.md)).
 37. **Everything goes into `1.7.1`, the two held migrations included:** the CanaReels conversion (176) and the removal of Stripe. Each runs on dev through a pre-release before the stable.

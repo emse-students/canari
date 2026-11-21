@@ -86,7 +86,9 @@ describe('the background push engine yields to a foreground that arrived while i
   it('still guards at receipt too - the late check replaces nothing', () => {
     // The early return is what spares the whole pipeline when the app is already open. The late
     // check is for the window it cannot cover. Losing either one costs a different defect.
-    expect(source()).toContain('MainActivity.isInForeground && !showsWhileForeground');
+    expect(source()).toContain(
+      'MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction)'
+    );
   });
 
   it('the check sits INSIDE the locked region, not before it', () => {

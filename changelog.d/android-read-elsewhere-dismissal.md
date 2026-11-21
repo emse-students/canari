@@ -1,0 +1,3 @@
+### Fixed - Android: a notification posted while the app was open now goes when the conversation is read on another device
+
+The WebView now hands every own read it learns over its socket to the native side, which records it (a late post of a read message is refused) and removes the banner once the read covers every line it holds; a salon's `channel_read` push acts while the app is in front ([social-service](docs/wiki/services/social-service.md)). On Android 15+ a banner answered inline shows the answer and is removed at the next read; the app never sends a cancel the platform would drop. The background resend runs only with a network, so an offline run no longer spends an attempt ([chat-delivery](docs/wiki/services/chat-delivery.md)).

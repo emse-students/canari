@@ -721,10 +721,11 @@ the sidebar reveals its community and the members panel loads; DM/group targets 
 
 Cross-device read dismissal: opening a channel that had unread messages calls
 `POST /api/channels/:channelId/read`, which fans out a silent `channel_read` push (via the same
-internal push path) to the caller's own devices. Sibling devices in the background cancel that
-channel's notification (`cancelConversationNotification("channel_<uuid>")`); the reading device
-ignores it (foreground guard). This mirrors the MLS DM/group behaviour, where a self read-receipt
-push clears the conversation's notification on the user's other devices.
+internal push path) to the caller's own devices. Every device that receives it cancels that
+channel's notification (`cancelConversationNotification("channel_<uuid>")`) - in front as well as
+in the background since 2026-11-20 (`ForegroundGuard`, below). This mirrors the MLS DM/group
+behaviour, where a self read-receipt push clears the conversation's notification on the user's
+other devices.
 
 #### Read receipts in a salon
 
@@ -789,8 +790,328 @@ posters do set `threadIdentifier` to the conversation (`groupId`, or `channel_<u
 then writes the badge from what remains — computed from the array already in hand, since
 `removeDeliveredNotificationsWithIdentifiers:` has no completion handler to wait on. Fixed
 2026-08-16, together with the missing `apns` block that had kept the frame from arriving at all
-(see [chat-delivery](chat-delivery.md)). Android is unaffected: it has one poster, and its
-`groupId → notifId` map is written by that poster.
+(see [chat-delivery](chat-delivery.md)).
+
+**Android has one KEY but had one cancel TRIGGER against two post triggers (fixed 2026-11-20).**
+Both Android posters - the push (`CanariFirebaseMessagingService`) and the WebView's frame
+(`notify_native_message` -> `notifyMessageFromWebSocket`, since 2026-09-18) - post under
+`getStableNotifId(<conversation id>)`, the MLS group id or `channel_<uuid>`, so the ids always
+agreed. The defect was the cancel: only a PUSH triggered it, and two things kept that push from
+acting on a banner the WebView had posted while the app was open (owner's report: posted in front,
+app sent to the background, read on the web, never removed - DMs, groups and salons alike):
+
+- **a read the WebView took over its socket is never pushed.** The server pushes an MLS frame only
+  when the device has not ACKed it within 10 s (`PUSH_DEFERRED`); an own `read_watermark` that the
+  live WebView received and ACKed - app in front, or backgrounded and not yet frozen - produced no
+  push, and the WebView itself cancelled nothing. Now the WebView is the cancel's second trigger:
+  EVERY own `read_watermark` from another device (`systemMessageHandler`) and every own
+  `channel.read` (`channelEventHandler`) calls `recordNativeReadElsewhere` -> `record_read_elsewhere`
+  -> `readElsewhereFromWebSocket` on `WS_NOTIF_LANE`, with the mark. The call is made whether or not
+  the mark MOVED the row: a mark the row already held (learned on a reconnect, before the banner was
+  even posted) changes nothing in the WebView and still has to clear the shade. Whether the banner
+  goes is decided on the native side, against the shade (below);
+- **`channel_read` was dropped in front.** The foreground guard of `dispatchPush` let through only
+  what shows in front, on the premise that the device in front is the one reading - but a phone in
+  front showing another conversation holds that salon's banner. `channel_read` touches no `mls.bin`
+  and now passes (`push/ForegroundGuard.kt`, pinned by `ForegroundGuardTest`).
+
+**Measured on the Mi 9T against dev, 2026-11-20 (DM, before the fix):** a peer's message reached the
+app in front over the socket and was posted (`notifyMessageFromWebSocket: queued`, `notifId=1001`);
+the app went home (`onPause: isInForeground=false`); the same account opened the DM on the web
+6 s later, whose read watermark the gateway routed in REALTIME to the phone's device, which ACKed
+it - and chat-delivery logged no `PUSH_DEFERRED` for that send. Not one `FCM silent from self` for
+that group followed, while the self receipts of other groups, un-ACKed, were pushed and cancelled;
+`id=1001` was still in the shade a minute later. The salon half rests on the code (the guard
+above); its bench run did not reach a posted banner.
+
+**THE ORDER OF ARRIVAL DECIDES NOTHING: THE MARK TRAVELS WITH THE CANCEL.** Sharing a lane does
+not order the two: the WebView's post is asynchronous BEFORE it reaches Kotlin (the sender's name is
+resolved, the name files flushed), while the read covering it is handed over at once. A bare cancel
+landing first found nothing to remove, and the post that followed stood for good. So the read
+carries its mark (`at`, and whether it is on the server's clock) and Kotlin RECORDS it in
+`push/ReadElsewhereMarks.kt` - on every own read, cancelling or not, since a late post of an OLDER
+message must be refused even while a newer one stays unread. The comparison is on the server clock
+when both the message and the mark carry it, on the stamped clock otherwise (a salon's stamp IS its
+server time); a message comparable on neither is posted - a lost banner is a lost message. The
+record is in memory on purpose: the race is between a post still being built and a read this
+process was told about, and both die with the process.
+
+**THE LINES DECIDE THE CANCEL, NOT THE WEBVIEW'S ROW.** The banner goes only when the mark covers
+EVERY line the conversation's notification holds, on the same clock rule. Each line carries its own
+instants in its extras (`LINE_SENT_AT`, `LINE_SERVER_AT`, written by `showMessageNotification`,
+re-injected with the line on every later post - androidx core keeps a message's extras - and
+restamped when a second trigger of the same message knows the server instant the first did not).
+A REACTION's line is the exception: it carries no server instant (its `LINE_SERVER_AT` is 0), so no
+mark weighs it - its notification follows the conversation instead (below, round 14).
+
+**THE BANNER IS WHAT THIS PROCESS POSTED, NOT WHAT THE SHADE ANSWERS.** `notify` returns before
+NotificationManagerService has enqueued the record (it posts a runnable to its handler), so the shade
+read right after a post can still show the notification from BEFORE it. Weighed by a read, a banner
+holding M1 while M2 was just posted would be cancelled (M2 lost), and a first banner would not be
+found at all (a read banner left standing); re-injected by a post, two posts back to back would drop
+the first one's line. So every post records the banner it handed to `notify` - its id, its channel,
+its messages (`ReadElsewhereMarks.Banner`) - and both the next post and a read start from that
+record (`bannerOf`); the shade (`shadeBannerOf`) answers only when this process has posted nothing
+for the conversation, i.e. a fresh process whose banner an earlier one left.
+
+- **One lock from the banner a post builds on to the record of what it posted.**
+  `showMessageNotification` holds `READ_ELSEWHERE.lock` from the moment it reads the banner it
+  re-injects to the end of its post; a read holds it across record, weigh and cancel. The lock is
+  reentrant. Under a post it takes three LEAF locks, none of which ever takes it: `ALERTED_LOCK`
+  (read only - `rememberAlerted`'s durable `commit()` and `refreshBadgeSummary` run after the lock
+  is released), the ring sequencer's lock (`callHoldsSound`) and the `ConversationShortcuts.push`
+  monitor (whose shortcut record is committed on purpose: the sign-out relies on it). Its blocking
+  work is binder calls (the shade read, `notify`, `cancel`, the shortcut push), that commit, and
+  building the notification from bitmaps loaded BEFORE the lock - no fetch under it. It may be
+  taken while the generic-banner lock is held (the WebSocket path), never the reverse.
+- **The cancel takes the id of the banner it weighed**, whichever source supplied it - the record,
+  or the shade looked up by id inside the lock. (Round 5 found the id resolved only on the shade's
+  branch, so the usual case cancelled id -1.)
+- **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
+  between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
+  `withdraw`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
+  user's swipe does too, through the delete intent of a conversation banner
+  (`ACTION_BANNER_DISMISSED`, then `forgetPostedBanner`) - otherwise the next post would bring back
+  the lines the user dismissed.
+  BOTH builders of a conversation banner - the message post and the pending reply's re-post - build
+  it through ONE helper, `conversationBanner`, which sets that intent: the re-post once had none, and
+  the next message rebuilt on swiped lines, a reply already delivered still marked `non envoyé`
+  (device reading of #3912). A reaction is built without it.
+  The intent names the notification's id and the record is forgotten only when it is that banner's,
+  so a swipe of the conversation's reaction notification leaves it; a swipe that cold-starts a
+  process with no record logs nothing (`forget` says whether it dropped one). A post whose dismissal
+  broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
+- **A banner this process removed is not asked of the shade again** (`ReadElsewhereMarks.withdrawn`,
+  and every conversation after `forgetAll`): the shade lags a `cancel` as it lags a `notify`, so its
+  copy is stale. A second dismissal of the same banner - a salon's `channel.read` on the socket, then
+  its `channel_read` push - finds nothing and says so at debug only (`no notif`), where it used to
+  log a second `notif removed`; a post rebuilds on nothing, and the pending reply's re-post does not
+  bring the banner back. Two cancels BY ID close what that blind spot could hide (round-7 review):
+  `forgetAll` cancels every banner it recorded by id under the lock (the sweep of the shade before
+  it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
+  cancels the conversation's stable id, silently - the system orders a cancel by id after its
+  `notify`, where a shade read is not ordered at all.
+- **The pending reply** (`repostReplyPending`) asks the record FIRST, under the lock, for both its
+  lines and its template (`Banner.posted`, the notification as handed to `notify`; the shade's only
+  in a fresh process), records what it posts, so its bound (`takeLast`) is the record's too. No
+  dismissal that cannot weigh lines removes it when the dismissal only announces a read elsewhere:
+  the push's silent-from-self cancel passes `keepPendingReply`, and `ReadElsewhereMarks.withdraw`
+  keeps a banner whose record (or, in a fresh process, shade) holds a `LINE_PENDING_REPLY` line - it
+  removed one while the reply was still queued (device reading of #3912). Its delivery and the "mark
+  as read" action remove it.
+- **A delivered reply clears its notice, whichever path of a live process sends it.** The pending line carries its
+  message id (`LINE_PENDING_REPLY_ID`), and `drainOutboxBackground` - the one drain every native
+  send goes through: the quick reply, `OutboxRetryWorker`, a push-woken drain, the boot drain -
+  calls `replyDelivered` for each entry it delivered, after the outbox lock and after the ids are
+  durable. A LATE DELIVERY IS NOT A READ (round-8 decision, principle 2): only the line carrying that
+  id goes - every peer line stays for a later read to weigh, and every other reply still queued
+  stays pending. With no line left the banner goes - NOT its reaction notification, which a peer
+  may not have seen (round-9 correction); otherwise it is rebuilt silently (`setOnlyAlertOnce`) from
+  its own template, and left as it was - logged at WARN - when it has none. A banner the platform
+  holds is re-posted with what the delivery LEFT, never with the delivered line (round 14, S-a: r0
+  failed offline, the network came back, r2 was answered inline, and the drain delivered both - the
+  held re-post used to draw r0's "non envoyé" again). A delivery also honours the read ALREADY
+  recorded (round 16): a peer line the mark covers goes with the delivered line - [m1, r0], a read
+  covering m1 kept the banner for r0, then r0 delivered: the banner is cancelled (re-posted empty
+  when held), and m1 is never shown again.
+- **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
+  the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
+  watermark. Answering is reading, so the peer lines its watermark covers go and the reaction goes - but a line of
+  ANOTHER reply still queued stays, the banner rebuilt silently with only those (round-10 review,
+  principle 2: answering r2 never erases r0's "not sent yet"). `handleReply` runs it when THIS reply
+  went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart on a Mi
+  9T). The reply is AWAITED before its entry is queued (`AwaitedReplies`, its own leaf lock), and a
+  drain records the delivery AT THE SEND, still holding the outbox lock - so every drain taking that
+  lock after it, the handler's own included, finds it when it returns: the handler's check is
+  decided by the lock's order, not by how far the other drain's post-lock loop has got (round-10:
+  recorded after the lock, the worker's late step ran after the handler had re-posted the reply as
+  pending). Lock order: the outbox lock, then the leaf; the banner record's lock, then the leaf;
+  nothing under the leaf. The re-post's own check under the record's lock covers only a drain that
+  took the outbox lock after the handler's - a genuinely later delivery, whose late step clears the
+  pending line the re-post put up. A drain that throws still ends in that decision. The log says
+  what is known, at WARN in every case (`mirrorPresence`, round-11 review): still QUEUED (the send
+  failed); ABSENT, meaning adopted by the app's outbox or erased by `store_outbox_mirror`'s whole
+  rewrite outside the outbox lock, which cannot be told apart here and leaves a pending line no
+  native path clears ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md));
+  or UNREADABLE, a failed mirror read told apart by type (`readOutboxMirrorOrNull`) and not read as
+  an empty queue. The map holds only replies whose handler is running (removed in a
+  `finally`), so it needs no cap. The in-memory record decides rather than the outbox files: both
+  are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login. A process
+  that dies between the enqueue and the decision cannot be resolved in-process
+  ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
+- **A banner the platform holds after an inline answer is never cancelled by the app** (rounds
+  11-12; `holdsDirectReply`, `ReadElsewhereMarks.cancelUnlessHeldLocked`). Android 15+ keeps a banner
+  answered inline with `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (`@hide`, `0x00010000`). Read on a Mi
+  9T, SDK 36: `notif removed` logged, and the record kept in dumpsys with the "Vous ..." line on
+  screen. What AOSP `NotificationManagerService` does:
+  - `cancelNotificationWithTag` puts the flag in an app cancel's must-NOT-have flags (all three
+    branches). `CancelNotificationRunnable` looks the record up with `findNotificationLocked`, which
+    searches the POSTED list (`mNotificationList`) before the enqueued one. A cancel that meets the
+    flag returns and calls `maybeNotifySystemUiListenerLifetimeExtendedLocked`, which posts an
+    `EnqueueNotificationRunnable` of the old record straight onto the handler, so the flag survives.
+    On android16-release and main that runnable is built with `isAppProvided = false`. On
+    android15-release the parameter does not exist, and the strip lives only in
+    `enqueueNotificationInternal` (line 7664 there), which this re-enqueue does not go through.
+  - `enqueueNotificationInternal` strips the flag from an app's post ("Apps cannot post
+    notifications that are lifetime extended"). Its `EnqueueNotificationRunnable` then posts
+    `PostNotificationRunnable`, delayed by `DELAY_FOR_ASSISTANT_TIME` (200 ms) when an assistant is
+    enabled. So a cancel sent right after the update meets the OLD flagged record and re-extends it.
+    The first attempt (31904d65) did exactly that.
+  - `setTimeoutAfter` was weighed and REFUSED. Its alarm is armed in `EnqueueNotificationRunnable`
+    (`scheduleTimeoutLocked` / `mTtlHelper.scheduleTimeoutLocked`), before `PostNotificationRunnable`
+    lands. The `REASON_TIMEOUT` cancel (`mNotificationTimeoutReceiver`) looks the record up with
+    `findNotificationByKeyLocked`, posted list first, and excludes the flag. A timeout shorter than
+    the post delay would meet the old record, so the duration would carry the ordering.
+
+  The rule, with no assumption about latency: EVERY cancel of a recorded banner (a read's
+  `recordThenCancel`, a dismissal's `withdraw`, a delivery's `replyDelivered`, the answer, the app's
+  start in `forgetAll`) first asks the shade whether the platform holds it. A held banner is posted
+  again, silently and through the one rebuild (`rebuildBanner`), which ends the hold, and it STAYS
+  recorded. The next event asks again, and either finds it released and cancels it, or updates it
+  again. None forgets it. WHAT THE RE-POST DRAWS IS WHAT THE RECORD HOLDS (round 15):
+  - `rebuildBanner` always sets its MessagingStyle explicitly to the lines it is given:
+    `NotificationCompat.Builder(context, template)` restores the template's own style, which redrew
+    every old line - a held [r0] whose r0 was delivered drew "non envoyé" again. With no line, it
+    posts an EMPTY conversation (the title, no text).
+  - A read that covers every line, a dismissal and the app's start re-post a held banner EMPTY:
+    every line it showed was read or seen, and re-drawing them made the next post bring them back.
+    A delivery re-posts what it left; the answer, what it shows.
+  - A banner that cannot be rebuilt (no template, no MessagingStyle - no fallback sender is
+    invented) was not posted, so its record stays as it was, reported at WARN by the rebuild.
+
+  The other app cancels follow the same rule (round 13):
+  - A stable-id cancel for a banner the record does not know (`withdraw`'s NONE, the answer with no
+    banner) is not sent to a held one. With nothing recorded, there is nothing to re-post, so it is
+    left and reported at WARN.
+  - A message post that would switch a held banner's channel (a mention arriving during a slow
+    inline reply) posts on the held banner's channel instead. That post ends the hold, and the switch
+    is left to the next post. Otherwise the switch's cancel would be dropped, and the re-enqueued old
+    record would bury the new line.
+  - The app's start takes ONE shade snapshot for every "held?" (only the system sets the flag) and
+    leaves held banners out of its sweep. `releaseUnrecordedHold` then asks THE RECORD FIRST (round
+    14, B2): a banner it holds was re-posted and kept by `forgetAll`, and that re-post may land at
+    once and read as released - cancelling it then left a record of a banner that was gone. Only one
+    the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
+    is cancelled; still held, it is re-posted empty and recorded under its conversation.
+
+  What the answer shows (round-12, S-b) is posted the standard way: the lines that stay (newer than
+  the watermark, or another reply still queued), then the answer as this account's own line
+  (`answerLine`, `LINE_OWN`). Every read covers that line. The record holds exactly what is shown. A
+  held banner with nothing else left shows the answer alone and is `KEPT_UNTIL_READ`. A swipe of it
+  forgets it, so the next peer message alerts with only that message. A banner whose remaining
+  lines are all own answers counts as empty wherever lines are weighed (round 13). A delivery of r0
+  next to "Vous: r2" removes the banner instead of leaving the answer alone.
+
+  What is truly left:
+  - A held banner stays until an event about its conversation happens (a read anywhere, a
+    dismissal, a new message, a swipe, or the app's start). It shows what was answered, nothing
+    unread.
+  - A shade that cannot be read is taken as "not held", logged at ERROR, and the cancel goes as it
+    always did.
+  - A held banner the app's start finds but cannot name a conversation for is left as it is, logged
+    at WARN.
+
+  Accepted residuals (round-16 review), each with the reason it is not worth a mechanism:
+  - **An empty held banner waits for an event.** A held banner a read covered shows the title only;
+    its actions are kept and it counts on the launcher badge. It stays until the next event for its
+    conversation: removing it sooner would need a timer, which the standing directive refuses.
+  - **A stale reaction base.** Two DISTINCT reactions within the system's processing delay, or a
+    legacy reactor sending `sentAt` 0, can make the second post rebuild on the shade's copy from
+    before the cancel (`reactionPosted` lets the shade answer again once a post went out, and both
+    may still be queued). Closing it costs a full reaction record, for a window of milliseconds.
+  - **A reaction posted milliseconds before the app's start sweep.** It is not yet in the sweep's
+    snapshot and survives it. The app is open, nothing is lost, and `forgetAll`'s cancel by id
+    (round 16) covers every reaction this process recorded.
+  - **A late read clears a newer lone reaction.** A read handed over after a reaction it predates
+    removes that reaction's notification. This is inherent to the decision that the reaction's alert
+    goes with the conversation: a reaction carries no server instant to weigh. The reaction itself
+    stays in the conversation (principle 2).
+  - **An unreadable shade reads as "not held" / "nothing posted".** It happens only when the system
+    server failed (`RemoteException` cause, typed at the catch); the cancel then goes as before and
+    the line accuses at ERROR. Anything else is rethrown, not read as an answer.
+  - **A banner with no template or no MessagingStyle is not rebuilt.** Every conversation banner is
+    built with both; no fallback sender is invented, the record keeps what was posted, and the
+    rebuild says so at WARN.
+- **Answering is reading UP TO THE WATERMARK** (round-11 review, S2). The answer records the instants
+  its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
+  mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
+  sent is newer and stays, and the banner is rebuilt silently with it.
+- **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
+  `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
+  its reaction notification too: an answer, a read that cancels the banner or finds it held after
+  covering every line (`holds` is asked only then), a dismissal ("mark as read", a silent-from-self
+  push). A late delivery is not a read and leaves it. Why not weigh it on its own, as rounds 12-13
+  did: a reaction line carries no server instant (`LINE_SERVER_AT` 0), so a server-clock mark never
+  covered it and the reaction stayed after every read. Principle 2 holds: the reaction itself stays
+  in the conversation - only its alert goes, when the conversation it belongs to is read.
+  - THE READ'S OUTCOME DECIDES (`ReadElsewhereMarks.ReadOutcome`, round 15): `CANCELLED`, `HELD`
+    (every line covered), `PENDING_ONLY` and `NO_BANNER` remove the reaction; only `UNREAD` - a
+    MESSAGE line newer than the read - keeps it. A pending reply is a send of this account's that
+    has not gone out, not an unread message: a read covering every other line is `PENDING_ONLY`,
+    the banner stays for the reply and the reaction goes, as on a dismissal's `KEPT_PENDING_REPLY`
+    (round 16). So a read of a conversation with no message banner standing removes a LONE
+    reaction, as a dismissal always did (round-15 decision).
+  - The cancel runs IN THE DECISION'S CRITICAL SECTION (`READ_ELSEWHERE.lock`), on the answer, read
+    and dismissal paths alike, so a reaction post cannot fall between the decision and the cancel.
+  - A reaction post rebuilds on the shade, which lags a `cancel`: a reaction removed a moment before
+    came back with the next one. The record now says when the shade's copy is stale
+    (`reactionWithdrawn` on every cancel, every reaction at the app's start sweep): the next post
+    builds on nothing (`reactionBaseOf`), and the shade answers again once one was posted on that
+    fresh base (`reactionPosted`). The app's start also cancels BY ID every reaction this process
+    posted since the last sweep (`forgetAll`), as it does the banners: its sweep reads a shade that
+    lags a `notify` (round 16).
+- **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
+  UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
+  name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
+  the banner is the only place that says "not sent yet") and for a line that carries no stamp (a
+  banner from a build that did not stamp).
+
+The WebView's row used to decide
+(`unreadCount === 0`), and it can lag behind the shade: the WebView is frozen, the account reads on
+desktop at t1, a peer sends N at t2 > t1 and the push posts N; on thaw the own read t1 is drained
+before N reaches the row, which counts nothing unread - and N's banner was cancelled, its WebView
+re-post then refused as already announced (`hasAlreadyAlerted`), so N lost its banner for good
+(round-3 review of #3912). A line comparable on neither clock keeps the banner.
+
+**A COVERED POST TOUCHES NOTHING.** `showMessageNotification` asks the record twice:
+
+- EARLY, before any side effect (before an id is minted, a shortcut pushed, the previous banner
+  removed) - a covered post returns there;
+- AND DECIDING, at the post: every side effect on the shade - the channel switch's `cancel` of the
+  previous banner (a mention upgrading a plain post, WP-XP-5), then the `notify` - is ONE step that
+  `ReadElsewhereMarks.postUnlessRead` runs only when the message is not covered, under the lock
+  `recordThenCancel` (the dismissal: record, then cancel) also takes - the lock described above.
+
+The switch's cancel used to run before the check, so a covered late post (an older mention read on
+the web) removed a newer message's banner on its way to posting nothing (re-review of #3912). The
+WebView's post (`notifyMessageFromWebSocket`) asks the record before it fetches the avatar or retires
+a generic line from `GenericBannerLedger`, so a refused post consumes neither.
+
+What is JVM-tested (`ReadElsewhereMarksTest`, no clock - latches, and the waiting thread's state
+bounded by a spin count so a lock that stopped excluding fails instead of hanging; the shade is an
+ASYNCHRONOUS fake whose posts show only once the test drains them, driven by the same steps as the
+service's - build on `bannerOf` under the lock, `postUnlessRead`, `recordThenCancel` with the shade
+lookup and a cancel that receives the id): the comparison, the record's rise, the id the cancel
+receives from either source, two posts back to back keeping both lines, the two lag scenarios above, an unstamped foreign line never covered, that a mark older than the
+newest line cancels nothing and one covering every line cancels, that a covered post runs none of its steps, and both interleavings - a read
+arriving while a post is inside its steps waits, then weighs its line and removes it; a post arriving
+while a read is inside its steps waits and is then refused. What only a device proves (pinned as
+source by `dismissedNotificationReplay.test.ts`): that the builder hands EVERY side effect to that
+step, that the stamps survive `extractMessagingStyleFromNotification`, and the binder calls.
+
+**Windows that remain.** The `channel_read` push carries no mark, so its cancel records none; it runs
+on `WS_NOTIF_LANE`, and a post still in flight is covered by the socket's own `channel.read`, which
+does. The push silent-from-self cancel (`handleMlsFrame`) cannot weigh the shade's lines: the mark is
+inside the ciphertext the service does not open, so it still removes the whole notification - the one
+place where a newer message's banner can go with an older read - unless it holds a pending reply.
+
+**The log names a conversation by `ConversationRef.of`**: `ch:` and 8 characters of a salon's own id
+(the `channel_` prefix stripped - `take(8)` of the key printed `channel_` for every salon), `g:` and 8
+of an MLS conversation; the scheme of the push-outcome line (#3914), which must stay the same.
+
+Pinned by `systemMessageHandler.readState.test.ts` and `channelEventHandler.read.test.ts` (every own
+mark is handed over, moved or not, and a peer's is not), `nativeNotification.test.ts`,
+`ReadElsewhereMarksTest` and `dismissedNotificationReplay.test.ts`.
 
 ### Forms (`/api/forms`)
 

@@ -30,6 +30,7 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
 vi.mock('$lib/stores/user', () => ({
   isGlobalAdmin: () => state.admin,
   getSavedUserId: () => 'u1',
+  currentUserId: () => 'u1',
 }));
 
 import LydiaBusinessOnboardingForm from './LydiaBusinessOnboardingForm.svelte';

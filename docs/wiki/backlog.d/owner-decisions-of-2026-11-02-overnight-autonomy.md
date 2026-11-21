@@ -1,6 +1,6 @@
 ## Decided - the owner's answers of 2026-11-02, for the night he left the lead agent in autonomy
 
-target: 1.7.2
+target: 1.7.3
 
 Decisions, not open questions; this entry is deleted when the last one is carried out.
 

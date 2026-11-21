@@ -14,6 +14,141 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-11-20
+
+### Changed - the birthday ring is a thin flush ring with floating confetti
+
+The ring no longer eats the edge of the photo and no longer turns muddy at small sizes: it now sits outside the photo, flush, in four warm colours, with a few confetti pieces round it, and the cake badge of a notification no longer cuts it ([birthdays](docs/wiki/birthdays.md)).
+
+Side effect, accepted: the directory, follow, blocked, profile-header and call-tile avatars lost the `overflow-hidden` that cut the ring, so their face's soft shadow is now visible there.
+
+### Security - a dragged-in web image is fetched only from Canari's own hosts, and the in-app log keeps every Unicode line break on one line
+
+A picture dragged into a composer from another page is fetched only when the `connect-src` the runtime enforces allows its origin, through the WebView's own `fetch` with no credentials; every other origin is refused up front with the existing toast. The in-app log now also folds NEL and the Unicode line and paragraph separators, and the `imeGround` colour probe never writes `fillStyle` twice in a row ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - the composer's buttons touched each other on phones
+
+The phone composer row had no gap, so the round "+" and send buttons touched the field; it now has 6px ([keyboard-and-send-motion](docs/wiki/frontend/keyboard-and-send-motion.md)).
+
+### Fixed - dev's TURN budget meter held a revoked token, so dev calls got STUN only
+
+From 2026-11-19 until the `1.7.1-alpha.7` deploy, the meter on dev used a token that had been rolled without its GitHub secret being updated. A token roll is complete only once the secret carrying it is rewritten and the consumer redeployed ([MIGRATION](infrastructure/MIGRATION.md)).
+
+### Fixed - the image scan is green again: the dead CVE-2026-97054 suppression is removed
+
+The scanner no longer reports CVE-2026-97054 in the postgres images' gosu, so its allowlist entry was a dead suppression the scan refuses ([.github/image-scan-allowlist.yaml](.github/image-scan-allowlist.yaml)).
+
+### Fixed - iOS: the files shared with the notification and share extensions no longer go into a backup
+
+The App Group container's root refused the backup flag, so `mls.bin` and the push credential still
+travelled. They now live in a `store/` directory of ours, flagged at creation, older files moved in
+at first launch, and a refusal logs its cause
+([mobile](docs/wiki/frontend/mobile.md#the-app-group-a-store-directory-never-the-root-172)).
+
+### Fixed - iOS: Canari's local data no longer travels to a new iPhone through a backup
+
+A new iPhone restored from a backup arrived with the old phone's local stores but not their
+device-only key, and the PIN screen called the data unreadable. Every launch now excludes the data
+directory, WebKit's stores, the preferences and the App Group from backups
+([mobile](docs/wiki/frontend/mobile.md#nothing-local-travels-to-another-phone-2026-11-20)).
+
+### Security - the two images we build ship libxml2 2.13.9-r3, and the upstream pins wait on a rebuild
+
+`CVE-2026-86144` (libxml2, HIGH) turned the image scan red on every pull request. `Dockerfile.adminer` and `Dockerfile.frontend` now upgrade `libxml2` and assert the fixed build, and the scan builds both; no upstream postgres or nginx build carries the fix yet, so those pins are allowlisted by purl until they move ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - the live card follows the feed tab, and a feed of replays no longer bursts 429s
+
+Under "Organisations" the live card lists association lives only; the covers of live posters and replays now load three at a time instead of all at once, which was tripping nginx's per-address connection bound ([live](docs/wiki/frontend/modules/live.md#the-width-of-the-poster-fetches-s14-2026-11-20)).
+
+### Added - the organiser's "Rediffusion" switch: a live is replayed only if its organiser leaves it on, and can turn it off for good
+
+The switch is shown when a live is launched, ON by default; once started it can only be switched OFF, during or after the live, which deletes what was kept and can never be undone. The server is the authority ([live replays](docs/wiki/live-replays.md#the-organisers-rediffusion-switch-owner-2026-11-20)).
+
+### Fixed - "En direct" past an open web live screen left it on "Reading the live's rules"
+
+The broadcaster's screen now makes its machine once for its life instead of as a prop fallback, which a re-targeted screen silently replaced with a machine whose rules were never read; the feed no longer re-targets an open live screen ([lives](docs/wiki/frontend/modules/live.md)).
+
+### Changed - the Lydia managers' notices, the cashier notice and the form organiser alert are switched on
+
+With the client floor at `1.7.0` on both estates, a payout manager is told in the app when Lydia payments become active or are paused, a member is told when they are added as a Lydia cashier, and a form's managers are told when a payment lands over capacity. The three constants stay as kill switches; their phone readings are owed on the next alpha ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - a media message says what it is, the same everywhere
+
+A last message that is a photo, video, voice note, file or CanaReel read `[Média]`; the conversation list, the reply quotes, the in-app notification and the push banner now say `📷 Photo`, `🎥 Vidéo`, `🎤 Message vocal`, `📎 Fichier : nom`... with the caption after it ([chat](docs/wiki/frontend/modules/chat.md#a-media-message-is-previewed-by-what-it-is-2026-11-20)).
+
+### Fixed - the MiConnect deploy: authentik upgraded first, a rollback that sees system migrations, copies kept 30 days at most
+
+A release now upgrades MiConnect before any other container and keeps a NEWER running version (so
+an older release's rerun still rolls the estate back), restores the dump when only authentik's own
+system migrations ran, accepts a `.env` put back by its backup, counts only this run's restarts,
+keeps host paths out of the public log, and expires its rollback copies to 3 and 30 days at most,
+daily. It refuses early, read-only and with the exact hand command, what would stop it, checks that
+the test stack rehearses production's upgrade, pulls anonymously under the host's 85 % disk ceiling,
+asks each probe five times before a rollback, and redacts the blueprints' output. A stable is refused before its bump (gate 8) unless production MiConnect's morning preflight passed on the pin it ships ([authentik](docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+
+### Added - MiConnect asks for the terms of use once per version, for every service
+
+A required tick before any application receives the person, on the CAS and the Alumni source alike, new accounts and existing ones; the answer is stored on the account ([authentik](docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)).
+
+### Changed - the PIN screen says one short thing, and a phone that lost its key restarts as a new device
+
+Every PIN-screen and sign-in message is now one or two plain sentences that name the exact control to use. When the PIN is right but the phone's key did not survive a transfer or a restore, the phone starts again by itself as a new device: the account's PIN and its other devices are kept, and the history can come back from them. A saved state that will not open gets its start-fresh button on the screen itself, not behind the forgot-PIN link ([auth](docs/wiki/frontend/modules/auth.md#the-pin-gate-says-one-short-thing-and-shows-the-control-that-does-it-2026-11-20)).
+
+### Fixed - a PIN request that hangs ends as "unreachable", and a 429 says "too many attempts"
+
+PIN requests now live under the app's request deadline; a 429 reads "Trop d'essais" with the minute to retry at; the password sign-in link has a plain label ([auth](docs/wiki/frontend/modules/auth.md#pin-and-device-key)).
+
+### Fixed - the "Rediffusion" switch reads on the dark pre-live sheet
+
+Its label and hint were the theme's near-black and grey over the camera; the shared `Toggle` now takes an `on-media` tone and the live sheet uses it, so they are as white as the other texts there ([live-replays](docs/wiki/live-replays.md)).
+
+### Added - the release deploys MiConnect's authentik version, and a daily job reports drift
+
+A pre-release puts the test MiConnect, a stable production, on the image `compose.yml` pins (dump,
+restart only on a difference, health and OIDC checks, automatic rollback); Dependabot watches that
+pin; `scheduled.yml` reports running images against the released pins and hand edits the next stable
+would overwrite ([authentik](docs/wiki/infrastructure/authentik.md#the-release-deploys-miconnects-version-2026-11-13)).
+
+### Changed - the privacy policy and the register say the images and sound of a replay are never backed up
+
+Only a replay's metadata rows follow the nightly database dump, 14 days at most; the owner confirmed on 2026-11-20 that replays stay out of the file backup on purpose ([live-replays](docs/wiki/live-replays.md#why-the-backup-decided-the-shape-d2)).
+
+### Fixed - a rename notice no longer fires for a name that only differs by a trailing space
+
+A server group name written untrimmed by an old build made an honest sealed-name statement draw a rename notice naming its sender; names are now compared trimmed ([sealed-names](docs/wiki/protocols/sealed-names.md)). The live replay switch-off tests now prove the bell rows are purged and that overlapping switch-offs run exactly one drain.
+
+### Fixed - a checkpoint no longer exports past a decrypted message held for an absent conversation
+
+The last window of "rows before ratchet": a decrypted message whose conversation had left the map is
+now stored or dropped by the checkpoint's hold before the export, and its frame's ack waits for it; a
+row a store is retrying or replaying stays counted until its write lands, and a backup import no
+longer empties the conversation list
+([chat](docs/wiki/frontend/modules/chat.md#rows-before-ratchet-the-orphan-buffer-2026-11-20)).
+
+### Fixed - a post that is not published yet takes no comment
+
+The comment write refuses a post not published yet (the database's own predicate, under the row lock), its own author included, with a typed 409 (`COMMENT_POST_NOT_PUBLISHED`), the app words it, and the card (the post page included) draws no comment control on a scheduled post. Decision in [moderation](docs/wiki/moderation-and-blocking.md#a-post-that-is-not-published-yet-takes-no-comment-owner-2026-11-19).
+
+### Changed - every group's name is dated by its members, silently
+
+A new group dates its name at creation, and a group that existed before is restated once by one member device, by a `groupNamed` frame that stays silent unless it changes the name shown; a rename always beats such a statement, so a restatement crossing a real rename never puts the old name back ([sealed-names](docs/wiki/protocols/sealed-names.md#step-2---built-2026-11-20-every-group-gets-a-dated-name)).
+
+### Changed - the four NestJS service images ship production dependencies only
+
+The runtime stage of the core, social, media and chat-delivery images copies a `--production` install instead of the builder's, so jest, the Nest CLI and the other dev tools are no longer on the image, in its size or in its scan ([cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+
+### Fixed - Android: the launcher's long-press conversations show a photo, not an empty white circle
+
+The conversations listed when the Canari icon is long-pressed (and the share sheet's suggestions) now carry the person's photo, the group's image or the community's logo, and the initials disc when there is none - the notification's own fetch, cache and disc, in one adaptive icon shared with the notification shortcut ([sharing](docs/wiki/frontend/sharing.md)). Android only, and it needs a phone reading; iOS suggestions still show no photo.
+
+### Fixed - the thread glide plays on Chromium and the Android WebView, and no longer warns at every arrival
+
+`motionMs` accepted only `220ms`, while Chromium answers the token as `.22s`, so the glide never ran there and a WARN was logged at each message arrival. The parser now reads `ms` and `s`, leading-dot numbers included ([threadGrowthObserver](frontend/src/lib/utils/chat/threadGrowthObserver.ts)).
+
+### Added - a voice note logs what the microphone really recorded
+
+At the start of each recording the in-app log now carries one line: echo cancellation, noise suppression, auto gain, sample rate, channels, the class of input (Bluetooth, headset, other; never its name), and the recorder's container and bitrate. It is the measurement behind the "voice messages sound bad" report ([entry](docs/wiki/backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)); nothing about the capture changes yet.
+
 ## [1.7.1] - 2026-11-20
 
 ### Fixed - a live's sound no longer drifts ahead of its picture when the camera runs under 15 fps

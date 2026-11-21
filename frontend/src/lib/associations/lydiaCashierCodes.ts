@@ -13,6 +13,15 @@ export const LYDIA_CASHIER_REFUSAL = {
   /** Changing the Responsable's number is off while the add gate is off. */
   /** Only the Responsable themselves, or a global admin, may change their number. */
   RESPONSABLE_NUMBER_CHANGE_FORBIDDEN: 'LYDIA_RESPONSABLE_NUMBER_CHANGE_FORBIDDEN',
+  /** Handing the Responsable over is off (the owner's gate). */
+  RESPONSABLE_HANDOVER_DISABLED: 'LYDIA_RESPONSABLE_HANDOVER_DISABLED',
+  /**
+   * A cashier promoted in place lost MANAGE_PAYOUT_ACCOUNT before the record: the hand-over is not
+   * made and their own number was removed - they are no longer a cashier.
+   */
+  RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED: 'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_REMOVED',
+  /** The same refusal, but that number's removal did not complete: it is still on the card. */
+  RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD: 'LYDIA_RESPONSABLE_HANDOVER_HEIR_CASHIER_ON_CARD',
 } as const;
 
 /** The typed refusals social-service answers on the same routes (core passes them on as given). */
@@ -33,4 +42,13 @@ export const LYDIA_CASHIER_SOCIAL_REFUSAL = {
   CONFIRMED_REQUIRED: 'LYDIA_CASHIER_CONFIRMED_REQUIRED',
   /** Deleting the association is refused while its Lydia Business still lists cashiers to remove. */
   LIVE_ON_DELETE: 'LYDIA_CASHIERS_LIVE',
+  /** Only the Responsable themselves, or a platform admin, hands the role over. */
+  RESPONSABLE_HANDOVER_FORBIDDEN: 'LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN',
+  /** The member picked already is the Responsable. */
+  RESPONSABLE_HANDOVER_SAME_PERSON: 'LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON',
+  /** The heir does not hold MANAGE_PAYOUT_ACCOUNT: they could never hand over in turn. */
+  RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER:
+    'LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER',
+  /** A cashier heir is promoted with the number they are cashier with, never another one. */
+  RESPONSABLE_HANDOVER_CASHIER_NUMBER: 'LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER',
 } as const;

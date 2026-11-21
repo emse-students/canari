@@ -11,6 +11,9 @@ package fr.emse.canari.push
  * design" from "posted" from "posted and dropped by the OS": a full-mode push was cached on
  * 2026-11-20 and no notification was seen, and nothing said why.
  *
+ * The read-elsewhere decisions of [ReadElsewhereMarks] - what a read, a dismissal or a delivered
+ * reply did to a banner - record the same line, so a banner that went (or stayed) is explained too.
+ *
  * So every way a VISIBLE message push ends records ONE line ([line]) into the in-app log, through
  * the push service's recorded-INFO path (`FcmLog.iRecorded`), and that line is a WARN ([level])
  * exactly when the app posted what the OS drops - the one outcome that is a defect to chase rather
@@ -52,6 +55,54 @@ object PushShowOutcome {
         SUPPRESSED_SHADE_MARK("suppressed-shade-mark", false),
         /** Already announced, then dismissed (swiped, or cleared by a launch): not announced twice. */
         SUPPRESSED_ALREADY_ALERTED("suppressed-already-alerted", false),
+        /** Already read on another device ([ReadElsewhereMarks.covers], or refused at the post). */
+        SUPPRESSED_READ_ELSEWHERE("suppressed-read-elsewhere", false),
+
+        // What a read on another device did to the banner ([ReadElsewhereMarks.ReadOutcome]).
+        READ_NO_BANNER("read-no-banner", false),
+        READ_CANCELLED("read-cancelled", false),
+        READ_HELD("read-held", false),
+        READ_PENDING_ONLY("read-pending-only", false),
+        READ_UNREAD("read-unread", false),
+
+        // What a dismissal with no mark did ([ReadElsewhereMarks.Withdrawal]).
+        WITHDRAW_NONE("withdraw-none", false),
+        WITHDRAW_KEPT_PENDING_REPLY("withdraw-kept-pending-reply", false),
+        WITHDRAW_CANCELLED("withdraw-cancelled", false),
+        WITHDRAW_HELD("withdraw-held", false),
+
+        // What a delivered or answered reply did to its banner ([ReadElsewhereMarks.Delivery]).
+        DELIVERY_NONE("delivery-none", false),
+        DELIVERY_CANCELLED("delivery-cancelled", false),
+        DELIVERY_REPOSTED("delivery-reposted", false),
+        DELIVERY_NOT_REBUILT("delivery-not-rebuilt", false),
+        DELIVERY_KEPT_UNTIL_READ("delivery-kept-until-read", false),
+    }
+
+    /** The line of a read on another device, one outcome per [ReadElsewhereMarks.ReadOutcome]. */
+    fun of(read: ReadElsewhereMarks.ReadOutcome): Outcome = when (read) {
+        ReadElsewhereMarks.ReadOutcome.NO_BANNER -> Outcome.READ_NO_BANNER
+        ReadElsewhereMarks.ReadOutcome.CANCELLED -> Outcome.READ_CANCELLED
+        ReadElsewhereMarks.ReadOutcome.HELD -> Outcome.READ_HELD
+        ReadElsewhereMarks.ReadOutcome.PENDING_ONLY -> Outcome.READ_PENDING_ONLY
+        ReadElsewhereMarks.ReadOutcome.UNREAD -> Outcome.READ_UNREAD
+    }
+
+    /** The line of a dismissal with no mark, one outcome per [ReadElsewhereMarks.Withdrawal]. */
+    fun of(withdrawal: ReadElsewhereMarks.Withdrawal): Outcome = when (withdrawal) {
+        ReadElsewhereMarks.Withdrawal.NONE -> Outcome.WITHDRAW_NONE
+        ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY -> Outcome.WITHDRAW_KEPT_PENDING_REPLY
+        ReadElsewhereMarks.Withdrawal.CANCELLED -> Outcome.WITHDRAW_CANCELLED
+        ReadElsewhereMarks.Withdrawal.HELD -> Outcome.WITHDRAW_HELD
+    }
+
+    /** The line of a delivered or answered reply, one outcome per [ReadElsewhereMarks.Delivery]. */
+    fun of(delivery: ReadElsewhereMarks.Delivery): Outcome = when (delivery) {
+        ReadElsewhereMarks.Delivery.NONE -> Outcome.DELIVERY_NONE
+        ReadElsewhereMarks.Delivery.CANCELLED -> Outcome.DELIVERY_CANCELLED
+        ReadElsewhereMarks.Delivery.REPOSTED -> Outcome.DELIVERY_REPOSTED
+        ReadElsewhereMarks.Delivery.NOT_REBUILT -> Outcome.DELIVERY_NOT_REBUILT
+        ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ -> Outcome.DELIVERY_KEPT_UNTIL_READ
     }
 
     /**
@@ -114,15 +165,8 @@ object PushShowOutcome {
     /** `W` when the app posted what the OS drops, `I` otherwise. */
     fun level(outcome: Outcome, os: OsState): Char = if (outcome.posts && osDrops(os)) 'W' else 'I'
 
-    /**
-     * The conversation as the line names it: `ch:` and 8 characters for a salon (`channel_<id>`,
-     * whose prefix would otherwise fill all 8), `g:` and 8 for an MLS conversation, `?` unknown.
-     */
-    fun conversationRef(conversationId: String?): String = when {
-        conversationId.isNullOrEmpty() -> "?"
-        conversationId.startsWith("channel_") -> "ch:" + conversationId.removePrefix("channel_").take(8)
-        else -> "g:" + conversationId.take(8)
-    }
+    /** The conversation as the line names it - the one scheme every log line uses, [ConversationRef]. */
+    fun conversationRef(conversationId: String?): String = ConversationRef.of(conversationId)
 
     /**
      * The recorded line. No message text and no name ever reaches it.

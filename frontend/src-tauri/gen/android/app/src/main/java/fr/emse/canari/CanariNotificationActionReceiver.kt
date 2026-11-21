@@ -6,7 +6,9 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.RemoteInput
+import fr.emse.canari.CanariFirebaseMessagingService.Companion.MirrorPresence
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.throwableSite
 import java.util.UUID
 
@@ -50,6 +52,11 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                         handleMarkRead(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
                         handleCallDecline(appContext, intent, groupId)
+                    CanariFirebaseMessagingService.ACTION_BANNER_DISMISSED ->
+                        CanariFirebaseMessagingService.forgetPostedBanner(
+                            groupId,
+                            intent.getIntExtra(CanariFirebaseMessagingService.EXTRA_BANNER_NOTIF_ID, -1),
+                        )
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
@@ -100,32 +107,41 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             return
         }
 
-        CanariFirebaseMessagingService.enqueueOutboxMirror(
-            context,
-            CanariFirebaseMessagingService.OutboxMirrorEntry(
-                messageId, groupId, protoB64, sentAt, silent = false, durable = true
+        // AWAITED BEFORE IT IS QUEUED: from here on, a drain that delivers it - this one or another
+        // running beside it (the retry worker, 5 ms apart on a Mi 9T) - says so, and this handler
+        // decides on that, never on a guess.
+        CanariFirebaseMessagingService.awaitReplyDelivery(messageId)
+        try {
+            CanariFirebaseMessagingService.enqueueOutboxMirror(
+                context,
+                CanariFirebaseMessagingService.OutboxMirrorEntry(
+                    messageId, groupId, protoB64, sentAt, silent = false, durable = true
+                )
             )
-        )
-        Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${groupId.take(8)}")
+            Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${ConversationRef.of(groupId)}")
 
-        // The server's receive time of THIS reply, as its POST answered it: the cache row is dated
-        // by it, so the reply sits where the server placed it (chat.md, server order).
-        var receivedAt = 0L
-        val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
-            if (sent.id == messageId) receivedAt = sent.receivedAt
-        }
-        if (remaining == 0) {
-            // Delivered: record it locally BEFORE clearing the notification, so the one visible
-            // trace of the reply is never dropped before the durable one exists.
-            CanariFirebaseMessagingService.writeSentMessageToCache(
-                context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
-            )
-            CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
-            // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the
-            // delivered branch: a reply still sitting in the outbox has not been seen by anyone,
-            // and announcing a read state for it would state something no peer can yet corroborate.
-            sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
-        } else {
+            // Whether THIS reply went out - by this drain, or by another one meanwhile - not whether
+            // the whole outbox drained: a reply delivered beside an older entry still queued is
+            // delivered, and must not be re-posted as pending. With the server's receive time its
+            // POST answered: the cache row is dated by it (chat.md, server order).
+            //
+            // A DRAIN THAT THROWS (the mirror's file I/O) still ends in the decision below, with no
+            // result: the RemoteInput spinner must end in a re-post or a cancel whatever happened.
+            var ownReceivedAt: Long? = null
+            val remaining: Int? = try {
+                CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
+                    if (sent.id == messageId) ownReceivedAt = sent.receivedAt
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "handleReply: drain failed id=${messageId.take(8)} - deciding without it: ${throwableSite(e)}")
+                null
+            }
+            if (remaining == null || remaining > 0) OutboxRetryWorker.enqueueIfHealthy(context)
+            val receivedAt = ownReceivedAt ?: CanariFirebaseMessagingService.replyDeliveredAt(messageId)
+            if (receivedAt != null) {
+                replyAnswered(context, groupId, pushCtx, messageId, text, sentAt, receivedAt, notifiedAt, notifiedServerAt)
+                return
+            }
             // Not delivered: NO cache entry, or the app would show as sent a message that never
             // left. The entry stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries`
             // (outboxMirror.ts) picks it up at the next login and turns it into a real TypeScript
@@ -136,13 +152,57 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    this action fired and draws an indeterminate spinner it never resolves, so
             //    "the notification stays up as the retry affordance" was false - it stayed up with
             //    the actions gone and a spinner running, for good.
-            //  - a deferred retry must be ENQUEUED. Nothing scheduled one here, so a reply that
-            //    failed waited for the next LOGIN, where the FCM drain's own failure path has had
-            //    a 30s/60s/120s backoff all along.
-            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
-            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text, notifiedAt, notifiedServerAt)
-            OutboxRetryWorker.enqueueIfHealthy(context)
+            //  - a deferred retry must be ENQUEUED (above). Nothing scheduled one here, so a reply
+            //    that failed waited for the next LOGIN.
+            // A drain may still deliver it before the re-post: the re-post asks under the record's
+            // lock and hands back the receive time - the first-try success then runs here.
+            // WORDED ON WHAT IS KNOWN, and at WARN in every case - each is a reply not seen
+            // delivered. Still in the mirror: its send failed. Absent: adopted by the app's outbox
+            // or erased by its whole rewrite (`store_outbox_mirror`, outside the outbox lock) - not
+            // distinguishable here, and nothing native will clear that pending line
+            // ([backlog](docs/wiki/backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
+            // Unreadable: unknown.
+            when (CanariFirebaseMessagingService.mirrorPresence(context, messageId)) {
+                MirrorPresence.QUEUED ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered by this drain, still queued (remaining=$remaining) - re-posted as pending, retry scheduled")
+                MirrorPresence.ABSENT ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and absent from the mirror - adopted or rewritten by the app, not distinguishable here - re-posted as pending")
+                MirrorPresence.UNREADABLE ->
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and the outbox mirror could not be read - whether it is queued is unknown - re-posted as pending")
+            }
+            CanariFirebaseMessagingService.repostReplyPending(context, groupId, messageId, text, notifiedAt, notifiedServerAt)
+                ?.let { late -> replyAnswered(context, groupId, pushCtx, messageId, text, sentAt, late, notifiedAt, notifiedServerAt) }
+        } finally {
+            CanariFirebaseMessagingService.settleReplyDelivery(messageId)
         }
+    }
+
+    /**
+     * THE QUICK REPLY'S SUCCESS - the user answered from the banner and the reply went out, by its
+     * own drain or by another one while the user was replying. ONE function, so the two branches of
+     * [handleReply] cannot drift: the reply is recorded locally BEFORE the notification goes (the
+     * one visible trace is never dropped before the durable one exists), the banner is removed -
+     * its reaction with it, but never ANOTHER reply's line still queued
+     * ([CanariFirebaseMessagingService.answerReplyNotification]) - and, ANSWERING BEING READING (product decision, 2026-08-31), the read
+     * watermark is sent. Only a delivered reply announces a read: one still in the outbox has been
+     * seen by no one.
+     */
+    private fun replyAnswered(
+        context: Context,
+        groupId: String,
+        pushCtx: MlsContextLoader.PushContext,
+        messageId: String,
+        text: String,
+        sentAt: Long,
+        receivedAt: Long,
+        notifiedAt: Long,
+        notifiedServerAt: Long,
+    ) {
+        CanariFirebaseMessagingService.writeSentMessageToCache(
+            context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
+        )
+        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId, text, sentAt, receivedAt, notifiedAt, notifiedServerAt)
+        sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
     }
 
     /**
@@ -178,7 +238,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun sendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
         if (at <= 0L) {
-            Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${groupId.take(8)} - nothing announced")
+            Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${ConversationRef.of(groupId)} - nothing announced")
             return
         }
         CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at, serverAt)
@@ -191,7 +251,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         }
         val service = CanariFirebaseMessagingService()
         if (serverAt <= 0L) {
-            Log.w(TAG, "sendReadWatermark: no server time on the intent for group=${groupId.take(8)} - the mark is stated on the sender's clock alone")
+            Log.w(TAG, "sendReadWatermark: no server time on the intent for group=${ConversationRef.of(groupId)} - the mark is stated on the sender's clock alone")
         }
         val protoB64 = service.nativeBuildReadWatermarkProto(at, serverAt)
         if (protoB64.isEmpty()) {
@@ -208,7 +268,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             )
         )
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
-        Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${groupId.take(8)}")
+        Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${ConversationRef.of(groupId)}")
     }
 
     /**
@@ -249,7 +309,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun handleCallDecline(context: Context, intent: Intent, groupId: String) {
         val callId = intent.getStringExtra(CanariFirebaseMessagingService.EXTRA_CALL_ID) ?: ""
-        Log.d(TAG, "handleCallDecline: call=$callId group=${groupId.take(8)}")
+        Log.d(TAG, "handleCallDecline: call=$callId group=${ConversationRef.of(groupId)}")
         CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
         if (callId.isEmpty()) {
             Log.e(TAG, "handleCallDecline: no callId on the intent -> the caller is not told")

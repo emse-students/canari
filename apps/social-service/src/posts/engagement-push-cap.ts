@@ -146,6 +146,7 @@ export const PUSH_BUDGET: Readonly<
   lydia_payments_paused: FREE,
   lydia_refund_issued: FREE,
   lydia_cashier_added: FREE,
+  lydia_responsable_handed_over: FREE,
   delegation_revoked: FREE,
   delegation_receiver_not_ready: FREE,
   delegation_resumed: FREE,

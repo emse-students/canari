@@ -27,6 +27,7 @@
 #                                          `TRIVY_CACHE_DIR` honoured)
 #        image-scan.sh --allowlist-ids    (the ids the retirement check reads; no network)
 #        image-scan.sh --allowlist-purls  (the `id package version` triples it reads; no network)
+#        image-scan.sh --upgraded-packages <Dockerfile> / --shipped-base <Dockerfile>  (the readers; no network)
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,6 +67,87 @@ if [ "${1:-}" = '--allowlist-purls' ]; then
   exit 0
 fi
 
+# THE PACKAGES A `dockerfile:` TARGET UPGRADES PAST ITS BASE, one per line: the words after `upgrade`
+# in each `apk`/`apt-get`/`apt` upgrade of the shipped stage (the last `FROM`), up to the end of that
+# command, its options left out. Docker's own line continuation is honoured first: a line ending in a
+# backslash is joined to the next (a comment line inside it dropped, as Docker does), so a package
+# list spread over several lines is read whole. A word is cut at a trailing backslash, `;` or `&&`
+# (`libpq\`, `libpq;`): the part before it is the package, and `;` or `&&` also ends the command, as
+# a separate `&&`, `||` or `;` does. An upgrade naming no package (`apk upgrade` alone) prints
+# nothing: it moves everything, and no single package can be called a no-op.
+# Usage: upgraded_packages <Dockerfile>
+upgraded_packages() {
+  awk '
+    function parse(line,    n, w, i, j, word, ends) {
+      n = split(line, w, /[[:space:]]+/)
+      if (toupper(w[1]) == "FROM" || (w[1] == "" && toupper(w[2]) == "FROM")) { split("", pkgs); return }
+      for (i = 1; i < n; i++) {
+        if ((w[i] == "apk" || w[i] == "apt-get" || w[i] == "apt") && w[i + 1] == "upgrade") {
+          for (j = i + 2; j <= n; j++) {
+            word = w[j]
+            if (word == "&&" || word == "||" || word == ";") break
+            ends = (word ~ /(;|&&)$/)
+            sub(/(\\|;|&&)+$/, "", word)
+            if (word != "" && word !~ /^-/) pkgs[word] = 1
+            if (ends) break
+          }
+        }
+      }
+    }
+    { sub(/\r$/, "") }
+    /^[[:space:]]*#/ { next }
+    /\\[[:space:]]*$/ { line = $0; sub(/\\[[:space:]]*$/, " ", line); joined = joined line; next }
+    { parse(joined $0); joined = "" }
+    END { if (joined != "") parse(joined); for (p in pkgs) print p }
+  ' "$1" | sort -u
+}
+
+# THE IMAGE THE SHIPPED STAGE STARTS FROM, as a registry reference: the last `FROM`, followed through
+# an earlier stage it names (`FROM base` after `FROM nginx:x AS base`) and through the `ARG` defaults
+# declared before the first `FROM` (`${TAG}`, `$TAG`). Prints `SKIP <reason>` when no reference can be
+# named - an `ARG` with no default, `${X:-y}`, `scratch` - so the caller logs why it did not compare,
+# rather than reading an outage into a reference that was never an image.
+# Usage: shipped_base <Dockerfile>
+shipped_base() {
+  awk '
+    function resolve(r,    n, k, pre, post) {
+      for (n = 0; n < 20; n++) {
+        if (tolower(r) in stage) { r = stage[tolower(r)]; continue }
+        if (match(r, /\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { k = substr(r, RSTART + 2, RLENGTH - 3) }
+        else if (match(r, /\$[A-Za-z_][A-Za-z0-9_]*/)) { k = substr(r, RSTART + 1, RLENGTH - 1) }
+        else break
+        if (!(k in args)) break
+        pre = substr(r, 1, RSTART - 1); post = substr(r, RSTART + RLENGTH); r = pre args[k] post
+      }
+      return r
+    }
+    { sub(/\r$/, "") }
+    toupper($1) == "ARG" && !from_seen { eq = index($2, "="); if (eq > 0) args[substr($2, 1, eq - 1)] = substr($2, eq + 1) }
+    toupper($1) == "FROM" {
+      from_seen = 1; ref = ""
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--/) continue; ref = $i; break }
+      for (i = 2; i < NF; i++) if (toupper($i) == "AS") { stage[tolower($(i + 1))] = ref }
+      last = ref
+    }
+    END {
+      r = resolve(last)
+      if (r ~ /\$/) print "SKIP the shipped stage starts from " last ", which names a build argument with no default here"
+      else if (tolower(r) == "scratch") print "SKIP the shipped stage starts from scratch, which carries no package"
+      else print r
+    }
+  ' "$1"
+}
+
+# The two readers above, alone, for `image-scan-targets.test.sh` (no network, no trivy).
+if [ "${1:-}" = '--upgraded-packages' ]; then
+  upgraded_packages "$2"
+  exit 0
+fi
+if [ "${1:-}" = '--shipped-base' ]; then
+  shipped_base "$2"
+  exit 0
+fi
+
 command -v trivy >/dev/null || { echo "::error::trivy is not on PATH"; exit 1; }
 
 targets="$(bash "$here/image-scan-targets.sh")" || exit 1
@@ -86,6 +168,56 @@ if ! trivy image --quiet --download-db-only; then
   outage "the Trivy vulnerability database could not be downloaded, so NO image was scanned"
 fi
 
+# THE CONTEXT A `dockerfile:` BUILD READS: exactly the sources its `COPY`/`ADD` lines name (not a
+# `--from` stage's), copied from the repository into a fresh directory, whose path is printed.
+# A source the checkout does not hold is a build OUTPUT the release produces before it builds
+# (`frontend/build`, downloaded from `build-frontend` in `build.yml`), and this job does not produce
+# it. It is staged EMPTY only when git IGNORES that path - the proof it is an output and not a source
+# of ours: the packages the scan reads come from the base and the `RUN` lines, and that output's code
+# is what the lockfile audits read. A missing source git does NOT ignore is a typo the release would
+# meet too, so it fails the staging and the run (exit 1), like a build that fails.
+# ONLY THE PLAIN FORM `COPY [--flag...] <src>... <dest>` IS READ. The JSON form (`COPY ["a", "b"]`),
+# a heredoc (`COPY <<EOF`), a glob (`*`, `?`, `[`) and a remote `ADD <url>` are REFUSED by name, so the
+# run fails with "could not be staged" (exit 1) instead of building from a context that silently lacks
+# a source. None is used today; the first file that needs one extends this reader, and
+# `image-scan-targets.test.sh` holds each refusal.
+# Usage: stage_context <Dockerfile> <directory to create>
+stage_context() {
+  local dockerfile="$1" dir="$2" src
+  mkdir -p "$dir" || return 1
+  while read -r src; do
+    [ -n "$src" ] || continue
+    if [ "${src%% *}" = 'REFUSED' ]; then
+      echo "    ${dockerfile##*/}: ${src#REFUSED } is a COPY/ADD form this reader does not stage" >&2
+      return 1
+    fi
+    mkdir -p "$dir/$(dirname "$src")" || return 1
+    if [ -e "$root/$src" ]; then
+      cp -R "$root/$src" "$dir/$src" || return 1
+    elif git -C "$root" check-ignore -q "$src"; then
+      echo "    $src is a build output this checkout does not hold (git ignores it): staged empty" >&2
+      mkdir -p "$dir/$src" || return 1
+    else
+      echo "    $src, copied by ${dockerfile##*/}, is not in the tree and git does not ignore it" >&2
+      return 1
+    fi
+  done < <(awk '
+    toupper($1) == "COPY" || toupper($1) == "ADD" {
+      n = 0; from = 0
+      for (i = 2; i <= NF; i++) { if ($i ~ /^--from=/) from = 1; else if ($i !~ /^--/) args[++n] = $i }
+      if (from) next
+      if (args[1] ~ /^\[/) { print "REFUSED the JSON form"; next }
+      for (i = 1; i < n; i++) {
+        if (args[i] ~ /^<</) print "REFUSED a heredoc"
+        else if (args[i] ~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//) print "REFUSED a remote source (" args[i] ")"
+        else if (args[i] ~ /[*?[]/) print "REFUSED a glob (" args[i] ")"
+        else print args[i]
+      }
+    }
+  ' "$dockerfile")
+  printf '%s\n' "$dir"
+}
+
 common=(--quiet --skip-db-update --scanners vuln --severity 'HIGH,CRITICAL' --ignore-unfixed)
 root="$(cd "$here/../.." && pwd)"
 found=""
@@ -95,7 +227,7 @@ while IFS= read -r target; do
   echo "--- $target"
   # `dockerfile:<path>` is an image whose shipped stage upgrades its base's packages, so its base is
   # not what an estate runs (`image-scan-targets.sh`): it is BUILT here, from the same file and the
-  # same context `build.yml` uses, and the local result is scanned. Every other target is a reference
+  # context `stage_context` builds from its COPY lines, and the local result is scanned. Every other target is a reference
   # Trivy reads from its registry. A build that fails is a FINDING (exit 1), never an outage: the file
   # is ours, and an image we cannot build is one the release cannot ship (review of #3442) - exit 2
   # stays for the registry and the database alone.
@@ -105,7 +237,12 @@ while IFS= read -r target; do
       path="${target#dockerfile:}"
       name="${path##*/Dockerfile.}"
       image="canari-image-scan/$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]'):local"
-      if ! DOCKER_BUILDKIT=1 docker build --quiet --no-cache --file "$root/$path" --tag "$image" "$root" </dev/null >/dev/null; then
+      if ! context="$(stage_context "$root/$path" "$work/context-$name")"; then
+        echo "    $path could not be staged"
+        broken="$broken $target"
+        continue
+      fi
+      if ! DOCKER_BUILDKIT=1 docker build --quiet --no-cache --file "$root/$path" --tag "$image" "$context" </dev/null >/dev/null; then
         echo "    $path could not be built"
         broken="$broken $target"
         continue
@@ -127,6 +264,32 @@ while IFS= read -r target; do
   # The same image WITHOUT the allowlist, for the retirement check below.
   trivy image "${common[@]}" "${src[@]}" --exit-code 0 --format json --output "$work/raw-$(printf '%s' "$target" | tr -c 'A-Za-z0-9.-' '_').json" "$image" ||
     unread="$unread $target"
+  # AN UPGRADE THE BASE NO LONGER NEEDS IS REPORTED (review of #3915). The built image is clean either
+  # way, so nothing else would ever say that upstream shipped the fix and the line can go: the BARE
+  # base is scanned without the allowlist, and a package the file upgrades on which the base reports
+  # no fixable HIGH/CRITICAL advisory any more is a no-op, named in a warning. It does not fail the
+  # run - the image is right, only the file is longer than it needs to be.
+  case "$target" in
+    dockerfile:*)
+      base="$(shipped_base "$root/$path")"
+      packages="$(upgraded_packages "$root/$path")"
+      if [ -z "$packages" ]; then
+        echo "    $path upgrades no named package, so no line of it can be called a no-op"
+      elif [ "${base%% *}" = 'SKIP' ]; then
+        echo "    $path: its upgrades are not compared with a base - ${base#SKIP }"
+      elif trivy image "${common[@]}" --image-src remote --exit-code 0 --format json --output "$work/base-$name.json" "$base"; then
+        while read -r package; do
+          if jq -e --arg p "$package" '[.Results[]?.Vulnerabilities[]? | select(.PkgName == $p)] | length > 0' "$work/base-$name.json" >/dev/null; then
+            echo "    $package: its base $base still needs the upgrade"
+          else
+            echo "::warning title=Image scan, an upgrade is likely a no-op::no fixable HIGH/CRITICAL advisory left on $package in $base: the upgrade of $package in $path is likely a no-op, check and delete it (and the file, if it was the last). Only that package name was compared, not the advisory the line was written for."
+          fi
+        done <<< "$packages"
+      else
+        unread="$unread $base(base of $path)"
+      fi
+      ;;
+  esac
 done <<< "$targets"
 
 retired=0

@@ -2579,7 +2579,13 @@ When the opportunistic outbox drain (FCM push, Welcome join, boot receiver) leav
 exponential backoff on both platforms.
 
 - **Android** — `OutboxRetryWorker` (WorkManager): expedited one-shot work request with exponential
-  backoff (30s → 60s → 120s …). After 3 consecutive failures it enters a persistent failure state
+  backoff (30s → 60s → 120s …), constrained to `NetworkType.CONNECTED` like the iOS twin. It is
+  enqueued as ONE unique work (`canari_outbox_retry`, `APPEND_OR_REPLACE`, so each enqueue is owed a
+  drain after it). The plain requests of earlier builds were unconstrained; they are cancelled once
+  by their class tag (#3912). The constraint means an offline run is no longer an attempt. It does
+  NOT make the cap right: the cap counts, so a server down for a few minutes while the phone is
+  online still spends it ([backlog](../backlog.d/p2-the-outbox-retry-ends-on-a-count-not-on-durable-state.md)).
+  A failed drain below the cap is a `Result.retry()`. After 3 consecutive failures it enters a persistent failure state
   and shows the "open the app" nudge (`showPendingSyncNotification`). The flag resets when the user
   opens the app (`MainActivity.onResume`). A foreground guard defers retry when the TS outbox
   flusher is active (avoids double-send).

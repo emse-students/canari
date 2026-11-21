@@ -1,8 +1,10 @@
 ## Reading owed - the broadcaster's right-edge control column on both phones (owner, 2026-11-19)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Built: on air, the six controls (End, flip, mic, camera, share, chat toggle) are one column on the
 right edge, End on top, identity top-left; the column is height-capped and scrolls on a short screen

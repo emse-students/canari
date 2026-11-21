@@ -572,6 +572,18 @@ export class SubmitFormDto extends DeclaredIdentityDto {
   @IsOptional()
   guestEmail?: string;
 
+  /**
+   * THE ACCOUNT FIELDS THE PAGE TOLD THE MEMBER IT WOULD JOIN (`respondentFields` as the page read
+   * them, owner 2026-11-21, principle 1). The server joins only what was announced: a form changed
+   * since the page loaded is refused `FORM_RESPONDENT_FIELDS_CHANGED` and the page reloads. Absent
+   * from a build older than `1.7.3` ([LEGACY], `docs/wiki/legacy-compatibility.md`).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  announcedFields?: string[];
+
   @IsValidAnswers()
   answers: Record<string, FormAnswerValue>;
 

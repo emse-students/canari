@@ -1,8 +1,10 @@
 ## P2 - a Lydia cashier add binds the person and not the number, and overwrites a number Lydia already knows
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Found by the adversarial review of the 1.7.1 flip of the cashier gate
 ([payments](../frontend/modules/payments.md#the-cashiers-enrolment-lot-3)). No direct exploit: every
@@ -59,6 +61,14 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    la main lui-même. C'est pour ça qu'il est important de pouvoir gérer les caissiers sur Canari"*: the
    Responsable hands over to another member through the cashier screens first (that hand-over step is
    owed if the screens cannot do it yet), and only then may leave ([decisions](owner-decisions-of-2026-11-19.md)).
+   **Built 2026-11-20, behind its own switch, OFF**: "Transférer le rôle", the hand-over (add the heir
+   with the 13 rights, record, remove the old number through the verified removal) and the departure
+   refusal `LYDIA_RESPONSABLE_MUST_HAND_OVER` (a platform admin may remove a Responsable anyway after a
+   typed confirmation; heirs hold `MANAGE_PAYOUT_ACCOUNT`; a cashier is promoted in one step - owner,
+   2026-11-20) ([payments](../frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)).
+   Items 4 and 6 stand: an erased Responsable's current number stays live at Lydia under no row. It flips
+   after [homologation](reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md) and
+   [the owner's trial](reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md).
 8. **The claim fence is a clock.** social waits 30 s for core's removal and then records it NOT
    confirmed and releases the claim; core bounds its three Lydia calls to 24 s, but an axios timeout is
    per socket idle, not a total deadline. A late `removecashier` landing after a re-add of the same

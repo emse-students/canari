@@ -169,10 +169,12 @@ check "a new backlog entry -> backlog-plan" "a new backlog entry does not plan b
 git -C "$c" reset -q
 rm -f "$c/docs/wiki/backlog.d/new.md"
 
-# The plan regenerates against the index the COMMIT is built from: `git commit -a` and
-# `git commit -- <path>` build their own (GIT_INDEX_FILE), and read against the default index their
-# own changes looked unstaged and were refused. Run through a real pre-commit hook, as git runs it.
-echo "the plan regeneration follows git commit -a and git commit -- <path>:"
+# The plan page is generated where it is read and NEVER committed (docs/wiki/cicd.md, "The plan
+# page is generated where it is read"): committed, it made every open pull request conflict with
+# every merge. A commit touching an entry rewrites the checkout's copy and stages nothing - through
+# `git commit -a` and `git commit -- <path>` too, which build their own index (GIT_INDEX_FILE) and
+# were refused once when the plan was derived from the default one. Run through a real hook.
+echo "the commit rewrites the plan page in the checkout and never commits it:"
 g="$scratch/plan-index"
 make_repo "$g"
 mkdir -p "$g/tools/backlog-plan" "$g/.github/scripts/tests" "$g/.husky"
@@ -184,23 +186,25 @@ printf '%s\n' "import { readdirSync, readFileSync, writeFileSync } from 'node:fs
 echo "" >"$g/.github/scripts/tests/backlog-plan.test.mjs"
 printf '#!/bin/sh\nexec bash .github/scripts/local-ci.sh plan\n' >"$g/.husky/pre-commit"
 chmod +x "$g/.husky/pre-commit"
+echo "docs/wiki/plan.md" >"$g/.gitignore"
 echo "entry one" >"$g/docs/wiki/backlog.d/a.md"
-echo "entry one" >"$g/docs/wiki/plan.md"
 git -C "$g" add -A
 git -C "$g" commit -qm plan-base
 echo "entry one, edited" >"$g/docs/wiki/backlog.d/a.md"
 rc=0
 out=$(git -C "$g" commit -qam edit-a 2>&1) || rc=$?
-check "git commit -a commits an edited entry, its plan regenerated" "git commit -a was refused or left the plan out (rc=$rc): $out" \
-  test "$rc" -eq 0 -a "$(git -C "$g" show HEAD:docs/wiki/plan.md)" = "entry one, edited"
+check "git commit -a commits an edited entry and rewrites the page in the checkout" "git commit -a was refused or left the page stale (rc=$rc): $out" \
+  test "$rc" -eq 0 -a "$(cat "$g/docs/wiki/plan.md")" = "entry one, edited"
 echo "entry one, edited twice" >"$g/docs/wiki/backlog.d/a.md"
 echo "not in this commit" >>"$g/shared.txt"
 rc=0
 out=$(git -C "$g" commit -qm edit-a-again -- docs/wiki/backlog.d/a.md 2>&1) || rc=$?
-check "git commit -- <entry> commits it, its plan regenerated" "git commit -- <path> was refused or left the plan out (rc=$rc): $out" \
-  test "$rc" -eq 0 -a "$(git -C "$g" show HEAD:docs/wiki/plan.md)" = "entry one, edited twice"
+check "git commit -- <entry> commits it and rewrites the page" "git commit -- <path> was refused or left the page stale (rc=$rc): $out" \
+  test "$rc" -eq 0 -a "$(cat "$g/docs/wiki/plan.md")" = "entry one, edited twice"
 check "and leaves the file it did not name out of the commit" "a partial commit took an unnamed file" \
   test -z "$(git -C "$g" show --name-only --format= HEAD | grep -F shared.txt || true)"
+check "no commit ever carries the page" "the generated page was committed" \
+  test -z "$(git -C "$g" log --format= --name-only -- docs/wiki/plan.md)"
 
 # ── 4. the push ─────────────────────────────────────────────────────────────────────────────────
 # RUN FOR REAL, never dry: a dry push would be a push nothing checked, so the push tier refuses one.

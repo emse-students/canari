@@ -64,6 +64,13 @@ export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
 /** An answer carries a guest name or e-mail the form does not ask - or comes from a member. */
 export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
 
+/**
+ * What the form joins from the account changed since the page the member read (owner, 2026-11-21,
+ * principle 1): the page's `announcedFields` are not the form's joined fields now. Nothing was
+ * stored; the page reloads the form, keeps the answer, and the member reads the new notice.
+ */
+export const FORM_RESPONDENT_FIELDS_CHANGED = 'FORM_RESPONDENT_FIELDS_CHANGED';
+
 /** The form does not let its answers be changed: the switch is off, or it is anonymous (`answer-edit.ts`). */
 export const FORM_ANSWER_EDIT_OFF = 'FORM_ANSWER_EDIT_OFF';
 /** An edit changes a question that touches the price; `itemId` names it (`answer-edit.ts`). */

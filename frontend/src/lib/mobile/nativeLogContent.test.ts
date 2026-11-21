@@ -189,6 +189,8 @@ const SAFE_EXPRESSIONS: RegExp[] = [
   /\.(as_millis|as_secs|as_micros|as_u64|u32|sum|count|len)\(\)$/,
   // Helpers that return a fingerprint, a cache stem or a description built from ids and states.
   /^(\w*key_fingerprint|CanariDescribeDeepLink|avatar_cache_stem|copy_label|refused_of|id_of|describe)\(.*\)$/,
+  // A conversation's log reference: `ch:` or `g:` and 8 characters of its id (`ConversationRef`).
+  /^ConversationRef\.of\([\w.]+\)$/,
   // The helpers that say an error's domain and code, and a refusal's reason, instead of its text.
   /^(CanariErrorReason|errorReason|CanariPushContextRefusal)\(.*\)$/,
   // Where a throwable was thrown (its class and its frame), never what it says.

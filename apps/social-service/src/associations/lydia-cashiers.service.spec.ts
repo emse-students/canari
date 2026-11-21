@@ -18,10 +18,12 @@ import {
 } from './lydia-cashiers.service';
 import {
   LYDIA_CASHIER_ADDED_TYPE,
+  LYDIA_RESPONSABLE_HANDED_OVER_TYPE,
   LYDIA_CASHIER_NOTIFICATIONS_ENABLED,
   LydiaCashierNotifier,
 } from './lydia-payments-notifier.service';
 import { LYDIA_CASHIER_PHONE_PURPOSE } from './associations.service';
+import { LYDIA_RESPONSABLE_HANDOVER_DISABLED } from './lydia-responsable-handover';
 import { SECRET_BOX_ENV, sealSecret } from '../common/secret-box';
 import {
   LYDIA_CASHIER_CLAIM_LOST,
@@ -68,6 +70,9 @@ describe('the lot 3 codes social-service answers follow the shared contract', ()
     );
     expect(LYDIA_NO_BUSINESS).toBe(CONTRACT.core.noBusiness);
     expect(LYDIA_CASHIER_ADDED_TYPE).toBe(CONTRACT.notificationTypes.cashierAdded);
+    expect(LYDIA_RESPONSABLE_HANDED_OVER_TYPE).toBe(
+      CONTRACT.notificationTypes.responsableHandedOver
+    );
   });
 
   it('waits for core exactly as long as core bounds a removal under (its three calls answer first)', () => {
@@ -793,5 +798,223 @@ describe('LydiaCashiersService - the checks, with a mocked database', () => {
       Record<string, string>,
     ];
     expect(body).toMatchObject({ contextPhone: HOLDER_PHONE, cashierPhone: OLD });
+  });
+});
+
+describe('LydiaCashiersService - the hand-over switch, social side (defence in depth)', () => {
+  /** A service whose database must never be read: the switch refuses before. */
+  function shut() {
+    const query = jest.fn();
+    const service = new LydiaCashiersService(
+      { query, manager: { transaction: jest.fn() } } as never,
+      {} as never,
+      { tellAdded: jest.fn(), tellResponsable: jest.fn() } as never,
+      {} as never
+    );
+    return { service, query };
+  }
+
+  it('ships OFF: the claim is the typed 409 DISABLED, nothing read or claimed', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, query } = shut();
+    expect(service.handoverEnabled()).toBe(false);
+    await expect(
+      service.claimHandover('asso-1', {
+        actorId: 'holder',
+        globalAdmin: false,
+        userId: 'heir',
+        phone: '+33611112222',
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED } });
+    expect(query).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a record reaching it while off is refused the same way, its claim released', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service } = shut();
+    const release = jest
+      .spyOn(service as unknown as { release: () => Promise<void> }, 'release')
+      .mockResolvedValue(undefined);
+    await expect(
+      service.recordHandover('asso-1', {
+        vendorToken: 'vendor-1',
+        userId: 'heir',
+        phone: '+33611112222',
+        previousResponsableId: 'row-1',
+        actorId: 'holder',
+        confirmed: true,
+        claimToken: '3e1c8d7b-4a5f-4e6d-8c9b-0a1f2e3d4c5b',
+      })
+    ).rejects.toMatchObject({ response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED } });
+    expect(release).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
+describe('LydiaCashiersService.recordHandover - the record, with an SQL-routed database', () => {
+  const ASSO_ID = '9b2e4c6a-1d3f-4e5a-8b7c-0d1e2f3a4b5c';
+  const TOKEN = '7d0c3b1a-5e2f-4a6b-9c8d-0e1f2a3b4c5d';
+  const OLD = '+33611111111';
+  const HEIR = '+33622222222';
+  let saved: string | undefined;
+  beforeAll(() => {
+    saved = process.env[SECRET_BOX_ENV];
+    process.env[SECRET_BOX_ENV] = 'unit-test-secret-0123456789abcdefghij';
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env[SECRET_BOX_ENV];
+    else process.env[SECRET_BOX_ENV] = saved;
+  });
+  beforeEach(() => {
+    for (const level of ['log', 'warn', 'error', 'debug'] as const) {
+      jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
+    }
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  /**
+   * The record's transaction, answered by SQL text: the claim held under TOKEN, the old Responsable
+   * live, no cashier row for the heir, the heir's bitmask `permissions` (null: not a member). Every
+   * write is kept. `assoRepo.query` - anything OUTSIDE the transaction - fails.
+   */
+  function made(permissions: number | null, shape: { old?: boolean; heirCashier?: boolean } = {}) {
+    const { old = true, heirCashier = false } = shape;
+    const writes: Array<{ sql: string; params: unknown[] }> = [];
+    const query = jest.fn(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('FOR UPDATE OF a')) {
+        return [{ vendorToken: 'vendor-1', startedAt: new Date(0), claimToken: TOKEN }];
+      }
+      if (sql.includes("role = 'responsable'") && sql.includes('FOR UPDATE')) {
+        if (!old) return [];
+        return [
+          {
+            id: 'row-old',
+            phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO_ID, OLD),
+            phoneEnd: '11',
+            previousPhoneSealed: null,
+          },
+        ];
+      }
+      if (sql.includes("role <> 'responsable'")) {
+        return heirCashier
+          ? [
+              {
+                id: 'row-heir',
+                phoneSealed: sealSecret(LYDIA_CASHIER_PHONE_PURPOSE, ASSO_ID, HEIR),
+              },
+            ]
+          : [];
+      }
+      if (sql.includes('FROM association_members')) {
+        return permissions === null ? [] : [{ permissions }];
+      }
+      if (sql.includes('SELECT name FROM associations')) return [{ name: 'BDE' }];
+      writes.push({ sql, params });
+      if (sql.includes('INSERT INTO lydia_cashiers')) return [{ id: 'row-new' }];
+      if (sql.includes('RETURNING id')) return [{ id: ASSO_ID }];
+      return [];
+    });
+    const tellResponsable = jest.fn(async () => 1);
+    const outside = jest.fn().mockRejectedValue(new Error('the pool is gone'));
+    const service = new LydiaCashiersService(
+      {
+        query: outside,
+        manager: { transaction: async (fn: (m: unknown) => unknown) => fn({ query }) },
+      } as never,
+      {} as never,
+      { tellAdded: jest.fn(), tellResponsable } as never,
+      {} as never
+    );
+    jest.spyOn(service, 'handoverEnabled').mockReturnValue(true);
+    const record = (confirmed: boolean) =>
+      service.recordHandover(ASSO_ID, {
+        vendorToken: 'vendor-1',
+        userId: 'heir-user',
+        phone: HEIR,
+        previousResponsableId: 'row-old',
+        actorId: 'holder',
+        confirmed,
+        claimToken: TOKEN,
+      });
+    return { record, writes, tellResponsable, outside };
+  }
+  const PAYOUT = 1 << 9;
+
+  it('handed over: the notice carries the name read UNDER the lock - nothing after the commit can fail the answer', async () => {
+    const { record, tellResponsable, outside } = made(PAYOUT);
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'handed-over',
+      cashierId: 'row-new',
+      remove: 'previous',
+    });
+    expect(tellResponsable).toHaveBeenCalledWith({ id: ASSO_ID, name: 'BDE' }, 'heir-user');
+    // The only reads outside the transaction would be the failing pool: none was made.
+    expect(outside).not.toHaveBeenCalled();
+  });
+
+  it('the heir lost MANAGE_PAYOUT_ACCOUNT since the claim: never recorded, the number tracked and removed next', async () => {
+    const { record, writes, tellResponsable } = made(0);
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'heir-ineligible',
+      cashierId: 'row-old',
+      remove: 'previous',
+    });
+    expect(writes.some((w) => w.sql.includes('INSERT INTO lydia_cashiers'))).toBe(false);
+    expect(writes.some((w) => w.sql.includes('"previousPhoneSealed" = $2'))).toBe(true);
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('the heir left AND Lydia did not confirm: target-left, the number removed next - never tracked with nobody to end it', async () => {
+    const { record, tellResponsable } = made(null);
+    await expect(record(false)).resolves.toEqual({
+      outcome: 'target-left',
+      cashierId: 'row-old',
+      remove: 'previous',
+    });
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('no old Responsable left, the heir without MANAGE_PAYOUT_ACCOUNT: recorded AND answered as the Responsable - never "not made" over the row', async () => {
+    const { record, writes, tellResponsable } = made(0, { old: false });
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'handed-over',
+      cashierId: 'row-new',
+      remove: null,
+    });
+    expect(writes.some((w) => w.sql.includes('INSERT INTO lydia_cashiers'))).toBe(true);
+    expect(tellResponsable).toHaveBeenCalledWith({ id: ASSO_ID, name: 'BDE' }, 'heir-user');
+    const said = String((Logger.prototype.error as jest.Mock).mock.calls);
+    expect(said).toContain('WITHOUT MANAGE_PAYOUT_ACCOUNT');
+  });
+
+  it('no old Responsable left, an ineligible heir Lydia did not confirm: recorded unconfirmed, answered unconfirmed', async () => {
+    const { record, tellResponsable } = made(0, { old: false });
+    await expect(record(false)).resolves.toEqual({
+      outcome: 'unconfirmed',
+      cashierId: 'row-new',
+      remove: null,
+    });
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('a promoted cashier who lost MANAGE_PAYOUT_ACCOUNT: their OWN number removed next (current) - the seat goes with it', async () => {
+    const { record, writes, tellResponsable } = made(0, { heirCashier: true });
+    await expect(record(true)).resolves.toEqual({
+      outcome: 'heir-ineligible',
+      cashierId: 'row-heir',
+      remove: 'current',
+    });
+    expect(writes.some((w) => w.sql.includes('INSERT INTO lydia_cashiers'))).toBe(false);
+    expect(tellResponsable).not.toHaveBeenCalled();
+  });
+
+  it('an eligible heir Lydia did not confirm: unconfirmed, tracked for a retry, nothing removed', async () => {
+    const { record } = made(PAYOUT);
+    await expect(record(false)).resolves.toEqual({
+      outcome: 'unconfirmed',
+      cashierId: 'row-old',
+      remove: null,
+    });
   });
 });

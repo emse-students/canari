@@ -1,9 +1,11 @@
 package fr.emse.canari
 
+import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.NativePushLogLine
 import fr.emse.canari.push.PushShowOutcome
 import fr.emse.canari.push.PushShowOutcome.OsState
 import fr.emse.canari.push.PushShowOutcome.Outcome
+import fr.emse.canari.push.ReadElsewhereMarks
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -93,6 +95,27 @@ class PushShowOutcomeTest {
         assertFalse(PushShowOutcome.guardedAnnouncement("message", false, false, isWelcome = true))
         assertFalse(PushShowOutcome.guardedAnnouncement("welcome_request_pending", false, false, false))
         assertFalse(PushShowOutcome.guardedAnnouncement(null, false, false, false))
+    }
+
+    @Test
+    fun `every read-elsewhere decision has its own recorded outcome`() {
+        val reads = ReadElsewhereMarks.ReadOutcome.entries.map { PushShowOutcome.of(it) }
+        val withdrawals = ReadElsewhereMarks.Withdrawal.entries.map { PushShowOutcome.of(it) }
+        val deliveries = ReadElsewhereMarks.Delivery.entries.map { PushShowOutcome.of(it) }
+        val all = reads + withdrawals + deliveries
+        assertEquals("one outcome per decision", all.size, all.toSet().size)
+        assertTrue(all.all { it.recorded && !it.posts })
+        assertEquals(Outcome.READ_PENDING_ONLY, PushShowOutcome.of(ReadElsewhereMarks.ReadOutcome.PENDING_ONLY))
+        assertEquals(Outcome.WITHDRAW_KEPT_PENDING_REPLY, PushShowOutcome.of(ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY))
+        assertEquals(Outcome.DELIVERY_KEPT_UNTIL_READ, PushShowOutcome.of(ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ))
+        assertEquals("suppressed-read-elsewhere", Outcome.SUPPRESSED_READ_ELSEWHERE.token)
+    }
+
+    @Test
+    fun `the line names a conversation the way every other log line does`() {
+        for (id in listOf(null, "", "channel_9f8e7d6c5b4a", "0123456789")) {
+            assertEquals(ConversationRef.of(id), PushShowOutcome.conversationRef(id))
+        }
     }
 
     @Test

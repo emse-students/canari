@@ -43,36 +43,96 @@ const RECORD = /\brecordShowOutcome\(/g;
 
 const show = code(bodyOf(service, 'internal fun Context.showMessageNotification(', '): Long {'));
 
+/** The statement just before `index` in `lines`, blank lines and `Log.` lines aside. */
+function statementBefore(lines: string[], index: number): string {
+  for (let i = index - 1; i >= 0; i--) {
+    const l = lines[i].trim();
+    if (l !== '' && !l.startsWith('Log.')) return l;
+  }
+  return '';
+}
+
 describe('showMessageNotification records exactly one outcome per return', () => {
-  it('counts as many records as returns', () => {
+  // A direct record before an early return, or `ended = ...` inside the section held under
+  // READ_ELSEWHERE's lock, which the `finally` records once the lock is released.
+  const ENDED = /\bended = PushShowOutcome\./g;
+  const direct = (show.match(RECORD) ?? []).length - 1; // minus the `finally`'s own record
+
+  it('counts as many ends as returns: one record or one `ended =` per return', () => {
     const returns = show.match(RETURN) ?? [];
-    const records = show.match(RECORD) ?? [];
-    expect(returns.length).toBeGreaterThanOrEqual(4);
-    expect(records.length).toBe(returns.length);
+    const ended = show.match(ENDED) ?? [];
+    expect(returns.length).toBeGreaterThanOrEqual(6);
+    expect(direct + ended.length).toBe(returns.length);
   });
 
-  it('each early return records its own suppression, the post records the derived outcome', () => {
-    for (const outcome of [
-      'SUPPRESSED_FOREGROUND',
-      'SUPPRESSED_SHADE_MARK',
-      'SUPPRESSED_ALREADY_ALERTED',
-    ]) {
+  it('every return is preceded by its own record or `ended =`', () => {
+    const lines = show.split('\n');
+    lines.forEach((l, i) => {
+      if (!/\breturn\b(?!@)/.test(l)) return;
+      const before = statementBefore(lines, i);
+      // `return postedStamp` follows the `finally` that records the post.
+      if (/\breturn postedStamp\b/.test(l)) return;
+      expect(before, `nothing recorded before "${l.trim()}"`).toMatch(
+        /^(recordShowOutcome\(|ended = PushShowOutcome\.|endedDetail = )/
+      );
+    });
+  });
+
+  it("records the locked section's end in a finally, once the lock is released", () => {
+    expect(show).toMatch(
+      /\} \} finally \{\s*ended\?\.let \{ recordShowOutcome\(it, groupId, channel, manager, endedShortcut, endedDetail\) \}/
+    );
+    expect(show).toContain(
+      'ended = PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds)'
+    );
+    // The post is decided after the notify, and recorded before the badge summary.
+    const notify = show.indexOf('manager.notify(notifId, notif)');
+    const posted = show.indexOf('PushShowOutcome.posted(');
+    expect(posted).toBeGreaterThan(notify);
+    expect(show.indexOf('} } finally {')).toBeLessThan(show.indexOf('refreshBadgeSummary('));
+  });
+
+  it('each suppression names its own outcome', () => {
+    for (const outcome of ['SUPPRESSED_FOREGROUND', 'SUPPRESSED_SHADE_MARK']) {
       expect(show).toContain(
         `recordShowOutcome(PushShowOutcome.Outcome.${outcome}, groupId, channel)`
       );
     }
-    expect(show).toMatch(
-      /recordShowOutcome\(\s*PushShowOutcome\.posted\(alreadyPosted, supersedes != 0L, callHolds\), groupId, channel, manager, conversationShortcutId,/
+    expect(show).toContain(
+      'recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_READ_ELSEWHERE, groupId, channel, detail = "early")'
+    );
+    expect(show).toContain('ended = PushShowOutcome.Outcome.SUPPRESSED_ALREADY_ALERTED');
+    expect(show).toContain('ended = PushShowOutcome.Outcome.SUPPRESSED_READ_ELSEWHERE');
+  });
+});
+
+describe('every read-elsewhere decision records its outcome, outside the lock', () => {
+  const svc = code(service);
+
+  it('a read and a dismissal record what they did to the banner, in a finally', () => {
+    const cancel = code(bodyOf(service, 'internal fun cancelConversationNotification(', ') {'));
+    expect(cancel).toContain('decided = PushShowOutcome.of(outcome)');
+    expect(cancel).toContain('decided = PushShowOutcome.of(withdrawal)');
+    expect(cancel).toMatch(
+      /\} \} finally \{\s*decided\?\.let \{ context\.recordShowOutcome\(it, groupId, null, manager\) \}/
     );
   });
 
-  it('records the post right after manager.notify, before the badge summary', () => {
-    const notify = show.indexOf('manager.notify(notifId, notif)');
-    const posted = show.indexOf('PushShowOutcome.posted(');
-    expect(posted).toBeGreaterThan(notify);
-    expect(posted).toBeLessThan(show.indexOf('refreshBadgeSummary('));
-    // Nothing else stands between the post and its record.
-    expect(show.slice(notify, posted).match(/\n/g)).toHaveLength(2);
+  it('a delivered reply and an answered reply record what they did to the banner', () => {
+    expect(svc).toContain(
+      'context.recordShowOutcome(PushShowOutcome.of(outcome), groupId, null, manager, detail = "by=reply-delivered")'
+    );
+    expect(svc).toContain(
+      'context.recordShowOutcome(PushShowOutcome.of(outcome), groupId, null, manager, detail = "by=answer-reply")'
+    );
+    // The answer's record follows its locked section, never inside it.
+    const answer = code(bodyOf(service, 'internal fun answerReplyNotification(', ') {'));
+    const lockEnd = answer.indexOf('.also { cancelReactionNotification(prefs, manager, groupId) }');
+    expect(answer.indexOf('recordShowOutcome(')).toBeGreaterThan(lockEnd);
+  });
+
+  it("holdsDirectReply's answer for a post is carried on its line", () => {
+    expect(svc).toContain('if (heldByReply) endedDetail = "heldByReply=true"');
   });
 });
 
@@ -89,7 +149,7 @@ describe('every earlier end of a visible message push records its outcome', () =
   it.each([
     [
       'the dispatchPush foreground guard',
-      'if (MainActivity.isInForeground && !showsWhileForeground)',
+      'if (MainActivity.isInForeground && !ForegroundGuard.actsInForeground(msgType, isReaction))',
       'SUPPRESSED_FOREGROUND_GUARD',
     ],
     [

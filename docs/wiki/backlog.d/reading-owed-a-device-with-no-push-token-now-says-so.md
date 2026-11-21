@@ -1,8 +1,10 @@
 ## Reading owed - a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-20, production read the morning of the `1.7.1` stable ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **steps 1 and 2 are NOT 0, and the tally does not name the branch.** The daily line reads `ios build=1.7.0 without=15/142 last: unstated=15` and `android build=1.7.0 without=12/118 last: unstated=11 in-progress:os-token=1`; 230 other `1.7.0` devices state `registered` and hold their row. The rate is about 10 % against about 20 % on `1.6.12` (2026-11-17), the same shape (11 of the 26 hold a session born in the last 24 h, 7 were used for under two minutes). Step 3 asks for a fix from the tally, and `unstated` carries none: `upsertDeviceKeyPackage` writes `pushOutcome` as the caller states it (null when omitted) and keeps the stored version, so a `1.7.0` device with no outcome is one whose last key-package write did not carry it. **What is left to read:** which caller writes a `1.7.0` device's key package without the outcome (the server can count writes by caller; the client's `register-device` always states one), then the same grouped read again once those devices have launched a second time. Nothing in this reading is a regression of `1.7.1`._
 

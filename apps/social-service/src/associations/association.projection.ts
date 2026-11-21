@@ -93,6 +93,12 @@ export type AssociationPayoutAccount = Pick<
   responsable: { userId: string; name: string; phoneEnd: string; confirmed: boolean } | null;
   /** Every live cashier of the CURRENT Business, the Responsable included (lot 3). */
   cashiers: LydiaCashierView[];
+  /**
+   * The members holding MANAGE_PAYOUT_ACCOUNT - the only heirs a Responsable hand-over accepts
+   * (owner, 2026-11-20) - read while the hand-over is switched on and a Business is managed. The
+   * reader holds that permission too.
+   */
+  payoutManagerIds?: string[];
   readiness: { cause: LydiaReadinessCause; at: string } | null;
   enrolmentInFlightSince: string | null;
   /** The Responsable step's claim (`lydiaResponsableStartedAt`), for the global admin's clear. */

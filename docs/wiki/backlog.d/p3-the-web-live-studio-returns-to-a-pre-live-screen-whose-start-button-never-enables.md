@@ -1,6 +1,8 @@
 ## Reading owed - "En direct" past an open web live screen no longer leaves it on "Reading the live's rules..." (S13, 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Seen** on `1.7.1-alpha.5` (dev) by the rig's throwaway scripts in S13
 ([S13](../device-verification.md#the-readings-of-2026-11-20-s13-171-alpha5-replays-sound-under-15-fps-messages-and-the-iphone)):
@@ -34,3 +36,5 @@ open. Expected: one `[LIVE-BROADCAST] screen for` line for the whole sequence, t
 `[POSTS] going live while a live screen is open`, the overlay still on "Live termine"; then "Fermer",
 "Publier" > "En direct" opens a fresh screen that reads the rules (`GET /api/lives/rules`) and
 offers Start.
+
+**2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, phones): a second live after an ended live opens a FRESH pre-live sheet, PASS.** The web seat's console half (one `[LIVE-BROADCAST] screen for` line, the `[POSTS] going live while a live screen is open` warning, the overlay kept on "Live termine") was not read: that is what is left.

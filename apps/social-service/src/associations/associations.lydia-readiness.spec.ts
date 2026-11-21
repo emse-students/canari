@@ -9,6 +9,15 @@ import {
   LYDIA_BUSINESS_PENDING_VALIDATION,
 } from './lydia-account-bridge';
 import {
+  LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+  LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+  LYDIA_RESPONSABLE_HANDOVER_ENABLED,
+  LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
+  LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+  LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
+  LYDIA_RESPONSABLE_MUST_HAND_OVER,
+} from './lydia-responsable-handover';
+import {
   AssociationsService,
   LYDIA_ACCOUNT_ALREADY_LINKED,
   LYDIA_BUSINESS_CHANGED,
@@ -1220,7 +1229,7 @@ describe('the Responsable codes social-service answers follow the shared contrac
         join(__dirname, '..', '..', '..', '..', 'libs', 'contracts', 'lydia-refusal-codes.json'),
         'utf8'
       )
-    ) as { social: Record<string, string> };
+    ) as { social: Record<string, string>; switches: { responsableHandoverEnabled: boolean } };
     expect({
       responsableAlreadySet: LYDIA_RESPONSABLE_ALREADY_SET,
       responsablePhoneLocked: LYDIA_RESPONSABLE_PHONE_LOCKED,
@@ -1232,6 +1241,13 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierConfirmedRequired: LYDIA_CASHIER_CONFIRMED_REQUIRED,
       businessPendingValidation: LYDIA_BUSINESS_PENDING_VALIDATION,
       businessHoldsPayments: LYDIA_BUSINESS_HOLDS_PAYMENTS,
+      responsableHandoverForbidden: LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN,
+      responsableHandoverSamePerson: LYDIA_RESPONSABLE_HANDOVER_SAME_PERSON,
+      responsableMustHandOver: LYDIA_RESPONSABLE_MUST_HAND_OVER,
+      responsableHandoverHeirNotPayoutManager: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER,
+      responsableHandoverCashierNumber: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER,
+      responsableHandoverDisabled: LYDIA_RESPONSABLE_HANDOVER_DISABLED,
+      responsableHandoverEnabled: LYDIA_RESPONSABLE_HANDOVER_ENABLED,
     }).toEqual({
       responsableAlreadySet: contract.social.responsableAlreadySet,
       responsablePhoneLocked: contract.social.responsablePhoneLocked,
@@ -1243,6 +1259,14 @@ describe('the Responsable codes social-service answers follow the shared contrac
       cashierConfirmedRequired: contract.social.cashierConfirmedRequired,
       businessPendingValidation: contract.social.businessPendingValidation,
       businessHoldsPayments: contract.social.businessHoldsPayments,
+      responsableHandoverForbidden: contract.social.responsableHandoverForbidden,
+      responsableHandoverSamePerson: contract.social.responsableHandoverSamePerson,
+      responsableMustHandOver: contract.social.responsableMustHandOver,
+      responsableHandoverHeirNotPayoutManager:
+        contract.social.responsableHandoverHeirNotPayoutManager,
+      responsableHandoverCashierNumber: contract.social.responsableHandoverCashierNumber,
+      responsableHandoverDisabled: contract.social.responsableHandoverDisabled,
+      responsableHandoverEnabled: contract.switches.responsableHandoverEnabled,
     });
   });
 });

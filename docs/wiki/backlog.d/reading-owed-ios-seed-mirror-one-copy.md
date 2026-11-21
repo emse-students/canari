@@ -1,8 +1,10 @@
 ## Reading owed - the iPhone's one seed mirror keeps the extension's seeds through a foreground (2026-11-17)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-20, production ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **the `[PUSH_BLIND]` count by platform could not be taken.** The `1.7.0` containers' logs were recreated away by the `1.7.1` deploy and the archive a deploy keeps is the runner account's, out of this account's reach; the `1.7.1` chat-delivery log (35 minutes) holds none, which proves nothing. **Read it from the live chat-delivery container at or after 2026-11-21 04:00Z, before the next release recreates it**: `[PUSH_BLIND]` grouped by `platform`, the iOS `missing=seed refused=none` lines against the stable's adoption (`1.7.0` is on 144 iOS devices that ran in the last 24 h)._
 

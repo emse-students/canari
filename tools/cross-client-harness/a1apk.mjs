@@ -451,7 +451,7 @@ export async function armA1({
     const verdict = bundleTargetVerdict(texts, plan.origin, link, { acceptDeadLiterals: acceptDeadProductionLiteral });
     console.log(
       `[${TAG}] ${plan.origin} appears in ${verdict.hits.length} packaged chunk(s), a production origin in ` +
-        `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated`
+        `${verdict.production.length}; ${verdict.links.length} production LINK constant(s) of ${LINK_MODULE} tolerated, ${verdict.allowlists.length} CSP allowlist member(s) not counted as targets`
     );
     for (const a of verdict.accepted) {
       console.log(`[${TAG}] ACCEPTED by --accept-dead-production-literal (old ref ${ref}): ${a}`);

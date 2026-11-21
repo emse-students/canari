@@ -1,6 +1,8 @@
 ## Reading owed - the Lydia managers' notices, "payments active" and "payments paused" (switched on 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **What is built:** the bell row and the push telling an association's `MANAGE_PAYOUT_ACCOUNT` holders that its Lydia payments became active (`lydia_payments_active`) or were paused (`lydia_payments_paused`), Lydia enrolment lot 2 (#2780, `v1.5.3`). `LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED` is `true` since 2026-11-20: the floor reads `1.7.0` on both estates, above `v1.5.3`, and the owner decided on 2026-11-18 to flip the managers' notices together with that floor. The constant stays as the kill switch ([payments](../frontend/modules/payments.md), [legacy-compatibility](../legacy-compatibility.md)).
 

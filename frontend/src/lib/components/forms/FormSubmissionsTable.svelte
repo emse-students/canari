@@ -27,6 +27,7 @@
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
   import {
+    cursusSourceText,
     identityCellText,
     respondentChoiceLabel,
     type DeclaredField,
@@ -86,6 +87,8 @@
      * campus columns, after the name - `identityColumnsOf`, decided by the form like every column.
      */
     identityColumns?: DeclaredField[];
+    /** Whether each row says where its cursus came from (`showsCursusSource`). */
+    cursusSource?: boolean;
   }
 
   let {
@@ -98,6 +101,7 @@
     onDelete,
     rowActions,
     identityColumns = [],
+    cursusSource = false,
   }: Props = $props();
 
   const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
@@ -320,6 +324,11 @@
           <th class="pr-4 pb-2 whitespace-nowrap" data-testid="identity-col-{field}">
             {respondentChoiceLabel(field)}
           </th>
+          {#if field === 'cursus' && cursusSource}
+            <th class="pr-4 pb-2 whitespace-nowrap" data-testid="identity-col-source">
+              {m.form_respondent_source_header()}
+            </th>
+          {/if}
         {/each}
         {#each columns as column (column.id)}
           <!-- The width lives on a DIV, not on the cell: `max-width` on a `<th>` or `<td>` is a
@@ -352,6 +361,12 @@
             <td class="py-2 pr-4 text-xs whitespace-nowrap">
               {#if text}{text}{:else}<span class="text-text-muted/50">-</span>{/if}
             </td>
+            {#if field === 'cursus' && cursusSource}
+              {@const source = cursusSourceText(sub.respondentIdentity)}
+              <td class="py-2 pr-4 text-xs whitespace-nowrap" data-testid="identity-source-cell">
+                {#if source}{source}{:else}<span class="text-text-muted/50">-</span>{/if}
+              </td>
+            {/if}
           {/each}
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
@@ -387,6 +402,7 @@
             <td
               colspan={columns.length +
                 identityColumns.length +
+                (cursusSource ? 1 : 0) +
                 (requiresPayment ? 6 : 4) -
                 (anonymous ? 1 : 0)}
               class="bg-cn-border/10 px-3 py-3"
@@ -416,7 +432,16 @@
           {#if identityColumns.length > 0}
             <p class="text-text-muted text-xs">
               {identityColumns
-                .map((field) => identityCellText(sub.respondentIdentity, field))
+                .map((field) =>
+                  field === 'cursus' && cursusSource
+                    ? [
+                        identityCellText(sub.respondentIdentity, field),
+                        cursusSourceText(sub.respondentIdentity),
+                      ]
+                        .filter(Boolean)
+                        .join(' ')
+                    : identityCellText(sub.respondentIdentity, field)
+                )
                 .filter(Boolean)
                 .join(' · ')}
             </p>

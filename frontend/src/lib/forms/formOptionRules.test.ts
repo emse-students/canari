@@ -28,6 +28,8 @@ const OFF: FormOptionState = {
   restrictsAudience: false,
   hasFileQuestion: false,
   allowsAnswerEdit: false,
+  joinsAccountBeyondCursus: false,
+  joinsCursusUnasked: false,
 };
 const OPTIONS = Object.keys(OFF) as FormOption[];
 
@@ -45,6 +47,10 @@ const EXPECTED: Record<string, FormOptionConflict> = {
   'isPublic+hasFileQuestion': 'FORM_PUBLIC_FILE',
   // Owner, 2026-11-13: an anonymous answer names nobody who could reopen it.
   'anonymous+allowsAnswerEdit': 'FORM_ANONYMOUS_ANSWER_EDIT',
+  // Owner, 2026-11-21: an anonymous form may read the promo and formation, never a name.
+  'anonymous+joinsAccountBeyondCursus': 'FORM_ANONYMOUS_ACCOUNT_FIELDS',
+  // Review, 2026-11-21: a joined cursus is also asked, a guest has no account.
+  'anonymous+joinsCursusUnasked': 'FORM_ANONYMOUS_CURSUS_NOT_ASKED',
 };
 
 /** The expected code of a pair, in either order - or undefined when the two may coexist. */

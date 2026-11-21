@@ -3336,12 +3336,38 @@ are left out (they are their Dockerfile's base plus our code, which the lockfile
 are builder stages and the local compose file, which reach no estate. **A Dockerfile whose shipped
 stage UPGRADES its base's packages** (`apk upgrade`, `apt-get upgrade`) is the exception: its base is
 exactly what it does not run, so it is listed as `dockerfile:<path>` and `image-scan.sh` BUILDS it
-(`docker build`, the repository as context, as `build.yml` does) and scans the local result
+(`docker build`, the same file `build.yml` builds) and scans the local result
 (`--image-src docker`). Both that build and the release's are uncached (`--no-cache`, `no-cache:` for
 `adminer` in `build.yml`), so a cached upgrade layer cannot hold an older package than the scan read. A
 build that fails is a FINDING (exit 1), not an outage: the file is ours; exit 2 stays for the registry
-and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN` also checks
-`apk info -e 'libpq>=18.7-r0'` so a repository that hands over no fix fails the build.
+and the database. Two such files: `Dockerfile.adminer` (below), whose `RUN` also checks
+`apk info -e 'libpq>=18.7-r0'` so a repository that hands over no fix fails the build, and
+`Dockerfile.frontend` since 2026-11-20 (`libxml2`, below). Every one is built `no-cache` by `build.yml`
+too, which `image-scan-targets.test.sh` asserts per file. **The build context is STAGED** (2026-11-20):
+`image-scan.sh` copies exactly the `COPY`/`ADD` sources into a fresh directory. A source the checkout
+does not hold - `frontend/build`, which the release downloads from `build-frontend` - is staged EMPTY,
+but only when git IGNORES that path: the packages come from the base and the `RUN` lines, and that
+bundle is what the lockfile audits read. A missing source git does not ignore is a typo the release
+would meet too, and fails the run like a build that fails. **Only the plain `COPY [--flag] <src>... <dest>` is read**: the JSON form, a heredoc, a glob
+and a remote `ADD <url>` are refused by name ("could not be staged", exit 1) rather than built from a
+context missing a source; `image-scan-targets.test.sh` holds each refusal.
+
+**An upgrade the base may no longer need is reported** (reviews of #3915 and #3916). The built image
+is clean whether or not the base still needs its `apk upgrade`, so nothing else would say that
+upstream shipped the fix. For each `dockerfile:` target the scan also reads its BARE base without the
+allowlist: the last `FROM`, followed through an earlier stage it names and the `ARG` defaults declared
+before the first `FROM` (`--shipped-base`). A base that names an `ARG` with no default, or `scratch`, is
+not compared, and the log says why; it is never read as an outage. The packages are the words after
+`upgrade` in the shipped stage (`--upgraded-packages`), Docker's line continuations joined first and a
+trailing `\`, `;` or `&&` cut from a word. For each one on which the base reports no fixable
+HIGH/CRITICAL advisory under that exact package name any more, a
+`::warning title=Image scan, an upgrade is likely a no-op::` annotation says so: it compares the
+package NAME, not the advisory the line was written for, so it asks for a check before the delete
+(adminer's `libpq`/`libxml2`, the frontend's `libxml2`). It fails nothing - the image is right. A base
+that cannot be read is an outage like any other image (exit 2).
+The build is tied to the release by `build.yml`'s own `[<name>]="./infrastructure/local/Dockerfile.<x>"`
+line, and its `no-cache:` must be one plain OR of `matrix.name == '<name>'` terms naming it: both are
+asserted per target, never assumed from the file name.
 
 | Choice | Why |
 | --- | --- |
@@ -3400,6 +3426,7 @@ and the database. The one such file is `Dockerfile.adminer` (below), whose `RUN`
 - **2026-11-10, the image scan red on krb5-libs 1.22.2-r1 (16 CVEs) and libxslt 1.1.43-r3 (2)**, HIGH, fixed in Alpine (1.22.3-r0, 1.1.43-r4) but in no official `postgres:18-alpine` or `nginx` image yet (each newest digest pulled and read that day), and no Dockerfile of ours between compose and them. The krb5 advisories are in the KDC and kadmind, which the image does not ship, and postgres answers `scram-sha-256` only; libxslt is reached only through nginx's xslt module, which no configuration loads (`nginx -T` on the production frontend and edge). **Allowlisted by purl** with the owner's approval, retiring with the pins.
 - **2026-11-03, the image scan red on `CVE-2026-117610` and `CVE-2026-118370`**, libexpat 2.9.0-r0 (HIGH, fixed in Alpine's 2.10.0-r0), in `nginx:1.31.8-alpine` and `nginx:stable-alpine`. The pinned digest (built 2026-10-28) is still the newest plain `1.31-alpine`; the `-perl` rebuild of 2026-10-31 and the floating heads carry 2.9.0-r0 too, so there was no digest to move to: **allowlisted by purl** (`pkg:apk/alpine/libexpat@2.9.0-r0`), reached only through fontconfig (the optional `image_filter` module), retiring with the pins.
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
+- **2026-11-20, the image scan red on every pull request from 20:10Z: `CVE-2026-86144`**, libxml2 2.13.9-r2 (HIGH, fixed in Alpine 3.24's 2.13.9-r3), in adminer, `nginx:stable-alpine` (the frontend base), the `nginx:1.31.8-alpine` edge and both `postgres:18-alpine` pins. Read from Docker Hub's layers that evening, no upstream build carried r3: the newest `postgres:18-alpine` (`ff64c9e3`, 2026-11-18), `nginx:1.31.8-alpine` (still `fed7e14b`), `nginx:1.31-alpine` and `stable-alpine` (2026-11-18) all ship r2. **The two images we build ship the fix**: `Dockerfile.adminer` upgrades `libxml2` beside `libpq`, and `Dockerfile.frontend` gained `apk upgrade --no-cache libxml2`, each asserting `libxml2>=2.13.9-r3`, so the scan now builds both (the frontend through the staged context above) and the release builds both uncached. **The upstream pins are allowlisted by purl** (`pkg:apk/alpine/libxml2@2.13.9-r2`): nginx reaches libxml2 only through the unloaded xslt module, and postgres parses XML only for the `xml` type, which no schema or service query uses. The rescan retires the entry when the pins move ([backlog](backlog.d/p3-bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-1-2-1-2026-10-24.md)).
 - **2026-11-20, authentik 2026.8.6 (#3877) retired 65 allowlist entries at once**: the Python libraries (aiohttp, dnspython, msgpack, oauthlib, pyasn1), Debian apt, libbrotli1 and libpq5, and 13 entries scoped by id alone. The image-scan retirement check named them from the failed run; they were deleted in the bump's own commit. One entry (`CVE-2025-47273`) still reports and remains.
 
 **2026-11-13, the image scan red on every pull request: 38 HIGH PostgreSQL advisories in `libpq
@@ -3569,6 +3596,81 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 
 **The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
 
+### The plan page is generated where it is read (2026-11-21)
+
+**THE DEFECT.** [plan](plan.md) is derived from the `target:` line of every
+[backlog.d](backlog.d/README.md) entry by `tools/backlog-plan/plan.mjs`. From 2026-11-13 it was
+COMMITTED, and `backlog-plan.test.mjs` failed a pull request whose copy was stale. Nearly every pull
+request touches an entry, so every merge to `main` left the other open pull requests CONFLICTING on
+`plan.md` - on 2026-11-16 alone #3676, #3678, #3683, #3684, and #3682 three times - and the
+automatic merge stalled until somebody merged `main` by hand and regenerated. A queue nobody drains.
+It is the conflict `backlog.d/` was created to remove from `backlog.md`, brought back by its own
+index.
+
+**WHY IT WAS CERTAIN, MEASURED.** The page lists each version's entries oldest first, and a new
+entry is the youngest of its group, so two pull requests each filing one insert at the SAME line -
+and git conflicts on two insertions between the same neighbours, always. Rendering the plan before
+and after pairs of independent changes and merging them with `git merge-file` (292 entries, the
+tree of 2026-11-16):
+
+| Change pair | Committed page, oldest first | Re-sorted by file name, a blank line between entries | Page not committed |
+| --- | --- | --- | --- |
+| two pull requests each filing one P2 entry the same day (15 pairs) | **15 conflict** | 2 conflict | 0 - nothing to merge |
+| random pairs, half filing an entry and half deleting one (300 pairs) | 18 conflict | 26 conflict | 0 |
+
+**THE OPTIONS, AND WHY THIS ONE.**
+
+- **A page conflict-free by construction** (option b: entry-local lines, file-name order, no counts)
+  is not possible in a text file: two insertions between the same two neighbours conflict whatever
+  the order, so a re-sort only MOVES the collisions (the second column) - and the file-name order
+  would drop the owner's order (P1 first, then the oldest, 2026-11-11), which is what makes the page
+  a queue. Rejected: it lowers a rate and keeps the mechanism.
+- **A regeneration after the merge** (option c) is a commit onto `main`, and `main` takes no direct
+  push (ruleset `22152902`). Pushing the regenerated page into every open branch instead is a bot
+  healing a race after the fact - a ledger, never a fix (CLAUDE.md, "a race that heals cleanly is
+  still a defect") - and a fifth visible workflow. A `merge=union` attribute is not honoured by
+  GitHub's merge, and would produce a page nobody generated. Rejected.
+- **The page is not committed** (option a, CHOSEN). A file no commit carries cannot conflict and
+  cannot be stale in git: the conflict is not made rarer, its cause is deleted. It is the rule this
+  repository already applies to the WASM and the protobuf bindings (`.gitignore`, "Generated sources
+  - built, never committed": a generated file in git is a copy of the truth).
+
+**HOW THE READER KEEPS THE PAGE.** The reader of [plan](plan.md) is an agent or a developer in a
+checkout - CLAUDE.md calls it the queue - and the page is written there:
+
+- `.husky/post-checkout` (a `git worktree add`, a `git switch`), `.husky/post-merge` (a `git pull`,
+  any merge) and `.husky/post-rewrite` (a rebase, `git pull --rebase` included: a rebase runs
+  `post-checkout` once, on the upstream commit, BEFORE replaying the branch - measured) run
+  `bun tools/backlog-plan/plan.mjs`, silently, in about 0.4 s;
+  the commit tier (`local-ci.sh plan`) rewrites it when the commit touches an entry and stages
+  nothing. `husky-hookspath.test.mjs` asserts all three hooks are tracked and executable.
+- **A hook never fails the git operation** (2026-11-21): with no `bun` on the PATH, or a generator
+  error, each hook prints ONE stderr line (`plan.md not refreshed: bun missing`) and exits 0 - a
+  failing `post-checkout` would break `git switch` and `git worktree add` for every script, and the
+  page is only a copy.
+- **A hook-less operation leaves a stale page, and the page says so**: `rebase --abort`,
+  `reset --hard`, `stash pop`, `cherry-pick` and `restore` fire no hook. The page header carries the
+  commit it was generated from and whether `backlog.d` was dirty; `plan.mjs --check` warns
+  `page generated from X, HEAD is Y`; CLAUDE.md tells the reader to run the command before reading.
+- **A fresh clone runs no hook** - none is armed until the install sets `core.hooksPath` - so
+  `make install` (`install-frontend`, `install-hooks`) writes the page once. By hand, in any
+  checkout, the one command: `bun tools/backlog-plan/plan.mjs`.
+- **A pull request open when this merged and still editing `plan.md` conflicts once**
+  (modify/delete) when it merges `main`: resolve with `git rm --cached docs/wiki/plan.md` - the
+  file stays on disk, ignored - and commit.
+- `wiki-links.test.mjs` resolves a link into `plan.md` - the `plan.md#readings-owed` links - against
+  what `render()` WOULD write from the tree, so a runner, which has no copy, checks the anchors, and
+  a copy that is stale on a workstation cannot make a dead link look alive.
+- `backlog-plan.test.mjs` keeps every check that mattered (a target on every entry, the readings in
+  the earliest version) and adds three: the rendered page lists every entry exactly once, under the
+  version it targets; the `Readings owed` heading is there while readings exist; and `plan.md` is
+  neither tracked nor un-ignored - recommitting it is what would bring the conflicts back.
+
+**WHAT IT COSTS, SAID PLAINLY.** On github.com the link to `plan.md` is a 404: a human there reads
+the [backlog.d](backlog.d/README.md) directory, and the owner the private tracking page the lead
+republishes at every milestone (CLAUDE.md, WORKFLOW CYCLE), which is generated from a checkout like
+any other reader's. No workflow file changed.
+
 ## Checks at commit, at push, and in CI only
 
 **The owner's decision, 2026-11-15:** *"tout ce qui est vérifié à la PR devrait être vérifié au
@@ -3667,7 +3769,7 @@ matches it; a commit touching none of them pays nothing.
 | --- | --- | --- |
 | a `.md`, or any deletion or rename | `wiki-links.test.mjs` (reads `git ls-files`, no disk walk) | 0.4 s |
 | a `.md` | `docs-merge-artefacts.test.mjs` | 0.3 s |
-| `docs/wiki/backlog.d/`, `backlog.md`, `plan.md`, `tools/backlog-plan/` | `plan.mjs` re-run and `plan.md` staged, then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
+| `docs/wiki/backlog.d/`, `backlog.md`, `tools/backlog-plan/` | `plan.mjs` re-run (the checkout's `plan.md`, gitignored, [never staged](#the-plan-page-is-generated-where-it-is-read-2026-11-21)), then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
 | `CLAUDE.md` | `claude-md-cap.test.mjs` | 0.05 s |
 | `.md`, `.sh`, `.yml`, `.ts`, `.mjs`, `.env.example` | `docs-private-guard.test.mjs` | 3.3 s |
 | a `.sh` or `.husky/` | `executable-bit`; `pipefail-early-reader`; shellcheck on the staged scripts of the set CI lints (`make lint-ci-scripts FILES=...`, `-x` follows what they source) | 0.15 s, 0.16 s, ~1 s (the whole set, 15-37 s, is the push's) |

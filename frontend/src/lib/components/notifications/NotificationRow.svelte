@@ -347,6 +347,7 @@
     notif.type === 'lydia_payments_active' ||
       notif.type === 'lydia_payments_paused' ||
       notif.type === 'lydia_cashier_added' ||
+      notif.type === 'lydia_responsable_handed_over' ||
       isDelegationNotif
   );
   /** The whole sentence of a Lydia or delegation notice, naming the entity the row stores. */
@@ -365,7 +366,9 @@
             ? m.notif_delegation_receiver_not_ready_text({ name: notif.text })
             : notif.type === 'delegation_resumed'
               ? m.notif_delegation_resumed_text({ name: notif.text })
-              : m.notif_lydia_cashier_added_text({ name: notif.text })
+              : notif.type === 'lydia_responsable_handed_over'
+                ? m.notif_lydia_responsable_handed_over_text({ name: notif.text })
+                : m.notif_lydia_cashier_added_text({ name: notif.text })
   );
   /** An association refunded the reader (system actor): a whole sentence naming the association. */
   const isLydiaRefundNotif = $derived(notif.type === 'lydia_refund_issued');
@@ -520,7 +523,7 @@
         <CircleCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_paused' || notif.type === 'delegation_revoked' || notif.type === 'delegation_receiver_not_ready'}
         <CirclePause size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'lydia_cashier_added'}
+      {:else if notif.type === 'lydia_cashier_added' || notif.type === 'lydia_responsable_handed_over'}
         <Store size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_refund_issued'}
         <Undo2 size={glyph} strokeWidth={2.75} />

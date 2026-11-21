@@ -1,8 +1,10 @@
 ## P1 - encrypt the names of groups, communities and salons (raised 2026-10-21, tied to principle 1 of the charter on 2026-11-10)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **2026-11-17 evening: step 1 shipped in `1.7.0` (#3785, on dev from `1.7.0-alpha.10`); steps 2-4 are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below).**
 

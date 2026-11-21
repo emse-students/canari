@@ -115,7 +115,7 @@ describe('channel push payload contract (social-service writer vs the three nati
    */
   const PLATFORM_SPECIFIC: Record<string, { readers: ('kotlin' | 'swift' | 'objc')[] }> = {
     // The stamp the two Android triggers recognise one message by. The second trigger is
-    // `notifier_message_natif` -> `notifyMessageFromWebSocket`, whose body is
+    // `notify_native_message` -> `notifyMessageFromWebSocket`, whose body is
     // `#[cfg(target_os = "android")]`: on iOS the socket posts no native notification at all, so
     // there are no two announcements of one salon message to reconcile. When that changes, this
     // entry's own assertion fails before the drift does.
@@ -201,7 +201,7 @@ describe('channel push payload contract (social-service writer vs the three nati
     // removes it, rather than on a duplicate banner somebody reports months later.
     if (PLATFORM_SPECIFIC.createdAt) {
       const rust = readFileSync(NOTIFICATIONS_RS, 'utf8');
-      expect(rust).toContain('pub(crate) fn notifier_message_natif(');
+      expect(rust).toContain('pub(crate) fn notify_native_message(');
       expect(rust).toContain('#[cfg(target_os = "android")]');
       expect(rust).toContain('"notifyMessageFromWebSocket"');
     }

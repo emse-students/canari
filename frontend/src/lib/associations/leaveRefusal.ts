@@ -11,6 +11,8 @@ export function leaveRefusalMessage(err: unknown): string | null {
   switch (err.code) {
     case LEAVE_REFUSAL.LAST_MEMBER_MANAGER:
       return m.asso_leave_last_manager();
+    case LEAVE_REFUSAL.RESPONSABLE_MUST_HAND_OVER:
+      return m.asso_leave_lydia_responsable();
     default:
       return null;
   }

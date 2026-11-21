@@ -1,6 +1,8 @@
 ## Reading owed - the organiser's "Rediffusion" switch, on both phones and on dev (owner, 2026-11-20)
 
-target: 1.7.2
+target: 1.7.3
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Built ([the organiser's switch](../live-replays.md#the-organisers-rediffusion-switch-owner-2026-11-20)): the
 switch in the pre-live sheet (ON by default), `replay: false` on the start, `DELETE /api/lives/:id/replay`,
@@ -17,3 +19,5 @@ in CI (`lives.integration.spec.ts`, "the organiser's Rediffusion switch"). Owed,
 5. A phone: the switch is operable in the pre-live sheet and a confirm sits before the irreversible off.
 
 **2026-11-20, S16 (`1.7.2-alpha.1`, [readings](../device-verification.md#the-readings-of-2026-11-20-s16-172-alpha1-the-birthday-ring-the-composer-gap-the-pin-gate-the-ios-backup-pass-the-rediffusion-switch-the-web-image-drop-miconnect)): rows 2, 4 and 5 READ, PASS; the replay of a live left ON READ, PASS; rows 1 and 3 NOT TAKEN.** Row 2 on the Mi 9T: `switched OFF by its organiser (on air, replay post not published)`, `trimmed 10 segment(s) behind the window (0..9)`, the trim done, the live on air; the end "Rien n'en est gardé." and `replay=none`. Row 4 on both phones: the viewer's screen names no replay choice, during and after the live. Row 5 on both phones: the switch ON by default and operable, and the confirm "Désactiver la rediffusion ? ... C'est irréversible." before the off. A live of `gamma` left ON (iPhone, 51 s): `published as post ..., 48s`, the Mi's CanaReels viewer opened on it ("Rediffusion · encore 2 j"). **Defect met:** the switch's label is unreadable on the dark sheet (fixed in `1.7.2`, `Toggle` `tone="on-media"`; the reading left: the label as white as "Titre (facultatif)"). **Left:** row 1 (started OFF) and row 3 (off from the end screen after publication).
+
+**2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`, Mi 9T): the switch's label is readable on the dark sheet** (the `on-media` tone). Rows 1 and 3 are still owed; the switch's track, invisible when OFF, is [its own entry](p3-android-the-rediffusion-switch-track-is-invisible-when-off-on-the-dark-pre-live-sheet.md).

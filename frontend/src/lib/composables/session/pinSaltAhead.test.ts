@@ -106,8 +106,10 @@ describe('who is asked ahead', () => {
     expect(service).toContain('if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);');
     const retry = service.slice(service.indexOf('function askSaltForNextTry'));
     expect(retry.indexOf('if (isFirstPinSetup) return;')).toBeGreaterThan(-1);
-    expect(retry.indexOf("if (code === 'device_revoked')")).toBeLessThan(
-      retry.indexOf('globalSession.prefetchPinSalt(appendLog);')
+    // A removed device asks no salt: its branch of `applyPinFailure` returns before the retry.
+    const apply = service.slice(service.indexOf('function applyPinFailure'));
+    expect(apply.indexOf('if (removedNotice) {')).toBeLessThan(
+      apply.indexOf('askSaltForNextTry();')
     );
   });
 });

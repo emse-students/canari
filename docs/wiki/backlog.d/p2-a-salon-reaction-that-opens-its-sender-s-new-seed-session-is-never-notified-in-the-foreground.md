@@ -1,8 +1,10 @@
 ## P2 - a salon reaction that opens its sender's new seed session is never notified while the app is open (2026-11-18)
 
-target: 1.7.2
+target: 1.7.3
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
+
+_2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Seen on the Mi 9T, `1.7.0-alpha.10`, dev, 2026-11-18**
 ([device-verification](../device-verification.md#the-phone-readings-of-2026-11-18-170-alpha10-the-iphone-broadcasting-and-reactions-in-a-group-a-salon-and-a-locked-iphone)):

@@ -70,7 +70,9 @@ use crate::commands::mls_account_state::{
     mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
 use crate::commands::native_push_log::take_native_push_log;
-use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
+use crate::commands::notifications::{
+    notify_native_message, record_read_elsewhere, store_avatar_mirror,
+};
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
@@ -1861,7 +1863,8 @@ pub fn run() {
             flush_webview_cookies,
             take_picked_file,
             discard_picked_file,
-            notifier_message_natif,
+            notify_native_message,
+            record_read_elsewhere,
             store_avatar_mirror,
             store_display_names,
             store_conversation_nicknames,
