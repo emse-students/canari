@@ -330,11 +330,16 @@ jobs:
         working-directory: frontend
         run: bun scripts/gen-android-icons.mjs --dev
 
+      # THE TARGETS ARE NAMED, NEVER LEFT TO THE CLI'S DEFAULT: without `--target`, `tauri android build`
+      # compiled `aarch64` ONLY ("no .so files available to package for armeabi-v7a, x86, x86_64"), so
+      # Play read an arm64-only bundle and refused every 32-bit device - a Galaxy A11 (`a11q`) among
+      # them - as "required ABI not supported: arm64-v8a". `armv7` is the 32-bit phone; x86 and x86_64
+      # serve emulators only and cost build time and bundle size. docs/wiki/frontend/mobile.md
       - name: Build Android AAB + APK
         working-directory: frontend
         run: |
-          bun tauri android build
-          bun tauri android build --apk
+          bun tauri android build --target aarch64 armv7
+          bun tauri android build --apk --target aarch64 armv7
 
       - name: Locate build outputs
         id: outputs
@@ -345,6 +350,27 @@ jobs:
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
           echo "AAB: $AAB"
           echo "APK: $APK"
+
+      # BOTH ARTIFACTS MUST CARRY BOTH ABIs. A build that silently dropped one is a green gate and a
+      # store that refuses part of the population, which is how the 32-bit phones were lost.
+      - name: Check the built artifacts carry both ABIs
+        env:
+          AAB: ${{ steps.outputs.outputs.aab }}
+          APK: ${{ steps.outputs.outputs.apk }}
+        run: |
+          set -euo pipefail
+          FAILED=0
+          for artifact in "$AAB" "$APK"; do
+            LIBS=$(unzip -Z1 "$artifact" | grep -E '(^|/)lib/[^/]+/libmines_app_lib\.so$' || true)
+            for abi in arm64-v8a armeabi-v7a; do
+              if ! grep -q "lib/${abi}/" <<<"$LIBS"; then
+                echo "::error::${artifact} has no native library for ${abi}"
+                FAILED=1
+              fi
+            done
+          done
+          [ "$FAILED" = 0 ]
+          echo "Both ABIs present in the AAB and the APK"
 
       # THE ONGOING-CALL SERVICE IS DECLARED EXACTLY WHEN CALLS ARE COMPILED (WP-C-BG-A). It lives in the
       # main manifest since the flip of CALLS_COMPILED, so every build carries it; were the constant
