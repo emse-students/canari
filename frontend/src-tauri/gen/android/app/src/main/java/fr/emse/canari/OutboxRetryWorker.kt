@@ -3,6 +3,8 @@ package fr.emse.canari
 import android.content.Context
 import android.util.Log
 import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
@@ -50,6 +52,15 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         /**
          * Enqueues a one-shot expedited work request with exponential backoff (30s → 60s → 120s …).
          * No-op when the persistent failure flag is set: the user must open the app to reset it.
+         *
+         * ONLY WITH A NETWORK (`NetworkType.CONNECTED`): a drain run offline fails by construction,
+         * and each one used to count as one of [MAX_DRAIN_ATTEMPTS]. Read on a Mi 9T during the
+         * #3912 sitting: after a reconnect, one run failed on a DNS miss and ended in FAILURE with
+         * the "open the app" nudge, over a reply still marked as retrying and nothing scheduled.
+         * A failed drain ends in FAILURE only at the cap, so the attempts before it had been spent
+         * with nothing to reach. WorkManager now runs the request when a network exists, so an
+         * attempt is a drain that could have succeeded; a transport failure below the cap is still
+         * a `Result.retry()`.
          */
         fun enqueueIfHealthy(context: Context) {
             if (isInFailureState(context)) {
@@ -58,6 +69,7 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
             }
             val request = OneTimeWorkRequestBuilder<OutboxRetryWorker>()
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
                     30_000L,

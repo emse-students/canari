@@ -254,6 +254,8 @@ describe('the builder records what it posted and keeps the stamps current', () =
       const fns = [...before.matchAll(/fun (?:\w+\.)?(\w+)\(/g)];
       const name = fns[fns.length - 1][1];
       if (notConversation.has(name)) continue;
+      // Re-posts the shade's OWN record (built here already) and cancels it at once - pinned below.
+      if (name === 'cancelAnsweredBanner') continue;
       posters.push(name);
       const fn = source.slice(fns[fns.length - 1].index);
       const call = source.slice(m.index, source.indexOf('\n', m.index));
@@ -328,6 +330,18 @@ describe('the builder records what it posted and keeps the stamps current', () =
     // The retry worker and the push-woken drains go through it.
     const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
     expect(worker).toContain('CanariFirebaseMessagingService.drainOutboxBackground(');
+    // ...only with a network (#3912 F2): a drain run offline must not spend one of its attempts,
+    // and a failed drain below the cap is a retry, never a failure.
+    const enqueue = worker.slice(worker.indexOf('fun enqueueIfHealthy('));
+    const request = enqueue.slice(0, enqueue.indexOf('.build()\n            WorkManager'));
+    expect(request).toContain(
+      '.setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())'
+    );
+    const tail = worker.slice(worker.indexOf('if (attempt >= MAX_DRAIN_ATTEMPTS) {'));
+    expect(tail.indexOf('return Result.failure()')).toBeGreaterThan(-1);
+    expect(tail.slice(tail.indexOf('return Result.failure()') + 1)).toContain(
+      'still queued — retry")\n        return Result.retry()'
+    );
     expect(source).toContain('drainOutboxBackground(this, this, drainCtx)');
     // The pending line names its message.
     expect(source).toContain('extras.putString(LINE_PENDING_REPLY_ID, messageId)');
@@ -401,6 +415,29 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(body).toContain('sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)');
     expect(fn).not.toContain('cancelConversationNotification(');
     expect(fn).not.toContain('sendReadWatermark(');
+  });
+
+  it('ends the direct-reply lifetime extension before cancelling an answered banner (#3912 F1)', () => {
+    // Android 15+ drops an app's cancel on a record flagged LIFETIME_EXTENDED_BY_DIRECT_REPLY and
+    // strips that flag from an app's post: read the flag, re-post silently, THEN cancel.
+    const fn = source.slice(source.indexOf('private fun cancelAnsweredBanner('));
+    expect(fn.indexOf('private fun cancelAnsweredBanner(')).toBe(0);
+    const body = fn.slice(0, fn.indexOf('/**'));
+    const flag = body.indexOf('FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY != 0');
+    const silent = body.indexOf('FLAG_ONLY_ALERT_ONCE');
+    const repost = body.indexOf('manager.notify(id, shown)');
+    const cancel = body.indexOf('manager.cancel(id)');
+    expect(flag).toBeGreaterThan(-1);
+    expect(silent).toBeGreaterThan(flag);
+    expect(repost).toBeGreaterThan(silent);
+    expect(cancel).toBeGreaterThan(repost);
+    expect(body.split('manager.notify(').length - 1).toBe(1);
+    // The answer path - and only it - cancels through it.
+    const answer = source.slice(source.indexOf('internal fun answerReplyNotification('));
+    const lambda = answer.slice(answer.indexOf('cancel = { id ->'), answer.indexOf('repost = '));
+    expect(lambda).toContain('cancelAnsweredBanner(manager, id)');
+    expect(lambda).not.toContain('manager.cancel(');
+    expect(source.split('cancelAnsweredBanner(manager, id)').length - 1).toBe(1);
   });
 
   it('commits the announced-message record and rebuilds the summary after the lock', () => {

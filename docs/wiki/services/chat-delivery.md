@@ -2579,7 +2579,10 @@ When the opportunistic outbox drain (FCM push, Welcome join, boot receiver) leav
 exponential backoff on both platforms.
 
 - **Android** — `OutboxRetryWorker` (WorkManager): expedited one-shot work request with exponential
-  backoff (30s → 60s → 120s …). After 3 consecutive failures it enters a persistent failure state
+  backoff (30s → 60s → 120s …), constrained to `NetworkType.CONNECTED` like the iOS twin (#3912:
+  without it, drains run offline spent the attempts, and the one run after a reconnect that missed
+  DNS was the last - FAILURE, the nudge, and nothing scheduled under a reply shown as retrying).
+  A failed drain below the cap is a `Result.retry()`. After 3 consecutive failures it enters a persistent failure state
   and shows the "open the app" nudge (`showPendingSyncNotification`). The flag resets when the user
   opens the app (`MainActivity.onResume`). A foreground guard defers retry when the TS outbox
   flusher is active (avoids double-send).

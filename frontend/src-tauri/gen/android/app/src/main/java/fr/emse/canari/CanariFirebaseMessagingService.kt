@@ -921,6 +921,43 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
         /**
+         * `Notification.FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (API 35), `@hide` in the SDK and so
+         * named here: the bit `NotificationManagerService` sets on a record it keeps after an
+         * inline reply, read back from the shade's own copy by [cancelAnsweredBanner].
+         */
+        private const val FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY = 0x00010000
+
+        /**
+         * Cancels the banner a quick reply answered, first ENDING THE DIRECT-REPLY LIFETIME
+         * EXTENSION Android 15+ puts on it (read on the Mi 9T, SDK 36: `notif removed` logged, the
+         * record kept with `LIFETIME_EXTENDED_BY_DIRECT_REPLY`, the "Vous ..." line on screen).
+         *
+         * The platform's own rules, from `NotificationManagerService`: an app's cancel carries
+         * `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` in its must-NOT-have flags, so it is DROPPED on
+         * an extended record; an app's post strips that flag ("Apps cannot post notifications that
+         * are lifetime extended"); and a cancel finds the record in the enqueued list as well as the
+         * posted one. So the order is a silent re-post of what the shade shows, then the cancel -
+         * the update the platform itself waits for after an action click. The flag is READ from
+         * the shade, never assumed: a record without it is cancelled as it always was.
+         */
+        private fun cancelAnsweredBanner(manager: NotificationManager, id: Int) {
+            if (android.os.Build.VERSION.SDK_INT >= 35) {
+                val shown = try {
+                    manager.activeNotifications.firstOrNull { it.id == id && it.tag == null }?.notification
+                } catch (e: Exception) {
+                    Log.e(TAG, "cancelAnsweredBanner: activeNotifications unavailable - cancelling without ending an extension: ${throwableSite(e)}")
+                    null
+                }
+                if (shown != null && shown.flags and FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY != 0) {
+                    shown.flags = shown.flags or android.app.Notification.FLAG_ONLY_ALERT_ONCE
+                    manager.notify(id, shown)
+                    Log.d(TAG, "cancelAnsweredBanner: direct-reply extension ended by a silent re-post id=$id")
+                }
+            }
+            manager.cancel(id)
+        }
+
+        /**
          * THE BANNER SIDE OF A QUICK REPLY'S SUCCESS ([ReadElsewhereMarks.answerReply]): the user
          * answered from it, so it goes - but a line of ANOTHER reply still queued stays, the banner
          * rebuilt silently with only those (principle 2). Its reaction goes in every case: answering
@@ -938,7 +975,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 shade = { stableId?.let { shadeBannerOf(manager, it) } },
                 cancel = { id ->
                     cancelledId = id
-                    manager.cancel(id)
+                    cancelAnsweredBanner(manager, id)
                 },
                 repost = rebuildBanner(context, manager, groupId),
             )

@@ -927,6 +927,16 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login. A process
   that dies between the enqueue and the decision cannot be resolved in-process
   ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
+- **An answered banner ends its direct-reply lifetime extension before it is cancelled**
+  (`cancelAnsweredBanner`, the answer's only cancel). Android 15+ keeps a banner answered inline
+  with `FLAG_LIFETIME_EXTENDED_BY_DIRECT_REPLY` (`@hide`, `0x00010000`), and its
+  `NotificationManagerService` DROPS an app's cancel on such a record (`mustNotHaveFlags`) while
+  stripping the flag from an app's post - read on a Mi 9T, SDK 36: `notif removed` logged, the
+  record kept in dumpsys with the "Vous ..." line on screen. So when the shade's copy carries the
+  flag it is re-posted as is (`FLAG_ONLY_ALERT_ONCE`), then cancelled; the cancel finds it in the
+  enqueued list. That is the update the platform itself waits for after an action click (it
+  schedules its own cancel, which the update voids). A record without the flag is cancelled as
+  before.
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
