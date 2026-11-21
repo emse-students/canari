@@ -21,6 +21,145 @@
         } catch (_) {}
       })();
     </script>
+    <!-- OLD ANDROID SYSTEM WEBVIEW GUARD (docs/wiki/frontend/mobile.md#an-old-android-system-webview-shows-an-update-screen-not-a-blank-page-owner-2026-11-21). The bundle needs
+         Chrome 111 or newer (Vite's default target, Tailwind 4, the MLS WASM module); on an older
+         engine the page stays blank and nothing is reported, because it is not a crash. This is
+         the one script that must parse on ANY engine, so it is ES5 only (webviewGuard.test.ts
+         parses it as ES5) and it runs before the bundle. Two triggers, neither a timer: the
+         engine's own version below FLOOR, and a SyntaxError (the engine cannot parse the bundle)
+         raised before the layout sets window.__canariMounted. Its strings are a small table
+         pinned to messages/fr.json and en.json by the same test. -->
+    <script>
+      (function () {
+        // CANARI_WEBVIEW_GUARD
+        // The oldest Chrome major the bundle runs on: Vite's default build target (chrome111),
+        // which Tailwind 4 and the MLS WASM module also need. Raise it with the build target.
+        var FLOOR = 111;
+        var PLAY_APP = 'com.google.android.webview';
+        var STRINGS = {
+          fr: {
+            title: 'Mettez à jour Android System WebView',
+            body: 'Canari ne peut pas démarrer : le composant Android System WebView de ce téléphone est trop ancien. Mettez-le à jour depuis le Play Store, puis rouvrez Canari.',
+            button: 'Ouvrir le Play Store',
+            fallback: 'Ouvrir dans le navigateur',
+            version: 'Version détectée : {version}',
+          },
+          en: {
+            title: 'Update Android System WebView',
+            body: 'Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.',
+            button: 'Open the Play Store',
+            fallback: 'Open in the browser',
+            version: 'Detected version: {version}',
+          },
+        };
+
+        function chromeMajor(ua) {
+          var m = /Chrome\/(\d+)/.exec(ua || '');
+          return m ? parseInt(m[1], 10) : null;
+        }
+        // The WebView marker ("; wv)") separates a WebView from Chrome, which updates itself: the
+        // version-floor trigger is for the WebView only. A desktop or iOS agent has no "Android".
+        function isAndroidWebView(ua) {
+          return /Android/.test(ua || '') && /; wv\)/.test(ua || '');
+        }
+        function isBelowFloor(ua) {
+          var major = chromeMajor(ua);
+          return isAndroidWebView(ua) && major !== null && major < FLOOR;
+        }
+        // Only a SyntaxError means "this engine cannot read the bundle". A failed fetch (offline,
+        // stale build) is the network's business and is handled by vite:preloadError.
+        function isSyntaxFailure(error, message) {
+          return (
+            (!!error && error.name === 'SyntaxError') || /SyntaxError/.test(String(message || ''))
+          );
+        }
+        function mounted() {
+          return window.__canariMounted === true;
+        }
+
+        var shown = false;
+        function render(version) {
+          var lang = /^fr/i.test(navigator.language || '') ? 'fr' : 'en';
+          var t = STRINGS[lang];
+          var root = document.createElement('div');
+          root.id = 'canari-webview-update';
+          root.setAttribute('role', 'alert');
+          root.style.cssText =
+            'position:fixed;top:0;right:0;bottom:0;left:0;z-index:10000;overflow:auto;' +
+            'background:#151b2c;color:#fff;padding:32px 24px;text-align:center;' +
+            'font-family:system-ui,sans-serif;line-height:1.5;box-sizing:border-box';
+          function add(tag, text, css) {
+            var el = document.createElement(tag);
+            el.appendChild(document.createTextNode(text));
+            el.style.cssText = css;
+            root.appendChild(el);
+            return el;
+          }
+          add('h1', t.title, 'font-size:22px;margin:48px 0 16px;color:#fac809');
+          add('p', t.body, 'font-size:16px;margin:0 0 24px');
+          var button = add(
+            'a',
+            t.button,
+            'display:block;max-width:320px;margin:0 auto 16px;padding:14px 20px;' +
+              'border-radius:999px;background:#fac809;color:#151b2c;font-weight:700;' +
+              'text-decoration:none'
+          );
+          button.href = 'market://details?id=' + PLAY_APP;
+          var link = add('a', t.fallback, 'display:block;margin:0 0 24px;color:#fff');
+          link.href = 'https://play.google.com/store/apps/details?id=' + PLAY_APP;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          if (version) {
+            add(
+              'p',
+              t.version.replace('{version}', version),
+              'font-size:13px;opacity:0.7;margin:0'
+            );
+          }
+          document.body.appendChild(root);
+        }
+        function show(version) {
+          if (shown) return;
+          shown = true;
+          try {
+            if (document.body) render(version);
+            else
+              document.addEventListener('DOMContentLoaded', function () {
+                render(version);
+              });
+          } catch (_) {}
+        }
+
+        window.__canariWebViewGuard = {
+          FLOOR: FLOOR,
+          STRINGS: STRINGS,
+          chromeMajor: chromeMajor,
+          isBelowFloor: isBelowFloor,
+          isSyntaxFailure: isSyntaxFailure,
+        };
+
+        try {
+          var ua = navigator.userAgent;
+          if (!/Android/.test(ua)) return; // desktop and iOS: no-op
+          var detected = chromeMajor(ua);
+          var label = detected === null ? '' : String(detected);
+          if (isBelowFloor(ua)) {
+            show(label);
+            return;
+          }
+          window.addEventListener(
+            'error',
+            function (event) {
+              if (!mounted() && isSyntaxFailure(event.error, event.message)) show(label);
+            },
+            true
+          );
+          window.addEventListener('unhandledrejection', function (event) {
+            if (!mounted() && isSyntaxFailure(event.reason, '')) show(label);
+          });
+        } catch (_) {}
+      })();
+    </script>
     <!-- Only the native Tauri WebView draws edge-to-edge behind the system's own gesture/button
          area, so only there does env(safe-area-inset-*) answer a real question. A plain mobile
          browser tab already excludes that area from its own viewport - env() reports it there
