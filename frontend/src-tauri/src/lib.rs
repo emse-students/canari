@@ -71,7 +71,8 @@ use crate::commands::mls_account_state::{
 };
 use crate::commands::native_push_log::take_native_push_log;
 use crate::commands::notifications::{
-    notify_native_message, record_read_elsewhere, store_avatar_mirror,
+    cancel_conversation_notifications, notify_native_message, record_read_elsewhere,
+    store_avatar_mirror,
 };
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
@@ -1955,6 +1956,7 @@ pub fn run() {
             discard_picked_file,
             notify_native_message,
             record_read_elsewhere,
+            cancel_conversation_notifications,
             store_avatar_mirror,
             store_display_names,
             store_conversation_nicknames,

@@ -27,7 +27,7 @@
  * this session has not measured). It is the only builder those engines have.
  */
 
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 
 /**
  * What the native builder needs in order to render the same notification for both triggers.
@@ -268,10 +268,45 @@ export async function recordNativeReadElsewhere(
 }
 
 /**
- * The page's ONE hand-over of a conversation event to the native notification shade: Android decides
- * against a mark (`record_read_elsewhere`). iOS has no hand-over yet - its native side removes
- * nothing on a page event (`docs/wiki/backlog.d/ios-banners-go-with-their-conversation.md`). A
- * runtime with no native shade answers `true`: there is nothing to hand over, and nothing failed.
+ * Takes down a conversation's delivered notifications on iOS - the page's reader opened it
+ * (`read_here`) or it ended (`conversation_ended`). iOS posts under the conversation's thread, so
+ * the native side removes by thread and recomputes the badge; it keeps no read mark, because a
+ * message newer than the reading cannot be on a banner of a conversation that is on screen.
+ *
+ * One call per conversation EVENT, never a sweep: opening the app clears nothing (owner,
+ * 2026-11-21). Off iOS: `false`, nothing invoked.
+ *
+ * @returns whether the native side queued the removal.
+ */
+export async function cancelNativeConversationNotifications(
+  conversationId: string,
+  event: ReadElsewhereEvent
+): Promise<boolean> {
+  if (!isIosTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('cancel_conversation_notifications', {
+      groupId: conversationId,
+      reason: event,
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused to take down the notifications of ${conversationId} (${event}) - a banner for it may stay.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    console.error(
+      `[NOTIF] Taking down the notifications of ${conversationId} (${event}) threw - a banner for it may stay: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * The page's ONE hand-over of a conversation event to the native notification shade, whichever OS:
+ * Android decides against a mark (`record_read_elsewhere`), iOS removes by thread. A runtime with no
+ * native shade (web, desktop) answers `true`: there is nothing to hand over, and nothing failed.
  *
  * @param at the mark Android weighs lines against ({@link ENDED_CONVERSATION_MARK} for an ended
  *   conversation); `clock` says which clock it is on.
@@ -284,6 +319,7 @@ export async function handOverConversationEvent(
   clock: 'server' | 'stamped'
 ): Promise<boolean> {
   if (isAndroidTauriRuntime()) return recordNativeReadElsewhere(conversationId, event, at, clock);
+  if (isIosTauriRuntime()) return cancelNativeConversationNotifications(conversationId, event);
   return true;
 }
 

@@ -2,14 +2,17 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
 const isAndroidTauriRuntime = vi.fn();
+const isIosTauriRuntime = vi.fn(() => false);
 vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => isAndroidTauriRuntime(),
+  isIosTauriRuntime: () => isIosTauriRuntime(),
 }));
 
 import {
   composePlainNotificationText,
   recordNativeReadElsewhere,
   handOverConversationEvent,
+  cancelNativeConversationNotifications,
   ENDED_CONVERSATION_MARK,
   notificationGroupName,
   notificationIsGroup,
@@ -352,6 +355,38 @@ describe('recordNativeReadElsewhere', () => {
       serverClock: true,
       reason: 'conversation_ended',
     });
+  });
+
+  // iOS keeps no mark: the native side removes the conversation's delivered notifications by thread.
+  it('hands an opened or ended conversation to the iOS notification centre', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    isIosTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    expect(await handOverConversationEvent('g1', 'read_here', 10, 'server')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('cancel_conversation_notifications', {
+      groupId: 'g1',
+      reason: 'read_here',
+    });
+    isIosTauriRuntime.mockReturnValue(false);
+  });
+
+  it('accuses a refusal or a throw of the iOS hand-over, and says it failed', async () => {
+    isIosTauriRuntime.mockReturnValue(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockResolvedValueOnce(false);
+    expect(await cancelNativeConversationNotifications('g1', 'conversation_ended')).toBe(false);
+    invoke.mockRejectedValueOnce(new Error('no class'));
+    expect(await cancelNativeConversationNotifications('g1', 'conversation_ended')).toBe(false);
+    expect(error).toHaveBeenCalledTimes(2);
+    isIosTauriRuntime.mockReturnValue(false);
+    error.mockRestore();
+  });
+
+  it('invokes nothing on iOS commands off iOS', async () => {
+    isIosTauriRuntime.mockReturnValue(false);
+    expect(await cancelNativeConversationNotifications('g1', 'read_here')).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('has nothing to hand over off Android, and nothing failed', async () => {

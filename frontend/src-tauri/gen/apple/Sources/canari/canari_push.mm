@@ -4953,27 +4953,26 @@ static void CanariHandleFcmData(NSDictionary *data) {
 }
 
 void CanariPushCancelMessageNotifications(void) {
+  // OPENING THE APP REMOVES NO CONVERSATION BANNER (owner, 2026-11-21: "N'effacer que les lues"):
+  // a banner goes with ITS conversation - opened here (`CanariConversationNotifications`), read on
+  // another device or answered (`CanariCancelConversationNotification`), or ended. What the open app
+  // takes over is the ring alert of an incoming call (the in-app overlay rings now); a delivered
+  // alert names its call in `userInfo`, which no chat banner carries. The badge is recomputed from
+  // what remains, never zeroed.
   UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
   [center getDeliveredNotificationsWithCompletionHandler:^(
               NSArray<UNNotification *> *_Nonnull notifications) {
     NSMutableArray<NSString *> *ids = [NSMutableArray array];
     for (UNNotification *n in notifications) {
-      NSString *thread = n.request.content.threadIdentifier;
-      NSString *deepLink = n.request.content.userInfo[@"deepLink"];
-      // WP-XP-7: per-conversation notifications use the groupId as threadIdentifier, not the
-      // old flat "canari_messages" thread. Also catch legacy notifications that have no thread
-      // (empty) or the old flat thread. The deepLink prefix check is a safety net.
-      BOOL isChatNotif = [thread isEqualToString:@"canari_messages"] || thread.length == 0 ||
-                         [deepLink hasPrefix:@"fr.emse.canari://chat"];
-      if (isChatNotif) {
+      if (n.request.content.userInfo[@"canariCallId"] != nil) {
         [ids addObject:n.request.identifier];
       }
     }
     if (ids.count > 0) {
       [center removeDeliveredNotificationsWithIdentifiers:ids];
+      NSLog(@"[CanariPush] activation: %lu ring alert(s) removed - the in-app overlay rings now",
+            (unsigned long)ids.count);
     }
-    // Clearing every message notification (app opened) drops the badge to 0 (WP-XP-2). Counted
-    // from what remains in the array already read, not by re-reading after an uncompleted removal.
     CanariSetBadgeCount(CanariCountUnreadConversations(notifications, [NSSet setWithArray:ids]));
   }];
 }
@@ -6254,6 +6253,27 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
     }
     return CanariCompleteOwedDeletionLocked();
   }
+}
+
+@end
+
+/// A conversation's banners go with the conversation: its reader opened it here (`read_here`) or it
+/// ended (`conversation_ended`). Reached from the page by `cancel_conversation_notifications`
+/// (`commands/notifications.rs`) through the Objective-C runtime, not a symbol - `libapp.a` is linked
+/// into the notification extension too, which does not carry this class.
+@interface CanariConversationNotifications : NSObject
++ (BOOL)cancelForConversation:(NSString *)groupId;
+@end
+
+@implementation CanariConversationNotifications
+
++ (BOOL)cancelForConversation:(NSString *)groupId {
+  if (groupId.length == 0) {
+    NSLog(@"[CanariPush] cancelForConversation: empty conversation id - nothing taken down");
+    return NO;
+  }
+  CanariCancelConversationNotification(groupId, nil);
+  return YES;
 }
 
 @end
