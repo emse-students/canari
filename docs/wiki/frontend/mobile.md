@@ -1055,6 +1055,35 @@ loaded, the native encrypt is refused by the foreground guard. The entry the nat
 `outbox_pending.ndjson` was then erased by the page's next `store_outbox_mirror`, so a reply typed in
 Notification Center over an open app was lost. The fix:
 
+- **Android takes the same road with the app in front (1.7.3).** Read on the Mi 9T during #3912
+  (2026-11-20): a reply typed in a banner over the open app sat queued for about four minutes. The
+  receiver queued it in `outbox_pending.ndjson`, the native encrypt was refused
+  (`foreground active - background mls.bin write abandoned`), `OutboxRetryWorker` stood down for the
+  page (`outbox handled by TS, retry deferred`), and the page never heard of an entry it had not
+  written - the reply left only once the app was backgrounded, and its banner still said
+  `non envoyé`. Now `CanariNotificationActionReceiver.handleReply` asks the route FIRST, before
+  anything is built or queued (`QuickReplyRoute`, `push/`, pinned by `QuickReplyRouteTest`): the
+  activity resumed (`MainActivity.isInForeground`) AND a manager loaded in this process
+  (`nativePageHoldsMls`, Rust `live_manager_in_process`) send it to the page; anything else stays
+  native - in the background the native drain may write `mls.bin`, and at the PIN gate no manager is
+  loaded. `handReplyToPage` writes the iOS line (`nativeHandQuickReplyToPage`: sealed, appended by
+  Rust under `QUICK_REPLY_FILE_LOCK`, which every Rust reader of the file holds, so an append never
+  lands in a claim between its read and its delete), THEN tells the live page
+  (`MainActivity.tellPage("canari:quick-reply")`), and settles the banner ONCE: the answer drawn as
+  the user's own line (`answerReplyNotification`), the inline spinner ended, and no "not sent yet"
+  line that only a native delivery could clear. **The page in front is the one surface**: Android
+  holds nothing for the reply, so nothing is acknowledged natively (`QuickReplyStore.nativeTellsOutcome`
+  is false) and a lost reply is shown by the page; a put-back reply is taken again on the activity's
+  next front edge (`canari:foreground`), since an Android WebView never changes visibility. A reply
+  that could not be handed over (no cache key, a failed write) is LOST and said: re-posted as not
+  sent, with the actions back. Not done on Android: the read watermark of the answer (as on iOS's
+  page path), and mark-as-read from a banner over the open app, which still queues natively (the
+  [backlog entry](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md) names both
+  platforms' shared cause). Tests: `QuickReplyRouteTest`, `androidQuickReplyHandoff.test.ts` (the
+  route asked before any queueing, the line written before the page is told, the file and commands
+  served to Android), the Android cases of `quickReplyDrain.test.ts`, and
+  `an_android_hand_over_*` in `quick_reply_tests`. The reading:
+  [backlog](../backlog.d/reading-owed-an-inline-reply-typed-over-the-open-app-goes-out-at-once.md).
 - `CanariHandleQuickReplyAction` asks the fact first (`canari_ios_page_holds_mls`, Rust
   `live_manager_in_process`).
 - When a manager is loaded, `CanariHandQuickReplyToPage` APPENDS the reply to
@@ -3982,7 +4011,10 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 
 - **WorkManager** (`OutboxRetryWorker`): exponential backoff retry for unsent outbox messages
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
-- **Foreground guard**: retry is deferred when the TS outbox flusher is active
+- **Foreground guard**: retry is deferred when the TS outbox flusher is active. A quick reply typed
+  with the app in front never reaches the mirror: it is handed to the page
+  ([above](#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01), "Android takes
+  the same road")
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
   2026-10-20): the ONLY foreground service this app declares, declared in the main manifest since the flip of `CALLS_COMPILED` (2026-10-22; it was a gradle-merged overlay on pre-releases before). A backgrounded or locked app lost its call socket and its microphone 5 s in
   while its JavaScript kept running; the service keeps both for the call's life, draws the

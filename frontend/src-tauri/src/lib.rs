@@ -395,6 +395,56 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
     })
 }
 
+/// Hands one notification quick reply to the page in front: seals `line` (`native_cache`, purpose
+/// `QuickReply`) and appends it to `{dataDir}/pending_quick_replies.ndjson` under the lock every Rust
+/// reader of that file holds ([`commands::push::hand_quick_reply_in`]). Answers a
+/// `QuickReplyHandoff` code: 0 handed, 1 no usable key (nothing written - never a reply in the
+/// clear), 2 the write failed; 2 too when an argument cannot be read.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeHandQuickReplyToPage<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    line: jni::objects::JString<'a>,
+) -> i32 {
+    let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+        env.get_string(s).ok().map(Into::into)
+    };
+    let (Some(dir), Some(key), Some(line)) = (read(&data_dir), read(&cache_key_b64), read(&line))
+    else {
+        log::error!("[QUICK_REPLY] jni-string");
+        return commands::push::QuickReplyHandoff::WriteFailed as i32;
+    };
+    commands::push::hand_quick_reply_in(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &line,
+    ) as i32
+}
+
+/// Whether the page holds a loaded MLS manager in this process
+/// ([`concurrency::live_manager_in_process`]) - the Android twin of `canari_ios_page_holds_mls`.
+/// With the app in front, it is the fact that makes the page the one that sends a quick reply: the
+/// native encrypt would be refused by the foreground guard.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativePageHoldsMls<
+    'a,
+>(
+    _env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+) -> jni::sys::jboolean {
+    if concurrency::live_manager_in_process() {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
 /// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
 /// ring of a `call_ring` push stands back only when this is true AND the app is in front.
 #[cfg(target_os = "android")]

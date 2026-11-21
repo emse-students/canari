@@ -1,5 +1,5 @@
 /**
- * Sends the notification quick replies the iOS delegate handed to the page.
+ * Sends the notification quick replies the native side handed to the page.
  *
  * A reply typed in a notification while this page holds the MLS state cannot be encrypted natively:
  * the foreground guard refuses it, and the entry the native side used to leave in
@@ -22,12 +22,20 @@
  *   notification response until then, and tells the user what is not sent (H1). A line that cannot
  *   be read is acknowledged lost at once, never left to run out the background time.
  *
+ * ANDROID HANDS A REPLY OVER TOO, with the app in front (`CanariNotificationActionReceiver`,
+ * `handReplyToPage`): the native encrypt would be refused by the foreground guard there, and a reply
+ * left in the outbox mirror sat queued until the app went to the background. Android holds nothing
+ * for it and settles its banner at the hand-over, so the page in front is the one surface: nothing is
+ * acknowledged natively ({@link QuickReplyStore.nativeTellsOutcome}) and a lost reply is shown here.
+ *
  * One loss stays: a process that dies between the take (the file is claimed by a rename) and the
  * send's durable write loses the replies of that take. See `docs/wiki/frontend/mobile.md` ("One
  * notification delegate").
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
+import { isIosTauriRuntime } from '$lib/utils/appVersion';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
 
 /** The event the native side dispatches when a reply waits. */
 export const NATIVE_QUICK_REPLY_EVENT = 'canari:quick-reply';
@@ -80,6 +88,12 @@ export interface QuickReplyStore {
   take(accountId: string): Promise<string[]>;
   putBack(lines: string[]): Promise<void>;
   acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise<void>;
+  /**
+   * Whether the native side holds each reply until it is told how it settled, and shows what is not
+   * sent (iOS). False on Android: its receiver settles the banner at the hand-over and holds
+   * nothing, so nothing is acknowledged and a lost reply is shown by the page.
+   */
+  readonly nativeTellsOutcome: boolean;
 }
 
 const tauriStore: QuickReplyStore = {
@@ -94,6 +108,9 @@ const tauriStore: QuickReplyStore = {
   async acknowledge(replyId, outcome) {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke(ACKNOWLEDGE_QUICK_REPLY_COMMAND, { replyId, outcome });
+  },
+  get nativeTellsOutcome() {
+    return isIosTauriRuntime();
   },
 };
 
@@ -141,9 +158,14 @@ const told = new Set<string>();
 
 /**
  * Tells the native side what became of `replyId`, and answers whether it was told. A failure costs
- * the hold, which then runs to iOS's end of the background time.
+ * the hold, which then runs to iOS's end of the background time. Where the native side holds nothing
+ * ({@link QuickReplyStore.nativeTellsOutcome}), nobody is told and the answer is false.
  */
 async function acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise<boolean> {
+  if (!store.nativeTellsOutcome) {
+    appendLog(`[QuickReply] reply ${replyId} settled by the page: ${outcome}`);
+    return false;
+  }
   try {
     await store.acknowledge(replyId, outcome);
     appendLog(`[QuickReply] reply ${replyId} acknowledged: ${outcome}`);
@@ -159,7 +181,8 @@ async function acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise
 /**
  * A LOST reply, said on ONE surface: the native side shows its "not sent" notice for every reply it
  * is told is lost, in front too (`CanariTellQuickReplyOutcome`), so the page shows it only when the
- * native side could not be told - a line naming no id, or an acknowledgement that failed.
+ * native side could not be told - a line naming no id, an acknowledgement that failed, or a native
+ * side that holds nothing (Android).
  */
 async function settleLost(
   current: QuickReplySender,
@@ -286,8 +309,9 @@ export function setNativeQuickReplySender(next: QuickReplySender | null): void {
 
 /**
  * Drains whenever the native side says a reply waits, and whenever the page comes back to the front
- * - a reply put back is sent by opening the app, as the notice the user saw promised (M2). Returns
- * the unsubscribe.
+ * - a reply put back is sent by opening the app, as the notice the user saw promised (M2). The front
+ * is the page's visibility (iOS) and the activity's own edge (`canari:foreground`, Android, whose
+ * WebView never changes visibility). Returns the unsubscribe.
  */
 export function listenForNativeQuickReplies(): () => void {
   const onReply = () => void drainNativeQuickReplies('the native side says a reply waits');
@@ -296,9 +320,13 @@ export function listenForNativeQuickReplies(): () => void {
   };
   window.addEventListener(NATIVE_QUICK_REPLY_EVENT, onReply);
   document.addEventListener('visibilitychange', onVisible);
+  const stopForeground = onAppForegroundChange((foreground) => {
+    if (foreground) void drainNativeQuickReplies('the app is in front');
+  });
   return () => {
     window.removeEventListener(NATIVE_QUICK_REPLY_EVENT, onReply);
     document.removeEventListener('visibilitychange', onVisible);
+    stopForeground();
   };
 }
 

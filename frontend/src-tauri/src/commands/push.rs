@@ -1910,9 +1910,11 @@ pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> 
     )
 }
 
-/// The quick replies the iOS notification delegate hands to the page while it holds the MLS state
-/// (`canari_push.mm`, `CanariHandQuickReplyToPage`). The NAME is the contract
-/// (`iosNotificationDelegate.test.ts` reads it on both sides).
+/// The quick replies the native side hands to the page while it holds the MLS state: the iOS
+/// notification delegate (`canari_push.mm`, `CanariHandQuickReplyToPage`) and, with the app in
+/// front, the Android action receiver (`CanariNotificationActionReceiver.handReplyToPage`). The NAME
+/// is the contract (`iosNotificationDelegate.test.ts` and `androidQuickReplyHandoff.test.ts` read it
+/// on every side).
 ///
 /// ONE SEALED LINE PER REPLY (`native_cache`, [`Purpose::QuickReply`]), whose plaintext is
 /// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`: what the user typed is never
@@ -1924,12 +1926,12 @@ pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> 
 /// DELETED - only its lines, never the file, since the file can hold another account's
 /// ([`remove_quick_replies_of`], `delete_user_quick_replies`). A sign-out leaves them, like the
 /// outbox: they are still that account's, and its next sign-in sends them.
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub(crate) const PENDING_QUICK_REPLIES_FILE: &str = "pending_quick_replies.ndjson";
 
 /// What became of a quick reply, as the page acknowledges it and the native side is told it
 /// (`canari_push.mm`, `CanariQuickReplyOutcome`, same codes).
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuickReplyOutcome {
     /// Delivered.
@@ -1944,7 +1946,7 @@ pub(crate) enum QuickReplyOutcome {
     Lost = 4,
 }
 
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 impl QuickReplyOutcome {
     /// The page's word for it (`QuickReplyOutcome` in `$lib/mobile/quickReplyDrain`).
     pub(crate) fn parse(word: &str) -> Option<Self> {
@@ -1961,7 +1963,7 @@ impl QuickReplyOutcome {
 
 /// Opens one sealed line: its plaintext and the account it names, or `None` when it cannot be read
 /// (a foreign key, a plaintext line - no build ever wrote this file in the clear - or no account).
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 fn open_quick_reply(key: &CacheKey, line: &str) -> Option<(String, serde_json::Value)> {
     let Ok(Opened::Sealed(plain)) = open_line(key, Purpose::QuickReply, line) else {
         return None;
@@ -1974,6 +1976,58 @@ fn open_quick_reply(key: &CacheKey, line: &str) -> Option<(String, serde_json::V
     Some((plain, value))
 }
 
+/// EVERY READ-MODIFY-WRITE OF `pending_quick_replies.ndjson` MADE IN RUST HOLDS THIS, the Android
+/// hand-over's append included ([`hand_quick_reply_in`]). A take claims the file by a rename, reads
+/// the claim and deletes it; an append whose file was opened before that rename and written after
+/// it would land in the claim between its read and its delete, and be lost unread. Serialised, an
+/// append lands either before the claim (taken) or in the next file (the next take's).
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+static QUICK_REPLY_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+fn quick_reply_file_lock() -> std::sync::MutexGuard<'static, ()> {
+    QUICK_REPLY_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// What handing one reply to the page did ([`hand_quick_reply_in`]) - the codes the Android receiver
+/// reads (`CanariNotificationActionReceiver.handReplyToPage`), classified where each is known.
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuickReplyHandoff {
+    /// Sealed and appended: the page's next take has it.
+    Handed = 0,
+    /// No usable cache key: nothing was written - never a reply in the clear.
+    NoKey = 1,
+    /// The append failed: nothing the page can take.
+    WriteFailed = 2,
+}
+
+/// Seals `line` (`{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`) and appends it
+/// to `{dir}/pending_quick_replies.ndjson` under [`QUICK_REPLY_FILE_LOCK`] - the Android receiver's
+/// hand-over to the page in front. `key` is `None` when the platform handed no usable key.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn hand_quick_reply_in(
+    dir: &std::path::Path,
+    key: Option<&CacheKey>,
+    line: &str,
+) -> QuickReplyHandoff {
+    let Some(key) = key else {
+        log::error!("[QUICK_REPLY] no cache key - the reply is NOT handed to the page");
+        return QuickReplyHandoff::NoKey;
+    };
+    let sealed = crate::native_cache::seal_line(key, Purpose::QuickReply, line);
+    let _held = quick_reply_file_lock();
+    match append_sealed_quick_replies(dir, &[sealed]) {
+        Ok(()) => QuickReplyHandoff::Handed,
+        Err(e) => {
+            log::error!("[QUICK_REPLY] the reply could not be appended for the page: {e}");
+            QuickReplyHandoff::WriteFailed
+        }
+    }
+}
+
 /// Claims `{dir}/pending_quick_replies.ndjson` and returns the plaintext of each reply addressed to
 /// `account_id`; empty when none wait.
 ///
@@ -1983,15 +2037,17 @@ fn open_quick_reply(key: &CacheKey, line: &str) -> Option<(String, serde_json::V
 /// than waiting out a background time (M3). A line this install's key does not open, or one naming
 /// no account, is dropped too. Each kind is counted and said once per take, which is once per line,
 /// since a dropped line is gone.
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub(crate) fn take_quick_replies_in(
     dir: &std::path::Path,
     key: &CacheKey,
     account_id: &str,
 ) -> Vec<String> {
-    let Some(content) =
+    let taken = {
+        let _held = quick_reply_file_lock();
         crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
-    else {
+    };
+    let Some(content) = taken else {
         return vec![];
     };
     let mut replies = Vec::new();
@@ -2032,7 +2088,7 @@ pub(crate) fn take_quick_replies_in(
 /// Appends `lines` (the plaintext a take returned) back to `{dir}/pending_quick_replies.ndjson`,
 /// each SEALED again, ONE `O_APPEND` write per line, so a line the native side appends meanwhile is
 /// never overwritten or interleaved.
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub(crate) fn append_quick_replies_in(
     dir: &std::path::Path,
     key: &CacheKey,
@@ -2044,11 +2100,13 @@ pub(crate) fn append_quick_replies_in(
         .filter(|l| !l.is_empty())
         .map(|l| crate::native_cache::seal_line(key, Purpose::QuickReply, l))
         .collect();
+    let _held = quick_reply_file_lock();
     append_sealed_quick_replies(dir, &sealed)
 }
 
-/// Appends lines that are ALREADY sealed, one `O_APPEND` write each.
-#[cfg(any(target_os = "ios", test))]
+/// Appends lines that are ALREADY sealed, one `O_APPEND` write each. The caller holds
+/// [`QUICK_REPLY_FILE_LOCK`].
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 fn append_sealed_quick_replies(dir: &std::path::Path, sealed: &[String]) -> std::io::Result<()> {
     use std::io::Write;
     if sealed.is_empty() {
@@ -2071,12 +2129,13 @@ fn append_sealed_quick_replies(dir: &std::path::Path, sealed: &[String]) -> std:
 /// lands in the next file and is kept; the kept lines are appended to it, still sealed.
 ///
 /// Returns how many lines were removed.
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub(crate) fn remove_quick_replies_of(
     dir: &std::path::Path,
     key: &CacheKey,
     account_id: &str,
 ) -> std::io::Result<usize> {
+    let _held = quick_reply_file_lock();
     let Some(content) =
         crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
     else {
@@ -2110,7 +2169,7 @@ pub(crate) fn remove_quick_replies_of(
 /// Runs `f` with the app data directory and the install's cache key, off the main thread (the key
 /// is a keystore plugin read). `None` when either cannot be had - each logged where it fails, and
 /// the file is then NOT claimed: it waits for a take that can read it.
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_os = "android"))]
 async fn with_quick_reply_key<T: Send + 'static>(
     app: tauri::AppHandle,
     f: impl FnOnce(&std::path::Path, &CacheKey) -> T + Send + 'static,
@@ -2136,13 +2195,13 @@ async fn with_quick_reply_key<T: Send + 'static>(
 
 /// Takes the quick replies addressed to `account_id` that wait for the page - each line acted on
 /// once: the page sends it, or hands it back through [`return_pending_quick_replies`] when it cannot
-/// yet. Always empty off iOS, where nothing writes the file.
+/// yet. Always empty off the phones, where nothing writes the file.
 #[tauri::command]
 pub(crate) async fn read_and_clear_pending_quick_replies(
     app: tauri::AppHandle,
     account_id: String,
 ) -> Vec<String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         with_quick_reply_key(app, move |dir, key| {
             take_quick_replies_in(dir, key, &account_id)
@@ -2150,7 +2209,7 @@ pub(crate) async fn read_and_clear_pending_quick_replies(
         .await
         .unwrap_or_default()
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = (app, account_id);
         vec![]
@@ -2164,7 +2223,7 @@ pub(crate) async fn return_pending_quick_replies(
     app: tauri::AppHandle,
     lines: Vec<String>,
 ) -> Result<(), String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let count = lines.len();
         let written = with_quick_reply_key(app, move |dir, key| {
@@ -2178,22 +2237,22 @@ pub(crate) async fn return_pending_quick_replies(
         }
         written
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = (app, lines);
-        Err("quick replies exist on iOS only".to_string())
+        Err("quick replies exist on the phones only".to_string())
     }
 }
 
 /// Removes the waiting quick replies of a DELETED account (WP-DEL-LOCAL) - only its lines
 /// ([`remove_quick_replies_of`]). Async, apart from `delete_user_push_files`, because the lines are
-/// sealed and the key is a keystore read that must not run on the main thread. `Ok(0)` off iOS.
+/// sealed and the key is a keystore read that must not run on the main thread. `Ok(0)` off the phones.
 #[tauri::command]
 pub(crate) async fn delete_user_quick_replies(
     app: tauri::AppHandle,
     user_id: String,
 ) -> Result<usize, String> {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         // Nothing waits: nothing to remove, and no key needed to know it - so an install whose
         // cache key cannot be read does not keep the deletion owed for a file that is not there.
@@ -2211,7 +2270,7 @@ pub(crate) async fn delete_user_quick_replies(
         .await
         .unwrap_or_else(|| Err("no data directory or no cache key - nothing removed".to_string()))
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         let _ = (app, user_id);
         Ok(0)
@@ -2272,6 +2331,19 @@ fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool 
             false
         }
     }
+}
+
+/// ANDROID HOLDS NOTHING FOR A REPLY IT HANDED OVER, SO NOBODY IS TOLD HERE. The receiver hands a
+/// reply to the page only with the app in front (`CanariNotificationActionReceiver.handReplyToPage`)
+/// and settles the banner at the hand-over: the page in front is the one surface that shows what
+/// becomes of it (`quickReplyDrain.ts`, `nativeTellsOutcome`). A line typed under ANOTHER account is
+/// dropped by the take and lost - said here, since no native surface will.
+#[cfg(target_os = "android")]
+fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool {
+    log::warn!(
+        "[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) by the take - Android holds no listener, nothing native shows it"
+    );
+    false
 }
 
 /// The page says what became of quick reply `reply_id` - `outcome` is a [`QuickReplyOutcome`] word,
@@ -2356,6 +2428,38 @@ mod quick_reply_tests {
     #[test]
     fn nothing_waits_reads_as_empty() {
         assert!(take_quick_replies_in(&temp_dir("empty"), &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn an_android_hand_over_is_sealed_and_taken_by_its_account() {
+        let dir = temp_dir("android-hand");
+        assert_eq!(
+            hand_quick_reply_in(&dir, Some(&KEY), &reply("me", "g1")),
+            QuickReplyHandoff::Handed
+        );
+        assert_eq!(
+            hand_quick_reply_in(&dir, Some(&KEY), &reply("me", "g2")),
+            QuickReplyHandoff::Handed
+        );
+        let on_disk = std::fs::read_to_string(dir.join(PENDING_QUICK_REPLIES_FILE)).unwrap();
+        assert!(
+            !on_disk.contains("\"text\""),
+            "a reply is never on disk in the clear"
+        );
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "g1"), reply("me", "g2")]
+        );
+    }
+
+    #[test]
+    fn an_android_hand_over_with_no_key_writes_nothing() {
+        let dir = temp_dir("android-no-key");
+        assert_eq!(
+            hand_quick_reply_in(&dir, None, &reply("me", "g1")),
+            QuickReplyHandoff::NoKey
+        );
+        assert!(!dir.join(PENDING_QUICK_REPLIES_FILE).exists());
     }
 
     #[test]

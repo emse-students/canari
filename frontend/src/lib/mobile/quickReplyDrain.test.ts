@@ -23,8 +23,11 @@ const ME = 'me@x.fr';
 const line = (groupId: string, text: string, replyId = `r-${groupId}`) =>
   JSON.stringify({ replyId, accountId: ME, groupId, text, notifiedAt: 5, repliedAt: 9 });
 
-/** A file the native side appends to, taken by a claim, appended back to, and acknowledged. */
-function fakeStore(initial: string[] = []) {
+/**
+ * A file the native side appends to, taken by a claim, appended back to, and acknowledged.
+ * `nativeTellsOutcome`: iOS holds each reply until told; Android holds nothing.
+ */
+function fakeStore(initial: string[] = [], nativeTellsOutcome = true) {
   let file = [...initial];
   const acks: [string, QuickReplyOutcome][] = [];
   const store: QuickReplyStore & {
@@ -43,6 +46,7 @@ function fakeStore(initial: string[] = []) {
     acknowledge: vi.fn(async (replyId: string, outcome: QuickReplyOutcome) => {
       acks.push([replyId, outcome]);
     }),
+    nativeTellsOutcome,
     file: () => file,
     append: (l) => file.push(l),
     acks,
@@ -276,5 +280,54 @@ describe('a quick reply handed to the page is never lost, never sent twice, neve
     stop();
     expect(send).toHaveBeenCalledOnce();
     expect(store.acks).toEqual([['r-g3', 'sent']]);
+  });
+});
+
+describe('Android: the page in front is the one surface for a reply handed over', () => {
+  let store: ReturnType<typeof fakeStore>;
+  beforeEach(() => {
+    store = fakeStore([], false);
+    resetQuickReplyDrainForTest(store);
+  });
+
+  it('sends a handed-over reply on the native event, the app staying in front, and acknowledges nothing', async () => {
+    const send = vi.fn(async () => 'sent' as const);
+    const session = as(send);
+    setNativeQuickReplySender(session);
+    await settle();
+    const stop = listenForNativeQuickReplies();
+    store.append(line('g1', 'from the banner'));
+    window.dispatchEvent(new CustomEvent(NATIVE_QUICK_REPLY_EVENT));
+    await settle();
+    stop();
+    expect(send).toHaveBeenCalledOnce();
+    expect(store.file()).toEqual([]);
+    expect(store.acknowledge).not.toHaveBeenCalled();
+    expect(session.told).toEqual([]);
+  });
+
+  it('shows a lost reply itself: nothing native will', async () => {
+    const session = as(async () => 'gone');
+    setNativeQuickReplySender(session);
+    await settle();
+    store.append(line('removed-group', 'x'));
+    await drainNativeQuickReplies('event');
+    expect(store.acknowledge).not.toHaveBeenCalled();
+    expect(session.told).toEqual([['lost', 'r-removed-group']]);
+  });
+
+  it('drains a put-back reply on the activity coming back to the front (canari:foreground)', async () => {
+    const send = vi.fn(async () => 'sent' as const);
+    setNativeQuickReplySender(as(send));
+    await settle();
+    const stop = listenForNativeQuickReplies();
+    store.append(line('g4', 'later'));
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: false } }));
+    await settle();
+    expect(send).not.toHaveBeenCalled();
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: true } }));
+    await settle();
+    stop();
+    expect(send).toHaveBeenCalledOnce();
   });
 });

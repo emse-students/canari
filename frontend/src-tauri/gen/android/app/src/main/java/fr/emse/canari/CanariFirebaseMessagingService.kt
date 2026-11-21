@@ -119,6 +119,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private external fun nativePageRingsInApp(): Boolean
 
         /**
+         * Seals one quick reply [line] and appends it to `pending_quick_replies.ndjson` in
+         * [dataDir], under the lock every Rust reader of that file holds (Rust
+         * `hand_quick_reply_in`). Answers a `QuickReplyHandoff` code: [QUICK_REPLY_HANDED],
+         * [QUICK_REPLY_NO_KEY] (nothing written - never a reply in the clear) or
+         * [QUICK_REPLY_WRITE_FAILED].
+         */
+        external fun nativeHandQuickReplyToPage(dataDir: String, cacheKeyB64: String, line: String): Int
+
+        /** [nativeHandQuickReplyToPage]'s answers (Rust `QuickReplyHandoff`). */
+        const val QUICK_REPLY_HANDED = 0
+        const val QUICK_REPLY_NO_KEY = 1
+        const val QUICK_REPLY_WRITE_FAILED = 2
+
+        /**
+         * Whether the page holds a loaded MLS manager in this process (Rust
+         * `live_manager_in_process`) - with the app in front, the page then sends a quick reply
+         * ([fr.emse.canari.push.QuickReplyRoute]).
+         */
+        external fun nativePageHoldsMls(): Boolean
+
+        /**
          * WHETHER THE OPEN APP RINGS THIS CALL ITSELF - the one question the native ring asks before
          * it stands back. The app being in front is not the answer: at the PIN gate the page holds
          * no socket, the server skips the caller's invite (a transport frame, delivered to an online

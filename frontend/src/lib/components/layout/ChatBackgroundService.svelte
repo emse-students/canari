@@ -143,7 +143,7 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-  import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import {
     listenForNativeQuickReplies,
     setNativeQuickReplySender,
@@ -467,10 +467,11 @@
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
   });
-  // A reply typed in an iOS notification while this page holds the MLS state is handed here
-  // (`quickReplyDrain.ts`): the signed-in session is its sender, through the composer's own path.
+  // A reply typed in a notification while this page holds the MLS state is handed here - on iOS, and
+  // on Android with the app in front (`quickReplyDrain.ts`): the signed-in session is its sender,
+  // through the composer's own path.
   $effect(() => {
-    if (!isIosTauriRuntime()) return;
+    if (!isMobileTauriRuntime()) return;
     // The account the native side stamped in `push_context.json` - the same id: only its replies
     // are taken.
     const accountId = globalSession.userId;
@@ -2193,8 +2194,8 @@
     // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
     // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
     const stopNativeCallAccept = listenForNativeCallAccept();
-    // The native side says a notification reply waits (`canari:quick-reply`, iOS only).
-    const stopNativeQuickReply = isIosTauriRuntime() ? listenForNativeQuickReplies() : () => {};
+    // The native side says a notification reply waits (`canari:quick-reply`, both phones).
+    const stopNativeQuickReply = isMobileTauriRuntime() ? listenForNativeQuickReplies() : () => {};
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
     // THE LEADER HALF OF A FOLLOWER TAB'S COMMITS (`tabCommitDelegation.ts`): registered in every tab,
