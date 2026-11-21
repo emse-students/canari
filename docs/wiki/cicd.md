@@ -3380,7 +3380,7 @@ asserted per target, never assumed from the file name.
 | HIGH and CRITICAL, **with a fix published** (`--ignore-unfixed`) | a finding nobody can act on is a wall, not a gate |
 | in the `dependencies` half, so it gates `CI passed` and runs nightly | same footing as the audits: a database that moves without a commit; exit `2` (database or registry unreachable) is priced by `registry_outage_is_failure` |
 | the allowlist is `.github/image-scan-allowlist.yaml`, Trivy's own format | one entry per advisory, each with a `statement`; `image-scan-allowlist.test.mjs` refuses a missing statement, an unknown key and any `expired_at` - an entry retires on evidence, never on a date |
-| **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `ignored-advisories-still-reported.sh` (media-service's check) fails on an id nothing reports any more. A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
+| **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `image-allowlist-retirement.sh` fails on an entry whose covered package version is in no image ([why not on the feed](#a-suppression-is-dead-when-the-image-moved-not-when-the-feed-forgot-2026-11-21)). A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
 | Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt`. **The verified archive is cached** (`actions/cache`, keyed on version AND digest; ShellCheck the same, keyed on `.shellcheck-version` and its digest): GitHub's release downloads answered 504 for hours on 2026-11-08 under an "operational" status page and failed every pull request; the digest is still checked on every run, so a cache hit can only be the pinned archive |
 
 **What the first measurement found (Trivy 0.75.0, 2026-10-23), and what each became:**
@@ -3457,6 +3457,39 @@ root bought them nothing - the four Bun services run as the image's `bun` user, 
 install` with recommends. Two images stay root BY NAME in its allowlist, each with its reason, and
 the entry fails once its image gains a `USER`: the nginx frontend (port 80) and media-service
 (root-owned volumes) - [backlog](backlog.d/p3-two-service-images-still-run-as-root.md).
+
+### A suppression is dead when the image moved, not when the feed forgot (2026-11-21)
+
+**The defect.** The retirement check called an entry dead when the scan WITHOUT the allowlist no longer
+reported its id. That is a fact about Trivy's advisory data, which comes and goes: `CVE-2026-97054`
+(gosu's Go stdlib) was added (#3855), deleted as dead (#3895), restored when it was reported again
+(#3930) and then failed every pull request and main when the data dropped it once more. Whichever way
+the entry was last edited, the next feed state contradicted it.
+
+**The rule.** Every entry names the package version it was reviewed on - `purls:` or, for an entry
+scoped by `paths:` or by id alone, `covers: ["name@version"]` (a key Trivy ignores; the test refuses an
+entry with neither). The second scan adds `--list-all-pkgs`, and `image-allowlist-retirement.sh` judges
+each `id package version`:
+
+| State | Verdict |
+| --- | --- |
+| the advisory is reported on that package version | needed, silent |
+| not reported, but an image still carries that package version | **notice**, naming the Trivy DB version: the feed dropped it, the image did not move |
+| not reported, and NO image carries that package version | **dead, the run fails**: the reviewed code is gone |
+
+**Why this keeps the protection.** A stale `--ignore` is dangerous because it hides a FUTURE finding.
+An entry here is scoped to one advisory id on one package version, so a different advisory, or the same
+package at a new version, is outside it - the entry can only suppress what was assessed. The moment
+the image moves (a pin, an authentik release) the covered version leaves the inventory and the entry
+fails. The alternative considered, failing only after N runs "unseen in the DB for the digest", needs
+state kept between runs (a clock by another name); the inventory is read from the run itself.
+
+**What lifts a refusal.** Delete the entry, or show that `trivy image --list-all-pkgs --format json
+<image>` lists the package at that version (then the inventory, not the entry, is wrong). Self-tests:
+`image-allowlist-retirement.test.sh` (reported, feed-dropped with the package present, package gone,
+silent scan, no inventory) and `image-scan-allowlist.test.mjs` (every entry covers a package; the bash
+reader agrees with a YAML parse). Cost: an advisory withdrawn upstream leaves a harmless entry behind
+that shows up as a notice, not a failure.
 
 ### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 
