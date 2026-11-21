@@ -190,7 +190,7 @@ pub(crate) fn notify_native_message(
 /// call from it would abort the process. It is described to logcat (its stack is the evidence),
 /// then cleared, and the call reads as not done.
 #[cfg(target_os = "android")]
-fn with_native_builder(
+pub(crate) fn with_native_builder(
     call: impl FnOnce(&mut jni::JNIEnv<'_>, &jni::objects::JClass<'_>) -> bool,
 ) -> bool {
     let Some(vm) = crate::android_java_vm() else {

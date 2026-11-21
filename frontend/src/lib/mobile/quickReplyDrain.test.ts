@@ -11,6 +11,7 @@ import {
   parseNativeQuickReply,
   resetQuickReplyDrainForTest,
   setNativeQuickReplySender,
+  settleNativeQuickRepliesAtSignOut,
   type NativeQuickReply,
   type QuickReplyOutcome,
   type QuickReplySender,
@@ -23,16 +24,23 @@ const ME = 'me@x.fr';
 const line = (groupId: string, text: string, replyId = `r-${groupId}`) =>
   JSON.stringify({ replyId, accountId: ME, groupId, text, notifiedAt: 5, repliedAt: 9 });
 
-/** A file the native side appends to, taken by a claim, appended back to, and acknowledged. */
+/**
+ * A file the native side appends to, taken by a claim, appended back to, and acknowledged; `order`
+ * records the listings of unclaimed replies and the takes in the order they ran. `unclaimedIds` is
+ * what the native record answers; `told` whether an acknowledgement reached a native listener.
+ */
 function fakeStore(initial: string[] = []) {
   let file = [...initial];
   const acks: [string, QuickReplyOutcome][] = [];
+  const order: string[] = [];
   const store: QuickReplyStore & {
     file: () => string[];
     append: (l: string) => void;
     acks: [string, QuickReplyOutcome][];
+    order: string[];
   } = {
-    take: vi.fn(async () => {
+    take: vi.fn(async (accountId: string) => {
+      order.push(`take:${accountId}`);
       const taken = file;
       file = [];
       return taken;
@@ -42,20 +50,27 @@ function fakeStore(initial: string[] = []) {
     }),
     acknowledge: vi.fn(async (replyId: string, outcome: QuickReplyOutcome) => {
       acks.push([replyId, outcome]);
+      return true;
+    }),
+    unclaimed: vi.fn(async (accountId: string) => {
+      order.push(`unclaimed:${accountId}`);
+      return [] as string[];
     }),
     file: () => file,
     append: (l) => file.push(l),
     acks,
+    order,
   };
   return store;
 }
 
-/** A session that sends with `send` and records what it shows the member. */
-function as(send: SendQuickReply) {
+/** A session that sends with `send`, holds what `held` says, and records what it shows the member. */
+function as(send: SendQuickReply, held: QuickReplySender['heldAs'] = async () => null) {
   const told: [string, string | null][] = [];
   const sender: QuickReplySender & { told: typeof told } = {
     accountId: ME,
     send,
+    heldAs: vi.fn(held),
     tell: (kind, reply) => told.push([kind, reply?.replyId ?? null]),
     told,
   };
@@ -276,5 +291,192 @@ describe('a quick reply handed to the page is never lost, never sent twice, neve
     stop();
     expect(send).toHaveBeenCalledOnce();
     expect(store.acks).toEqual([['r-g3', 'sent']]);
+  });
+});
+
+describe('Android: the banner follows the page, and a dead page is settled before any take', () => {
+  let store: ReturnType<typeof fakeStore>;
+  beforeEach(() => {
+    store = fakeStore();
+    resetQuickReplyDrainForTest(store);
+  });
+
+  it('sends a handed-over reply on the native event and acknowledges how it settled', async () => {
+    const send = vi.fn(async () => 'pending' as const);
+    const session = as(send);
+    setNativeQuickReplySender(session);
+    await settle();
+    const stop = listenForNativeQuickReplies();
+    store.append(line('g1', 'from the banner'));
+    window.dispatchEvent(new CustomEvent(NATIVE_QUICK_REPLY_EVENT));
+    await settle();
+    stop();
+    expect(send).toHaveBeenCalledOnce();
+    expect(store.file()).toEqual([]);
+    // Queued in the page's outbox is durably the page's: the banner is answered on this.
+    expect(store.acks).toEqual([['r-g1', 'pending']]);
+    expect(session.told).toEqual([]);
+  });
+
+  it('settles what a dead page took BEFORE the first take of the account, once per page life', async () => {
+    store.append(line('g1', 'waiting'));
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
+    expect(store.order).toEqual(['unclaimed:me@x.fr', 'take:me@x.fr']);
+    setNativeQuickReplySender(null);
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
+    expect(store.order).toEqual(['unclaimed:me@x.fr', 'take:me@x.fr', 'take:me@x.fr']);
+  });
+
+  it('takes nothing while the sweep runs - no reply of this life is in flight while it weighs', async () => {
+    let answer: (ids: string[]) => void = () => {};
+    store.unclaimed = vi.fn(
+      (accountId: string) =>
+        new Promise<string[]>((r) => {
+          store.order.push(`unclaimed:${accountId}`);
+          answer = r;
+        })
+    );
+    store.append(line('g1', 'waiting'));
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
+    await drainNativeQuickReplies('event');
+    expect(store.take).not.toHaveBeenCalled();
+    answer([]);
+    await settle();
+    expect(store.take).toHaveBeenCalledOnce();
+  });
+
+  it('a registration withdrawn during the sweep takes nothing', async () => {
+    let answer: (ids: string[]) => void = () => {};
+    store.unclaimed = vi.fn(() => new Promise<string[]>((r) => (answer = r)));
+    setNativeQuickReplySender(as(async () => 'sent'));
+    setNativeQuickReplySender(null);
+    answer([]);
+    await settle();
+    await drainNativeQuickReplies('event');
+    expect(store.take).not.toHaveBeenCalled();
+  });
+
+  it('drains a put-back reply on the activity coming back to the front (canari:foreground)', async () => {
+    const send = vi.fn(async () => 'sent' as const);
+    setNativeQuickReplySender(as(send));
+    await settle();
+    const stop = listenForNativeQuickReplies();
+    store.append(line('g4', 'later'));
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: false } }));
+    await settle();
+    expect(send).not.toHaveBeenCalled();
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: true } }));
+    await settle();
+    stop();
+    expect(send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('a reply whose acknowledgement was lost is settled from what the page holds (review of #3927)', () => {
+  let store: ReturnType<typeof fakeStore>;
+  beforeEach(() => {
+    store = fakeStore();
+    resetQuickReplyDrainForTest(store);
+  });
+
+  it('shows a loss itself when the native side answers it was NOT told', async () => {
+    // The Android record was never written (its hand-over could not record it): nobody else says it.
+    vi.mocked(store.acknowledge).mockResolvedValueOnce(false);
+    const session = as(async () => 'gone');
+    setNativeQuickReplySender(session);
+    await settle();
+    store.append(line('g1', 'x'));
+    await drainNativeQuickReplies('event');
+    expect(store.acks).toEqual([]);
+    expect(session.told).toEqual([['lost', 'r-g1']]);
+  });
+
+  it('settles each unclaimed reply from the store: sent, failed or pending when held, lost only when not', async () => {
+    store.unclaimed = vi.fn(async () => ['was-sent', 'parked', 'queued', 'gone']);
+    const held: Record<string, 'sent' | 'failed' | 'pending' | null> = {
+      'was-sent': 'sent',
+      parked: 'failed',
+      queued: 'pending',
+      gone: null,
+    };
+    const session = as(
+      async () => 'sent',
+      async (id) => held[id]
+    );
+    setNativeQuickReplySender(session);
+    await settle();
+    // A reply SENT whose acknowledgement never landed is answered sent - never "retype it", which
+    // would have the member send it twice.
+    expect(store.acks).toEqual([
+      ['was-sent', 'sent'],
+      ['parked', 'failed'],
+      ['queued', 'pending'],
+      ['gone', 'lost'],
+    ]);
+    expect(session.told).toEqual([]);
+  });
+
+  it('settles nothing it cannot read - the record stays for the next ask', async () => {
+    store.unclaimed = vi.fn(async () => ['unknown']);
+    const session = as(
+      async () => 'sent',
+      async () => {
+        throw new Error('store closed');
+      }
+    );
+    setNativeQuickReplySender(session);
+    await settle();
+    expect(store.acks).toEqual([]);
+    expect(session.told).toEqual([]);
+    // The registration goes on: the sweep never blocks the session's own takes.
+    expect(store.take).toHaveBeenCalledOnce();
+  });
+
+  it('never weighs a reply this page is still sending', async () => {
+    let finish: (o: 'sent') => void = () => {};
+    const session = as(
+      () => new Promise<'sent'>((r) => (finish = r)),
+      async () => null
+    );
+    setNativeQuickReplySender(session);
+    await settle();
+    store.append(line('g1', 'in flight'));
+    const draining = drainNativeQuickReplies('event');
+    await settle();
+    // Claimed from the file, not written yet: the native record lists it as unclaimed.
+    store.unclaimed = vi.fn(async () => ['r-g1']);
+    await settleNativeQuickRepliesAtSignOut(ME, session.heldAs);
+    expect(store.acks).toEqual([]);
+    finish('sent');
+    await draining;
+    expect(store.acks).toEqual([['r-g1', 'sent']]);
+  });
+
+  it('a sign-out withdraws the sender and settles the account from the store it captured', async () => {
+    const session = as(async () => 'sent');
+    setNativeQuickReplySender(session);
+    await settle();
+    store.unclaimed = vi.fn(async () => ['taken-before']);
+    const leavingStore = vi.fn(async () => 'pending' as const);
+    await settleNativeQuickRepliesAtSignOut(ME, leavingStore);
+    expect(leavingStore).toHaveBeenCalledWith('taken-before');
+    expect(store.acks).toEqual([['taken-before', 'pending']]);
+    store.append(line('g1', 'after'));
+    await drainNativeQuickReplies('event');
+    expect(store.file()).toHaveLength(1);
+  });
+
+  it('never toasts a sign-out loss to the session in front by then - the banner and the log say it', async () => {
+    const session = as(async () => 'sent');
+    setNativeQuickReplySender(session);
+    await settle();
+    store.unclaimed = vi.fn(async () => ['nothing-held']);
+    vi.mocked(store.acknowledge).mockResolvedValueOnce(false);
+    await settleNativeQuickRepliesAtSignOut(ME, async () => null);
+    expect(store.acks).toEqual([]);
+    expect(session.told).toEqual([]);
   });
 });

@@ -11,6 +11,12 @@ reply: hand the watermark to the page through a durable file and an event, and h
 through `sendReadWatermark` ([mobile](../frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)).
 Unmeasured on a phone: the action only became reachable with #2843.
 
+**Android shares it** (found while the Android quick reply was handed to the page, 1.7.3):
+`handleMarkRead` -> `sendReadWatermark` queues the watermark in the mirror and drains it, refused the
+same way with the app in front and erasable by the page's next rewrite. The same hand-off closes it
+there: `QuickReplyRoute` and `nativeHandQuickReplyToPage` (`CanariNotificationActionReceiver`) take a
+`read` line as they take a reply.
+
 **Brief (batch 19, 2026-11-12) - native, one agent on the strongest model, an adversarial review.**
 Reuse the quick reply's hand-off rather than build a second one ([mobile](../frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)):
 

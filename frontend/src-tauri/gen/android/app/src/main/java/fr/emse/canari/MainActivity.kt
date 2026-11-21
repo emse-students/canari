@@ -67,6 +67,31 @@ class MainActivity : TauriActivity() {
 
         /** What `canariTheme.setGround` accepts, compiled once. */
         private val GROUND_COLOUR = Regex("^#[0-9a-fA-F]{6}$")
+
+        /**
+         * The page of the activity alive now, for a caller outside it ([tellPage]). Set with
+         * `liveWebView` in `onWebViewCreate`, cleared in `onDestroy` only when it is still that one.
+         */
+        @Volatile private var pageWebView: WebView? = null
+
+        /**
+         * Tells the live page that something waits for it in a file, by a plain `CustomEvent` named
+         * [event] (no detail: the page takes the file itself). For a caller off this activity - the
+         * notification action receiver, on its own thread. Returns whether a page was there to be
+         * told; a page that is not loaded takes the file when its session registers instead, and a
+         * failure to dispatch is logged.
+         */
+        fun tellPage(event: String): Boolean {
+            val webView = pageWebView ?: return false
+            webView.post {
+                try {
+                    webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('$event'));", null)
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "tellPage($event) not delivered, the page takes the file at its next registration: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
+                }
+            }
+            return true
+        }
     }
 
     /**
@@ -326,6 +351,7 @@ class MainActivity : TauriActivity() {
         // The web layer cannot see this activity's lifecycle any other way - see `pushForeground`.
         // Held from here because it is the only hook that is handed the WebView at all.
         liveWebView = webView
+        pageWebView = webView
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(ImeBridge(), "canariIme")
@@ -1039,6 +1065,7 @@ class MainActivity : TauriActivity() {
             return
         }
         liveWebView = null
+        if (pageWebView === webView) pageWebView = null
         // A call lives in this page: with the page gone, its service must not hold the microphone,
         // the audio mode and a wake lock for a call that no longer exists.
         CallBridge.detach(webView)

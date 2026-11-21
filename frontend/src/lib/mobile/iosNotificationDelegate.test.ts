@@ -342,7 +342,7 @@ describe('a suspended page gets the time to own a reply (review of #2843, A1)', 
     expect(bridge).toContain('void canari_ios_set_quick_reply_ack_listener(');
     expect(bridge).toContain('int32_t outcome');
     expect(ffiRs).toContain('pub extern "C" fn canari_ios_set_quick_reply_ack_listener(');
-    expect(pushRs).toContain('tell_quick_reply_settled(&reply_id, parsed);');
+    expect(pushRs).toContain('Ok(tell_quick_reply_settled(&reply_id, parsed))');
   });
 
   it('names the same five outcome codes on both sides', () => {

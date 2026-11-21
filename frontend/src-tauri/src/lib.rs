@@ -86,7 +86,7 @@ use crate::commands::push::{
     read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
     set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
     store_push_context, store_push_secret, take_background_joins, take_fcm_cache,
-    take_key_group_push_joins,
+    take_key_group_push_joins, unclaimed_quick_replies,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -393,6 +393,96 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
         log::error!("[FCM_CACHE] sealed line not returned: {e}");
         null()
     })
+}
+
+/// Hands one notification quick reply to the page in front: seals `line` (`native_cache`, purpose
+/// `QuickReply`) and appends it to `{dataDir}/pending_quick_replies.ndjson` under the lock every Rust
+/// reader of that file holds ([`commands::push::hand_quick_reply_in`]). Answers a
+/// `QuickReplyHandoff` code: 0 handed, 1 no usable key (nothing written - never a reply in the
+/// clear), 2 the write failed; 2 too when an argument cannot be read.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeHandQuickReplyToPage<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+    line: jni::objects::JString<'a>,
+) -> i32 {
+    let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+        env.get_string(s).ok().map(Into::into)
+    };
+    let (Some(dir), Some(key), Some(line)) = (read(&data_dir), read(&cache_key_b64), read(&line))
+    else {
+        log::error!("[QUICK_REPLY] jni-string");
+        return commands::push::QuickReplyHandoff::WriteFailed as i32;
+    };
+    commands::push::hand_quick_reply_in(
+        std::path::Path::new(&dir),
+        native_cache::platform_key(&key).as_ref(),
+        &line,
+    ) as i32
+}
+
+/// Whether the foreground guard holds ([`concurrency::foreground_is_active`]) - THE fact the
+/// background `mls.bin` writer refuses on ("foreground active - background mls.bin write
+/// abandoned"). The Android quick reply routes on it (`QuickReplyRoute`): held, the native encrypt
+/// would be refused and the page sends the reply; released, the native path sends it. One fact, read
+/// by both, so the route and the refusal can never disagree.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeForegroundGuardHolds<
+    'a,
+>(
+    _env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+) -> jni::sys::jboolean {
+    if concurrency::foreground_is_active() {
+        jni::sys::JNI_TRUE
+    } else {
+        jni::sys::JNI_FALSE
+    }
+}
+
+/// The ids of the quick replies waiting for the page, one per line, read under the lock its take
+/// holds ([`commands::push::quick_reply_ids_waiting_in`]) - what the receiver weighs its
+/// "sending" record against. NULL when the file or the key cannot be read: nothing is then answered.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeQuickReplyIdsWaiting<
+    'a,
+>(
+    mut env: jni::JNIEnv<'a>,
+    _companion: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    cache_key_b64: jni::objects::JString<'a>,
+) -> jni::sys::jstring {
+    let mut read = |s: &jni::objects::JString<'a>| -> Option<String> {
+        env.get_string(s).ok().map(Into::into)
+    };
+    let (Some(dir), Some(key)) = (read(&data_dir), read(&cache_key_b64)) else {
+        log::error!("[QUICK_REPLY] jni-string - nothing swept");
+        return std::ptr::null_mut();
+    };
+    let Some(key) = native_cache::platform_key(&key) else {
+        log::error!(
+            "[QUICK_REPLY] no cache key - the waiting replies cannot be read, nothing swept"
+        );
+        return std::ptr::null_mut();
+    };
+    let Some(ids) = commands::push::quick_reply_ids_waiting_in(std::path::Path::new(&dir), &key)
+    else {
+        return std::ptr::null_mut();
+    };
+    match env.new_string(ids.join("\n")) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            log::error!("[QUICK_REPLY] new_string failed: {e} - nothing swept");
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
@@ -1848,6 +1938,7 @@ pub fn run() {
             read_and_clear_pending_quick_replies,
             return_pending_quick_replies,
             acknowledge_quick_reply,
+            unclaimed_quick_replies,
             begin_background_flush,
             end_background_flush,
             delete_user_quick_replies,

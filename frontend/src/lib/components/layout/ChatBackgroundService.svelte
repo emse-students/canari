@@ -143,10 +143,11 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-  import { isIosTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import {
     listenForNativeQuickReplies,
     setNativeQuickReplySender,
+    settleNativeQuickRepliesAtSignOut,
   } from '$lib/mobile/quickReplyDrain';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { buildConversationRow } from '$lib/utils/chat/conversations';
@@ -467,10 +468,11 @@
   $effect(() => {
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
   });
-  // A reply typed in an iOS notification while this page holds the MLS state is handed here
-  // (`quickReplyDrain.ts`): the signed-in session is its sender, through the composer's own path.
+  // A reply typed in a notification while this page holds the MLS state is handed here - on iOS, and
+  // on Android with the app in front (`quickReplyDrain.ts`): the signed-in session is its sender,
+  // through the composer's own path.
   $effect(() => {
-    if (!isIosTauriRuntime()) return;
+    if (!isMobileTauriRuntime()) return;
     // The account the native side stamped in `push_context.json` - the same id: only its replies
     // are taken.
     const accountId = globalSession.userId;
@@ -483,9 +485,12 @@
     void globalConvs.conversations.size;
     setNativeQuickReplySender({
       accountId,
-      // How the queue SETTLED it, not merely that it was queued (review of #2843, H1).
+      // How the queue SETTLED it, not merely that it was queued (review of #2843, H1). Written under
+      // its reply id, so `heldAs` answers for it after a lost acknowledgement (review of #3927).
       send: async (reply) =>
-        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx())).outcome,
+        (await globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx(), reply.replyId))
+          .outcome,
+      heldAs: (replyId) => globalMessaging.heldAs(replyId, msgCtx()),
       tell: (kind) =>
         showToast(
           kind === 'waiting' ? m.chat_quick_reply_waiting() : m.chat_quick_reply_lost(),
@@ -945,6 +950,21 @@
   }
 
   /**
+   * THE QUICK REPLIES THE LEAVING ACCOUNT TOOK AND NEVER SETTLED are settled from what ITS store
+   * holds, so no banner stays "sending" for an account that left (review of #3927). The context is
+   * captured NOW - the teardown drops the session's reference to the store - and nothing waits for
+   * the settlement: `clearAuth` needs the teardown synchronous.
+   */
+  function settleLeavingQuickReplies(): void {
+    const leaving = globalSession.userId;
+    if (!leaving || !isMobileTauriRuntime()) return;
+    const leavingCtx = msgCtx();
+    void settleNativeQuickRepliesAtSignOut(leaving, (replyId) =>
+      globalMessaging.heldAs(replyId, leavingCtx)
+    );
+  }
+
+  /**
    * The device half of every sign-out, run by `clearAuth` before it drops the credential.
    *
    * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
@@ -958,6 +978,8 @@
    */
   function handleSignedOut(): Promise<void> {
     noteUnlockNeedsMember();
+    // Before the teardown below lets go of the leaving account's store.
+    settleLeavingQuickReplies();
     // Resolves when the server's push deregistration has answered: `clearAuth` awaits it before it
     // revokes the session.
     const pushDeregistered = globalSession.endSession(sessionCb());
@@ -2193,8 +2215,8 @@
     // visibilitychange - iOS launched it in the background `visible` (1.5.2-alpha.2, K7/K8), or a
     // warm Android activity at the PIN gate - drains it here (`listenForNativeCallAccept`).
     const stopNativeCallAccept = listenForNativeCallAccept();
-    // The native side says a notification reply waits (`canari:quick-reply`, iOS only).
-    const stopNativeQuickReply = isIosTauriRuntime() ? listenForNativeQuickReplies() : () => {};
+    // The native side says a notification reply waits (`canari:quick-reply`, both phones).
+    const stopNativeQuickReply = isMobileTauriRuntime() ? listenForNativeQuickReplies() : () => {};
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
     // THE LEADER HALF OF A FOLLOWER TAB'S COMMITS (`tabCommitDelegation.ts`): registered in every tab,

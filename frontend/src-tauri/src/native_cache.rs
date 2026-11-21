@@ -58,9 +58,10 @@ pub(crate) enum Purpose {
     /// where a push service can join).
     #[cfg(any(target_os = "android", target_os = "ios", test))]
     KeyGroupJoinLedger,
-    /// One line of `pending_quick_replies.ndjson`: a notification reply the iOS delegate hands to
-    /// the page (`commands::push::take_quick_replies_in`). It holds what the user typed.
-    #[cfg(any(target_os = "ios", test))]
+    /// One line of `pending_quick_replies.ndjson`: a notification reply the native side hands to
+    /// the page (`commands::push::take_quick_replies_in`) - the iOS delegate, and the Android
+    /// receiver with the app in front. It holds what the user typed.
+    #[cfg(any(target_os = "android", target_os = "ios", test))]
     QuickReply,
 }
 
@@ -71,7 +72,7 @@ impl Purpose {
             Purpose::PushCache => b"canari/native-cache/v1/push-cache",
             #[cfg(any(target_os = "android", target_os = "ios", test))]
             Purpose::KeyGroupJoinLedger => b"canari/native-cache/v1/key-group-join-ledger",
-            #[cfg(any(target_os = "ios", test))]
+            #[cfg(any(target_os = "android", target_os = "ios", test))]
             Purpose::QuickReply => b"canari/native-cache/v1/quick-reply",
         }
     }
