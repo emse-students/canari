@@ -1,4 +1,4 @@
-## P2 - iPhone message banners as communication notifications: four iPhone readings owed (2026-11-21)
+## P2 - iPhone message banners as communication notifications: six iPhone readings owed (2026-11-21)
 
 target: 1.8.0
 
@@ -25,6 +25,13 @@ path ran):
    the left, with no second copy of it as an attachment; a photo message keeps its thumbnail.
 4. A group banner shows the group's name (an unnamed group: "Conversation de groupe"), and the
    sender.
+5. A group @-mention keeps the group's name (it declares `recipientCount` 2) - not drawn as a DM.
+6. After a sign-out, a push still delivered draws the PLAIN banner (`reason=no-account-context`)
+   and the next account's share sheet offers none of the previous account's senders.
+
+**Noise to rule out**: on a phone restarted and not yet unlocked, a push must skip with
+`reason=no-account-context` (the App Group file is unreadable then) - if instead `donate` fails and
+logs `WARN` on every push, that is noise and is fixed before the stable.
 
 If a row fails while the app was alive rather than killed, check first which composer drew the
 banner: the app's own (`canari_push.mm` `CanariShowMessageNotification`) is not converted.

@@ -208,10 +208,25 @@ export function clearShareTargets(
  * `chat_<group>` conversation shortcuts, on iOS the interactions the notification extension
  * donates for its communication notifications (owner, 2026-11-21), one command on both phones.
  * Queued after any publish in flight. Phone apps only; a failure is said, never thrown.
+ *
+ * THE NOTIFICATIONS' HALF WAITS FOR `pushEnded`, the sign-out's end of the push registration
+ * (review of #3938). That end strips `push_context.json`, the proof the iPhone's notification
+ * extension reads before it donates; erased before the strip, a push landing in between would
+ * donate the leaving account's sender again, after the erase. Strip first, erase second: a donation
+ * completing before the strip is taken by the erase, one completing after it withdraws itself
+ * (`NotificationService.signedInUserId`). `pushEnded` never rejects.
  */
-export function eraseAccountShortcuts(reason: string): Promise<void> {
+export function eraseAccountShortcuts(
+  reason: string,
+  pushEnded: Promise<void> = Promise.resolve()
+): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
   void clearShareTargets(reason, { force: true });
+  return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason));
+}
+
+/** The notifications' half of {@link eraseAccountShortcuts}, queued like every native call here. */
+function eraseNotificationShortcuts(reason: string): Promise<void> {
   return enqueue(async () => {
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));

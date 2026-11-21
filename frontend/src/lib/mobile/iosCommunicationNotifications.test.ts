@@ -124,6 +124,50 @@ describe('the extension donates, THEN redraws', () => {
   });
 });
 
+describe('no donation outlives the account it named (review of #3938)', () => {
+  const skip = capture(nse, /static func communicationSkipReason\(([\s\S]*?)\n {2}\}\n/);
+
+  it('skips the donation FIRST when no whole push context proves an account is signed in', () => {
+    expect(skip.indexOf('return "no-account-context"')).toBeGreaterThan(-1);
+    expect(skip.indexOf('return "no-account-context"')).toBeLessThan(
+      skip.indexOf('return "no-conversation-id"')
+    );
+    // The proof is the context the sign-out strips of `baseUrl`, never the payload.
+    const proof = capture(nse, /static func signedInUserId\(\) -> String\? \{([\s\S]*?)\n {2}\}\n/);
+    expect(proof).toContain('!baseUrl.isEmpty');
+    expect(nse).toContain('signedInUserId: ctx?.userId)');
+  });
+
+  it('a donation the sign-out overtook withdraws exactly itself, and the plain banner goes out', () => {
+    expect(styleStep).toContain('interaction.identifier = donationId');
+    expect(styleStep).toMatch(
+      /else if Self\.signedInUserId\(\) != donor \{[\s\S]*?INInteraction\.delete\(with: \[donationId\]\)[\s\S]*?\} else \{\s*self\.adoptCommunicationContent/
+    );
+  });
+
+  it('the sign-out strips the context BEFORE it erases the donations', () => {
+    const auth = read(resolve(here, '../stores/auth.ts'));
+    expect(auth).toContain('const pushEnded = endPushRegistration(options.cause);');
+    expect(auth).toContain("void eraseAccountShortcuts('signed out', pushEnded);");
+    const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
+    expect(native).toContain(
+      'return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason));'
+    );
+  });
+
+  it('a group mention declares a recipient count, which would otherwise draw it as a DM', () => {
+    expect(capture(nse, /static let mentionedGroupRecipientCount = (\d+)/)).toBe('2');
+    expect(nse).toContain(
+      'metadata.recipientCount = groupName == nil ? 1 : mentionedGroupRecipientCount'
+    );
+  });
+
+  it('the stand-in for a group is never offered as a contact', () => {
+    const intent = capture(nse, /static func messageIntent\(([\s\S]*?)\n {2}\}\n/);
+    expect(intent).toContain('suggestionType: .none)');
+  });
+});
+
 describe('the sign-out erases what the extension donated', () => {
   it('spells the donation group and the conversation id prefix the same in both bundles', () => {
     const group = capture(nse, /static let messageNotificationsGroup = "([^"]+)"/);

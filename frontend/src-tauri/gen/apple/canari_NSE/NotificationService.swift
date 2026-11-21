@@ -1816,7 +1816,8 @@ class NotificationService: UNNotificationServiceExtension {
     // style is drawn on top of it, and that step calls `finish` (owner, 2026-11-21).
     applyCommunicationStyle(
       senderId: senderId, senderName: senderName, groupId: groupId,
-      groupName: isGroup ? groupTitle : nil, face: face, mentionsMe: level.mentionsMe)
+      groupName: isGroup ? groupTitle : nil, face: face, mentionsMe: level.mentionsMe,
+      signedInUserId: ctx?.userId)
   }
 
   // MARK: - Communication notification (owner, 2026-11-21) ---------------------
@@ -1831,10 +1832,24 @@ class NotificationService: UNNotificationServiceExtension {
   /// reaches the Share Extension in the shape it already reads (`ShareRules.suggestedTarget`).
   static let conversationIdPrefix = "c:"
 
+  /// The `recipientCount` a group's mention declares: the member and the stand-in for the others -
+  /// the smallest group there is. `iosCommunicationNotifications.test.ts` pins it.
+  static let mentionedGroupRecipientCount = 2
+
   /// Why a message notification is NOT made a communication notification, or nil when it is
-  /// eligible. Each reason is a payload naming nobody to draw: nothing failed, so it is said at
-  /// `notice`, never `WARN`.
-  static func communicationSkipReason(senderId: String, senderName: String, groupId: String) -> String? {
+  /// eligible. Nothing failed in any of them, so each is said at `notice`, never `WARN`.
+  ///
+  /// `no-account-context` FIRST, and it is the one that guards the member (review of #3938): a donation
+  /// names a sender and carries a face, and one made while no account owns this device would outlive
+  /// the sign-out that erased the others - the next account would meet it in its share sheet and
+  /// Siri suggestions. The proof an account is signed in is `push_context.json` WHOLE - written at
+  /// sign-in, stripped of `baseUrl` at sign-out (`keep_device_context_only`) - which is exactly
+  /// `loadPushContext` answering. The payload alone proves nothing: a push can arrive after the
+  /// sign-out, while the server's deregistration lags.
+  static func communicationSkipReason(
+    signedInUserId: String?, senderId: String, senderName: String, groupId: String
+  ) -> String? {
+    if (signedInUserId ?? "").isEmpty { return "no-account-context" }
     if groupId.isEmpty { return "no-conversation-id" }
     if senderId.isEmpty { return "no-sender-id" }
     if senderName.isEmpty { return "no-sender-name" }
@@ -1876,7 +1891,11 @@ class NotificationService: UNNotificationServiceExtension {
           displayName: groupName,
           image: nil,
           contactIdentifier: nil,
-          customIdentifier: conversationId)
+          customIdentifier: conversationId,
+          isMe: false,
+          // Not a person: no contact suggestion is ever made from it (Apple's `.none`). Siri may
+          // still offer it among the app's conversations, as the share suggestions' groups are.
+          suggestionType: .none)
       ]
       speakableGroupName = INSpeakableString(spokenPhrase: groupName)
     }
@@ -1893,6 +1912,11 @@ class NotificationService: UNNotificationServiceExtension {
       // The proof `levelDecision` raised the banner on; it lets a mention through a Focus too.
       let metadata = INSendMessageIntentDonationMetadata()
       metadata.mentionsCurrentUser = true
+      // A metadata's `recipientCount` OVERRIDES the recipients array's count, and it is 0 unless
+      // set - a group's mention would be drawn as a direct message, its group name lost (review of
+      // #3938). The real count is unknown here (the push does not carry it, and must not), so a
+      // group says the smallest group: the member and one other.
+      metadata.recipientCount = groupName == nil ? 1 : mentionedGroupRecipientCount
       intent.donationMetadata = metadata
     }
     return intent
@@ -1910,10 +1934,11 @@ class NotificationService: UNNotificationServiceExtension {
   /// notification is delivered, and the line says `WARN` with the error's type, domain and code.
   private func applyCommunicationStyle(
     senderId: String, senderName: String, groupId: String, groupName: String?, face: URL?,
-    mentionsMe: Bool
+    mentionsMe: Bool, signedInUserId: String?
   ) {
     if let reason = Self.communicationSkipReason(
-      senderId: senderId, senderName: senderName, groupId: groupId)
+      signedInUserId: signedInUserId, senderId: senderId, senderName: senderName,
+      groupId: groupId)
     {
       NseLog.log.notice(
         "[CanariNSE] communication style skipped reason=\(reason, privacy: .public) - the plain notification is delivered")
@@ -1921,9 +1946,20 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
     // The face the attachment used, else the initials disc the attachment would draw: a
-    // communication notification never lacks an avatar. Read from local files only.
-    var faceData = face.flatMap { try? Data(contentsOf: $0) }
-    let source = faceData != nil ? "avatar" : "initials"
+    // communication notification never lacks an avatar. Read from local files only. A face that
+    // was held but could not be read is said apart from one that was never held.
+    var faceData: Data?
+    var source = "initials-no-face"
+    if let face = face {
+      do {
+        faceData = try Data(contentsOf: face)
+        source = "avatar"
+      } catch {
+        source = "initials-face-unreadable"
+        NseLog.log.notice(
+          "[CanariNSE] communication style: the face file is unreadable (\(errorReason(error), privacy: .public)) - the initials are drawn")
+      }
+    }
     if faceData == nil {
       faceData = Self.initialsImagePng(name: senderName)
     }
@@ -1934,6 +1970,10 @@ class NotificationService: UNNotificationServiceExtension {
     let interaction = INInteraction(intent: intent, response: nil)
     interaction.direction = .incoming
     interaction.groupIdentifier = Self.messageNotificationsGroup
+    // Its own id, so a donation the sign-out overtook can withdraw exactly itself (below).
+    let donationId = UUID().uuidString
+    interaction.identifier = donationId
+    let donor = signedInUserId ?? ""
     trace?.mark("donate")
     NseLog.log.debug(
       "[CanariNSE] communication style: donating isGroup=\(isGroup, privacy: .public) source=\(source, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
@@ -1942,11 +1982,39 @@ class NotificationService: UNNotificationServiceExtension {
         let kind = String(describing: type(of: error))
         NseLog.log.warning(
           "[CanariNSE] WARN communication style not applied - the donation was refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+      } else if Self.signedInUserId() != donor {
+        // THE SIGN-OUT OVERTOOK THE DONATION. The app strips the context BEFORE it deletes the
+        // donation group (`eraseAccountShortcuts` waits for `endPushRegistration`), so a donation
+        // that completed before the strip was taken by the group delete, and one completing after
+        // it is seen here - every order is covered, none by a clock. It withdraws itself.
+        NseLog.log.notice(
+          "[CanariNSE] communication style withdrawn - the account signed out during the donation; the plain notification is delivered")
+        INInteraction.delete(with: [donationId]) { error in
+          if let error = error {
+            NseLog.log.error(
+              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(errorReason(error), privacy: .public))")
+          }
+        }
       } else {
         self.adoptCommunicationContent(intent, isGroup: isGroup)
       }
       self.finish()
     }
+  }
+
+  /// The account `push_context.json` says is signed in, or nil when none is: the file absent,
+  /// unreadable, or stripped by a sign-out (no `baseUrl`). The JSON half of `loadPushContext`,
+  /// without its keychain read - asked again when a donation completes.
+  static func signedInUserId() -> String? {
+    guard let dir = appGroupDir(),
+      let data = try? Data(contentsOf: dir.appendingPathComponent(pushContextFile)),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    let userId = json["userId"] as? String ?? ""
+    let deviceId = json["deviceId"] as? String ?? ""
+    let baseUrl = json["baseUrl"] as? String ?? ""
+    guard !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
+    return userId
   }
 
   /// Replaces the best-attempt content with its redraw from `intent`, unless the run was already

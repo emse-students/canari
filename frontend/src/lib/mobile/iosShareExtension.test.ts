@@ -519,7 +519,11 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
   });
 
   it('erases the suggestions at sign-out on iOS too, and the notification donations with them', () => {
-    const erase = capture(native, /(export function eraseAccountShortcuts[\s\S]*?\n\})/);
+    // The erase and its notifications' half (`eraseNotificationShortcuts`), read as one.
+    const erase = capture(
+      native,
+      /(export function eraseAccountShortcuts[\s\S]*?function eraseNotificationShortcuts[\s\S]*?\n\})/
+    );
     expect(erase).toContain('if (!isMobileTauriRuntime()) return Promise.resolve();');
     expect(erase).toContain('clearShareTargets(reason, { force: true })');
     // Both phones since the iPhone's communication notifications (owner, 2026-11-21): no
@@ -527,7 +531,7 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     expect(erase).not.toContain('isAndroidTauriRuntime');
     expect(erase).toContain("galleryCommand('clearConversationShortcuts')");
     const auth = read(resolve(here, '../stores/auth.ts'));
-    expect(auth).toContain("eraseAccountShortcuts('signed out')");
+    expect(auth).toContain("eraseAccountShortcuts('signed out', pushEnded)");
   });
 });
 

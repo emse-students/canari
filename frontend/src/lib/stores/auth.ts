@@ -1506,7 +1506,7 @@ async function clearAuthUnderway(options: {
   // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
-  void endPushRegistration(options.cause);
+  const pushEnded = endPushRegistration(options.cause);
   // Whose account is leaving, read before the identity below is forgotten.
   const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
@@ -1534,8 +1534,10 @@ async function clearAuthUnderway(options: {
   // And a share INTO Canari still waiting: it must never land in the account signed in next.
   void eraseIncomingShare('signed out');
   // And the shortcuts the phone holds for THIS account - the share sheet's suggestions and the
-  // notifications' conversation shortcuts, names and faces the next account must never see.
-  void eraseAccountShortcuts('signed out');
+  // notifications' conversation shortcuts, names and faces the next account must never see. The
+  // notifications' half after the push registration's end, which strips the extension's proof of an
+  // account first (`eraseAccountShortcuts`).
+  void eraseAccountShortcuts('signed out', pushEnded);
   // And the forms' edits this device kept for a save that has not landed: the next account must
   // neither see nor send them (owner, 2026-11-08).
   void eraseFormDraftCopies(leavingUserId, 'signed out');

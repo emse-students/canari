@@ -1565,10 +1565,44 @@ secret on 2026-11-21; the bench development profile `app.mobileprovision` was re
 regenerated later without the capability fails a release at codesign ("profile doesn't include the
 ... entitlement") - the pull request's unsigned compile cannot see it.
 
-**Erased at sign-out.** The donations name senders and carry faces, so they leave with the account:
-`eraseAccountShortcuts` asks `clear_conversation_shortcuts` on iOS too (Android's command for its
-`chat_<group>` shortcuts), which deletes the donation group
-(`ShareSuggestions.clearMessageNotifications`, [sharing](sharing.md#share-suggestions-ios---lot-s5)).
+**Erased at sign-out, and none made after it (review of #3938).** The donations name senders and
+carry faces, so they leave with the account: `eraseAccountShortcuts` asks
+`clear_conversation_shortcuts` on iOS too (Android's command for its `chat_<group>` shortcuts),
+which deletes the donation group (`ShareSuggestions.clearMessageNotifications`,
+[sharing](sharing.md#share-suggestions-ios---lot-s5)). Deleting is not enough on its own: a push
+can still arrive after the sign-out (the server's deregistration lags), and its payload alone would
+donate the leaving account's sender again. So:
+
+- **No donation without a signed-in account.** The proof is `push_context.json` WHOLE in the App
+  Group - written at sign-in, stripped of `baseUrl` by the sign-out (`keep_device_context_only`).
+  Without it the step skips with `reason=no-account-context` (also the answer before the first
+  unlock, when the file cannot be read: no donation is the safe side).
+- **Strip first, erase second.** `clearAuthUnderway` hands `endPushRegistration`'s promise (which
+  strips the context and never rejects) to `eraseAccountShortcuts`, whose notifications' half runs
+  only once it settled.
+- **A donation the sign-out overtook withdraws itself.** Each interaction carries its own id; when
+  its donation completes, the extension reads the context again (`signedInUserId`) and, if it no
+  longer names the donor, deletes exactly that interaction and delivers the plain banner. A donation
+  that completed before the strip was taken by the group delete; one completing after it is seen
+  here - every order is covered, none by a clock.
+- **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
+  and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
+  same erase.
+
+**A group's mention declares its recipient count.** `INSendMessageIntentDonationMetadata.recipientCount`
+overrides the recipients array's count and is 0 unless set, which would draw a group's mention as a
+direct message. A mention in a group declares 2 (`mentionedGroupRecipientCount`: the member and the
+stand-in, the smallest group) and in a DM 1; the real count is not known here and is not sent.
+
+**The stand-in may surface in Siri's suggestions.** The recipient that stands for a group's other
+members is an `INPerson` named after the group, with `suggestionType: .none`, so iOS never proposes
+it as a contact. Siri may still offer it among Canari's conversations - as it may the share
+suggestions' groups - a known effect, said here so a reader of the phone does not take it for a
+person.
+
+**An unreadable face is said apart from a missing one.** The face file is read with a `do`/`catch`:
+`source=initials-no-face` when none was held, `initials-face-unreadable` (and a `notice` with the
+error's domain and code) when it was held and could not be read; the initials disc is drawn in both.
 
 **Principle 1 - "Vos messages sont à vous"** ([principes](../../principes.md), the first and the one that wins).
 What this adds, and where it goes:
@@ -1598,7 +1632,7 @@ setting off still removes the share sheet's own suggestions.
 **What is NOT covered.** A banner the APP draws while it is alive (`canari_push.mm`
 `CanariShowMessageNotification`) stays plain; the extension draws the push banners.
 **Compiled by CI only; owed on the iPhone 12** - Focus with Canari allowed lets a message through,
-Focus without it holds it back, the avatar shows, groups show their name
+Focus without it holds it back, the avatar shows, groups (and their mentions) show their name, a signed-out phone donates nothing
 ([backlog](../backlog.d/ios-communication-notifications.md)).
 
 ### The extension's copy of the state follows every write (2026-11-05)

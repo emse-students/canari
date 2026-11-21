@@ -345,6 +345,19 @@ describe('on iOS', () => {
     await eraseAccountShortcuts('signed out');
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, CLEAR_CONVERSATIONS]);
   });
+
+  it('erases the notification donations only once the push registration has ended (review of #3938)', async () => {
+    // The end strips the extension's proof of an account; erased before it, a push landing in
+    // between would donate the leaving account's sender again.
+    platform = 'ios';
+    const pushEnded = deferred<void>();
+    const erased = eraseAccountShortcuts('signed out', pushEnded.promise);
+    await settle();
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR]);
+    pushEnded.resolve();
+    await erased;
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, CLEAR_CONVERSATIONS]);
+  });
 });
 
 describe('off the phone apps', () => {
