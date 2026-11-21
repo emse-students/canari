@@ -56,13 +56,13 @@ describe('readInviteNameFragment', () => {
   });
 
   it('strips bidi overrides, zero-width and control characters', () => {
-    const hostile = '‮serdna‬​Bureau';
+    const hostile = '\u202Eserdna\u202C\u200BBureau\u0007';
     const hash = `#${new URLSearchParams({ name: hostile }).toString()}`;
     expect(readInviteNameFragment(hash)).toEqual({ name: 'serdnaBureau' });
   });
 
   it('a name of invisible characters only is empty', () => {
-    const hash = `#${new URLSearchParams({ name: '​‮' }).toString()}`;
+    const hash = `#${new URLSearchParams({ name: '\u200B\u202E' }).toString()}`;
     expect(readInviteNameFragment(hash)).toEqual({ absent: 'empty' });
   });
 
