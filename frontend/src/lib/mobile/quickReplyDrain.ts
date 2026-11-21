@@ -22,19 +22,19 @@
  *   notification response until then, and tells the user what is not sent (H1). A line that cannot
  *   be read is acknowledged lost at once, never left to run out the background time.
  *
- * ANDROID HANDS A REPLY OVER TOO, with the app in front (`CanariNotificationActionReceiver`,
- * `handReplyToPage`): the native encrypt would be refused by the foreground guard there, and a reply
- * left in the outbox mirror sat queued until the app went to the background. Android holds nothing
- * for it and settles its banner at the hand-over, so the page in front is the one surface: nothing is
- * acknowledged natively ({@link QuickReplyStore.nativeTellsOutcome}) and a lost reply is shown here.
+ * ANDROID HANDS A REPLY OVER TOO, while the foreground guard holds (`CanariNotificationActionReceiver`,
+ * `handReplyToPage`): the native encrypt would be refused there, and a reply left in the outbox
+ * mirror sat queued until the app went to the background. Its receiver RECORDS the reply and draws it
+ * "sending"; the acknowledgement moves that banner (answered only once the page holds it durably),
+ * and a page life's FIRST registration of an account settles the replies an earlier, dead page took
+ * ({@link SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND}) before it takes anything.
  *
  * One loss stays: a process that dies between the take (the file is claimed by a rename) and the
- * send's durable write loses the replies of that take. See `docs/wiki/frontend/mobile.md` ("One
- * notification delegate").
+ * send's durable write loses the replies of that take - on Android it is SAID, by that sweep. See
+ * `docs/wiki/frontend/mobile.md` ("One notification delegate").
  */
 import { appendLog } from '$lib/utils/sessionLog';
 import { MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
-import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 
 /** The event the native side dispatches when a reply waits. */
@@ -42,6 +42,7 @@ export const NATIVE_QUICK_REPLY_EVENT = 'canari:quick-reply';
 export const TAKE_QUICK_REPLIES_COMMAND = 'read_and_clear_pending_quick_replies';
 export const RETURN_QUICK_REPLIES_COMMAND = 'return_pending_quick_replies';
 export const ACKNOWLEDGE_QUICK_REPLY_COMMAND = 'acknowledge_quick_reply';
+export const SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND = 'settle_unclaimed_quick_replies';
 
 export interface NativeQuickReply {
   /** The native side's id for this reply, which its acknowledgement names. */
@@ -83,17 +84,17 @@ export interface QuickReplySender {
   tell: (kind: 'waiting' | 'lost', reply: NativeQuickReply | null) => void;
 }
 
-/** The three native commands, injectable for tests. */
+/** The native commands, injectable for tests. */
 export interface QuickReplyStore {
   take(accountId: string): Promise<string[]>;
   putBack(lines: string[]): Promise<void>;
   acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise<void>;
   /**
-   * Whether the native side holds each reply until it is told how it settled, and shows what is not
-   * sent (iOS). False on Android: its receiver settles the banner at the hand-over and holds
-   * nothing, so nothing is acknowledged and a lost reply is shown by the page.
+   * Settles, as lost, the replies of `accountId` an earlier page life took and never acknowledged
+   * (Android: its receiver records each one it hands over); answers how many. 0 on iOS, which holds
+   * each reply in the process that handed it over.
    */
-  readonly nativeTellsOutcome: boolean;
+  settleUnclaimed(accountId: string): Promise<number>;
 }
 
 const tauriStore: QuickReplyStore = {
@@ -109,8 +110,9 @@ const tauriStore: QuickReplyStore = {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke(ACKNOWLEDGE_QUICK_REPLY_COMMAND, { replyId, outcome });
   },
-  get nativeTellsOutcome() {
-    return isIosTauriRuntime();
+  async settleUnclaimed(accountId) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<number>(SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND, { accountId });
   },
 };
 
@@ -155,17 +157,17 @@ let sender: QuickReplySender | null = null;
 let store: QuickReplyStore = tauriStore;
 /** Replies already shown as waiting or lost in this page life, so a re-take does not repeat it. */
 const told = new Set<string>();
+/** The accounts whose unclaimed replies this page life settled - once each, before their first take. */
+const swept = new Set<string>();
+/** Bumped by every registration, so a sweep that resolves after a newer one registers nothing. */
+let registration = 0;
 
 /**
  * Tells the native side what became of `replyId`, and answers whether it was told. A failure costs
- * the hold, which then runs to iOS's end of the background time. Where the native side holds nothing
- * ({@link QuickReplyStore.nativeTellsOutcome}), nobody is told and the answer is false.
+ * the hold, which then runs to iOS's end of the background time (on Android, the banner stays
+ * "sending" until the next page life's sweep).
  */
 async function acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise<boolean> {
-  if (!store.nativeTellsOutcome) {
-    appendLog(`[QuickReply] reply ${replyId} settled by the page: ${outcome}`);
-    return false;
-  }
   try {
     await store.acknowledge(replyId, outcome);
     appendLog(`[QuickReply] reply ${replyId} acknowledged: ${outcome}`);
@@ -180,9 +182,9 @@ async function acknowledge(replyId: string, outcome: QuickReplyOutcome): Promise
 
 /**
  * A LOST reply, said on ONE surface: the native side shows its "not sent" notice for every reply it
- * is told is lost, in front too (`CanariTellQuickReplyOutcome`), so the page shows it only when the
- * native side could not be told - a line naming no id, an acknowledgement that failed, or a native
- * side that holds nothing (Android).
+ * is told is lost, in front too (`CanariTellQuickReplyOutcome`, the Android banner), so the page
+ * shows it only when the native side could not be told - a line naming no id, or an acknowledgement
+ * that failed.
  */
 async function settleLost(
   current: QuickReplySender,
@@ -301,10 +303,47 @@ export async function drainNativeQuickReplies(why: string): Promise<void> {
 /**
  * Registers THE sender (the signed-in session), or withdraws it with null. A registration drains at
  * once: a reply handed over before the session was up has been waiting for exactly this.
+ *
+ * THE FIRST REGISTRATION OF AN ACCOUNT IN THIS PAGE LIFE SETTLES WHAT A DEAD PAGE TOOK, BEFORE ANY
+ * TAKE: the sender is set only once {@link QuickReplyStore.settleUnclaimed} answered, so no reply
+ * this life has taken can be in flight while the native side weighs its record against the file.
  */
 export function setNativeQuickReplySender(next: QuickReplySender | null): void {
-  sender = next;
-  if (next) void drainNativeQuickReplies('session ready');
+  const mine = ++registration;
+  if (!next) {
+    sender = null;
+    return;
+  }
+  if (swept.has(next.accountId)) {
+    sender = next;
+    void drainNativeQuickReplies('session ready');
+    return;
+  }
+  sender = null;
+  void (async () => {
+    try {
+      const lost = await store.settleUnclaimed(next.accountId);
+      swept.add(next.accountId);
+      if (lost > 0) {
+        appendLog(
+          `[QuickReply] ERROR ${lost} reply(ies) an earlier page took and never sent - LOST, their banners say so`
+        );
+      }
+    } catch (e) {
+      // Marked swept all the same: once this life has taken a reply, a sweep could say it lost
+      // while it is in flight. The next page life asks again.
+      swept.add(next.accountId);
+      appendLog(
+        `[QuickReply] ERROR the unclaimed replies could not be settled - asked again by the next page life: ${String(e)}`
+      );
+    }
+    if (mine !== registration) {
+      appendLog('[QuickReply] a newer registration came during the sweep - this one stands down');
+      return;
+    }
+    sender = next;
+    void drainNativeQuickReplies('session ready');
+  })();
 }
 
 /**
@@ -335,4 +374,6 @@ export function resetQuickReplyDrainForTest(s: QuickReplyStore): void {
   store = s;
   sender = null;
   told.clear();
+  swept.clear();
+  registration = 0;
 }

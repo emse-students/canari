@@ -24,18 +24,21 @@ const line = (groupId: string, text: string, replyId = `r-${groupId}`) =>
   JSON.stringify({ replyId, accountId: ME, groupId, text, notifiedAt: 5, repliedAt: 9 });
 
 /**
- * A file the native side appends to, taken by a claim, appended back to, and acknowledged.
- * `nativeTellsOutcome`: iOS holds each reply until told; Android holds nothing.
+ * A file the native side appends to, taken by a claim, appended back to, and acknowledged; `order`
+ * records the sweeps and takes in the order they ran.
  */
-function fakeStore(initial: string[] = [], nativeTellsOutcome = true) {
+function fakeStore(initial: string[] = []) {
   let file = [...initial];
   const acks: [string, QuickReplyOutcome][] = [];
+  const order: string[] = [];
   const store: QuickReplyStore & {
     file: () => string[];
     append: (l: string) => void;
     acks: [string, QuickReplyOutcome][];
+    order: string[];
   } = {
-    take: vi.fn(async () => {
+    take: vi.fn(async (accountId: string) => {
+      order.push(`take:${accountId}`);
       const taken = file;
       file = [];
       return taken;
@@ -46,10 +49,14 @@ function fakeStore(initial: string[] = [], nativeTellsOutcome = true) {
     acknowledge: vi.fn(async (replyId: string, outcome: QuickReplyOutcome) => {
       acks.push([replyId, outcome]);
     }),
-    nativeTellsOutcome,
+    settleUnclaimed: vi.fn(async (accountId: string) => {
+      order.push(`settle:${accountId}`);
+      return 0;
+    }),
     file: () => file,
     append: (l) => file.push(l),
     acks,
+    order,
   };
   return store;
 }
@@ -283,15 +290,15 @@ describe('a quick reply handed to the page is never lost, never sent twice, neve
   });
 });
 
-describe('Android: the page in front is the one surface for a reply handed over', () => {
+describe('Android: the banner follows the page, and a dead page is settled before any take', () => {
   let store: ReturnType<typeof fakeStore>;
   beforeEach(() => {
-    store = fakeStore([], false);
+    store = fakeStore();
     resetQuickReplyDrainForTest(store);
   });
 
-  it('sends a handed-over reply on the native event, the app staying in front, and acknowledges nothing', async () => {
-    const send = vi.fn(async () => 'sent' as const);
+  it('sends a handed-over reply on the native event and acknowledges how it settled', async () => {
+    const send = vi.fn(async () => 'pending' as const);
     const session = as(send);
     setNativeQuickReplySender(session);
     await settle();
@@ -302,18 +309,50 @@ describe('Android: the page in front is the one surface for a reply handed over'
     stop();
     expect(send).toHaveBeenCalledOnce();
     expect(store.file()).toEqual([]);
-    expect(store.acknowledge).not.toHaveBeenCalled();
+    // Queued in the page's outbox is durably the page's: the banner is answered on this.
+    expect(store.acks).toEqual([['r-g1', 'pending']]);
     expect(session.told).toEqual([]);
   });
 
-  it('shows a lost reply itself: nothing native will', async () => {
-    const session = as(async () => 'gone');
-    setNativeQuickReplySender(session);
+  it('settles what a dead page took BEFORE the first take of the account, once per page life', async () => {
+    store.append(line('g1', 'waiting'));
+    setNativeQuickReplySender(as(async () => 'sent'));
     await settle();
-    store.append(line('removed-group', 'x'));
+    expect(store.order).toEqual(['settle:me@x.fr', 'take:me@x.fr']);
+    setNativeQuickReplySender(null);
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
+    expect(store.order).toEqual(['settle:me@x.fr', 'take:me@x.fr', 'take:me@x.fr']);
+  });
+
+  it('takes nothing while the sweep runs - no reply of this life is in flight while it weighs', async () => {
+    let answer: (n: number) => void = () => {};
+    store.settleUnclaimed = vi.fn(
+      (accountId: string) =>
+        new Promise<number>((r) => {
+          store.order.push(`settle:${accountId}`);
+          answer = r;
+        })
+    );
+    store.append(line('g1', 'waiting'));
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
     await drainNativeQuickReplies('event');
-    expect(store.acknowledge).not.toHaveBeenCalled();
-    expect(session.told).toEqual([['lost', 'r-removed-group']]);
+    expect(store.take).not.toHaveBeenCalled();
+    answer(1);
+    await settle();
+    expect(store.take).toHaveBeenCalledOnce();
+  });
+
+  it('a registration withdrawn during the sweep takes nothing', async () => {
+    let answer: (n: number) => void = () => {};
+    store.settleUnclaimed = vi.fn(() => new Promise<number>((r) => (answer = r)));
+    setNativeQuickReplySender(as(async () => 'sent'));
+    setNativeQuickReplySender(null);
+    answer(0);
+    await settle();
+    await drainNativeQuickReplies('event');
+    expect(store.take).not.toHaveBeenCalled();
   });
 
   it('drains a put-back reply on the activity coming back to the front (canari:foreground)', async () => {

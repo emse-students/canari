@@ -51,6 +51,7 @@ import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.ForegroundGuard
 import fr.emse.canari.push.GenericBannerLedger
+import fr.emse.canari.push.HandedQuickReplies
 import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
@@ -133,11 +134,134 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val QUICK_REPLY_WRITE_FAILED = 2
 
         /**
-         * Whether the page holds a loaded MLS manager in this process (Rust
-         * `live_manager_in_process`) - with the app in front, the page then sends a quick reply
+         * Whether the Rust foreground guard holds (`foreground_is_active`) - THE fact a background
+         * `mls.bin` write is refused on, so a quick reply typed then goes to the page
          * ([fr.emse.canari.push.QuickReplyRoute]).
          */
-        external fun nativePageHoldsMls(): Boolean
+        external fun nativeForegroundGuardHolds(): Boolean
+
+        /**
+         * The ids of the quick replies waiting in `pending_quick_replies.ndjson`, one per line, read
+         * under the lock its take holds; null when the file or the key cannot be read.
+         */
+        external fun nativeQuickReplyIdsWaiting(dataDir: String, cacheKeyB64: String): String?
+
+        /**
+         * THE PAGE SETTLED A QUICK REPLY THE RECEIVER HANDED IT (Rust `tell_quick_reply_settled`,
+         * from `acknowledge_quick_reply`, or from a take that dropped another account's line):
+         * [outcome] is a Rust `QuickReplyOutcome` code. The banner drawn "sending" at the hand-over
+         * follows it ([HandedQuickReplies.Settlement]): answered only on the page's DURABLE acceptance
+         * (sent, or queued in its outbox), "not sent" on a failure or a loss, still "sending" on a
+         * put-back. Returns whether the reply was known here and drawn; false sends the page to show
+         * it itself.
+         */
+        @JvmStatic
+        fun quickReplySettledByPage(replyId: String, outcome: Int): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.e(TAG, "quickReplySettledByPage: no Application context - reply id=${replyId.take(8)} not drawn")
+                return false
+            }
+            if (!HandedQuickReplies.Settlement.known(outcome)) {
+                Log.e(TAG, "quickReplySettledByPage: reply id=${replyId.take(8)} settled with an unknown outcome $outcome - drawn not sent")
+            }
+            val settlement = HandedQuickReplies.Settlement.of(outcome)
+            synchronized(HandedQuickReplyStore.LOCK) {
+                val handed = if (settlement.settles) {
+                    HandedQuickReplyStore.take(context, replyId)
+                } else {
+                    HandedQuickReplyStore.peek(context, replyId)
+                }
+                if (handed == null) {
+                    Log.w(TAG, "quickReplySettledByPage: reply id=${replyId.take(8)} is not recorded here - the page shows what became of it")
+                    return false
+                }
+                drawHandedSettlement(context, handed, settlement)
+            }
+            return true
+        }
+
+        /**
+         * SETTLES THE REPLIES A DEAD PAGE TOOK (Rust `settle_unclaimed_quick_replies`, once per
+         * account and page life, before its first take): a reply of [accountId] recorded as handed
+         * over and absent from the file was taken by an earlier page that never said what became of
+         * it - its process died between the take and the send's durable write. Its banner says "not
+         * sent". Returns how many; 0 when the file cannot be read (nothing is then said lost).
+         */
+        @JvmStatic
+        fun sweepHandedQuickReplies(accountId: String): Int {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.e(TAG, "sweepHandedQuickReplies: no Application context - nothing swept")
+                return 0
+            }
+            synchronized(HandedQuickReplyStore.LOCK) {
+                val records = HandedQuickReplyStore.all(context)
+                if (records.none { it.accountId == accountId }) {
+                    Log.d(TAG, "sweepHandedQuickReplies: no reply of this account recorded - nothing to settle")
+                    return 0
+                }
+                val waiting = nativeQuickReplyIdsWaiting(
+                    MlsContextLoader.tauriDataDir(context).absolutePath,
+                    NativeCacheKey.retrieve(context),
+                )
+                if (waiting == null) {
+                    Log.e(TAG, "sweepHandedQuickReplies: the waiting replies could not be read - nothing said lost, the record kept")
+                    return 0
+                }
+                val lost = HandedQuickReplies.unclaimed(records, accountId, waiting.lines().filter { it.isNotEmpty() }.toSet())
+                lost.forEach { handed ->
+                    HandedQuickReplyStore.take(context, handed.replyId)
+                    Log.e(TAG, "sweepHandedQuickReplies: reply id=${handed.replyId.take(8)} taken by a page that died before sending it - LOST, its banner says not sent group=${ConversationRef.of(handed.groupId)}")
+                    drawHandedSettlement(context, handed, HandedQuickReplies.Settlement.NOT_SENT_RETYPE)
+                }
+                return lost.size
+            }
+        }
+
+        /** Draws [settlement] on the banner of [handed]. The caller holds [HandedQuickReplyStore.LOCK]. */
+        private fun drawHandedSettlement(
+            context: Context,
+            handed: HandedQuickReplies.Handed,
+            settlement: HandedQuickReplies.Settlement,
+        ) {
+            val id = handed.replyId.take(8)
+            when (settlement) {
+                HandedQuickReplies.Settlement.ANSWERED -> {
+                    Log.i(TAG, "drawHandedSettlement: reply id=$id held by the page - answered group=${ConversationRef.of(handed.groupId)}")
+                    answerReplyNotification(context, handed.groupId, handed.replyId, handed.text, handed.repliedAt, 0L, handed.notifiedAt, handed.notifiedServerAt)
+                }
+                HandedQuickReplies.Settlement.STILL_SENDING ->
+                    Log.d(TAG, "drawHandedSettlement: reply id=$id put back by the page - still sending group=${ConversationRef.of(handed.groupId)}")
+                HandedQuickReplies.Settlement.NOT_SENT_IN_APP -> {
+                    Log.w(TAG, "drawHandedSettlement: reply id=$id failed in the page's queue - not sent, its retry is in the app group=${ConversationRef.of(handed.groupId)}")
+                    repostReplyPending(context, handed.groupId, handed.replyId, handed.text, handed.notifiedAt, handed.notifiedServerAt, ReplyLine.NOT_SENT_IN_APP)
+                }
+                HandedQuickReplies.Settlement.NOT_SENT_RETYPE -> {
+                    Log.w(TAG, "drawHandedSettlement: reply id=$id LOST - not sent, to be typed again group=${ConversationRef.of(handed.groupId)}")
+                    repostReplyPending(context, handed.groupId, handed.replyId, handed.text, handed.notifiedAt, handed.notifiedServerAt, ReplyLine.NOT_SENT_RETYPE)
+                }
+            }
+        }
+
+        /**
+         * The line a quick reply leaves on its banner while it is not answered. [awaited]: it carries
+         * the reply's id ([LINE_PENDING_REPLY_ID]) - a delivery or a settlement of that id replaces
+         * it; a line not awaited says something final, which nothing native will clear.
+         */
+        internal enum class ReplyLine(val text: Int, val awaited: Boolean) {
+            /** Queued in the native outbox: its retry is scheduled. */
+            RETRYING(R.string.notif_reply_pending, true),
+
+            /** Handed to the page in front, which has not settled it yet. */
+            SENDING(R.string.notif_reply_sending, true),
+
+            /** Nothing will send it: not handed over, or lost - the user types it again. */
+            NOT_SENT_RETYPE(R.string.notif_reply_not_sent_retype, false),
+
+            /** Failed in the page's queue: the app shows it with its Retry. */
+            NOT_SENT_IN_APP(R.string.notif_reply_not_sent_in_app, false),
+        }
 
         /**
          * WHETHER THE OPEN APP RINGS THIS CALL ITSELF - the one question the native ring asks before
@@ -817,6 +941,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             replyText: String,
             sentAt: Long,
             serverAt: Long,
+            line: ReplyLine = ReplyLine.RETRYING,
         ): Long? {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -834,7 +959,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // it ran first and this sees it, or it runs after and clears the line posted here.
                     // Delivered meanwhile: the user DID answer from the banner - the caller runs the
                     // first-try success (cancel and watermark), never leaves the spinner running.
-                    AWAITED_REPLIES.deliveredAt(messageId)?.let { receivedAt ->
+                    // Only a reply of the native outbox is awaited there; a page's never is.
+                    if (line == ReplyLine.RETRYING) AWAITED_REPLIES.deliveredAt(messageId)?.let { receivedAt ->
                         Log.d(TAG, "repostReplyPending: reply id=${messageId.take(8)} delivered by another drain - answered, not re-posted group=${ConversationRef.of(groupId)}")
                         return receivedAt
                     }
@@ -857,16 +983,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // marked so ([LINE_PENDING_REPLY]): no read elsewhere covers it, so the banner
                     // that says "not sent yet" stays, until THIS message is delivered
                     // ([LINE_PENDING_REPLY_ID], [replyDelivered]).
+                    // A line NOT awaited carries no id: nothing will deliver it, and no delivery or
+                    // settlement of another reply may take it for its own.
                     val pending = NotificationCompat.MessagingStyle.Message(
-                        res.getString(R.string.notif_reply_pending, replyText),
+                        res.getString(line.text, replyText),
                         System.currentTimeMillis(),
                         previous.user
                     ).apply {
                         extras.putBoolean(LINE_PENDING_REPLY, true)
-                        extras.putString(LINE_PENDING_REPLY_ID, messageId)
+                        if (line.awaited) extras.putString(LINE_PENDING_REPLY_ID, messageId)
                     }
                     val channel = existing.channelId ?: CHANNEL_MESSAGES
+                    // This reply's earlier line (its "sending") is REPLACED, never shown twice.
                     held.messages
+                        .filter { it.extras.getString(LINE_PENDING_REPLY_ID) != messageId }
                         .takeLast(MAX_NOTIF_MESSAGES - 1)
                         .forEach { style.addMessage(it) }
                     style.addMessage(pending)
@@ -890,7 +1020,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     manager.notify(notifId, notif)
                     READ_ELSEWHERE.remember(groupId, ReadElsewhereMarks.Banner(notifId, channel, style.messages.toList(), notif))
                 }
-                Log.i(TAG, "repostReplyPending: re-posted group=${ConversationRef.of(groupId)} - spinner cleared, actions restored")
+                Log.i(TAG, "repostReplyPending: re-posted ${line.name} group=${ConversationRef.of(groupId)} - spinner cleared, actions restored") // log-safe: an enum constant's name (ReplyLine), no content
             } catch (e: Exception) {
                 Log.e(TAG, "repostReplyPending: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }

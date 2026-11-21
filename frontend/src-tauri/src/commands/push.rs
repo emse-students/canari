@@ -2333,17 +2333,144 @@ fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool 
     }
 }
 
-/// ANDROID HOLDS NOTHING FOR A REPLY IT HANDED OVER, SO NOBODY IS TOLD HERE. The receiver hands a
-/// reply to the page only with the app in front (`CanariNotificationActionReceiver.handReplyToPage`)
-/// and settles the banner at the hand-over: the page in front is the one surface that shows what
-/// becomes of it (`quickReplyDrain.ts`, `nativeTellsOutcome`). A line typed under ANOTHER account is
-/// dropped by the take and lost - said here, since no native surface will.
+/// Tells the Android receiver's record what became of `reply_id`
+/// (`CanariFirebaseMessagingService.quickReplySettledByPage`): the banner it drew as "sending" at the
+/// hand-over is drawn answered only on the page's DURABLE acceptance (sent, or queued in its outbox),
+/// "not sent" on a loss or a failure, and left "sending" on a put-back. True when the native side
+/// knew the reply and drew it; false when nobody could be told - the page then shows it itself.
 #[cfg(target_os = "android")]
 fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool {
-    log::warn!(
-        "[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) by the take - Android holds no listener, nothing native shows it"
-    );
-    false
+    use jni::objects::JValue;
+
+    let told = crate::commands::notifications::with_native_builder(|env, class| {
+        let id = match env.new_string(reply_id) {
+            Ok(id) => id,
+            Err(e) => {
+                log::error!("[QUICK_REPLY] new_string failed: {e} - reply {reply_id} not told");
+                return false;
+            }
+        };
+        match env
+            .call_static_method(
+                class,
+                "quickReplySettledByPage",
+                "(Ljava/lang/String;I)Z",
+                &[(&id).into(), JValue::Int(outcome as i32)],
+            )
+            .and_then(|v| v.z())
+        {
+            Ok(told) => told,
+            Err(e) => {
+                log::error!(
+                    "[QUICK_REPLY] quickReplySettledByPage failed: {e} - reply {reply_id} not told"
+                );
+                false
+            }
+        }
+    });
+    if told {
+        log::info!("[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) - the banner follows it");
+    } else {
+        log::warn!(
+            "[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) and the native side did not draw it - the page shows it"
+        );
+    }
+    told
+}
+
+/// The ids of every reply waiting in `{dir}/pending_quick_replies.ndjson`, read UNDER the lock its
+/// take holds, without claiming it - what the Android receiver's sweep weighs its record against
+/// ([`settle_unclaimed_quick_replies`]). `None` when the file cannot be read: nothing can then be
+/// said lost.
+#[cfg(any(target_os = "android", test))]
+pub(crate) fn quick_reply_ids_waiting_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+) -> Option<Vec<String>> {
+    let content = {
+        let _held = quick_reply_file_lock();
+        match std::fs::read_to_string(dir.join(PENDING_QUICK_REPLIES_FILE)) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                log::error!(
+                    "[QUICK_REPLY] the waiting replies could not be read: {e} - nothing swept"
+                );
+                return None;
+            }
+        }
+    };
+    Some(
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| open_quick_reply(key, l))
+            .filter_map(|(_, v)| {
+                v.get("replyId")
+                    .and_then(|r| r.as_str())
+                    .map(str::to_string)
+            })
+            .collect(),
+    )
+}
+
+/// SETTLES THE REPLIES A DEAD PAGE TOOK (Android): run once per account and page life, BEFORE its
+/// first take (`quickReplyDrain.ts`, `setNativeQuickReplySender`). A reply the receiver handed over
+/// and still records as "sending", absent from the file, was taken by an earlier page that never
+/// said what became of it - its process died between the take and the send's durable write, the
+/// one loss window of the hand-over (mobile.md). It is LOST: its banner says "not sent". Answers how
+/// many; 0 off Android, where the native side keeps no such record.
+#[tauri::command]
+pub(crate) async fn settle_unclaimed_quick_replies(account_id: String) -> u32 {
+    #[cfg(target_os = "android")]
+    {
+        let swept = tauri::async_runtime::spawn_blocking(move || {
+            let mut count = 0i32;
+            let reached = crate::commands::notifications::with_native_builder(|env, class| {
+                let account = match env.new_string(&account_id) {
+                    Ok(account) => account,
+                    Err(e) => {
+                        log::error!("[QUICK_REPLY] new_string failed: {e} - nothing swept");
+                        return false;
+                    }
+                };
+                match env
+                    .call_static_method(
+                        class,
+                        "sweepHandedQuickReplies",
+                        "(Ljava/lang/String;)I",
+                        &[(&account).into()],
+                    )
+                    .and_then(|v| v.i())
+                {
+                    Ok(n) => {
+                        count = n;
+                        true
+                    }
+                    Err(e) => {
+                        log::error!("[QUICK_REPLY] sweepHandedQuickReplies failed: {e}");
+                        false
+                    }
+                }
+            });
+            if reached {
+                u32::try_from(count).unwrap_or(0)
+            } else {
+                0
+            }
+        })
+        .await;
+        swept.unwrap_or_else(|e| {
+            log::error!("[QUICK_REPLY] the sweep task failed: {e}");
+            0
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = account_id;
+        0
+    }
 }
 
 /// The page says what became of quick reply `reply_id` - `outcome` is a [`QuickReplyOutcome`] word,
@@ -2353,7 +2480,7 @@ fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool 
 #[tauri::command]
 pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Result<(), String> {
     log::info!("[QUICK_REPLY] the page settles reply {reply_id}: {outcome}");
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     {
         let Some(parsed) = QuickReplyOutcome::parse(&outcome) else {
             log::error!("[QUICK_REPLY] reply {reply_id}: unknown outcome {outcome:?} - not told");
@@ -2450,6 +2577,24 @@ mod quick_reply_tests {
             take_quick_replies_in(&dir, &KEY, "me"),
             vec![reply("me", "g1"), reply("me", "g2")]
         );
+    }
+
+    #[test]
+    fn the_sweep_reads_the_waiting_ids_without_claiming_them() {
+        let dir = temp_dir("android-waiting");
+        assert_eq!(quick_reply_ids_waiting_in(&dir, &KEY), Some(vec![]));
+        hand_quick_reply_in(&dir, Some(&KEY), &reply("me", "g1"));
+        hand_quick_reply_in(&dir, Some(&KEY), &reply("other", "g2"));
+        assert_eq!(
+            quick_reply_ids_waiting_in(&dir, &KEY),
+            Some(vec!["r-g1".to_string(), "r-g2".to_string()])
+        );
+        // Read, never claimed: the take still hands the account's reply over.
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "g1")]
+        );
+        assert_eq!(quick_reply_ids_waiting_in(&dir, &KEY), Some(vec![]));
     }
 
     #[test]

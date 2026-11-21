@@ -73,6 +73,12 @@
          on its own, so the notification is re-posted with this line: the reply is kept and retried,
          but the shade must not keep showing "sending" forever. %1$s is the text the user typed. -->
     <string name="notif_reply_pending">%1$s · non envoyé, nouvelle tentative en cours</string>
+    <!-- A quick reply typed over the open app, handed to it and not settled yet. -->
+    <string name="notif_reply_sending">%1$s · envoi en cours</string>
+    <!-- A quick reply nothing will send (not handed to the app, or lost): it must be typed again. -->
+    <string name="notif_reply_not_sent_retype">%1$s · non envoyé, réécrivez-le</string>
+    <!-- A quick reply that failed in the app's queue: the app shows it with its "Réessayer". -->
+    <string name="notif_reply_not_sent_in_app">%1$s · non envoyé, à renvoyer depuis l\'application</string>
     <!-- The ring's title for a caller this phone has never named (the push carries no name). -->
     <string name="notif_call_unknown_caller">Appel Canari</string>
     <string name="notif_incoming_call">Appel entrant</string>

@@ -6,6 +6,7 @@ import {
   ACKNOWLEDGE_QUICK_REPLY_COMMAND,
   NATIVE_QUICK_REPLY_EVENT,
   RETURN_QUICK_REPLIES_COMMAND,
+  SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND,
   TAKE_QUICK_REPLIES_COMMAND,
 } from './quickReplyDrain';
 
@@ -42,28 +43,61 @@ function body(source: string, signature: string): string {
 }
 
 describe('an Android quick reply over a page that holds the MLS state', () => {
-  it('asks the route before the reply is built or queued, and hands it over on PAGE', () => {
+  it('routes on THE fact the guard refuses on, before the reply is built or queued', () => {
     const reply = body(receiver, 'private fun handleReply(');
-    const route = reply.indexOf('QuickReplyRoute.of(MainActivity.isInForeground)');
+    const route = reply.indexOf(
+      'QuickReplyRoute.of(CanariFirebaseMessagingService.nativeForegroundGuardHolds())'
+    );
     expect(route).toBeGreaterThan(-1);
-    expect(reply).toContain('CanariFirebaseMessagingService.nativePageHoldsMls()');
+    // Never the activity's resume edge: a second fact could disagree with the refusal.
+    expect(reply).not.toContain('MainActivity.isInForeground');
+    expect(reply).toContain('route PAGE');
+    expect(reply).toContain('route NATIVE');
     const handed = reply.indexOf('handReplyToPage(');
     expect(handed).toBeGreaterThan(route);
     expect(handed).toBeLessThan(reply.indexOf('nativeBuildTextMessageProto('));
     expect(handed).toBeLessThan(reply.indexOf('enqueueOutboxMirror('));
   });
 
-  it('writes the line before it tells the page, and never touches the outbox mirror', () => {
+  it('writes the line, records it and draws it SENDING before it tells the page - never answered', () => {
     const hand = body(receiver, 'private fun handReplyToPage(');
+    const locked = hand.indexOf('synchronized(HandedQuickReplyStore.LOCK)');
     const write = hand.indexOf('nativeHandQuickReplyToPage(');
+    const record = hand.indexOf('HandedQuickReplyStore.record(');
+    const sending = hand.indexOf('ReplyLine.SENDING');
     const tell = hand.indexOf('MainActivity.tellPage(QUICK_REPLY_EVENT)');
-    expect(write).toBeGreaterThan(-1);
-    expect(tell).toBeGreaterThan(write);
+    expect(locked).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(locked);
+    expect(record).toBeGreaterThan(write);
+    expect(sending).toBeGreaterThan(record);
+    expect(tell).toBeGreaterThan(sending);
     expect(hand).not.toContain('enqueueOutboxMirror');
     expect(hand).not.toContain('drainOutboxBackground');
-    // A reply that could not be handed over is said, never dropped in silence.
-    expect(hand).toContain('repostReplyPending(');
+    // A reply that could not be handed over is LOST and said - final, never "retrying".
+    expect(hand).toContain('ReplyLine.NOT_SENT_RETYPE');
+    expect(hand).not.toContain('ReplyLine.RETRYING');
     expect(receiver).toContain(`QUICK_REPLY_EVENT = "${NATIVE_QUICK_REPLY_EVENT}"`);
+  });
+
+  it('draws the banner answered only on the page settlement, and the final lines unawaited', () => {
+    expect(service).toContain(
+      'fun quickReplySettledByPage(replyId: String, outcome: Int): Boolean'
+    );
+    expect(service).toContain('fun sweepHandedQuickReplies(accountId: String): Int');
+    expect(service).toContain('NOT_SENT_RETYPE(R.string.notif_reply_not_sent_retype, false)');
+    expect(service).toContain('NOT_SENT_IN_APP(R.string.notif_reply_not_sent_in_app, false)');
+    expect(service).toContain('SENDING(R.string.notif_reply_sending, true)');
+    expect(service).toContain(
+      'if (line.awaited) extras.putString(LINE_PENDING_REPLY_ID, messageId)'
+    );
+    expect(pushRs).toContain('"quickReplySettledByPage"');
+    expect(pushRs).toContain('"sweepHandedQuickReplies"');
+    expect(pushRs).toContain(`pub(crate) async fn ${SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND}(`);
+    expect(libRs).toContain(`            ${SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND},`);
+    const ack = pushRs.slice(pushRs.indexOf(`pub(crate) fn ${ACKNOWLEDGE_QUICK_REPLY_COMMAND}(`));
+    expect(ack.slice(0, ack.indexOf('\n}\n'))).toContain(
+      '#[cfg(any(target_os = "ios", target_os = "android"))]'
+    );
   });
 
   it('dispatches the event on the live page only', () => {
@@ -75,8 +109,8 @@ describe('an Android quick reply over a page that holds the MLS state', () => {
   it('appends under the lock every Rust reader of the file holds', () => {
     expect(libRs).toContain('nativeHandQuickReplyToPage');
     expect(libRs).toContain('commands::push::hand_quick_reply_in(');
-    expect(libRs).toContain('nativePageHoldsMls');
-    expect(libRs).toContain('concurrency::live_manager_in_process()');
+    expect(libRs).toContain('nativeForegroundGuardHolds');
+    expect(libRs).toContain('if concurrency::foreground_is_active() {');
     expect(service).toContain('external fun nativeHandQuickReplyToPage(');
     const hand = pushRs.slice(pushRs.indexOf('pub(crate) fn hand_quick_reply_in('));
     expect(hand.slice(0, hand.indexOf('\n}\n'))).toContain('quick_reply_file_lock()');

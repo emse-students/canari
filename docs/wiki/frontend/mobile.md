@@ -1062,27 +1062,39 @@ Notification Center over an open app was lost. The fix:
   page (`outbox handled by TS, retry deferred`), and the page never heard of an entry it had not
   written - the reply left only once the app was backgrounded, and its banner still said
   `non envoyé`. Now `CanariNotificationActionReceiver.handleReply` asks the route FIRST, before
-  anything is built or queued (`QuickReplyRoute`, `push/`, pinned by `QuickReplyRouteTest`): the
-  activity resumed (`MainActivity.isInForeground`) AND a manager loaded in this process
-  (`nativePageHoldsMls`, Rust `live_manager_in_process`) send it to the page; anything else stays
-  native - in the background the native drain may write `mls.bin`, and at the PIN gate no manager is
-  loaded. `handReplyToPage` writes the iOS line (`nativeHandQuickReplyToPage`: sealed, appended by
-  Rust under `QUICK_REPLY_FILE_LOCK`, which every Rust reader of the file holds, so an append never
-  lands in a claim between its read and its delete), THEN tells the live page
-  (`MainActivity.tellPage("canari:quick-reply")`), and settles the banner ONCE: the answer drawn as
-  the user's own line (`answerReplyNotification`), the inline spinner ended, and no "not sent yet"
-  line that only a native delivery could clear. **The page in front is the one surface**: Android
-  holds nothing for the reply, so nothing is acknowledged natively (`QuickReplyStore.nativeTellsOutcome`
-  is false) and a lost reply is shown by the page; a put-back reply is taken again on the activity's
-  next front edge (`canari:foreground`), since an Android WebView never changes visibility. A reply
-  that could not be handed over (no cache key, a failed write) is LOST and said: re-posted as not
-  sent, with the actions back. Not done on Android: the read watermark of the answer (as on iOS's
-  page path), and mark-as-read from a banner over the open app, which still queues natively (the
+  anything is built or queued (`QuickReplyRoute`, `push/`, pinned by `QuickReplyRouteTest`), on THE
+  fact the refusal reads: the Rust foreground guard (`nativeForegroundGuardHolds`,
+  `concurrency::foreground_is_active`). Held, the reply goes to the page; released, it stays native.
+  It was first the activity's resume edge AND a loaded manager (review of #3927): two facts the
+  refusal does not read, so the route and the refusal could disagree. The route taken is logged
+  (`route PAGE` / `route NATIVE`). `handReplyToPage` writes the iOS line
+  (`nativeHandQuickReplyToPage`: sealed, appended by Rust under `QUICK_REPLY_FILE_LOCK`, which every
+  Rust reader of the file holds, so an append never lands in a claim between its read and its
+  delete), RECORDS it (`HandedQuickReplyStore`, durable, keyed by the reply id) and draws it
+  `envoi en cours` (`ReplyLine.SENDING`: the inline spinner ends), all under
+  `HandedQuickReplyStore.LOCK`, THEN tells the live page (`MainActivity.tellPage("canari:quick-reply")`).
+  **The banner follows the page, never ahead of it** (review of #3927: it was drawn answered at the
+  hand-over, before anything held the reply). The page acknowledges every reply as on iOS
+  (`acknowledge_quick_reply` -> Rust `tell_quick_reply_settled` -> Kotlin `quickReplySettledByPage`,
+  `HandedQuickReplies.Settlement`): `sent` or `pending` (queued in the page's outbox, durably the
+  page's) draws it answered (`answerReplyNotification`); `failed` draws `non envoyé, à renvoyer depuis
+  l'application` (the page shows the row with its Retry); `returned` leaves it `envoi en cours`;
+  `lost` - and a line the take drops because another account typed it, which reaches the same call -
+  draws `non envoyé, réécrivez-le`, at WARN. A reply that could not be handed over (no cache key, a
+  failed write) is LOST and drawn the same final line at ERROR - never the outbox's "retrying" line,
+  since nothing retries a reply that was never queued. The two final lines carry no reply id
+  (`ReplyLine.awaited` false): nothing will deliver them. A put-back reply is taken again on the
+  activity's next front edge (`canari:foreground`), since an Android WebView never changes
+  visibility. Lock order: `HandedQuickReplyStore.LOCK`, then the Rust file lock or
+  `READ_ELSEWHERE.lock`; never under `OUTBOX_LOCK`, and Rust tells Kotlin only outside its file lock.
+  Not done on Android: the read watermark of the answer (as on iOS's page path), and mark-as-read
+  from a banner over the open app, which still queues natively (the
   [backlog entry](../backlog.d/p2-ios-mark-as-read-from-a-banner-over-an-open-app.md) names both
-  platforms' shared cause). Tests: `QuickReplyRouteTest`, `androidQuickReplyHandoff.test.ts` (the
-  route asked before any queueing, the line written before the page is told, the file and commands
-  served to Android), the Android cases of `quickReplyDrain.test.ts`, and
-  `an_android_hand_over_*` in `quick_reply_tests`. The reading:
+  platforms' shared cause). Tests: `QuickReplyRouteTest` (the route, the settlements, the sweep's
+  selection), `androidQuickReplyHandoff.test.ts` (the route on the guard, the line written, recorded
+  and drawn sending before the page is told, the settlement wiring), the Android cases of
+  `quickReplyDrain.test.ts` (the sweep before any take), and `an_android_hand_over_*` and
+  `the_sweep_reads_the_waiting_ids_without_claiming_them` in `quick_reply_tests`. The reading:
   [backlog](../backlog.d/reading-owed-an-inline-reply-typed-over-the-open-app-goes-out-at-once.md).
 - `CanariHandleQuickReplyAction` asks the fact first (`canari_ios_page_holds_mls`, Rust
   `live_manager_in_process`).
@@ -1177,6 +1189,14 @@ Notification Center over an open app was lost. The fix:
   A process that dies between that claim and the send's durable write (the echo plus outbox entry)
   loses the replies of that take. A take-then-acknowledge file, as the push cache has
   (`take_fcm_cache` / `ack_fcm_cache`), would close it.
+- **On Android the same window is SAID, not closed.** The receiver's record outlives the process:
+  the first registration of an account in a page life, before its first take, asks
+  `settle_unclaimed_quick_replies` (Kotlin `sweepHandedQuickReplies`), and every reply of that
+  account still recorded and absent from the file (its ids read under the take's lock,
+  `quick_reply_ids_waiting_in`) was taken by a page that died - drawn `non envoyé, réécrivez-le`,
+  at ERROR. Asked before the take, never after: a reply this page life took and has not settled
+  would read the same. A FROZEN process is not a loss: its banner stays `envoi en cours` until the
+  page runs again and settles it.
 - Tests: `quickReplyDrain.test.ts` (each outcome acknowledged once settled, the put-back told once,
   the lost line, the visibility drain), `outbox.test.ts` (`awaitSettled`, and the enqueue's typed
   failures on the real controller), `messagingDurability.test.ts`,
@@ -4012,7 +4032,7 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **WorkManager** (`OutboxRetryWorker`): exponential backoff retry for unsent outbox messages
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active. A quick reply typed
-  with the app in front never reaches the mirror: it is handed to the page
+  while the guard holds never reaches the mirror: it is handed to the page
   ([above](#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01), "Android takes
   the same road")
 - **The ongoing-call foreground service** (`CallForegroundService`, type `microphone`, WP-C-BG-A,
