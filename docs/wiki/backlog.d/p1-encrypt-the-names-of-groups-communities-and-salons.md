@@ -40,9 +40,14 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
   name nor a group image (title `Rejoindre un groupe - Canari`, site image); a signed-out
   visitor is sent to `/login?returnTo=...` with the fragment inside `returnTo` and no name shown
   before sign-in. NOT TAKEN: the post-sign-in render of a visitor who signed in from that redirect
-  (needs a fresh enrolled device), and BOTH PHONE rows (the Mi 9T had no network; the iPhone is read
-  by another sitting). A web tab left on an older bundle minted a link with NO fragment until it was
+  (needs a fresh enrolled device), and the iPhone rows (read by another
+  sitting). A web tab left on an older bundle minted a link with NO fragment until it was
   reloaded onto the deployed bundle: reload before reading.
+  **Mi 9T (alpha.3), same day:** the sharer's panel generates `/g/join/<token>#name=<name>` (read from
+  the panel's input over CDP: path shape true, fragment name equals the group's); the in-chat card
+  of the pasted link names the group. The link tapped from adb as a VIEW intent opens the phone's
+  browser, not the app (dev's app link is not claimed by Canari): the join page was not read on the
+  phone.
 - **Left, in order:**
   1. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
      native naming, and the invite preview API's `groupName`. It ships behind the minimum version
