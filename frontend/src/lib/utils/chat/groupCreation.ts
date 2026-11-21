@@ -454,11 +454,11 @@ export async function createNewGroup(
         save: () => saveConversation(conversationKey!),
         log,
       }).catch((e: unknown) => {
-        // EVERY PATH ENDS IN THE OUTCOME LINE, this one included: the creation's log is where a
-        // reader (and a test awaiting that line) learns the statement ended, however it ended.
-        const line = `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`;
-        console.error(line);
-        log(line);
+        // ONE WRITE, AT ERROR LEVEL: `log` is `appendLog` in production, which is `console.log`
+        // (utils/sessionLog.ts), so writing the line to both would store it twice in the in-app log.
+        console.error(
+          `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`
+        );
       });
     }
     log(`[OK] Group ${groupId} created.`);

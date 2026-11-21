@@ -207,6 +207,9 @@ describe('redactLogLine - what the reading needs must survive', () => {
     '⚠ Push notifications degraded',
     'ℹ Private browsing mode',
     '[PIN] Verifying PIN... PIN verified, attempt 2',
+    // A slash glued to a word or a number is not an absolute path: its `#` is prose.
+    '[Chat] step 3/#4 of 1/2#3 reached x/y#z',
+    '[Chat] posted in channel /#general',
   ];
   for (const raw of kept) {
     it(`keeps: ${raw}`, () => {

@@ -74,6 +74,14 @@ describe('readInviteNameFragment', () => {
     expect(readInviteNameFragment(`#name=${exact}`)).toEqual({ name: exact });
   });
 
+  it('never cuts a grapheme in half at the cap', () => {
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}';
+    const read = readInviteNameFragment(
+      `#${new URLSearchParams({ name: `${'a'.repeat(98)}${family}` })}`
+    );
+    expect(read).toEqual({ name: 'a'.repeat(98), cut: true });
+  });
+
   it('never throws on a malformed escape', () => {
     expect(() => readInviteNameFragment('#name=%E0%A4%A')).not.toThrow();
   });

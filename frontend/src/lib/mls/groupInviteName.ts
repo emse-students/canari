@@ -1,4 +1,5 @@
 import type { Conversation } from '$lib/types';
+import { graphemes } from '$lib/utils/emoji';
 import { stripInvisible } from '$lib/utils/users/visibleText';
 
 /**
@@ -64,10 +65,19 @@ export function readInviteNameFragment(hash: string): InviteNameRead {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash;
   const value = new URLSearchParams(raw).get(INVITE_NAME_FRAGMENT_KEY);
   if (value === null) return { absent: 'no-fragment' };
-  const points = Array.from(stripInvisible(value).trim());
-  if (points.length === 0) return { absent: 'empty' };
-  if (points.length <= INVITE_NAME_MAX_CODE_POINTS) return { name: points.join('') };
-  return { name: points.slice(0, INVITE_NAME_MAX_CODE_POINTS).join('').trim(), cut: true };
+  const text = stripInvisible(value).trim();
+  if (text === '') return { absent: 'empty' };
+  // THE CAP IS CUT BY GRAPHEME, never inside one: a code-point cut splits a ZWJ emoji or a flag and
+  // leaves a dangling joiner. A grapheme that would cross the bound is left out whole.
+  let kept = '';
+  let count = 0;
+  for (const g of graphemes(text)) {
+    const size = Array.from(g).length;
+    if (count + size > INVITE_NAME_MAX_CODE_POINTS) return { name: kept.trim(), cut: true };
+    kept += g;
+    count += size;
+  }
+  return { name: kept };
 }
 
 /** The fragment of `href` (an absolute URL or a path), `''` when it has none or does not parse. */
