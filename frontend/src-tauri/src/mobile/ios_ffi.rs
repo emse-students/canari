@@ -568,7 +568,7 @@ pub unsafe extern "C" fn canari_native_send_messages_background(
         max_attempts,
     ) {
         Ok(v) => json_to_c_string(v),
-        Err(e) => err_json_to_c_string(e),
+        Err(e) => json_to_c_string(e.to_json()),
     }
 }
 

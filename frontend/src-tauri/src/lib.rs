@@ -1382,25 +1382,23 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     entries_json: jni::objects::JString<'a>,
     max_attempts: jni::sys::jint,
 ) -> jni::objects::JString<'a> {
-    let result = (|| -> Result<serde_json::Value, String> {
-        let files_dir_str: String = env
-            .get_string(&files_dir)
-            .map_err(|e| e.to_string())?
-            .into();
-        let state_vec = env
-            .convert_byte_array(&state_bytes)
-            .map_err(|e| e.to_string())?;
-        let key_b64_str: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
-        let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
-        let device_id_str: String = env
-            .get_string(&device_id)
-            .map_err(|e| e.to_string())?
-            .into();
-        let entries_str: String = env
-            .get_string(&entries_json)
-            .map_err(|e| e.to_string())?
-            .into();
-        let entries = mobile::background::parse_outbox_entries_json(&entries_str)?;
+    use mobile::background::SendBatchError;
+
+    // A marshalling fault is `not-yet` (nothing about the queue is wrong); an entries list that does
+    // not parse is `never` for the WHOLE batch, which the Kotlin caller reads as BLOCKED
+    // (`OutboxRetry.Prospect.of(batch = true)`): the same mirror is handed again, so nothing in it
+    // goes from here - the retry ends with the nudge and the entries stay sendable for the app.
+    // Classified here, where each is thrown.
+    let result = (|| -> Result<serde_json::Value, SendBatchError> {
+        let jni = |e: jni::errors::Error| SendBatchError::not_yet(format!("jni: {e}"));
+        let files_dir_str: String = env.get_string(&files_dir).map_err(jni)?.into();
+        let state_vec = env.convert_byte_array(&state_bytes).map_err(jni)?;
+        let key_b64_str: String = env.get_string(&key_b64).map_err(jni)?.into();
+        let user_id_str: String = env.get_string(&user_id).map_err(jni)?.into();
+        let device_id_str: String = env.get_string(&device_id).map_err(jni)?.into();
+        let entries_str: String = env.get_string(&entries_json).map_err(jni)?.into();
+        let entries = mobile::background::parse_outbox_entries_json(&entries_str)
+            .map_err(SendBatchError::never)?;
 
         mobile::background::send_messages_background_with_key(
             std::path::Path::new(&files_dir_str),
@@ -1409,7 +1407,8 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             &user_id_str,
             &device_id_str,
             &entries,
-            usize::try_from(max_attempts).map_err(|_| format!("max attempts {max_attempts}"))?,
+            usize::try_from(max_attempts)
+                .map_err(|_| SendBatchError::not_yet(format!("max attempts {max_attempts}")))?,
         )
     })();
 
@@ -1417,7 +1416,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
         Ok(v) => v.to_string(),
         Err(e) => {
             log::error!("[BG_SEND] nativeSendMessagesBackground failed: {e}");
-            format!("{{\"ok\":false,\"error\":{:?}}}", e)
+            e.to_json().to_string()
         }
     };
 

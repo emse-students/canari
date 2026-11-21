@@ -286,6 +286,9 @@ const REVIEWED_GROUPS: [string, string[]][] = [
   [
     "a label, state or outcome the app spells itself (a constant, an enum, a classifier's output)",
     [
+      // `OutboxRetry.Prospect` and its Rust token (`SendProspect::token`): an enum's name.
+      'CanariFirebaseMessagingService.kt|prospect',
+      'background.rs|prospect.token()',
       'admission.rs|previous.map_or("unclassified", AdmissionPolicy::as_str)',
       'owed_welcome.rs|match other { PendingSubmissionRead::None => "no record", PendingSubmissionRead::Unreadable => "unre',
       'CanariApplication.kt|installer ?: "(none - sideload)"',
