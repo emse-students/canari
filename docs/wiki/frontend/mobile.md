@@ -1556,12 +1556,14 @@ with no face. Reversible; the iPhone row "groups show their name" is its proof.
 `canari_iOS.entitlements` - on the APP target only, as Apple asks; the extension's entitlements are
 unchanged - and `INSendMessageIntent` in `NSUserActivityTypes` (`canari_iOS/Info.plist`, already
 there for the share suggestions). Intents is autolinked by the extension's `import Intents`.
-**The App ID needs the capability** - the profiles are named, manual and stored as secrets
-(`APPLE_PROVISIONING_PROFILE`, see "iOS project"), so CI's signing cannot add it: the "Communication
-Notifications" capability enabled on `fr.emse.canari` in the Apple Developer portal, then the
-"Canari" App Store profile regenerated and its secret replaced (and the bench development profile
-`app.mobileprovision` regenerated for `tools/ios-device`). Until then a release fails at codesign
-("profile doesn't include the ... entitlement") - the pull request's unsigned compile cannot see it.
+**The App ID carries the capability - portal step DONE 2026-11-21.** The profiles are named,
+manual and stored as secrets (`APPLE_PROVISIONING_PROFILE`, see "iOS project"), so CI's signing
+cannot add one: the owner enabled "Communication Notifications" on `fr.emse.canari` in the Apple
+Developer portal, and the regenerated "Canari" distribution profile (expires 2027-07-11) replaced the
+secret on 2026-11-21; the bench development profile `app.mobileprovision` was regenerated too
+(expires 2027-11-21). Both carry the communication and time-sensitive entitlements. A profile
+regenerated later without the capability fails a release at codesign ("profile doesn't include the
+... entitlement") - the pull request's unsigned compile cannot see it.
 
 **Erased at sign-out.** The donations name senders and carry faces, so they leave with the account:
 `eraseAccountShortcuts` asks `clear_conversation_shortcuts` on iOS too (Android's command for its
