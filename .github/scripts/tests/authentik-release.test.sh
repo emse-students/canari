@@ -391,7 +391,9 @@ run_deploy() {
 # outcome - the step output the run wrote, empty when none.
 outcome() { sed -n 's/^outcome=//p' "$tmp/gh-output" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'; }
 # changed - how many calls changed or dumped anything (reads of the migration count do not count).
-changed() { grep -vF -- '--dry-run' "$S/calls" | grep -cE '^(pull|compose .*(up|stop))|pg_dump|dropdb'; }
+# The scratch directory's own name is stripped first: mktemp names it at random, compose is handed
+# files under it, and a name holding "up" or "stop" would read as a recreate or a stop.
+changed() { grep -vF -- '--dry-run' "$S/calls" | sed "s|$tmp||g" | grep -cE '^(pull|compose .*(up|stop))|pg_dump|dropdb'; }
 
 pin="$(ak_pin_image infrastructure/authentik/compose.yml)"
 pin_tag="$(ak_tag_of "$pin")"
