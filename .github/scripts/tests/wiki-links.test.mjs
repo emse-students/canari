@@ -115,7 +115,7 @@ const anchors = new Map(files.map((f) => [normalize(f), anchorsOf(readFileSync(f
 
 /**
  * The pages generated where they are read and never committed, by path, with the text their
- * generator produces from this tree. The plan by version (2026-11-16) is the one: committed, it
+ * generator produces from this tree. The plan by version (2026-11-21) is the one: committed, it
  * made every open pull request conflict with every merge, so it is gitignored and every checkout
  * writes it (docs/wiki/cicd.md, "The plan page is generated where it is read"). A link into it is
  * checked against what the generator WOULD write - a copy on disk may be stale, and no runner has one.

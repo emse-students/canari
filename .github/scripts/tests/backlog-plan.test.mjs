@@ -13,7 +13,7 @@
  *   3. the page `render()` produces does not list every entry exactly once, under its own version,
  *      or loses the `Readings owed` anchor the wiki links to while readings exist;
  *   4. `docs/wiki/plan.md` is TRACKED. It is generated where it is read and gitignored
- *      (2026-11-16): committed, it made every open pull request conflict with every merge, because
+ *      (2026-11-21): committed, it made every open pull request conflict with every merge, because
  *      two pull requests filing a new entry each insert at the same line of it. A page nobody
  *      commits cannot be stale in git, and cannot conflict. docs/wiki/cicd.md, "The plan page is
  *      generated where it is read".
@@ -60,6 +60,12 @@ else ok(readings ? 'the `Readings owed` anchor is there' : 'no reading, so no `R
 
 console.log('\ndocs/wiki/plan.md is generated where it is read, never committed');
 const rel = relative(ROOT, PAGE(ROOT)).split(sep).join('/');
+try {
+  execFileSync('git', ['rev-parse', '--git-dir'], { cwd: ROOT, stdio: 'ignore' });
+} catch {
+  console.error('FAIL this check needs a git checkout (it asks git whether plan.md is tracked and ignored); run it inside the repository, not an export');
+  process.exit(1);
+}
 const tracked = execFileSync('git', ['ls-files', '--', rel], { cwd: ROOT, encoding: 'utf8' }).trim();
 if (tracked) no(`${rel} is tracked`, ['Every merge would make every open pull request conflict on it again: `git rm --cached` it.']);
 else ok(`${rel} is not tracked`);

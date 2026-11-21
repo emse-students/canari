@@ -98,7 +98,7 @@ Figma/
 frontend/src/lib/wasm/
 frontend/src/lib/proto/canari.js
 frontend/src/lib/proto/canari.d.ts
-# The plan by version (2026-11-16): committed, it made every open pull request conflict with every
+# The plan by version (2026-11-21): committed, it made every open pull request conflict with every
 # merge. The git hooks write it in every checkout; docs/wiki/cicd.md, "The plan page is generated
 # where it is read".
 docs/wiki/plan.md

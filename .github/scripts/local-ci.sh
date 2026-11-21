@@ -520,7 +520,7 @@ commit_rules() {
   local backlog_check="bash .github/scripts/local-ci.sh plan"
   [ "$tier" = commit ] || backlog_check="bun $t/backlog-plan.test.mjs"
   # shellcheck disable=SC2086 # the command is words by construction
-  rule '^(docs/wiki/backlog\.d/|docs/wiki/backlog\.md$|docs/wiki/plan\.md$|tools/backlog-plan/)' "$all_changed" \
+  rule '^(docs/wiki/backlog\.d/|docs/wiki/backlog\.md$|tools/backlog-plan/)' "$all_changed" \
     backlog-plan $backlog_check
   rule '^docs/wiki/backlog' "$all_changed" backlog-fragments bun "$t/backlog-fragments.test.mjs"
   rule '^docs/wiki/backlog' "$all_changed" backlog-closed bun "$t/backlog-closed.test.mjs"

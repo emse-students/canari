@@ -2,7 +2,7 @@
 
 **The backlog IS this directory**: one file per entry, and every entry names the version it is
 planned for. [plan](../plan.md) lists them by version, generated from those lines in every checkout
-and never committed ([why](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). Since 2026-11-13
+and never committed ([why](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)). Since 2026-11-13
 `backlog.md` holds no entry - only the rules and the list of what is owed to the user.
 
 ```md
@@ -46,10 +46,10 @@ still naming it is replanned (the readings to the new earliest version), and the
 has disappeared (feature removed, superseded) is deleted too, with the evidence written in the closing
 commit or its changelog fragment. Fix every link to it - `wiki-links.test.mjs` names them.
 
-**`docs/wiki/plan.md` cannot conflict, because no commit carries it** (2026-11-16). Committed, it
+**`docs/wiki/plan.md` cannot conflict, because no commit carries it** (2026-11-21). Committed, it
 made every open pull request conflict with every merge: a new entry is the youngest of its group, so
 two pull requests filing one each inserted at the same line of it. The git hooks write it after every
-checkout, merge and commit; [cicd](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)
+checkout, merge and commit; [cicd](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)
 has the measurement and the options weighed.
 
 ## The tests

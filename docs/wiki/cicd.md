@@ -3596,7 +3596,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 
 **The work**: port four NestJS services from jest to `bun test` - `jest.fn()`/`jest.spyOn` to bun's `mock`/`spyOn`, `ts-jest` (which TypeScript 7 already could not load, see [ecosystem-convergence](ecosystem-convergence.md) section 9), the `moduleNameMapper`, the `@nestjs/testing` fixtures. Days, not hours, and it touches suites guarding MLS storage - the wrong place to discover a mock that silently stopped asserting. It waits for the campaign ladder to reach the bottom, because a test-framework migration changes what "green" means for every rung still to be taken. Until then: bun is the package manager and runtime everywhere except one test invocation, which runs on node on purpose.
 
-### The plan page is generated where it is read (2026-11-16)
+### The plan page is generated where it is read (2026-11-21)
 
 **THE DEFECT.** [plan](plan.md) is derived from the `target:` line of every
 [backlog.d](backlog.d/README.md) entry by `tools/backlog-plan/plan.mjs`. From 2026-11-13 it was
@@ -3644,13 +3644,21 @@ checkout - CLAUDE.md calls it the queue - and the page is written there:
   `bun tools/backlog-plan/plan.mjs`, silently, in about 0.4 s;
   the commit tier (`local-ci.sh plan`) rewrites it when the commit touches an entry and stages
   nothing. `husky-hookspath.test.mjs` asserts all three hooks are tracked and executable.
+- **A hook never fails the git operation** (2026-11-21): with no `bun` on the PATH, or a generator
+  error, each hook prints ONE stderr line (`plan.md not refreshed: bun missing`) and exits 0 - a
+  failing `post-checkout` would break `git switch` and `git worktree add` for every script, and the
+  page is only a copy.
+- **A hook-less operation leaves a stale page, and the page says so**: `rebase --abort`,
+  `reset --hard`, `stash pop`, `cherry-pick` and `restore` fire no hook. The page header carries the
+  commit it was generated from and whether `backlog.d` was dirty; `plan.mjs --check` warns
+  `page generated from X, HEAD is Y`; CLAUDE.md tells the reader to run the command before reading.
 - **A fresh clone runs no hook** - none is armed until the install sets `core.hooksPath` - so
   `make install` (`install-frontend`, `install-hooks`) writes the page once. By hand, in any
   checkout, the one command: `bun tools/backlog-plan/plan.mjs`.
-- **An open pull request from before 2026-11-16 that still edits `plan.md` conflicts ONCE**
+- **A pull request open when this merged and still editing `plan.md` conflicts once**
   (modify/delete) when it merges `main`: resolve with `git rm --cached docs/wiki/plan.md` - the
   file stays on disk, ignored - and commit.
-- `wiki-links.test.mjs` resolves a link into `plan.md` - the 78 `plan.md#readings-owed` - against
+- `wiki-links.test.mjs` resolves a link into `plan.md` - the `plan.md#readings-owed` links - against
   what `render()` WOULD write from the tree, so a runner, which has no copy, checks the anchors, and
   a copy that is stale on a workstation cannot make a dead link look alive.
 - `backlog-plan.test.mjs` keeps every check that mattered (a target on every entry, the readings in
@@ -3761,7 +3769,7 @@ matches it; a commit touching none of them pays nothing.
 | --- | --- | --- |
 | a `.md`, or any deletion or rename | `wiki-links.test.mjs` (reads `git ls-files`, no disk walk) | 0.4 s |
 | a `.md` | `docs-merge-artefacts.test.mjs` | 0.3 s |
-| `docs/wiki/backlog.d/`, `backlog.md`, `tools/backlog-plan/` | `plan.mjs` re-run (the checkout's `plan.md`, gitignored, [never staged](#the-plan-page-is-generated-where-it-is-read-2026-11-16)), then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
+| `docs/wiki/backlog.d/`, `backlog.md`, `tools/backlog-plan/` | `plan.mjs` re-run (the checkout's `plan.md`, gitignored, [never staged](#the-plan-page-is-generated-where-it-is-read-2026-11-21)), then `backlog-plan.test.mjs`; `backlog-fragments`, `backlog-closed` | 0.5 s, 0.1 s, 0.2 s |
 | `CLAUDE.md` | `claude-md-cap.test.mjs` | 0.05 s |
 | `.md`, `.sh`, `.yml`, `.ts`, `.mjs`, `.env.example` | `docs-private-guard.test.mjs` | 3.3 s |
 | a `.sh` or `.husky/` | `executable-bit`; `pipefail-early-reader`; shellcheck on the staged scripts of the set CI lints (`make lint-ci-scripts FILES=...`, `-x` follows what they source) | 0.15 s, 0.16 s, ~1 s (the whole set, 15-37 s, is the push's) |

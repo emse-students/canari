@@ -1,8 +1,8 @@
 # Backlog
 
 **The entries live in [`backlog.d/`](backlog.d/README.md), one file each, and each names the version
-it is planned for** (`target: 1.7.0`, owner, 2026-11-13). **The order is [plan](plan.md)**, generated
-from those lines in every checkout and never committed ([why](cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). This page holds the rules every entry follows and, below, the one list of what only
+it is planned for** (`target: 1.7.0`, owner, 2026-11-13). **The order is [plan](plan.md)**, generated (`bun tools/backlog-plan/plan.mjs`)
+from those lines in every checkout and never committed ([why](cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)). This page holds the rules every entry follows and, below, the one list of what only
 the USER can do. Since 2026-11-13 it carries no entry: the 150 entries and the 137 verification rows
 it held moved to `backlog.d/`, each with its target ([roadmap log](roadmap.md#log-of-replannings-and-milestones)).
 

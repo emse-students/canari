@@ -152,7 +152,7 @@ Le backlog est un fichier par entree dans [`docs/wiki/backlog.d/`](../wiki/backl
 de ces lignes par `bun tools/backlog-plan/plan.mjs`, **dans chaque copie de travail, et jamais commite** : les
 hooks git le reecrivent apres chaque checkout, merge, rebase et commit (un clone tout neuf n'a pas encore de hooks :
 `make install` l'ecrit, ou `bun tools/backlog-plan/plan.mjs` a la main). Commite, il mettait toutes les pull
-requests ouvertes en conflit a chaque fusion ([cicd](../wiki/cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). D'ou trois habitudes :
+requests ouvertes en conflit a chaque fusion ([cicd](../wiki/cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)). D'ou trois habitudes :
 
 - **Ajouter une entree, c'est la planifier dans la meme pull request** : le fichier avec sa ligne
   `target:`, et rien d'autre. La CI refuse une entree sans version, une version inconnue, ou un

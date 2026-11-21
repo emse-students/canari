@@ -1,7 +1,7 @@
 #!/bin/sh
 # Post-checkout hook - rewrite the plan page from the entries this checkout now holds.
 #
-# `docs/wiki/plan.md` is generated where it is read and never committed (2026-11-16): committed,
+# `docs/wiki/plan.md` is generated where it is read and never committed (2026-11-21): committed,
 # it made every open pull request conflict with every merge to main. So each checkout writes its
 # own copy - after a `git worktree add`, a `git switch`, the start of a rebase - and the page
 # CLAUDE.md calls the queue says what the entries say. A fresh clone runs no hook (none is armed
@@ -9,4 +9,8 @@
 #
 # The page's line is discarded (a line every switch would print is noise); a problem the generator
 # finds goes to stderr. Called by git directly (`core.hooksPath` = `.husky`, tracked).
-exec bun tools/backlog-plan/plan.mjs >/dev/null
+# A hook never fails the git operation: no bun, or a generator error, is ONE accusing stderr line
+# and exit 0 - the page is stale and says so (its header carries the commit), the checkout works.
+command -v bun >/dev/null 2>&1 || { echo "plan.md not refreshed: bun missing (run: bun tools/backlog-plan/plan.mjs)" >&2; exit 0; }
+bun tools/backlog-plan/plan.mjs >/dev/null || echo "plan.md not refreshed: plan.mjs failed" >&2
+exit 0
