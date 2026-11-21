@@ -80,6 +80,7 @@ export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
 /**
  * A text or image block is empty or carries a question's setting, or a question depends on a block
  * (refused at save, `itemId` names the item; `formBlocks.ts`).
+ * @public Read through the namespace import by answerBounds.test.ts (contract codes).
  */
 export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
 

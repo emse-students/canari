@@ -21,7 +21,7 @@ export const TEXT_BLOCK_TYPE = 'text_block';
 export const IMAGE_BLOCK_TYPE = 'image_block';
 
 /** The item types that are content, not questions. */
-export const FORM_BLOCK_TYPES: readonly string[] = [TEXT_BLOCK_TYPE, IMAGE_BLOCK_TYPE];
+const FORM_BLOCK_TYPES: readonly string[] = [TEXT_BLOCK_TYPE, IMAGE_BLOCK_TYPE];
 
 /** Whether a stored type is a block's. */
 export function isFormBlockType(type: string | undefined): boolean {
