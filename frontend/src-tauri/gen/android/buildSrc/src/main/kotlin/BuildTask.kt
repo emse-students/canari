@@ -5,16 +5,17 @@ import org.gradle.api.GradleException
 import org.gradle.api.logging.LogLevel
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.TaskAction
-import org.gradle.process.ExecOperations
 import javax.inject.Inject
+import org.gradle.process.ExecOperations
 
 abstract class BuildTask : DefaultTask() {
-    // `Project.exec` is gone in Gradle 9 (the wrapper here); `ExecOperations` is its replacement.
     @get:Inject
     abstract val execOperations: ExecOperations
 
     @Input
     var rootDirRel: String? = null
+    @Input
+    var projectDir: String? = null
     @Input
     var target: String? = null
     @Input
@@ -57,12 +58,12 @@ abstract class BuildTask : DefaultTask() {
         val args = listOf("tauri", "android", "android-studio-script");
 
         execOperations.exec {
-            workingDir(File(project.projectDir, rootDirRel))
+            workingDir(File(projectDir, rootDirRel))
             executable(executable)
             args(args)
-            if (project.logger.isEnabled(LogLevel.DEBUG)) {
+            if (logger.isEnabled(LogLevel.DEBUG)) {
                 args("-vv")
-            } else if (project.logger.isEnabled(LogLevel.INFO)) {
+            } else if (logger.isEnabled(LogLevel.INFO)) {
                 args("-v")
             }
             if (release) {
