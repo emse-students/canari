@@ -706,13 +706,6 @@ export function useNotifications() {
     });
   }
 
-  /**
-   * Takes down the reaction notifications this page raised for `conversationId` - the reader opened
-   * it, and the bubble now carries what the alert announced. Off Android only (see
-   * `raisedReactions`); idempotent, a notification already gone costs nothing.
-   *
-   * @returns how many were asked to go.
-   */
   /** Forgets one held entry (its notification closed by itself), dropping an emptied conversation. */
   function releaseRaisedReaction(conversationId: string, entry: RaisedReaction) {
     const list = raisedReactions.get(conversationId);
@@ -722,6 +715,13 @@ export function useNotifications() {
     else raisedReactions.set(conversationId, left);
   }
 
+  /**
+   * Takes down the reaction notifications this page raised for `conversationId` - the reader opened
+   * it, and the bubble now carries what the alert announced. Off Android only (see
+   * `raisedReactions`); idempotent, a notification already gone costs nothing.
+   *
+   * @returns how many were asked to go.
+   */
   async function dismissConversationReactions(conversationId: string): Promise<number> {
     const held = raisedReactions.get(conversationId);
     if (!held) return 0;
@@ -837,8 +837,16 @@ export function useNotifications() {
           }
         }
         return;
-      } catch {
-        /* fallback to web */
+      } catch (e) {
+        // NO FALLBACK TO THE BROWSER'S API: this is a Tauri runtime, where the plugin is the one
+        // builder (Android's is the native one, asked above), and the WebView's `Notification` would
+        // raise a SECOND, differently-identified system notification for the same event. The plugin
+        // throws only when its native side is unavailable or refuses (a missing permission is a
+        // `false` answer, handled above), which is a defect to see, not a path to route around.
+        console.error(
+          `[NOTIF] The notification plugin threw for ${convKey} (${e instanceof Error ? e.name : typeof e}) - nothing was raised: ${String(e)}`
+        );
+        return;
       }
     }
 
