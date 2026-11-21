@@ -6661,6 +6661,5 @@
   "webview_outdated_title": "Update Android System WebView",
   "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
   "webview_outdated_button": "Open the Play Store",
-  "webview_outdated_fallback": "Open in the browser",
   "webview_outdated_version": "Detected version: {version}"
 }

@@ -18,6 +18,9 @@ const guardSource = inlineScripts(appHtml).find((s) => s.includes('CANARI_WEBVIE
 
 const ANDROID_WEBVIEW = (chrome: number) =>
   `Mozilla/5.0 (Linux; Android 12; SM-G950F Build/SP1A.210812.016; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/${chrome}.0.0.0 Mobile Safari/537.36`;
+/** The same engine in a plain browser tab: no "; wv)" marker. */
+const CHROME_ANDROID = (chrome: number) => ANDROID_WEBVIEW(chrome).replace('; wv)', ')');
+const APP_ASSET = 'https://dev.example/_app/immutable/chunks/x.js';
 
 type Listener = (event: Record<string, unknown>) => void;
 
@@ -25,28 +28,47 @@ type Listener = (event: Record<string, unknown>) => void;
 function runGuard(userAgent: string, language = 'fr-FR') {
   const listeners: Record<string, Listener[]> = {};
   const appended: any[] = [];
+  const errors: string[] = [];
   const makeElement = (tag: string): any => ({
     tag,
     style: {},
     children: [] as any[],
     setAttribute() {},
+    addEventListener() {},
     appendChild(child: any) {
       this.children.push(child);
       return child;
     },
   });
+  const body: any = {
+    appendChild(el: any) {
+      appended.push(el);
+      el.parentNode = body;
+    },
+    removeChild(el: any) {
+      appended.splice(appended.indexOf(el), 1);
+    },
+  };
+  const console = { error: (text: string) => errors.push(text) };
   const window: any = {
+    console,
     addEventListener: (name: string, fn: Listener) => (listeners[name] ??= []).push(fn),
   };
   const document = {
-    body: { appendChild: (el: any) => appended.push(el) },
+    body,
     createElement: makeElement,
     createTextNode: (text: string) => ({ text }),
+    getElementById: (id: string) => appended.find((el) => el.id === id) ?? null,
     addEventListener() {},
   };
-  const context = vm.createContext({ window, document, navigator: { userAgent, language } });
+  const context = vm.createContext({
+    window,
+    document,
+    console,
+    navigator: { userAgent, language },
+  });
   vm.runInContext(guardSource, context);
-  return { window, listeners, appended };
+  return { window, listeners, appended, errors };
 }
 
 const textOf = (el: any): string => el.text ?? [el.children ?? []].flat().map(textOf).join(' ');
@@ -63,6 +85,17 @@ describe('the guard is ES5 (it runs before anything else can)', () => {
   it('would be caught if ES2015 syntax crept in', () => {
     expect(() => parse('const a = () => `x`;', { ecmaVersion: 5 })).toThrow();
   });
+
+  it('never reads an error message to decide', () => {
+    expect(guardSource).not.toMatch(/\.message/);
+  });
+
+  it('links to https, never market://', () => {
+    expect(guardSource).not.toContain('market:');
+    expect(guardSource).toContain(
+      "'https://play.google.com/store/apps/details?id=com.google.android.webview'"
+    );
+  });
 });
 
 describe('the version floor', () => {
@@ -77,15 +110,14 @@ describe('the version floor', () => {
     [ANDROID_WEBVIEW(111), false],
     [ANDROID_WEBVIEW(64), true],
     [ANDROID_WEBVIEW(131), false],
-    // Chrome itself (no "; wv)") updates by itself: not this guard's business.
-    [ANDROID_WEBVIEW(90).replace('; wv)', ')'), false],
-    // Desktop and iOS never match.
-    ['Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/90.0.0.0 Safari/537.36', false],
-    ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15', false],
-    // No Chrome token at all: nothing to compare.
     ['Mozilla/5.0 (Linux; Android 8.0; wv) AppleWebKit/537.36', false],
   ])('isBelowFloor(%s) is %s', (ua, expected) => {
     expect(guard().isBelowFloor(ua)).toBe(expected);
+  });
+
+  it('tells a WebView from Chrome', () => {
+    expect(guard().isAndroidWebView(ANDROID_WEBVIEW(90))).toBe(true);
+    expect(guard().isAndroidWebView(CHROME_ANDROID(90))).toBe(false);
   });
 
   it('reads the Chrome major', () => {
@@ -93,10 +125,18 @@ describe('the version floor', () => {
     expect(guard().chromeMajor('nothing')).toBeNull();
   });
 
-  it('tells a SyntaxError from a network failure', () => {
-    expect(guard().isSyntaxFailure({ name: 'SyntaxError' }, '')).toBe(true);
-    expect(guard().isSyntaxFailure(null, "Uncaught SyntaxError: Unexpected token '?'")).toBe(true);
-    expect(guard().isSyntaxFailure({ name: 'TypeError' }, 'Failed to fetch')).toBe(false);
+  it('knows a bundle parse failure by its type and its source, never its message', () => {
+    const syntax = { name: 'SyntaxError', stack: '' };
+    expect(guard().isBundleParseFailure(syntax, APP_ASSET)).toBe(true);
+    expect(
+      guard().isBundleParseFailure({ name: 'SyntaxError', stack: `at ${APP_ASSET}:1` }, '')
+    ).toBe(true);
+    // JSON.parse of an HTML body: a SyntaxError, but not from an app asset.
+    expect(guard().isBundleParseFailure(syntax, 'https://dev.example/portal')).toBe(false);
+    expect(guard().isBundleParseFailure(syntax, '')).toBe(false);
+    expect(guard().isBundleParseFailure({ name: 'TypeError', stack: APP_ASSET }, APP_ASSET)).toBe(
+      false
+    );
   });
 });
 
@@ -126,26 +166,53 @@ describe('what the guard does on a page', () => {
     }
   });
 
-  it('on a current WebView draws nothing until a SyntaxError arrives before the app mounted', () => {
-    const { appended, listeners } = runGuard(ANDROID_WEBVIEW(120));
+  it('a JSON.parse-style SyntaxError before mount does NOT draw the screen', () => {
+    for (const chrome of [120, 67]) {
+      const { appended, listeners } = runGuard(CHROME_ANDROID(chrome));
+      const error = { name: 'SyntaxError', stack: 'at JSON.parse (<anonymous>)' };
+      listeners.error[0]({ error, filename: '' });
+      listeners.unhandledrejection[0]({ reason: error });
+      expect(appended).toHaveLength(0);
+    }
+  });
+
+  it('a SyntaxError from a non-/_app/ source does not draw it', () => {
+    const { appended, listeners } = runGuard(CHROME_ANDROID(67));
+    listeners.error[0]({
+      error: { name: 'SyntaxError', stack: '' },
+      filename: 'chrome-extension://abc/inject.js',
+    });
     expect(appended).toHaveLength(0);
-    listeners.error[0]({ error: { name: 'TypeError' }, message: 'x' });
+  });
+
+  it('a bundle parse failure at or above the floor logs an error and draws nothing', () => {
+    const { appended, listeners, errors } = runGuard(CHROME_ANDROID(120));
+    listeners.error[0]({ error: { name: 'SyntaxError', stack: '' }, filename: APP_ASSET });
     expect(appended).toHaveLength(0);
-    listeners.error[0]({ error: { name: 'SyntaxError' }, message: 'x' });
+    expect(errors.join('\n')).toContain('not an old WebView');
+  });
+
+  it('a bundle parse failure on an old non-WebView Android engine draws it, once', () => {
+    const { appended, listeners } = runGuard(CHROME_ANDROID(67));
+    listeners.error[0]({ error: { name: 'SyntaxError', stack: '' }, filename: APP_ASSET });
+    listeners.unhandledrejection[0]({
+      reason: { name: 'SyntaxError', stack: `at ${APP_ASSET}` },
+    });
     expect(appended).toHaveLength(1);
   });
 
-  it('a SyntaxError that rejects the bundle import also draws it, once', () => {
-    const { appended, listeners } = runGuard(ANDROID_WEBVIEW(120));
-    listeners.unhandledrejection[0]({ reason: { name: 'SyntaxError' } });
-    listeners.unhandledrejection[0]({ reason: { name: 'SyntaxError' } });
+  it('removes the screen, and says so, when the app mounts anyway', () => {
+    const { appended, window, errors } = runGuard(ANDROID_WEBVIEW(67));
     expect(appended).toHaveLength(1);
+    window.__canariWebViewGuard.mounted();
+    expect(appended).toHaveLength(0);
+    expect(errors.join('\n')).toContain('screen removed');
   });
 
   it('draws nothing once the layout has mounted', () => {
-    const { appended, listeners, window } = runGuard(ANDROID_WEBVIEW(120));
-    window.__canariMounted = true;
-    listeners.error[0]({ error: { name: 'SyntaxError' }, message: 'x' });
+    const { appended, listeners, window } = runGuard(CHROME_ANDROID(67));
+    window.__canariWebViewGuard.mounted();
+    listeners.error[0]({ error: { name: 'SyntaxError', stack: '' }, filename: APP_ASSET });
     expect(appended).toHaveLength(0);
   });
 });
@@ -163,7 +230,7 @@ describe('the string table follows the Paraglide messages', () => {
 
   it.each(['fr', 'en'])('%s: every entry equals webview_outdated_<key>', (lang) => {
     const keys = Object.keys(table[lang]);
-    expect(keys.sort()).toEqual(['body', 'button', 'fallback', 'title', 'version']);
+    expect(keys.sort()).toEqual(['body', 'button', 'title', 'version']);
     for (const key of keys) {
       expect(messages(lang)[`webview_outdated_${key}`], `${lang}.${key}`).toBe(table[lang][key]);
     }
