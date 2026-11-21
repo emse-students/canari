@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { redactLogLine } from '$lib/utils/appLogRedact';
+import { withoutAnyComments } from '$lib/styles/markupSources';
 
 /**
  * EVERY END OF A VISIBLE MESSAGE PUSH SAYS WHICH ONE IT WAS, IN THE IN-APP LOG (2026-11-20).
@@ -33,9 +34,7 @@ function bodyOf(source: string, header: string, opener: string): string {
 }
 
 /** Kotlin without its comments - a `return` or a record named in prose is not code. */
-function code(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
+const code = withoutAnyComments;
 
 /** A return of the function itself, anywhere on a line (`?: return`, `-> return`), never `return@`. */
 const RETURN = /\breturn\b(?!@)/g;
