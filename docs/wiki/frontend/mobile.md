@@ -4568,6 +4568,23 @@ parent, the icon size and every `BitmapFactory` call having options. **What it c
 the shrunk APK still works**, since the debug build type never minifies: that is
 [device-verification check R](../device-verification.md#r-the-shrunk-release-apk-actually-runs---owed-on-android).
 
+### The release names its ABIs, and a 32-bit phone was lost without a word (2026-11-21)
+
+A Galaxy A11 (`a11q`, 32-bit userspace) could neither find the app on Play nor install the APK. Play
+Console's device catalogue said, for the internal and production tracks alike, *"required ABI not
+supported: arm64-v8a"*. Measured on the v1.7.2 assets: the AAB and the APK each held ONE native
+library, `lib/arm64-v8a/libmines_app_lib.so`. The Gradle side was never the cause (`RustPlugin.kt`
+lists four ABIs, `minSdk` is 28): `tauri android build` with no `--target` compiled `aarch64` only,
+and Gradle logged `There are no .so files available to package in the APK for armeabi-v7a, x86,
+x86_64`, an Info line nobody reads.
+
+**The fix is in two parts.** `android.yml` names its targets (`--target aarch64 armv7`) on both the
+AAB and the APK command, and a step after "Locate build outputs" reads both artifacts and FAILS when
+`lib/arm64-v8a/` or `lib/armeabi-v7a/` holds no `libmines_app_lib.so`. `x86` and `x86_64` are left
+out on purpose: emulators only, and each ABI costs build time and bundle size. The `armv7` target was
+compiled locally in debug (NDK 28, 2 minutes) before the change; a release build and a run on a
+32-bit phone are still owed: the first pre-release carrying this change is the reading.
+
 ### Play's Q3-2026 quality requirements, measured against this app
 
 A second Google Play mail, the same day as the pre-launch analysis, announced two requirements with
