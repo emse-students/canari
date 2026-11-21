@@ -28,10 +28,16 @@ class PushShowOutcomeTest {
     }
 
     @Test
-    fun `a refresh of a line already shown stays in logcat, every other outcome is recorded`() {
-        assertFalse(Outcome.ALREADY_IN_SHADE.recorded)
-        assertTrue(Outcome.entries.filter { it != Outcome.ALREADY_IN_SHADE }.all { it.recorded })
-        assertTrue(Outcome.POSTED.recorded && Outcome.REDRAWN.recorded)
+    fun `a second trigger of one message and a read that touched no banner stay in logcat`() {
+        val logcatOnly = setOf(
+            Outcome.ALREADY_IN_SHADE,
+            Outcome.SUPPRESSED_ALREADY_ALERTED,
+            Outcome.READ_NO_BANNER,
+            Outcome.WITHDRAW_NONE,
+            Outcome.DELIVERY_NONE,
+        )
+        assertEquals(logcatOnly, Outcome.entries.filter { !it.recorded }.toSet())
+        assertTrue(Outcome.POSTED.recorded && Outcome.REDRAWN.recorded && Outcome.THREW.recorded)
     }
 
     @Test
@@ -79,7 +85,7 @@ class PushShowOutcomeTest {
         // A LOW channel still shows it, quietly: the member's choice, reported, not accused.
         assertEquals('I', PushShowOutcome.level(Outcome.POSTED, open.copy(channelImportance = 2)))
         val closed = open.copy(notificationsEnabled = false)
-        for (o in Outcome.entries.filter { !it.posts }) {
+        for (o in Outcome.entries.filter { !it.posts && it != Outcome.THREW }) {
             assertEquals('I', PushShowOutcome.level(o, closed))
             assertFalse(PushShowOutcome.line(o, "g", "c", closed).contains("drops"))
         }
@@ -104,7 +110,8 @@ class PushShowOutcomeTest {
         val deliveries = ReadElsewhereMarks.Delivery.entries.map { PushShowOutcome.of(it) }
         val all = reads + withdrawals + deliveries
         assertEquals("one outcome per decision", all.size, all.toSet().size)
-        assertTrue(all.all { it.recorded && !it.posts })
+        assertTrue(all.none { it.posts })
+        assertEquals(setOf(Outcome.READ_NO_BANNER, Outcome.WITHDRAW_NONE, Outcome.DELIVERY_NONE), all.filter { !it.recorded }.toSet())
         assertEquals(Outcome.READ_PENDING_ONLY, PushShowOutcome.of(ReadElsewhereMarks.ReadOutcome.PENDING_ONLY))
         assertEquals(Outcome.WITHDRAW_KEPT_PENDING_REPLY, PushShowOutcome.of(ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY))
         assertEquals(Outcome.DELIVERY_KEPT_UNTIL_READ, PushShowOutcome.of(ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ))
@@ -116,6 +123,33 @@ class PushShowOutcomeTest {
         for (id in listOf(null, "", "channel_9f8e7d6c5b4a", "0123456789")) {
             assertEquals(ConversationRef.of(id), PushShowOutcome.conversationRef(id))
         }
+    }
+
+    @Test
+    fun `the OS is read only for a recorded post, the one line whose verdict it decides`() {
+        assertEquals(
+            setOf(Outcome.POSTED, Outcome.POSTED_SILENT_CALL, Outcome.REDRAWN),
+            Outcome.entries.filter { PushShowOutcome.readsOs(it) }.toSet(),
+        )
+        assertEquals(
+            "[PUSH_SHOW] outcome=suppressed-read-elsewhere conv=g:01234567 channel=? os: not read why: early",
+            PushShowOutcome.line(Outcome.SUPPRESSED_READ_ELSEWHERE, "0123456789", null, null, "early"),
+        )
+        assertEquals('I', PushShowOutcome.level(Outcome.POSTED, null))
+    }
+
+    @Test
+    fun `an exception that escaped the post section is an ERROR line`() {
+        assertEquals('E', PushShowOutcome.level(Outcome.THREW, null))
+        assertEquals('E', PushShowOutcome.level(Outcome.THREW, open))
+        assertFalse(Outcome.THREW.posts)
+    }
+
+    @Test
+    fun `a salon named by its bare id reads as the same reference as its key`() {
+        assertEquals(ConversationRef.of("channel_9f8e7d6c5b4a"), ConversationRef.ofSalon("9f8e7d6c5b4a"))
+        assertEquals("ch:9f8e7d6c", ConversationRef.ofSalon("channel_9f8e7d6c5b4a"))
+        assertEquals("?", ConversationRef.ofSalon(null))
     }
 
     @Test

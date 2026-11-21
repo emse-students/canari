@@ -19,7 +19,7 @@ describe('formatNativePushLines', () => {
       '2026-11-04 10:00:00.000 W CanariFCM: handleChannelMessage: seed absent -> generic banner',
       '2026-11-04 10:00:01.000 E CanariFCM: handleChannelMessage: REFUSED reason=signature-refused',
       '2026-11-04 10:00:02.000 W CanariFCM: openSeedFrame: seed frame refused',
-      '2026-11-04 10:00:03.000 I CanariFCM: [PUSH_SHOW] outcome=posted groupId=0a1b2c3d channel=canari_messages_v2',
+      '2026-11-04 10:00:03.000 I CanariFCM: [PUSH_SHOW] outcome=posted conv=g:0a1b2c3d channel=canari_messages_v2',
     ]);
     expect(out).toHaveLength(5);
     expect(out.slice(0, 4).every((l) => l.startsWith(`${NATIVE_PUSH_TAG} 2026-11-04`))).toBe(true);

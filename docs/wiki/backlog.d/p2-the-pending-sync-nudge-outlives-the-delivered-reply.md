@@ -18,6 +18,14 @@ whichever caller drained - the worker, a push-woken drain, the boot drain, the q
 A drain that still leaves sends keeps it. The nudge states a fact about the queue, so the queue's
 own state removes it: no timer, no "was it shown" flag.
 
+**The trap: 9998 is not the nudge's alone.** `MlsBackgroundWorker.FOREGROUND_NOTIF_ID` is the same
+`FixedNotifIds.PENDING_SYNC`, the worker's foreground-service notice. A blind
+`cancel(PENDING_SYNC_NOTIF_ID)` while the worker runs in the foreground would take its notice down
+(and the platform may refuse or re-post it). So the fix first gives the nudge its OWN fixed id (a new
+`FixedNotifIds` entry, added to `ALL`), or guards the cancel on the posted record being the nudge
+(its channel or tag, read from `activeNotifications`). The distinct id is the cleaner one: one id,
+one meaning, and the cancel needs no reading.
+
 **Test.** A source pin that `drainOutboxBackground` cancels the nudge when `remaining == 0`, outside
-the outbox lock. And a reading on the Mi 9T: queue a reply offline, let the worker deliver it, and
+the outbox lock, and that the nudge's id is no longer the worker's foreground id. And a reading on the Mi 9T: queue a reply offline, let the worker deliver it, and
 see the nudge leave without opening the app.

@@ -78,9 +78,13 @@ describe('showMessageNotification records exactly one outcome per return', () =>
   });
 
   it("records the locked section's end in a finally, once the lock is released", () => {
+    // An exception that escaped the section leaves no `ended`: it is recorded as THREW, an ERROR.
     expect(show).toMatch(
-      /\} \} finally \{\s*ended\?\.let \{ recordShowOutcome\(it, groupId, channel, manager, endedShortcut, endedDetail\) \}/
+      /\} \} finally \{\s*recordShowOutcome\(ended \?: PushShowOutcome\.Outcome\.THREW, groupId, endedChannel, manager, endedShortcut, endedDetail\)/
     );
+    // A banner held after an inline answer is posted on ITS channel: the line reads that one.
+    expect(show).toContain('var endedChannel: String? = channel');
+    expect(show).toMatch(/endedShortcut = conversationShortcutId\s*endedChannel = postChannel/);
     expect(show).toContain(
       'ended = PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds)'
     );
@@ -186,7 +190,9 @@ describe('every earlier end of a visible message push records its outcome', () =
 describe('the recorded line', () => {
   it('is a recorded INFO by design, a WARN when the OS drops a post, logcat only when not recorded', () => {
     expect(service).toContain('!outcome.recorded -> Log.d(TAG, line)');
-    expect(service).toContain("PushShowOutcome.level(outcome, os) == 'W' -> Log.w(TAG, line)");
+    expect(service).toContain('val level = PushShowOutcome.level(outcome, os)');
+    expect(service).toContain("level == 'E' -> Log.e(TAG, line)");
+    expect(service).toContain("level == 'W' -> Log.w(TAG, line)");
     expect(service).toContain('else -> Log.iRecorded(TAG, line)');
     // The deliberate path passes the level gate on purpose, into its own stream; a plain i does not.
     expect(nativeLog).toMatch(
@@ -196,7 +202,8 @@ describe('the recorded line', () => {
     expect(nativeLog).toContain("line, level == 'I')");
   });
 
-  it('reads the conversation channel and the paused state', () => {
+  it('reads the conversation channel and the paused state, and only for a line whose verdict they decide', () => {
+    expect(service).toContain('val os = if (!PushShowOutcome.readsOs(outcome)) null else try {');
     expect(service).toContain('manager.getNotificationChannel(id, it)');
     expect(service).toContain('manager.areNotificationsPaused()');
   });

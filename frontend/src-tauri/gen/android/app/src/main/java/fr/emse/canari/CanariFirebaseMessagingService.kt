@@ -2510,7 +2510,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val ctx = MlsContextLoader.loadPushContext(context)
             val secret = retrievePushSecret(context)
             if (ctx == null || secret == null) {
-                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${channelId.take(8)}")
+                Log.w(TAG, "postChannelRead: no push context or secret - the salon read mark is not sent channel=${ConversationRef.ofSalon(channelId)}")
                 return false
             }
             return try {
@@ -2532,10 +2532,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     if (code == 200 || code == 201) {
-                        Log.d(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at")
+                        Log.d(TAG, "postChannelRead: HTTP $code channel=${ConversationRef.ofSalon(channelId)} at=$at")
                         true
                     } else {
-                        Log.w(TAG, "postChannelRead: HTTP $code channel=${channelId.take(8)} at=$at - the read mark did not move")
+                        Log.w(TAG, "postChannelRead: HTTP $code channel=${ConversationRef.ofSalon(channelId)} at=$at - the read mark did not move")
                         false
                     }
                 } finally {
@@ -3437,7 +3437,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             shortcutId: String? = null,
             detail: String? = null,
         ) {
-            val os = try {
+            val os = if (!PushShowOutcome.readsOs(outcome)) null else try {
                 val manager = known ?: getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 val postedOn = channel?.let { id ->
                     shortcutId?.takeIf { android.os.Build.VERSION.SDK_INT >= 30 }
@@ -3458,9 +3458,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 PushShowOutcome.OsState.UNREAD
             }
             val line = PushShowOutcome.line(outcome, groupId, channel, os, detail)
+            val level = PushShowOutcome.level(outcome, os)
             when {
                 !outcome.recorded -> Log.d(TAG, line) // log-safe: PushShowOutcome.line - an outcome token, an 8-character id prefix, a channel id and OS constants by name
-                PushShowOutcome.level(outcome, os) == 'W' -> Log.w(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+                level == 'E' -> Log.e(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
+                level == 'W' -> Log.w(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
                 else -> Log.iRecorded(TAG, line) // log-safe: the same PushShowOutcome.line, system words only
             }
         }
@@ -3665,6 +3667,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             var ended: PushShowOutcome.Outcome? = null
             var endedDetail: String? = null
             var endedShortcut: String? = null
+            // The channel the post went out on: a banner held after an inline answer keeps ITS channel.
+            var endedChannel: String? = channel
             val (postedStamp, postedAlertedKey) = try { synchronized(READ_ELSEWHERE.lock) {
                 val held = if (channel == CHANNEL_REACTIONS) {
                     READ_ELSEWHERE.reactionBaseOf(groupId) { shadeBannerOf(manager, notifId) }
@@ -3915,11 +3919,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.d(TAG, "showNotification: notifId=$notifId messages=${style.messages.size} group=$isGroup namesEachSender=$namesEachSender")
                 ended = PushShowOutcome.posted(alreadyPosted, supersedes != 0L, callHolds)
                 endedShortcut = conversationShortcutId
+                endedChannel = postChannel
                 // [holdsDirectReply]'s answer for this post: the platform holds the banner after an inline answer.
                 if (heldByReply) endedDetail = "heldByReply=true"
                 stamp to alertedKey
             } } finally {
-                ended?.let { recordShowOutcome(it, groupId, channel, manager, endedShortcut, endedDetail) }
+                // Every return sets `ended`, so null means an exception escaped the section: it is
+                // recorded too, as an ERROR (the caller logs the exception itself).
+                recordShowOutcome(ended ?: PushShowOutcome.Outcome.THREW, groupId, endedChannel, manager, endedShortcut, endedDetail)
             }
 
             // WRITTEN AFTER THE POST, so a builder that threw on the way here leaves no record of an
@@ -4506,7 +4513,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     try {
                         cancelConversationNotification(context, "channel_$channelId")
                     } catch (e: Exception) {
-                        Log.e(TAG, "channel_read: cancel failed for ${channelId.take(8)}: ${throwableSite(e)}")
+                        Log.e(TAG, "channel_read: cancel failed for ${ConversationRef.of(salonId)}: ${throwableSite(e)}")
                     }
                 }
             }
@@ -5079,7 +5086,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (attempt < 2) Thread.sleep(2_000)
         }
         if (hold == null) {
-            Log.w(TAG, "processWelcomeRequestBackground: unable to acquire the lock for group=$groupId -> abort")
+            Log.w(TAG, "processWelcomeRequestBackground: unable to acquire the lock for group=${ConversationRef.of(groupId)} -> abort")
             return
         }
         Log.d(TAG, "processWelcomeRequestBackground: Redis lock acquired for group=$groupId")
@@ -5934,7 +5941,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .build()
             enqueueWorkerIfHealthy(workRequest)
         } else {
-            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=$groupId")
+            Log.e(TAG, "processReceivedWelcomeBackground: join failed group=${ConversationRef.of(groupId)}")
         }
 
         // The group may have just been joined: try to send the pending outgoing messages,
@@ -6224,7 +6231,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         } ?: return null
         if (epoch < 0) {
-            Log.w(TAG, "catchup: epoch unknown for group=$groupId -> abort")
+            Log.w(TAG, "catchup: epoch unknown for group=${ConversationRef.of(groupId)} -> abort")
             return null
         }
 
@@ -7154,13 +7161,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Yielded is the foreground holding the state, which the WebSocket serves; everything
             // else is a frame that should have opened and did not, which is why this is a warning.
             val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
-            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
+            Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=${ConversationRef.ofSalon(channelId)} session=$sessionId")
             return false
         }
         absorbGraineSeeds(cacheKey, keyMaterial.seedsJson, groupId)
         val held = graineSeedHeld(cacheKey, channelId, sessionId)
         if (!held) {
-            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${ConversationRef.of(groupId)} channel=$channelId session=$sessionId")
+            Log.e(TAG, "openSeedFrame: the frame opened and holds no seed for this message's session group=${ConversationRef.of(groupId)} channel=${ConversationRef.ofSalon(channelId)} session=$sessionId")
         }
         return held
     }
@@ -7631,7 +7638,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val ctx = MlsContextLoader.loadPushContext(this)
         val secret = retrievePushSecret(this)
         if (ctx == null || secret == null) {
-            Log.w(TAG, "reportBlindBanner: no push context or secret - the blind banner goes uncounted channel=$channelId")
+            Log.w(TAG, "reportBlindBanner: no push context or secret - the blind banner goes uncounted channel=${ConversationRef.ofSalon(channelId)}")
             return
         }
         try {
@@ -7779,7 +7786,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 channelId,
                 sessionId,
             )
-            if (held < 0) Log.e(TAG, "graineSeedHeld: the seed mirror is unreadable channel=$channelId")
+            if (held < 0) Log.e(TAG, "graineSeedHeld: the seed mirror is unreadable channel=${ConversationRef.ofSalon(channelId)}")
             held == 1
         } catch (e: Throwable) {
             // UnsatisfiedLinkError included, as in [absorbGraineSeeds].

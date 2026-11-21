@@ -53,30 +53,42 @@ object PushShowOutcome {
         REFUSED_COVERED("refused-covered", false),
         /** The reader already read the conversation up to this message from the shade. */
         SUPPRESSED_SHADE_MARK("suppressed-shade-mark", false),
-        /** Already announced, then dismissed (swiped, or cleared by a launch): not announced twice. */
-        SUPPRESSED_ALREADY_ALERTED("suppressed-already-alerted", false),
+        /**
+         * Already announced, then dismissed (swiped, or cleared by a launch): not announced twice.
+         * A later trigger of a message the log already carries as posted: logcat only.
+         */
+        SUPPRESSED_ALREADY_ALERTED("suppressed-already-alerted", false, recorded = false),
         /** Already read on another device ([ReadElsewhereMarks.covers], or refused at the post). */
         SUPPRESSED_READ_ELSEWHERE("suppressed-read-elsewhere", false),
 
         // What a read on another device did to the banner ([ReadElsewhereMarks.ReadOutcome]).
-        READ_NO_BANNER("read-no-banner", false),
+        // The `*_NONE` outcomes found no banner to touch: every read of this device's own account
+        // ends there (a silent push from self, its own watermark over the WebSocket, a salon read),
+        // so recording them would rotate the useful lines out of the log - logcat only.
+        READ_NO_BANNER("read-no-banner", false, recorded = false),
         READ_CANCELLED("read-cancelled", false),
         READ_HELD("read-held", false),
         READ_PENDING_ONLY("read-pending-only", false),
         READ_UNREAD("read-unread", false),
 
         // What a dismissal with no mark did ([ReadElsewhereMarks.Withdrawal]).
-        WITHDRAW_NONE("withdraw-none", false),
+        WITHDRAW_NONE("withdraw-none", false, recorded = false),
         WITHDRAW_KEPT_PENDING_REPLY("withdraw-kept-pending-reply", false),
         WITHDRAW_CANCELLED("withdraw-cancelled", false),
         WITHDRAW_HELD("withdraw-held", false),
 
         // What a delivered or answered reply did to its banner ([ReadElsewhereMarks.Delivery]).
-        DELIVERY_NONE("delivery-none", false),
+        DELIVERY_NONE("delivery-none", false, recorded = false),
         DELIVERY_CANCELLED("delivery-cancelled", false),
         DELIVERY_REPOSTED("delivery-reposted", false),
         DELIVERY_NOT_REBUILT("delivery-not-rebuilt", false),
         DELIVERY_KEPT_UNTIL_READ("delivery-kept-until-read", false),
+
+        /**
+         * An exception escaped the locked post section before it decided: no other outcome was
+         * reached. An ERROR ([level]) - a swallowed end must still leave its line.
+         */
+        THREW("threw", false),
     }
 
     /** The line of a read on another device, one outcome per [ReadElsewhereMarks.ReadOutcome]. */
@@ -162,8 +174,19 @@ object PushShowOutcome {
     fun osDrops(os: OsState): Boolean =
         os.notificationsEnabled == false || os.paused == true || os.channelImportance == IMPORTANCE_NONE
 
-    /** `W` when the app posted what the OS drops, `I` otherwise. */
-    fun level(outcome: Outcome, os: OsState): Char = if (outcome.posts && osDrops(os)) 'W' else 'I'
+    /**
+     * Whether the OS state is read for [outcome]'s line: only where it decides the verdict - a
+     * recorded post. A decision that posts nothing has nothing for the OS to drop, so its line
+     * spends no binder call (some of them are made under a lock), and says `os: not read`.
+     */
+    fun readsOs(outcome: Outcome): Boolean = outcome.posts && outcome.recorded
+
+    /** `E` for [Outcome.THREW], `W` when the app posted what the OS drops, `I` otherwise. */
+    fun level(outcome: Outcome, os: OsState?): Char = when {
+        outcome == Outcome.THREW -> 'E'
+        outcome.posts && os != null && osDrops(os) -> 'W'
+        else -> 'I'
+    }
 
     /** The conversation as the line names it - the one scheme every log line uses, [ConversationRef]. */
     fun conversationRef(conversationId: String?): String = ConversationRef.of(conversationId)
@@ -173,12 +196,15 @@ object PushShowOutcome {
      *
      * @param conversationId the conversation (or `channel_<id>` salon), null when the push named none
      * @param channel        the notification channel id it posts on, null before one was chosen
+     * @param os             the OS state, null when not read ([readsOs])
      * @param detail         a short system-worded reason (a withholding level, a push type), or null
      */
-    fun line(outcome: Outcome, conversationId: String?, channel: String?, os: OsState, detail: String? = null): String {
-        val drop = if (outcome.posts && osDrops(os)) " -> the OS drops it" else ""
+    fun line(outcome: Outcome, conversationId: String?, channel: String?, os: OsState?, detail: String? = null): String {
         val why = detail?.let { " why: ${it.replace('\n', ' ').take(120)}" } ?: ""
-        return "[PUSH_SHOW] outcome=${outcome.token} conv=${conversationRef(conversationId)} channel=${channel ?: "?"}" +
+        val head = "[PUSH_SHOW] outcome=${outcome.token} conv=${conversationRef(conversationId)} channel=${channel ?: "?"}"
+        if (os == null) return "$head os: not read$why"
+        val drop = if (outcome.posts && osDrops(os)) " -> the OS drops it" else ""
+        return head +
             " os: enabled=${os.notificationsEnabled ?: "?"}" +
             " paused=${os.paused ?: "?"}" +
             " importance=${importanceName(os.channelImportance)}" +
