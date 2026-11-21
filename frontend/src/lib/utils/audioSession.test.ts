@@ -197,6 +197,19 @@ describe('the microphone', () => {
     expect(session.current()).toBe('ambient');
   });
 
+  it('a voice note ending during a call leaves the call its play-and-record', async () => {
+    const session = fakeSession();
+    armAudioSession();
+    reportCallSoundPhase('svc', 'incall');
+    const d = devices(['audio'], session);
+    const stream = await captureUserMedia(d.devices, { audio: true }, 'voice-note');
+    stream.getAudioTracks()[0].stop();
+    expect(session.current()).toBe('play-and-record');
+    expect(session.set).toEqual(['ambient', 'play-and-record']);
+    reportCallSoundPhase('svc', 'ended');
+    expect(session.current()).toBe('ambient');
+  });
+
   it('the camera path: held across video and audio, released only when every audio track ended', async () => {
     const session = fakeSession();
     armAudioSession();

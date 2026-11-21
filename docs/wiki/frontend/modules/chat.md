@@ -5704,6 +5704,43 @@ follows the bottom.
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
 portrait photo near its end.**
 
+### The flag is only ever the reader's (2026-11-21)
+
+The photo DM of the Pixel 6a (`1.6.12`, 2026-11-14): a DM whose last rows hold a photo, a video and a
+screenshot landed on OLDER messages ~50 ms after the keyboard settled, the scroll-down arrow up. The
+2026-10-30 fix and the held media ceiling did not stop it. **Not reproduced on a phone**; the
+mechanism was reproduced in Chrome (a pane, three photos under a `calc(var(--kv) * 0.6)` ceiling, the
+real `observeThreadGrowth` and the real `stickToBottomAfterScroll`) and is a property of the flag, not of
+the media.
+
+**Why the anchor was lost.** `measureScroll` runs in an animation callback, before the frame's
+`ResizeObserver` entries, and decided "the reader went up" from `scrollTop` lower than the LAST
+MEASUREMENT while more than the slack from the bottom. Frame A: the thread shrinks (the photos'
+ceiling drops, the box loses the keyboard), the browser clamps `scrollTop` and the observer pins it
+lower - the pane is at the bottom, at a smaller `scrollTop`. Frame B: the thread grows back (the
+ceiling restored) BEFORE the measurement of A's scroll runs. It reads a `scrollTop` lower than its
+last reading and a distance of 643 px from the bottom: the flag falls, every later change answers
+`keep-row`, and the reader stays 429-643 px above the newest rows, with nothing that will ever follow
+them. Measured: flag `true -> false`, distance 429 px after the settle (Chrome, three 567 px photos).
+It needs no media load and no timer: any shrink then growth of the thread in consecutive frames does
+it; the photo DM is the one place a phone showed it.
+
+**The fix: a reader leaves the bottom by moving up from where the PANE was last put, by anyone.**
+`observeThreadGrowth` takes an `onPlaced(scrollTop)` callback, called after every write it makes (a pin,
+which is also where a clamp ends); `ChatArea` writes it into `lastMeasuredScrollTop`, as
+`scrollToBottom` does for its own write. The next measurement then compares with the pane's own
+placement, finds `scrollTop` unchanged, and keeps the flag; the observer pins the regrowth. Same
+replay, fixed: flag `true`, distance 0. No clock, no ceiling, no per-media rule - it holds for a
+thread of any length and any content.
+
+`threadGrowthObserver.test.ts` ("a thread that shrinks then grows back") replays it: the pin of
+frame A, the growth of frame B, the measurement between them. With the placement as baseline the reader
+ends at the bottom with the flag up; with the last measurement as baseline (the old rule) the flag
+falls and the reader is left above - the control, which fails on the old code.
+
+**Owed:** one reading on the owner's Pixel 6a (a reading-owed entry in the plan). Not refuted: other
+writers of `scrollTop` (`widenEntryWindow`, `loadOlderGroups`) were excluded by reading, not measured.
+
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
 The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a

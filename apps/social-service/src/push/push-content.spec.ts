@@ -556,3 +556,26 @@ describe('markdownToPreviewText', () => {
     expect(markdownToPreviewText(`**Bravo** ${token} !`)).toBe(`Bravo ${token} !`);
   });
 });
+
+describe('form reminders name who and what (owner, 2026-11-17)', () => {
+  it('the opening push carries the association as the actor and the form title', () => {
+    const content = formOpenContent({ formTitle: 'Gala', associationName: 'BDE' });
+    expect(pushContentData(content)).toMatchObject({
+      contentKey: 'form_open',
+      actorName: 'BDE',
+      contentArg: 'Gala',
+    });
+    expect(content.legacyTitle).toContain('BDE');
+    expect(content.legacyBody).toContain('Gala');
+  });
+
+  it('the heads-up names them too, and reads as before for a form with neither', () => {
+    const soon = formOpeningSoonContent({ formTitle: 'Gala', associationName: 'BDE' });
+    expect(soon.legacyBody).toContain('Gala');
+    expect(soon.actorName).toBe('BDE');
+    expect(formOpeningSoonContent().legacyBody).toBe(
+      'Un formulaire que vous suivez ouvre dans 5 minutes !'
+    );
+    expect(formOpenContent().actorName).toBe('');
+  });
+});

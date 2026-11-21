@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { askerCountOf, openingImmediateOf } from '$lib/associations/api';
 import {
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
@@ -10,6 +11,8 @@ import {
   FORM_PAYMENTS_NOT_READY,
   FORM_NO_PAYMENT_METHOD,
   FORM_ONLINE_PAYMENT_NOT_OFFERED,
+  FORM_OPENING_NOTIFIES,
+  openingNotifiesMessage,
   draftRefusalMessage,
   formViewHref,
   isDraftForm,
@@ -128,5 +131,41 @@ describe('drafts and their publication', () => {
     expect(draftRefusalMessage(FORM_DRAFT_INVALID)).toBe(m.form_draft_invalid_refusal());
     expect(draftRefusalMessage('SOMETHING_ELSE')).toBeNull();
     expect(draftRefusalMessage(null)).toBeNull();
+  });
+});
+
+describe('an earlier opening names who it would push (owner, 2026-11-17)', () => {
+  it('words the count and WHEN they are told, singular and plural', () => {
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1, true)).toBe(
+      m.form_opening_notifies_now_refusal({ count: 1 })
+    );
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 7, false)).toBe(
+      m.form_opening_notifies_later_refusal({ count: 7 })
+    );
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 7, false)).toContain('7');
+    // Told right away is not told at the new opening: the two sentences differ.
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, true)).not.toBe(
+      openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, false)
+    );
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1, true)).not.toBe(
+      openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, true)
+    );
+  });
+
+  it('says nothing for another code, or for a body that lacks the count or the timing', () => {
+    expect(openingNotifiesMessage('SOMETHING_ELSE', 3, true)).toBeNull();
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, null, true)).toBeNull();
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 3, null)).toBeNull();
+    expect(openingNotifiesMessage(null, 3, true)).toBeNull();
+  });
+
+  it('reads the count and the timing of the server body, strictly typed', () => {
+    expect(askerCountOf({ code: FORM_OPENING_NOTIFIES, askers: 4 })).toBe(4);
+    expect(askerCountOf({ askers: 0 })).toBeNull();
+    expect(askerCountOf({ askers: '4' })).toBeNull();
+    expect(askerCountOf(null)).toBeNull();
+    expect(openingImmediateOf({ immediate: false })).toBe(false);
+    expect(openingImmediateOf({ immediate: 'no' })).toBeNull();
+    expect(openingImmediateOf(undefined)).toBeNull();
   });
 });

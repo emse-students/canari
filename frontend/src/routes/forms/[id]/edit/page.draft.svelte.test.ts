@@ -225,7 +225,9 @@ describe('the editor', () => {
       // Opening is not an edit: the editor's own payload round-trips without a save.
       expect(api.saveFormDraft).not.toHaveBeenCalled();
       byTestId<HTMLButtonElement>('publish-button')!.click();
-      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 0, false));
+      await vi.waitFor(() =>
+        expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 0, false, null)
+      );
     },
     MOUNT_BUDGET_MS
   );
@@ -323,7 +325,9 @@ describe('the editor', () => {
       expect(byTestId('form-unpublished-notice')).not.toBeNull();
       expect(viewHref()).toBe('/forms/f1?preview=1');
       byTestId<HTMLButtonElement>('publish-button')!.click();
-      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 7, false));
+      await vi.waitFor(() =>
+        expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 7, false, null)
+      );
       expect(api.saveFormDraft).not.toHaveBeenCalled();
     },
     MOUNT_BUDGET_MS
@@ -500,7 +504,94 @@ describe('the editor', () => {
       const confirm = byTestId<HTMLButtonElement>('publish-button')!;
       expect(confirm.textContent).toContain(m.form_publish_overwrite_button());
       confirm.click();
-      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenLastCalledWith('f1', 2, true));
+      await vi.waitFor(() =>
+        expect(api.publishFormDraft).toHaveBeenLastCalledWith('f1', 2, true, null)
+      );
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'an earlier opening that would push the people who asked: refused with their count, then published only once confirmed with that count',
+    async () => {
+      api.status = 'published';
+      api.revision = {
+        revision: 2,
+        document: {
+          title: 'Gala (revision)',
+          basePrice: 0,
+          currency: 'eur',
+          items: [],
+          opensAt: '2030-01-01T10:00:00.000Z',
+        },
+        savedAt: null,
+        saveId: null,
+      };
+      const { SocialApiError } = await import('$lib/associations/api');
+      api.publishFormDraft.mockRejectedValueOnce(
+        new SocialApiError('x', 'FORM_OPENING_NOTIFIES', 409, null, null, null, null, 3, false)
+      );
+      await open();
+      byTestId<HTMLButtonElement>('publish-button')!.click();
+      await vi.waitFor(() =>
+        expect(document.body.textContent).toContain(
+          m.form_opening_notifies_later_refusal({ count: 3 })
+        )
+      );
+      const confirm = byTestId<HTMLButtonElement>('publish-button')!;
+      expect(confirm.textContent).toContain(m.form_publish_notify_button());
+      confirm.click();
+      await vi.waitFor(() =>
+        expect(api.publishFormDraft).toHaveBeenLastCalledWith('f1', 2, false, 3)
+      );
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a confirmation belongs to the opening it was shown for: changing the date asks again',
+    async () => {
+      api.status = 'published';
+      api.revision = {
+        revision: 2,
+        document: {
+          title: 'Gala (revision)',
+          basePrice: 0,
+          currency: 'eur',
+          items: [],
+          opensAt: '2030-01-01T10:00:00.000Z',
+        },
+        savedAt: null,
+        saveId: null,
+      };
+      const { SocialApiError } = await import('$lib/associations/api');
+      api.publishFormDraft.mockRejectedValueOnce(
+        new SocialApiError('x', 'FORM_OPENING_NOTIFIES', 409, null, null, null, null, 3, true)
+      );
+      await open();
+      byTestId<HTMLButtonElement>('publish-button')!.click();
+      await vi.waitFor(() =>
+        expect(byTestId<HTMLButtonElement>('publish-button')!.textContent).toContain(
+          m.form_publish_notify_button()
+        )
+      );
+      // The opening is cleared in its picker: a different move. Its section is folded first.
+      [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((b) => b.textContent?.includes(m.form_section_advanced()))!
+        .click();
+      flushSync();
+      document.querySelector<HTMLButtonElement>('#form-opens-at')!.click();
+      flushSync();
+      const clear = [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+        b.textContent?.includes(m.common_clear_aria())
+      )!;
+      clear.click();
+      flushSync();
+      await vi.waitFor(() =>
+        expect(byTestId<HTMLButtonElement>('publish-button')!.textContent).not.toContain(
+          m.form_publish_notify_button()
+        )
+      );
     },
     MOUNT_BUDGET_MS
   );
@@ -593,7 +684,7 @@ describe('the editor', () => {
         byTestId<HTMLButtonElement>('publish-button')!.click();
         await vi.advanceTimersByTimeAsync(0);
         await settle();
-        expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 2, false);
+        expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 2, false, null);
         expect(savedDocuments().every((d, i) => i === 0 || d.associationId === 'a2')).toBe(true);
       },
       MOUNT_BUDGET_MS

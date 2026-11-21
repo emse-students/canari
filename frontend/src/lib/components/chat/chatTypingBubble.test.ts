@@ -90,7 +90,9 @@ describe('the thread follows its own bottom from four triggers', () => {
   // in a real browser; ChatArea must still hand it the pane AND the composer band.
   it('watches the content, every child box, its own box and the composer band', () => {
     expect(read(CHAT_AREA)).toContain('return observeThreadGrowth(');
-    expect(read(CHAT_AREA)).toContain('composerBand\n    );');
+    expect(read(CHAT_AREA)).toContain('composerBand,\n');
+    // The pane's placements are the baseline of the flag's measurement (the photo DM, 2026-11-21).
+    expect(read(CHAT_AREA)).toContain('(top) => (lastMeasuredScrollTop = top)');
     const wiring = read(GROWTH);
     // A box change is never an arrival, so it never glides (keyboard-and-send-motion.md).
     expect(wiring).toContain("const boxes = new ResizeObserver(() => follow('box'));");
