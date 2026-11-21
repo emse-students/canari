@@ -256,7 +256,7 @@ import { socialUrl } from '$lib/utils/apiUrl';
 import { withClientVersionHeader } from '$lib/utils/appVersion';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
-import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
+import { amountBoundsOf, askerCountOf, SocialApiError } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 import { prepareQuestionImage } from './questionImage';
@@ -288,7 +288,9 @@ async function refusal(res: Response, fallback: string): Promise<SocialApiError>
     res.status,
     amountBoundsOf(body),
     null,
-    itemId
+    itemId,
+    null,
+    askerCountOf(body)
   );
 }
 
@@ -410,12 +412,17 @@ export async function saveFormDraft(
 export async function publishFormDraft(
   id: string,
   revision: number,
-  overwrite = false
+  overwrite = false,
+  confirmOpeningNotify = false
 ): Promise<{ id: string; status: FormStatus; revision: number }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(overwrite ? { revision, overwrite } : { revision }),
+    body: JSON.stringify({
+      revision,
+      ...(overwrite ? { overwrite } : {}),
+      ...(confirmOpeningNotify ? { confirmOpeningNotify } : {}),
+    }),
   });
   if (!res.ok) throw await refusal(res, 'Failed to publish the form changes');
   return res.json();

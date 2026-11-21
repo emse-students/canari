@@ -82,9 +82,9 @@ import {
 import { Submission } from './entities/submission.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
-  announceOpeningToFollowers,
   askOpening,
   cancelOpening,
+  countUntoldOpenings,
   followOpeningMove,
   isTold,
 } from '../openings/opening-reminders';
@@ -467,6 +467,13 @@ export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
  * payments, refunds, reminders and attachments are the association's it was published under.
  */
 export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
+
+/**
+ * The 409 refusing to move a PUBLISHED form's opening EARLIER while people asked to be told of it
+ * and are not yet: the move pushes them (owner, 2026-11-17, (B)). Carries `askers`, the count, so
+ * the editor names it; the same edit sent with `confirmOpeningNotify: true` goes through.
+ */
+export const FORM_OPENING_NOTIFIES = 'FORM_OPENING_NOTIFIES';
 
 /**
  * The 403 refusing a form for an association whose forms the actor does not manage: a create naming
@@ -1036,50 +1043,62 @@ export class FormsService {
     });
     // A question citing an image: the citation is checked and bound in the transaction that stores
     // the form, under each image's lock (`FormItemImagesService`). None cited, nothing to claim.
-    // A form published at once by an association tells its followers in that same transaction
-    // (engagement WP-4): a form stored without its followers' rows would never be announced.
+    // A form tells nobody at its publication (owner, 2026-11-17): only the people who pressed its
+    // bell are told, and their row is written by the ask.
     const cites = questionImageIds(form.items).length > 0;
-    const announces = status === FORM_PUBLISHED && !!form.associationId;
-    if (!cites && !announces) return this.formRepo.save(form);
+    if (!cites) return this.formRepo.save(form);
     return this.formRepo.manager.transaction(async (m) => {
-      const ids = cites
-        ? await this.formItemImages.claimForSave(m, form.items, null, input.ownerId!)
-        : [];
+      const ids = await this.formItemImages.claimForSave(m, form.items, null, input.ownerId!);
       const saved = await m.save(Form, form);
-      if (cites) await this.formItemImages.bindToForm(m, ids, saved.id);
-      if (announces) await this.announceFormOpening(m, saved, input.ownerId!);
+      await this.formItemImages.bindToForm(m, ids, saved.id);
       return saved;
     });
   }
 
   /**
-   * The opening of a PUBLISHED association form, written for the association's followers who see it
-   * (engagement WP-4, decision 5d): one row each, the opening only, never two with an ask. Called
-   * where the form becomes published - a create published at once, a draft's publication - and
-   * where a published form's opening moves.
+   * A published form's opening moved: the rows of the people who asked follow it, and a row already
+   * told is re-armed when the new opening is still to come (`followOpeningMove`). A form writes no
+   * follower row (owner, 2026-11-17), so nothing else is written here.
    */
-  private async announceFormOpening(
-    m: EntityManager,
-    form: Pick<Form, 'id' | 'associationId' | 'opensAt'>,
-    actorId: string
-  ): Promise<void> {
-    await announceOpeningToFollowers(m, {
-      kind: 'form',
-      targetId: form.id,
-      associationId: form.associationId ?? null,
-      opensAt: form.opensAt ? new Date(form.opensAt) : null,
-      actorId,
-    });
-  }
-
-  /** A published form's opening moved: its rows follow it, and its followers are written again. */
   private async followFormOpeningMove(
     m: EntityManager,
-    form: Pick<Form, 'id' | 'associationId' | 'opensAt'>,
-    actorId: string
+    form: Pick<Form, 'id' | 'opensAt'>
   ): Promise<void> {
     await followOpeningMove(m, 'form', form.id, form.opensAt ? new Date(form.opensAt) : null);
-    await this.announceFormOpening(m, form, actorId);
+  }
+
+  /**
+   * (B) Moving a PUBLISHED form's opening EARLIER pushes everyone who asked and is not yet told:
+   * refused `409 FORM_OPENING_NOTIFIES` naming the count unless the editor confirmed it. Later, or
+   * nobody waiting, goes through. Read before the write, in the editing transaction when there is
+   * one, so the count is the one the move acts on.
+   */
+  private async assertEarlierOpeningConfirmed(
+    form: Pick<Form, 'id' | 'status' | 'opensAt'>,
+    opensAtRaw: string | null | undefined,
+    confirmed: boolean,
+    db: EntityManager
+  ): Promise<void> {
+    if (form.status !== FORM_PUBLISHED || !form.opensAt) return;
+    const before = new Date(form.opensAt).getTime();
+    const after = opensAtRaw ? new Date(opensAtRaw).getTime() : null;
+    if (after !== null && after >= before) return;
+    const askers = await countUntoldOpenings(db, 'form', form.id);
+    if (askers === 0) return;
+    if (confirmed) {
+      this.logger.log(
+        `[FORMS] opening of ${form.id.slice(0, 8)} moved earlier, confirmed: ${askers} asker(s) will be told`
+      );
+      return;
+    }
+    this.logger.log(
+      `[FORMS] opening of ${form.id.slice(0, 8)} moved earlier refused: ${askers} asker(s) to be told, not confirmed`
+    );
+    throw new ConflictException({
+      code: FORM_OPENING_NOTIFIES,
+      askers,
+      message: 'Moving the opening earlier notifies the people who asked to be told.',
+    });
   }
 
   /**
@@ -1506,7 +1525,8 @@ export class FormsService {
     input: CreateFormDto,
     userId: string,
     isGlobalAdmin: boolean,
-    inTransaction?: EntityManager
+    inTransaction?: EntityManager,
+    confirmOpeningNotify = false
   ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
 
@@ -1681,6 +1701,12 @@ export class FormsService {
     const closedAtAfter =
       closedAtRaw === undefined ? form.closedAt : closedAtRaw ? new Date(closedAtRaw) : null;
     assertWindowOrdered(opensAtRaw ? new Date(opensAtRaw) : null, closedAtAfter);
+    await this.assertEarlierOpeningConfirmed(
+      form,
+      opensAtRaw,
+      confirmOpeningNotify,
+      inTransaction ?? this.reminderRepo.manager
+    );
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
     if (input.guestFields !== undefined && input.respondentFields === undefined) {
@@ -1768,7 +1794,7 @@ export class FormsService {
         await this.formItemImages.claimForSave(inTransaction, form.items, formId, userId);
       }
       const saved = await inTransaction.save(Form, written as Form);
-      if (moves) await this.followFormOpeningMove(inTransaction, form, userId);
+      if (moves) await this.followFormOpeningMove(inTransaction, form);
       return withStatus(saved);
     }
     if (citedBefore.length === 0 && citedAfter.length === 0 && !moves) {
@@ -1779,7 +1805,7 @@ export class FormsService {
         await this.formItemImages.claimForSave(m, form.items, formId, userId);
       }
       const stored = await m.save(Form, written as Form);
-      if (moves) await this.followFormOpeningMove(m, form, userId);
+      if (moves) await this.followFormOpeningMove(m, form);
       return stored;
     });
     // Replaced or removed: released once no question of any form cites it (a duplicated question
@@ -1878,7 +1904,8 @@ export class FormsService {
     revision: number,
     userId: string,
     isGlobalAdmin: boolean,
-    overwrite = false
+    overwrite = false,
+    confirmOpeningNotify = false
   ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
@@ -1912,7 +1939,14 @@ export class FormsService {
       let saved: Form = locked;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
-        saved = (await this.update(formId, dto, userId, isGlobalAdmin, m)) as Form;
+        saved = (await this.update(
+          formId,
+          dto,
+          userId,
+          isGlobalAdmin,
+          m,
+          confirmOpeningNotify
+        )) as Form;
       }
       if (wasDraft) {
         await this.assertPublishable(saved);
@@ -1922,9 +1956,6 @@ export class FormsService {
           .set({ status: FORM_PUBLISHED })
           .where('id = :id AND status = :draft', { id: formId, draft: FORM_DRAFT })
           .execute();
-        // Published: the association's followers are told of its opening (engagement WP-4), in
-        // the transaction that publishes it.
-        await this.announceFormOpening(m, saved, userId);
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
       return { refused: null, revision: next, items: saved.items as unknown, wasDraft };

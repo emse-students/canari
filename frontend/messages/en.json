@@ -6510,6 +6510,17 @@
   "form_draft_invalid_refusal": "These changes cannot be published as they are: check the questions and the settings.",
   "form_changed_since_revision_refusal": "This form was changed elsewhere since these edits started (by an older version of the app). Publishing would replace those changes: check it, then press \"Publish anyway\".",
   "form_publish_overwrite_button": "Publish anyway",
+  "form_publish_notify_button": "Publish and notify",
+  "form_opening_notifies_refusal": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person asked to be told when this form opens: moving the opening earlier sends them a notification right away. If you only want to test the form, keep the current date. To continue, press \"Publish and notify\".",
+        "countPlural=other": "{count} people asked to be told when this form opens: moving the opening earlier sends them a notification right away. If you only want to test the form, keep the current date. To continue, press \"Publish and notify\"."
+      }
+    }
+  ],
   "form_action_publish": "Publishing the form",
   "form_action_discard": "Discarding the edits",
   "form_publish_failed": "The form could not be published. Try again.",

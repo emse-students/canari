@@ -5,6 +5,7 @@
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
   import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+  import { SocialApiError } from '$lib/associations/api';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -119,7 +120,7 @@
     holdFormEditor,
   } from '$lib/forms/draftCopies';
   import { tellCopyDropped } from '$lib/forms/draftResend';
-  import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
+  import { FORM_CHANGED_SINCE_REVISION, openingNotifiesMessage } from '$lib/forms/publish';
   import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
   import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
@@ -518,6 +519,11 @@
   let isPublishing = $state(false);
   /** The form was written outside its revision: the next "Publier" confirms the overwrite. */
   let overwriteOffered = $state(false);
+  /**
+   * Moving the opening earlier would push the people who asked to be told: the next "Publier"
+   * confirms it (owner, 2026-11-17).
+   */
+  let notifyOffered = $state(false);
 
   /**
    * "Publier" / "Publier les modifications" (owner, 2026-11-08): the page's own checks first, in the
@@ -598,11 +604,18 @@
       // Written outside the revision since it started: publishing would undo that unseen. Said,
       // and "Publier" becomes "Publier quand meme" for the manager who has read it.
       if (refusalCode(e) === FORM_CHANGED_SINCE_REVISION) overwriteOffered = true;
+      // The move would push everyone who asked to be told: the sentence names how many.
+      const notifies = openingNotifiesMessage(
+        refusalCode(e),
+        e instanceof SocialApiError ? e.askerCount : null
+      );
+      if (notifies) notifyOffered = true;
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
       if (gridFault) revealQuestion(gridFault.itemId);
       error =
+        notifies ??
         gridFault?.message ??
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
@@ -633,8 +646,14 @@
       return;
     }
     isPublishing = true;
-    const result = await publishFormDraft(formId, autosave.revision, overwriteOffered);
+    const result = await publishFormDraft(
+      formId,
+      autosave.revision,
+      overwriteOffered,
+      notifyOffered
+    );
     overwriteOffered = false;
+    notifyOffered = false;
     autosave.closed(result.revision, 'published');
     Log.d('forms-editor', `published ${formId} at revision ${result.revision}`);
     goto(resolve('/forms'));
@@ -1039,9 +1058,11 @@
             busy: isPublishing,
             label: overwriteOffered
               ? m.form_publish_overwrite_button()
-              : isDraft
-                ? m.form_publish_button()
-                : m.form_publish_changes_button(),
+              : notifyOffered
+                ? m.form_publish_notify_button()
+                : isDraft
+                  ? m.form_publish_button()
+                  : m.form_publish_changes_button(),
           }
         : null}
       discard={hasUnpublishedChanges ? { onDiscard: handleDiscard, busy: isDiscarding } : null}

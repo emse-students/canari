@@ -599,7 +599,12 @@ export class SocialApiError extends ApiRefusalError {
      * rosters were sent empty while they have members, so the editor re-reads exactly those. Null
      * when the body names none ({@link associationIdsOf}).
      */
-    readonly associationIds: string[] | null = null
+    readonly associationIds: string[] | null = null,
+    /**
+     * How many people asked to be told of a form's opening and would be pushed by the move a
+     * `FORM_OPENING_NOTIFIES` refusal stopped ({@link askerCountOf}), so the editor words the number.
+     */
+    readonly askerCount: number | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
@@ -634,6 +639,13 @@ export function holderCountOf(body: unknown): number | null {
   return typeof holderCount === 'number' && Number.isInteger(holderCount) && holderCount > 0
     ? holderCount
     : null;
+}
+
+/** Reads the whole, positive `askers` a `FORM_OPENING_NOTIFIES` body carries; `null` otherwise. */
+export function askerCountOf(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const { askers } = body as Record<string, unknown>;
+  return typeof askers === 'number' && Number.isInteger(askers) && askers > 0 ? askers : null;
 }
 
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
@@ -671,6 +683,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let amountBounds: AmountBounds | null = null;
   let holderCount: number | null = null;
   let associationIds: string[] | null = null;
+  let askerCount: number | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -696,6 +709,8 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     holderCount = holderCountOf(parsed);
     // A carte publish refused for a roster sent empty names the associations, as ids.
     associationIds = associationIdsOf(parsed);
+    // A form edit moving the opening earlier names how many people it would push.
+    askerCount = askerCountOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
@@ -706,7 +721,8 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     amountBounds,
     holderCount,
     null,
-    associationIds
+    associationIds,
+    askerCount
   );
 }
 

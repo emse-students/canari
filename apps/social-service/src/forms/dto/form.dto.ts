@@ -443,6 +443,14 @@ export class PublishFormRevisionDto extends FormRevisionDto {
   @IsBoolean()
   @IsOptional()
   overwrite?: boolean;
+
+  /**
+   * The organiser confirmed that moving the opening earlier pushes the people who asked to be told
+   * (`FORM_OPENING_NOTIFIES`, owner 2026-11-17).
+   */
+  @IsBoolean()
+  @IsOptional()
+  confirmOpeningNotify?: boolean;
 }
 
 /**
