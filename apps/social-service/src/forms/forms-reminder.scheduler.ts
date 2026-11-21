@@ -45,6 +45,11 @@ interface DueHeadsUp {
   userId: string;
   /** The form is published and its association not archived; false = gone for good, told nothing. */
   targetLive: boolean;
+  /** What the reminder names: the form's association (name, logo) and its title. */
+  associationId: string | null;
+  associationName: string | null;
+  associationLogoUrl: string | null;
+  targetName: string | null;
 }
 
 @Injectable()
@@ -73,7 +78,10 @@ export class FormReminderScheduler {
 
     const headsUp = (await manager.query(DUE_HEADS_UP_SQL, [now])) as DueHeadsUp[];
     for (const r of headsUp) {
-      const content = formOpeningSoonContent();
+      const content = formOpeningSoonContent({
+        formTitle: r.targetName,
+        associationName: r.associationName,
+      });
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
         // crashes between the push and the flag update.  Worst case: the notification is
@@ -95,8 +103,7 @@ export class FormReminderScheduler {
           recipientId: r.userId,
           type: 'form_reminder',
           postId: r.targetId,
-          actorId: SYSTEM_ACTOR_ID,
-          actorName: SYSTEM_ACTOR_NAME,
+          ...this.formReminderActor(r),
           text: content.legacyBody,
           skipPush: true,
         });
@@ -145,7 +152,10 @@ export class FormReminderScheduler {
     }
     const withhold = r.bellWithholds;
     if (r.kind === 'form') {
-      const content = formOpenContent();
+      const content = formOpenContent({
+        formTitle: r.targetName,
+        associationName: r.associationName,
+      });
       if (!withhold) {
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
@@ -157,8 +167,7 @@ export class FormReminderScheduler {
         recipientId: r.userId,
         type: 'form_reminder',
         postId: r.targetId,
-        actorId: SYSTEM_ACTOR_ID,
-        actorName: SYSTEM_ACTOR_NAME,
+        ...this.formReminderActor(r),
         text: content.legacyBody,
         skipPush: true,
       });
@@ -185,6 +194,25 @@ export class FormReminderScheduler {
     this.logger.log(
       `[REMINDER] open sent: ${who}${withhold ? ' (push withheld by the bell)' : ''}`
     );
+  }
+
+  /**
+   * The actor of a form reminder's bell row: the association that runs the form, with its logo (owner,
+   * 2026-11-17), else the generic system actor for a personal form.
+   */
+  private formReminderActor(r: {
+    associationId: string | null;
+    associationName: string | null;
+    associationLogoUrl: string | null;
+  }) {
+    return {
+      actorId: SYSTEM_ACTOR_ID,
+      actorName: r.associationName || SYSTEM_ACTOR_NAME,
+      ...(r.associationId && {
+        associationId: r.associationId,
+        associationLogoUrl: r.associationLogoUrl,
+      }),
+    };
   }
 
   /**

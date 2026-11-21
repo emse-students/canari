@@ -11,7 +11,7 @@ import { CameraAccessError, classifyCameraError, type CameraFacing } from '$lib/
 import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
 import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
-import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
+import { RECORDING_AUDIO_CONSTRAINTS } from '$lib/utils/audio/recordingConstraints';
 import { captureUserMedia } from '$lib/utils/audioSession';
 import { logCaptureAudioLayout } from '$lib/utils/audioLayout';
 import {
@@ -58,7 +58,7 @@ export async function openLiveCamera(
           height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
           frameRate: { ideal: LIVE_CAPTURE_FPS },
         },
-        audio: withMicrophone ? REEL_AUDIO_CONSTRAINTS : false,
+        audio: withMicrophone ? RECORDING_AUDIO_CONSTRAINTS : false,
       },
       'live-camera'
     );
@@ -223,7 +223,7 @@ export function liveScenesAvailable(): boolean {
 /**
  * Opens the MICROPHONE alone, for a desktop live whose picture is composed (`liveStudio.svelte.ts`):
  * the camera and the screen come and go with the scenes, the voice stays. Asked mono, as every
- * capture of a live or a reel is (`REEL_AUDIO_CONSTRAINTS`).
+ * capture of a live or a reel is (`RECORDING_AUDIO_CONSTRAINTS`).
  *
  * @throws {CameraAccessError} for every refusal, with its fault (a refused microphone refuses the live).
  */
@@ -235,7 +235,11 @@ export async function openLiveMicrophone(): Promise<MediaStream> {
     throw new CameraAccessError('unavailable', 'live microphone: getUserMedia is not available');
   }
   try {
-    const stream = await captureUserMedia(devices, { audio: REEL_AUDIO_CONSTRAINTS }, 'live-mic');
+    const stream = await captureUserMedia(
+      devices,
+      { audio: RECORDING_AUDIO_CONSTRAINTS },
+      'live-mic'
+    );
     logCaptureAudioLayout('LIVE-CAM', stream);
     return stream;
   } catch (err) {

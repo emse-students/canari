@@ -1710,7 +1710,7 @@ read that lands after `stop()` writes nothing (`#watchEpoch`).
 
 ### Audio channels: the sound that plays out of one side
 
-The microphone of a live or a reel is asked for ONE channel (`REEL_AUDIO_CONSTRAINTS.channelCount: { ideal: 1 }`,
+The microphone of a live or a reel is asked for ONE channel (`RECORDING_AUDIO_CONSTRAINTS.channelCount: { ideal: 1 }`, `utils/audio/recordingConstraints.ts`,
 `reels/framedCapture.ts`). Raw (no voice processing) a phone mic can answer two channels with an empty second one, which
 `MediaRecorder` wrote as a stereo file playing on one side only (owner, 2026-11-09). Nothing downstream changes the layout
 (the transcode keeps the source's channel count, the player uses no Web Audio splitter or panner). Every capture logs one

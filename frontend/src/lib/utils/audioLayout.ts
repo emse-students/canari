@@ -2,7 +2,7 @@
  * THE CHANNEL LAYOUT A MICROPHONE TRACK CAME BACK WITH, decided from `getSettings().channelCount`.
  *
  * A reel or a live is recorded by `MediaRecorder` with as many channels as the track has. A phone
- * microphone captured WITHOUT voice processing (`REEL_AUDIO_CONSTRAINTS`) can come back as a
+ * microphone captured WITHOUT voice processing (`RECORDING_AUDIO_CONSTRAINTS`) can come back as a
  * two-channel track whose second channel is empty, and the recorder then writes a STEREO file with
  * a silent side: the sound plays out of one ear or one speaker only. A one-channel track is played
  * on both sides by every player, so the capture ASKS for one channel (`channelCount: { ideal: 1 }`)

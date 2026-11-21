@@ -166,6 +166,12 @@ export interface ScrollMeasurement {
  * rows by exactly what grew, with nothing that will ever follow it. The entry's timed re-pins
  * (removed by #3223) used to cover this window after an entry; the cause is here.
  *
+ * **`previousScrollTop` IS WHERE THE PANE WAS LAST PUT, BY ANYONE, NOT ONLY WHERE THE LAST MEASUREMENT
+ * FOUND IT** (the photo DM, 2026-11-21): a thread that shrinks in one frame (the browser clamps, the
+ * observer pins lower) and grows back in the next is otherwise measured as a `scrollTop` lower than
+ * the last reading and far from the bottom - the thread's own move read as the reader's. The
+ * observer and `scrollToBottom` hand their placements to the caller (`onPlaced`) for that.
+ *
  * A pane that did not move up (`scrollTop` unchanged or larger) keeps a `true` flag - the reach grew
  * under it, which the observer follows. Moving up out of the slack is the only way to `false`, and
  * reaching the slack again is the only way back to `true`.
