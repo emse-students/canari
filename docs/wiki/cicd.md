@@ -3466,9 +3466,10 @@ reported its id. That is a fact about Trivy's advisory data, which comes and goe
 (#3930) and then failed every pull request and main when the data dropped it once more. Whichever way
 the entry was last edited, the next feed state contradicted it.
 
-**The rule.** Every entry names the package version it was reviewed on - `purls:` or, for an entry
-scoped by `paths:` or by id alone, `covers: ["name@version"]` (a key Trivy ignores; the test refuses an
-entry with neither). The second scan adds `--list-all-pkgs`, and `image-allowlist-retirement.sh` judges
+**The rule.** Every entry carries `purls:` naming the package version it was reviewed on (the test
+refuses an entry without one); `paths:` may restrict it further. Trivy enforces that scope itself, and
+`purls:` and `paths:` combine as an AND (measured with Trivy 0.75.0: a right path with a wrong purl, or
+the reverse, does not suppress). The second scan adds `--list-all-pkgs`, and `image-allowlist-retirement.sh` judges
 each `id package version`:
 
 | State | Verdict |
@@ -3477,20 +3478,20 @@ each `id package version`:
 | not reported, but an image still carries that package version | **kept, one plain log line** (never an annotation) naming the Trivy DB version: the advisory was dropped, rescored below HIGH or lost its fixed version (the scan filters on `--severity` and `--ignore-unfixed`, so the causes are not told apart), the image did not move |
 | not reported, and NO image carries that package version | **dead, the run fails**: the reviewed code is gone |
 
-**Why this keeps the protection, and where it is weaker.** A stale `--ignore` is dangerous because it
-hides a FUTURE finding. A `purls:` entry is enforced by Trivy itself: one advisory id on one package
-version, so a new version is outside it. **A `paths:`-scoped or id-only entry is not**: Trivy ignores
-`covers:`, so it still suppresses its id on ANY version at that path (or anywhere), and `covers:` only
-tells the retirement check what the entry was reviewed on. The inventory is also pooled across all
-scanned images, so a covered package present in another image keeps an entry alive. Both gaps close by
-moving the version into `purls:` (follow-up). Either way, when the image moves (a pin, an authentik
-release) the covered version leaves the inventory and the entry fails. The alternative considered, failing only after N runs "unseen in the DB for the digest", needs
-state kept between runs (a clock by another name); the inventory is read from the run itself.
+**Why this keeps the protection.** A stale `--ignore` is dangerous because it hides a FUTURE finding.
+An entry is one advisory id on one package version - enforced by Trivy through the purl, not only
+judged by this check - so a new version of the package, or a different advisory, is outside it. When
+the image moves (a pin, an authentik release) the covered version leaves the inventory and the entry
+fails. The scan inventory records where each package sits (its file path and its scan target): an
+entry with `paths:` is alive only on a package at those paths, so the same package name in ANOTHER
+image cannot keep it alive. An entry with a purl and no `paths:` (the Alpine and postgres ones) is
+pooled across all scanned images. A deb epoch is listed with and without the epoch, since a purl
+carries none.
 
 **What lifts a refusal.** Delete the entry, or show that `trivy image --list-all-pkgs --format json
 <image>` lists the package at that version (then the inventory, not the entry, is wrong). Self-tests:
 `image-allowlist-retirement.test.sh` (reported, feed-dropped with the package present, package gone,
-silent scan, no inventory) and `image-scan-allowlist.test.mjs` (every entry covers a package; the bash
+silent scan, no inventory, a package present only at another path or image, deb epochs) and `image-scan-allowlist.test.mjs` (every entry covers a package; the bash
 reader agrees with a YAML parse). Cost: an advisory withdrawn upstream leaves a harmless entry behind
 that shows up as a log line, not a failure.
 
