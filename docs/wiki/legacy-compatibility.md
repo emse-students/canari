@@ -566,6 +566,21 @@ absent from production for a week. Then make `announcedFields` required on the m
 `assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
 entry.
 
+### Removal once `minClientVersion` passes `1.7.3` - a pending-sync nudge posted under 9998 before the update (2026-11-21)
+
+**Site:** `withdrawPreUpdateNudge` (`CanariFirebaseMessagingService.kt`) and `OutboxNudge.isPreUpdateNudge`
+(`push/OutboxNudge.kt`), logged `a nudge posted before 1.7.3 withdrawn (id=9998)`.
+**What it humours:** until `1.7.3` the outbox nudge shared id 9998 with the background worker's
+foreground notice, and nothing withdrew it; a nudge up across the update would stand under the old id,
+which the new withdrawal (id 999) does not reach. So every logged withdrawal also cancels the record at
+9998 when it is neither ongoing nor a foreground-service record - never the worker's notice
+([mobile](frontend/mobile.md#the-outbox-nudge)).
+**The cost while it stands:** one shade read per logged withdrawal, and a second id to reason about.
+**Removal condition:** `minClientVersion` on both estates passes `1.7.3`: an install meeting the floor
+has opened the app, whose messages-channel sweep clears either id. Then delete the function, its call,
+`isPreUpdateNudge`, its test case, the pre-update sentence of `FixedNotifIds.WORKER_FOREGROUND`'s
+comment and this entry.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

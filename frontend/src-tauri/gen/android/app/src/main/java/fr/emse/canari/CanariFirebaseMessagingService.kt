@@ -55,6 +55,7 @@ import fr.emse.canari.push.throwableSite
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
 import fr.emse.canari.push.NotificationLevelGate
+import fr.emse.canari.push.OutboxNudge
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.PushShowOutcome
 import fr.emse.canari.push.QueuedSendAnswer
@@ -442,8 +443,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Reserved ID for the group summary notification (must not collide with getStableNotifId). */
         private const val GROUP_SUMMARY_ID   = FixedNotifIds.GROUP_SUMMARY
 
-        /** Reserved ID for the "messages pending sync" notification (messages channel -> auto-cleared on open). */
-        private const val PENDING_SYNC_NOTIF_ID = FixedNotifIds.PENDING_SYNC
+        /**
+         * Reserved ID for the "messages pending sync" nudge: withdrawn when the outbox mirror empties
+         * ([settleOutboxNudgeLocked]), and on the messages channel, so the app's open clears it too.
+         */
+        private const val OUTBOX_NUDGE_NOTIF_ID = FixedNotifIds.OUTBOX_NUDGE
 
         /** Reserved ID for the "a new device was added to your account" notification. */
         private const val NEW_DEVICE_NOTIF_ID = FixedNotifIds.NEW_DEVICE
@@ -2086,8 +2090,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Counts distinct unread conversations = active message notifications, excluding the group
-         * summary and the pending-sync nudge. Backs the launcher app-icon badge (WP-XP-2).
+         * Counts distinct unread conversations = active message notifications, excluding every fixed
+         * id (the group summary, the outbox nudge, the worker's notice). Backs the launcher app-icon badge (WP-XP-2).
          *
          * **[justPosted] AND [justCancelled] ARE NOT AN OPTIMISATION - THEY CORRECT A READ-AFTER-
          * WRITE.** `NotificationManager.notify` and `cancel` hand the record to system_server over a
@@ -2107,8 +2111,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (android.os.Build.VERSION.SDK_INT < 23) return 0
             return try {
                 val ids = manager.activeNotifications.filter { sbn ->
-                    sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
-                        sbn.id != WAKE_UNAVAILABLE_NOTIF_ID &&
+                    // A FIXED ID IS NEVER A CONVERSATION ([FixedNotifIds.ALL]): the summary, the
+                    // outbox nudge, the worker's foreground notice (both on the messages channel)
+                    // and every other reserved notice - one predicate, not a list kept by hand.
+                    sbn.id !in FixedNotifIds.ALL &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
                             sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
@@ -2193,7 +2199,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             onSent: (SentOutboxId) -> Unit = {},
         ): Int {
             val delivered = mutableListOf<OutboxMirrorEntry>()
-            val remaining = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent, delivered) }
+            val remaining = synchronized(OUTBOX_LOCK) {
+                val left = drainOutboxLocked(context, service, ctx, onSent, delivered)
+                // THE NUDGE FOLLOWS THE MIRROR, whichever caller drained (the worker, a push-woken
+                // drain, the boot drain, a quick reply's first try): read back under the same lock
+                // that rewrote it, so a post asked for meanwhile is ordered with this withdrawal. A
+                // drain that found nothing queued and sent nothing withdraws silently - it runs on
+                // every push, and its cancel is a no-op when no nudge stands.
+                settleOutboxNudgeLocked(context, asked = false, where = "drainOutboxBackground", routine = delivered.isEmpty() && left == 0)
+                left
+            }
             // EVERY DELIVERY CLEARS ITS "NOT SENT YET" NOTICE, whichever caller drained: after the
             // outbox lock is released (no lock order to keep with the banner record), and after the
             // delivered ids are durable (`appendOutboxSent`) - the visible trace never goes first.
@@ -2666,9 +2681,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Soft notification inviting the user to open the app to flush the outbox (safety net of
-         * the background send). Stable ID + messages channel: it clears itself when the app opens
-         * (cancelAllMessageNotifications in MainActivity.onResume), for this reason or another.
+         * Asks for the soft notification inviting the user to open the app to flush the outbox
+         * (safety net of the background send). Posted only if the outbox mirror, read under
+         * [OUTBOX_LOCK], still holds an entry: a drain that emptied it meanwhile has the last word,
+         * and the nudge is withdrawn instead ([OutboxNudge]). On the messages channel, so the app's
+         * open clears it too (cancelAllMessageNotifications in MainActivity.onResume).
          *
          * THE ONLY COPY. It takes an explicit [context] rather than the Service-as-Context, so
          * workers and receivers that have no Service - [OutboxRetryWorker] calls it once its real
@@ -2677,7 +2694,78 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * wording and one certainty of forgetting.
          */
         internal fun showPendingSyncNotification(context: Context) {
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            Log.d(TAG, "showPendingSyncNotification: nudge asked")
+            synchronized(OUTBOX_LOCK) {
+                settleOutboxNudgeLocked(context, asked = true, where = "showPendingSyncNotification", routine = false)
+            }
+        }
+
+        /**
+         * Withdraws the nudge if the outbox mirror is empty, for a caller that drained nothing - the
+         * [OutboxRetryWorker] finding an empty queue. Takes [OUTBOX_LOCK].
+         */
+        internal fun settleOutboxNudge(context: Context, where: String) {
+            synchronized(OUTBOX_LOCK) { settleOutboxNudgeLocked(context, asked = false, where = where, routine = false) }
+        }
+
+        /**
+         * THE ONE PLACE THE NUDGE IS POSTED OR WITHDRAWN; the caller holds [OUTBOX_LOCK]. Reads the
+         * mirror (durable state, never a timer) and applies [OutboxNudge.decide]. [routine] is a
+         * drain that found nothing queued and sent nothing - it runs on every push, so its
+         * withdrawal (a no-op cancel when no nudge stands) is not logged; every other decision is.
+         */
+        private fun settleOutboxNudgeLocked(context: Context, asked: Boolean, where: String, routine: Boolean) {
+            val queued = readOutboxMirrorOrNull(context)?.size
+            val decision = OutboxNudge.decide(queued, asked)
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                when (decision) {
+                    OutboxNudge.Decision.POST -> {
+                        postOutboxNudge(context, manager)
+                        Log.d(TAG, "$where: outbox nudge posted (id=$OUTBOX_NUDGE_NOTIF_ID, queued=${queued ?: "unreadable"})")
+                    }
+                    OutboxNudge.Decision.WITHDRAW -> {
+                        manager.cancel(OUTBOX_NUDGE_NOTIF_ID)
+                        if (!routine) {
+                            Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")
+                            withdrawPreUpdateNudge(manager, where)
+                        }
+                    }
+                    OutboxNudge.Decision.KEEP ->
+                        Log.d(TAG, "$where: $queued send(s) still queued - nudge left as it stands")
+                    OutboxNudge.Decision.UNKNOWN ->
+                        Log.w(TAG, "$where: outbox mirror unreadable - nudge left as it stands, the queue unknown")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "$where: outbox nudge $decision failed: ${throwableSite(e)}") // log-safe: an OutboxNudge.Decision enum name and a throwable site
+            }
+        }
+
+        /**
+         * LEGACY: a nudge posted BEFORE 1.7.3 stands under [FixedNotifIds.WORKER_FOREGROUND], the id
+         * it shared with the background worker's foreground notice. Withdrawn with the new one, but
+         * only when the record there is neither ongoing nor a foreground-service record - the
+         * worker's notice is always one or the other, the nudge never was
+         * ([OutboxNudge.isPreUpdateNudge]). The platform also refuses `cancel` on a foreground-service
+         * record, which covers a promotion landing between this read and the cancel. Removal date:
+         * [legacy-compatibility](../../../../../../../../../../docs/wiki/legacy-compatibility.md).
+         */
+        private fun withdrawPreUpdateNudge(manager: NotificationManager, where: String) {
+            if (android.os.Build.VERSION.SDK_INT < 23) return
+            val record = manager.activeNotifications.firstOrNull { it.id == FixedNotifIds.WORKER_FOREGROUND } ?: return
+            val flags = record.notification.flags
+            val ongoing = (flags and android.app.Notification.FLAG_ONGOING_EVENT) != 0
+            val foregroundService = (flags and android.app.Notification.FLAG_FOREGROUND_SERVICE) != 0
+            if (!OutboxNudge.isPreUpdateNudge(record.id, ongoing, foregroundService)) {
+                Log.d(TAG, "$where: id=${record.id} is the worker's notice (ongoing=$ongoing fgs=$foregroundService) - left") // log-safe: two platform notification flags, as booleans
+                return
+            }
+            manager.cancel(FixedNotifIds.WORKER_FOREGROUND)
+            Log.i(TAG, "$where: a nudge posted before 1.7.3 withdrawn (id=${record.id})")
+        }
+
+        /** Builds and posts the nudge; only [settleOutboxNudgeLocked] calls it. */
+        private fun postOutboxNudge(context: Context, manager: NotificationManager) {
             CanariApplication.ensureChannels(context, manager)
             val res = appLocaleContext(context)
             val tapIntent = Intent(context, MainActivity::class.java).apply {
@@ -2686,7 +2774,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
             val pendingIntent = PendingIntent.getActivity(
-                context, PENDING_SYNC_NOTIF_ID, tapIntent,
+                context, OUTBOX_NUDGE_NOTIF_ID, tapIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val body = res.getString(R.string.notif_outbox_pending_body)
@@ -2701,8 +2789,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // A call holds the sound ([CallSoundHold]): shown, without its sound.
                 .setSilent(callHoldsSound())
                 .build()
-            manager.notify(PENDING_SYNC_NOTIF_ID, notif)
-            Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
+            manager.notify(OUTBOX_NUDGE_NOTIF_ID, notif)
         }
 
         /**

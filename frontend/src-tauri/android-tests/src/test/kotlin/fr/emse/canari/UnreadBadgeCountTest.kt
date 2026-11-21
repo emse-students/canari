@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import fr.emse.canari.push.FixedNotifIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,9 +24,10 @@ import org.junit.Test
  */
 class UnreadBadgeCountTest {
 
-    /** The app's reserved ids, which are never conversations. */
-    private val groupSummaryId = 9999
-    private val pendingSyncId = 9998
+    /** The app's reserved ids, which are never conversations - read from the app's own table. */
+    private val groupSummaryId = FixedNotifIds.GROUP_SUMMARY
+    private val outboxNudgeId = FixedNotifIds.OUTBOX_NUDGE
+    private val workerForegroundId = FixedNotifIds.WORKER_FOREGROUND
 
     /** A record as `activeNotifications` reports it: an id and the channel it was filed under. */
     data class Posted(val id: Int, val channel: String)
@@ -41,7 +43,7 @@ class UnreadBadgeCountTest {
      */
     private fun count(shade: List<Posted>, justPosted: Int = 0, justCancelled: Int = 0): Int {
         val ids = shade
-            .filter { it.id != groupSummaryId && it.id != pendingSyncId }
+            .filter { it.id !in FixedNotifIds.ALL }
             .filter { it.channel == messages || it.channel == mentions }
             .mapTo(mutableSetOf()) { it.id }
         if (justPosted != 0) ids.add(justPosted)
@@ -122,10 +124,17 @@ class UnreadBadgeCountTest {
         )
     }
 
-    /** The two reserved ids are not conversations whichever channel they were filed under. */
+    /**
+     * The reserved ids are not conversations whichever channel they were filed under: the summary,
+     * the outbox nudge, and the worker's foreground notice (all on the messages channel).
+     */
     @Test
-    fun `the summary and the pending-sync nudge are never counted`() {
-        val shade = listOf(Posted(groupSummaryId, messages), Posted(pendingSyncId, messages))
+    fun `the summary, the outbox nudge and the worker's notice are never counted`() {
+        val shade = listOf(
+            Posted(groupSummaryId, messages),
+            Posted(outboxNudgeId, messages),
+            Posted(workerForegroundId, messages),
+        )
 
         assertEquals(0, count(shade))
         assertTrue(

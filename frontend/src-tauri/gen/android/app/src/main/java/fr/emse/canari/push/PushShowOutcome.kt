@@ -85,8 +85,10 @@ object PushShowOutcome {
         DELIVERY_KEPT_UNTIL_READ("delivery-kept-until-read", false),
 
         /**
-         * An exception escaped the locked post section before it decided: no other outcome was
-         * reached. An ERROR ([level]) - a swallowed end must still leave its line.
+         * An exception escaped the locked post section before any other outcome was recorded. It
+         * does not prove nothing was posted: the record writes after `postToShade` are inside the
+         * section, so a banner may already be in the shade. An ERROR ([level]) - a swallowed end
+         * must still leave its line.
          */
         THREW("threw", false),
     }
