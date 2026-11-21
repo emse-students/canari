@@ -42,6 +42,11 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
+import {
+  PushDeliveryTally,
+  pushFailureCode,
+  recordPushDeliveries,
+} from '../utils/push-delivery-records';
 import { categoryOfDataPush, pushKindOf } from './push-category';
 import { appVersionAtLeast, MIN_APP_VERSION_DATA_KEY } from '../utils/app-version';
 import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
@@ -1048,6 +1053,8 @@ interface FanOutTally {
   /** Of `pushed`, how many left as a content-free wake-up (`push_mode = 'wake'`). */
   woken: number;
   pushes: Promise<unknown>[];
+  /** The fan-out's durable record, flushed once when the last push settles (migration 054). */
+  delivery: PushDeliveryTally;
 }
 
 /**
@@ -1576,9 +1583,12 @@ export class MessagingService {
     const pushMode = pushTokens.some((pt) => effectiveWakeVersion(pt) >= MLS_WAKE_VERSION)
       ? await readPushMode(this.groupRepo.manager, this.logger)
       : 'full';
+    // A fan-out's devices share its batch's record; a lone send (the deferred push) records its own.
+    const delivery = batch?.delivery ?? new PushDeliveryTally('message');
     for (const pt of pushTokens) {
       const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
       try {
+        delivery.attempted(pt);
         await getMessaging().send(
           wake
             ? this.buildWakeMessage(
@@ -1611,6 +1621,7 @@ export class MessagingService {
                   },
                 }
         );
+        delivery.accepted(pt);
         if (batch) {
           // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
           // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
@@ -1625,8 +1636,10 @@ export class MessagingService {
           );
         }
       } catch (e) {
+        delivery.failed(pt, pushFailureCode(e));
         if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
+          delivery.pruned(pt);
           this.logger.warn(
             `[PUSH_SEND][${traceId}] Deleted invalid push token user=${queued.recipientId} device=${pt.deviceId}`
           );
@@ -1653,6 +1666,16 @@ export class MessagingService {
         }
       }
     }
+    if (!batch) this.recordDeliveries(delivery, traceId);
+  }
+
+  /**
+   * Hands a send batch's record to {@link recordPushDeliveries} WITHOUT awaiting it (migration 054):
+   * the pushes it counts already left, and a write that fails logs at WARN and is dropped. THE ONE
+   * HOOK every push path of this service flushes through.
+   */
+  private recordDeliveries(tally: PushDeliveryTally, traceId: string): void {
+    void recordPushDeliveries(this.pushTokenRepo.manager, tally, this.logger, traceId);
   }
 
   /**
@@ -7390,7 +7413,12 @@ export class MessagingService {
     traceId: string
   ): Promise<number> {
     let sent = 0;
-    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
+    const tally: FanOutTally = {
+      pushed: 0,
+      woken: 0,
+      pushes: [],
+      delivery: new PushDeliveryTally('message'),
+    };
     for (const queued of rows) {
       // Reuses the presence answer taken by the caller rather than asking Redis a second time. A
       // device that went offline in between is covered the same way it always was: the row survives
@@ -7409,11 +7437,12 @@ export class MessagingService {
       // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
       // the last one settles. Failures and missing tokens already logged themselves per device.
       const attempted = tally.pushes.length;
-      void Promise.all(tally.pushes).then(() =>
+      void Promise.all(tally.pushes).then(() => {
         this.logger.log(
           `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
-        )
-      );
+        );
+        this.recordDeliveries(tally.delivery, traceId);
+      });
     }
     return sent;
   }
@@ -8427,6 +8456,7 @@ export class MessagingService {
       }
     }
 
+    const delivery = new PushDeliveryTally('welcome_request');
     await Promise.all(
       tokens.map(async (pt) => {
         const refusal = withheld.get(pt.id);
@@ -8437,18 +8467,22 @@ export class MessagingService {
         if (refusal) return;
         const envelopeId = envelopes.get(pt.id);
         try {
+          delivery.attempted(pt);
           await getMessaging().send(
             envelopeId
               ? this.buildWakeMessage(pt, { envelopeId }, true, false, android)
               : { token: pt.token, data, android }
           );
+          delivery.accepted(pt);
           this.logger.log(
             `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId} ` +
               (envelopeId ? `mode=wake envelope=${envelopeId.slice(0, 8)}` : 'mode=full')
           );
         } catch (e) {
+          delivery.failed(pt, pushFailureCode(e));
           if (isTerminalPushTokenError(e)) {
             await this.pushTokenRepo.delete({ id: pt.id });
+            delivery.pruned(pt);
             this.logger.warn(
               `[WELCOME_REQ][${traceId}] Deleted invalid push token user=${pt.userId} device=${pt.deviceId}`
             );
@@ -8460,6 +8494,7 @@ export class MessagingService {
         }
       })
     );
+    this.recordDeliveries(delivery, traceId);
   }
 
   /**
@@ -8696,6 +8731,7 @@ export class MessagingService {
 
     let sent = 0;
     let failed = 0;
+    const delivery = new PushDeliveryTally('social');
     for (const pt of pushTokens) {
       const refusal = withheld.get(pt.id);
       if (refusal === 'failed') {
@@ -8711,6 +8747,7 @@ export class MessagingService {
       // Android reads the data map (onMessageReceived fires in the background) and nothing else.
       try {
         const envelopeId = envelopes.get(pt.deviceId);
+        delivery.attempted(pt);
         if (envelopeId) {
           // The content-free wake: the device fetches the envelope and runs it through the path
           // this full push would have taken. Android keeps the full push's options.
@@ -8731,6 +8768,7 @@ export class MessagingService {
             )
           );
           sent++;
+          delivery.accepted(pt);
           this.logger.log(
             `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
               `mode=wake kind=${pushKindOf(data)} envelope=${envelopeId.slice(0, 8)}`
@@ -8763,6 +8801,7 @@ export class MessagingService {
           });
         }
         sent++;
+        delivery.accepted(pt);
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
             `mode=full kind=${pushKindOf(data)} inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
@@ -8779,8 +8818,10 @@ export class MessagingService {
         }
       } catch (e) {
         failed++;
+        delivery.failed(pt, pushFailureCode(e));
         if (isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
+          delivery.pruned(pt);
           this.logger.warn(
             `[SOCIAL_PUSH][${traceId}] deleted invalid token user=${userId} device=${pt.deviceId}`
           );
@@ -8791,6 +8832,7 @@ export class MessagingService {
         );
       }
     }
+    this.recordDeliveries(delivery, traceId);
     return { sent, failed };
   }
 }

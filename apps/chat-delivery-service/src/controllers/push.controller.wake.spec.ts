@@ -42,7 +42,11 @@ describe('PushController - the wake-up push', () => {
     upsert: jest.fn().mockResolvedValue(undefined),
     findOne: jest.fn(),
     update: jest.fn(),
-    manager: { tag: 'the chat-delivery manager' },
+    manager: {
+      tag: 'the chat-delivery manager',
+      /** The `lastPushFetchedAt` stamp (migration 054); answered empty unless a test says otherwise. */
+      query: jest.fn().mockResolvedValue([]),
+    },
   };
   const queuedRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
@@ -346,6 +350,53 @@ describe('PushController - the wake-up push', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(fetch('1')).rejects.toBeInstanceOf(BadRequestException);
       expect(queuedRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lastPushFetchedAt (migration 054)', () => {
+    const E = '11111111-2222-4333-8444-555555555555';
+    const stamps = () =>
+      pushTokenRepo.manager.query.mock.calls.filter(([sql]) =>
+        String(sql).includes('"lastPushFetchedAt"')
+      );
+
+    it.each([
+      [
+        'a frame wake answered gone',
+        () => controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false'),
+      ],
+      [
+        'an envelope wake answered gone',
+        () => controller.fetchWakeFrame(undefined, 'user-1', 'phone-1', undefined, E),
+      ],
+      [
+        'a fetch-proto of a row already acknowledged',
+        () => controller.fetchProtoForPush(`PushSecret ${SECRET}`, Q, 'user-1', 'phone-1'),
+      ],
+    ])('stamps the device on %s - the push reached its handler', async (_case, fetch) => {
+      queuedRepo.findOne.mockResolvedValue(null);
+      serve.mockResolvedValue({ kind: 'gone' });
+      await fetch();
+      expect(stamps().map(([, params]) => params)).toEqual([['user-1', 'phone-1']]);
+    });
+
+    it('answers the fetch exactly the same when the stamp cannot be written, and accuses it', async () => {
+      queuedRepo.findOne.mockResolvedValue(null);
+      pushTokenRepo.manager.query.mockRejectedValueOnce(new Error('connection terminated'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      await expect(controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false')).resolves.toEqual({
+        status: 'gone',
+      });
+      expect(warn.mock.calls.map(([m]) => String(m)).join(' ')).toContain(
+        'lastPushFetchedAt NOT stamped route=wake'
+      );
+    });
+
+    it('stamps nothing when fetch-proto refuses the PushSecret', async () => {
+      await expect(
+        controller.fetchProtoForPush('PushSecret wrong', Q, 'user-1', 'phone-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(stamps()).toEqual([]);
     });
   });
 

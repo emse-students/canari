@@ -68,6 +68,8 @@ describe('CallsService', () => {
     find: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
+    /** The push delivery record's writes (migration 054); answered empty. */
+    manager: { query: jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([])) },
   };
   const apnsVoip = {
     isConfigured: jest.fn(() => true),
@@ -558,6 +560,37 @@ describe('CallsService', () => {
       await expect(service.ringGroup('intruder', 'group-1', 'call-1', false)).rejects.toThrow(
         ForbiddenException
       );
+    });
+
+    it('records the fan-out once, kind ring: an accepted FCM ring and a VoIP token APNs said is gone', async () => {
+      pushTokenRepo.find.mockResolvedValue([
+        { id: 'a', userId: 'callee-android', deviceId: 'd1', token: 'fcm-a', platform: 'android' },
+        {
+          id: 'b',
+          userId: 'callee-ios-voip',
+          deviceId: 'd2',
+          token: 'fcm-b',
+          platform: 'ios',
+          voipToken: 'voip-b',
+        },
+      ]);
+      apnsVoip.sendVoipPush.mockResolvedValue('gone');
+
+      await ringAndSettle(service, 'caller', 'group-1', 'call-1', false);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const writes = pushTokenRepo.manager.query.mock.calls;
+      const increments = writes.filter(([sql]) => sql.includes('push_delivery_daily'));
+      expect(increments).toHaveLength(1);
+      expect(increments[0][1]).toEqual([
+        'ring',
+        ['android', 'android', 'ios', 'ios', 'ios'],
+        ['accepted', 'attempted', 'attempted', 'failed', 'pruned'],
+        ['', '', '', 'apns-voip/gone', ''],
+        [1, 1, 1, 1, 1],
+      ]);
+      const stamps = writes.filter(([sql]) => sql.includes('"lastPushSentAt"'));
+      expect(stamps.map(([, params]) => params)).toEqual([[['a']]]);
     });
 
     it.each([

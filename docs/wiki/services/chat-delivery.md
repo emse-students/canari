@@ -2080,6 +2080,99 @@ PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
 the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
+#### Push delivery records - daily totals and the last delivery per device (2026-11-21)
+
+**Why.** A read-only production diagnosis on 2026-11-21 could not answer "was member X's
+notification sent, and did it arrive?". The batch path printed only a total
+(`[PUSH_SEND] FCM sent batch pushed=N of M`), and every counter lived in container logs that reset
+at each deploy. The owner decided "totals + last delivery" the same day: two records, no content,
+kept in the database (migration `054`, additive; `utils/push-delivery-records.ts`).
+
+**What is stored.**
+
+- `push_delivery_daily` - one counter per (UTC `day`, `kind`, `platform`, `outcome`, `code`). `kind`
+  is the send path: `message` (an MLS frame to an offline device, `sendFcmForQueued`), `social`
+  (`sendPushToUser`: posts, comments, reactions, salons, reminders), `ring` (FCM or the iOS VoIP
+  push), `ring_end`, `welcome_request`. `outcome` is `attempted`, `accepted`, `failed` (under the
+  provider's `code`: the FCM `messaging/*` code, `none` when the throw carried none, `apns-voip/gone`
+  or `apns-voip/refused` for a VoIP ring - its HTTP status stays on the `[apns-voip]` line) or
+  `pruned` (the failure proved the token gone and it was removed, counted ON TOP of its `failed`).
+  On every row group `attempted = accepted + failed`. A device with no token, a muted category, a
+  wake withheld because its envelope could not be stored: nothing was asked of a provider, nothing
+  is counted. No account, no device: not personal data.
+- `push_token."lastPushSentAt"` - the last time a provider ACCEPTED a push for that registration.
+- `push_token."lastPushFetchedAt"` - the last time its native handler fetched what a push pointed at,
+  `GET /mls/push/fetch-proto` or `GET /mls/push/wake` (frame or envelope) - the server's own sight of
+  a push ARRIVING, which the diagnosis had to read from the edge access log. Stamped on every fetch
+  the PushSecret admitted, a `gone` answer included (the push still reached the handler). **Not
+  evidence for every push**: a full push whose ciphertext rode inline is never fetched, so the date
+  speaks for wakes and for frames carried by reference.
+- Both dates live on the registration row, so every deletion of it takes them: a session end, a
+  revocation, an invalid-token prune, the account's erasure. The registration's upsert names its
+  columns, so a re-registration keeps them.
+
+**Where they are written, and what it costs a send.** Each send path fills a `PushDeliveryTally` in
+memory while it sends (`attempted` before the provider call, then `accepted` or `failed` /
+`pruned`) - no I/O. Once the batch has settled, the ONE hook (`recordDeliveries` in
+`MessagingService` and `CallsService`) hands it to `recordPushDeliveries` **without awaiting it**: two
+statements per batch whatever its size - one multi-row upsert of the counters, one UPDATE stamping
+`lastPushSentAt` on the accepted registrations. A message fan-out flushes once, when its last push
+settled (beside the `FCM sent batch` line); a lone deferred push flushes its own. The fetch stamp is
+one single-row UPDATE on the fetch request. **A write that fails logs `[PUSH_RECORD] ... NOT
+recorded|stamped` at WARN, naming what was lost, and never fails a send or a fetch.** No timer, no
+retry: a lost count is a WARN, and the next batch counts afresh.
+
+**Why it cannot deadlock.** The counter rows are inserted in one order (platform, outcome, code,
+`WITH ORDINALITY ... ORDER BY`), so two flushes over the same rows wait for each other. The stamp
+locks its registrations in `("userId", "deviceId")` order with `FOR NO KEY UPDATE` - the order
+`deleteAccountPushTokens` and `storeEnvelopes` lock a user's rows in, and the strength the UPDATE
+itself takes, so it blocks no foreign-key check. `GREATEST` keeps a date from going back when two
+flushes commit out of order; the day and the dates are the DATABASE's clock (UTC), one for every
+replica.
+
+**The lead's queries** (read-only; production access is in the private operations notes). Member X,
+per device - the account id is the core-service user id:
+
+```sql
+SELECT "deviceId", platform, "createdAt" AS registered,
+       "lastPushSentAt"    AS last_sent,
+       "lastPushFetchedAt" AS last_fetched,
+       "wakeVersion"
+  FROM push_token
+ WHERE "userId" = :'user_id'
+ ORDER BY "lastPushSentAt" DESC NULLS LAST;
+```
+
+No row: the device holds no registration (see the coverage section above, and `[PUSH_MISSING]`).
+`last_sent` recent and `last_fetched` older than it on a wake-capable device: the provider took the
+push and the handler did not fetch it - the phone, the OS or the provider's delivery, not this server.
+
+The last seven days, per path and platform, failures by code:
+
+```sql
+SELECT "day", kind, platform,
+       sum(count) FILTER (WHERE outcome = 'attempted') AS attempted,
+       sum(count) FILTER (WHERE outcome = 'accepted')  AS accepted,
+       sum(count) FILTER (WHERE outcome = 'failed')    AS failed,
+       sum(count) FILTER (WHERE outcome = 'pruned')    AS pruned,
+       string_agg(code || '=' || count, ' ' ORDER BY count DESC)
+         FILTER (WHERE outcome = 'failed')             AS failures_by_code
+  FROM push_delivery_daily
+ WHERE "day" > (now() AT TIME ZONE 'UTC')::date - 7
+ GROUP BY "day", kind, platform
+ ORDER BY "day" DESC, kind, platform;
+```
+
+A measurement taken from these names roles and counts, never people, when it is written into this
+repository ([durable-rules](../durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
+
+Tests: `utils/push-delivery-records.spec.ts` (the tally, the two statements, the WARNs),
+`services/messaging.push-delivery-records.spec.ts` (`sendPushToUser` and a fan-out write once per
+batch, a failed write changes no answer), `services/calls.service.spec.ts` (a ring with a gone VoIP
+token), `controllers/push.controller.wake.spec.ts` (the fetch stamp on both routes),
+`migrations/054_push_delivery_records.integration.spec.ts` (the SQL against PostgreSQL: counts add,
+concurrent flushes lose nothing, the stamp never goes back, the erasure takes the dates).
+
 #### Transport — single gateway (FCM)
 
 Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
