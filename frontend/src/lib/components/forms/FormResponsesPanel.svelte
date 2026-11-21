@@ -33,6 +33,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
+  import { showsCursusSource } from '$lib/forms/respondentSource';
   import { m } from '$lib/paraglide/messages';
   import Select from '$lib/components/ui/Select.svelte';
   import {
@@ -93,6 +94,8 @@
   const words = $derived(fileAnswerWords(submissions));
   /** Who answered, as columns, and the filter on them: by promo, formation and status. */
   const identityColumns = $derived(identityColumnsOf(form, submissions));
+  /** Certified and declared promos are never mixed silently: each row says which it is. */
+  const cursusSource = $derived(showsCursusSource(form, submissions));
   const identityValues = $derived(identityFilterValues(submissions));
   let identityFilter = $state(emptyIdentityFilter());
   const shown = $derived(
@@ -384,6 +387,7 @@
           {onDelete}
           {rowActions}
           {identityColumns}
+          {cursusSource}
         />
       {/if}
     </div>

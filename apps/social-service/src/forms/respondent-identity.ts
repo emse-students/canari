@@ -24,7 +24,10 @@ import {
  *   answer is joined to no account). Names and the e-mail stay the guest columns of migration 138;
  *   "Promo et formation", "Statut" and "Campus" are DECLARED (`source: 'declared'`). An anonymous
  *   form never asks a name or an e-mail (`FORM_ANONYMOUS_GUEST_IDENTITY`): it promised not to keep
- *   who answered.
+ *   who answered. ONE exception (owner, 2026-11-21: "Oui, en option, avec avis"): the organiser may
+ *   have a MEMBER's "Promo et formation" read from the account instead (`respondentFields:
+ *   ['cursus']` on an anonymous form) - certified rather than declared, and announced before
+ *   sending. Never the name, the status or the campus; a guest still declares.
  *
  * Principle 1 of the charter ("Vos messages sont a vous", docs/principes.md): nothing about the
  * respondent leaves their account unless the organiser asked for it AND the respondent was shown it
@@ -66,6 +69,19 @@ export function predatesDeclaredFields(clientVersion: string | undefined): boole
   return clientVersionAtLeast(clientVersion, RESPONDENT_FIELDS_MIN_CLIENT_VERSION) !== true;
 }
 
+/**
+ * The first build that tells a member, before sending, that an ANONYMOUS form reads their promo and
+ * formation from the account (owner, 2026-11-21: "Oui, en option, avec avis"). A build older than
+ * this - or naming none - cannot say it, so principle 1 forbids joining anything for it: it is
+ * asked the cursus as it always was ([LEGACY], `docs/wiki/legacy-compatibility.md`).
+ */
+export const ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION = '1.7.3';
+
+/** Whether a submit comes from a build that cannot announce the anonymous cursus join. */
+export function predatesAnonymousCursusJoin(clientVersion: string | undefined): boolean {
+  return clientVersionAtLeast(clientVersion, ANONYMOUS_CURSUS_JOIN_MIN_CLIENT_VERSION) !== true;
+}
+
 /** One cursus as an answer keeps it. */
 export interface RespondentCursus {
   promo: number | null;
@@ -84,6 +100,13 @@ export interface RespondentIdentity {
   cursus?: RespondentCursus[];
   status?: RespondentStatus[];
   campus?: string | null;
+  /**
+   * The keys READ FROM THE ACCOUNT in a snapshot that also holds declared ones: an anonymous form
+   * may join the cursus alone, so a member's snapshot is `source: 'declared'` (status, campus typed)
+   * with `fromAccount: ['cursus']`. Absent means every key follows `source`; a snapshot of the
+   * account alone is `source: 'account'` and needs none.
+   */
+  fromAccount?: AccountField[];
   /**
    * The declared fields the form asked that the respondent's build could not draw (a store build
    * older than {@link RESPONDENT_FIELDS_MIN_CLIENT_VERSION}): the organiser reads them as "not
@@ -151,28 +174,72 @@ export function accountFieldsOf(stored: unknown): AccountField[] {
   return canonical(stored, ACCOUNT_FIELDS, 'respondentFields');
 }
 
+/** The one account field an ANONYMOUS form may join (owner, 2026-11-21): it names nobody. */
+export const ANONYMOUS_JOINABLE_FIELDS: readonly AccountField[] = ['cursus'];
+
 /**
- * What a form joins from a member's account: nothing on an ANONYMOUS form (its answers name no
- * account), its canonical `respondentFields` otherwise.
+ * What a form joins from a member's account: the cursus alone on an ANONYMOUS form that ticked it,
+ * its canonical `respondentFields` otherwise.
  */
 export function joinedAccountFields(form: {
   anonymous?: boolean | null;
   respondentFields?: unknown;
 }): AccountField[] {
-  return form.anonymous ? [] : accountFieldsOf(form.respondentFields);
+  const fields = accountFieldsOf(form.respondentFields);
+  return form.anonymous ? fields.filter((f) => ANONYMOUS_JOINABLE_FIELDS.includes(f)) : fields;
 }
 
 /**
- * What a save stores in `forms.respondentFields`: the canonical list, and always the empty one on
- * an anonymous form - so the column never claims a join the form will not make.
+ * What a save stores in `forms.respondentFields`: the canonical list; on an anonymous form only the
+ * cursus or the empty list - so the column never claims a join the form will not make.
  */
 export function storedRespondentFields(input: unknown, anonymous: boolean): AccountField[] {
-  return anonymous ? [] : accountFieldsOf(input);
+  return joinedAccountFields({ anonymous, respondentFields: input });
+}
+
+/**
+ * Whether a save SENT, for an anonymous form, an account field it may not join (a name, a status, a
+ * campus): refused as `FORM_ANONYMOUS_ACCOUNT_FIELDS` (the shared option rule) instead of dropped.
+ * An absent list is never one - the create default is the two names, normalised away.
+ */
+export function joinsBeyondCursus(sent: unknown): boolean {
+  return (
+    Array.isArray(sent) &&
+    sent.some((f) => !(ANONYMOUS_JOINABLE_FIELDS as readonly unknown[]).includes(f))
+  );
+}
+
+/**
+ * Whether the account fields a page ANNOUNCED are exactly what the form joins now (principle 1: a
+ * member is joined only to what they were shown). Canonical on both sides, so order never matters.
+ */
+export function announcedMatchesJoined(
+  announced: unknown,
+  joined: readonly AccountField[]
+): boolean {
+  const said = accountFieldsOf(announced);
+  return said.length === joined.length && said.every((f, i) => f === joined[i]);
 }
 
 /** The declared fields a form asks (`forms.guestFields`, whose names and e-mail are the guest's). */
 export function askedDeclaredFields(stored: unknown): DeclaredField[] {
   return canonical(stored, DECLARED_FIELDS, 'guestFields', ['lastName', 'firstName', 'email']);
+}
+
+/**
+ * What a MEMBER of an anonymous form is asked: the form's declared fields, the cursus left out when
+ * the form reads it from the account - ONE field, ONE source, for each respondent. A guest has no
+ * account and is asked every declared field, the cursus included ({@link askedDeclaredFields}).
+ */
+export function askedOfMember(form: {
+  guestFields?: unknown;
+  respondentFields?: unknown;
+}): DeclaredField[] {
+  const joined: readonly string[] = joinedAccountFields({
+    anonymous: true,
+    respondentFields: form.respondentFields,
+  });
+  return askedDeclaredFields(form.guestFields).filter((f) => !joined.includes(f));
 }
 
 /**
@@ -231,6 +298,20 @@ export function accountSnapshot(
   return snapshot;
 }
 
+/**
+ * The snapshot of an anonymous form's MEMBER when the form joins the cursus: the cursus read from
+ * the account, the other asked fields declared (`declared`, null when none is asked). A declared
+ * cursus never reaches here - `askedOfMember` leaves it out, so `declaredIdentityFor` refuses it.
+ */
+export function anonymousMemberSnapshot(
+  declared: RespondentIdentity | null,
+  account: AccountIdentity | null
+): RespondentIdentity {
+  const fromAccount = accountSnapshot(['cursus'], account);
+  if (!declared) return fromAccount;
+  return { ...declared, cursus: fromAccount.cursus, fromAccount: ['cursus'] };
+}
+
 /** What an answer may carry of the declared fields, as the DTO receives them. */
 export interface DeclaredIdentityInput {
   declaredFormation?: string;
@@ -249,13 +330,32 @@ function carriesDeclared(input: DeclaredIdentityInput): boolean {
   );
 }
 
+/**
+ * How a log line names a form. An ANONYMOUS form is never named on its submit path (review,
+ * 2026-11-21): a line with the form and a line with the account would pair them, so the caller passes
+ * an empty id ({@link identityFormId}) and the line says only that the form is anonymous.
+ */
+function idTag(formId: string): string {
+  return formId ? `form=${formId.slice(0, 8)}` : 'an anonymous form';
+}
+
+/** How a log line names a form: its short id, or - when anonymous - nothing that identifies it. */
+export function formTag(form: { id: string; anonymous?: boolean | null }): string {
+  return idTag(identityFormId(form));
+}
+
+/** The id handed to this module's log lines: empty for an anonymous form (see {@link idTag}). */
+export function identityFormId(form: { id: string; anonymous?: boolean | null }): string {
+  return form.anonymous ? '' : form.id;
+}
+
 function notAsked(field: string, formId: string): BadRequestException {
-  logger.warn(`[FORMS] answer refused: ${field} declared but not asked form=${formId.slice(0, 8)}`);
+  logger.warn(`[FORMS] answer refused: ${field} declared but not asked ${idTag(formId)}`);
   return formRefusal(FORM_GUEST_IDENTITY_NOT_ASKED, `This form does not ask for ${field}.`);
 }
 
 function missing(field: string, formId: string): BadRequestException {
-  logger.log(`[FORMS] answer refused: ${field} missing form=${formId.slice(0, 8)}`);
+  logger.log(`[FORMS] answer refused: ${field} missing ${idTag(formId)}`);
   return formRefusal(FORM_GUEST_IDENTITY_MISSING, `This form asks for ${field}.`);
 }
 
@@ -281,7 +381,7 @@ export function declaredIdentityFor(
   // fields marked as not declared. One that sends any is judged like every other (below).
   if (olderClient && !carriesDeclared(input)) {
     logger.log(
-      `[LEGACY] answer to form=${formId.slice(0, 8)} from a build older than ` +
+      `[LEGACY] answer to ${idTag(formId)} from a build older than ` +
         `${RESPONDENT_FIELDS_MIN_CLIENT_VERSION}: ${asked.join(',')} taken as not declared`
     );
     return { source: 'declared', notDeclared: [...asked] };

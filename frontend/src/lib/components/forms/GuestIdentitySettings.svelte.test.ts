@@ -88,7 +88,25 @@ describe('GuestIdentitySettings', () => {
       m.form_respondent_field_cursus(),
       m.form_respondent_field_status(),
       m.form_respondent_field_campus(),
+      m.form_respondent_field_cursus_from_account(),
     ]);
     expect(target.textContent).toContain(m.form_respondent_settings_hint_anonymous());
+  });
+
+  it('warns about small groups once the cursus is read from the account, and says what it needs', () => {
+    const joined = render({
+      isPublic: false,
+      anonymous: true,
+      choices: ['cursus', 'cursusFromAccount'],
+    });
+    expect(
+      joined.target.querySelector('[data-testid="cursus-from-account-note"]')?.textContent
+    ).toContain(m.form_respondent_cursus_from_account_note());
+    const alone = render({ isPublic: false, anonymous: true, choices: ['cursusFromAccount'] });
+    expect(
+      alone.target.querySelector('[data-testid="cursus-from-account-note"]')?.textContent
+    ).toContain(m.form_respondent_cursus_from_account_needs_cursus());
+    const off = render({ isPublic: false, anonymous: true, choices: ['cursus'] });
+    expect(off.target.querySelector('[data-testid="cursus-from-account-note"]')).toBeNull();
   });
 });

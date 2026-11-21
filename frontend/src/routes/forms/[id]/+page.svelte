@@ -56,7 +56,8 @@
   import DeclaredIdentityFields from '$lib/components/forms/DeclaredIdentityFields.svelte';
   import RespondentNotice from '$lib/components/forms/RespondentNotice.svelte';
   import {
-    askedDeclaredFields,
+    askedOfMember,
+    joinedAccountFields,
     declaredPayload,
     emptyDeclaredValues,
     firstDeclaredProblem,
@@ -103,7 +104,10 @@
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
-  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import {
+    FORM_RESPONDENT_FIELDS_CHANGED,
+    formSubmitRefusalMessage,
+  } from '$lib/forms/answerBounds';
   import { offersAnswerEdit } from '$lib/forms/answerEditGate';
   import { serverFormAnswerEdit } from '$lib/stores/appVersionCheck.svelte';
   import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
@@ -174,9 +178,11 @@
   /**
    * What an ANONYMOUS form asks each respondent to declare (owner, 2026-11-16): its answers are
    * joined to no account, so the promo and formation, status and campus it wants are typed here.
-   * A named form asks nothing: the server reads them from the account (`RespondentNotice`).
+   * A named form asks nothing: the server reads them from the account (`RespondentNotice`). The
+   * cursus is left out when the form reads it from the account too (owner, 2026-11-21): one field,
+   * one source.
    */
-  const askedDeclared = $derived(form?.anonymous ? askedDeclaredFields(form.guestFields) : []);
+  const askedDeclared = $derived(form?.anonymous ? askedOfMember(form) : []);
   let declared = $state(emptyDeclaredValues());
   let declaredChecked = $state(false);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
@@ -370,6 +376,23 @@
       void loadForm(id);
     });
   });
+
+  /**
+   * Reads the form again after `FORM_RESPONDENT_FIELDS_CHANGED`, replacing the form and nothing of
+   * the member's work: the answers, the declared fields and the payment choice stay as typed.
+   */
+  async function reloadFormKeepingAnswers(): Promise<void> {
+    if (!form) return;
+    Log.d('FormView', 'what the form joins changed since the page loaded: form read again');
+    try {
+      form = await getForm(form.id);
+    } catch (e: unknown) {
+      // The form could not be read again, so the notice on screen is STILL the old one: the member is
+      // told to reload (never "reloaded"), and the answer is not sent until they have read the new one.
+      Log.w('FormView', 'reload after a changed join failed: the notice on screen is stale', e);
+      error = m.form_refusal_respondent_fields_changed_reload();
+    }
+  }
 
   async function loadForm(id: string | undefined): Promise<void> {
     const stale = () => loadedFormId !== id;
@@ -802,6 +825,8 @@
         ...(payerEmail ? { payerEmail } : {}),
         answers: visibleAnswers(visibleItems, selections),
         ...declaredPayload(askedDeclared, declared),
+        // What the notice above showed as joined to this answer: the server joins only that.
+        announcedFields: joinedAccountFields(form.respondentFields),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -836,6 +861,9 @@
       win.adopt(e);
       // Worded from the refusal's CODE, never from the server's English (D6).
       error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
+      // The form's join changed since this page read it (principle 1): the form is read again so
+      // the notice shows what WILL go with the answer, and what the member typed is kept.
+      if (refusalCode(e) === FORM_RESPONDENT_FIELDS_CHANGED) await reloadFormKeepingAnswers();
     } finally {
       submitting = false;
     }
@@ -1270,7 +1298,11 @@
         anonymous
         disabled={submitting || preview}
       />
-      <RespondentNotice respondentFields={form.respondentFields} />
+      <RespondentNotice
+        respondentFields={form.respondentFields}
+        anonymous={form.anonymous ?? false}
+        declared={askedDeclared}
+      />
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->
