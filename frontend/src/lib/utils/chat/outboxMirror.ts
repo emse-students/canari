@@ -34,6 +34,7 @@
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
+  MAX_CONSECUTIVE_SERVER_ERRORS,
   buildOutboxProto,
   deliveryForOutboxEntry,
   isServerFailureTerminal,
@@ -66,6 +67,13 @@ export interface OutboxMirrorEntry {
    * device can ever learn about it.
    */
   durable: boolean;
+  /**
+   * Set by the native drain only (`OutboxMirrorEntry.unsendable`): it learned this entry will NEVER
+   * go from there - the server refused it, its group is not held, it is malformed. The drains skip
+   * it and keep it; adopted, a text or a reply is parked as FAILED, with its Retry
+   * ({@link adoptMirrorEntry}). Never written by this side.
+   */
+  unsendable?: boolean;
 }
 
 /** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
@@ -211,8 +219,17 @@ interface AdoptedMirrorEntry {
  * Rebuild a real outbox entry (and the local message it should have left) from a mirror line.
  * Returns null when the proto cannot be understood, which is the one case worth a log: the entry
  * would otherwise be dropped silently by the next mirror rewrite, exactly the bug being fixed.
+ *
+ * AN ENTRY THE NATIVE DRAIN MARKED UNSENDABLE IS ADOPTED FAILED, NEVER DROPPED (principle 2): a text
+ * or a reply is parked at the terminal count ({@link MAX_CONSECUTIVE_SERVER_ERRORS}), so the bubble
+ * shows it failed with its Retry and the flusher does not send it on its own - the member decides.
+ * A control frame has no bubble to show it on: it is adopted pending, and the flusher's own answer
+ * to it decides.
  */
-function adoptMirrorEntry(entry: OutboxMirrorEntry, userId: string): AdoptedMirrorEntry | null {
+export function adoptMirrorEntry(
+  entry: OutboxMirrorEntry,
+  userId: string
+): AdoptedMirrorEntry | null {
   let proto: Uint8Array;
   try {
     proto = fromBase64(entry.proto);
@@ -231,6 +248,15 @@ function adoptMirrorEntry(entry: OutboxMirrorEntry, userId: string): AdoptedMirr
     attempts: 0,
     createdAt: entry.sentAt || now,
   };
+  // Typed entries only: a control frame has no Retry to park it behind.
+  const parked = entry.unsendable
+    ? (() => {
+        appendLog(
+          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain - adopted failed, with its Retry`
+        );
+        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS };
+      })()
+    : {};
 
   // A silent entry is a control event (reaction/edit/delete/read): the flusher sends its proto
   // verbatim and silently, which is exactly what `kind: 'control'` means. Nothing to display.
@@ -250,7 +276,7 @@ function adoptMirrorEntry(entry: OutboxMirrorEntry, userId: string): AdoptedMirr
     };
     const text = app.reply.content ?? '';
     return {
-      outbox: { ...base, kind: 'reply', text, replyTo },
+      outbox: { ...base, ...parked, kind: 'reply', text, replyTo },
       message: {
         id: entry.id,
         conversationId: entry.groupId,
@@ -263,7 +289,7 @@ function adoptMirrorEntry(entry: OutboxMirrorEntry, userId: string): AdoptedMirr
   if (app?.text?.content !== undefined) {
     const text = app.text.content ?? '';
     return {
-      outbox: { ...base, kind: 'text', text },
+      outbox: { ...base, ...parked, kind: 'text', text },
       message: {
         id: entry.id,
         conversationId: entry.groupId,

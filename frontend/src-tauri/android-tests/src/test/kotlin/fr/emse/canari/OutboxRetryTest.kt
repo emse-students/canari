@@ -35,9 +35,44 @@ class OutboxRetryTest {
     }
 
     @Test
-    fun `one 4xx refusal ends in the nudge`() {
-        assertEquals(Decision.GIVE_UP, OutboxRetry.decide(drainLeaves(1, 400)))
-        assertEquals(Decision.GIVE_UP, OutboxRetry.decide(drainLeaves(1, 403) + drainLeaves(3, null)))
+    fun `a refused entry is told and does not strand the ones that can still go`() {
+        // Alone, it ends the request - nothing left can go - and is told.
+        assertEquals(Decision.DONE, OutboxRetry.decide(drainLeaves(1, 400)))
+        assertTrue(OutboxRetry.tells(drainLeaves(1, 400)))
+        // Beside entries that can still go, the retry goes on for them (review of #3928).
+        val mixed = drainLeaves(1, 403) + drainLeaves(3, null)
+        assertEquals(Decision.RETRY, OutboxRetry.decide(mixed))
+        assertTrue(OutboxRetry.tells(mixed))
+        assertFalse(OutboxRetry.tells(drainLeaves(3, null)))
+    }
+
+    @Test
+    fun `only a device that can send nothing gives up`() {
+        assertEquals(Decision.GIVE_UP, OutboxRetry.decide(listOf(Prospect.BLOCKED, Prospect.BLOCKED)))
+        assertEquals(Decision.GIVE_UP, OutboxRetry.decide(listOf(Prospect.BLOCKED) + drainLeaves(1, null)))
+    }
+
+    @Test
+    fun `the native batch's token is read where it was classified`() {
+        assertEquals(Prospect.NEVER, Prospect.of("never"))
+        assertEquals(Prospect.BLOCKED, Prospect.of("never", batch = true))
+        assertEquals(Prospect.NOT_YET, Prospect.of("not-yet"))
+        assertEquals(Prospect.NOT_YET, Prospect.of("not-yet", batch = true))
+        assertEquals(Prospect.NOT_YET, Prospect.of(null))
+    }
+
+    @Test
+    fun `a 403 sender_not_active while the re-add is in flight is not yet, any other 403 is final`() {
+        val pending = QueuedSendAnswer.classify(403, { QueuedSendAnswer.Refusal("sender_not_active", "pending") }) { BodyRead.NotJson }
+        assertEquals(Outcome.Kept(KeptCause.SENDER_BEING_READDED), pending)
+        assertEquals(Prospect.NOT_YET, (pending as Outcome.Kept).cause.prospect)
+        for (refusal in listOf(
+            QueuedSendAnswer.Refusal("sender_not_active", "removed"),
+            QueuedSendAnswer.Refusal("sender_not_member", null),
+            QueuedSendAnswer.Refusal.UNREAD,
+        )) {
+            assertEquals(Outcome.Kept(KeptCause.REFUSED), QueuedSendAnswer.classify(403, { refusal }) { BodyRead.NotJson })
+        }
     }
 
     @Test
@@ -65,13 +100,13 @@ class OutboxRetryTest {
     fun `a run in front ends its request, three times, and the background run drains at once`() {
         // Each deferral ENDS the request (Result.success), so no backoff grows: the request the
         // background edge enqueues drains on its first run.
-        repeat(3) { assertEquals(Run.END_FOR_PAGE, OutboxRetry.run(queued = 1, appInFront = true)) }
-        assertEquals(Run.DRAIN, OutboxRetry.run(queued = 1, appInFront = false))
+        repeat(3) { assertEquals(Run.END_FOR_PAGE, OutboxRetry.run(sendable = 1, appInFront = true)) }
+        assertEquals(Run.DRAIN, OutboxRetry.run(sendable = 1, appInFront = false))
     }
 
     @Test
     fun `an empty mirror owes nothing, in front or not`() {
-        assertEquals(Run.NOTHING_OWED, OutboxRetry.run(queued = 0, appInFront = true))
-        assertEquals(Run.NOTHING_OWED, OutboxRetry.run(queued = 0, appInFront = false))
+        assertEquals(Run.NOTHING_OWED, OutboxRetry.run(sendable = 0, appInFront = true))
+        assertEquals(Run.NOTHING_OWED, OutboxRetry.run(sendable = 0, appInFront = false))
     }
 }

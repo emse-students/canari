@@ -12,15 +12,20 @@ import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import fr.emse.canari.push.OutboxRetry
+import fr.emse.canari.push.PushContextVerdict
 import java.util.concurrent.TimeUnit
 
 /**
  * Shared deferred-retry engine for the outbox drain (WP-XP-8). When the opportunistic outbox drain
  * (FCM, Welcome, boot) leaves messages unsent, this worker retries with exponential backoff behind
- * Android WorkManager - for as long as every entry left CAN still go ([OutboxRetry]). It ends in a
- * persistent failure state, with the "open the app" nudge, only when durable state says a retry
- * cannot succeed: an entry the server refused, no push secret, no MLS state, an unreadable push
- * context. Never on a count of attempts.
+ * Android WorkManager - for as long as an entry left CAN still go ([OutboxRetry]). An entry that can
+ * never go is marked in the mirror and told (the nudge), and the others keep their retry. It ends in
+ * the persistent failure state, with the nudge, only when durable state says this DEVICE can send
+ * nothing from here: no push secret, no MLS state or a key that does not open it, an unreadable
+ * push context. Never on a count of attempts.
+ *
+ * [KEY_FAILED] is set by that end alone, so it never holds back an entry that can go: every state
+ * that sets it is one no retry can leave, and opening the app resets it.
  *
  * iOS counterpart: BGTaskScheduler handler `fr.emse.canari.outboxRetry` in canari_push.mm.
  */
@@ -39,6 +44,26 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
 
         /** Set once the requests of the builds before [UNIQUE_WORK] have been cancelled. */
         private const val KEY_LEGACY_CANCELLED = "outbox_retry_legacy_cancelled"
+
+        /** The per-request attempt counts of the builds that capped the retry (gone since 1.7.3). */
+        private const val LEGACY_ATTEMPTS_PREFIX = "drain_attempts_"
+
+        /**
+         * Deletes the attempt counts the capped builds left in [PREFS_WORKER]. Durable state is its
+         * own "once": after it ran, no key carries the prefix, and a later run finds nothing to say.
+         */
+        private fun forgetLegacyAttemptCounts(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+            val stale = prefs.all.keys.filter { it.startsWith(LEGACY_ATTEMPTS_PREFIX) }
+            if (stale.isEmpty()) return
+            val edit = prefs.edit()
+            stale.forEach { edit.remove(it) }
+            if (edit.commit()) {
+                Log.i(TAG, "forgetLegacyAttemptCounts: ${stale.size} attempt count(s) of the capped builds deleted")
+            } else {
+                Log.e(TAG, "forgetLegacyAttemptCounts: ${stale.size} attempt count(s) NOT deleted - asked again at the next run")
+            }
+        }
 
         /**
          * Resets the persistent failure flag so the next outbox drain failure can enqueue a fresh
@@ -64,7 +89,8 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
          * thread (it reads the mirror).
          */
         fun enqueueIfMirrorHolds(context: Context) {
-            val queued = CanariFirebaseMessagingService.readOutboxMirrorOrNull(context)
+            // An entry marked unsendable is the app's to show, not this worker's to retry.
+            val queued = CanariFirebaseMessagingService.readOutboxMirrorOrNull(context)?.filterNot { it.unsendable }
             when {
                 queued == null -> {
                     Log.w(TAG, "enqueueIfMirrorHolds: outbox mirror unreadable - a retry is enqueued, the worker reads it again")
@@ -139,7 +165,8 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
      * spent them all, #3912 review); one NEVER, or an unreadable push context, ends it with the nudge.
      */
     override fun doWork(): Result {
-        val queued = CanariFirebaseMessagingService.readOutboxMirror(applicationContext).size
+        forgetLegacyAttemptCounts(applicationContext)
+        val queued = CanariFirebaseMessagingService.readOutboxMirror(applicationContext).count { !it.unsendable }
         when (OutboxRetry.run(queued, MainActivity.isInForeground)) {
             OutboxRetry.Run.NOTHING_OWED -> {
                 Log.d(TAG, "doWork: outbox empty - nothing owed (run $runAttemptCount)")
@@ -160,6 +187,12 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         val ctxRead = MlsContextLoader.readPushContext(applicationContext)
         val ctx = ctxRead.context
         if (ctx == null) {
+            if (ctxRead.verdict == PushContextVerdict.Absent) {
+                // AN ERASED ACCOUNT (or an install that never signed in): there is nobody to send
+                // as and nothing to open the app for - no nudge, which would promise messages.
+                Log.w(TAG, "doWork: push_context.json absent with $queued queued - no account to send as, nothing posted, the request ends")
+                return Result.success()
+            }
             Log.e(TAG, "doWork: push_context.json ${ctxRead.verdict.describe()} with $queued queued - no retry can send them, the app must open")
             giveUp()
             return Result.failure()
@@ -170,16 +203,20 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
         val left = CanariFirebaseMessagingService.drainOutbox(applicationContext, service, ctx)
         return when (OutboxRetry.decide(left)) {
             OutboxRetry.Decision.DONE -> {
-                Log.d(TAG, "doWork: outbox drained - success")
+                if (left.isEmpty()) {
+                    Log.d(TAG, "doWork: outbox drained - success")
+                } else {
+                    Log.w(TAG, "doWork: ${left.size} message(s) left, none can go from here - marked and told, the request ends")
+                }
                 Result.success()
             }
             OutboxRetry.Decision.RETRY -> {
-                Log.d(TAG, "doWork: ${left.size} message(s) still queued, each can still go - retry")
+                val never = left.count { it == OutboxRetry.Prospect.NEVER }
+                Log.d(TAG, "doWork: ${left.size} message(s) still queued, ${left.size - never} can still go - retry") // log-safe: counts, no content
                 Result.retry()
             }
             OutboxRetry.Decision.GIVE_UP -> {
-                val never = left.count { it == OutboxRetry.Prospect.NEVER }
-                Log.e(TAG, "doWork: ${left.size} message(s) still queued, $never of them refused for good or unsendable from here - the app must open") // log-safe: two counts, no content
+                Log.e(TAG, "doWork: ${left.size} message(s) still queued, and this device can send nothing from here - the app must open")
                 giveUp()
                 Result.failure()
             }

@@ -23,7 +23,47 @@ describe('the outbox retry', () => {
       'CanariFirebaseMessagingService.drainOutbox(applicationContext, service, ctx)'
     );
     expect(worker).toContain('when (OutboxRetry.decide(left))');
-    expect(worker).not.toMatch(/MAX_DRAIN_ATTEMPTS|recordAttempt|drain_attempts_/);
+    expect(worker).not.toMatch(/MAX_DRAIN_ATTEMPTS|recordAttempt/);
+  });
+
+  it('deletes the attempt counts of the capped builds at every run start, logged', () => {
+    const run = worker.slice(worker.indexOf('override fun doWork(): Result {'));
+    expect(run.indexOf('forgetLegacyAttemptCounts(applicationContext)')).toBeLessThan(
+      run.indexOf('OutboxRetry.run(')
+    );
+    expect(worker).toContain('private const val LEGACY_ATTEMPTS_PREFIX = "drain_attempts_"');
+    expect(worker).toContain('attempt count(s) of the capped builds deleted');
+  });
+
+  it('posts no nudge for an erased account - nothing to open the app for', () => {
+    const absent = worker.slice(
+      worker.indexOf('if (ctxRead.verdict == PushContextVerdict.Absent) {')
+    );
+    const branch = absent.slice(0, absent.indexOf('return Result.success()'));
+    expect(branch).toContain('Log.w(TAG, "doWork: push_context.json absent');
+    expect(branch).not.toContain('giveUp()');
+  });
+
+  it('marks an entry that will never go, skips it, and never drops it', () => {
+    const drain = service.slice(service.indexOf('private fun drainOutboxLocked('));
+    expect(drain).toContain('val parked = mirror.filter { it.unsendable }');
+    expect(drain).toContain('val entries = mirror.filterNot { it.unsendable }');
+    expect(drain).toContain(
+      'rewriteOutboxMirror(context, parked + remaining + entries.drop(index))'
+    );
+    expect(drain).toContain('val stillQueued: List<OutboxMirrorEntry> = parked + remaining');
+    expect(drain).toContain('entry.copy(unsendable = true)');
+    expect(service).toContain('if (e.unsendable) put("unsendable", true)');
+    expect(service).toContain('o.optBoolean("unsendable", false)');
+    // Told: the drain that marked it asks for the nudge.
+    expect(service).toContain(
+      'settleOutboxNudgeLocked(context, asked = tells, where = "drainOutboxBackground")'
+    );
+  });
+
+  it('reads the native batch prospect token, never its prose', () => {
+    expect(service).toContain('OutboxRetry.Prospect.of(json.optString("prospect")');
+    expect(service).toContain('OutboxRetry.Prospect.of(r.optString("prospect")');
   });
 
   it('ends a run in front with success, never a retry that grows the backoff', () => {
@@ -43,6 +83,7 @@ describe('the outbox retry', () => {
     expect(service).toContain(
       'QueuedSendAnswer.Outcome.Kept(QueuedSendAnswer.KeptCause.TRANSPORT_FAILED)'
     );
-    expect(service).toContain('return List(entries.size) { OutboxRetry.Prospect.NEVER }');
+    expect(service).toContain('return List(entries.size) { OutboxRetry.Prospect.BLOCKED }');
+    expect(service).toContain('QueuedSendAnswer.classify(code, readRefusal)');
   });
 });

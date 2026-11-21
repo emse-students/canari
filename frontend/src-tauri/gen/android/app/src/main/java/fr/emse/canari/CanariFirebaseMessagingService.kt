@@ -100,6 +100,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * which path delivered it would decide whether an absent device can ever learn about it.
          */
         val durable: Boolean,
+        /**
+         * A drain learned it will NEVER go from here ([OutboxRetry.Prospect.NEVER]: refused by the
+         * server, its group not held, malformed). Kept - never deleted - and skipped by every later
+         * drain; the page adopts it as a failed message with its Retry (`outboxMirror.ts`).
+         */
+        val unsendable: Boolean = false,
     )
 
     companion object {
@@ -2209,8 +2215,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // THE NUDGE FOLLOWS THE MIRROR, whichever caller drained (the worker, a push-woken
                 // drain, the boot drain, a quick reply's first try): read back under the same lock
                 // that rewrote it, so a post asked for meanwhile is ordered with this withdrawal. A
-                // withdrawal's line is written only when the shade showed a nudge to withdraw.
-                settleOutboxNudgeLocked(context, asked = false, where = "drainOutboxBackground")
+                // withdrawal's line is written only when the shade showed a nudge to withdraw. An
+                // entry this drain marked as never going is TOLD: the nudge is asked for.
+                val tells = OutboxRetry.tells(left)
+                if (tells) {
+                    Log.w(TAG, "drainOutboxBackground: ${left.count { it == OutboxRetry.Prospect.NEVER }} message(s) will not go from here - kept, marked, the member told") // log-safe: a count, no content
+                }
+                settleOutboxNudgeLocked(context, asked = tells, where = "drainOutboxBackground")
                 left
             }
             // EVERY DELIVERY CLEARS ITS "NOT SENT YET" NOTICE, whichever caller drained: after the
@@ -2246,8 +2257,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /** What [encryptQueuedMessages] did with a batch. */
         private sealed interface EncryptBatch {
-            /** Entry id -> ciphertext for every entry that encrypted. */
-            data class Encrypted(val ciphertexts: Map<String, String>) : EncryptBatch
+            /**
+             * Entry id -> ciphertext for every entry that encrypted; [failed], entry id -> whether a
+             * later drain can encrypt it, as the native batch classified it.
+             */
+            data class Encrypted(
+                val ciphertexts: Map<String, String>,
+                val failed: Map<String, OutboxRetry.Prospect> = emptyMap(),
+            ) : EncryptBatch
 
             /** The whole batch failed; [prospect] says whether a later drain can do better. */
             data class Failed(val prospect: OutboxRetry.Prospect) : EncryptBatch
@@ -2309,29 +2326,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             onSent: (SentOutboxId) -> Unit,
             delivered: MutableList<OutboxMirrorEntry>,
         ): List<OutboxRetry.Prospect> {
-            val entries = readOutboxMirror(context)
-            if (entries.isEmpty()) return emptyList()
+            val mirror = readOutboxMirror(context)
+            // AN ENTRY ALREADY MARKED UNSENDABLE IS NEVER SENT AGAIN FROM HERE - not re-encrypted, not
+            // re-POSTed by every push-woken drain - and never dropped: it stays for the page.
+            val parked = mirror.filter { it.unsendable }
+            val entries = mirror.filterNot { it.unsendable }
+            if (entries.isEmpty()) {
+                if (parked.isNotEmpty()) Log.d(TAG, "drainOutboxBackground: ${parked.size} message(s) marked unsendable, none to send - left for the app")
+                return emptyList()
+            }
             val secret = retrievePushSecret(context)
             if (secret == null) {
-                // NEVER from here: no secret to authenticate with until the app registers again.
+                // BLOCKED: no secret to authenticate with until the app registers again.
                 Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
-                return List(entries.size) { OutboxRetry.Prospect.NEVER }
+                return List(entries.size) { OutboxRetry.Prospect.BLOCKED }
             }
             // The native side ATTEMPTS at most DRAIN_MAX_BATCH entries, and only those can burn a
             // generation. It sees the whole queue so that a group held behind an unsettled staged
             // commit takes none of those slots: its entries stay queued and the others fill the batch.
             Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, at most $DRAIN_MAX_BATCH attempted")
-            val ciphertexts = when (val batch = encryptQueuedMessages(context, service, ctx, entries)) {
-                is EncryptBatch.Encrypted -> batch.ciphertexts
+            val ciphertextsOf = when (val batch = encryptQueuedMessages(context, service, ctx, entries)) {
+                is EncryptBatch.Encrypted -> batch
                 is EncryptBatch.Failed -> {
                     Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
                     return List(entries.size) { batch.prospect }
                 }
             }
+            val ciphertexts = ciphertextsOf.ciphertexts
             val deadline = System.currentTimeMillis() + DRAIN_POST_BUDGET_MS
             // Each delivered id WITH the server's receive time it was answered (0 when the answer
             // carried none): the app dates its own copy by it, as it does a foreground send.
             val sentIds = mutableListOf<SentOutboxId>()
+            val failed = ciphertextsOf.failed
             val remaining = mutableListOf<OutboxMirrorEntry>()
             // WHY each entry of `remaining` remains, in the same order.
             val prospects = mutableListOf<OutboxRetry.Prospect>()
@@ -2348,10 +2374,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val ciphertext = ciphertexts[entry.id]
                 if (ciphertext == null) {
-                    // Not encryptable in this batch (a group not joined here yet, a staged commit,
-                    // past the batch cap): a later drain may encrypt it.
-                    remaining.add(entry)
-                    prospects.add(OutboxRetry.Prospect.NOT_YET)
+                    // Not encrypted in this batch: a staged commit or past the batch cap (NOT_YET,
+                    // no failure named), or a failure the native batch classified - its group not
+                    // held here, this device removed from it, a malformed proto (NEVER, marked).
+                    val prospect = failed[entry.id] ?: OutboxRetry.Prospect.NOT_YET
+                    if (prospect == OutboxRetry.Prospect.NEVER) {
+                        remaining.add(entry.copy(unsendable = true))
+                        Log.w(TAG, "drainOutboxBackground: id=${entry.id.take(8)} cannot be encrypted from this state - marked unsendable group=${ConversationRef.of(entry.groupId)}")
+                    } else {
+                        remaining.add(entry)
+                    }
+                    prospects.add(prospect)
                     continue
                 }
                 val answer = sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)
@@ -2367,7 +2400,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     onSent(sent)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${ConversationRef.of(entry.groupId)}")
                 } else if (answer is QueuedSendAnswer.Outcome.Kept) {
-                    remaining.add(entry)
+                    // Refused for good: marked, so no later drain sends it again.
+                    remaining.add(if (answer.cause.prospect == OutboxRetry.Prospect.NEVER) entry.copy(unsendable = true) else entry)
                     prospects.add(answer.cause.prospect)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued (${answer.cause})") // log-safe: an enum constant's name (QueuedSendAnswer.KeptCause), no content
                 }
@@ -2377,11 +2411,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (sentIds.size - checkpointed >= DRAIN_CHECKPOINT_EVERY) {
                     appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
                     checkpointed = sentIds.size
-                    rewriteOutboxMirror(context, remaining + entries.drop(index))
+                    rewriteOutboxMirror(context, parked + remaining + entries.drop(index))
                 }
             }
             if (sentIds.size > checkpointed) appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
-            val stillQueued: List<OutboxMirrorEntry> = remaining
+            val stillQueued: List<OutboxMirrorEntry> = parked + remaining
             rewriteOutboxMirror(context, stillQueued)
             Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${stillQueued.size} remaining")
             return prospects
@@ -2421,7 +2455,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val stateBytes = MlsContextLoader.loadMlsState(context)
                 if (stateBytes == null) {
                     Log.e(TAG, "encryptQueuedMessages: mls.bin absent -> abort")
-                    return EncryptBatch.Failed(OutboxRetry.Prospect.NEVER)
+                    return EncryptBatch.Failed(OutboxRetry.Prospect.BLOCKED)
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
                 val payload = JSONArray()
@@ -2439,22 +2473,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
-                    Log.e(TAG, "encryptQueuedMessages: ok=false (${json.optString("error").take(120)})")
-                    return notYet
+                    // CLASSIFIED WHERE IT WAS THROWN (Rust `SendBatchError`): a key that does not
+                    // open the state is BLOCKED, a refused write or a passing failure NOT_YET.
+                    val prospect = OutboxRetry.Prospect.of(json.optString("prospect").takeIf { it.isNotEmpty() }, batch = true)
+                    Log.e(TAG, "encryptQueuedMessages: ok=false, $prospect (${json.optString("error").take(120)})")
+                    return EncryptBatch.Failed(prospect)
                 }
                 val results = json.optJSONArray("results") ?: JSONArray()
                 val out = mutableMapOf<String, String>()
+                val failed = mutableMapOf<String, OutboxRetry.Prospect>()
                 for (i in 0 until results.length()) {
                     val r = results.optJSONObject(i) ?: continue
                     val id = r.optString("id")
                     if (id.isEmpty()) continue
                     if (!r.optBoolean("ok", false)) {
-                        Log.d(TAG, "encryptQueuedMessages: kept queued id=${id.take(8)} (${r.optString("error").take(80)})")
+                        failed[id] = OutboxRetry.Prospect.of(r.optString("prospect").takeIf { it.isNotEmpty() })
+                        Log.d(TAG, "encryptQueuedMessages: not encrypted id=${id.take(8)} (${r.optString("error").take(80)})")
                         continue
                     }
                     r.optString("ciphertext").takeIf { it.isNotEmpty() }?.let { out[id] = it }
                 }
-                return EncryptBatch.Encrypted(out)
+                return EncryptBatch.Encrypted(out, failed)
             } catch (e: Exception) {
                 Log.e(TAG, "encryptQueuedMessages: exception: ${e.javaClass.simpleName}")
                 return notYet
@@ -2504,7 +2543,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // app orders this message by it (messageOrder.ts). Only a JSON 2xx counts as sent;
                     // a non-JSON body and a body the transport lost are both kept (QueuedSendAnswer),
                     // and each is logged as what it is.
-                    val outcome = QueuedSendAnswer.classify(code) {
+                    // A refusal's typed fields (`error`, `status`), read from its JSON body - never its prose.
+                    val readRefusal = {
+                        try {
+                            val o = JSONObject(conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "")
+                            QueuedSendAnswer.Refusal(o.optString("error").takeIf { it.isNotEmpty() }, o.optString("status").takeIf { it.isNotEmpty() })
+                        } catch (e: Exception) {
+                            Log.w(TAG, "sendQueuedMessagePush: HTTP $code with no typed body (${e.javaClass.simpleName}) - read as a refusal msg=${messageId.take(8)}")
+                            QueuedSendAnswer.Refusal.UNREAD
+                        }
+                    }
+                    val outcome = QueuedSendAnswer.classify(code, readRefusal) {
                         try {
                             val text = conn.inputStream.bufferedReader().use { it.readText() }
                             try {
@@ -2525,6 +2574,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                                 QueuedSendAnswer.KeptCause.NOT_ACCEPTED_STATUS -> Unit
                                 QueuedSendAnswer.KeptCause.REFUSED ->
                                     Log.w(TAG, "sendQueuedMessagePush: HTTP $code is a refusal of this frame - kept, and no background retry will send it msg=${messageId.take(8)}")
+                                QueuedSendAnswer.KeptCause.SENDER_BEING_READDED ->
+                                    Log.w(TAG, "sendQueuedMessagePush: HTTP $code sender_not_active, this device's re-add in flight - kept for a retry msg=${messageId.take(8)}")
                                 // Classified in the catch below, never by `classify`.
                                 QueuedSendAnswer.KeptCause.TRANSPORT_FAILED -> Unit
                                 QueuedSendAnswer.KeptCause.BODY_NOT_JSON ->
@@ -2626,6 +2677,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             o.optLong("sentAt", 0L),
                             o.optBoolean("silent", false),
                             o.optBoolean("durable", true),
+                            o.optBoolean("unsendable", false),
                         )
                     } catch (e: Exception) {
                         null
@@ -2653,6 +2705,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         put("sentAt", e.sentAt)
                         put("silent", e.silent)
                         put("durable", e.durable)
+                        if (e.unsendable) put("unsendable", true)
                     }.toString()
                 }
                 file.writeText(body + "\n")

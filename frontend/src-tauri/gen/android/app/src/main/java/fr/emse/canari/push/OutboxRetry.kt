@@ -10,7 +10,12 @@ package fr.emse.canari.push
  * app (#3912 review, round 11). A count answers "how long have we tried"; the decision needs "can a
  * retry ever succeed". So the drain says WHY each entry it leaves remains ([Prospect]), classified
  * where it is known, and the worker retries - with no cap, WorkManager's backoff bounding the cost -
- * while every one of them is [Prospect.NOT_YET].
+ * while ANY of them is [Prospect.NOT_YET].
+ *
+ * AN ENTRY THAT CAN NEVER GO DOES NOT STRAND THE OTHERS (review of #3928): it is marked in the
+ * mirror (`unsendable`), skipped by every later drain, told to the member (the nudge) and shown by
+ * the page as failed with its Retry at the next open - never deleted. Only a [Prospect.BLOCKED]
+ * drain - this DEVICE cannot send anything from here - ends the retry.
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard and not a style rule.
@@ -19,21 +24,39 @@ object OutboxRetry {
 
     /** Whether a later drain can send an entry a drain left. */
     enum class Prospect {
-        /** No answer, a server fault, a capture, out of budget, not encryptable yet: a retry may send it. */
+        /** No answer, a server fault, a capture, out of budget, a passing encrypt failure: a retry may send it. */
         NOT_YET,
 
         /**
-         * Durable state says no retry from here will send it: the server refused the frame (a 4xx
-         * that is not a "later"), or this device holds no push secret or no MLS state to send with.
-         * Only the app, opened, can act on it.
+         * THIS ENTRY will not go from here: the server refused the frame (a 4xx that is not a
+         * "later"), its group is not held on this device or removed it, or it is malformed. Marked
+         * and skipped from then on; the page shows it as failed.
          */
         NEVER,
+
+        /**
+         * NOTHING will go from this device's state: no push secret, no MLS state, or a key that
+         * does not open it. Only the app, opened, can act on it.
+         */
+        BLOCKED;
+
+        companion object {
+            /**
+             * The token the native batch classified a failure with (`SendProspect` in Rust):
+             * `never` is [NEVER] for an entry and [BLOCKED] for a whole batch ([batch]); anything
+             * else, `not-yet` included, is [NOT_YET].
+             */
+            fun of(token: String?, batch: Boolean = false): Prospect = when (token) {
+                "never" -> if (batch) BLOCKED else NEVER
+                else -> NOT_YET
+            }
+        }
     }
 
     /**
      * The 4xx statuses that say "later", not "never": a timeout, too early, too many. Every other
      * 4xx is the server's refusal of THIS frame or of this device's credential, and the same frame
-     * sent again meets it again.
+     * sent again meets it again - except the typed ones [QueuedSendAnswer] reads first.
      */
     private val RETRYABLE_4XX = setOf(408, 425, 429)
 
@@ -42,7 +65,7 @@ object OutboxRetry {
 
     /** What a worker run does once it has looked at the queue. */
     enum class Run {
-        /** The mirror is empty: nothing owed, the request ends. */
+        /** No entry a drain could send: nothing owed, the request ends. */
         NOTHING_OWED,
 
         /**
@@ -56,29 +79,32 @@ object OutboxRetry {
         DRAIN,
     }
 
-    /** [queued]: entries in the mirror; [appInFront]: the activity is resumed. */
-    fun run(queued: Int, appInFront: Boolean): Run = when {
-        queued == 0 -> Run.NOTHING_OWED
+    /** [sendable]: mirror entries not marked unsendable; [appInFront]: the activity is resumed. */
+    fun run(sendable: Int, appInFront: Boolean): Run = when {
+        sendable == 0 -> Run.NOTHING_OWED
         appInFront -> Run.END_FOR_PAGE
         else -> Run.DRAIN
     }
 
     /** What a drain's leftovers decide. */
     enum class Decision {
-        /** Nothing left: the request succeeds. */
+        /** Nothing left a retry could send: the request succeeds. */
         DONE,
 
-        /** Every entry left can still go: retry, under WorkManager's backoff. */
+        /** At least one entry left can still go: retry, under WorkManager's backoff. */
         RETRY,
 
-        /** At least one entry can never go from here: end, and ask the user to open the app. */
+        /** This device can send nothing from here: end, and ask the user to open the app. */
         GIVE_UP,
     }
 
     /** Decides from the [Prospect] of every entry a drain left. */
     fun decide(left: Collection<Prospect>): Decision = when {
-        left.isEmpty() -> Decision.DONE
-        left.any { it == Prospect.NEVER } -> Decision.GIVE_UP
-        else -> Decision.RETRY
+        left.any { it == Prospect.BLOCKED } -> Decision.GIVE_UP
+        left.any { it == Prospect.NOT_YET } -> Decision.RETRY
+        else -> Decision.DONE
     }
+
+    /** Whether the drain marked an entry that will never go - the member is then told (the nudge). */
+    fun tells(left: Collection<Prospect>): Boolean = left.any { it == Prospect.NEVER }
 }

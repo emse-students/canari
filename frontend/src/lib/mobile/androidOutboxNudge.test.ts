@@ -68,7 +68,7 @@ describe('the outbox nudge', () => {
   it('is withdrawn by every drain, inside the lock that rewrote the mirror', () => {
     const drain = body(service, 'internal fun drainOutbox(');
     const locked = drain.slice(drain.indexOf('synchronized(OUTBOX_LOCK) {'));
-    const settleAt = locked.indexOf('settleOutboxNudgeLocked(context, asked = false,');
+    const settleAt = locked.indexOf('settleOutboxNudgeLocked(context, asked = tells,');
     expect(settleAt).toBeGreaterThan(locked.indexOf('drainOutboxLocked('));
     // Before the block's result, so still inside it.
     expect(settleAt).toBeLessThan(locked.indexOf('\n                left\n'));

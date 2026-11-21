@@ -2583,10 +2583,11 @@ exponential backoff on both platforms.
   enqueued as ONE unique work (`canari_outbox_retry`, `APPEND_OR_REPLACE`, so each enqueue is owed a
   drain after it). The plain requests of earlier builds were unconstrained; they are cancelled once
   by their class tag (#3912). **It ends on durable state, never on a count (1.7.3):** the drain says
-  why each entry it left remains, and a drain whose leftovers can all still go is a `Result.retry()`
-  with no cap; one refused for good (a 4xx), no push secret, no MLS state or an unreadable push
-  context enters a persistent failure state and shows the "open the app" nudge
-  (`showPendingSyncNotification`) - [mobile](../frontend/mobile.md#the-retry-ends-on-durable-state-never-on-a-count-173).
+  why each entry it left remains, and a drain that left one that can still go is a `Result.retry()`
+  with no cap; one refused for good (a 4xx, a group not held) is marked in the mirror, skipped, told
+  by the nudge and adopted failed by the page, without holding the others back; no push secret, no
+  MLS state, a key that does not open it or an unreadable push context enters a persistent failure
+  state and shows the "open the app" nudge (`showPendingSyncNotification`) - [mobile](../frontend/mobile.md#the-retry-ends-on-durable-state-never-on-a-count-173).
   The flag resets when the user opens the app (`MainActivity.onResume`). A run that finds the app in
   front ENDS its request (the outbox is the page's), and the app's move to the background enqueues a
   fresh one when the mirror still holds an entry.

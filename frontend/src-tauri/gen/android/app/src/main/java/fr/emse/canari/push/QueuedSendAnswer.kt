@@ -48,6 +48,13 @@ object QueuedSendAnswer {
         /** A 4xx refusal of this frame or credential ([OutboxRetry.isFinalRefusal]): never from here. */
         REFUSED(OutboxRetry.Prospect.NEVER),
 
+        /**
+         * 403 `sender_not_active` with the device's row `pending`: a re-add of this device is in
+         * flight, and once it lands the same frame is accepted - read from the server's TYPED body
+         * (`messaging.service.ts`, `error` and `status`), never from its prose.
+         */
+        SENDER_BEING_READDED(OutboxRetry.Prospect.NOT_YET),
+
         /** A 2xx whose body is not JSON: no answer from the server. */
         BODY_NOT_JSON(OutboxRetry.Prospect.NOT_YET),
 
@@ -56,6 +63,13 @@ object QueuedSendAnswer {
 
         /** No answer at all: DNS, connect, timeout, a reset before the status. */
         TRANSPORT_FAILED(OutboxRetry.Prospect.NOT_YET),
+    }
+
+    /** The typed fields of a refusal's JSON body (`error`, `status`); null when absent or unread. */
+    data class Refusal(val error: String?, val status: String?) {
+        companion object {
+            val UNREAD = Refusal(null, null)
+        }
     }
 
     /** The decision. */
@@ -68,12 +82,20 @@ object QueuedSendAnswer {
     }
 
     /**
-     * Decides from the status [code] and, only when it is 200 or 201, the body [readBody] produces -
-     * a refused status never reads its body.
+     * Decides from the status [code] and, only when it is 200 or 201, the body [readBody] produces.
+     * A final refusal reads only its typed fields ([readRefusal]), and only for a 403 - the one
+     * status whose `sender_not_active` is a "later" while a re-add is in flight.
      */
-    fun classify(code: Int, readBody: () -> BodyRead): Outcome {
+    fun classify(code: Int, readRefusal: () -> Refusal = { Refusal.UNREAD }, readBody: () -> BodyRead): Outcome {
         if (code != 200 && code != 201) {
-            return Outcome.Kept(if (OutboxRetry.isFinalRefusal(code)) KeptCause.REFUSED else KeptCause.NOT_ACCEPTED_STATUS)
+            if (!OutboxRetry.isFinalRefusal(code)) return Outcome.Kept(KeptCause.NOT_ACCEPTED_STATUS)
+            if (code == 403) {
+                val refusal = readRefusal()
+                if (refusal.error == "sender_not_active" && refusal.status == "pending") {
+                    return Outcome.Kept(KeptCause.SENDER_BEING_READDED)
+                }
+            }
+            return Outcome.Kept(KeptCause.REFUSED)
         }
         return when (val body = readBody()) {
             is BodyRead.Json -> Outcome.Sent(body.receivedAt.coerceAtLeast(0L))
