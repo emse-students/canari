@@ -3427,7 +3427,7 @@ after that phone's app socket opened, and the socket closed 20 s later - the pus
 nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
 reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
 heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
-notifications. Fixed for `1.7.1` by the frame trigger below ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+notifications. Fixed for `1.7.1` by the frame trigger below ([below](#the-frame-trigger-of-a-reaction-2026-11-17)).
 
 #### The frame trigger of a reaction (2026-11-17)
 
@@ -3463,6 +3463,20 @@ when the row first opens, so a seed a peer answers hours later announces the rea
 once, since the push was dropped in front; principle 2 (the essential is never lost) over a
 notification that reads as old. Tests: `channelEventHandler.reaction.test.ts`,
 `useConversations.owedLiveReaction.svelte.test.ts`.
+
+**A reaction's alert goes with its conversation - also when THIS device's reader opens it (2026-11-21).**
+The native cancel had two triggers: a push (a silent self frame) and an own read learned over the
+socket from ANOTHER device. The server never reports a read back to the device that took it, and the
+activity does not resume when the app was already open, so an alert the frame trigger raised for a
+conversation the reader then opened in the same session stood on screen. The receipt effect in
+`MainChatPage` now hands the reading to the native side once per reading
+(`openedConversationDismissal.ts`, then `recordNativeReadElsewhere(..., 'read_here', ...)` ->
+`readElsewhereFromWebSocket`): the same decision as a read elsewhere, so the message banner and the
+reaction go unless a message line newer than the read is unread. It runs BEFORE the effect's
+`target <= held` return - a reaction moves no mark - and not for an idle window; leaving the
+conversation, the app going away or an idle window re-arms it, so coming back dismisses what was
+raised meanwhile. Android only (the plugin and the browser post under ids the page does not keep).
+Tests: `openedConversationDismissal.test.ts`, `nativeNotification.test.ts`.
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction
 (`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is

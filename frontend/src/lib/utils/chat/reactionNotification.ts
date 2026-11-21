@@ -8,7 +8,7 @@
  * reason holds only while THAT conversation is on screen; the predicate was the whole app. So a
  * reaction landing while the app was open on the feed, in another conversation or in a salon was
  * lost, and the web and desktop, which have no push, never notified one at all (owner, 2026-11-17;
- * [backlog](../../../../../docs/wiki/backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+ * [backlog](../../../../../docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
  *
  * A message has a second trigger for exactly that case - the frame, decided by `canSeeArrival` - and
  * this gives a reaction the same one:
