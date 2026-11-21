@@ -28,8 +28,11 @@ export interface OpenedConversationDismissal {
    * reading and again whenever `at` rises above what was handed over; records it as handed over.
    */
   take: (conversationKey: string, at: number) => boolean;
-  /** Forgets the last hand-over, which did not reach the native side: the next `take` is true. */
-  unspend: () => void;
+  /**
+   * Forgets the hand-over of `conversationKey` that did not reach the native side: its next `take`
+   * is true. A late refusal for a conversation no longer the one handed over changes nothing.
+   */
+  unspend: (conversationKey: string) => void;
   /** Ends the current reading: the next `take` of any conversation is true again. */
   reset: () => void;
 }
@@ -45,8 +48,8 @@ export function createOpenedConversationDismissal(): OpenedConversationDismissal
       handedAt = at;
       return true;
     },
-    unspend() {
-      handedOver = null;
+    unspend(conversationKey) {
+      if (handedOver === conversationKey) handedOver = null;
     },
     reset() {
       handedOver = null;

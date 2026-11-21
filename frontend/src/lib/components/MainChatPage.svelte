@@ -862,7 +862,7 @@
       ).then((queued) => {
         // A refusal (or a throw) is already accused by the callee; the hand-over is not spent, so
         // the next run of this effect retries it. Off Android there is nothing to hand over.
-        if (!queued && isAndroidTauriRuntime()) openedDismissal.unspend();
+        if (!queued && isAndroidTauriRuntime()) openedDismissal.unspend(currentSelection);
       });
     }
     if (target <= held) return;

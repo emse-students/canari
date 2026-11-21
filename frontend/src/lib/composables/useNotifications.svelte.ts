@@ -213,7 +213,8 @@ export function useNotifications() {
    * with its conversation" ({@link dismissConversationReactions}). Android's are the native
    * builder's, cancelled there. A push-drawn one is not here: the page never held it.
    */
-  const raisedReactions = new Map<string, { id?: number; notification?: Notification }[]>();
+  type RaisedReaction = { key: string; id?: number; notification?: Notification };
+  const raisedReactions = new Map<string, RaisedReaction[]>();
 
   // ---------- Audio ----------
 
@@ -712,6 +713,15 @@ export function useNotifications() {
    *
    * @returns how many were asked to go.
    */
+  /** Forgets one held entry (its notification closed by itself), dropping an emptied conversation. */
+  function releaseRaisedReaction(conversationId: string, entry: RaisedReaction) {
+    const list = raisedReactions.get(conversationId);
+    if (!list) return;
+    const left = list.filter((r) => r !== entry);
+    if (left.length === 0) raisedReactions.delete(conversationId);
+    else raisedReactions.set(conversationId, left);
+  }
+
   async function dismissConversationReactions(conversationId: string): Promise<number> {
     const held = raisedReactions.get(conversationId);
     if (!held) return 0;
@@ -742,12 +752,15 @@ export function useNotifications() {
   function holdRaisedReaction(
     channelId: string,
     conversationId: string | undefined,
-    entry: { id?: number; notification?: Notification }
-  ) {
-    if (channelId !== CHANNEL_REACTIONS || !conversationId) return;
-    const list = raisedReactions.get(conversationId) ?? [];
+    entry: RaisedReaction
+  ): RaisedReaction | null {
+    if (channelId !== CHANNEL_REACTIONS || !conversationId) return null;
+    // One entry per slot: a reactor's second reaction to one message REPLACES the first (same id or
+    // tag), so holding both would only duplicate it.
+    const list = (raisedReactions.get(conversationId) ?? []).filter((r) => r.key !== entry.key);
     list.push(entry);
     raisedReactions.set(conversationId, list);
+    return entry;
   }
 
   /**
@@ -777,7 +790,14 @@ export function useNotifications() {
             ...androidNotificationOptions(body, channelId),
             ...(idKey ? { id: stableNotifId(idKey) } : {}),
           });
-          if (idKey) holdRaisedReaction(channelId, conversationId, { id: stableNotifId(idKey) });
+          // The plugin reports no close, so a plugin entry lives until its conversation is opened -
+          // one small id per reactor and message at most (`holdRaisedReaction` dedupes by slot).
+          if (idKey) {
+            holdRaisedReaction(channelId, conversationId, {
+              key: idKey,
+              id: stableNotifId(idKey),
+            });
+          }
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
@@ -870,9 +890,21 @@ export function useNotifications() {
           if (conversationId) notifNav.navigate(conversationId);
           n.close();
         };
-        holdRaisedReaction(channelId, conversationId, { notification: n });
+        const held = holdRaisedReaction(channelId, conversationId, {
+          key: idKey ?? convKey,
+          notification: n,
+        });
+        // A notification that closed - by itself after 8 s, by a click, by the user - is no longer
+        // held: only an open one can be taken down with its conversation.
+        const release = () => {
+          if (held && conversationId) releaseRaisedReaction(conversationId, held);
+        };
+        n.onclose = release;
         console.log(`[NOTIF] Raised for ${convKey}.`);
-        setTimeout(() => n.close(), 8000);
+        setTimeout(() => {
+          n.close();
+          release();
+        }, 8000);
       } catch (e) {
         // A browser refuses a Notification for reasons a page cannot test for in advance, and an
         // empty catch here is indistinguishable from never having tried.

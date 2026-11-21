@@ -684,6 +684,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // THE CANCELS AND THE FORGET ARE ONE STEP, under the lock a post holds from the banner it
                 // builds on to its record: a post between them would be forgotten while it stands, or
                 // rebuild on a banner already gone. The next post starts a new thread.
+                val idPrefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
                 synchronized(READ_ELSEWHERE.lock) {
                     // A banner the platform holds after an inline answer is NOT cancelled - the
                     // cancel would be dropped and re-extend it ([ReadElsewhereMarks]'s class comment).
@@ -702,7 +703,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
                             channelId == CHANNEL_REACTIONS
                         ) {
-                            if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)
+                            if (isHeldByDirectReply(sbn.notification)) held += sbn.id else {
+                                manager.cancel(sbn.id)
+                                // EVERY REMOVAL SAYS WHY: this sweep removes a banner whose conversation
+                                // was NOT necessarily read (opening the app is the whole rule), and it
+                                // used to leave no line - a banner gone a second after the app came to
+                                // the front could not be told from a defect.
+                                val conversation = idPrefs.all.entries
+                                    .firstOrNull { (key, value) -> value == sbn.id && key != "__counter__" && ':' !in key }?.key
+                                Log.d(TAG, "cancelAllMessageNotifications: removed id=${sbn.id} channel=$channelId conversation=${ConversationRef.of(conversation)} - the app came to the foreground (opening the app clears every message notification, read or not)")
+                            }
                         }
                     }
                     // What the record holds is cancelled BY ID too: the sweep above reads a shade that

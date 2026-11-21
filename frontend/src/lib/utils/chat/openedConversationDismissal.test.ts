@@ -34,7 +34,15 @@ describe('openedConversationDismissal', () => {
   it('does not spend a hand-over the native side refused', () => {
     const d = createOpenedConversationDismissal();
     expect(d.take('g1', 10)).toBe(true);
-    d.unspend();
+    d.unspend('g1');
     expect(d.take('g1', 10)).toBe(true);
+  });
+
+  it('a late refusal for g1 does not reset the hand-over of g2', () => {
+    const d = createOpenedConversationDismissal();
+    expect(d.take('g1', 10)).toBe(true);
+    expect(d.take('g2', 10)).toBe(true);
+    d.unspend('g1');
+    expect(d.take('g2', 10)).toBe(false);
   });
 });

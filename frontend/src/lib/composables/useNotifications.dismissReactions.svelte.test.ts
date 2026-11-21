@@ -26,6 +26,7 @@ const closed: string[] = [];
 class FakeNotification {
   static permission = 'granted';
   onclick: (() => void) | null = null;
+  onclose: (() => void) | null = null;
   tag: string;
   constructor(_title: string, options: { tag?: string }) {
     this.tag = String(options.tag);
@@ -55,6 +56,31 @@ function reaction(conversationId: string, messageId: string) {
     at: 1_700_000_000_100,
   };
 }
+
+describe('what the page holds of a reaction notification', () => {
+  it('drops an entry when its notification closes by itself, so a never-opened conversation holds nothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const notifs = useNotifications();
+      await notifs.sendReactionNotification(reaction('grp-1', 'm1'));
+      await vi.advanceTimersByTimeAsync(8100);
+      expect(await notifs.dismissConversationReactions('grp-1')).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds ONE entry for a slot raised twice', async () => {
+    const notifs = useNotifications();
+    await notifs.sendReactionNotification(reaction('grp-1', 'm1'));
+    await notifs.sendReactionNotification({
+      ...reaction('grp-1', 'm1'),
+      emoji: '😂',
+      at: 1_700_000_000_400,
+    });
+    expect(await notifs.dismissConversationReactions('grp-1')).toBe(1);
+  });
+});
 
 describe('dismissConversationReactions', () => {
   it("closes the opened conversation's reaction notifications and leaves the others", async () => {
