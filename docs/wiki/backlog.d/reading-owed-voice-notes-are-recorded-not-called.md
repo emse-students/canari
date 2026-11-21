@@ -41,3 +41,19 @@ effects); Signal `AudioCodec.java` (AAC 32 kb/s, 44.1 kHz, mono, `MIC` source); 
 R128 s2 and AES TD1008 for speech loudness; WebKit bugs 192932, 257495, 234784, 274222.
 
 Charter: principle 2 (the essential is never lost - a voice note that cannot be understood is lost).
+
+**2026-11-21, iPhone 12 on `1.7.3-alpha.4` (TestFlight build 100700304), account `gamma`, sitting r173a4-ios (evidence out of the repo).**
+Mi 9T rows not taken here (its build failed). The WDA bench cannot hold a finger, so the notes were
+recorded through the lock gesture (press, slide right 90 pt, release), not hold-and-release.
+
+| Row | Verdict | Evidence |
+| --- | --- | --- |
+| 1 capture line | **PARTIAL** | The app log reads `capture as recording (call phase none)`, then `capture: echo=false noise=undefined agc=undefined rate=48000Hz ch=? device=builtin-or-other mime=audio/mp4 bps=192000`. Echo is off and the call branch is not taken; WebKit reports no noise or gain state and no channel count, so the line cannot prove `noise=false agc=false ch=1` on iOS. |
+| 2 no call configuration | **PARTIAL** | The log shows `audio session ambient -> play-and-record` at the start and `-> ambient` at release (0 mic holders left). The WebKit session is `PlayAndRecord_WithBluetooth_DefaultToSpeaker`, mode `VideoChat` (WebKit's, expected). **Another app's music is STOPPED, not ducked:** with Safari playing audio, the syslog line `cmsInterruptSession ... INTERRUPTING ... [MediaPlayback] [NonMixable] ... stopping playing` fires at the first microphone open, and the Safari clock lost the recording's duration. The loudspeaker read after recording was not taken by ear. |
+| 3 the sound | **NOT TAKEN** (container only) | Three notes fetched decrypted from the web peer: AAC, 48 kHz, **2 channels**, 150 kb/s. Every file is near-silent (peak -45 to -50.6 dBFS, integrated -64 LUFS): the workstation speech was not picked up and the phone's own playback was interrupted by the recording (row 2), so no loudness, clipping or cutoff figure exists and no `1.7.2` comparison was possible (no older iPhone build). Mono is NOT met on the iPhone (2 channels in the file). |
+| 4 a call is not broken | **NOT TAKEN** | The iPhone called the web seat; the callee showed "Connexion..." and the call ended "Call not answered" (the web seat has no fake media device). |
+| 5 a ring during a note | **NOT TAKEN** | Needs a call partner. |
+
+Seen on the way: a microphone permission prompt raised by the very first press left the recorder in
+`holding` with its timer running for minutes and no way out (slide, bin), until the app was ended;
+not reproduced, since the prompt appears once.
