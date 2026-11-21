@@ -525,7 +525,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notifications for messages read here or elsewhere (visible part of the read-state sync).
          */
         fun cancelAllMessageNotifications(context: Context) {
-            if (android.os.Build.VERSION.SDK_INT < 23) return
             try {
                 val manager =
                     context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -540,13 +539,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val heldIds = snapshot.filter { isHeldByDirectReply(it.notification) }.map { it.id }.toSet()
                     val held = mutableListOf<Int>()
                     for (sbn in snapshot) {
-                        val channelId =
-                            if (android.os.Build.VERSION.SDK_INT >= 26) sbn.notification.channelId else null
+                        // minSdk 28: every record carries the channel it was posted on.
+                        val channelId = sbn.notification.channelId
                         // Only touch message notifications (leave social/forms alone; the mentions
                         // and reactions channels are message tiers so they clear on open too). Ring
                         // notifications are also cleared: once the app is open the in-app CallOverlay
                         // rings.
-                        if (channelId == null || channelId == CHANNEL_MESSAGES ||
+                        if (channelId == CHANNEL_MESSAGES ||
                             channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
                             channelId == CHANNEL_REACTIONS
                         ) {
@@ -2108,15 +2107,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             justPosted: Int = 0,
             justCancelled: Int = 0,
         ): Int {
-            if (android.os.Build.VERSION.SDK_INT < 23) return 0
             return try {
                 val ids = manager.activeNotifications.filter { sbn ->
                     // A FIXED ID IS NEVER A CONVERSATION ([FixedNotifIds.ALL]): the summary, the
                     // outbox nudge, the worker's foreground notice (both on the messages channel)
                     // and every other reserved notice - one predicate, not a list kept by hand.
                     sbn.id !in FixedNotifIds.ALL &&
-                        (android.os.Build.VERSION.SDK_INT < 26 ||
-                            sbn.notification.channelId == CHANNEL_MESSAGES ||
+                        (sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
                 }.mapTo(mutableSetOf()) { it.id }
                 if (justPosted != 0) ids.add(justPosted)
@@ -2753,16 +2750,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * [legacy-compatibility](../../../../../../../../../../docs/wiki/legacy-compatibility.md).
          */
         private fun withdrawOutboxNudge(manager: NotificationManager, where: String) {
-            val shade = manager.activeNotifications.map { sbn ->
-                val flags = sbn.notification.flags
-                OutboxNudge.Standing(
-                    sbn.id,
-                    ongoing = (flags and android.app.Notification.FLAG_ONGOING_EVENT) != 0,
-                    foregroundService = (flags and android.app.Notification.FLAG_FOREGROUND_SERVICE) != 0,
+            // The read comes first - the line must know what stood BEFORE the cancel - but its
+            // failure never costs the withdrawal: it is caught here, and the cancel runs after it.
+            val stood = try {
+                OutboxNudge.withdrawal(
+                    manager.activeNotifications.map { sbn ->
+                        val flags = sbn.notification.flags
+                        OutboxNudge.Standing(
+                            sbn.id,
+                            ongoing = (flags and android.app.Notification.FLAG_ONGOING_EVENT) != 0,
+                            foregroundService = (flags and android.app.Notification.FLAG_FOREGROUND_SERVICE) != 0,
+                        )
+                    },
                 )
+            } catch (e: Exception) {
+                Log.e(TAG, "$where: reading the shade failed - the nudge is withdrawn unread, a pre-1.7.3 one left: ${throwableSite(e)}")
+                null
             }
-            val stood = OutboxNudge.withdrawal(shade)
             manager.cancel(OUTBOX_NUDGE_NOTIF_ID)
+            if (stood == null) return
             if (stood.preUpdateNudgeStood) manager.cancel(FixedNotifIds.WORKER_FOREGROUND)
             // A line per record that STOOD, none when the shade held nothing of ours.
             if (stood.nudgeStood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")

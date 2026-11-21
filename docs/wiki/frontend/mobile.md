@@ -4041,7 +4041,7 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   all of them, and it is the line the device reading takes as evidence. One line per record that
   stood: `outbox mirror empty - nudge withdrawn (id=999)`, `a nudge posted before 1.7.3 withdrawn
   (id=9998)`, `id=9998 is the worker's notice - left`. The cancel of 999 is unconditional
-  (idempotent, and it also takes a post the read lags behind); only the line follows the read. The
+  (idempotent, and it also takes a post the read lags behind); only the line follows the read. A read that throws is caught and logged as an ERROR, and the cancel still runs after it (only the lines and the 9998 check are skipped). The
   cost is one `activeNotifications` binder call per drain that leaves the mirror empty.
 - **Its own id: `FixedNotifIds.OUTBOX_NUDGE` = 999.** It shared 9998 with `MlsBackgroundWorker`'s
   foreground notice, now `FixedNotifIds.WORKER_FOREGROUND`, so a blind cancel would have taken that

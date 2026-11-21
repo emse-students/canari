@@ -86,7 +86,14 @@ describe('the outbox nudge', () => {
     expect(withdraw.match(/manager\.activeNotifications/g)).toHaveLength(1);
     expect(withdraw).toContain('Notification.FLAG_ONGOING_EVENT');
     expect(withdraw).toContain('Notification.FLAG_FOREGROUND_SERVICE');
-    expect(withdraw).toContain('val stood = OutboxNudge.withdrawal(shade)');
+    expect(withdraw).toContain('val stood = try {\n                OutboxNudge.withdrawal(');
+    // A failed read never costs the withdrawal: it is caught, and the cancel runs after the catch,
+    // before the early return that only skips the lines and the 9998 check.
+    const caught = withdraw.indexOf('} catch (e: Exception) {');
+    const cancelAt = withdraw.indexOf('            manager.cancel(OUTBOX_NUDGE_NOTIF_ID)\n');
+    expect(caught).toBeGreaterThan(withdraw.indexOf('manager.activeNotifications'));
+    expect(cancelAt).toBeGreaterThan(caught);
+    expect(withdraw.indexOf('if (stood == null) return')).toBeGreaterThan(cancelAt);
     // The cancel of the nudge is unconditional; the 9998 cancel needs the pre-update verdict.
     expect(withdraw).toContain('            manager.cancel(OUTBOX_NUDGE_NOTIF_ID)\n');
     expect(withdraw).toContain(
