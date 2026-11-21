@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
  * Seen on the Mi 9T, 2026-11-21: a quick reply queued offline was delivered by the retry worker and
  * the nudge stayed in the shade until the app opened - every drain that left sends posted it, and no
  * path withdrew it. And its id, 9998, was also the background worker's foreground notice, so a blind
- * cancel would have taken that down. The decision itself is tested on the JVM (`OutboxNudgeTest`);
+ * cancel would have taken that down; it has its own id since 1.7.3. The decision itself is tested on the JVM (`OutboxNudgeTest`);
  * this pins the wiring no JVM test reaches: who posts, who cancels, and under which lock.
  * Mechanism: docs/wiki/frontend/mobile.md, "The outbox nudge".
  */
@@ -84,28 +84,28 @@ describe('the outbox nudge', () => {
   it('withdraws reading the shade once, logging only what stood', () => {
     const withdraw = body(service, 'private fun withdrawOutboxNudge(');
     expect(withdraw.match(/manager\.activeNotifications/g)).toHaveLength(1);
-    expect(withdraw).toContain('Notification.FLAG_ONGOING_EVENT');
-    expect(withdraw).toContain('Notification.FLAG_FOREGROUND_SERVICE');
-    expect(withdraw).toContain('val stood = try {\n                OutboxNudge.withdrawal(');
+    expect(withdraw).toContain(
+      'val stood = try {\n                OutboxNudge.nudgeStood(manager.activeNotifications.map { it.id })'
+    );
     // A failed read never costs the withdrawal: it is caught, and the cancel runs after the catch,
-    // before the early return that only skips the lines and the 9998 check.
+    // unconditionally.
     const caught = withdraw.indexOf('} catch (e: Exception) {');
     const cancelAt = withdraw.indexOf('            manager.cancel(OUTBOX_NUDGE_NOTIF_ID)\n');
     expect(caught).toBeGreaterThan(withdraw.indexOf('manager.activeNotifications'));
     expect(cancelAt).toBeGreaterThan(caught);
-    expect(withdraw.indexOf('if (stood == null) return')).toBeGreaterThan(cancelAt);
-    // The cancel of the nudge is unconditional; the 9998 cancel needs the pre-update verdict.
-    expect(withdraw).toContain('            manager.cancel(OUTBOX_NUDGE_NOTIF_ID)\n');
-    expect(withdraw).toContain(
-      'if (stood.preUpdateNudgeStood) manager.cancel(FixedNotifIds.WORKER_FOREGROUND)'
-    );
     // The withdrawal line exists only behind what the shade showed.
     expect(withdraw).toContain(
-      'if (stood.nudgeStood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")'
+      'if (stood) Log.d(TAG, "$where: outbox mirror empty - nudge withdrawn (id=$OUTBOX_NUDGE_NOTIF_ID)")'
     );
     expect(service.match(/nudge withdrawn \(id=/g)).toHaveLength(1);
-    // The only cancel of the worker's id anywhere in the service.
-    expect(service.match(/cancel\(FixedNotifIds\.WORKER_FOREGROUND\)/g)).toHaveLength(1);
+    // The worker's foreground notice is never cancelled by the service: an update already cleared
+    // every nudge a pre-1.7.3 build posted under its id (mobile.md, "The outbox nudge").
+    expect(service).not.toMatch(/WORKER_FOREGROUND/);
+    for (const source of [service, worker, retry]) {
+      expect(source).not.toMatch(
+        /cancel\((FixedNotifIds\.WORKER_FOREGROUND|FOREGROUND_NOTIF_ID)\)/
+      );
+    }
     expect(service).toContain(
       'OutboxNudge.Decision.WITHDRAW -> withdrawOutboxNudge(manager, where)'
     );
