@@ -99,6 +99,18 @@ describe('PricingFactsService - the account read of an anonymous form names nobo
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.filter((l) => l.includes(USER.slice(0, 8)))).toEqual([]);
     lines.length = 0;
+    // The profile read that prices an audience criterion takes the same context.
+    for (const answer of [answers[0], answers[1], answers[3]]) {
+      global.fetch = jest.fn(answer) as unknown as typeof fetch;
+      await service.cursusFor(USER, true, { anonymous: true }).catch(() => undefined);
+    }
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ status: 200, ok: true, json: async () => ({ cursusViews: [] }) })
+    ) as unknown as typeof fetch;
+    await service.cursusFor(USER, true, { anonymous: true });
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.filter((l) => l.includes(USER.slice(0, 8)))).toEqual([]);
+    lines.length = 0;
     global.fetch = jest.fn(answers[0]) as unknown as typeof fetch;
     await service.accountIdentity(USER).catch(() => undefined);
     expect(lines.some((l) => l.includes(USER.slice(0, 8)))).toBe(true);

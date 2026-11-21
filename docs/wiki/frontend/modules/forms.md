@@ -1462,10 +1462,12 @@ would be a separate decision.
    emits debug in production). On an anonymous submit social-service names the form as "an anonymous form"
    (`formTag`, `identityFormId`: the "priced on" line, the audience, grid and file refusals, the identity
    refusals and the [LEGACY] lines) and the account read (`accountIdentity` with `{ anonymous: true }`) says
-   "an anonymous respondent" - no short id of either. core-service's own debug line for that read names the
-   account (`internal respondent-identity id=...`) and never the form, so it pairs with nothing. Still
-   pairing by design, outside this path: the profile read of a form with an audience criterion
-   (`[PRICING] profile user=...`, no form id) and the review-cohort check. The row itself is never tied to
+   "an anonymous respondent" - no short id of either. core-service's debug line for that read carries no id (its miss warning keeps it: that one is the
+   accusation), and the profile read for an audience criterion takes the same `{ anonymous }` context.
+   No service log line names the account or the form on this path. **What remains is the HTTP access
+   log**: it records the form's URL with the client address, as for every anonymous form, and its
+   `/api/ws` lines pair the address with the `userId` - both predate this feature, and are planned
+   in [the access-log backlog entry](../../backlog.d/redact-the-form-id-and-user-id-in-the-access-log.md). Not inspected: the review-cohort check. The row itself is never tied to
    an account (`userId` empty; register C8). Pinned by the log test of the anonymous join in
    `forms.service.respondent-identity.spec.ts`.
 9. **Every cursus is read, and the organiser sees where each value came from** - the notice and the privacy

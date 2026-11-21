@@ -799,6 +799,20 @@ describe('the respondent account fields of a form', () => {
             'member'
           )
         );
+        // A member carrying a guest name is refused too: that line names no anonymous form.
+        await code(
+          service.submit(
+            FORM,
+            {
+              answers: {},
+              userId: USER,
+              clientVersion: ANNOUNCING,
+              announcedFields: ['cursus'],
+              guestFirstName: 'Ada',
+            } as any,
+            'member'
+          )
+        );
         expect(names()).toEqual([]);
       });
     });

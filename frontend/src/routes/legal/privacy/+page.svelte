@@ -390,14 +390,14 @@
           promo et votre formation : elles sont alors lues sur votre compte (toutes celles de votre
           compte, si vous en avez plusieurs), le formulaire vous le dit avant l'envoi, et elles
           accompagnent votre réponse sans votre nom ni rien d'autre qui vous désigne ; ceux qui
-          gèrent le formulaire voient, pour chaque réponse, si la promo vient du compte ou a été
-          indiquée (dans un petit groupe, une promo et une formation peuvent suffire à reconnaître
-          quelqu'un). S'il demande votre statut ou votre campus, c'est vous qui les indiquez, sans
-          lien avec votre compte ; un invité indique lui-même sa promo et sa formation. Quand un
-          responsable d'association enregistre l'issue d'un paiement non livré (remboursé ou
-          cotisation attribuée), Canari garde cette issue, sa date et l'identifiant du responsable.
-          Quand une association vous rembourse un paiement depuis Canari, Canari garde le
-          remboursement : le paiement concerné, le montant, total ou partiel, le motif saisi, la
+          gèrent le formulaire voient, pour chaque réponse, si la promo et la formation viennent du
+          compte ou ont été indiquées (dans un petit groupe, une promo et une formation peuvent
+          suffire à reconnaître quelqu'un). S'il demande votre statut ou votre campus, c'est vous
+          qui les indiquez, sans lien avec votre compte ; un invité indique lui-même sa promo et sa
+          formation. Quand un responsable d'association enregistre l'issue d'un paiement non livré
+          (remboursé ou cotisation attribuée), Canari garde cette issue, sa date et l'identifiant du
+          responsable. Quand une association vous rembourse un paiement depuis Canari, Canari garde
+          le remboursement : le paiement concerné, le montant, total ou partiel, le motif saisi, la
           date, l'identifiant du responsable qui l'a demandé (et de celui qui l'a vérifié si Lydia
           ne l'avait pas confirmé) et la réponse de Lydia. Le motif est écrit librement par le
           responsable : il peut nommer une personne, et il figure tel quel dans le relevé que les

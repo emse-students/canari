@@ -867,6 +867,7 @@ export class FormsService {
       associationId: form.associationId,
       answers,
       needProfile,
+      anonymous: form.anonymous === true,
     });
   }
 
@@ -2600,7 +2601,7 @@ export class FormsService {
       askedGuestFields(form.guestFields),
       input,
       guest ? 'guest' : 'member',
-      id
+      identityFormId(form)
     );
 
     // WHO ANSWERED, as the form chose to keep it (`respondent-identity.ts`): read from the account

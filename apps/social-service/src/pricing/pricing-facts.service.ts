@@ -74,6 +74,8 @@ export class PricingFactsService {
     associationId?: string | null;
     answers?: Record<string, string[]>;
     needProfile: boolean;
+    /** The facts are read for an ANONYMOUS form's submit: no log line names the account. */
+    anonymous?: boolean;
   }): Promise<PricingFacts> {
     const answers = input.answers ?? {};
 
@@ -82,7 +84,9 @@ export class PricingFactsService {
         ? await this.userTagService.listHeldCotisationTiers(input.userId, input.associationId)
         : [];
 
-    const cursus = await this.cursusFor(input.userId, input.needProfile);
+    const cursus = await this.cursusFor(input.userId, input.needProfile, {
+      anonymous: input.anonymous,
+    });
     return { cursus, cotisationTiers, answers };
   }
 
@@ -110,10 +114,11 @@ export class PricingFactsService {
    */
   async cursusFor(
     userId: string | undefined,
-    needProfile: boolean
+    needProfile: boolean,
+    context: { anonymous?: boolean } = {}
   ): Promise<readonly CursusView[]> {
     if (!needProfile || !userId) return NO_CURSUS;
-    return this.fetchCursus(userId);
+    return this.fetchCursus(userId, context);
   }
 
   /**
@@ -132,7 +137,13 @@ export class PricingFactsService {
    * the typed `PRICING_CORE_BEHIND`, rather than priced as somebody with no cursus - that would
    * overcharge every student it served.
    */
-  private async fetchCursus(userId: string): Promise<readonly CursusView[]> {
+  private async fetchCursus(
+    userId: string,
+    context: { anonymous?: boolean } = {}
+  ): Promise<readonly CursusView[]> {
+    // An ANONYMOUS form's submit names nobody in its logs (owner review, 2026-11-21), as in
+    // `accountIdentity`: no line of this read pairs a person with the form.
+    const who = context.anonymous ? 'an anonymous respondent' : `user=${userId.slice(0, 8)}`;
     const url = coreUrl(`internal/users/${encodeURIComponent(userId)}/public-profile`);
     let res: Response;
     try {
@@ -141,7 +152,7 @@ export class PricingFactsService {
       });
     } catch (e) {
       this.logger.error(
-        `[PRICING] profile fetch FAILED user=${userId.slice(0, 8)} - a price depends on it, so the ` +
+        `[PRICING] profile fetch FAILED ${who} - a price depends on it, so the ` +
           `operation is refused rather than priced wrongly: ${e instanceof Error ? e.message : String(e)}`
       );
       throw new ServiceUnavailableException(
@@ -150,13 +161,13 @@ export class PricingFactsService {
     }
     if (res.status === 404) {
       this.logger.warn(
-        `[PRICING] profile MISS user=${userId.slice(0, 8)} - no such user in core-service, priced as "everyone else"`
+        `[PRICING] profile MISS ${who} - no such user in core-service, priced as "everyone else"`
       );
       return NO_CURSUS;
     }
     if (!res.ok) {
       this.logger.error(
-        `[PRICING] profile fetch returned ${res.status} user=${userId.slice(0, 8)} - refusing rather than pricing wrongly`
+        `[PRICING] profile fetch returned ${res.status} ${who} - refusing rather than pricing wrongly`
       );
       throw new ServiceUnavailableException(
         'Cannot check your profile right now, so this cannot be priced. Please try again in a moment.'
@@ -165,7 +176,7 @@ export class PricingFactsService {
     const profile = (await res.json()) as InternalPublicProfile;
     if (!Array.isArray(profile.cursusViews)) {
       this.logger.error(
-        `[PRICING] ${PRICING_CORE_BEHIND} user=${userId.slice(0, 8)} - core-service older than the ` +
+        `[PRICING] ${PRICING_CORE_BEHIND} ${who} - core-service older than the ` +
           'cursus views (a rollback window); refusing rather than pricing on nothing'
       );
       throw new ServiceUnavailableException({
@@ -179,7 +190,7 @@ export class PricingFactsService {
       formation: view.formation ?? null,
     }));
     this.logger.debug(
-      `[PRICING] profile user=${userId.slice(0, 8)} cursus=` +
+      `[PRICING] profile ${who} cursus=` +
         (cursus.length ? cursus.map((c) => `${c.formation}:${c.promo}`).join(',') : 'none')
     );
     return cursus.length ? cursus : NO_CURSUS;
