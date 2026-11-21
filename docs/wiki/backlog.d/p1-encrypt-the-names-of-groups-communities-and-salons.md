@@ -33,6 +33,16 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
   and the cards read it there; the link's Open Graph head names no group. No floor needed: the
   server's API still answers the name for older builds. Readings owed: the web rig and both phones
   ([sealed-names](../protocols/sealed-names.md#step-3-part-1---built-2026-11-21-a-group-invite-link-carries-the-name-in-its-fragment)).
+- **Readings of 2026-11-21 on `1.7.3-alpha.3` (web rig, dev):** TAKEN and passing - the sharer's panel
+  mints `/g/join/<token>#name=<name>` (path shape asserted, fragment equals the dated name); the
+  in-chat card of the pasted link names the group; the join page opened by a signed-in non-member
+  names the group; the page source of `/g/join/<token>` fetched as a link unfurler holds neither the
+  name nor a group image (title `Rejoindre un groupe - Canari`, site image); a signed-out
+  visitor is sent to `/login?returnTo=...` with the fragment inside `returnTo` and no name shown
+  before sign-in. NOT TAKEN: the post-sign-in render of a visitor who signed in from that redirect
+  (needs a fresh enrolled device), and BOTH PHONE rows (the Mi 9T had no network; the iPhone is read
+  by another sitting). A web tab left on an older bundle minted a link with NO fragment until it was
+  reloaded onto the deployed bundle: reload before reading.
 - **Left, in order:**
   1. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
      native naming, and the invite preview API's `groupName`. It ships behind the minimum version

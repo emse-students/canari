@@ -31,3 +31,12 @@ the mirror holds an entry. Mechanism:
    `will not go from here - kept, marked, the member told`, the nudge shows, and the runs that follow
    read `can still go - retry` - never `the app must open`. DNS restored, A's reply leaves; opening the
    app shows the refused reply failed, with "Réessayer".
+
+**Sitting of 2026-11-21 on `1.7.3-alpha.3` (dev build `dev.0d2bc4b`): NO ROW TAKEN, all stay owed.** The Mi 9T
+had no network: Wi-Fi scans found no access point (scan results frozen, not refreshed), no SIM, and
+a toggle, an airplane cycle and the one allowed reboot did not bring it back; an inline reply needs
+a peer message to arrive, so none of the rows could start. A USB-tethering attempt
+(`svc usb setFunctions rndis`, without `adb`) then dropped the adb transport until the cable is
+replugged: **never switch the USB function without keeping `adb` in the list**
+(`svc usb setFunctions rndis,adb`). The `1.7.3-alpha.3` APK (versionCode 100700303) is installed on
+the phone, signed in and unlocked. Take these rows when the phone is on a working Wi-Fi.
