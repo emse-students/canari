@@ -29,9 +29,11 @@
          need an engine below FLOOR: a "update the WebView" screen is never drawn for an engine
          that is not old. (1) an Android WebView whose user agent names Chrome below FLOOR;
          (2) a parse failure of the app's own /_app/ module before the layout mounted, on an
-         Android engine below FLOOR (a plain browser, which trigger 1 does not read). The same
-         failure on a current or unknown engine is a different defect: logged at error, nothing
-         drawn. The layout calls window.__canariWebViewGuard.mounted(), which removes the screen if
+         Android WebView below FLOOR. Anything else (a plain browser such as Samsung Internet or
+         old Chrome, a current or unknown engine) is a different defect: logged at error, nothing
+         drawn, because "update the WebView" would be wrong advice. Trigger 2 is best effort:
+         whether a failed import() rejection carries the /_app/ asset in its stack depends on the
+         engine, so it may not match on some; trigger 1 is what covers a WebView like the S8's. The layout calls window.__canariWebViewGuard.mounted(), which removes the screen if
          the app runs after all. Its strings are a small table pinned to messages/fr.json and
          en.json by the same test. -->
     <script>
@@ -123,10 +125,15 @@
           button.addEventListener('click', function (event) {
             var tauri = window.__TAURI_INTERNALS__;
             if (!tauri || !tauri.invoke) return;
-            event.preventDefault();
-            tauri.invoke('plugin:opener|open_url', { url: PLAY_URL }).then(null, function (e) {
-              logError('opener refused the Play link: ' + e);
-            });
+            try {
+              tauri.invoke('plugin:opener|open_url', { url: PLAY_URL }).then(null, function (e) {
+                logError('opener refused the Play link: ' + e);
+              });
+              event.preventDefault();
+            } catch (e) {
+              // A synchronous throw: leave the click alone, so the href is followed.
+              logError('opener threw, following the link: ' + e);
+            }
           });
           if (version) {
             add(
@@ -158,13 +165,15 @@
             logError('the app mounted on an engine the screen was drawn for; screen removed');
           }
         }
-        function onBundleFailure(major) {
+        function onBundleFailure(major, webView) {
           if (settled) return;
-          if (major !== null && major < FLOOR) {
+          if (webView && major !== null && major < FLOOR) {
             show(String(major));
           } else {
             logError(
-              'the app bundle failed to parse on an engine at or above the floor (Chrome ' +
+              'the app bundle failed to parse, but this is not an Android WebView below the floor (' +
+                (webView ? 'WebView' : 'browser') +
+                ', Chrome ' +
                 (major === null ? 'unknown' : major) +
                 '): not an old WebView, no screen drawn'
             );
@@ -185,19 +194,21 @@
           var ua = navigator.userAgent;
           if (!/Android/.test(ua)) return; // desktop and iOS: no-op
           var detected = chromeMajor(ua);
-          if (isAndroidWebView(ua) && isBelowFloor(ua)) {
+          var webView = isAndroidWebView(ua);
+          if (webView && isBelowFloor(ua)) {
             show(String(detected));
             return;
           }
           window.addEventListener(
             'error',
             function (event) {
-              if (isBundleParseFailure(event.error, event.filename)) onBundleFailure(detected);
+              if (isBundleParseFailure(event.error, event.filename))
+                onBundleFailure(detected, webView);
             },
             true
           );
           window.addEventListener('unhandledrejection', function (event) {
-            if (isBundleParseFailure(event.reason, '')) onBundleFailure(detected);
+            if (isBundleParseFailure(event.reason, '')) onBundleFailure(detected, webView);
           });
         } catch (_) {}
       })();

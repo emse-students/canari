@@ -185,20 +185,21 @@ describe('what the guard does on a page', () => {
     expect(appended).toHaveLength(0);
   });
 
-  it('a bundle parse failure at or above the floor logs an error and draws nothing', () => {
-    const { appended, listeners, errors } = runGuard(CHROME_ANDROID(120));
+  it('a bundle parse failure on a current WebView logs an error and draws nothing', () => {
+    const { appended, listeners, errors } = runGuard(ANDROID_WEBVIEW(120));
     listeners.error[0]({ error: { name: 'SyntaxError', stack: '' }, filename: APP_ASSET });
     expect(appended).toHaveLength(0);
     expect(errors.join('\n')).toContain('not an old WebView');
   });
 
-  it('a bundle parse failure on an old non-WebView Android engine draws it, once', () => {
-    const { appended, listeners } = runGuard(CHROME_ANDROID(67));
+  it('a bundle parse failure in a plain browser below the floor logs an error and draws nothing', () => {
+    const { appended, listeners, errors } = runGuard(CHROME_ANDROID(67));
     listeners.error[0]({ error: { name: 'SyntaxError', stack: '' }, filename: APP_ASSET });
     listeners.unhandledrejection[0]({
       reason: { name: 'SyntaxError', stack: `at ${APP_ASSET}` },
     });
-    expect(appended).toHaveLength(1);
+    expect(appended).toHaveLength(0);
+    expect(errors.join('\n')).toContain('not an old WebView');
   });
 
   it('removes the screen, and says so, when the app mounts anyway', () => {

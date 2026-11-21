@@ -23,3 +23,7 @@ real engine. Owed, by the lead, on the pre-release:
    WebView opens in the Play app or the browser, and Canari is NOT replaced by an error page.
 6. Nothing wrongly draws it: on the Mi 9T's current WebView a `JSON.parse` failure before mount (airplane mode
    then a captive page) never shows the screen.
+7. **An old engine whose UA has no `wv` marker** (DevTools UA override: `Android ... Chrome/67` without
+   `; wv)`, e.g. a Samsung Internet string): the update screen NEVER shows; a bundle parse failure there
+   is only logged (`[webview-guard]` at error). Nothing here says "update Android System WebView" to a
+   browser user.
