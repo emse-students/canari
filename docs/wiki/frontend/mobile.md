@@ -4148,7 +4148,9 @@ needs "can a retry ever succeed".
   was erased by the page's first outbox mutation after it: neither sent, nor shown failed, nor
   retried. The file now says which line is whose, the page writes only its own under the lock the
   native writers take (`OUTBOX_LOCK` on Android, `OUTBOX_MIRROR_LOCK` on iOS), and it adopts the
-  native lines on every return to the front -
+  native lines on every return to the front. A native append no longer waits behind a drain: it
+  goes to `outbox_journal.ndjson` under its own short lock, and every holder of the mirror lock
+  folds it in first -
   [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
   The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
   and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).
@@ -4156,9 +4158,10 @@ needs "can a retry ever succeed".
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
 quick-reply send and the worker 5 ms apart both posted `f79aac25`, each under its own ratchet
-generation. Every native read-modify-write of the mirror (the drain, and `enqueueOutboxMirror`,
-which the shade actions append through) now holds one process lock, `OUTBOX_LOCK`, taken before
-`MlsStateLock`; the second drain waits and reads the mirror the first one rewrote.
+generation. Every native read-modify-write of the mirror (the drain, after folding the journal
+`enqueueOutboxMirror` appends to) holds one process lock, `OUTBOX_LOCK`, taken before
+`MlsStateLock`; the second drain waits and reads the mirror the first one rewrote. The append
+itself takes only the journal's lock, so a shade reply is on disk before any drain's POSTs end.
 
 #### The outbox nudge
 
@@ -4169,7 +4172,8 @@ attente" stayed in the shade until the app opened. Every drain that left sends p
 reply's own "not sent yet" line, and the nudge had no counterpart.
 
 - **One decision, from durable state.** `settleOutboxNudgeLocked` is the only place the nudge is
-  posted or cancelled. It runs under `OUTBOX_LOCK`, reads the mirror (`readOutboxMirrorOrNull`) and
+  posted or cancelled. It runs under `OUTBOX_LOCK`, reads what is queued - the mirror and the
+  journal not folded yet (`readOutboxQueuedOrNull`) - and
   applies `OutboxNudge.decide` (`push/`, pinned by `OutboxNudgeTest`): an empty mirror WITHDRAWS (an
   idempotent cancel), sends still queued KEEP what stands, an ask with sends queued POSTS, and an
   unreadable mirror withdraws nothing (`UNKNOWN`, a WARN - an unreadable file is not an empty queue).

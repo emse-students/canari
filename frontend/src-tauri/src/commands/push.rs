@@ -3121,7 +3121,7 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// ([`remove_device_notices_of`]).
 const ACCOUNT_PUSH_FILES: [&str; 5] = [
     "outbox_pending.ndjson",
-    crate::commands::outbox_mirror::OUTBOX_UNREADABLE_FILE,
+    crate::commands::outbox_mirror::OUTBOX_JOURNAL_FILE,
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
@@ -3424,6 +3424,10 @@ fn remove_user_push_files_proved(
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     for (_, name) in taken_files(data_dir) {
+        crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    // The mirror files moved aside unreadable (`outbox_mirror::set_aside`): the same account's protos.
+    for name in crate::commands::outbox_mirror::aside_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);

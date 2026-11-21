@@ -2311,11 +2311,17 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   (sent, withdrawn, discarded). A native VERDICT on the current line of a page id (`NATIVE_VERDICTS`, an
   allowlist: `unsendable`) is carried onto the page's copy, so a drain's "never from here" is not
   erased by the page's next write. An empty result deletes the file.
-- **The file is read lossily, and never wedges the page's writes.** Bytes that are not UTF-8 spoil
-  only their line, which is counted and dropped like any line that is no entry. A file that cannot
-  be read at all is moved aside to `outbox_pending.unreadable.ndjson` (logged at ERROR, removed with
-  the account's files), and the write starts from an empty mirror; only a file that can be neither
-  read nor moved fails the write, and nothing is written over it.
+- **The file is read lossily, never wedges the page's writes, and what it holds is read back.**
+  Bytes that are not UTF-8 spoil only their line. A file that cannot be read at all is moved aside
+  to the FIRST FREE `outbox_pending.unreadable.<n>.ndjson` - never over an earlier one - logged at
+  ERROR, and the write starts from an empty mirror; only a file that can be neither read nor moved
+  fails the write, and nothing is written over it. Every holder of the lock folds the asides back
+  (`fold_into_mirror`): each is read lossily, each line that is an entry is taken in (by id, the
+  mirror's own line first), and the file is deleted only once the mirror holding its lines is
+  written. **What still cannot be read is shown to the member**, not only logged: both page commands
+  return the count (lines that are no entry, aside files that cannot be opened, which are kept), and
+  the page shows a toast (`chat_outbox_lines_unreadable`) asking them to check their latest messages.
+  The asides and the journal are removed with the account's files.
 - **Under the native writers' lock (Android).** Kotlin's `OUTBOX_LOCK` is a JVM monitor, so the
   Rust command takes THAT monitor over JNI (`outboxLock()`, `JNIEnv::lock_obj`); a file lock could
   not serialise with it, `FileChannel.lock` being per process and the page and the service one
@@ -2325,6 +2331,20 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   thread, and the page sends its writes one at a time, in order (`syncOutboxMirror`'s chain) - two in
   flight could otherwise land older-last. No monitor, no write: the command fails, logged, and the
   next write retries; it never touches the file unlocked.
+- **A native append never waits behind a drain: it goes to a journal.** A drain holds the lock
+  through its POSTs (a 35 s budget on iOS, plus the 10 s `tryLock`), and a reply typed in the shade
+  that waited for it existed only in memory - inside `goAsync`'s window on Android, in an app iOS
+  may suspend. No background-task assertion covered that wait, and a longer one would only be a
+  bigger timer. So the quick reply and the read watermark append to `outbox_journal.ndjson` under
+  `JOURNAL_LOCK`, a leaf that covers one synced file write (`append_journal`; Kotlin
+  `nativeAppendOutboxJournal`, iOS `canari_outbox_journal_append`), and every holder of the mirror
+  lock folds the journal into the mirror first: the drain at its start (`nativeFoldOutboxMirror`,
+  `canari_outbox_fold`), the page's write and read inside their lock. The order: the mirror lock,
+  then `JOURNAL_LOCK`; an appender takes the leaf alone. A drain reads the mirror ALONE after its
+  fold - a line appended during its POSTs waits in the journal for the next holder, never sent twice;
+  the read-only checkers (the reply's `mirrorPresence`, the nudge, the boot receiver, the retry
+  worker) read mirror plus journal (`readOutboxQueuedOrNull`). An append that fails is reported:
+  the shade reply is drawn "not sent, type it again" on both phones.
 - **A send never waits for the mirror.** The enqueue reads the queue, raises the flusher, and
   writes the mirror WITHOUT awaiting it: the write may wait for a background drain's POSTs, and a
   message typed right after a return to the front must not. The order costs nothing: the writes
@@ -2333,10 +2353,11 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   Support, which the notification extension cannot reach and never names, so every writer is in the
   app process and one process-local lock covers them: `OUTBOX_MIRROR_LOCK` in
   `commands/outbox_mirror.rs`, which the page's commands take and `canari_push.mm` takes through
-  `canari_with_outbox_mirror_lock` (`CanariWithOutboxMirrorLock`) around each append and around each
-  whole drain - read, encrypt, POST, rewrite, as on Android. The order: this lock first, the drain's
-  `g_mlsStateLock` under it with `tryLock` (never waits), nothing under it on the page's side. Not
-  reentrant: an append releases it before it drains.
+  `canari_with_outbox_mirror_lock` (`CanariWithOutboxMirrorLock`) around each whole drain - fold,
+  read, encrypt, POST, rewrite, as on Android. The order: this lock first, the drain's
+  `g_mlsStateLock` under it with `tryLock` (never waits), `JOURNAL_LOCK` under it for the fold.
+  Not reentrant. The ObjC block runs inside `@try`/`@catch` in the trampoline Rust calls, so no ObjC
+  exception unwinds through the Rust frame that holds the lock (its name is logged).
 - **Adoption at login AND on every return to the front.** The resume sequence
   (`ChatBackgroundService`), after `reconcileOutboxSent` and while the page holds the MLS state (the
   native drain can no longer encrypt), runs `adoptNativeOutboxEntries` ->
@@ -2344,10 +2365,19 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   (`adoptOrphanedMirrorEntries`) and put on screen (`applyPendingStatuses` - pending, or failed with
   its Retry for an `unsendable` one), and the mirror is rewritten so those lines become the page's.
   **The flusher sends an adopted entry only once that claim lands** (`unclaimed`): until then the
-  line is still native in the file and a background drain may send it, so a failed claim (an ERROR)
-  holds the entry, with its successors, until a later write holding it lands - that write raises the
-  flush. A line the page wrote is never adopted: absent from the queue, the page settled it. The
-  server's `messageId` dedup stays a witness, never the mechanism.
+  line is still native in the file and a background drain may send it. The entry is HELD BEFORE it
+  is written to the queue (`MirrorClaims.hold`), so no flush can read it unheld. A failed claim (an
+  ERROR) holds it, with its successors, and **draws it failed with its Retry** - the server-failure
+  view - never a silent "pending": the Retry tries the claim again, and the write that lands draws it
+  pending and raises the flush. A line the page wrote is never adopted: absent from the queue, the
+  page settled it. The server's `messageId` dedup stays a witness, never the mechanism.
+- **`unclaimed` is rebuilt from the file, at every page life's start.** It is memory; the durable
+  record is the mirror, where a claim that never landed leaves the line NATIVE under an id the
+  queue holds. The controller's START PASS (`claimAtStart`, before its first flush) reads the mirror
+  back, holds every such line, adopts what the queue lacks, writes the mirror and draws the statuses;
+  a pass that throws skips that flush and runs again with the next. The login's adoption goes through
+  the same controller (`adoptNativeOutboxEntries`). The cost, accepted: a page life's FIRST flush
+  waits for a background drain in progress, since what it holds could otherwise be sent twice.
 - **Upgrade, and a send that outran the last write.** A line a page wrote before 1.7.3 carries no
   owner and reads as native; so does a page line whose send landed after the page's last mirror
   write (a kill between the two). One the page still queues is claimed by its first write. One it
@@ -2357,11 +2387,15 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   this way - a reaction or a read mark its receiver applies idempotently.
 - Tests: `outbox_mirror.rs` (the merge: a native-only line survives a page write, an empty queue
   keeps it, an unsendable one keeps its mark, a held one is the page's, a verdict on a page line is
-  carried; a lossy read; an unreadable file moved aside; the ObjC door runs under the page's lock),
-  `outboxMirror.ownership.test.ts` (the whole queue held, writes in order, a page line never adopted,
-  the return to the front adopts, shows and flushes, an unsendable one failed, an unclaimed one not
-  sent until its claim lands, a send not waiting for the mirror, an already-sent line dropped),
-  `outboxMirrorOwnership.test.ts` (the lock and the stamp in Kotlin, iOS and Rust).
+  carried; a lossy read; an unreadable file moved aside, never over an earlier one, folded back and
+  the rest counted; a journal line folded once; the C doors; the ObjC door runs under the page's
+  lock), `outboxMirror.ownership.test.ts` (the whole queue held, writes in order, a page line never
+  adopted, held before queued, the return to the front adopts, shows and flushes, an unsendable one
+  failed, an unclaimed one failed and not sent until its claim lands, its Retry claims again, a new
+  page life holds what the mirror still names native, the start pass writes before the first flush,
+  a send not waiting for the mirror, an already-sent line dropped, an unreadable line told to the
+  member), `outboxMirrorOwnership.test.ts` (the lock, the stamp, the journal doors and the `@try` in
+  Kotlin, iOS and Rust).
 
 #### App-icon unread badge
 

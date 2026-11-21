@@ -650,7 +650,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(branches).not.toContain('rewritten by the app');
     const presence = source.slice(source.indexOf('internal fun mirrorPresence('));
     expect(presence.slice(0, 400)).toContain(
-      'readOutboxMirrorOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE'
+      'readOutboxQueuedOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE'
     );
     expect(source).toContain('readOutboxMirrorOrNull(context) ?: emptyList()');
   });

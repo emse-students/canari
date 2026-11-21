@@ -2047,17 +2047,30 @@ void CanariScheduleOutboxRetryTask(void) {
 #endif
 }
 
+/**
+ * The C function Rust calls holding the lock. NO OBJC EXCEPTION MAY UNWIND THROUGH THE RUST FRAME
+ * that called it (undefined behaviour, and the mutex guard would never drop), so the work runs in
+ * `@try` and an exception is logged here and goes no further.
+ */
 static void CanariOutboxMirrorLockTrampoline(void *ctx) {
   void (^work)(void) = (__bridge void (^)(void))ctx;
-  work();
+  @try {
+    work();
+  } @catch (NSException *exception) {
+    // Its name only: a reason may quote the data the work held.
+    NSLog(@"[CanariPush] ERROR an ObjC exception inside the outbox mirror lock was stopped before "
+          @"the Rust frame: %@",
+          exception.name); // log-safe: an NSException name, never its reason
+  }
 }
 
 /**
  * Runs `work` holding the outbox mirror lock - the ONE lock the page's Rust commands take too
  * (`canari_with_outbox_mirror_lock`, `commands/outbox_mirror.rs`). Every read-modify-write of
- * `outbox_pending.ndjson` runs inside it: an append, and a whole drain. Without it the page's write
- * and a native one interleaved, and the later erased the earlier's line. NOT REENTRANT: an append
- * releases it before it drains.
+ * `outbox_pending.ndjson` runs inside it: a whole drain, which folds the journal first. Without it
+ * the page's write and a native one interleaved, and the later erased the earlier's line. NOT
+ * REENTRANT. An APPEND never takes it ([CanariAppendOutboxJournal]): a drain holds it through its
+ * POSTs, and a reply waiting behind them sat only in memory while iOS could suspend the app.
  */
 static void CanariWithOutboxMirrorLock(void (^work)(void)) {
   canari_with_outbox_mirror_lock((__bridge void *)work, CanariOutboxMirrorLockTrampoline);
@@ -2108,6 +2121,44 @@ static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
   return entries;
 }
 
+/// One outbox line, as the mirror and the journal hold it - the ONE serialiser of an entry, from
+/// the dictionary it was read from, so a field this code does not know survives. nil if unencodable.
+static NSString *CanariOutboxEntryLine(CanariOutboxEntry *e) {
+  NSMutableDictionary *obj = e.fields != nil ? [e.fields mutableCopy] : [NSMutableDictionary dictionary];
+  [obj addEntriesFromDictionary:@{
+    @"id" : e.entryId,
+    @"groupId" : e.groupId,
+    @"proto" : e.proto,
+    @"sentAt" : @(e.sentAt),
+    @"silent" : @(e.silent),
+    @"durable" : @(e.durable),
+  }];
+  NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+  return data == nil ? nil : [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+/**
+ * Queues `entry` - the one way native code queues a frame. Into `outbox_journal.ndjson` under the
+ * Rust journal lock ALONE (`canari_outbox_journal_append`), never the mirror lock a drain holds
+ * through its POSTs: the line is on disk, synced, before this returns. The next holder of the
+ * mirror lock folds it in. NO, logged, when nothing was queued.
+ */
+static BOOL CanariAppendOutboxJournal(CanariOutboxEntry *entry) {
+  NSString *dir = CanariTauriDataDir();
+  NSString *line = CanariOutboxEntryLine(entry);
+  NSString *shortId = [entry.entryId substringToIndex:MIN((NSUInteger)8, entry.entryId.length)];
+  if (dir == nil || line == nil) {
+    NSLog(@"[CanariPush] ERROR outbox journal: id=%@ NOT queued - %@", shortId,
+          dir == nil ? @"no data dir" : @"the line could not be encoded");
+    return NO;
+  }
+  if (canari_outbox_journal_append(dir.UTF8String, line.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR outbox journal: id=%@ NOT queued - the append failed", shortId);
+    return NO;
+  }
+  return YES;
+}
+
 static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -2120,18 +2171,9 @@ static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
   }
   NSMutableArray<NSString *> *lines = [NSMutableArray array];
   for (CanariOutboxEntry *e in remaining) {
-    NSMutableDictionary *obj = e.fields != nil ? [e.fields mutableCopy] : [NSMutableDictionary dictionary];
-    [obj addEntriesFromDictionary:@{
-      @"id" : e.entryId,
-      @"groupId" : e.groupId,
-      @"proto" : e.proto,
-      @"sentAt" : @(e.sentAt),
-      @"silent" : @(e.silent),
-      @"durable" : @(e.durable),
-    }];
-    NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-    if (data != nil) {
-      [lines addObject:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
+    NSString *line = CanariOutboxEntryLine(e);
+    if (line != nil) {
+      [lines addObject:line];
     }
   }
   NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
@@ -2308,6 +2350,13 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx,
 
 static int CanariDrainOutboxBackgroundLocked(
     CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
+  // What was appended meanwhile, into the mirror first (`canari_outbox_fold`): read after this, the
+  // journal holds only what is appended DURING this drain, which the next holder folds.
+  NSString *foldDir = CanariTauriDataDir();
+  if (foldDir != nil && canari_outbox_fold(foldDir.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR drainOutbox: the outbox journal was not folded - its lines wait for "
+          @"the next holder of the mirror lock");
+  }
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {
     return 0;
@@ -2493,11 +2542,10 @@ static void CanariSendReadWatermark(NSString *groupId, long long at) {
   // one sent from the app, and must reach a device that was offline.
   entry.silent = YES;
   entry.durable = YES;
-  CanariWithOutboxMirrorLock(^{
-    NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-    [entries addObject:entry];
-    CanariRewriteOutboxMirror(entries);
-  });
+  if (!CanariAppendOutboxJournal(entry)) {
+    NSLog(@"[CanariPush] ERROR sendReadWatermark: frame NOT queued - the mark stays local group=%@", groupId);
+    return;
+  }
   CanariDrainOutboxBackground(ctx, nil);
   NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
 }
@@ -2595,11 +2643,10 @@ static BOOL CanariSendQuickReplyNatively(CanariPushContext *ctx, NSString *group
   entry.sentAt = sentAt;
   entry.silent = NO;
   entry.durable = YES;
-  CanariWithOutboxMirrorLock(^{
-    NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-    [entries addObject:entry];
-    CanariRewriteOutboxMirror(entries);
-  });
+  // ON DISK BEFORE ANY WAIT: the journal append never waits behind a drain's POSTs.
+  if (!CanariAppendOutboxJournal(entry)) {
+    return NO;
+  }
   NSLog(@"[CanariPush] handleQuickReplyAction: queued id=%@ group=%@",
         [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)], groupId);
 

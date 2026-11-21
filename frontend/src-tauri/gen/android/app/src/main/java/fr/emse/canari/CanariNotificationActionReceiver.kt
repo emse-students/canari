@@ -129,12 +129,21 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         // decides on that, never on a guess.
         CanariFirebaseMessagingService.awaitReplyDelivery(messageId)
         try {
-            CanariFirebaseMessagingService.enqueueOutboxMirror(
+            val queued = CanariFirebaseMessagingService.enqueueOutboxMirror(
                 context,
                 CanariFirebaseMessagingService.OutboxMirrorEntry(
                     messageId, groupId, protoB64, sentAt, silent = false, durable = true
                 )
             )
+            if (!queued) {
+                // Nothing on disk holds it, so nothing will retry it: the banner says so.
+                Log.e(TAG, "handleReply: reply id=${messageId.take(8)} NOT queued (the journal append failed) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
+                CanariFirebaseMessagingService.repostReplyPending(
+                    context, groupId, messageId, text, notifiedAt, notifiedServerAt,
+                    ReplyLine.NOT_SENT_RETYPE,
+                )
+                return
+            }
             Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${ConversationRef.of(groupId)}")
 
             // Whether THIS reply went out - by this drain, or by another one meanwhile - not whether
@@ -359,7 +368,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.e(TAG, "sendReadWatermark: nativeBuildReadWatermarkProto failed")
             return
         }
-        CanariFirebaseMessagingService.enqueueOutboxMirror(
+        val queued = CanariFirebaseMessagingService.enqueueOutboxMirror(
             context,
             CanariFirebaseMessagingService.OutboxMirrorEntry(
                 // Silent, but durable: a read watermark sent from the notification shade is the
@@ -368,6 +377,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                 silent = true, durable = true
             )
         )
+        if (!queued) {
+            Log.e(TAG, "sendReadWatermark: frame NOT queued (the journal append failed) - the mark stays local group=${ConversationRef.of(groupId)}")
+            return
+        }
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
         Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${ConversationRef.of(groupId)}")
     }

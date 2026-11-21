@@ -22,6 +22,14 @@ const tauri = vi.hoisted(() => ({
    * the lock - keyed on the id so a write still chained from an earlier case is not caught by it.
    */
   failHolding: null as string | null,
+  /** What the native fold could not read back, as both commands report it. */
+  unreadable: 0,
+}));
+
+const toast = vi.hoisted(() => ({ shown: [] as string[] }));
+vi.mock('$lib/stores/toast.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/toast.svelte')>()),
+  showToast: (message: string) => void toast.shown.push(message),
 }));
 
 vi.mock('$lib/utils/openExternal', async (importOriginal) => ({
@@ -37,7 +45,8 @@ vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
 }));
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string, args: Record<string, unknown>) => {
-    if (cmd === 'read_outbox_mirror') return tauri.mirror;
+    if (cmd === 'read_outbox_mirror')
+      return { entries: tauri.mirror, unreadable: tauri.unreadable };
     if (cmd === 'store_outbox_mirror') {
       const gate = tauri.gate;
       tauri.gate = null;
@@ -46,7 +55,7 @@ vi.mock('@tauri-apps/api/core', () => ({
         throw new Error('the outbox lock could not be taken');
       }
       tauri.writes.push(args as (typeof tauri.writes)[number]);
-      return null;
+      return tauri.unreadable;
     }
     if (cmd === 'read_and_clear_outbox_sent') return [];
     return null;
@@ -138,6 +147,8 @@ beforeEach(() => {
   tauri.writes = [];
   tauri.gate = null;
   tauri.failHolding = null;
+  tauri.unreadable = 0;
+  toast.shown = [];
 });
 
 describe('syncOutboxMirror - what the page hands the merge', () => {
@@ -168,6 +179,61 @@ describe('adoptOrphanedMirrorEntries - only the native lines', () => {
     const storage = makeStorage();
     expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me')).toEqual(['native']);
     expect([...storage._queue.keys()]).toEqual(['native']);
+  });
+
+  // Review of #3929: a hold taken AFTER the queue write left a window where a flush sent a line a
+  // background drain could send too. The hold comes first, and a failed write releases it.
+  it('holds an adopted entry BEFORE it is queued, and releases it when the write fails', async () => {
+    tauri.mirror = [line('native'), line('broken')];
+    const storage = makeStorage();
+    const order: string[] = [];
+    const save = storage.saveOutboxEntry;
+    storage.saveOutboxEntry = vi.fn(async (e: OutboxEntry) => {
+      order.push(`save ${e.id}`);
+      if (e.id === 'broken') throw new Error('quota');
+      return save(e);
+    });
+    const held = new Set<string>();
+    await adoptOrphanedMirrorEntries(storage, 'key', 'me', {
+      hold: (id) => void (order.push(`hold ${id}`), held.add(id)),
+      release: (id) => void held.delete(id),
+    });
+    expect(order).toEqual(['hold native', 'save native', 'hold broken', 'save broken']);
+    expect([...held]).toEqual(['native']);
+  });
+
+  // A queued entry whose line is still native was adopted by a page life whose claim never landed:
+  // the mirror is the durable record of it, and it is held again.
+  it('holds a queued entry whose mirror line is still native', async () => {
+    tauri.mirror = [line('earlier')];
+    const storage = makeStorage([textEntry('earlier')]);
+    const held: string[] = [];
+    expect(
+      await adoptOrphanedMirrorEntries(storage, 'key', 'me', {
+        hold: (id) => void held.push(id),
+        release: () => {},
+      })
+    ).toEqual([]);
+    expect(held).toEqual(['earlier']);
+  });
+});
+
+// Review of #3929: a line the native fold could not read back - or a file moved aside it could not
+// open - is the member's to know about, not a log line nobody reads (principle 2).
+describe('a queued line the native side could not read back', () => {
+  it('is told to the member, on the read and on the write', async () => {
+    tauri.unreadable = 2;
+    await adoptOrphanedMirrorEntries(makeStorage(), 'key', 'me');
+    expect(toast.shown).toHaveLength(1);
+    await syncOutboxMirror([]);
+    expect(toast.shown).toHaveLength(2);
+  });
+
+  it('tells nothing when everything was read', async () => {
+    tauri.mirror = [line('fine')];
+    await adoptOrphanedMirrorEntries(makeStorage(), 'key', 'me');
+    await syncOutboxMirror([]);
+    expect(toast.shown).toEqual([]);
   });
 });
 
@@ -273,13 +339,16 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     tauri.mirror = [line('shade')];
     tauri.failHolding = 'shade';
     const storage = makeStorage();
-    const { outbox, sendMessage } = controllerOver(storage);
+    const { outbox, conversations, sendMessage } = controllerOver(storage);
 
     expect(await outbox.adoptNativeEntries()).toBe(1);
     outbox.flush();
     await new Promise((r) => setTimeout(r, 0));
     expect(sendMessage).not.toHaveBeenCalled();
     expect(storage._queue.has('shade')).toBe(true);
+    // Never silently "pending" on a claim that cannot land: failed, with its Retry.
+    const row = () => conversations.get('g1')!.messages.find((m) => m.id === 'shade');
+    expect(row()?.status).toBe('error');
 
     // The lock is back: the next return to the front adopts nothing new, but claims - and the claim
     // raises the flush.
@@ -290,20 +359,75 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
   });
 
+  // Review of #3929: the unclaimed entry's Retry is a Retry of the CLAIM - the one thing failing.
+  it('Retry on an unclaimed entry claims again, and the claim that lands sends it', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('shade')];
+    tauri.failHolding = 'shade';
+    const storage = makeStorage();
+    const { outbox, conversations, sendMessage } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    const row = () => conversations.get('g1')!.messages.find((m) => m.id === 'shade');
+    expect(row()?.status).toBe('error');
+
+    // Still failing: still failed, nothing sent.
+    outbox.retryUpload('shade');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(row()?.status).toBe('error');
+
+    tauri.failHolding = null;
+    outbox.retryUpload('shade');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(tauri.writes.some((w) => w.held.includes('shade'))).toBe(true);
+    await vi.waitFor(() => expect(storage._queue.has('shade')).toBe(false));
+  });
+
+  // Review of #3929: `unclaimed` is memory, and a reload lost it - the queue then flushed an entry
+  // the mirror still named native. The START PASS reads it back from the mirror, before any flush.
+  it('a new page life holds a queued entry still native in the mirror before its first flush', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('earlier')];
+    tauri.failHolding = 'earlier';
+    const storage = makeStorage([textEntry('earlier')]);
+    const { outbox, sendMessage } = controllerOver(storage);
+
+    outbox.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    tauri.failHolding = null;
+    outbox.retryUpload('earlier');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+  });
+
+  it('the start pass writes the mirror once before the first flush sends anything', async () => {
+    connectivity.reset();
+    const storage = makeStorage([textEntry('queued')]);
+    const { outbox, sendMessage } = controllerOver(storage);
+    outbox.flush();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(tauri.writes[0]?.held).toEqual(['queued']);
+  });
+
   // Review of #3929: the mirror write waits for the native writers' lock, which a background drain
   // holds through its POSTs - the send typed now must not wait for it.
   it('sends an enqueued message while its mirror write is still waiting for the lock', async () => {
     connectivity.reset();
-    let release!: () => void;
-    tauri.gate = new Promise((r) => (release = r));
     const storage = makeStorage();
     const { outbox, sendMessage } = controllerOver(storage);
+    // The page life's start pass first (it DOES wait for the lock: what it holds could otherwise be
+    // sent twice) - then a drain takes the lock.
+    outbox.flush();
+    await vi.waitFor(() => expect(tauri.writes).toHaveLength(1));
+    let release!: () => void;
+    tauri.gate = new Promise((r) => (release = r));
 
     await outbox.enqueue(textEntry('typed'));
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
-    expect(tauri.writes).toHaveLength(0);
+    expect(tauri.writes).toHaveLength(1);
     release();
-    await vi.waitFor(() => expect(tauri.writes.length).toBeGreaterThan(0));
+    await vi.waitFor(() => expect(tauri.writes.length).toBeGreaterThan(1));
   });
 
   it('adopts nothing and writes nothing when the mirror holds only the page lines', async () => {

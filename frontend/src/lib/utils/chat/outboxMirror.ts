@@ -46,6 +46,8 @@ import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
+import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 import type { Conversation } from '$lib/types';
 import { replaceMessageOrdered } from './messageOrder';
 import { noteServerTime } from './serverClock';
@@ -131,6 +133,20 @@ export function mirrorHoldsSentLines(): boolean {
 }
 
 /**
+ * THE MEMBER IS TOLD WHEN A QUEUED LINE COULD NOT BE READ BACK (principle 2: the essential is never
+ * lost silently). `count` is what the native side's fold found unreadable - a line that is no entry,
+ * or a file moved aside it could not open (`outbox_mirror.rs`) - and a log line alone is read by
+ * nobody: the member may have a message to type again.
+ */
+function reportUnreadableLines(count: number, where: string): void {
+  if (count <= 0) return;
+  console.error(
+    `[OUTBOX_MIRROR] ${where}: ${count} queued line(s) or file(s) could not be read back - the member is told`
+  );
+  showToast(m.chat_outbox_lines_unreadable({ count }), 'error', 8000);
+}
+
+/**
  * Write the page's lines of the native mirror from an outbox snapshot (Tauri only; no-op on
  * web/desktop-web). Called after every outbox mutation so the background service always sees the
  * live queue. `entries` is the WHOLE queue: what it mirrors is written, and every id in it is
@@ -151,8 +167,9 @@ export function syncOutboxMirror(entries: OutboxEntry[]): Promise<boolean> {
   const write = mirrorWrites.then(async () => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('store_outbox_mirror', { entries: mirror, held });
+      const unreadable = await invoke<number>('store_outbox_mirror', { entries: mirror, held });
       for (const id of settled) sentNativeLines.delete(id);
+      reportUnreadableLines(unreadable, 'mirror write');
       return true;
     } catch (e) {
       appendLog(`[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${String(e)}`);
@@ -348,6 +365,18 @@ export function adoptMirrorEntry(
 }
 
 /**
+ * The page's claims on native mirror lines, kept by the outbox controller (`unclaimed` in
+ * outbox.ts). `hold` is called BEFORE an adopted entry is written to the queue - so no flush can
+ * read it before it is held - and for every native line the queue ALREADY holds (adopted by an
+ * earlier page life whose claim never landed: the mirror is the durable record of that). `release`
+ * undoes a hold whose queue write failed.
+ */
+export interface MirrorClaims {
+  hold(id: string): void;
+  release(id: string): void;
+}
+
+/**
  * Adopt into the TypeScript outbox every NATIVE mirror line it does not already know about, and
  * persist the local copy of each so the sender finally sees what they sent. Tauri only; no-op
  * elsewhere.
@@ -366,13 +395,20 @@ export function adoptMirrorEntry(
 export async function adoptOrphanedMirrorEntries(
   storage: IStorage,
   deviceKeyB64: string,
-  userId: string
+  userId: string,
+  claims?: MirrorClaims
 ): Promise<string[]> {
   if (!isTauriRuntime()) return [];
   let mirror: OutboxMirrorEntry[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    mirror = await invoke<OutboxMirrorEntry[]>('read_outbox_mirror');
+    // The read FOLDS first: the native journal and every file moved aside unreadable are taken into
+    // the mirror before it is read, and what still cannot be read is counted (`outbox_mirror.rs`).
+    const read = await invoke<{ entries: OutboxMirrorEntry[]; unreadable: number }>(
+      'read_outbox_mirror'
+    );
+    mirror = read.entries;
+    reportUnreadableLines(read.unreadable, 'mirror read');
   } catch (e) {
     appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
     return [];
@@ -389,6 +425,16 @@ export async function adoptOrphanedMirrorEntries(
     })
     .then((entries) => (entries ? new Set(entries.map((e) => e.id)) : null));
   if (!known) return [];
+
+  // NATIVE LINES THE QUEUE ALREADY HOLDS: adopted by a page life whose claim never landed (it is in
+  // memory only). Still native in the file, so a background drain may send them - held again.
+  const unclaimedNative = mirror.filter((e) => e.id && e.owner !== 'page' && known.has(e.id));
+  if (claims && unclaimedNative.length) {
+    for (const line of unclaimedNative) claims.hold(line.id);
+    appendLog(
+      `[OUTBOX_MIRROR] ${unclaimedNative.length} queued entr(y/ies) still native in the mirror - held until claimed`
+    );
+  }
 
   const stale = mirror.filter((e) => e.owner === 'page' && !known.has(e.id));
   if (stale.length) {
@@ -421,9 +467,13 @@ export async function adoptOrphanedMirrorEntries(
     }
     const rebuilt = adoptMirrorEntry(orphan, userId);
     if (!rebuilt) continue;
+    // HELD BEFORE IT IS QUEUED: a flush reading the queue between the write and the hold would send
+    // a line the background drain may send too.
+    claims?.hold(orphan.id);
     try {
       await storage.saveOutboxEntry(rebuilt.outbox, deviceKeyB64);
     } catch (e) {
+      claims?.release(orphan.id);
       appendLog(`[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed: ${String(e)}`);
       continue;
     }
