@@ -2,7 +2,7 @@
 
 **The entries live in [`backlog.d/`](backlog.d/README.md), one file each, and each names the version
 it is planned for** (`target: 1.7.0`, owner, 2026-11-13). **The order is [plan](plan.md)**, generated
-from those lines. This page holds the rules every entry follows and, below, the one list of what only
+from those lines in every checkout and never committed ([why](cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). This page holds the rules every entry follows and, below, the one list of what only
 the USER can do. Since 2026-11-13 it carries no entry: the 150 entries and the 137 verification rows
 it held moved to `backlog.d/`, each with its target ([roadmap log](roadmap.md#log-of-replannings-and-milestones)).
 
@@ -32,7 +32,7 @@ retelling.
 
 **NO ENTRY IS WRITTEN HERE.** A heading added to this page is refused by
 `.github/scripts/tests/backlog-fragments.test.mjs`; `backlog-plan.test.mjs` refuses a fragment with no
-target or an unknown one, and a `plan.md` that is not what the targets produce.
+target or an unknown one, and a `plan.md` that is committed.
 
 ---
 

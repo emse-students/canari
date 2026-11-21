@@ -156,7 +156,7 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
-- [Plan](plan.md) — every open backlog entry under the version it is planned for, GENERATED from each entry's `target:` line; the readings owed are its checklist
+- [Plan](plan.md) — every open backlog entry under the version it is planned for, GENERATED in every checkout from each entry's `target:` line and never committed; the readings owed are its checklist
 - [Roadmap](roadmap.md) — how the plan is ordered, the dated commitments, and the log of every replanning and milestone
 - [Backlog](backlog.md) — the rules every entry follows, and the table of what only the user can do
 - [backlog.d](backlog.d/README.md) — the backlog itself: one file per entry, each with its `target:` version

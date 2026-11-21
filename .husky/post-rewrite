@@ -1,0 +1,11 @@
+#!/bin/sh
+# Post-rewrite hook - rewrite the plan page after a rebase (`git pull --rebase` included).
+#
+# `docs/wiki/plan.md` is generated where it is read and never committed (2026-11-16). A rebase runs
+# `post-checkout` once, on the commit it starts from, BEFORE replaying this branch's commits - so
+# the page would list the upstream entries and miss the branch's own. `git commit --amend` (the
+# other caller, `$1` = amend) already went through the commit tier, which rewrote it.
+# docs/wiki/cicd.md, "The plan page is generated where it is read". Called by git directly
+# (`core.hooksPath` = `.husky`, tracked).
+[ "$1" = rebase ] || exit 0
+exec bun tools/backlog-plan/plan.mjs >/dev/null

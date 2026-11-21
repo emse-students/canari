@@ -149,11 +149,14 @@ bruler ; ca se note dans `CHANGELOG.md` quand ca arrive.
 Le backlog est un fichier par entree dans [`docs/wiki/backlog.d/`](../wiki/backlog.d/README.md), et
 **chaque entree dit pour quelle version elle est prevue**, sur une ligne sous son titre :
 `target: 1.7.0`. Le plan par version, [`docs/wiki/plan.md`](../wiki/plan.md), est **genere** a partir
-de ces lignes par `bun tools/backlog-plan/plan.mjs`. D'ou trois habitudes :
+de ces lignes par `bun tools/backlog-plan/plan.mjs`, **dans chaque copie de travail, et jamais commite** : les
+hooks git le reecrivent apres chaque checkout, merge, rebase et commit (un clone tout neuf n'a pas encore de hooks :
+`make install` l'ecrit, ou `bun tools/backlog-plan/plan.mjs` a la main). Commite, il mettait toutes les pull
+requests ouvertes en conflit a chaque fusion ([cicd](../wiki/cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). D'ou trois habitudes :
 
 - **Ajouter une entree, c'est la planifier dans la meme pull request** : le fichier avec sa ligne
-  `target:`, puis le script, et `plan.md` part dans le meme commit. La CI refuse une entree sans
-  version, une version inconnue, ou un `plan.md` qui ne correspond plus aux lignes.
+  `target:`, et rien d'autre. La CI refuse une entree sans version, une version inconnue, ou un
+  `plan.md` commite.
 - **Replanifier, c'est changer une ligne** : aucun fichier ne bouge.
 - **Quand une version sort, on relit tout le plan** : la version livree sort de la liste `TIERS` du
   script, et chaque entree qui la nommait encore est replanifiee. Les lectures (une entree a qui il

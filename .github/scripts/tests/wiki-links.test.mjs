@@ -37,6 +37,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, normalize, relative, resolve, sep } from 'node:path';
+import { collect as collectPlan, PAGE, render } from '../../../tools/backlog-plan/plan.mjs';
 
 const ROOT = resolve(process.argv[2] ?? join(import.meta.dirname, '..', '..', '..'));
 // `.claude` holds git WORKTREES, which are whole copies of this repository at other commits. They
@@ -111,6 +112,16 @@ function baseOf(file) {
   return relative(ROOT, dirname(file)) === 'changelog.d' ? ROOT : dirname(file);
 }
 const anchors = new Map(files.map((f) => [normalize(f), anchorsOf(readFileSync(f, 'utf-8'))]));
+
+/**
+ * The pages generated where they are read and never committed, by path, with the text their
+ * generator produces from this tree. The plan by version (2026-11-16) is the one: committed, it
+ * made every open pull request conflict with every merge, so it is gitignored and every checkout
+ * writes it (docs/wiki/cicd.md, "The plan page is generated where it is read"). A link into it is
+ * checked against what the generator WOULD write - a copy on disk may be stale, and no runner has one.
+ */
+const generated = new Map([[normalize(PAGE(ROOT)), render(collectPlan(ROOT).entries)]]);
+for (const [path, text] of generated) anchors.set(path, anchorsOf(text));
 const broken = [];
 
 for (const file of files) {
@@ -141,7 +152,7 @@ for (const file of files) {
       broken.push(`${where} -> ${link} (outside the repository - dead for every reader but you)`);
       continue;
     }
-    if (!existsSync(target)) {
+    if (!generated.has(target) && !existsSync(target)) {
       broken.push(`${where} -> ${link} (no such file)`);
       continue;
     }

@@ -1,7 +1,8 @@
 # backlog.d - one file per backlog entry, each naming its version
 
 **The backlog IS this directory**: one file per entry, and every entry names the version it is
-planned for. [plan](../plan.md) lists them by version, generated from those lines. Since 2026-11-13
+planned for. [plan](../plan.md) lists them by version, generated from those lines in every checkout
+and never committed ([why](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)). Since 2026-11-13
 `backlog.md` holds no entry - only the rules and the list of what is owed to the user.
 
 ```md
@@ -28,25 +29,28 @@ carrying the mechanism ([cicd](../cicd.md)).
 
 ## The workflow
 
-**Adding an entry is planning it, in the same pull request.** Write the file with its `target:`,
-then run `bun tools/backlog-plan/plan.mjs` and commit `docs/wiki/plan.md` with it. Pick the version by
+**Adding an entry is planning it, in the same pull request.** Write the file with its `target:`; the
+commit rewrites your checkout's `docs/wiki/plan.md`, which is gitignored and never committed (by hand:
+`bun tools/backlog-plan/plan.mjs`). Pick the version by
 the order the plan states: P1 first, then the oldest; a reading always in the earliest version; a
 version that is already full takes the entry in the next one.
 
-**Replanning is changing one line.** Edit `target:`, regenerate, commit; no file ever moves. Say why in
+**Replanning is changing one line.** Edit `target:`, commit; no file ever moves. Say why in
 the [roadmap log](../roadmap.md#log-of-replannings-and-milestones) when it is more than one entry.
 
 **When a version ships, the plan is re-read whole**: the shipped version leaves `TIERS`, every entry
 still naming it is replanned (the readings to the new earliest version), and the log says so.
 
-**Closing an entry.** Delete its file when it ships, and regenerate the plan: the rule goes to
+**Closing an entry.** Delete its file when it ships: the rule goes to
 `durable-rules.md`, the story to `changelog.d/`, the mechanism to the wiki page. An entry whose object
 has disappeared (feature removed, superseded) is deleted too, with the evidence written in the closing
 commit or its changelog fragment. Fix every link to it - `wiki-links.test.mjs` names them.
 
-**A conflict on `docs/wiki/plan.md`** is resolved by regenerating it, never by hand: take either side,
-run the script, commit. The page carries no count for that reason - a count is a line every pull
-request adding an entry would edit.
+**`docs/wiki/plan.md` cannot conflict, because no commit carries it** (2026-11-16). Committed, it
+made every open pull request conflict with every merge: a new entry is the youngest of its group, so
+two pull requests filing one each inserted at the same line of it. The git hooks write it after every
+checkout, merge and commit; [cicd](../cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-16)
+has the measurement and the options weighed.
 
 ## The tests
 
@@ -54,7 +58,8 @@ request adding an entry would edit.
   and a heading in `backlog.md` other than the frozen one
   (`.github/scripts/tests/backlog-legacy-headings.txt`, which only ever loses lines).
 - `.github/scripts/tests/backlog-plan.test.mjs` refuses a fragment with no target or an unknown one, a
-  reading planned after the earliest version, and a `plan.md` that is not what the targets produce.
+  reading planned after the earliest version, a rendered page that misses or doubles an entry, and a
+  `plan.md` that is tracked or not ignored.
 - `.github/scripts/tests/backlog-closed.test.mjs` refuses a title that announces its own closure.
 
 **Why a file and not a section.** 47 of the 130 commits on `main` between 2026-10-27 and 2026-10-30
