@@ -215,5 +215,9 @@ describe('a group invite head names no group (sealed names, step 3)', () => {
     const { meta } = await resolveServerSeo('/g/join/some-token');
     expect(fetchJson).not.toHaveBeenCalled();
     expect(meta.title).toBe(m.group_join_page_title());
+    expect(meta.noindex).toBe(true);
+    // No image of the group: the head falls back to the site's own picture, and names nothing.
+    expect(meta.image).toBeUndefined();
+    expect(meta.imageAlt).toBeUndefined();
   });
 });

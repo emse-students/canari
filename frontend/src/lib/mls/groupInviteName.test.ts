@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  INVITE_NAME_MAX_CODE_POINTS,
   fragmentOf,
   inviteCardName,
   inviteLinkName,
@@ -52,6 +53,25 @@ describe('readInviteNameFragment', () => {
 
   it('reads a blank name as empty', () => {
     expect(readInviteNameFragment('#name=+++')).toEqual({ absent: 'empty' });
+  });
+
+  it('strips bidi overrides, zero-width and control characters', () => {
+    const hostile = '‮serdna‬​Bureau';
+    const hash = `#${new URLSearchParams({ name: hostile }).toString()}`;
+    expect(readInviteNameFragment(hash)).toEqual({ name: 'serdnaBureau' });
+  });
+
+  it('a name of invisible characters only is empty', () => {
+    const hash = `#${new URLSearchParams({ name: '​‮' }).toString()}`;
+    expect(readInviteNameFragment(hash)).toEqual({ absent: 'empty' });
+  });
+
+  it('caps the name at its bound, in code points, and says so', () => {
+    const long = '🎉'.repeat(INVITE_NAME_MAX_CODE_POINTS + 5);
+    const read = readInviteNameFragment(`#${new URLSearchParams({ name: long }).toString()}`);
+    expect(read).toEqual({ name: '🎉'.repeat(INVITE_NAME_MAX_CODE_POINTS), cut: true });
+    const exact = 'a'.repeat(INVITE_NAME_MAX_CODE_POINTS);
+    expect(readInviteNameFragment(`#name=${exact}`)).toEqual({ name: exact });
   });
 
   it('never throws on a malformed escape', () => {

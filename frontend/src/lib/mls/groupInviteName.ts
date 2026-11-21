@@ -1,4 +1,5 @@
 import type { Conversation } from '$lib/types';
+import { stripInvisible } from '$lib/utils/users/visibleText';
 
 /**
  * THE NAME A GROUP INVITE LINK CARRIES, IN ITS `#fragment` (sealed names, step 3, part 1).
@@ -15,6 +16,13 @@ import type { Conversation } from '$lib/types';
 
 /** The fragment key the name is written under. */
 export const INVITE_NAME_FRAGMENT_KEY = 'name';
+
+/**
+ * The most code points a card shows of a fragment's name. The fragment is UNTRUSTED - any holder of
+ * the token can write any name there - so a pasted megabyte never reaches a card; 100 is the bound
+ * the other names a member types carry (`NICKNAME_MAX_LENGTH`).
+ */
+export const INVITE_NAME_MAX_CODE_POINTS = 100;
 
 /**
  * The name a member's device puts in a group invite link: the row's name ONLY when a frame of the
@@ -39,20 +47,27 @@ export function withInviteNameFragment(url: string, name: string | null): string
 
 /**
  * What a link's fragment says about the group's name:
- * - `{ name }`: the name the sharer's device wrote;
+ * - `{ name }`: the name the link carries, invisible characters stripped (`cut`: it was longer than
+ *   {@link INVITE_NAME_MAX_CODE_POINTS} and only its start is kept);
  * - `{ absent: 'no-fragment' }`: a link with no name - minted by a build older than this one, or for
  *   a group no frame has named yet;
- * - `{ absent: 'empty' }`: a fragment whose name is blank once trimmed.
+ * - `{ absent: 'empty' }`: a fragment whose name is blank once stripped and trimmed.
  */
-export type InviteNameRead = { name: string } | { absent: 'no-fragment' | 'empty' };
+export type InviteNameRead = { name: string; cut?: true } | { absent: 'no-fragment' | 'empty' };
 
-/** Reads the name from a fragment (`location.hash`, with or without its `#`). Never throws. */
+/**
+ * Reads the name from a fragment (`location.hash`, with or without its `#`). Never throws. The
+ * fragment is untrusted input: the controls, bidi overrides and zero-width characters a name must
+ * not hold are stripped by the one rule names use (`stripInvisible`), then the length is capped.
+ */
 export function readInviteNameFragment(hash: string): InviteNameRead {
   const raw = hash.startsWith('#') ? hash.slice(1) : hash;
   const value = new URLSearchParams(raw).get(INVITE_NAME_FRAGMENT_KEY);
   if (value === null) return { absent: 'no-fragment' };
-  const name = value.trim();
-  return name === '' ? { absent: 'empty' } : { name };
+  const points = Array.from(stripInvisible(value).trim());
+  if (points.length === 0) return { absent: 'empty' };
+  if (points.length <= INVITE_NAME_MAX_CODE_POINTS) return { name: points.join('') };
+  return { name: points.slice(0, INVITE_NAME_MAX_CODE_POINTS).join('').trim(), cut: true };
 }
 
 /** The fragment of `href` (an absolute URL or a path), `''` when it has none or does not parse. */

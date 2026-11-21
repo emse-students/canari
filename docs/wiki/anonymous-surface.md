@@ -83,7 +83,8 @@ is part of the anonymous surface.
 | `/sitemap.xml` posts | **closed (owner 2026-11-02)** | the sitemap lists static pages and association slugs, as the showcase's does |
 | `/associations/<slug>` head | kept | the showcase's fields (name, description, logo, contact email, member count) |
 | `/posts/<id>` head | **kept - owner decision** | the shared post's link preview |
-| `/c/join/<token>`, `/g/join/<token>` heads | kept - capability | an invite a member handed out; `noindex` |
+| `/c/join/<token>` head | kept - capability | an invite a member handed out; `noindex` |
+| `/g/join/<token>` head | **generic (2026-11-21)** | names no group: the name travels in the link's `#fragment` ([sealed-names](protocols/sealed-names.md#step-3-part-1---built-2026-11-21-a-group-invite-link-carries-the-name-in-its-fragment)); `noindex` |
 | `/forms/<id>` head | kept | reads a guarded route and so only ever gets the generic head |
 
 The app itself renders nothing for a signed-out visitor beyond `/login`, `/auth`, `/legal` and a

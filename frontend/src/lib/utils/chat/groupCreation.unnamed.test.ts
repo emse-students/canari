@@ -147,12 +147,15 @@ describe('a named group dates its name at creation', () => {
     const d = withSend(async () => {
       throw new TransportFailureError(new Error('offline'));
     });
-    expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
-    await d.statementSettled;
-    const row = d.conversations.get('g-new')!;
-    expect(row.nameAt).toBeUndefined();
-    expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
-    vi.restoreAllMocks();
+    try {
+      expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
+      await d.statementSettled;
+      const row = d.conversations.get('g-new')!;
+      expect(row.nameAt).toBeUndefined();
+      expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('the creation returns without waiting for the statement round trip', async () => {

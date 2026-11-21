@@ -454,9 +454,11 @@ export async function createNewGroup(
         save: () => saveConversation(conversationKey!),
         log,
       }).catch((e: unknown) => {
-        console.error(
-          `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`
-        );
+        // EVERY PATH ENDS IN THE OUTCOME LINE, this one included: the creation's log is where a
+        // reader (and a test awaiting that line) learns the statement ended, however it ended.
+        const line = `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`;
+        console.error(line);
+        log(line);
       });
     }
     log(`[OK] Group ${groupId} created.`);

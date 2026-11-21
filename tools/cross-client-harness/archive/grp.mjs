@@ -822,7 +822,8 @@ async function grp4() {
       const shapeOk =
         typeof url === 'string' &&
         url.startsWith(joinPrefix) &&
-        /^[A-Za-z0-9_-]{8,}$/.test(url.slice(joinPrefix.length));
+        // The path's shape: the link may carry the group's name after `#` (sealed names, step 3).
+        /^\/g\/join\/[A-Za-z0-9_-]{8,}$/.test(new URL(url).pathname);
 
       let invitationNamesGroup = null;
       let joinedMs = null;
@@ -835,7 +836,8 @@ async function grp4() {
         // was handed a whole URL as a PATH and concatenated it onto the estate's own origin,
         // producing `Cannot navigate to invalid URL (-32000) on Page.navigate`. Fourth hardcoded
         // production origin found in this rig; `origin-selftest.mjs` is what stops the fifth.
-        await goto(w2, new URL(url).pathname);
+        // With its fragment: the invitation page reads the group's name there.
+        await goto(w2, new URL(url).pathname + new URL(url).hash);
         // THE LINK OPENS AN INVITATION, IT DOES NOT JOIN. The page reads "Vous avez ete invite(e) a
         // rejoindre le groupe <name>" and offers `Rejoindre le groupe` / `Annuler`; navigating and
         // waiting - which is what this check did on its first run - measures a page, not a join.
@@ -957,7 +959,7 @@ async function grp4() {
           linkOffered: share.offersGenerate || share.offersRegenerate,
           linkGenerationError: share.error,
           urlShapeOk: shapeOk,
-          tokenLength: shapeOk ? url.split('/').pop().length : null, // length only, never the token
+          tokenLength: shapeOk ? new URL(url).pathname.split('/').pop().length : null, // length only, never the token
           invitationPageNamesGroup: invitationNamesGroup,
           joinedAfterClickMs: joinedMs,
           rosterAfterJoin,

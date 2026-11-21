@@ -24,7 +24,7 @@
   );
   // THE NAME IS READ FROM THE LINK'S FRAGMENT, which no request carries (sealed names, step 3): the
   // sharer's device wrote it there. The server's name is read only for a link with no fragment.
-  const fragmentName = readInviteNameFragment(page.url.hash);
+  const fragmentName = $derived(readInviteNameFragment(page.url.hash));
   const groupName = $derived(inviteCardName(fragmentName, preview?.groupName ?? null));
 
   onMount(async () => {
@@ -41,6 +41,10 @@
     }
     try {
       preview = await getGroupInvitePreview(token);
+      if ('cut' in fragmentName) {
+        // The fragment is untrusted input: a name past the bound is cut, and its length never printed.
+        Log.d('GROUP_INVITE', 'the link carries a name past the bound - only its start is shown');
+      }
       if ('absent' in fragmentName) {
         // [LEGACY] a link minted before the name moved to the fragment, or for an unnamed group
         // (docs/wiki/legacy-compatibility.md). The shape only, never the name.

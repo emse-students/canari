@@ -41,6 +41,11 @@ describe('redactLogLine - what must never enter', () => {
     ],
     ['a token in a relative URL', '[API] -> GET /api/ws?token=sekret123', 'sekret123'],
     ['a fragment', '[auth] https://x.fr/cb#access_token=abc123def', 'abc123def'],
+    [
+      'a path fragment (a group invite name)',
+      '[auth] redirect loop to /g/join/tok123#name=Bureau+des+arts broken',
+      'Bureau',
+    ],
     ['an e-mail', '[LOGIN] signed in as jean.dupont@emse.fr', 'jean.dupont@emse.fr'],
     ['a PIN as a field', '[PIN] check pin=482913 ok', '482913'],
     ['a PIN as JSON', '[PIN] {"pin":"482913","mode":"keypad"}', '482913'],

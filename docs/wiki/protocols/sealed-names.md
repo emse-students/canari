@@ -439,17 +439,22 @@ into) no longer learns what a group is called.
   fragment reads the server's `groupName` - the legacy branch, logged at `[LEGACY]` with its shape
   (`no-fragment` or `empty`, and whether the server named it), never the name.
 - **The name survives a sign-in.** A signed-out reader is sent to `/login?returnTo=<path + fragment>`
-  by a client-side navigation, and `returnTo` is kept on the device (`setOidcEntry`); it never
-  reaches a server. The two lines that printed `returnTo` print `+fragment` instead
-  (`pathWithoutFragment`, `logSanitize.ts`), and so does the in-chat card's failure line.
+  by a client-side navigation, and the sign-in keeps `returnTo` on the device (`setOidcEntry`). The
+  fragment then sits, percent-encoded, in the QUERY of `/login`: a reload of that page sends it to
+  nginx, whose access log redacts the query - so a server can receive it there, and never stores it.
+  Two lines that printed `returnTo` print `+fragment` instead (`pathWithoutFragment`,
+  `logSanitize.ts`), and so does the in-chat card's failure line; the exported in-app log redacts a
+  path's fragment for every other line (`FRAGMENT_RE`, `appLogRedact.ts`).
 - **The Open Graph head of `/g/join/<token>` names no group** (`serverSeo.ts`): no enrichment, so the
   generic "Rejoindre un groupe" title of `resolveSeoForPath`, the site image, and no request to
   chat-delivery. The group's avatar is not shown either: a generic invitation shows nothing of the
   group (reversible; the decision said generic). The session-free
   `GET internal/group-invites/:token` it called is deleted, with the SSR's `DELIVERY_SERVICE_URL`.
-- **What a crafted link can do:** anyone holding a token can write any name in a fragment - as any
-  member can rename the group today. The card shows what the link says; the conversation, once
-  joined, shows the members' dated name.
+- **The fragment is untrusted input.** Any holder of a token - not only a member - can forge the
+  name a link carries. The card strips the controls, bidi overrides and zero-width characters a name
+  must not hold (`stripInvisible`, the rule nicknames use) and shows at most 100 code points
+  (`INVITE_NAME_MAX_CODE_POINTS`, a cut is logged without the name). The card shows what the link
+  says; the conversation, once joined, shows the members' dated name.
 - **What stays for the next part:** `GET mls/group-invites/:token` still answers `groupName`, for
   builds older than this one (their card reads it) and for links they minted (no fragment). It stops
   naming the group with the rest of step 3, behind the floor; a link minted before this build then
