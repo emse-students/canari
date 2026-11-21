@@ -30,8 +30,10 @@ object FixedNotifIds {
 
     /**
      * The background MLS worker's foreground notice. Until 1.7.3 the "messages en attente" nudge
-     * shared it, so a nudge posted before the update may still stand here: [OUTBOX_NUDGE] says
-     * how it is told apart ([OutboxNudge.isPreUpdateNudge]).
+     * shared it; no nudge posted then survives the update, which cancels every notification of the
+     * package (docs/wiki/frontend/mobile.md, "The outbox nudge"). No code cancels it by id; the
+     * app-open sweep of the messages channel cancels every record there by `sbn.id`, this one
+     * included, and the platform refuses that cancel while it is a foreground-service record.
      */
     const val WORKER_FOREGROUND = 9998
 
