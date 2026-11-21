@@ -80,6 +80,12 @@ import {
   type RequestState,
 } from './seat-hold';
 import { Submission } from './entities/submission.entity';
+import {
+  ANONYMOUS_BATCH_SIZE,
+  heldAnswerCount,
+  holdAnonymousAnswer,
+  releaseHeldAnswers,
+} from './anonymous-answer-batches';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
   askOpening,
@@ -1223,7 +1229,7 @@ export class FormsService {
       );
       throw new NotFoundException('Form not found');
     }
-    const submissionCount = await this.countActiveSubmissions(id);
+    const submissionCount = await this.countActiveSubmissions(form);
     // A paid form granting a cotisation its association cannot grant (no mode) is not buyable: its
     // submit is refused `COTISATION_DISABLED` (`assertGrantedTierIsARise`, the SAME
     // `cotisationGrantRefusal`), so the read says so rather than offer a payment that cannot open.
@@ -1318,10 +1324,14 @@ export class FormsService {
 
   /**
    * The submissions holding a place on the form: answered, paid, or waiting to be - an online
-   * `pending` only while it is younger than the hold (`seatHoldingWhere`).
+   * `pending` only while it is younger than the hold (`seatHoldingWhere`) - and the anonymous answers
+   * waiting for their batch (`anonymous-answer-batches.ts`), which are answers like the others.
    */
-  private countActiveSubmissions(formId: string): Promise<number> {
-    return this.submissionRepo.count({ where: seatHoldingWhere(formId) });
+  private async countActiveSubmissions(form: Pick<Form, 'id' | 'anonymous'>): Promise<number> {
+    const stored = await this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
+    return form.anonymous
+      ? stored + (await heldAnswerCount(this.submissionRepo.manager, form.id))
+      : stored;
   }
 
   /**
@@ -1359,7 +1369,7 @@ export class FormsService {
       throw new NotFoundException('Form not found');
     }
     const formFull =
-      !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
+      !!form.maxSubmissions && (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
@@ -2071,6 +2081,9 @@ export class FormsService {
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
     );
     await this.formRepo.update({ id: formId }, { closedAt });
+    // A closed anonymous form delivers every answer still waiting for its batch, now.
+    if (closed && form.anonymous)
+      await releaseHeldAnswers(this.submissionRepo.manager, formId, now);
     // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
     return {
       id: formId,
@@ -2497,7 +2510,7 @@ export class FormsService {
     // Check global capacity independently of per-user state
     let formFull = false;
     if (form.maxSubmissions) {
-      formFull = (await this.countActiveSubmissions(formId)) >= form.maxSubmissions;
+      formFull = (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
     }
 
     const facts = await this.factsFor(form, userId);
@@ -2864,6 +2877,8 @@ export class FormsService {
     }
 
     let savedSubmission!: Submission;
+    // An anonymous answer is held for its batch: it has no submission id to hand back.
+    let heldAnswer = false;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       // The association BEFORE the form: the lock order its delete takes (association first).
       await this.assertAssociationLiveUnderLock(manager, form, 'submit');
@@ -2917,7 +2932,10 @@ export class FormsService {
         })) > 0;
 
       if (form.maxSubmissions && !holdsSeat) {
-        const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
+        // An anonymous answer waiting for its batch holds its place like a stored one.
+        const count =
+          (await manager.count(Submission, { where: seatHoldingWhere(id) })) +
+          (form.anonymous ? await heldAnswerCount(manager, id) : 0);
         if (count >= form.maxSubmissions) throw formRefusal(FORM_FULL, 'Form is full');
       }
       // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
@@ -2958,10 +2976,9 @@ export class FormsService {
         if (totalCents > 0) {
           throw new BadRequestException('An anonymous form cannot charge for an option.');
         }
-        // The registry insert and the answer are ONE transaction, and the answer carries nothing
-        // that names the respondent: no account, no address, and a time cut to the day, because a
-        // precise clock would re-join the two tables by order alone. A guest is never in the
-        // registry: a public form takes several answers, and there is no account to write.
+        // The registry insert refuses a second answer from the same account, in this transaction.
+        // The answer itself is not written beside it: it waits for its batch (below). A guest is
+        // never in the registry: a public form takes several answers, and there is no account.
         if (!guest && !form.allowMultipleSubmissions) {
           const inserted: unknown[] = await manager.query(
             `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
@@ -2975,10 +2992,27 @@ export class FormsService {
             });
           }
         }
+        if (form.anonymous) {
+          // An anonymous form never asks a name or an e-mail (`FORM_ANONYMOUS_GUEST_IDENTITY`), so
+          // there is none to drop here; one reaching this line is a broken save rule, not an answer.
+          if (Object.values(guestIdentity).some((value) => value !== null && value !== undefined)) {
+            throw new Error(`guest identity reached the anonymous answer path on ${formTag(form)}`);
+          }
+          // The answer waits for its batch and moves into `submissions` with the others of this
+          // form, in one write of its own (`anonymous-answer-batches.ts`): nothing stored pairs it
+          // with the registry row above. Released after this transaction, below.
+          await holdAnonymousAnswer(manager, {
+            formId: id,
+            answers: storedAnswers,
+            lines,
+            priceLockedItemIds,
+            respondentIdentity,
+          });
+          heldAnswer = true;
+          return;
+        }
         // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
         // forgetting, and the answer carries no account for a clock to re-join.
-        const day = new Date();
-        day.setUTCHours(0, 0, 0, 0);
         savedSubmission = await manager.save(
           manager.create(Submission, {
             formId: id,
@@ -2993,7 +3027,6 @@ export class FormsService {
             paymentStatus: 'free',
             paymentMethod: null,
             cashExpiresAt: null,
-            ...(form.anonymous ? { createdAt: day, updatedAt: day } : {}),
           })
         );
         return;
@@ -3047,6 +3080,24 @@ export class FormsService {
         await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
+
+    if (heldAnswer) {
+      // The batch this answer completes is released in a transaction of its OWN, never the one that
+      // wrote the registry row. The answer is already safe: a failure here leaves the batch waiting,
+      // and the next submit, the close, a manager's read or the hourly sweep releases it.
+      try {
+        await releaseHeldAnswers(this.submissionRepo.manager, id);
+      } catch (e) {
+        this.logger.error(
+          '[FORMS] an anonymous batch could not be released after a submit; it stays held for the next release',
+          e
+        );
+      }
+      // No id: the answer is not a submission yet, and an id handed out now would be one more
+      // thing that pairs the request with the row its batch writes later.
+      this.logger.debug('[FORMS] an anonymous answer is held for its batch');
+      return { held: true as const };
+    }
 
     // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
@@ -4574,12 +4625,26 @@ export class FormsService {
   }
 
   /**
+   * The anonymous answers of a form waiting for their batch, and the batch size: the responses
+   * screen says how many are not listed yet and why. Read AFTER the release a read triggers, so a
+   * closed form answers 0. Zero on a named form, which holds nothing.
+   */
+  async heldAnswers(formId: string): Promise<{ held: number; batchSize: number }> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (form?.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
+    const held = await heldAnswerCount(this.submissionRepo.manager, formId);
+    return { held, batchSize: ANONYMOUS_BATCH_SIZE };
+  }
+
+  /**
    * Returns all submissions for a form enriched with the submitter's first/last name, a payment
    * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
    * something to.
    */
   async getSubmissions(formId: string) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
+    // A form that stopped taking answers delivers the ones still waiting for their batch first.
+    if (form?.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the day-precision `createdAt` was cut to hide.
     const subs = overCapacityFirst(
@@ -4635,6 +4700,8 @@ export class FormsService {
     const gridWords = productGridExportLabels(form.items, labels);
     // A CSV is one grid sheet: a form without a grid is refused here, not written empty.
     assertExportFormatFits(format, gridWords);
+    // As the responses list: a form that stopped taking answers delivers the waiting ones first.
+    if (form.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
 
     // Same order as the responses list, a payment over capacity first.
     const submissions = overCapacityFirst(

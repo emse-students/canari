@@ -967,13 +967,14 @@ what is displayed:
 | | Named form | Anonymous form |
 |---|---|---|
 | `submissions.userId` / `email` | the submitter | **NULL** |
-| `submissions.createdAt` | the instant | **cut to the UTC day** - a precise clock would re-join the two tables by order alone |
+| `submissions.createdAt` (and `updatedAt`, `paymentRequestedAt`) | the instant | **the UTC day its batch was released** - a precise clock would re-join the two tables by order alone |
+| when the answer is stored | in the request | **in a batch** ([below](#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | "has this account answered" | a `submissions` row | `form_respondents (formId, userId)`, which names **no answer and no time** |
 | Responses list and XLSX | newest first, name columns | **random-id order**, no name column, date without time |
 
-The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING ... RETURNING` is
-what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
-registers nobody.
+The registry insert is written in the request (`ON CONFLICT DO NOTHING ... RETURNING` is what refuses
+a second answer from the same account); the answer is not written beside it. `allowMultipleSubmissions`
+still works and then registers nobody.
 
 **Free only, refused where it is chosen** (the shared option rule,
 [below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06)): a payment names its
@@ -991,6 +992,46 @@ What it does NOT hide, stated so nobody over-reads it: an audience restriction (
 for a promo or a formation on a small group re-identifies its answerer by itself. The fill page says
 only what is stored, not more. Database history (WAL, backups) taken while the answer was written is
 outside this mechanism.
+
+## An anonymous form's answers are released in batches (2026-11-21)
+
+**The lesson, general**: what is stored must not pair an account with an answer - and "what is stored"
+includes what the database itself keeps about each write (system columns, physical order, a column's
+default clock), not only the columns this service declares. Splitting two writes apart is not enough
+on its own either: two writes made one after the other are still neighbours, on a form quiet enough.
+So the answer is never written near the registry row; it is written later, with others.
+
+**The mechanism** (`anonymous-answer-batches.ts`, migration 178, principle 1 first):
+
+1. The request writes the registry row and HOLDS the answer in `form_answers_held` - its content and
+   nothing that names or dates it (no account, no address, no timestamp, a random id).
+2. Once `ANONYMOUS_BATCH_SIZE` (5) answers of a form wait, the submit that brought the count there
+   releases them right after its own transaction commits: ONE transaction of their own, under the
+   form's lock (`lockFormSeats`), inserts them into `submissions` in a cryptographically random order,
+   dated the release's UTC day, and deletes the held rows. A registry row never shares that write.
+3. Once the form takes no more answers (closed by its manager, an end date that came, an opening moved
+   later, archived), every waiting answer is released however few. Below the batch size they **join the
+   answers released on the form's latest release day**: those are rewritten in the same transaction
+   and the new ones take their date, so the last group is not smaller than the batch size - unless the
+   form never had that many answers, and then the group is every answer it has, the most any design
+   can give when the reader also holds the list of who answered.
+4. The release is a predicate over durable state, looked at by: the submit (a full batch), the close
+   (`setClosed`), a manager's read or export of the answers, `retireForms` (an archived form's answers
+   are released, never lost), and the hourly sweep `AnonymousAnswerReleaseScheduler` (an end date
+   that came, or a full batch whose release after its submit failed). Each is idempotent.
+
+| Question | Answer |
+|---|---|
+| Does the organiser see an answer at once? | **No, on an anonymous form.** Up to 4 answers wait while the form is open. The responses screen says so: "Réponses en attente : N. Sur un formulaire anonyme, elles s'affichent par groupes de 5, et toutes à la clôture du formulaire." (`GET /api/forms/:id/held-answers`, managers only, read after the answers). The creation hint says it too. |
+| Does a waiting answer count? | Yes: the capacity check and `submissionCount` count it, and the one-answer rule holds from the request (the registry). |
+| What does the respondent get back? | `{ held: true }`, no submission id: an id handed back now would pair the request with the row its batch writes later. |
+| Can the organiser force a small group out? | Only by closing the form - which releases into the latest group, not as a group of its own. Closing and reopening repeatedly is the organiser's choice, and the count of waiting answers is shown to them. |
+| What does the database keep of a released held row? | Its old version until vacuum: the table's autovacuum runs as soon as a row is gone (migration 178). WAL and backups taken meanwhile are outside this mechanism, as above. |
+
+Tests: `anonymous-answer-batches.integration.spec.ts` (PostgreSQL: the batch is one write no registry
+row shares, no instant stored, the close joins the latest group, a waiting answer holds its place, the
+sweep and `retireForms` release), the unit specs of the submit, and `FormsManagerList.svelte.test.ts`
+(the notice).
 
 ## A public form is answered without an account (2026-09-30)
 

@@ -47,6 +47,8 @@ function makeManager(affected: { update: number; delete: number }) {
   };
   let n = 0;
   const manager: any = {
+    // The anonymous forms among the targets, whose waiting answers are released first: none here.
+    query: jest.fn(() => Promise.resolve([])),
     // Order of use inside `retireForms`: update, its sub-query, delete, its sub-query.
     createQueryBuilder: jest.fn(() => {
       n += 1;

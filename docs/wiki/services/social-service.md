@@ -1122,6 +1122,7 @@ mark is handed over, moved or not, and a peer's is not), `nativeNotification.tes
 | GET | `/api/forms/:id` | Get form definition |
 | POST | `/api/forms/:id/submit` | Submit form (with optional Lydia or cash payment) |
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
+| GET | `/api/forms/:id/held-answers` | An anonymous form's answers waiting for their batch, and the batch size (managers only; [forms](../frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
 ### Bookings (`/api/bookings`)

@@ -647,6 +647,17 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
   return res.json();
 }
 
+/**
+ * How many answers of an anonymous form wait for their batch, and the batch size (manager only). An
+ * anonymous form's answers are stored in groups, all of them once the form is closed, so the
+ * responses screen says why some are not listed yet.
+ */
+export async function getHeldAnswers(formId: string): Promise<{ held: number; batchSize: number }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/held-answers`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch the waiting answers');
+  return res.json();
+}
+
 /** The payment state of the caller's own submission, read by the return page after Lydia. */
 export async function getSubmissionPayment(submissionId: string): Promise<{
   id: string;
