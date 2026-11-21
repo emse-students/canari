@@ -130,7 +130,11 @@ export async function cancelOpening(
   );
 }
 
-/** Whether the person will be told of this target's opening - asked, or as a follower. */
+/**
+ * Whether the person will be told of this target's opening - asked, or as a follower. A FORM tells
+ * only who asked (owner, 2026-11-17): a follower row an older build wrote for one is never told, so it
+ * does not read as "will be told" - the bell would say "on" for a notice that never comes.
+ */
 export async function isTold(
   db: Queryable,
   kind: OpeningKind,
@@ -139,7 +143,8 @@ export async function isTold(
 ): Promise<boolean> {
   const rows = await returned(
     db,
-    `SELECT 1 FROM opening_reminders WHERE kind = $1 AND "targetId" = $2::uuid AND "userId" = $3`,
+    `SELECT 1 FROM opening_reminders WHERE kind = $1 AND "targetId" = $2::uuid AND "userId" = $3
+        AND (kind <> 'form' OR origin = 'asked')`,
     [kind, targetId, userId]
   );
   return rows.length > 0;
@@ -259,7 +264,8 @@ export async function followOpeningMove(
 }
 
 /**
- * How many people a move of this target's opening would push: the rows not yet told of an opening.
+ * How many people a move of this target's opening would push: the rows not yet told of an opening
+ * (a form's legacy follower rows are never told, so they are not counted).
  * Read BEFORE an organiser moves an opening earlier, so the move can name the count and ask first
  * (owner, 2026-11-17, (B); charter principle 3: nobody is told a form is open by a test).
  */
@@ -271,7 +277,8 @@ export async function countUntoldOpenings(
   const rows = await returned(
     db,
     `SELECT 1 FROM opening_reminders
-      WHERE kind = $1 AND "targetId" = $2::uuid AND NOT "notifiedOnOpen"`,
+      WHERE kind = $1 AND "targetId" = $2::uuid AND NOT "notifiedOnOpen"
+        AND (kind <> 'form' OR origin = 'asked')`,
     [kind, targetId]
   );
   return rows.length;

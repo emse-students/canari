@@ -471,7 +471,8 @@ export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
 /**
  * The 409 refusing to move a PUBLISHED form's opening EARLIER while people asked to be told of it
  * and are not yet: the move pushes them (owner, 2026-11-17, (B)). Carries `askers`, the count, so
- * the editor names it; the same edit sent with `confirmOpeningNotify: true` goes through.
+ * the editor names it; the same edit sent with `confirmOpeningNotify` equal to that count goes
+ * through (a count that moved since the editor read it is refused again).
  */
 export const FORM_OPENING_NOTIFIES = 'FORM_OPENING_NOTIFIES';
 
@@ -1076,7 +1077,7 @@ export class FormsService {
   private async assertEarlierOpeningConfirmed(
     form: Pick<Form, 'id' | 'status' | 'opensAt'>,
     opensAtRaw: string | null | undefined,
-    confirmed: boolean,
+    confirmedAskers: number | null,
     db: EntityManager
   ): Promise<void> {
     if (form.status !== FORM_PUBLISHED || !form.opensAt) return;
@@ -1085,18 +1086,20 @@ export class FormsService {
     if (after !== null && after >= before) return;
     const askers = await countUntoldOpenings(db, 'form', form.id);
     if (askers === 0) return;
-    if (confirmed) {
+    if (confirmedAskers === askers) {
       this.logger.log(
         `[FORMS] opening of ${form.id.slice(0, 8)} moved earlier, confirmed: ${askers} asker(s) will be told`
       );
       return;
     }
     this.logger.log(
-      `[FORMS] opening of ${form.id.slice(0, 8)} moved earlier refused: ${askers} asker(s) to be told, not confirmed`
+      `[FORMS] opening of ${form.id.slice(0, 8)} moved earlier refused: ${askers} asker(s) to be told, confirmed ${confirmedAskers ?? 'none'}`
     );
     throw new ConflictException({
       code: FORM_OPENING_NOTIFIES,
       askers,
+      // The wording is the editor's, and it must be true: told right away, or at the new opening.
+      immediate: after === null || after <= Date.now(),
       message: 'Moving the opening earlier notifies the people who asked to be told.',
     });
   }
@@ -1526,7 +1529,7 @@ export class FormsService {
     userId: string,
     isGlobalAdmin: boolean,
     inTransaction?: EntityManager,
-    confirmOpeningNotify = false
+    confirmedAskers: number | null = null
   ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
 
@@ -1704,7 +1707,7 @@ export class FormsService {
     await this.assertEarlierOpeningConfirmed(
       form,
       opensAtRaw,
-      confirmOpeningNotify,
+      confirmedAskers,
       inTransaction ?? this.reminderRepo.manager
     );
     const citedBefore = questionImageIds(form.items);
@@ -1905,7 +1908,7 @@ export class FormsService {
     userId: string,
     isGlobalAdmin: boolean,
     overwrite = false,
-    confirmOpeningNotify = false
+    confirmedAskers: number | null = null
   ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
@@ -1939,14 +1942,7 @@ export class FormsService {
       let saved: Form = locked;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
-        saved = (await this.update(
-          formId,
-          dto,
-          userId,
-          isGlobalAdmin,
-          m,
-          confirmOpeningNotify
-        )) as Form;
+        saved = (await this.update(formId, dto, userId, isGlobalAdmin, m, confirmedAskers)) as Form;
       }
       if (wasDraft) {
         await this.assertPublishable(saved);

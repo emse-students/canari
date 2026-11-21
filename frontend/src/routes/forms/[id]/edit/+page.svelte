@@ -523,7 +523,15 @@
    * Moving the opening earlier would push the people who asked to be told: the next "Publier"
    * confirms it (owner, 2026-11-17).
    */
-  let notifyOffered = $state(false);
+  let notifyAskers = $state<number | null>(null);
+  /**
+   * The confirmation belongs to the opening it was shown for: a different date is a different move,
+   * and the count shown no longer describes it (the server also refuses a count that moved).
+   */
+  $effect(() => {
+    void opensAt;
+    notifyAskers = null;
+  });
 
   /**
    * "Publier" / "Publier les modifications" (owner, 2026-11-08): the page's own checks first, in the
@@ -607,9 +615,10 @@
       // The move would push everyone who asked to be told: the sentence names how many.
       const notifies = openingNotifiesMessage(
         refusalCode(e),
-        e instanceof SocialApiError ? e.askerCount : null
+        e instanceof SocialApiError ? e.askerCount : null,
+        e instanceof SocialApiError ? e.openingImmediate : null
       );
-      if (notifies) notifyOffered = true;
+      if (notifies && e instanceof SocialApiError) notifyAskers = e.askerCount;
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
@@ -650,10 +659,10 @@
       formId,
       autosave.revision,
       overwriteOffered,
-      notifyOffered
+      notifyAskers
     );
     overwriteOffered = false;
-    notifyOffered = false;
+    notifyAskers = null;
     autosave.closed(result.revision, 'published');
     Log.d('forms-editor', `published ${formId} at revision ${result.revision}`);
     goto(resolve('/forms'));
@@ -1058,7 +1067,7 @@
             busy: isPublishing,
             label: overwriteOffered
               ? m.form_publish_overwrite_button()
-              : notifyOffered
+              : notifyAskers !== null
                 ? m.form_publish_notify_button()
                 : isDraft
                   ? m.form_publish_button()

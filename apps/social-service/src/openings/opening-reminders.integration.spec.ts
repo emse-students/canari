@@ -101,7 +101,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
    * The follower rows of a form - which NO build writes since 2026-11-17 (a form tells only the
    * people who pressed its bell). Kept to prove the rows an older build left tell nobody.
    */
-  const announceForm = (opensAt: Date | null) =>
+  const announceFormLegacy = (opensAt: Date | null) =>
     announceOpeningToFollowers(ds.manager, {
       kind: 'form',
       targetId: FORM,
@@ -273,7 +273,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('writes the followers who see the association, never the publisher, the far follower or a stranger', async () => {
-      expect(await announceForm(opensIn(60))).toBe(3);
+      expect(await announceFormLegacy(opensIn(60))).toBe(3);
       expect(await rows()).toEqual(
         sorted([
           `form:${FAN}:followed:true/false`,
@@ -286,21 +286,21 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         BDE,
         FAR_FAN,
       ]);
-      expect(await announceForm(opensIn(60))).toBe(1);
+      expect(await announceFormLegacy(opensIn(60))).toBe(1);
       // An archived association announces nothing.
       await q(`UPDATE associations SET archived = true`);
       await q(`DELETE FROM opening_reminders`);
-      expect(await announceForm(opensIn(60))).toBe(0);
+      expect(await announceFormLegacy(opensIn(60))).toBe(0);
       await q(`UPDATE associations SET archived = false`);
     });
 
     it('a form tells only who asked: its follower rows (an older build) are claimed and told nothing, and the bell row names the association and the form', async () => {
-      await announceForm(opensIn(3));
+      await announceFormLegacy(opensIn(3));
       // Asked AFTER the follower row (the upsert) and BEFORE any row (a new ask).
       await askOpening(ds.manager, 'form', FORM, FAN_ASKER, opensIn(3));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
       // A re-announcement (a later move, a retried publication) never overwrites an ask.
-      await announceForm(opensIn(3));
+      await announceFormLegacy(opensIn(3));
       expect(await rows()).toEqual(
         sorted([
           `form:${ASKER}:asked:false/false`,
@@ -348,7 +348,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
          VALUES ($1, 'association', $3, 'none'), ($2, 'association', $3, 'lives')`,
         [MUTED_FAN, FAN_ASKER, BDE]
       );
-      await announceForm(null);
+      await announceFormLegacy(null);
       await askOpening(ds.manager, 'form', FORM, FAN_ASKER, opensIn(60));
       await openNow();
       await scheduler.checkReminders();
@@ -380,7 +380,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('a moved opening carries the untold rows and re-arms an ask, never a told opening', async () => {
-      await announceForm(opensIn(2));
+      await announceFormLegacy(opensIn(2));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(2));
       await scheduler.checkReminders();
       expect(pushes()).toEqual(sorted([`${ASKER}:form_opening_soon`]));
@@ -435,6 +435,25 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
       );
     });
 
+    it("a form's legacy follower rows are neither counted nor read as told (they never will be)", async () => {
+      await announceFormLegacy(opensIn(60));
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(0);
+      expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(false);
+      await askOpening(ds.manager, 'form', FORM, FAN, opensIn(60));
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(1);
+      expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(true);
+      // A booking space's follower still reads as told.
+      await announceOpeningToFollowers(ds.manager, {
+        kind: 'booking',
+        targetId: SPACE,
+        associationId: BDE,
+        opensAt: opensIn(60),
+        actorId: PUBLISHER,
+      });
+      expect(await isTold(ds.manager, 'booking', SPACE, FAN_ASKER)).toBe(true);
+      expect(await countUntoldOpenings(ds.manager, 'booking', SPACE)).toBe(3);
+    });
+
     it('counts the people a move of the opening would push: the rows not yet told', async () => {
       expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(0);
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
@@ -446,7 +465,8 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('"Ne plus me prévenir" removes the row, follower or not, and the status reads it', async () => {
-      await announceForm(opensIn(60));
+      await announceFormLegacy(opensIn(60));
+      await askOpening(ds.manager, 'form', FORM, FAN, opensIn(60));
       expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(true);
       await cancelOpening(ds.manager, 'form', FORM, FAN);
       expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(false);
@@ -773,7 +793,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
 
     describe('an image older than WP-4, still writing form_reminders during the rollover', () => {
       it('its ask (insert, then its upsert) and its unsubscribe are the same writes on the new store', async () => {
-        await announceForm(opensIn(60));
+        await announceFormLegacy(opensIn(60));
         // The old subscribe of a FOLLOWER: their row becomes an ask, its heads-up armed.
         await q(
           `INSERT INTO form_reminders ("formId", "userId", "opensAt") VALUES ($1, $2, now() + interval '1 hour')`,
@@ -829,7 +849,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('the erasure deletes the account rows of both stores', async () => {
-      await announceForm(opensIn(60));
+      await announceFormLegacy(opensIn(60));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
       for (const label of ['form_reminders', 'opening_reminders']) {
         const statement = ERASURE_STATEMENTS.find((s) => s.label === label);

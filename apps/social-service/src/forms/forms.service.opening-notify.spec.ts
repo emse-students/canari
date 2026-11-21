@@ -27,7 +27,7 @@ describe('FormsService - an earlier opening asks first when people asked to be t
     const run = (
       form: { status: string; opensAt: Date | null },
       raw: string | null | undefined,
-      confirmed = false
+      confirmed: number | null = null
     ) =>
       service.assertEarlierOpeningConfirmed(
         { id: 'form-1', ...form },
@@ -55,9 +55,29 @@ describe('FormsService - an earlier opening asks first when people asked to be t
     await expect(run(published(60), undefined)).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('refuses again when the count moved since the editor read it', async () => {
+    const { run } = guard(4);
+    const refusal = await run(published(60), at(0), 3).catch((e) => e);
+    expect(refusal.getResponse()).toMatchObject({ code: FORM_OPENING_NOTIFIES, askers: 4 });
+  });
+
+  it('says whether they are told right away or at the new opening', async () => {
+    const { run } = guard(2);
+    const past = await run(published(60), '2020-01-01T00:00:00.000Z').catch((e) => e);
+    expect(past.getResponse()).toMatchObject({ immediate: true });
+    const clear = await run(published(60), null).catch((e) => e);
+    expect(clear.getResponse()).toMatchObject({ immediate: true });
+    // Stored two hours ahead, moved one hour ahead: earlier, but still to come.
+    const stored = { status: FORM_PUBLISHED as string, opensAt: new Date(Date.now() + 7_200_000) };
+    const future = await run(stored, new Date(Date.now() + 3_600_000).toISOString()).catch(
+      (e) => e
+    );
+    expect(future.getResponse()).toMatchObject({ immediate: false });
+  });
+
   it('lets the editor confirm it', async () => {
     const { run } = guard(3);
-    await expect(run(published(60), at(0), true)).resolves.toBeUndefined();
+    await expect(run(published(60), at(0), 3)).resolves.toBeUndefined();
   });
 
   it('lets a later or unchanged opening through without reading anybody', async () => {

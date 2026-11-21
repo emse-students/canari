@@ -445,12 +445,13 @@ export class PublishFormRevisionDto extends FormRevisionDto {
   overwrite?: boolean;
 
   /**
-   * The organiser confirmed that moving the opening earlier pushes the people who asked to be told
-   * (`FORM_OPENING_NOTIFIES`, owner 2026-11-17).
+   * The count the organiser was shown and confirmed ("N people asked to be told",
+   * `FORM_OPENING_NOTIFIES`, owner 2026-11-17): the server refuses again when the count moved.
    */
-  @IsBoolean()
+  @IsInt()
+  @Min(1)
   @IsOptional()
-  confirmOpeningNotify?: boolean;
+  confirmOpeningNotify?: number;
 }
 
 /**

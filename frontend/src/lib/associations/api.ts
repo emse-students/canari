@@ -604,7 +604,12 @@ export class SocialApiError extends ApiRefusalError {
      * How many people asked to be told of a form's opening and would be pushed by the move a
      * `FORM_OPENING_NOTIFIES` refusal stopped ({@link askerCountOf}), so the editor words the number.
      */
-    readonly askerCount: number | null = null
+    readonly askerCount: number | null = null,
+    /**
+     * Whether that move pushes them right away (the new opening is now or past) or at the new
+     * opening ({@link openingImmediateOf}); the sentence must say which. Null when the body says none.
+     */
+    readonly openingImmediate: boolean | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
@@ -648,6 +653,13 @@ export function askerCountOf(body: unknown): number | null {
   return typeof askers === 'number' && Number.isInteger(askers) && askers > 0 ? askers : null;
 }
 
+/** Reads the `immediate` flag a `FORM_OPENING_NOTIFIES` body carries; `null` otherwise. */
+export function openingImmediateOf(body: unknown): boolean | null {
+  if (!body || typeof body !== 'object') return null;
+  const { immediate } = body as Record<string, unknown>;
+  return typeof immediate === 'boolean' ? immediate : null;
+}
+
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
 export interface AmountBounds {
   minCents: number;
@@ -684,6 +696,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let holderCount: number | null = null;
   let associationIds: string[] | null = null;
   let askerCount: number | null = null;
+  let openingImmediate: boolean | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -711,6 +724,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     associationIds = associationIdsOf(parsed);
     // A form edit moving the opening earlier names how many people it would push.
     askerCount = askerCountOf(parsed);
+    openingImmediate = openingImmediateOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
@@ -722,7 +736,8 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     holderCount,
     null,
     associationIds,
-    askerCount
+    askerCount,
+    openingImmediate
   );
 }
 

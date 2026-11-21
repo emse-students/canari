@@ -16,7 +16,7 @@ export const FORM_CHANGED_SINCE_REVISION = 'FORM_CHANGED_SINCE_REVISION';
 /**
  * The 409 refusing to move a published form's opening EARLIER while people asked to be told of it:
  * the move pushes them (owner, 2026-11-17). Carries `askers`; confirmed by sending the publication
- * again with `confirmOpeningNotify`.
+ * again with `confirmOpeningNotify` set to the count it showed (a count that moved is refused again).
  */
 export const FORM_OPENING_NOTIFIES = 'FORM_OPENING_NOTIFIES';
 
@@ -27,10 +27,13 @@ export const FORM_OPENING_NOTIFIES = 'FORM_OPENING_NOTIFIES';
  */
 export function openingNotifiesMessage(
   code: string | null | undefined,
-  askerCount: number | null | undefined
+  askerCount: number | null | undefined,
+  immediate: boolean | null | undefined
 ): string | null {
-  if (code !== FORM_OPENING_NOTIFIES || !askerCount) return null;
-  return m.form_opening_notifies_refusal({ count: askerCount });
+  if (code !== FORM_OPENING_NOTIFIES || !askerCount || immediate == null) return null;
+  return immediate
+    ? m.form_opening_notifies_now_refusal({ count: askerCount })
+    : m.form_opening_notifies_later_refusal({ count: askerCount });
 }
 
 /** The 400 of a revision the edit route's validation refuses at its publication. */

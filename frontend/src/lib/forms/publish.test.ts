@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { askerCountOf } from '$lib/associations/api';
+import { askerCountOf, openingImmediateOf } from '$lib/associations/api';
 import {
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
@@ -135,26 +135,37 @@ describe('drafts and their publication', () => {
 });
 
 describe('an earlier opening names who it would push (owner, 2026-11-17)', () => {
-  it('words the count of people who asked, singular and plural, in the reader locale', () => {
-    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1)).toBe(
-      m.form_opening_notifies_refusal({ count: 1 })
+  it('words the count and WHEN they are told, singular and plural', () => {
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1, true)).toBe(
+      m.form_opening_notifies_now_refusal({ count: 1 })
     );
-    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 7)).toContain('7');
-    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1)).not.toBe(
-      openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2)
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 7, false)).toBe(
+      m.form_opening_notifies_later_refusal({ count: 7 })
+    );
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 7, false)).toContain('7');
+    // Told right away is not told at the new opening: the two sentences differ.
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, true)).not.toBe(
+      openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, false)
+    );
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 1, true)).not.toBe(
+      openingNotifiesMessage(FORM_OPENING_NOTIFIES, 2, true)
     );
   });
 
-  it('says nothing for another code, or for a body that carried no count', () => {
-    expect(openingNotifiesMessage('SOMETHING_ELSE', 3)).toBeNull();
-    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, null)).toBeNull();
-    expect(openingNotifiesMessage(null, 3)).toBeNull();
+  it('says nothing for another code, or for a body that lacks the count or the timing', () => {
+    expect(openingNotifiesMessage('SOMETHING_ELSE', 3, true)).toBeNull();
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, null, true)).toBeNull();
+    expect(openingNotifiesMessage(FORM_OPENING_NOTIFIES, 3, null)).toBeNull();
+    expect(openingNotifiesMessage(null, 3, true)).toBeNull();
   });
 
-  it('reads the count of the server body, whole and positive only', () => {
+  it('reads the count and the timing of the server body, strictly typed', () => {
     expect(askerCountOf({ code: FORM_OPENING_NOTIFIES, askers: 4 })).toBe(4);
     expect(askerCountOf({ askers: 0 })).toBeNull();
     expect(askerCountOf({ askers: '4' })).toBeNull();
     expect(askerCountOf(null)).toBeNull();
+    expect(openingImmediateOf({ immediate: false })).toBe(false);
+    expect(openingImmediateOf({ immediate: 'no' })).toBeNull();
+    expect(openingImmediateOf(undefined)).toBeNull();
   });
 });

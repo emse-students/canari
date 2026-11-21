@@ -161,8 +161,8 @@ export class FormsController {
    * the edit's rules, atomically. 409 `FORM_DRAFT_CONFLICT` when it moved, `FORM_DRAFT_EMPTY` when a
    * published form holds no unpublished change, `FORM_CHANGED_SINCE_REVISION` when the form was
    * written since the revision started and `overwrite` does not confirm publishing over it, and
-   * `FORM_OPENING_NOTIFIES` (with `askers`) when it moves the opening earlier while people asked to
-   * be told and `confirmOpeningNotify` does not confirm it.
+   * `FORM_OPENING_NOTIFIES` (with `askers` and `immediate`) when it moves the opening earlier while
+   * people asked to be told and `confirmOpeningNotify` is not that count.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/draft/publish')
@@ -179,7 +179,7 @@ export class FormsController {
       xUserId,
       ga === 'true',
       dto.overwrite === true,
-      dto.confirmOpeningNotify === true
+      dto.confirmOpeningNotify ?? null
     );
   }
 
@@ -212,7 +212,7 @@ export class FormsController {
       xUserId,
       ga === 'true',
       undefined,
-      confirmOpeningNotify === 'true'
+      confirmedAskersOf(confirmOpeningNotify)
     );
   }
 
@@ -628,4 +628,10 @@ export class FormsController {
 
     res.send(Buffer.from(buffer));
   }
+}
+
+/** The confirmed count of a `confirmOpeningNotify` query, or null when absent or not a whole count. */
+function confirmedAskersOf(raw: string | undefined): number | null {
+  const n = Number(raw);
+  return raw !== undefined && Number.isInteger(n) && n > 0 ? n : null;
 }
