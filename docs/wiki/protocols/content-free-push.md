@@ -34,7 +34,7 @@ so either reading leaks nothing more.
 | **Social / bell** (posts, comments, mentions, reactions to posts, reposts, follow requests, lives, bookings, agenda, forms, Lydia, delegations - the 40 keys of `PushContentKey`) | `PushService.notifyContent` (`apps/social-service/src/push/push.service.ts`, keys in `push-content.ts`) | `type=social` or `form_reminder`, `contentKey`, `actorName` (a person's name), `contentArg` (**the opening of the text a person typed** for a comment, a reply, a mention or a post; an emoji; an event or form title; an association name; a booking place), `iconUserId` / `iconMediaId`, `deepLink` (names the post, form, live, association), the ids the caller adds (`postId`, `commentId`, `formId`, `liveId`, `associationId`, ...), and `title` / `body` = the French **legacy sentences** for clients before 2026-08-19 | no |
 | **Reaction to a chat message** | `POST /mls/notify-reaction` (`messaging.controller.ts`) -> `sendPushToUser` | `type=social`, `reaction=true`, `groupId`, `messageId`, `emoji`, `senderId` (the actor), `deepLink` (`chat/<groupId>`); title = the actor's name, body = the French legacy sentence naming the actor and the emoji | no |
 | **Join ask** (a person asks to join a group conversation) | `pushJoinAsk` (`utils/join-ask-announce.ts`, from `invitations.controller.ts`) -> `sendPushToUser` | `type=social`, `contentKey` (the join-ask key), `actorName` (the asker's name), `contentArg` (the group's name), `deepLink` (`chat/<groupId>`), `groupId`, `senderId` (the asker); title = the asker's name, body = the French legacy sentence naming the asker and the group | no |
-| **Welcome request pending** (wake the other members so one of them admits a device) | `sendFcmWelcomeRequestPending` (`messaging.service.ts`, its own direct `getMessaging().send`) - `notifyWelcomeRequest` itself is a WebSocket signal | `type=welcome_request_pending`, `groupId`, `requesterUserId`, `requesterDeviceId`; Android high priority, iOS a background push (`content-available`), to every token of every other member | no - **WP-W3b (built 2026-11-21)**: a silent envelope wake (`type=wake`, `envelopeId`, `silent=true`) when `push_mode=wake` AND the token is at `wakeVersion >= 2`; no client declares 2 yet |
+| **Welcome request pending** (wake the other members so one of them admits a device) | `sendFcmWelcomeRequestPending` (`messaging.service.ts`, its own direct `getMessaging().send`) - `notifyWelcomeRequest` itself is a WebSocket signal | `type=welcome_request_pending`, `groupId`, `requesterUserId`, `requesterDeviceId`; Android high priority, iOS a background push (`content-available`), to every token of every other member | no - **WP-W3b (built 2026-11-21)**: a silent envelope wake (`type=wake`, `envelopeId`, `silent=true`) when `push_mode=wake` AND the token is at `wakeVersion >= 2`; no client declares 2 yet. **Never sent to an iPhone since 2026-11-21** (section 2): Apple receives none of it |
 | **Call ring** | `CallsService` (`calls.service.ts`): Android and VoIP-less iPhones through FCM (`ringViaFcm`), iPhones with a VoIP token through APNs VoIP direct (`apns-voip.service.ts`, `call-ring-payload.ts`) | ids only since decision 6: `type=call_ring`, `groupId`, `callId`, `callerId`, `hasVideo`, and on VoIP `ringUntil`; the FCM iOS alert is generic (`Canari` / `Appel entrant`) | no - and see section 6 |
 | **Ring end** | `CallsService.endRing` | `type=call_ring_end`, `callId`, `reason` (`cancelled`, `answered` or `ended`) - **no `groupId` since WP-W6 (2026-11-17)**; silent / background, to EVERY token of EVERY admitted member | no - and see section 6 |
 
@@ -81,8 +81,23 @@ kind; the wake does not need it to choose a code path because the fetch IS the c
 `groupId` + `requesterUserId` + `requesterDeviceId` tell Google and Apple that a given person's new
 device is joining a given conversation, sent to every other member. It has no durable row either, so
 it goes through the same envelope as `sendPushToUser` (section 3.2): `sendFcmWelcomeRequestPending`
-stops calling `getMessaging()` itself and stores its map, then sends a silent wake. The receiver
-already only reconnects its WebSocket on it, so the fetched fields change nothing in what it does.
+stores its map, then sends a silent wake. **What the receiver does with it is a full background
+admission, not a reconnection**: the Android `dispatchPush` branch (`CanariFirebaseMessagingService.kt`)
+runs `processWelcomeRequestBackground` on the MLS lane, under a wake lock - the device builds and sends
+the requester's Welcome without opening the WebView. So the fetched answer must reach that same branch,
+in arrival order (`WakeOrder`), and that is WP-W4's to prove before any version-2 token exists with the
+switch on (below).
+
+**Decided 2026-11-21 under the owner's delegation, reversible - principle 1 of
+[Nos principes](../../principes.md) ("your messages are yours", data kept to a minimum): this push
+is never sent to an iPhone, in either mode.** iOS does not act on it - `canari_push.mm` lists it among
+the kinds "NOT acted on", since its branch was deleted on 2026-10-22
+([mobile](../frontend/mobile.md)) - so every iOS member token was handing Apple a `groupId` and the
+requester's ids for no function. The filter sits where the token list is built
+(`sendFcmWelcomeRequestPending`), by platform, with one line per send saying how many iOS tokens it
+skipped and why. Reversing it is one condition, the day an iOS build acts on the type again - and
+that build should take the envelope wake, not the full push. The requester's own device is filtered
+the same way: it has nothing to admit.
 
 **Built 2026-11-21, switch OFF, inert until a version-2 client** (WP-W4). As built:
 
@@ -90,18 +105,30 @@ already only reconnects its WebSocket on it, so the fetched fields change nothin
   push sends AND the map the envelope stores, so the fetched fields are the full push's by
   construction. `isInternalSilent` names the type, so the envelope is `silent` (evicted before any
   banner by the cap) and its answer is a background request: `presentation` is null.
-- **The decision is `envelopesForWake`, the one `sendPushToUser` uses**, taken once per ACCOUNT (an
-  envelope belongs to one account's devices); the tokens stay one batched read for the whole group.
-  A device that cannot be prepared (switch unreadable, envelope not stored) is sent NOTHING and
-  accused at ERROR there - never the full push; a token below version 2, or the switch at `full`,
-  keeps today's full push byte for byte (`messaging.push-envelope.spec.ts`).
+- **The decision is `envelopesForWake`, the one `sendPushToUser` uses.** The switch is read ONCE
+  per send (`readEnvelopeWakeMode`, both senders), so an unreadable switch is ONE ERROR line under
+  the caller's tag (`[WELCOME_REQ]` / `[SOCIAL_PUSH]`), never one per member. The envelopes are then
+  stored one ACCOUNT at a time, in a `for..of` as `pushJoinAsk` walks its recipients: an envelope
+  belongs to one account's devices, and a sequential walk holds one pool connection whatever the size
+  of the group - a `Promise.all` over a 300-member group would have queued 300 transactions on a pool
+  of 10, inline in the welcome-request handler. The tokens stay one batched read for the whole group.
+- **Every device that is not woken says why**: switch unreadable or envelope not stored, ERROR (once
+  per send, once per account); the cap taking the new envelope at once, WARN `[WELCOME_REQ] ... not
+  woken - the envelope cap` (a device that never fetches); a registration deleted since the read,
+  `[WELCOME_REQ] ... not woken - its registration was deleted`. Never the full push in its place. A
+  token below version 2, or the switch at `full`, keeps the full push (`messaging.push-envelope.spec.ts`);
+  since only Android tokens are sent, that push no longer carries the `apns` block FCM ignored for them.
 - **The wake keeps the full push's Android `ttl` of 1 h** - the request it announces lives 24 h in
-  Redis, so a wake delivered later has nothing to drain - and iOS gets the silent wake
-  (`content-available`, `background`, priority 5), as the full push.
-- **What the answer is, per platform**: iOS, exactly the four fields; Android, the four plus the
-  empty `title` and `body` every Android envelope answer carries (`internalAndroidFields`) - inert,
-  since the Kotlin branch reads only its three ids and nothing in `dispatchPush` reads `title` or
-  `body` before it.
+  Redis, so a wake delivered later has nothing to drain.
+- **What the answer is**: on Android, the four fields plus the empty `title` and `body` every Android
+  envelope answer carries (`internalAndroidFields`) - inert, since the Kotlin branch reads only its
+  three ids and nothing in `dispatchPush` reads `title` or `body` before it. (`buildEnvelopeAnswer`
+  would answer iOS exactly the four fields, but no iOS token is sent this push.)
+- **What WP-W4 must do before any version-2 Android token exists with the switch on**, or a woken
+  member's phone would admit no one: `onWakePush` handles `envelopeId`, fetches the envelope and
+  routes the `push` answer into `dispatchPush`; the welcome branch runs from that wake path in its
+  `WakeOrder` turn (pinned in `WakeAnswerTest`); `PUSH_WAKE_DECLARED.android = 2`. Until then no
+  token is at version 2, so the switch on changes nothing for this push.
 - **The send line is `[WELCOME_REQ] FCM welcome_request_pending ... mode=wake envelope=<8>`** (and
   `mode=full` for a full push), so the "sends minus served" count of section 5 sums it with
   `[SOCIAL_PUSH] sent ... mode=wake`; the fetch is the same `[PUSH_WAKE] served|gone envelope=<8>`.
@@ -592,7 +619,7 @@ both platforms and deletes the full builders, `push_mode` and the legacy-sentenc
 | WP-W1 | `push_mode = wake` on dev, Android | reading 1 (Mi 9T, three texts, backgrounded then killed) and reading 3 (airplane mode -> the honest notification + `[PUSH_WAKE] ... failed`) |
 | WP-W2 | `push_mode = wake` on production (Android declares, iOS does not) | WP-W1 read; then reading 4 for a week: every unfetched wake explained by a typed stage; the register + privacy policy line for MLS frames (reading 5) in the same change |
 | WP-W3 | **BUILT 2026-11-07, switch OFF** (see section 3.2 "as built"): `push_envelope` (one table - Q2 revised), `wakeVersion` ADDED (no backfill - section 8), `sendPushToUser` stores and wakes when `push_mode = wake` and `wakeVersion >= 2`, the fetch answers `{status: 'push', fields, presentation}`; the step-1 MLS answer gains `presentation` too | **Passed**: jest (`push-payload.spec.ts`: the fetched map the same key/value set as the full push for a salon, a social comment, a chat reaction, a salon read and a join ask, on both platforms, and `presentation` equal to the full push's `aps`; `messaging.push-envelope.spec.ts`: every branch of the send decision; `push.controller.wake.spec.ts`: register and fetch) and PostgreSQL (`046_push_envelope.integration.spec.ts`: the migration replayed twice; a lost response fetched again is `served` twice, never `gone`; each of the three deaths deletes exactly its rows; the cap evicts served first, then silent, and WARNs only for an unserved banner, and takes a new silent envelope at once on a full device; same-salon `channel_read` collapses; `foreign` for another registration; a registration deleted under a store costs that device alone, and two concurrent stores keep one read envelope per salon and never pass the cap, both proven with a second session holding the row lock; store, serve and `buildEnvelopeAnswer` give the same key/value set as `buildInternalAndroidHalf` and the APNs custom keys through jsonb). The orphan-body gate fell with the body table. **Owed before the switch moves for a version-2 device**: the production volume counts of section 9, written here |
-| WP-W3b | **BUILT 2026-11-21, switch OFF** (section 2, "as built"): `sendFcmWelcomeRequestPending` stores its map in an envelope and sends a silent wake to `wakeVersion >= 2` tokens (no client declares 2 yet) | **Passed**: jest (`messaging.push-envelope.spec.ts`: a version-2 token receives `type=wake`, `envelopeId`, `silent=true` and nothing naming the group or the requester, on both platforms; a lower token or the switch at `full` the full push byte for byte; a device that cannot be prepared nothing; one decision per account. `push-payload.spec.ts`: the fetched map is the four fields on iOS, the four plus the empty `title` / `body` of every Android answer). **Owed**: on the Mi 9T, a new device's admission still wakes a closed member's phone (the existing welcome-request reading) - meaningful only with a version-2 Android build, so read with WP-W4's sitting |
+| WP-W3b | **BUILT 2026-11-21, switch OFF** (section 2, "as built"): `sendFcmWelcomeRequestPending` stores its map in an envelope and sends a silent wake to `wakeVersion >= 2` Android tokens (no client declares 2 yet); never sent to an iPhone, nor to the requester's own device (decided under delegation, principle 1) | **Passed**: jest (`messaging.push-envelope.spec.ts`: a version-2 Android token receives `type=wake`, `envelopeId`, `silent=true` and nothing naming the group or the requester; an iOS token of any version receives nothing in either mode; the requester's own device nothing; a version-1 token, or the switch at `full`, the full push exactly; a mixed version-1 + version-2 account each its own; the switch read ONCE per send and an unreadable one accused once; one account stored at a time; `evicted` WARNs and `registration-gone` logs, neither woken. `push-payload.spec.ts`: the fetched map is the four fields, plus the empty `title` / `body` of every Android answer). **Owed**: WP-W4's three obligations (section 2) before any version-2 token exists with the switch on; on the Mi 9T, a new device's admission still wakes a closed member's phone - read with WP-W4's sitting |
 | WP-W3c | The held migration that DROPS `push_token.wakeCapable` | no reader of `wakeCapable` left in any shipped server; the approval line merged by the owner or the lead under the delegation, before the release carrying it |
 | WP-W4 | Android: envelope wakes (`envelopeId` -> fetch -> `dispatchPush`), the notification tag = `envelopeId` so a repeat answer redraws and never adds, the account bound at arrival and checked at dispatch, `PUSH_WAKE_DECLARED.android = 2` | `:app:compileArmDebugKotlin`; JVM tests (`WakeAnswerTest` for `push`, a repeated answer for one `envelopeId` drawing one notification, `WakeOrderTest` for an envelope ticket between a Welcome and its salon, a switch between arrival and dispatch); vitest `pushWakeCompiled.test.ts` extended; then on the Mi 9T: a salon text, a comment, a chat reaction, each with content; the blind-banner `not-inlined` reason reads zero on wake |
 | WP-W5 | iOS: envelope wakes in the extension and in `canari_push.mm`, applying the answer's `presentation` (thread, sound, interruption level), the notification identifier = `envelopeId`, the account check, the first-unlock cause evidence, `PUSH_WAKE_DECLARED.ios = 2` | the compile-only iOS job ([p2](../cicd.md#a-pull-request-compiles-the-ios-app-unsigned-compile-ios-app-2026-11-04)) green; iPhone 12: reading 2 of the backlog entry for DMs, then salons and social, `[NSE_OUTCOME] kind=wake outcome=decrypted`, `peakMB` read for the largest salon; two reactions to one post and two salon messages stack under ONE thread each with their own sounds (the grouping a full push gives today) |

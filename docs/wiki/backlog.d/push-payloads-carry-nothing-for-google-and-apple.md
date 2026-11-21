@@ -255,10 +255,17 @@ puts the readings before WP-W4 and before any lasting flip.
    envelope wake for a `wakeVersion >= 2` token, server only, inert until a version-2 client
    ([as built](../protocols/content-free-push.md#2-the-target)). Its Mi 9T reading (a new device's
    admission still wakes a closed member's phone) is read with WP-W4's sitting, the first build that
-   declares version 2.
+   declares version 2. **Also decided 2026-11-21 under the owner's delegation, reversible (principle
+   1): the push is never sent to an iPhone** - iOS does not act on it, so it only handed Apple the
+   group and the requester ([why](../protocols/content-free-push.md#2-the-target)).
 3. **WP-W1, then WP-W2** - the flips, Android; WP-W2 then needs reading 4 over **a week** of
    production and reading 5 (register + privacy policy) in the same change.
-4. **WP-W4** - Android envelope wakes, `wakeVersion: 2` (3 to 5 days, then a Mi 9T sitting).
+4. **WP-W4** - Android envelope wakes, `wakeVersion: 2` (3 to 5 days, then a Mi 9T sitting). **Owed by
+   WP-W4 before any version-2 token exists with the switch on, or a woken member's phone admits no
+   one** (WP-W3b's envelope reaches only that path): `onWakePush` handles `envelopeId`, fetches the
+   envelope and routes the `push` answer into `dispatchPush`; the `welcome_request_pending` branch
+   (`processWelcomeRequestBackground`, a full background admission) runs from that wake path in its
+   `WakeOrder` turn, pinned in `WakeAnswerTest`; `PUSH_WAKE_DECLARED.android = 2`.
 5. **The iPhone 12 wake reading** (the owner's gate for `PUSH_WAKE_DECLARED.ios`, 2026-11-14) and
    **WP-W5** - iOS envelope wakes in the extension and `canari_push.mm` (1 to 2 weeks: Swift and
    ObjC++ checked only by the compile-only iOS job, then an iPhone sitting).

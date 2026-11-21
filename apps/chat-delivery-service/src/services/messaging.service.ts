@@ -113,9 +113,9 @@ import {
 } from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
 import {
-  ENVELOPE_WAKE_VERSION,
   MLS_WAKE_VERSION,
   effectiveWakeVersion,
+  isEnvelopeCapable,
   readPushMode,
   type PushMode,
 } from '../utils/push-mode';
@@ -8327,19 +8327,25 @@ export class MessagingService {
   }
 
   /**
-   * Sends a silent push to every registered device of each group member (except the requester) to
-   * wake them up when a welcome_request is pending and no peer was online to handle it.
+   * Sends a silent push to every registered ANDROID device of each group member to wake them up when
+   * a welcome_request is pending and no peer was online to handle it.
    *
-   * On reception, the Kotlin service admits the device in the background (or reconnects the
-   * WebSocket); the normal welcome-drain flow then forwards the pending welcome_request.
+   * On reception, the Kotlin service runs a full background admission
+   * (`processWelcomeRequestBackground`: the device builds and sends the requester's Welcome without
+   * opening the WebView); the stored frame still reaches every member's app when it opens.
+   *
+   * NEVER TO AN iPHONE (2026-11-21, decided under the owner's delegation, reversible - principle 1 of
+   * docs/principes.md): iOS does not act on this type (`canari_push.mm` lists it as "NOT acted on"),
+   * so every iOS token was handing Apple a `groupId` and the requester's ids for no function. Nor to
+   * the requester's own device, which has nothing to admit.
    *
    * CONTENT-FREE FOR A VERSION-2 BINARY (WP-W3b, docs/wiki/protocols/content-free-push.md section
-   * 2): the three ids it carries tell Google and Apple that a given person's new device is joining a
-   * given conversation. While `push_mode = wake`, a token at `wakeVersion >= 2` is sent a SILENT
-   * envelope wake instead - the map stored through the same envelope as `sendPushToUser`
-   * ({@link envelopesForWake}), so the device fetches exactly the map below. A device that could not
-   * be prepared (switch unreadable, envelope not stored) is sent NOTHING, accused at ERROR there;
-   * never the full push in its place. Every other token keeps the full push, unchanged.
+   * 2): while `push_mode = wake`, a token at `wakeVersion >= 2` is sent a SILENT envelope wake - the
+   * map stored through the same envelope as `sendPushToUser` ({@link envelopesForWake}), so the device
+   * fetches exactly the map below. The switch is read ONCE for the send; the envelopes are stored one
+   * account at a time, so a large group holds one pool connection, never one per member. A device
+   * that could not be prepared is sent NOTHING (accused at ERROR); never the full push in its place.
+   * Every other token keeps the full push, unchanged.
    */
   private async sendFcmWelcomeRequestPending(
     groupId: string,
@@ -8365,6 +8371,22 @@ export class MessagingService {
     const allTokens = await this.pushTokenRepo.find({
       where: { userId: In(uniqueUserIds) },
     });
+    const isRequesterDevice = (pt: PushToken) =>
+      pt.userId === requesterUserId && pt.deviceId === requesterDeviceId;
+    const iosSkipped = allTokens.filter((pt) => pt.platform === 'ios').length;
+    if (iosSkipped > 0) {
+      this.logger.log(
+        `[WELCOME_REQ][${traceId}] ${iosSkipped} iOS token(s) not sent welcome_request_pending - iOS does ` +
+          `not act on it, and it would hand Apple the group and the requester for nothing`
+      );
+    }
+    if (allTokens.some(isRequesterDevice)) {
+      this.logger.log(
+        `[WELCOME_REQ][${traceId}] requester's own device not sent welcome_request_pending - it has nothing to admit`
+      );
+    }
+    const tokens = allTokens.filter((pt) => pt.platform !== 'ios' && !isRequesterDevice(pt));
+    if (tokens.length === 0) return;
 
     // THE ONE MAP, for the full push and the envelope alike.
     const data = welcomeRequestPendingData(groupId, requesterUserId ?? '', requesterDeviceId ?? '');
@@ -8372,48 +8394,62 @@ export class MessagingService {
     // to drain. The wake keeps it - it announces the same request.
     const android = { priority: 'high' as const, ttl: 3_600_000 };
 
-    // One envelope decision per ACCOUNT: an envelope belongs to one account's devices.
+    // ONE switch read for the whole send, then one envelope transaction per ACCOUNT (an envelope
+    // belongs to one account's devices), one after the other, as `pushJoinAsk` walks its recipients.
+    const capableCount = tokens.filter(isEnvelopeCapable).length;
+    const mode =
+      capableCount > 0
+        ? await this.readEnvelopeWakeMode(
+            '[WELCOME_REQ]',
+            traceId,
+            `${capableCount} envelope-capable device(s) of group=${groupId}`
+          )
+        : 'full';
     const tokensByUser = new Map<string, PushToken[]>();
-    for (const pt of allTokens) {
+    for (const pt of tokens) {
       tokensByUser.set(pt.userId, [...(tokensByUser.get(pt.userId) ?? []), pt]);
     }
-    const decisions = new Map(
-      await Promise.all(
-        [...tokensByUser].map(
-          async ([userId, tokens]) =>
-            [
-              userId,
-              await this.envelopesForWake(
-                userId,
-                tokens,
-                { title: '', body: '', data, inline: {} },
-                traceId
-              ),
-            ] as const
-        )
-      )
-    );
+    const envelopes = new Map<string, string>();
+    const withheld = new Map<string, 'failed' | EnvelopeNotWoken>();
+    for (const [userId, userTokens] of tokensByUser) {
+      const decision = await this.envelopesForWake(
+        userId,
+        userTokens,
+        { title: '', body: '', data, inline: {} },
+        mode,
+        traceId
+      );
+      for (const pt of userTokens) {
+        const envelopeId = decision.envelopes.get(pt.deviceId);
+        if (envelopeId) envelopes.set(pt.id, envelopeId);
+        const refusal = decision.withheld.get(pt.id);
+        if (refusal) withheld.set(pt.id, refusal);
+      }
+    }
 
     await Promise.all(
-      allTokens.map(async (pt) => {
-        const decision = decisions.get(pt.userId);
-        // Not woken: `failed` was accused at ERROR by `envelopesForWake`; a registration gone or an
-        // envelope the cap took at once was logged by `storeEnvelopes`. Never the full push instead.
-        if (decision?.withheld.has(pt.id)) return;
-        const envelopeId = decision?.envelopes.get(pt.deviceId);
+      tokens.map(async (pt) => {
+        const refusal = withheld.get(pt.id);
+        // Not woken, and never the full push instead. `failed` was accused at ERROR, once for the
+        // send (switch unreadable) or once for the account (envelope not stored).
+        if (refusal === 'evicted') {
+          this.logger.warn(
+            `[WELCOME_REQ][${traceId}] user=${pt.userId} device=${pt.deviceId} not woken - the envelope cap ` +
+              `took its welcome_request_pending at once: a device that never fetches`
+          );
+        } else if (refusal === 'registration-gone') {
+          this.logger.log(
+            `[WELCOME_REQ][${traceId}] user=${pt.userId} device=${pt.deviceId} not woken - its registration ` +
+              `was deleted since it was read`
+          );
+        }
+        if (refusal) return;
+        const envelopeId = envelopes.get(pt.id);
         try {
           await getMessaging().send(
             envelopeId
               ? this.buildWakeMessage(pt, { envelopeId }, true, false, android)
-              : {
-                  token: pt.token,
-                  data,
-                  android,
-                  apns: {
-                    payload: { aps: { contentAvailable: true } },
-                    headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
-                  },
-                }
+              : { token: pt.token, data, android }
           );
           this.logger.log(
             `[WELCOME_REQ][${traceId}] FCM welcome_request_pending user=${pt.userId} device=${pt.deviceId} ` +
@@ -8472,25 +8508,61 @@ export class MessagingService {
   }
 
   /**
-   * THE ENVELOPE WAKE's decision for one `sendPushToUser` send (content-free push WP-W3,
+   * The estate's `push_mode` as an ENVELOPE wake reads it, for one SEND - read once, whatever the
+   * number of accounts the send reaches, and never cached across sends. Only called when some
+   * destination could take an envelope wake (`isEnvelopeCapable`).
+   *
+   * An unreadable switch is accused at ERROR ONCE for the whole send, under the caller's own tag,
+   * and answered `unreadable`: {@link envelopesForWake} then withholds every capable device -
+   * never the full push in their place, which would hand Google and Apple exactly what the switch
+   * withholds.
+   *
+   * @param tag - The caller's log tag (`[SOCIAL_PUSH]`, `[WELCOME_REQ]`).
+   * @param traceId - The send's trace.
+   * @param scope - Which devices go unsent if it cannot be read, for the accusing line.
+   */
+  private async readEnvelopeWakeMode(
+    tag: string,
+    traceId: string,
+    scope: string
+  ): Promise<PushMode | 'unreadable'> {
+    try {
+      return await readPushMode(this.pushTokenRepo.manager, this.logger);
+    } catch (e) {
+      this.logger.error(
+        `${tag}[${traceId}] push_mode unreadable - ${scope} sent NOTHING: ${String(e)}`
+      );
+      return 'unreadable';
+    }
+  }
+
+  /**
+   * THE ENVELOPE WAKE's decision for one account's devices (content-free push WP-W3,
    * docs/wiki/protocols/content-free-push.md section 3.2): which devices are woken, and under which
    * envelope.
    *
-   * Two locks, ANDed, as for an MLS frame: the estate's `push_mode` and the token's
-   * `effectiveWakeVersion >= ENVELOPE_WAKE_VERSION`. The switch is read only when some destination
-   * could take an envelope wake, and never cached. When it reads `wake`, the push is stored once per
-   * capable device (`storeEnvelopes`) BEFORE any wake leaves, so a device that fetches at once finds it.
+   * Two locks, ANDed, as for an MLS frame: the estate's `push_mode` (read once per send by
+   * {@link readEnvelopeWakeMode} and passed in) and the token's `effectiveWakeVersion >=
+   * ENVELOPE_WAKE_VERSION`. When the switch reads `wake`, the push is stored once per capable device
+   * (`storeEnvelopes`, ONE transaction for this account) BEFORE any wake leaves, so a device that
+   * fetches at once finds it.
    *
    * Returns the envelope per device, and the tokens to WITHHOLD: `failed` when the switch could not be
-   * read or the envelopes could not be stored - accused at ERROR, and never sent the full push in their
-   * place, which would hand Google and Apple exactly what the switch withholds;
-   * `registration-gone` (the token was deleted since it was read) and `evicted` (the cap took the new
-   * envelope at once) are no failure - each logged by `storeEnvelopes`.
+   * read (already accused by the read) or the envelopes could not be stored (accused here) - never sent
+   * the full push in their place; `registration-gone` (the token was deleted since it was read) and
+   * `evicted` (the cap took the new envelope at once) are no failure - each logged by `storeEnvelopes`.
+   *
+   * @param userId - The account the devices belong to.
+   * @param pushTokens - That account's destinations; only the capable ones are considered.
+   * @param content - What the full push would have carried.
+   * @param mode - The send's switch, as {@link readEnvelopeWakeMode} read it.
+   * @param traceId - The send's trace.
    */
   private async envelopesForWake(
     userId: string,
     pushTokens: PushToken[],
     content: EnvelopeContent,
+    mode: PushMode | 'unreadable',
     traceId: string
   ): Promise<{
     envelopes: Map<string, string>;
@@ -8498,17 +8570,9 @@ export class MessagingService {
   }> {
     const envelopes = new Map<string, string>();
     const withheld = new Map<string, 'failed' | EnvelopeNotWoken>();
-    const capable = pushTokens.filter((pt) => effectiveWakeVersion(pt) >= ENVELOPE_WAKE_VERSION);
+    const capable = pushTokens.filter(isEnvelopeCapable);
     if (capable.length === 0) return { envelopes, withheld };
-
-    let mode: PushMode;
-    try {
-      mode = await readPushMode(this.pushTokenRepo.manager, this.logger);
-    } catch (e) {
-      this.logger.error(
-        `[SOCIAL_PUSH][${traceId}] push_mode unreadable - ${capable.length} envelope-capable device(s) of ` +
-          `user=${userId} sent NOTHING: ${String(e)}`
-      );
+    if (mode === 'unreadable') {
       for (const pt of capable) withheld.set(pt.id, 'failed');
       return { envelopes, withheld };
     }
@@ -8622,10 +8686,20 @@ export class MessagingService {
       return { sent: 0, failed: 0 };
     }
 
+    const capableCount = pushTokens.filter(isEnvelopeCapable).length;
+    const mode =
+      capableCount > 0
+        ? await this.readEnvelopeWakeMode(
+            '[SOCIAL_PUSH]',
+            traceId,
+            `${capableCount} envelope-capable device(s) of user=${userId}`
+          )
+        : 'full';
     const { envelopes, withheld } = await this.envelopesForWake(
       userId,
       pushTokens,
       { title, body, data, inline },
+      mode,
       traceId
     );
 
