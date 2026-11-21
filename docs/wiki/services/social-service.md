@@ -897,7 +897,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   keeps a banner whose record (or, in a fresh process, shade) holds a `LINE_PENDING_REPLY` line - it
   removed one while the reply was still queued (device reading of #3912). Its delivery and the "mark
   as read" action remove it.
-- **A delivered reply clears its notice, whichever path sends it.** The pending line carries its
+- **A delivered reply clears its notice, whichever path of a live process sends it.** The pending line carries its
   message id (`LINE_PENDING_REPLY_ID`), and `drainOutboxBackground` - the one drain every native
   send goes through: the quick reply, `OutboxRetryWorker`, a push-woken drain, the boot drain -
   calls `replyDelivered` for each entry it delivered, after the outbox lock and after the ids are
@@ -907,15 +907,26 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   may not have seen (round-9 correction); otherwise it is rebuilt silently (`setOnlyAlertOnce`) from
   its own template, and left as it was - logged at WARN - when it has none.
 - **The quick reply's success is ONE function** (`replyAnswered` in the receiver): the cache row,
-  the cancel - the reaction included, this IS a read - and the watermark. `handleReply` runs it when
-  THIS reply went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart
-  on a Mi 9T): the reply is AWAITED before its entry is queued (`ReadElsewhereMarks.awaitReply`), a
-  drain that delivers it records the receive time there, and the handler reads it
-  (`replyDeliveredAt`) after its drain - and its re-post as pending asks again under the record's
-  lock, handing the receive time back so the success runs instead: the RemoteInput spinner always
-  ends in a re-post or a cancel. The map holds only replies whose handler is running (removed in a
+  the answer on the banner (`answerReplyNotification`, `ReadElsewhereMarks.answerReply`), and the
+  watermark. Answering is reading, so the peer lines go and the reaction goes - but a line of
+  ANOTHER reply still queued stays, the banner rebuilt silently with only those (round-10 review,
+  principle 2: answering r2 never erases r0's "not sent yet"). `handleReply` runs it when THIS reply
+  went out, by its own drain OR by another drain meanwhile (the retry worker, 5 ms apart on a Mi
+  9T). The reply is AWAITED before its entry is queued (`AwaitedReplies`, its own leaf lock), and a
+  drain records the delivery AT THE SEND, still holding the outbox lock - so every drain taking that
+  lock after it, the handler's own included, finds it when it returns: the handler's check is
+  decided by the lock's order, not by how far the other drain's post-lock loop has got (round-10:
+  recorded after the lock, the worker's late step ran after the handler had re-posted the reply as
+  pending). Lock order: the outbox lock, then the leaf; the banner record's lock, then the leaf;
+  nothing under the leaf. The re-post's own check under the record's lock covers only a drain that
+  took the outbox lock after the handler's - a genuinely later delivery, whose late step clears the
+  pending line the re-post put up. A drain that throws still ends in that decision. The log says
+  what is known: WARN only when the reply is really still in the outbox, INFO when the app's own
+  outbox took it over. The map holds only replies whose handler is running (removed in a
   `finally`), so it needs no cap. The in-memory record decides rather than the outbox files: both
-  are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login.
+  are rewritten whole, not atomically, and `outbox_sent` is emptied by the app at login. A process
+  that dies between the enqueue and the decision cannot be resolved in-process
+  ([backlog](../backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and

@@ -477,9 +477,9 @@ class ReadElsewhereMarksTest {
         marks.remember("g1", Banner(1001, "messages", listOf(m1, pending)))
         assertFalse(marks.readOn(shade, "g1", Read(Long.MAX_VALUE, serverClock = true)))
 
-        assertEquals(Delivery.NONE, marks.replyDelivered("g1", "other", 0L, shade = { null }, cancel = { fail("not this reply") }) { _, _ -> throw AssertionError("not this reply") })
+        assertEquals(Delivery.NONE, marks.replyDelivered("g1", "other", shade = { null }, cancel = { fail("not this reply") }) { _, _ -> throw AssertionError("not this reply") })
         var rebuilt: List<Msg>? = null
-        val outcome = marks.replyDelivered("g1", "r1", 0L, shade = { null }, cancel = { fail("the peer line stays") }) { held, kept ->
+        val outcome = marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("the peer line stays") }) { held, kept ->
             rebuilt = kept
             held.copy(messages = kept)
         }
@@ -498,7 +498,7 @@ class ReadElsewhereMarksTest {
         val r2 = Msg(null, null, pendingReply = true, replyId = "r2")
         val after = Msg(sentAt = 2_900L, serverAt = 3_000L)
         marks.remember("g1", Banner(1001, "messages", listOf(m1, r1, after, r2)))
-        marks.replyDelivered("g1", "r1", 0L, shade = { null }, cancel = { fail("lines stay") }) { held, kept -> held.copy(messages = kept) }
+        marks.replyDelivered("g1", "r1", shade = { null }, cancel = { fail("lines stay") }) { held, kept -> held.copy(messages = kept) }
         assertEquals(listOf(m1, after, r2), marks.bannerOf("g1") { null }?.messages)
         // r2 is still queued: a read covering every peer line keeps the banner.
         assertFalse(marks.recordThenCancel("g1", Read(Long.MAX_VALUE, serverClock = true), shade = { null }) { fail("r2 is not sent") })
@@ -510,38 +510,43 @@ class ReadElsewhereMarksTest {
         val r1 = Msg(null, null, pendingReply = true, replyId = "r1")
         marks.remember("g1", Banner(1001, "messages", listOf(r1)))
         val cancelled = mutableListOf<Int>()
-        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r1", 0L, shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("no line left") })
+        assertEquals(Delivery.CANCELLED, marks.replyDelivered("g1", "r1", shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("no line left") })
         assertEquals(listOf(1001), cancelled)
         assertNull(marks.bannerOf("g1") { fail("removed by this process"); null })
 
         val held = Banner(1002, "messages", listOf(m1, Msg(null, null, pendingReply = true, replyId = "r2")))
         marks.remember("g2", held)
-        assertEquals(Delivery.NOT_REBUILT, marks.replyDelivered("g2", "r2", 0L, shade = { null }, cancel = { fail("m1 stays") }) { _, _ -> null })
+        assertEquals(Delivery.NOT_REBUILT, marks.replyDelivered("g2", "r2", shade = { null }, cancel = { fail("m1 stays") }) { _, _ -> null })
         assertEquals(held, marks.bannerOf("g2") { null })
     }
 
-    // Round-8/9 review (B1'): a second drain delivers r1 BEFORE the quick reply re-posts it as
-    // pending (the reply and the retry worker 5 ms apart). The handler learns it, with the receive
-    // time, and runs the first-try success instead of a re-post - it never leaves the spinner.
+    // Round-10 review (S2, principle 2): answering r2 must not erase ANOTHER reply's line still
+    // queued - r0 pending, r2 answered, r0 still failing: r0's line stays, the peer lines go.
     @Test
-    fun `a delivery that comes before the re-post is handed to the waiting reply`() {
+    fun `an answered reply keeps another reply's pending line and drops the peer lines`() {
         val marks = marks()
-        marks.awaitReply("r1")
-        assertNull(marks.replyDeliveredAt("r1"))
-        // The other drain delivers r1 while no banner holds it yet.
-        assertEquals(Delivery.NONE, marks.replyDelivered("g1", "r1", 4_200L, shade = { null }, cancel = { fail("nothing posted") }) { _, _ -> null })
-        assertEquals(4_200L, marks.replyDeliveredAt("r1"))
-        marks.settleReply("r1")
-        assertNull(marks.replyDeliveredAt("r1"))
+        val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, r0, m2)))
+        var rebuilt: List<Msg>? = null
+        val outcome = marks.answerReply("g1", "r2", 1001, shade = { null }, cancel = { fail("r0 is not sent") }) { held, kept ->
+            rebuilt = kept
+            held.copy(messages = kept)
+        }
+        assertEquals(Delivery.REPOSTED, outcome)
+        assertEquals(listOf(r0), rebuilt)
+        assertEquals(listOf(r0), marks.bannerOf("g1") { null }?.messages)
     }
 
-    // Round-9 review (S1): no cap to prove - only an awaited reply is recorded, and only while its
-    // handler runs.
     @Test
-    fun `a delivery nobody awaits records nothing`() {
+    fun `an answered reply with no other reply queued cancels the banner, or the stable id when none is known`() {
         val marks = marks()
-        repeat(1_000) { i -> marks.replyDelivered("g1", "m$i", 1L, shade = { null }, cancel = {}) { _, _ -> null } }
-        assertNull(marks.replyDeliveredAt("m0"))
-        assertNull(marks.replyDeliveredAt("m999"))
+        val r2 = Msg(null, null, pendingReply = true, replyId = "r2")
+        marks.remember("g1", Banner(1001, "messages", listOf(m1, r2)))
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Delivery.CANCELLED, marks.answerReply("g1", "r2", 1001, shade = { null }, cancel = { cancelled += it }) { _, _ -> throw AssertionError("nothing stays") })
+        assertEquals(listOf(1001), cancelled)
+        // Nothing known: the stable id is cancelled, ordered after any `notify`.
+        assertEquals(Delivery.NONE, marks.answerReply("g1", "r3", 1001, shade = { fail("removed by this process"); null }, cancel = { cancelled += it }) { _, _ -> null })
+        assertEquals(listOf(1001, 1001), cancelled)
     }
 }

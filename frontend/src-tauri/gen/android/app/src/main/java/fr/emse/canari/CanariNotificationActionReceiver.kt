@@ -123,11 +123,19 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             // the whole outbox drained: a reply delivered beside an older entry still queued is
             // delivered, and must not be re-posted as pending. With the server's receive time its
             // POST answered: the cache row is dated by it (chat.md, server order).
+            //
+            // A DRAIN THAT THROWS (the mirror's file I/O) still ends in the decision below, with no
+            // result: the RemoteInput spinner must end in a re-post or a cancel whatever happened.
             var ownReceivedAt: Long? = null
-            val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
-                if (sent.id == messageId) ownReceivedAt = sent.receivedAt
+            val remaining: Int? = try {
+                CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
+                    if (sent.id == messageId) ownReceivedAt = sent.receivedAt
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "handleReply: drain failed id=${messageId.take(8)} - deciding without it: ${throwableSite(e)}")
+                null
             }
-            if (remaining > 0) OutboxRetryWorker.enqueueIfHealthy(context)
+            if (remaining == null || remaining > 0) OutboxRetryWorker.enqueueIfHealthy(context)
             val receivedAt = ownReceivedAt ?: CanariFirebaseMessagingService.replyDeliveredAt(messageId)
             if (receivedAt != null) {
                 replyAnswered(context, groupId, pushCtx, messageId, text, sentAt, receivedAt, notifiedAt, notifiedServerAt)
@@ -147,7 +155,14 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    that failed waited for the next LOGIN.
             // A drain may still deliver it before the re-post: the re-post asks under the record's
             // lock and hands back the receive time - the first-try success then runs here.
-            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
+            // WORDED ON WHAT IS KNOWN, at the level the state deserves: a reply still in the outbox
+            // is a send that failed (WARN); one no longer there and not seen delivered was taken
+            // over by the app's own outbox (`store_outbox_mirror` rewrites the mirror) - not a fault.
+            if (CanariFirebaseMessagingService.isQueued(context, messageId)) {
+                Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered by this drain, still queued (remaining=$remaining) - re-posted as pending, retry scheduled")
+            } else {
+                Log.i(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and no longer in the native outbox (taken over by the app) - re-posted as pending")
+            }
             CanariFirebaseMessagingService.repostReplyPending(context, groupId, messageId, text, notifiedAt, notifiedServerAt)
                 ?.let { late -> replyAnswered(context, groupId, pushCtx, messageId, text, sentAt, late, notifiedAt, notifiedServerAt) }
         } finally {
@@ -160,7 +175,8 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      * own drain or by another one while the user was replying. ONE function, so the two branches of
      * [handleReply] cannot drift: the reply is recorded locally BEFORE the notification goes (the
      * one visible trace is never dropped before the durable one exists), the banner is removed -
-     * its reaction with it - and, ANSWERING BEING READING (product decision, 2026-08-31), the read
+     * its reaction with it, but never ANOTHER reply's line still queued
+     * ([CanariFirebaseMessagingService.answerReplyNotification]) - and, ANSWERING BEING READING (product decision, 2026-08-31), the read
      * watermark is sent. Only a delivered reply announces a read: one still in the outbox has been
      * seen by no one.
      */
@@ -178,7 +194,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         CanariFirebaseMessagingService.writeSentMessageToCache(
             context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
         )
-        CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
+        CanariFirebaseMessagingService.answerReplyNotification(context, groupId, messageId)
         sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
     }
 

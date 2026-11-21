@@ -267,7 +267,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
       expect(fn.indexOf('val notif = ')).toBeLessThan(m.index - fns[fns.length - 1].index);
     }
     expect(posters.sort()).toEqual([
-      'replyDelivered',
+      'rebuildBanner',
       'repostReplyPending',
       'showMessageNotification',
     ]);
@@ -311,11 +311,20 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(source.split('drainOutboxLocked(').length - 1).toBe(2);
     const drain = source.slice(source.indexOf('internal fun drainOutboxBackground('));
     const body = drain.slice(0, drain.indexOf('private val OUTBOX_LOCK'));
-    expect(body).toContain('replyDelivered(context, entry.groupId, entry.id, receivedAt)');
+    expect(body).toContain('replyDelivered(context, entry.groupId, entry.id)');
     const locked = source.slice(source.indexOf('private fun drainOutboxLocked('));
-    expect(locked.slice(0, locked.indexOf('private fun encryptQueuedMessages('))).toContain(
-      'delivered.add(entry to receivedAt)'
-    );
+    const lockedBody = locked.slice(0, locked.indexOf('private fun encryptQueuedMessages('));
+    expect(lockedBody).toContain('delivered.add(entry)');
+    // Round-10 review (B1): an awaited reply's delivery is recorded AT THE SEND, inside the body
+    // the outbox lock covers - never after it is released, where thread scheduling decided.
+    const send = lockedBody.indexOf('delivered.add(entry)');
+    const record = lockedBody.indexOf('AWAITED_REPLIES.delivered(entry.id, receivedAt)');
+    expect(send).toBeGreaterThan(-1);
+    expect(record).toBeGreaterThan(send);
+    expect(record - send).toBeLessThan(500);
+    expect(body).not.toContain('AWAITED_REPLIES.delivered(');
+    const outer = body.slice(0, body.indexOf('for (entry in delivered)'));
+    expect(outer).toContain('synchronized(OUTBOX_LOCK) { drainOutboxLocked(');
     // The retry worker and the push-woken drains go through it.
     const worker = readFileSync(resolve(dirname(SERVICE), 'OutboxRetryWorker.kt'), 'utf8');
     expect(worker).toContain('CanariFirebaseMessagingService.drainOutboxBackground(');
@@ -329,15 +338,18 @@ describe('the builder records what it posted and keeps the stamps current', () =
   // casts its template with a check; a re-post racing a delivery is refused under the record lock.
   it('rebuilds silently after a delivery and refuses a re-post the delivery came before', () => {
     const fn = source.slice(source.indexOf('private fun replyDelivered('));
-    const body = fn.slice(0, fn.indexOf('internal fun reactionNotifKey('));
-    expect(body).toContain('.setOnlyAlertOnce(true)');
-    expect(body).toContain('held.posted as? android.app.Notification');
-    expect(body).not.toContain(' as android.app.Notification');
-    expect(body).not.toContain('Person.Builder()');
-    expect(body).toContain('return@repost null');
+    const body = fn.slice(0, fn.indexOf('private fun rebuildBanner('));
+    expect(body).toContain('repost = rebuildBanner(context, manager, groupId)');
+    const rebuild = source.slice(source.indexOf('private fun rebuildBanner('));
+    const rebuildBody = rebuild.slice(0, rebuild.indexOf('internal fun answerReplyNotification('));
+    expect(rebuildBody).toContain('.setOnlyAlertOnce(true)');
+    expect(rebuildBody).toContain('held.posted as? android.app.Notification');
+    expect(rebuildBody).not.toContain(' as android.app.Notification');
+    expect(rebuildBody).not.toContain('Person.Builder()');
+    expect(rebuildBody).toContain('return@rebuild null');
     const repost = source.slice(source.indexOf('internal fun repostReplyPending('));
     const lock = repost.indexOf('synchronized(READ_ELSEWHERE.lock) {');
-    const asked = repost.indexOf('READ_ELSEWHERE.replyDeliveredAt(messageId)?.let { receivedAt ->');
+    const asked = repost.indexOf('AWAITED_REPLIES.deliveredAt(messageId)?.let { receivedAt ->');
     expect(lock).toBeGreaterThan(-1);
     expect(asked).toBeGreaterThan(lock);
     expect(asked).toBeLessThan(repost.indexOf('manager.notify('));
@@ -357,9 +369,18 @@ describe('the builder records what it posted and keeps the stamps current', () =
     );
     const handle = receiver.slice(receiver.indexOf('private fun handleReply('));
     const fn = handle.slice(0, handle.indexOf('private fun replyAnswered('));
-    // Awaited before it is queued, settled whatever happens.
-    expect(fn.indexOf('awaitReplyDelivery(messageId)')).toBeLessThan(
-      fn.indexOf('enqueueOutboxMirror(')
+    // Awaited before it is queued, settled whatever happens. Each index is asserted present first:
+    // a deleted call reads -1, which is less than any index.
+    const awaited = fn.indexOf('awaitReplyDelivery(messageId)');
+    const queued = fn.indexOf('enqueueOutboxMirror(');
+    expect(awaited).toBeGreaterThan(-1);
+    expect(queued).toBeGreaterThan(-1);
+    expect(awaited).toBeLessThan(queued);
+    // A drain that throws still ends in the decision (round-10 review, S5).
+    const drain = fn.indexOf('drainOutboxBackground(');
+    expect(drain).toBeGreaterThan(-1);
+    expect(fn.slice(drain, fn.indexOf('val receivedAt = ', drain))).toContain(
+      '} catch (e: Exception) {'
     );
     expect(fn).toContain('finally {');
     expect(fn).toContain('settleReplyDelivery(messageId)');
@@ -374,7 +395,9 @@ describe('the builder records what it posted and keeps the stamps current', () =
     // The success action is the only place that cancels and announces the read.
     const answered = handle.slice(handle.indexOf('private fun replyAnswered('));
     const body = answered.slice(0, answered.indexOf('private fun sendReadWatermark('));
-    expect(body).toContain('cancelConversationNotification(context, groupId)');
+    // ...through the answer, which keeps ANOTHER reply's line still queued (round-10 review, S2).
+    expect(body).toContain('answerReplyNotification(context, groupId, messageId)');
+    expect(body).not.toContain('cancelConversationNotification(');
     expect(body).toContain('sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)');
     expect(fn).not.toContain('cancelConversationNotification(');
     expect(fn).not.toContain('sendReadWatermark(');
