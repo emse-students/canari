@@ -392,8 +392,9 @@ run_deploy() {
 outcome() { sed -n 's/^outcome=//p' "$tmp/gh-output" 2>/dev/null | tr '\n' ' ' | sed 's/ $//'; }
 # changed - how many calls changed or dumped anything (reads of the migration count do not count).
 # The scratch directory's own name is stripped first: mktemp names it at random, compose is handed
-# files under it, and a name holding "up" or "stop" would read as a recreate or a stop.
-changed() { grep -vF -- '--dry-run' "$S/calls" | sed "s|$tmp||g" | grep -cE '^(pull|compose .*(up|stop))|pg_dump|dropdb'; }
+# files under it, and a name holding "up" or "stop" would read as a recreate or a stop. The patterns
+# are also anchored to the subcommand token, so the check does not depend on the path at all.
+changed() { grep -vF -- '--dry-run' "$S/calls" | sed "s|$tmp||g" | grep -cE '^pull( |$)|^compose( .*)? (up|stop)( |$)|pg_dump|dropdb'; }
 
 pin="$(ak_pin_image infrastructure/authentik/compose.yml)"
 pin_tag="$(ak_tag_of "$pin")"
@@ -413,7 +414,7 @@ run_deploy; st=$?
 eq "on the pin with a stale .env line: exit 0" "$st" 0
 eq "  the line now names the pin" "$(ak_env_tag <"$S/dir/.env")" "$pin_tag"
 eq "  the secrets beside it are untouched" "$(grep -c '^PG_PASS=s3cret$' "$S/dir/.env")" 1
-eq "  and nothing restarted" "$(grep -c 'compose.*up' "$S/calls")" 0
+eq "  and nothing restarted" "$(sed "s|$tmp||g" "$S/calls" | grep -cE '^compose( .*)? up( |$)')" 0
 eq "  the .env was backed up first, byte for byte" "$(find "$tmp/dumps/miconnect" -name '*.env' -exec grep -c '^AUTHENTIK_TAG=2026.1.0$' {} + 2>/dev/null)" 1
 eq "  and the checks ran" "$(grep -c 'checks passed' "$tmp/out")" 1
 
