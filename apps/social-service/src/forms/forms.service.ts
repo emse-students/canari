@@ -79,6 +79,15 @@ import {
   toRequestState,
   type RequestState,
 } from './seat-hold';
+import {
+  PAYMENT_IN_PROGRESS,
+  PAYMENT_NOT_RESUMABLE,
+  resumableWhere,
+  resumeRowRefusal,
+  type ResumableAnswer,
+  type ResumeRowRefusal,
+} from './payment-resume';
+import { cashReminderDueAt, type DueCashReminder } from './cash-reminder';
 import { Submission } from './entities/submission.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
@@ -508,6 +517,21 @@ function isImageNotYours(err: unknown): boolean {
     body !== null &&
     (body as { code?: string }).code === 'QUESTION_IMAGE_NOT_YOURS'
   );
+}
+
+/**
+ * What a submit (or a payment resume) answers: the answer's id, and how it continues - Lydia's
+ * payer page (`checkoutUrl`), a payment found already made (`alreadyPaid`), cash awaited
+ * (`cashPayment`, with a guest's `reference`), or a provider that issued no page (`message`).
+ * Ids and flags only: the words are the client's.
+ */
+export interface SubmitOutcome {
+  submissionId: string;
+  checkoutUrl?: string;
+  message?: string;
+  alreadyPaid?: boolean;
+  cashPayment?: boolean;
+  reference?: string;
 }
 
 @Injectable()
@@ -2480,6 +2504,12 @@ export class FormsService {
      * `productGridPrices` above are [LEGACY] - the FIRST slice, for a page older than D32.
      */
     cursusSlices: CursusSlice[];
+    /**
+     * The caller's answer whose online payment ended without money and may be paid again
+     * ("Reprendre le paiement", `payment-resume.ts`), or null. Offered only when nothing else answers
+     * for them, the form is open, takes online payment and has a seat: the route re-checks each.
+     */
+    resumable: ResumableAnswer | null;
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2492,6 +2522,7 @@ export class FormsService {
         refusalCode: null,
         productGridPrices: {},
         cursusSlices: [],
+        resumable: null,
       };
 
     // Check global capacity independently of per-user state
@@ -2531,6 +2562,7 @@ export class FormsService {
         refusalCode,
         productGridPrices,
         cursusSlices,
+        resumable: null,
       };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
@@ -2547,6 +2579,7 @@ export class FormsService {
         refusalCode,
         productGridPrices,
         cursusSlices,
+        resumable: null,
       };
     }
 
@@ -2563,6 +2596,10 @@ export class FormsService {
         order: { createdAt: 'DESC' },
       })
     );
+    const resumable =
+      !submission && maySubmit && !formFull && isFormOpen(form) && acceptsOnline(form)
+        ? await this.resumableAnswerOf(formId, userId)
+        : null;
     return {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
@@ -2576,7 +2613,22 @@ export class FormsService {
       refusalCode,
       productGridPrices,
       cursusSlices,
+      resumable,
     };
+  }
+
+  /** The caller's newest answer a payment resume may take up (`resumableWhere`), or null. */
+  private async resumableAnswerOf(formId: string, userId: string): Promise<ResumableAnswer | null> {
+    const row = await this.submissionRepo.findOne({
+      where: resumableWhere(formId, userId),
+      order: { createdAt: 'DESC' },
+      select: { id: true, totalPaid: true, paymentStatus: true },
+    });
+    if (!row) return null;
+    this.logger.debug(
+      `[Forms] check ${formId.slice(0, 8)}: answer ${row.id} (${row.paymentStatus}) may resume its payment`
+    );
+    return { submissionId: row.id, amountCents: row.totalPaid };
   }
 
   /**
@@ -2591,7 +2643,7 @@ export class FormsService {
     input: SubmitFormDto & SubmitClient,
     origin: SubmitOrigin = 'member',
     visitorAddress?: string
-  ) {
+  ): Promise<SubmitOutcome> {
     const guest = origin === 'guest';
     // A guest names nobody, whatever reached this call: the row and the payment are written with
     // no account and no stored address, by construction rather than by each caller's care.
@@ -2599,24 +2651,7 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(id) });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
-    // Across the review cohort's boundary nothing is submitted or bought: a review account answers
-    // only its own associations' forms, and nobody answers a review account's personal form
-    // (review-cohort-reach.ts, review-cohort.ts).
-    if (!guest && input.userId) {
-      if (form.associationId) {
-        await assertReviewerReachesAssociation(
-          this.formRepo.manager,
-          input.userId,
-          form.associationId,
-          'form submission'
-        );
-      } else if (!sameSideOfReviewCohort(input.userId, form.ownerId)) {
-        this.logger.log(
-          `[REVIEW_COHORT] form submission refused: ${formTag(form)} across the boundary`
-        );
-        throw new ReviewCohortBoundaryException();
-      }
-    }
+    if (!guest && input.userId) await this.assertRespondentReach(form, input.userId);
 
     assertFormOpen(form);
     assertAnswerSizes(input.answers);
@@ -3050,10 +3085,15 @@ export class FormsService {
 
     // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
+      const now = new Date();
       const cashExpiresAt =
         form.cashPaymentExpiryDays != null
-          ? new Date(Date.now() + form.cashPaymentExpiryDays * 24 * 60 * 60 * 1000)
+          ? new Date(now.getTime() + form.cashPaymentExpiryDays * 24 * 60 * 60 * 1000)
           : null;
+      // The one notice before the hold expires (`cash-reminder.ts`): owed to a member only - a
+      // guest has no account to be told on.
+      const cashReminderDue =
+        cashExpiresAt && savedSubmission.userId ? cashReminderDueAt(cashExpiresAt, now) : null;
       savedSubmission.paymentStatus = 'pending_cash';
       savedSubmission.paymentMethod = 'cash';
       savedSubmission.cashExpiresAt = cashExpiresAt;
@@ -3063,6 +3103,7 @@ export class FormsService {
         paymentStatus: 'pending_cash',
         paymentMethod: 'cash',
         cashExpiresAt,
+        cashReminderDueAt: cashReminderDue,
       });
       this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
       return {
@@ -3073,188 +3114,380 @@ export class FormsService {
     }
 
     if (totalCents > 0) {
-      // Delegate checkout creation to the central payment service as a single consolidated item
-      const singleLineItem: any[] = [
-        {
-          price_data: {
-            currency,
-            product_data: { name: `${form.title} (Registration)` },
-            unit_amount: totalCents,
-          },
-          quantity: 1,
-        },
-      ];
-
-      const checkoutUrl = coreUrl('payments/create-checkout-session');
-
-      // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
-      // readiness of the HOLDER of the vendor token the request was sent to.
-      let connectAccountId: string | undefined;
-      // Whether that revert already ran (the bridge's re-issue below runs it itself).
-      let reverted = false;
-      try {
-        // If the form belongs to an association, route payment via its connected account
-        if (form.associationId) {
-          await this.associationsService.assertPaymentsReady(form.associationId);
-          const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
-          if (acctId) connectAccountId = acctId;
-        }
-
-        // order_ref for Lydia's request/do callback (see webhook.controller.ts).
-        const activeProvider = await this.associationsService.getActivePaymentProvider();
-        if (activeProvider === 'disabled') {
-          this.logger.warn(
-            `[Forms] Paid submission ${savedSubmission.id} refused: payments are disabled`
-          );
-          throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
-        }
-        // The provider's payable range, refused here rather than by core: the SAME typed answer
-        // (code + bounds) the payer's page words in their language, one call sooner. AFTER the
-        // disabled check, so a form on an estate with payments off says that, not a range. The
-        // catch below releases the row and passes this exception through untouched.
-        if (totalCents < PROVIDER_MIN_AMOUNT_CENTS || totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
-          this.logger.warn(
-            `[Forms] Paid submission ${savedSubmission.id} refused: total=${totalCents} cents outside ` +
-              `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} ${formTag(form)}`
-          );
-          throw amountOutOfRange(
-            PROVIDER_MIN_AMOUNT_CENTS,
-            PROVIDER_MAX_AMOUNT_CENTS,
-            `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is outside the ` +
-              `payable range ${(PROVIDER_MIN_AMOUNT_CENTS / 100).toFixed(2)}-` +
-              `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
-          );
-        }
-
-        const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
-        // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
-        // page reads the answer through a session the guest has not got. The URL carries the
-        // receipt and nothing that decides anything: the page only asks the server, which asks
-        // Lydia. The server chooses it; a guest names no return URL (`GuestSubmitFormDto`).
-        // `receipt` is minted for exactly this case (a guest paying online), above the transaction.
-        const guestReturn = guest
-          ? `${frontendUrl}/f/${encodeURIComponent(id)}/receipt?receipt=${receipt!.token}`
-          : null;
-        const successUrl = guestReturn
-          ? guestReturn
-          : resolveCheckoutCallbackUrl(
-              input.successUrl,
-              `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
-              frontendUrl
-            );
-        const cancelUrl = guestReturn
-          ? guestReturn
-          : resolveCheckoutCallbackUrl(
-              input.cancelUrl,
-              `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
-              frontendUrl
-            );
-        // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
-        let idempotencyKey = formOrderRef(savedSubmission.id);
-        const issueOn = (account: string | undefined, orderRef: string) =>
-          axios.post(
-            checkoutUrl,
-            {
-              lineItems: singleLineItem,
-              successUrl: withSubmissionReturnKey(successUrl, savedSubmission.id),
-              cancelUrl: withSubmissionReturnKey(cancelUrl, savedSubmission.id),
-              metadata: {
-                submissionId: savedSubmission.id,
-                formId: id,
-                userId: input.userId ?? '',
-              },
-              connectAccountId: account,
-              idempotencyKey: orderRef,
-              // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
-              payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
-              // The request dies before the seat is released (`seat-hold.ts`).
-              expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
-            },
-            internalCoreRequestConfig()
-          );
-        let res;
-        try {
-          res = await issueOn(connectAccountId, idempotencyKey);
-        } catch (err: unknown) {
-          const cause = lydiaReadinessRefusal(err);
-          if (!cause || !connectAccountId || !form.associationId) throw err;
-          reverted = true;
-          const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
-            connectAccountId,
-            cause,
-            { path: guest ? 'form-guest' : 'form', id: savedSubmission.id }
-          );
-          if (!reissue) throw err;
-          // A bridge's switch back (owner, 2026-11-13): error 5 on the Business a switch made
-          // active, answered before any request existed. The SAME answer is issued ONCE on the
-          // account that collects now - re-resolved and re-checked, with a new order_ref - and a
-          // refusal of that one is the ordinary revert below. NOT a fallback: logged and counted.
-          await this.associationsService.assertPaymentsReady(form.associationId);
-          const historical = await this.associationsService.getPaymentAccountId(form.associationId);
-          if (!historical || historical === connectAccountId) throw err;
-          this.logger.warn(
-            `${LYDIA_BRIDGE_LOG_TAG} submission ${savedSubmission.id}: error 5 on the Business a ` +
-              `bridge switch made active, switched back - the SAME payment is re-issued once on ` +
-              `the historical account (nothing was issued on the first)`
-          );
-          connectAccountId = historical;
-          idempotencyKey = formOrderRef(savedSubmission.id);
-          reverted = false;
-          res = await issueOn(connectAccountId, idempotencyKey);
-        }
-
-        const data = res.data || {};
-        const sessionUrl = data.url || data.checkoutUrl || null;
-        const sessionId = data.id || data.sessionId || null;
-        const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
-
-        if (!sessionUrl) {
-          await this.releaseUnissuedRow(savedSubmission.id);
-          return {
-            message: data.message || 'Payment service did not return a checkout URL',
-            submissionId: savedSubmission.id,
-          };
-        }
-
-        if (sessionId || requestId) {
-          savedSubmission.stripeSessionId = sessionId;
-          savedSubmission.paymentRequestId = requestId;
-          // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
-          // The order_ref and the Business beside the ids: what a refund of this payment is sent
-          // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
-          // OVERWRITTEN by each new request, and the LAST one is the only one that can be paid: a
-          // retry first settles the request before it at Lydia (D2, `settleOpenRequest`) - cancelled,
-          // or found paid and no new request issued - and refuses while it cannot. So no answer ever
-          // holds two payable requests, and the order_ref kept is the one the money came through.
-          await this.submissionRepo.update(savedSubmission.id, {
-            stripeSessionId: sessionId,
-            paymentRequestId: requestId,
-            lydiaOrderRef: idempotencyKey,
-            lydiaVendorToken: connectAccountId ?? null,
-          });
-        }
-
-        // Lydia issued a request on this Business: the proof a bridge switch waits for before
-        // telling its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
-        if (connectAccountId) {
-          await this.associationsService.noteLydiaRequestIssued(connectAccountId);
-        }
-        return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
-      } catch (err: unknown) {
-        // No request was issued, so nothing is payable: the row stops holding a seat for it.
-        await this.releaseUnissuedRow(savedSubmission.id);
-        const cause = lydiaReadinessRefusal(err);
-        if (cause && connectAccountId && !reverted) {
-          await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
-            path: guest ? 'form-guest' : 'form',
-            id: savedSubmission.id,
-          });
-        }
-        throw mapCorePaymentError(err, this.logger, 'Forms');
-      }
+      return this.issueOnlineRequest(form, savedSubmission.id, totalCents, {
+        guest,
+        receiptToken: receipt?.token ?? null,
+        userId: input.userId,
+        // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
+        payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
+        successUrl: input.successUrl,
+        cancelUrl: input.cancelUrl,
+      });
     }
 
     return { submissionId: savedSubmission.id };
+  }
+
+  /**
+   * Across the review cohort's boundary nothing is submitted or bought: a review account answers
+   * only its own associations' forms, and nobody answers a review account's personal form
+   * (review-cohort-reach.ts, review-cohort.ts). A submit and a payment resume both ask it.
+   */
+  private async assertRespondentReach(form: Form, userId: string): Promise<void> {
+    if (form.associationId) {
+      await assertReviewerReachesAssociation(
+        this.formRepo.manager,
+        userId,
+        form.associationId,
+        'form submission'
+      );
+    } else if (!sameSideOfReviewCohort(userId, form.ownerId)) {
+      this.logger.log(
+        `[REVIEW_COHORT] form submission refused: ${formTag(form)} across the boundary`
+      );
+      throw new ReviewCohortBoundaryException();
+    }
+  }
+
+  /**
+   * PAYS A RELEASED ANSWER AGAIN: a NEW Lydia request for the SAME answer, whose payment was
+   * cancelled, declined or expired (`payment-resume.ts`). The answer keeps its row, its answers and
+   * its amount (`totalPaid`, what was quoted at submit); only the request is new.
+   *
+   * NEVER TWO PAYABLE REQUESTS FOR ONE ANSWER, from durable state and from Lydia's own word:
+   * - the OLD request is settled at Lydia FIRST (`settleOpenRequest`, D2): cancelled or read dead,
+   *   it can never be paid again; read PAID, the answer is recorded paid (`markPaid`, decided by
+   *   capacity like any late payment) and NO new request is issued (`alreadyPaid`);
+   * - under the form lock the row must still be the one read - same status, same request ids - and
+   *   is then moved to `pending` naming NO request, its hold restarted: a second click (another
+   *   tab, a double tap) reads it `pending` within its hold and is refused `PAYMENT_IN_PROGRESS`;
+   * - a late callback about the old request names an id the row no longer holds: a cancel is
+   *   ignored (`cancelPendingSubmission`), a confirm reads the row's OWN new request.
+   *
+   * The seat is judged as a fresh submit judges it: the form open, one answer per person, and the
+   * capacity counted under the form lock with `seatHoldingWhere` (the row itself holds none).
+   */
+  async resumePayment(
+    submissionId: string,
+    callerId: string,
+    input: { payerEmail?: string; successUrl?: string; cancelUrl?: string }
+  ): Promise<SubmitOutcome> {
+    this.logger.debug(`[Forms] resumePayment ${submissionId} by ${callerId.slice(0, 8)}`);
+    const row = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    // Another person's answer, or a guest's, is not told apart from a missing one.
+    if (!row || !row.userId || row.userId !== callerId) {
+      throw new NotFoundException('Submission not found');
+    }
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(row.formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    await this.assertRespondentReach(form, callerId);
+    assertFormOpen(form);
+
+    // Whether a `pending` row still holds its seat: the one clock, the database's, read from the row.
+    const holdLive = livePendingWhere(form.id, { id: submissionId });
+    const refusal = form.anonymous
+      ? PAYMENT_NOT_RESUMABLE
+      : resumeRowRefusal(row, (await this.submissionRepo.count({ where: holdLive })) > 0);
+    if (refusal) throw this.resumeRefused(submissionId, row.paymentStatus, refusal);
+    const oneAnswer = !form.allowMultipleSubmissions;
+    // An answer given since (a fresh submit after this one was released) refuses BEFORE anything is
+    // cancelled at Lydia. Repeated under the lock.
+    if (oneAnswer) {
+      await this.assertNoOtherAnswer(this.submissionRepo.manager, form.id, callerId, row.id);
+    }
+    if (!acceptsOnline(form)) {
+      this.logger.log(`[Forms] resume refused on ${formTag(form)}: online not offered`);
+      throw new ConflictException({
+        code: FORM_ONLINE_PAYMENT_NOT_OFFERED,
+        message: 'This form is paid in cash only.',
+      });
+    }
+    // The old request, settled at Lydia before anything new exists. A row naming none (its request
+    // was never issued, `releaseUnissuedRow`) has nothing payable to settle.
+    if (row.paymentRequestId || row.stripeSessionId) {
+      const settled = await this.settleOpenRequest(row, form);
+      if (settled === 'paid') {
+        this.logger.log(
+          `[Forms] resumePayment ${submissionId}: the previous request was paid - no new request`
+        );
+        return { submissionId, alreadyPaid: true };
+      }
+    }
+    // After the settle, as in `submit`: a payment found made is answered `alreadyPaid`, never refused.
+    await this.assertGrantedTierIsARise(form, callerId);
+
+    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await this.assertAssociationLiveUnderLock(manager, form, 'submit');
+      await lockFormSeats(manager, form.id);
+      const locked = await manager.findOne(Submission, {
+        where: { id: submissionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Submission not found');
+      // The row the settle was about, unchanged: another resume (or a callback) moved it otherwise.
+      const changed =
+        locked.paymentRequestId !== row.paymentRequestId ||
+        locked.stripeSessionId !== row.stripeSessionId;
+      const lockedRefusal = resumeRowRefusal(
+        locked,
+        (await manager.count(Submission, { where: holdLive })) > 0
+      );
+      if (lockedRefusal || changed) {
+        throw this.resumeRefused(
+          submissionId,
+          locked.paymentStatus,
+          lockedRefusal ?? PAYMENT_IN_PROGRESS
+        );
+      }
+      if (oneAnswer) await this.assertNoOtherAnswer(manager, form.id, callerId, submissionId);
+      // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
+      if (form.maxSubmissions) {
+        const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
+        if (count >= form.maxSubmissions) {
+          this.logger.log(
+            `[Forms] resumePayment ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
+          );
+          throw formRefusal(FORM_FULL, 'Form is full');
+        }
+      }
+      // Pending, naming NO request until Lydia answers (what a concurrent caller refuses on), and
+      // its hold restarted on the database clock. Named columns, never a whole-entity save.
+      await manager.update(Submission, submissionId, {
+        paymentStatus: 'pending',
+        paymentRequestId: null,
+        stripeSessionId: null,
+        paymentSettledBy: null,
+        paymentRequestedAt: () => 'now()',
+      });
+      this.logger.log(
+        `[Forms] resumePayment ${submissionId}: ${locked.paymentStatus} -> pending, a new request is issued`
+      );
+    });
+
+    return this.issueOnlineRequest(form, submissionId, row.totalPaid, {
+      guest: false,
+      receiptToken: null,
+      userId: callerId,
+      payerEmail: input.payerEmail,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+    });
+  }
+
+  /** The typed 409 of a resume refused from the row, logged at INFO (a second tab is expected). */
+  private resumeRefused(
+    submissionId: string,
+    status: string,
+    code: ResumeRowRefusal
+  ): ConflictException {
+    this.logger.log(`[Forms] resumePayment ${submissionId} refused: ${status} -> ${code}`);
+    return new ConflictException({
+      code,
+      message:
+        code === PAYMENT_IN_PROGRESS
+          ? 'A payment of this answer is already in progress.'
+          : 'This answer has no payment to resume.',
+    });
+  }
+
+  /**
+   * ISSUES THE ONE LYDIA REQUEST A `pending` ANSWER WAITS ON, and stores both of its ids on the row.
+   *
+   * Shared by `submit` (a new answer, or a retry reusing a live row) and `resumePayment` (a
+   * released answer paid again): the row is already `pending` and names NO request when this runs,
+   * which is what makes a concurrent caller refuse instead of issuing a second one. Anything that
+   * fails before Lydia answers releases the row (`releaseUnissuedRow`): nothing is payable, so it
+   * holds no seat. The amount is the caller's, computed server-side and never from the client.
+   */
+  private async issueOnlineRequest(
+    form: Form,
+    submissionId: string,
+    totalCents: number,
+    opts: {
+      guest: boolean;
+      /** The guest's receipt, minted by `submit` for a guest paying online; null for a member. */
+      receiptToken: string | null;
+      userId: string | undefined;
+      payerEmail: string | undefined;
+      successUrl: string | undefined;
+      cancelUrl: string | undefined;
+    }
+  ): Promise<SubmitOutcome> {
+    const currency = form.currency.toLowerCase();
+    // Delegate checkout creation to the central payment service as a single consolidated item
+    const singleLineItem: any[] = [
+      {
+        price_data: {
+          currency,
+          product_data: { name: `${form.title} (Registration)` },
+          unit_amount: totalCents,
+        },
+        quantity: 1,
+      },
+    ];
+
+    const checkoutUrl = coreUrl('payments/create-checkout-session');
+
+    // Out of the try: a refusal naming the Business (Lydia's error 5 / 2701) reverts the
+    // readiness of the HOLDER of the vendor token the request was sent to.
+    let connectAccountId: string | undefined;
+    // Whether that revert already ran (the bridge's re-issue below runs it itself).
+    let reverted = false;
+    try {
+      // If the form belongs to an association, route payment via its connected account
+      if (form.associationId) {
+        await this.associationsService.assertPaymentsReady(form.associationId);
+        const acctId = await this.associationsService.getPaymentAccountId(form.associationId);
+        if (acctId) connectAccountId = acctId;
+      }
+
+      // order_ref for Lydia's request/do callback (see webhook.controller.ts).
+      const activeProvider = await this.associationsService.getActivePaymentProvider();
+      if (activeProvider === 'disabled') {
+        this.logger.warn(`[Forms] Paid submission ${submissionId} refused: payments are disabled`);
+        throw new BadRequestException(PAYMENTS_DISABLED_MESSAGE);
+      }
+      // The provider's payable range, refused here rather than by core: the SAME typed answer
+      // (code + bounds) the payer's page words in their language, one call sooner. AFTER the
+      // disabled check, so a form on an estate with payments off says that, not a range. The
+      // catch below releases the row and passes this exception through untouched.
+      if (totalCents < PROVIDER_MIN_AMOUNT_CENTS || totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
+        this.logger.warn(
+          `[Forms] Paid submission ${submissionId} refused: total=${totalCents} cents outside ` +
+            `${PROVIDER_MIN_AMOUNT_CENTS}-${PROVIDER_MAX_AMOUNT_CENTS} ${formTag(form)}`
+        );
+        throw amountOutOfRange(
+          PROVIDER_MIN_AMOUNT_CENTS,
+          PROVIDER_MAX_AMOUNT_CENTS,
+          `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is outside the ` +
+            `payable range ${(PROVIDER_MIN_AMOUNT_CENTS / 100).toFixed(2)}-` +
+            `${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}. Adjust the form price.`
+        );
+      }
+
+      const frontendUrl = this.configService.get('FRONTEND_URL') || 'http://localhost';
+      // A guest is sent back to the public form's RECEIPT page, never to `/forms/success`: that
+      // page reads the answer through a session the guest has not got. The URL carries the
+      // receipt and nothing that decides anything: the page only asks the server, which asks
+      // Lydia. The server chooses it; a guest names no return URL (`GuestSubmitFormDto`).
+      // `receipt` is minted for exactly this case (a guest paying online), above the transaction.
+      const guestReturn = opts.guest
+        ? `${frontendUrl}/f/${encodeURIComponent(form.id)}/receipt?receipt=${opts.receiptToken}`
+        : null;
+      const successUrl = guestReturn
+        ? guestReturn
+        : resolveCheckoutCallbackUrl(
+            opts.successUrl,
+            `${frontendUrl}/forms/success?session_id={CHECKOUT_SESSION_ID}`,
+            frontendUrl
+          );
+      const cancelUrl = guestReturn
+        ? guestReturn
+        : resolveCheckoutCallbackUrl(
+            opts.cancelUrl,
+            `${frontendUrl}/forms/cancel?session_id={CHECKOUT_SESSION_ID}`,
+            frontendUrl
+          );
+      // One order_ref PER REQUEST: Lydia refuses one it has seen, and a retry reuses this row.
+      let idempotencyKey = formOrderRef(submissionId);
+      const issueOn = (account: string | undefined, orderRef: string) =>
+        axios.post(
+          checkoutUrl,
+          {
+            lineItems: singleLineItem,
+            successUrl: withSubmissionReturnKey(successUrl, submissionId),
+            cancelUrl: withSubmissionReturnKey(cancelUrl, submissionId),
+            metadata: {
+              submissionId: submissionId,
+              formId: form.id,
+              userId: opts.userId ?? '',
+            },
+            connectAccountId: account,
+            idempotencyKey: orderRef,
+            payerEmail: opts.payerEmail,
+            // The request dies before the seat is released (`seat-hold.ts`).
+            expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
+          },
+          internalCoreRequestConfig()
+        );
+      let res;
+      try {
+        res = await issueOn(connectAccountId, idempotencyKey);
+      } catch (err: unknown) {
+        const cause = lydiaReadinessRefusal(err);
+        if (!cause || !connectAccountId || !form.associationId) throw err;
+        reverted = true;
+        const reissue = await this.associationsService.revertLydiaReadinessAfterRefusal(
+          connectAccountId,
+          cause,
+          { path: opts.guest ? 'form-guest' : 'form', id: submissionId }
+        );
+        if (!reissue) throw err;
+        // A bridge's switch back (owner, 2026-11-13): error 5 on the Business a switch made
+        // active, answered before any request existed. The SAME answer is issued ONCE on the
+        // account that collects now - re-resolved and re-checked, with a new order_ref - and a
+        // refusal of that one is the ordinary revert below. NOT a fallback: logged and counted.
+        await this.associationsService.assertPaymentsReady(form.associationId);
+        const historical = await this.associationsService.getPaymentAccountId(form.associationId);
+        if (!historical || historical === connectAccountId) throw err;
+        this.logger.warn(
+          `${LYDIA_BRIDGE_LOG_TAG} submission ${submissionId}: error 5 on the Business a ` +
+            `bridge switch made active, switched back - the SAME payment is re-issued once on ` +
+            `the historical account (nothing was issued on the first)`
+        );
+        connectAccountId = historical;
+        idempotencyKey = formOrderRef(submissionId);
+        reverted = false;
+        res = await issueOn(connectAccountId, idempotencyKey);
+      }
+
+      const data = res.data || {};
+      const sessionUrl = data.url || data.checkoutUrl || null;
+      const sessionId = data.id || data.sessionId || null;
+      const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
+
+      if (!sessionUrl) {
+        await this.releaseUnissuedRow(submissionId);
+        return {
+          message: data.message || 'Payment service did not return a checkout URL',
+          submissionId: submissionId,
+        };
+      }
+
+      if (sessionId || requestId) {
+        // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+        // The order_ref and the Business beside the ids: what a refund of this payment is sent
+        // with (migration 120) - the order_ref's attempt part is random and kept nowhere else.
+        // OVERWRITTEN by each new request, and the LAST one is the only one that can be paid: a
+        // retry first settles the request before it at Lydia (D2, `settleOpenRequest`) - cancelled,
+        // or found paid and no new request issued - and refuses while it cannot. So no answer ever
+        // holds two payable requests, and the order_ref kept is the one the money came through.
+        await this.submissionRepo.update(submissionId, {
+          stripeSessionId: sessionId,
+          paymentRequestId: requestId,
+          lydiaOrderRef: idempotencyKey,
+          lydiaVendorToken: connectAccountId ?? null,
+        });
+      }
+
+      // Lydia issued a request on this Business: the proof a bridge switch waits for before
+      // telling its managers "active" (lydia-account-bridge.ts). A no-op for any other Business.
+      if (connectAccountId) {
+        await this.associationsService.noteLydiaRequestIssued(connectAccountId);
+      }
+      return { checkoutUrl: sessionUrl, submissionId: submissionId };
+    } catch (err: unknown) {
+      // No request was issued, so nothing is payable: the row stops holding a seat for it.
+      await this.releaseUnissuedRow(submissionId);
+      const cause = lydiaReadinessRefusal(err);
+      if (cause && connectAccountId && !reverted) {
+        await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
+          path: opts.guest ? 'form-guest' : 'form',
+          id: submissionId,
+        });
+      }
+      throw mapCorePaymentError(err, this.logger, 'Forms');
+    }
   }
 
   /**
@@ -4311,6 +4544,56 @@ export class FormsService {
     });
     if (outcome === 'missing') throw new NotFoundException('Submission not found');
     return { ok: true };
+  }
+
+  /**
+   * The answers owed their one notice before the cash hold expires (`cash-reminder.ts`): still
+   * waiting for cash, a member's, due by now, not expired yet, not told. Read on the database clock,
+   * the clock the expiry below compares with; each row is CLAIMED before it is told
+   * (`claimCashReminder`), so two overlapping runs tell nobody twice.
+   */
+  async dueCashReminders(): Promise<DueCashReminder[]> {
+    const rows: DueCashReminder[] = await this.submissionRepo.query(
+      `SELECT s.id AS "submissionId", s."userId", s."formId", f.title AS "formTitle",
+              f."associationId", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl"
+         FROM submissions s
+         JOIN forms f ON f.id = s."formId"
+         LEFT JOIN associations a ON a.id = f."associationId"
+        WHERE s."paymentStatus" = 'pending_cash'
+          AND s."userId" IS NOT NULL
+          AND s."cashReminderNotifiedAt" IS NULL
+          AND s."cashReminderDueAt" <= now()
+          AND s."cashExpiresAt" > now()
+          AND f."deletedAt" IS NULL`
+    );
+    this.logger.debug(`[Forms] cash reminders due: ${rows.length}`);
+    return rows;
+  }
+
+  /**
+   * Stamps `cashReminderNotifiedAt` IF it is still unset and the answer still waits for cash, and
+   * says whether this run is the one that set it - THE STAMP IS THE CLAIM (the opening reminder's
+   * rule): a replica overlapping a deploy, or a cash validation landing meanwhile, tells nobody.
+   */
+  async claimCashReminder(submissionId: string): Promise<boolean> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ cashReminderNotifiedAt: () => 'now()' })
+      .where('id = :id', { id: submissionId })
+      .andWhere('"cashReminderNotifiedAt" IS NULL')
+      .andWhere('"paymentStatus" = :status', { status: 'pending_cash' })
+      .execute();
+    if (result.affected) return true;
+    this.logger.log(
+      `[Forms] cash reminder for ${submissionId} not claimed: already told, or no longer waiting for cash`
+    );
+    return false;
+  }
+
+  /** Releases a claim whose notice could not be written, so the next run tells the member. */
+  async releaseCashReminder(submissionId: string): Promise<void> {
+    await this.submissionRepo.update(submissionId, { cashReminderNotifiedAt: null });
   }
 
   /** Called by the hourly cron - expires cash submissions past their deadline. */

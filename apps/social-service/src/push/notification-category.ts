@@ -116,6 +116,8 @@ export const NOTIFICATION_TYPE_CATEGORY: Readonly<Record<NotificationType, strin
   live_withdrawn: null,
   live_reinstated: null,
   form_paid_over_capacity: 'forms',
+  // No push at all (`cash-reminder.ts`): nothing chat-delivery files, so no category governs it.
+  form_cash_expiring: null,
   lydia_payments_active: 'forms',
   lydia_payments_paused: 'forms',
   lydia_refund_issued: 'forms',
@@ -189,6 +191,7 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, string | null>> = 
   live_withdrawn: null,
   live_reinstated: null,
   form_paid_over_capacity: null,
+  form_cash_expiring: null,
   lydia_payments_active: null,
   lydia_payments_paused: null,
   lydia_refund_issued: null,

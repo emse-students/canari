@@ -60,6 +60,12 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENT_IN_PROGRESS) {
+    return m.form_payment_resume_in_progress();
+  }
+  if (err instanceof SocialApiError && err.code === PAYMENT_NOT_RESUMABLE) {
+    return m.form_payment_not_resumable();
+  }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
     const min = formatAmount(minCents);
@@ -308,3 +314,13 @@ const CHECKOUT_IN_PROGRESS = 'CHECKOUT_IN_PROGRESS';
  * "a moment", and is localized rather than echoing the server's English.
  */
 export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';
+
+/**
+ * The body `code` of social-service's 409 when a payment resume finds the answer's payment already
+ * in progress (`payment-resume.ts`): a second click, another tab - the row is `pending` and the
+ * first request is the one to pay.
+ */
+export const PAYMENT_IN_PROGRESS = 'PAYMENT_IN_PROGRESS';
+
+/** The body `code` of the 409 a resume gets on an answer with no payment to resume (`payment-resume.ts`). */
+export const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';

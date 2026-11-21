@@ -193,6 +193,8 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   delegation_resumed: roleInTarget(AssociationPermissionFlag.MANAGE_PRODUCTS),
   // The reader's own: a fixed sentence about an opening they asked for or follow (no title).
   form_reminder: 'reader',
+  // The reader's own cash answer about to expire: told to the one who answered, nobody else.
+  form_cash_expiring: 'reader',
   // The reader's own bookings: what happened to THEIR place - a removal is the very thing told.
   booking_cancelled: 'reader',
   booking_withdrawn: 'reader',

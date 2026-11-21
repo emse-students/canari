@@ -108,6 +108,20 @@ export class Submission {
   cashExpiresAt: Date | null;
 
   /**
+   * When the member is owed ONE notice that their cash hold is about to expire (migration 179,
+   * `cash-reminder.ts`): written with `cashExpiresAt`, null on every other row.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cashReminderDueAt: Date | null;
+
+  /**
+   * Set once that notice was written (migration 179): CLAIMED by a conditional `UPDATE` exactly one
+   * run wins, cleared again if writing it failed, so the member is told once and never twice.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cashReminderNotifiedAt: Date | null;
+
+  /**
    * When the CURRENT payment request was issued (migration 084): the seat hold of an online
    * `pending` row is counted from it (`seat-hold.ts`). Equal to `createdAt` until `submit` reuses
    * the row for a new request, which sets it to the database's `now()` again.

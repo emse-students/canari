@@ -22,6 +22,7 @@
     Bell,
     VideoOff,
     TriangleAlert,
+    Banknote,
     CircleCheck,
     Undo2,
     CirclePause,
@@ -291,6 +292,8 @@
       // system actor's profile. A row written before that carries no association and keeps the
       // neutral avatar.
       notif.type === 'form_reminder' ||
+      // The association whose form waits for the member's cash, like the opening reminder.
+      notif.type === 'form_cash_expiring' ||
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||
@@ -433,6 +436,7 @@
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
             : notif.type === 'form_paid_over_capacity' ||
+                notif.type === 'form_cash_expiring' ||
                 notif.type === 'lydia_payments_paused' ||
                 notif.type === 'delegation_revoked' ||
                 notif.type === 'delegation_receiver_not_ready'
@@ -523,6 +527,8 @@
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_paid_over_capacity'}
         <TriangleAlert size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'form_cash_expiring'}
+        <Banknote size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_active' || notif.type === 'delegation_resumed'}
         <CircleCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_paused' || notif.type === 'delegation_revoked' || notif.type === 'delegation_receiver_not_ready'}
@@ -633,6 +639,11 @@
         <!-- A payment landed on a full form: the sentence is built here, in the reader's locale,
              from the type and the form's title - the only data the server stores on the row. -->
         {m.notif_form_paid_over_capacity_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if notif.type === 'form_cash_expiring'}
+        <!-- The member's cash answer is about to expire: the sentence is this build's, the form's
+             title the only data the row carries. -->
+        {m.notif_form_cash_expiring_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isLydiaPaymentsNotif || isLydiaRefundNotif || isAdminQueueNotif}
         <!-- The whole sentence is the first span above; nothing follows it. -->

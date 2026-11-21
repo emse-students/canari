@@ -124,6 +124,9 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // The heir of a Lydia Responsable hand-over (2026-11-20): the first build that draws it. The
   // `1.7.2` pre-releases already out do not, and a floor compares the version core only.
   lydia_responsable_handed_over: '1.7.3',
+  // The member's one notice before their cash hold expires (owner decision of 2026-11-21): the
+  // first build that draws it, the version it is planned for.
+  form_cash_expiring: '1.8.0',
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */
