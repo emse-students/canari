@@ -1,12 +1,12 @@
 /**
  * WHAT THE ENGINE REALLY RECORDS FOR A VOICE NOTE, as one line per recording.
  *
- * A voice note asked for `{ audio: true }`, which leaves echo cancellation, noise suppression and
- * auto gain ON: the engine captures it like a phone call (owner, 2026-11-20: voice messages often
- * sound very bad). Nothing logged what was granted, so a bad note could not be told apart from a
- * device that answered differently. This reports the granted settings and the recorder's own
- * container and bitrate, so a reading names the cause instead of guessing it
- * ([backlog](../../../../../docs/wiki/backlog.d/p2-voice-notes-are-captured-as-a-phone-call.md)).
+ * A voice note used to ask `{ audio: true }`, which leaves echo cancellation, noise suppression and
+ * auto gain ON: the engine captured it like a phone call (owner, 2026-11-20: voice messages often
+ * sound very bad). It now asks a recording's constraints (`recordingConstraints.ts`), and this line
+ * reports what the engine GRANTED - the settings and the recorder's own container and bitrate - so a
+ * reading names the cause instead of guessing it
+ * ([sounds](../../../../../docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)).
  */
 
 /** What kind of input the label says, never the label itself (it can carry a person's name). */

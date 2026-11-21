@@ -33,11 +33,18 @@ export const THREAD_ROW_SELECTOR = '[id^="msg-"]';
  * is not a mutation), from its own box (the soft keyboard, a resize, a panel opening) or from the
  * composer band, whose measured height is the scroller's `padding-bottom`. All four ask `follow()`
  * the same question about the same number. No timer: every trigger is the change itself.
+ *
+ * **`onPlaced` SAYS WHERE THE PANE WAS PUT, SO THE READER'S FLAG NEVER MISTAKES THE COMPONENT'S OWN
+ * MOVE FOR THE READER'S** (the photo DM that lands on older messages, 2026-11-21): it is called with
+ * `scrollTop` after every write this observer makes, a pin included - which is also where a browser
+ * clamp that a shrinking thread caused ends up, since the pin follows it in the same frame. See
+ * `stickToBottomAfterScroll`.
  */
 export function observeThreadGrowth(
   scroller: HTMLElement,
   state: () => ThreadGrowthState,
-  composerBand?: HTMLElement | null
+  composerBand?: HTMLElement | null,
+  onPlaced?: (scrollTop: number) => void
 ): () => void {
   // THIS IS THE ONLY ANCHOR, IN EVERY ENGINE - so the browser's own is switched off. Chromium (and
   // Safari from 27) anchor a scroller natively: measured on the media-frame bench, 2026-10-02, an old
@@ -127,6 +134,7 @@ export function observeThreadGrowth(
     // A PREPEND - the window step or the store's page in `loadOlderGroups` - is kept HERE and only
     // here: nothing else writes `scrollTop` for it (2026-11-14).
     else if (shift !== 0) scroller.scrollTop += shift;
+    if (response === 'follow-bottom' || shift !== 0) onPlaced?.(scroller.scrollTop);
     // TWO ARRIVALS INSIDE ONE GLIDE (S5): the new glide starts where the rows are DRAWN - what the
     // running one had left to travel, plus the new row - so nothing jumps. Otherwise the held glide
     // resumes as it was.

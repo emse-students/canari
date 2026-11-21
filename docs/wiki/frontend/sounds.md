@@ -221,3 +221,63 @@ again while the reel plays and after it (no trill once it stopped), then a call 
 (the call is heard; the next send is silent); record a voice note while a reel plays unmuted, film a reel with sound, ANSWER a call that rang in - each capture opens (no `InvalidStateError`), and the log shows `microphone held by ...` / `released` around it - and the in-app log's `audio session` lines for each.
 Mi 9T: ringer on vibrate, then silent - a send makes no trill and the log says `the phone's ringer
 is silent or vibrate`; normal - the trill is back.
+
+## A voice note is a recording, not a call (owner, 2026-11-20)
+
+**Reported:** voice messages often sound very bad. The capture line shipped with #3910 read on the
+Mi 9T `capture: echo=true noise=true agc=true rate=48000Hz ch=1 mime=audio/mp4 bps=128000`: the
+note was captured under a phone call's configuration.
+
+**Who set it - no Canari code.** Native code sets `MODE_IN_COMMUNICATION` only in
+`CallForegroundService.kt` (the ongoing call), and no Objective-C sets an `AVAudioSession` category
+or mode. The ENGINE derived the call configuration from the capture's constraints:
+`VoiceRecorder.svelte` asked `{ audio: true }`, which leaves echo cancellation, noise suppression
+and auto gain ON. Read in the engines' sources on 2026-11-21:
+
+- **Android (Chromium WebView).** Echo cancellation ON asks the platform canceller
+  (`AudioParameters::ECHO_CANCELLER`, `audio_manager_android.cc`). The input stream is then opened
+  with the `VOICE_COMMUNICATION` preset (`aaudio_stream_wrapper.cc`; `opensles_input.cc` the same),
+  and `AudioManagerAndroid::MakeAudioInputStream` sets `MODE_IN_COMMUNICATION` on the FIRST input
+  stream that carries an effect, restored by `ReleaseInputStream` once the LAST input stream closes.
+  Output streams opened meanwhile take usage `VOICE_COMMUNICATION` (routed as a call's audio, the
+  call volume). With every effect off the preset is `GENERIC` (`CAMCORDER` on OpenSL) and the mode is left alone.
+- **iOS (WebKit).** Echo cancellation ON selects the Voice-Processing I/O unit (`CoreAudioCaptureUnit`,
+  a telephone's chain that also ducks other audio); OFF selects `RemoteIO`. The CATEGORY is
+  `play-and-record` (the page states it, [above](#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)),
+  and for that category WebKit forces the MODE to VideoChat (`MediaSessionManagerCocoa::updateSessionState`;
+  VoiceChat when a call chose the receiver). **That mode is WebKit's and stays**: setting it
+  natively would race WebKit's own `setCategory`, which runs on every session change.
+
+**The fix** ([`recordingConstraints.ts`](../../../frontend/src/lib/utils/audio/recordingConstraints.ts)):
+ONE constant, `RECORDING_AUDIO_CONSTRAINTS` (the three processings off, `channelCount: { ideal: 1 }`),
+asked by the voice note, the reel camera and the live - the reel's measured constants
+([reels](modules/reels.md)) moved there unchanged. `VoiceRecorder` logs its choice once per note,
+`[VoiceRecorder] capture as recording (call phase none)`, before the existing `capture:` line
+(`voiceNoteCaptureReport.ts`) reports what the engine granted.
+
+**A live call keeps its configuration.** On iOS every capture of the page feeds from ONE shared
+capture unit, and a source asking another echo setting RECONFIGURES it
+(`CoreAudioCaptureSource::initializeToStartProducingData`): a note with processing off, recorded
+during a call, would switch the CALL's echo canceller off. On Android a second input stream
+reselects the communication device. So `voiceNoteCapture(callPhase)` returns EXACTLY the call's
+constraints (`buildCallAudioConstraints`) while the call gate reads `calling` or `incall`, and the note
+is logged `capture as call`. When the note ends during the call, nothing has to be restored: the
+call's capture is still open, so Chromium keeps the mode (it restores after the LAST input stream),
+the ongoing-call service's `MODE_IN_COMMUNICATION` and output are untouched, and the audio session
+stays `play-and-record` because the call phase is a fact of its own (`audioSession.test.ts`, "a voice
+note ending during a call"). A ring coming in (`incoming`) holds no microphone, so a note recorded
+while it rings is a recording; answering then opens the call's capture with echo ON, which on iOS
+moves the shared unit to voice processing for the rest of that note - the call is never the one
+that loses.
+
+**Pinned by** `recordingConstraints.test.ts` (the constant, the choice per phase, and two source
+pins: only `CallForegroundService.kt` sets `MODE_IN_COMMUNICATION`, no native code sets an
+`AVAudioSession` category or mode), `VoiceRecorder.gesture.svelte.test.ts` (what is asked, idle, in a
+call, during a ring) and `audioSession.test.ts`. **Verified by compiling only**: the readings on
+both phones are [owed](../backlog.d/reading-owed-voice-notes-are-recorded-not-called.md).
+
+**Not changed, and why.** No bitrate is asked (the Mi 9T's AAC already reads 128 kb/s), no new
+loudness target and no high-pass: the research of 2026-11-20 ranked them after the processing, and
+they are taken only if the readings below fail their acceptance. A Bluetooth headset in HFP stays
+narrowband whatever the note asks (cause 2 of the research), which the `device=bluetooth` class of
+the capture line names.
