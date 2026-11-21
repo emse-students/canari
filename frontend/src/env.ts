@@ -10,6 +10,5 @@ import { defineEnvVars } from '@sveltejs/kit/env';
 export const variables = defineEnvVars({
   SOCIAL_SERVICE_URL: { schema: (value) => value },
   CORE_SERVICE_URL: { schema: (value) => value },
-  DELIVERY_SERVICE_URL: { schema: (value) => value },
   INTERNAL_SECRET: { schema: (value) => value },
 });

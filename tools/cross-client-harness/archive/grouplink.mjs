@@ -41,7 +41,7 @@ const LINK_INPUT = `(function () { var i = [].slice.call(document.querySelectorA
  * Mints the open group's invitation link from its panel, and returns it.
  *
  * @param {string} name the group's name, for the R5 ownership guard: a link is a door into it
- * @returns {Promise<string>} the link, shaped `${SITE}/g/join/<token>` - asserted, never recorded
+ * @returns {Promise<string>} the link, shaped `${SITE}/g/join/<token>[#name=...]` - asserted, never recorded
  */
 export async function mintGroupLink(cx, name) {
   assertCampaignOwned({ kind: 'group', name }, 'mintGroupLink');
@@ -53,7 +53,9 @@ export async function mintGroupLink(cx, name) {
   await until(cx, `${LINK_INPUT} !== null`, 20_000);
   const url = await evaluate(cx, LINK_INPUT);
   const prefix = `${SITE}/g/join/`;
-  if (typeof url !== 'string' || !url.startsWith(prefix) || !/^[A-Za-z0-9_-]{8,}$/.test(url.slice(prefix.length))) {
+  // THE SHAPE IS THE PATH'S: since sealed names step 3 the link carries the group's name after `#`
+  // (`#name=...`), which is no part of the token. The fragment is never printed.
+  if (typeof url !== 'string' || !url.startsWith(prefix) || !/^\/g\/join\/[A-Za-z0-9_-]{8,}$/.test(new URL(url).pathname)) {
     throw new Error(`mintGroupLink: the panel's link is not shaped ${prefix}<token> (length ${typeof url === 'string' ? url.length : 'none'})`);
   }
   return url;
@@ -65,7 +67,9 @@ export async function mintGroupLink(cx, name) {
  * the page said instead.
  */
 export async function followGroupLink(cx, url) {
-  await goto(cx, new URL(url).pathname);
+  // The fragment goes along: it is where the invitation page reads the group's name from.
+  const u = new URL(url);
+  await goto(cx, u.pathname + u.hash);
   await until(cx, `/Rejoindre le groupe/.test(document.body.innerText)`, 20_000);
   await realClick(cx, 'text=Rejoindre le groupe');
   try {

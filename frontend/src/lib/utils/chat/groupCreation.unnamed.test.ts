@@ -106,8 +106,14 @@ describe('a named group dates its name at creation', () => {
     // a deadline is a race with the runner's load.
     let settled!: () => void;
     const statementSettled = new Promise<void>((resolve) => (settled = resolve));
+    const isOutcomeLine = (msg: unknown) =>
+      typeof msg === 'string' && msg.startsWith("[GROUP_NAME] creation's name statement");
     d.args.log = vi.fn((msg: string) => {
-      if (msg.startsWith("[GROUP_NAME] creation's name statement")) settled();
+      if (isOutcomeLine(msg)) settled();
+    });
+    // The statement's THROW is reported once, by `console.error` alone (never also by `log`).
+    vi.spyOn(console, 'error').mockImplementation((msg: unknown) => {
+      if (isOutcomeLine(msg)) settled();
     });
     return { ...d, sent, statementSettled };
   }
@@ -147,12 +153,15 @@ describe('a named group dates its name at creation', () => {
     const d = withSend(async () => {
       throw new TransportFailureError(new Error('offline'));
     });
-    expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
-    await d.statementSettled;
-    const row = d.conversations.get('g-new')!;
-    expect(row.nameAt).toBeUndefined();
-    expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
-    vi.restoreAllMocks();
+    try {
+      expect(await createNewGroup('Les ROOTz', d.args)).toEqual({ ok: true, key: 'g-new' });
+      await d.statementSettled;
+      const row = d.conversations.get('g-new')!;
+      expect(row.nameAt).toBeUndefined();
+      expect(row.nameSync?.statement).toMatchObject({ name: 'Les ROOTz' });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('the creation returns without waiting for the statement round trip', async () => {

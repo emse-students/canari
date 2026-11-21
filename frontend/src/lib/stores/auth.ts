@@ -38,6 +38,7 @@ import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
+import { pathWithoutFragment } from '$lib/utils/logSanitize';
 import type { SignOutCause } from '$lib/stores/signOutCause';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { openCustomTab, type CustomTabOutcome } from '$lib/services/customTabsCommands';
@@ -638,7 +639,7 @@ export async function startOidcLogin(
     ? `${baseUrl}/if/flow/${options.flowSlug}/?next=${encodeURIComponent(authorizePath)}`
     : `${baseUrl}${authorizePath}`;
   alog(
-    `login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'} pkce=${pkce ? 'S256' : 'none (server has no oidcPkce)'}`
+    `login returnTo=${pathWithoutFragment(returnTo)} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'} pkce=${pkce ? 'S256' : 'none (server has no oidcPkce)'}`
   );
 
   // On Tauri mobile (Android + iOS), open in a dedicated in-app browser session so the main

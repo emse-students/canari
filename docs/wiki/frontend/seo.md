@@ -78,7 +78,6 @@ would be impersonation). One seam: `src/lib/seo/internalApi.ts`, shared with the
 | `/associations/{slug}` | social-service `GET /api/public/associations/slug/:slug` | `Organization` + `BreadcrumbList` |
 | `/forms/{id}` | social-service `GET /api/public/forms/:id` (the member route needs an identity the renderer has not: it answered 401 and every shared link was generic; a non-public form answers 404 and stays generic) | — |
 | `/c/join/{token}` | social-service internal invite preview | — (`noindex`) |
-| `/g/join/{token}` | chat-delivery internal invite preview | — (`noindex`) |
 | `/`, `/posts` | — | `Organization` + `WebSite` |
 | `/associations` | — | site nodes + `BreadcrumbList` |
 
@@ -269,15 +268,18 @@ owed to the other.
 
 ### The two invite links
 
-Both already had their own session-free preview endpoint and both are `noindex` — previewing for
-whoever holds the link is the point, being listed in a search index is not. Two things changed on
-2026-09-20: the descriptions became sentences somebody might act on, and **the group invite got an
-image**. It had none for no reason other than `resolveGroupInvitePreview` not selecting the column,
-while the community invite beside it carried one; a group avatar is a raw public blob
-(`/api/media/public/:id`), exactly like a community image, so an unfurler can fetch it.
+Both are `noindex` — previewing for whoever holds the link is the point, being listed in a search
+index is not.
 
-All four strings go through Paraglide (`seo_community_invite_*`, `seo_group_invite_*`,
-`seo_invite_image_alt`) rather than being French literals in a `.ts`.
+- **`/c/join/{token}`** is enriched from social-service's session-free invite preview: the
+  community's name and image, worded by `seo_community_invite_*` and `seo_invite_image_alt`. It
+  follows the group link with step 5 of [sealed-names](../protocols/sealed-names.md).
+- **`/g/join/{token}` is NOT enriched since 2026-11-21** (sealed names, step 3, part 1; principle 1
+  of [Nos principes](../../principes.md)). The group's name travels in the link's `#fragment`, which
+  no unfurler sends, so the head is the generic `group_join_page_title` with the site image and
+  names nothing of the group - not its name, not its avatar. The session-free
+  `GET internal/group-invites/:token`, its strings and the group avatar it carried (added
+  2026-09-20) are deleted ([sealed-names](../protocols/sealed-names.md#step-3-part-1---built-2026-11-21-a-group-invite-link-carries-the-name-in-its-fragment)).
 
 ### Escaping is the security-critical part
 

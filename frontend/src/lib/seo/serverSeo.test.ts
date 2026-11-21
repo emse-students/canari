@@ -8,7 +8,6 @@ const fetchJson = vi.fn();
 vi.mock('$lib/seo/internalApi', () => ({
   SOCIAL_URL: () => 'http://social',
   CORE_URL: () => 'http://core',
-  DELIVERY_URL: () => 'http://delivery',
   internalHeaders: () => ({}),
   fetchJson: (...args: unknown[]) => fetchJson(...args),
   fetchJsonOrThrow: (...args: unknown[]) => fetchJson(...args),
@@ -206,5 +205,19 @@ describe('a shared form card is read from the public route', () => {
     );
     expect(degraded).toBe(false);
     expect(meta.title).not.toBe('Soiree BDE');
+  });
+});
+
+describe('a group invite head names no group (sealed names, step 3)', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  it('asks no service and shows the generic invitation title', async () => {
+    const { meta } = await resolveServerSeo('/g/join/some-token');
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(meta.title).toBe(m.group_join_page_title());
+    expect(meta.noindex).toBe(true);
+    // No image of the group: the head falls back to the site's own picture, and names nothing.
+    expect(meta.image).toBeUndefined();
+    expect(meta.imageAlt).toBeUndefined();
   });
 });

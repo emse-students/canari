@@ -420,13 +420,59 @@ unit tests (`groupName.test.ts`, `systemMessageHandler.groupName.test.ts`,
 `serverGroupConversation.nameSync.test.ts`, where the restart goes through the real SQLite store,
 `historySystemEvents.bundleAuthorship.test.ts`, `groupCreation.unnamed.test.ts`).
 
+## Step 3, part 1 - built (2026-11-21): a group invite link carries the name in its `#fragment`
+
+The smallest part of step 3 that ships alone: no client is refused, no column changes, and the
+server's API still answers the name for the builds that need it. Principle 1 of
+[Nos principes](../../principes.md): a link unfurler (the servers of whatever app the link is pasted
+into) no longer learns what a group is called.
+
+- **The sharer's device writes the name into the link** (`ChatGroupPanel.generateShareLink`,
+  `withInviteNameFragment` in `frontend/src/lib/mls/groupInviteName.ts`):
+  `https://canari.emse.fr/g/join/<token>#name=<form-encoded name>`. No browser, WebView or unfurler
+  sends a fragment in a request, and the `Referer` of the join page is `strict-origin`.
+- **Only a name the members dated is handed out** (`inviteLinkName`): the row's name when `nameAt`
+  is set (steps 1 and 2 date every named group). An undated row may hold a placeholder, so its link
+  carries no name, and its card reads the server's (legacy, below) or says "a group".
+- **The cards read the fragment** (`readInviteNameFragment`, `inviteCardName`): the join page
+  `/g/join/<token>` and the in-chat card of a pasted link (`canariLinkPreview.ts`). A link with no
+  fragment reads the server's `groupName` - the legacy branch, logged at `[LEGACY]` with its shape
+  (`no-fragment` or `empty`, and whether the server named it), never the name.
+- **The name survives a sign-in.** A signed-out reader is sent to `/login?returnTo=<path + fragment>`
+  by a client-side navigation, and the sign-in keeps `returnTo` on the device (`setOidcEntry`). The
+  fragment then sits, percent-encoded, in the QUERY of `/login`: a reload of that page sends it to
+  nginx, whose access log redacts the query - so a server can receive it there, and never stores it.
+  Two lines that printed `returnTo` print `+fragment` instead (`pathWithoutFragment`,
+  `logSanitize.ts`), and so does the in-chat card's failure line; the exported in-app log redacts a
+  path's fragment for every other line (`FRAGMENT_RE`, `appLogRedact.ts`).
+- **The Open Graph head of `/g/join/<token>` names no group** (`serverSeo.ts`): no enrichment, so the
+  generic "Rejoindre un groupe" title of `resolveSeoForPath`, the site image, and no request to
+  chat-delivery. The group's avatar is not shown either: a generic invitation shows nothing of the
+  group (reversible; the decision said generic). The session-free
+  `GET internal/group-invites/:token` it called is deleted, with the SSR's `DELIVERY_SERVICE_URL`.
+- **The fragment is untrusted input.** Any holder of a token - not only a member - can forge the
+  name a link carries. The card strips the controls, bidi overrides and zero-width characters a name
+  must not hold (`stripInvisible`, the rule nicknames use) and shows at most 100 code points
+  (`INVITE_NAME_MAX_CODE_POINTS`, a cut is logged without the name). The card shows what the link
+  says; the conversation, once joined, shows the members' dated name.
+- **What stays for the next part:** `GET mls/group-invites/:token` still answers `groupName`, for
+  builds older than this one (their card reads it) and for links they minted (no fragment). It stops
+  naming the group with the rest of step 3, behind the floor; a link minted before this build then
+  shows "a group" until it is re-shared. Community invites (`/c/join`) follow with step 5.
+
+Readings owed: the web rig (share a named group's link, open it signed out in another context: the
+card names the group after the sign-in; paste it in a chat: the card names it; the page source of
+`/g/join/<token>` names nothing), and both phones (the link copied on the phone, opened on the other
+phone through the app link: the card names the group).
+
 ## The remaining steps, in order
 
 1. **Step 3 - the server stops knowing group names (about 1 week, native included).** Create and rename
    send no name, and the server refuses one. The `groupName` push field and the join-ask
    `contentArg` go. The native push path names the group from the mirrored rows (Android
-   `ChatBackgroundService`, iOS App Group copy). The invite preview carries the name in the link's
-   `#fragment` (decided, below).
+   `ChatBackgroundService`, iOS App Group copy). The invite preview's name moved to the link's
+   `#fragment` in part 1 (above); what is left is the server's `GET mls/group-invites/:token`
+   ceasing to answer `groupName`.
    Builds older than step 1 read only the server's list, so this step ships behind the minimum-version
    gate ([legacy-compatibility](../legacy-compatibility.md)) at the version decided below.
 2. **Step 4 - the held migration (about 1 day, then the owner's approval line).** Set `dm_groups.name`

@@ -361,16 +361,14 @@ const BENIGN = [
   /\[InvitationsController\] \[INVITATION_STATUS\] device=\S+ user=\S+ group=\S+ newStatus=(active|pending)/,
   // THE INVITE-LINK HALF OF THE SAME LIFECYCLE, unclassified until now because no phase had ever
   // built a group by LINK: GRP is the first, and these were six of its seventeen unexplained lines
-  // on 2026-08-23. Minting an invite changes nothing for anybody - it creates a capability and waits
-  // - and the preview is the invitation landing page resolving that token to a group name so a
-  // visitor can see what they were invited to. Anonymous, read-only, at DEBUG, and the token is
-  // already truncated to eight characters where it is logged.
+  // on 2026-08-23. Minting an invite changes nothing for anybody - it creates a capability and waits.
+  // (The session-free group preview the link's head read is gone since sealed names step 3: the head
+  // names no group, so its `internal group invite preview` line no longer exists.)
   //
   // `accepted` IS DELIBERATELY NOT HERE. That one is a person becoming a member, and it sits in
   // NOTABLE with the rest of the membership changes.
   /\[InvitationsController\] \[GROUP_INVITE\] created group=\S+ by=\S+$/,
-  /\[InternalController\] internal group invite preview token=\S+$/,
-  // THE COMMUNITY TWIN OF THE PAIR ABOVE, from a different controller and about a different object -
+  // THE COMMUNITY INVITE PREVIEW, from a different controller and about a different object -
   // a channel invite rather than a DM group's. `accepted` is likewise NOT here: it is a person
   // becoming a member of a community, and it sits in NOTABLE with `created`.
   /\[InternalInvitesController\] internal channel invite preview token=\S+$/,
