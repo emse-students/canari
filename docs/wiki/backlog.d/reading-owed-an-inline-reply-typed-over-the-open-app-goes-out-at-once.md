@@ -38,3 +38,10 @@ the banner answered. Mechanism:
    when it was neither sent nor queued, the banner then `non envoyé, réécrivez-le`. Never `envoi en
    cours` for good. Then the same, signing OUT instead of killing: the in-app log reads
    `[QuickReply] sign-out: the account's unsettled replies are settled`.
+
+**2026-11-21: a banner can now stay on screen while the app is in front.** Opening the app used to
+cancel every message banner, so the reading above could never have a banner to type into (Mi 9T,
+`1.7.3-alpha.3`: gone a second after the app came up). Since the owner's decision "N'effacer que les
+lues" ([social-service](../services/social-service.md)) a banner for a conversation nobody opened
+stays: post it with the app in the background, bring the app up WITHOUT opening that conversation,
+and type the reply in the banner's field.

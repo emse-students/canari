@@ -869,7 +869,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   branch, so the usual case cancelled id -1.)
 - **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
   between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
-  `withdraw`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
+  `withdraw`s it, (`forgetAll`, which the app's coming to the front used to call, has no caller since 2026-11-21), and the
   user's swipe does too, through the delete intent of a conversation banner
   (`ACTION_BANNER_DISMISSED`, then `forgetPostedBanner`) - otherwise the next post would bring back
   the lines the user dismissed.
@@ -1036,15 +1036,32 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
   sent is newer and stays, and the banner is rebuilt silently with it.
-- **Coming to the front removes every message, mention, ring and reaction banner, read or not (by
-  design, `MainActivity.onResume` -> `cancelAllMessageNotifications`), and says so (2026-11-21).** A
-  banner posted in the background was gone about a second after the app came to the front on the Mi
-  9T (`1.7.3-alpha.3`) with no line saying why; this sweep was the remover (not the #3912 read
-  dismissal). Each removal now logs `cancelAllMessageNotifications: removed id=<n> channel=<c>
-  conversation=<ref, "?" when unknown> - the app came to the foreground`. Whether opening the app should clear a
-  conversation nobody read is a product question, not settled here: the unread badge still counts
-  it. A banner therefore cannot be on screen while the app is in front, which is why the inline-reply
-  reading over the open app needs the banner held by a direct reply (the sweep spares those).
+- **OPENING THE APP CLEARS NO CONVERSATION BANNER (owner, 2026-11-21: "N'effacer que les lues"; Messenger
+  and Signal behave so).** `MainActivity.onResume` used to cancel every message, mention and reaction
+  banner, read or not, and logged nothing: a banner posted in the background was gone a second after
+  the app came to the front (Mi 9T, `1.7.3-alpha.3`). It now calls `retireTakenOverNotifications`,
+  and a banner goes only with ITS conversation. What removed each kind, and what removes it now:
+
+  | kind | removed by the sweep | now removed by |
+  | --- | --- | --- |
+  | a message banner (channel `messages`) | yes | the conversation opened on this device (the page's `read_here` hand-over to `readElsewhereFromWebSocket`), read on another device (`read_watermark`, `channel.read`, the silent-from-self push), answered, "mark as read", the user's swipe; a conversation that ENDED (below) |
+  | a mention (channel `mentions`) | yes | the same, they share the conversation's id |
+  | a reaction (channel `reactions`) | yes | with its conversation, by the round-14 rule above; an ended conversation takes it too |
+  | the generic "message to read" banner (no content decrypted) | yes | the same - it is posted under the conversation's id too; the real banner replaces it |
+  | the group summary | yes | follows its children (`refreshBadgeSummary` at each conversation cancel) |
+  | an incoming-call ring (channel `calls`) | yes | **still on the app's coming to the front**: the in-app overlay rings now and the ring's own screen must not outlive it; its end (`call_ring_end`), the answer and the decline also remove it. No missed-call notification exists, so no call banner stays behind |
+  | the outbox nudge, "a new device was added", the wake-up "could not be loaded", the background worker's failure | yes | **still on the app's coming to the front**: each invites to open the app, which satisfies it, and none names a conversation; the nudge also goes when the outbox mirror empties |
+  | a Welcome / invitation | not on these channels (never swept) | unchanged |
+
+  **A conversation that ENDS takes its banners with it** - deleted, left, excluded, its salon or
+  community gone: the page watches the conversation list every ending writes to
+  (`endedConversations.ts`, an effect in `ChatBackgroundService`; keyed by id, so a re-keyed row is
+  not an ending) and hands each ended id to the same native cancel with a mark covering every line
+  (`conversation_ended`). The event decides, never a timer. Logged on both sides: the page
+  (`[NOTIF] conversation <id> ended`) and Kotlin (`readElsewhereFromWebSocket: queued ... conversation
+  ended`). **iOS is NOT done:** its activation still clears chat banners (`CanariPushCancelMessageNotifications`)
+  and no page event reaches its notification centre - [the entry](../backlog.d/ios-banners-go-with-their-conversation.md).
+  In split-screen the activity does not resume either, so the page's hand-over is the only trigger there.
 - **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
   `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
   its reaction notification too: an answer, a read that cancels the banner or finds it held after

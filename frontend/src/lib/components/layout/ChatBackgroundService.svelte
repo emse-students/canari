@@ -93,6 +93,11 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
+  import { endedConversationIds, snapshotConversations } from '$lib/utils/chat/endedConversations';
+  import {
+    ENDED_CONVERSATION_MARK,
+    handOverConversationEvent,
+  } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
@@ -216,6 +221,22 @@
 
   // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
   $effect(() => callView.setLocked(showPinModal));
+
+  // A CONVERSATION THAT ENDED TAKES ITS NOTIFICATIONS WITH IT. Opening the app clears no banner any
+  // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
+  // community is gone would keep its banner for good. Observed on the list every ending writes to,
+  // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
+  let knownConversations: ReadonlyMap<string, string> = new Map();
+  $effect(() => {
+    const next = snapshotConversations(globalConvs.conversations.values());
+    const ended = untrack(() => endedConversationIds(knownConversations, next));
+    knownConversations = next;
+    for (const id of ended) {
+      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);
+      void handOverConversationEvent(id, 'conversation_ended', ENDED_CONVERSATION_MARK, 'server');
+      void globalNotifs.dismissConversationReactions(id);
+    }
+  });
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);

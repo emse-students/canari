@@ -199,7 +199,18 @@ export async function postNativeReactionNotification(
  * from another device, an own salon `channel.read`, or `read_here` - THIS device's reader opening
  * it, which no push and no socket echo ever reports back (`openedConversationDismissal.ts`).
  */
-export type ReadElsewhereEvent = 'read_watermark' | 'channel.read' | 'read_here';
+export type ReadElsewhereEvent =
+  | 'read_watermark'
+  | 'channel.read'
+  | 'read_here'
+  | 'conversation_ended';
+
+/**
+ * The mark of a conversation that ENDED (deleted, left, excluded, its salon or community gone): it
+ * covers every line a banner can hold, so the banner and its reaction go. `Number.MAX_SAFE_INTEGER`
+ * truncates losslessly into the command's `i64`.
+ */
+export const ENDED_CONVERSATION_MARK = Number.MAX_SAFE_INTEGER;
 
 /**
  * Tells the Android builder that this account read a conversation on another device, as this
@@ -254,6 +265,26 @@ export async function recordNativeReadElsewhere(
     );
     return false;
   }
+}
+
+/**
+ * The page's ONE hand-over of a conversation event to the native notification shade: Android decides
+ * against a mark (`record_read_elsewhere`). iOS has no hand-over yet - its native side removes
+ * nothing on a page event (`docs/wiki/backlog.d/ios-banners-go-with-their-conversation.md`). A
+ * runtime with no native shade answers `true`: there is nothing to hand over, and nothing failed.
+ *
+ * @param at the mark Android weighs lines against ({@link ENDED_CONVERSATION_MARK} for an ended
+ *   conversation); `clock` says which clock it is on.
+ * @returns whether the work was queued where there is a native shade.
+ */
+export async function handOverConversationEvent(
+  conversationId: string,
+  event: ReadElsewhereEvent,
+  at: number,
+  clock: 'server' | 'stamped'
+): Promise<boolean> {
+  if (isAndroidTauriRuntime()) return recordNativeReadElsewhere(conversationId, event, at, clock);
+  return true;
 }
 
 /**

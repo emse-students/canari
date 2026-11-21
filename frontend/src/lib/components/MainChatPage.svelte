@@ -35,8 +35,7 @@
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
   import { createOpenedConversationDismissal } from '$lib/utils/chat/openedConversationDismissal';
-  import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
-  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import { handOverConversationEvent } from '$lib/utils/nativeNotification';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
@@ -854,7 +853,7 @@
       openedDismissal.reset();
     } else if (openedDismissal.take(currentSelection, Math.max(held, target))) {
       void notifs.dismissConversationReactions(currentSelection);
-      void recordNativeReadElsewhere(
+      void handOverConversationEvent(
         currentSelection,
         'read_here',
         Math.max(held, target),
@@ -862,7 +861,7 @@
       ).then((queued) => {
         // A refusal (or a throw) is already accused by the callee; the hand-over is not spent, so
         // the next run of this effect retries it. Off Android there is nothing to hand over.
-        if (!queued && isAndroidTauriRuntime()) openedDismissal.unspend(currentSelection);
+        if (!queued) openedDismissal.unspend(currentSelection);
       });
     }
     if (target <= held) return;

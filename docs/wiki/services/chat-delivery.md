@@ -2301,8 +2301,8 @@ on push receipt and down on read-state cancel with no separate counter to keep i
   `refreshBadgeSummary` rebuilds the group summary carrying that count via `setNumber(count)` (or
   cancels the summary when it hits 0). It is the single source of truth for both the summary and the
   badge, called after every message notification post (`showNotification`) and every cancel
-  (`cancelConversationNotification`); `cancelAllMessageNotifications` clears the summary and thus the
-  badge on app open. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
+  (`cancelConversationNotification`); the app's coming to the front no longer clears conversation
+  banners (owner, 2026-11-21), so the summary and badge follow the conversations that remain. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
   see [the banner its own badge refresh cancelled](#the-banner-its-own-badge-refresh-cancelled---fixed-2026-09-21). Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
   some older launchers only show a dot (no third-party ShortcutBadger dependency).
 - **iOS** has two writers because the badge owner depends on process state:

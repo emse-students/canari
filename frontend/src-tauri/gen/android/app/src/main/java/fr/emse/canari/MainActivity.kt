@@ -963,9 +963,10 @@ class MainActivity : TauriActivity() {
         isInForeground = true
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
-        // Opening the app clears lingering message notifications (read here or on another
-        // device) - the visible half of cross-device read-state sync.
-        CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
+        // Opening the app does NOT clear message, mention or reaction banners (owner, 2026-11-21):
+        // each goes with its conversation, when it is read or ended. What the open app takes over
+        // - the rings, the wake notice - is retired here.
+        CanariFirebaseMessagingService.retireTakenOverNotifications(this)
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
         val opening = resumeOpening

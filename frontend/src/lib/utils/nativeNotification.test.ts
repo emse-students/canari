@@ -9,6 +9,8 @@ vi.mock('$lib/utils/appVersion', () => ({
 import {
   composePlainNotificationText,
   recordNativeReadElsewhere,
+  handOverConversationEvent,
+  ENDED_CONVERSATION_MARK,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -328,6 +330,34 @@ describe('recordNativeReadElsewhere', () => {
       serverClock: true,
       reason: 'read_here',
     });
+  });
+
+  // An ended conversation (deleted, left, excluded) takes its banner and reaction with it: the mark
+  // covers every line a banner can hold.
+  it('hands over an ended conversation with a mark that covers every line', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    expect(
+      await handOverConversationEvent(
+        'channel_c1',
+        'conversation_ended',
+        ENDED_CONVERSATION_MARK,
+        'server'
+      )
+    ).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
+      groupId: 'channel_c1',
+      at: Number.MAX_SAFE_INTEGER,
+      serverClock: true,
+      reason: 'conversation_ended',
+    });
+  });
+
+  it('has nothing to hand over off Android, and nothing failed', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    expect(await handOverConversationEvent('g1', 'read_here', 10, 'server')).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('invokes nothing off Android, where there is no native banner', async () => {
