@@ -323,4 +323,4 @@ export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';
 export const PAYMENT_IN_PROGRESS = 'PAYMENT_IN_PROGRESS';
 
 /** The body `code` of the 409 a resume gets on an answer with no payment to resume (`payment-resume.ts`). */
-export const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';
+const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';

@@ -76,8 +76,14 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
       `CREATE TABLE associations (id uuid PRIMARY KEY, name text, "logoUrl" text, archived boolean NOT NULL DEFAULT false)`
     );
     await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE')`, [ASSO]);
-    await q(`INSERT INTO forms (id, title, "associationId") VALUES ($1, 'Gala', $2)`, [FORM, ASSO]);
-    await q(`INSERT INTO forms (id, title, "deletedAt") VALUES ($1, 'Gone', now())`, [GONE_FORM]);
+    await q(
+      `INSERT INTO forms (id, "ownerId", title, "associationId") VALUES ($1, 'owner', 'Gala', $2)`,
+      [FORM, ASSO]
+    );
+    await q(
+      `INSERT INTO forms (id, "ownerId", title, "deletedAt") VALUES ($1, 'owner', 'Gone', now())`,
+      [GONE_FORM]
+    );
     const none = {} as never;
     forms = new FormsService(
       ds.getRepository(Form),

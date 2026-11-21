@@ -9,6 +9,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
+import { PAYMENT_IN_PROGRESS } from '$lib/associations/paymentRefusal';
 
 const api = vi.hoisted(() => ({
   check: null as unknown as () => Promise<Record<string, unknown>>,
@@ -167,7 +168,7 @@ describe('the form page offers to resume a released payment', () => {
       Promise.reject(
         new SocialApiError(
           'A payment of this answer is already in progress.',
-          'PAYMENT_IN_PROGRESS',
+          PAYMENT_IN_PROGRESS,
           409
         )
       )
