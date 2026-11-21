@@ -130,6 +130,22 @@ import { noteServerTime } from './serverClock';
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
 
 /**
+ * How a message stands from what is ON DISK alone: its queue entry (`pending`, or `failed` once
+ * parked for the member at {@link MAX_CONSECUTIVE_SERVER_ERRORS}), else its row (`failed` when an
+ * unsent reason was recorded, `sent` otherwise - the queue drops an entry once delivered), else
+ * nothing (`null`). What a quick reply whose acknowledgement was lost is settled from
+ * (`quickReplyDrain.ts`, review of #3927).
+ */
+export function settlementHeld(
+  entry: OutboxEntry | null,
+  row: Pick<StoredMessage, 'unsentReason'> | null
+): OutboxSettlement | null {
+  if (entry) return isServerFailureTerminal(entry) ? 'failed' : 'pending';
+  if (row) return row.unsentReason ? 'failed' : 'sent';
+  return null;
+}
+
+/**
  * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
  * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
  * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever

@@ -1170,10 +1170,13 @@ Notification Center over an open app was lost. The fix:
   native path does with an undelivered reply (`CanariMaybeNotifyPendingSync`: the pending-sync notice
   in the background, and the outbox retry task); put back, the pending-sync notice in the background;
   failed, the "reply not sent" notice in the background (the page shows the failed row in front);
-  lost, the "reply not sent" notice ALWAYS, in front too, since nothing else would say it. The page
-  shows a lost reply itself only when the native side could not be told (a line naming no id, an
-  acknowledgement that failed). A line the page cannot read is acknowledged lost at once, not left
-  to the expiry.
+  lost, the "reply not sent" notice ALWAYS, in front too, since nothing else would say it. The
+  command ANSWERS whether the native side was told (`Result<bool>`, review of #3927: the answer used
+  to be dropped): no listener registered (iOS), no Android record of the reply (its hand-over could
+  not record it), or a JNI failure is `false`, and the page then shows the loss itself - a toast,
+  `[QuickReply] WARN ... the page shows it` - as it does for a line naming no id or an
+  acknowledgement that threw. A line the page cannot read is acknowledged lost at once, not left to
+  the expiry.
 - **The expiry always ends its own task (L1).** The task is begun, its id stored in the hold, and the
   hold published in ONE block on the main thread, where iOS runs the expiration handler - so the
   handler can never run before the id is stored. The id is taken out of the hold, and the task ended,
@@ -1189,16 +1192,31 @@ Notification Center over an open app was lost. The fix:
   A process that dies between that claim and the send's durable write (the echo plus outbox entry)
   loses the replies of that take. A take-then-acknowledge file, as the push cache has
   (`take_fcm_cache` / `ack_fcm_cache`), would close it.
-- **On Android the same window is SAID, not closed.** The receiver's record outlives the process:
-  the first registration of an account in a page life, before its first take, asks
-  `settle_unclaimed_quick_replies` (Kotlin `sweepHandedQuickReplies`), and every reply of that
-  account still recorded and absent from the file (its ids read under the take's lock,
-  `quick_reply_ids_waiting_in`) was taken by a page that died - drawn `non envoyé, réécrivez-le`,
-  at ERROR. Asked before the take, never after: a reply this page life took and has not settled
-  would read the same. A FROZEN process is not a loss: its banner stays `envoi en cours` until the
-  page runs again and settles it.
+- **On Android the same window is SAID, not closed - and decided by the PAGE, from what it holds.**
+  The receiver's record outlives the process. A reply's id IS the message id its send writes
+  (`sendTextTo(..., reply.replyId)`), so the page's disk answers for a reply whose acknowledgement
+  never landed. `unclaimed_quick_replies` (Kotlin `unclaimedHandedQuickReplies`) lists the account's
+  replies still recorded and absent from the file (ids read under the take's lock,
+  `quick_reply_ids_waiting_in`) and draws nothing; the page settles each one from its store
+  (`heldAs` -> `settlementHeld`): an outbox entry is `pending` (or `failed` once parked), a message
+  row with no entry is `sent` (or `failed` with an unsent reason), and only NOTHING held is `lost` -
+  drawn `non envoyé, réécrivez-le`, at ERROR. Review of #3927: deciding "lost" natively from the file
+  alone drew "retype it" over a reply sent whose acknowledgement failed, or whose WebView reloaded
+  between the write and the ack - and the member sent it twice. A reply whose state cannot be read is
+  left, its record kept for the next ask.
+- **When it is asked, with no clock:** at an account's first registration in a page life, before its
+  first take; and at its SIGN-OUT (`settleNativeQuickRepliesAtSignOut`, from `handleSignedOut`, with
+  the leaving account's store captured before the teardown lets go of it, and not awaited -
+  `clearAuth` needs the teardown synchronous), so an account that left keeps no `envoi en cours`
+  banner. The settlements run one at a time, after every take in flight has ended, and skip the
+  replies this page is still sending (`handling`): none of those can be called lost while their send
+  runs. Replies still WAITING in the file at a sign-out stay there: the account's next session takes
+  them, and another account's take drops them, said. A FROZEN process is not a loss: its banner stays
+  `envoi en cours` until the page runs again and settles it.
 - Tests: `quickReplyDrain.test.ts` (each outcome acknowledged once settled, the put-back told once,
-  the lost line, the visibility drain), `outbox.test.ts` (`awaitSettled`, and the enqueue's typed
+  the lost line, the visibility drain, a loss the native side was not told of shown by the page, the
+  unclaimed replies settled from what the page holds, a reply still being sent never weighed, the
+  sign-out settlement), `outbox.settlementHeld.test.ts` (what the disk says of one message), `outbox.test.ts` (`awaitSettled`, and the enqueue's typed
   failures on the real controller), `messagingDurability.test.ts`,
   `useMessaging.pairWrite.svelte.test.ts` (the pair write reported, never swallowed),
   `accountLocalWipe.test.ts` (the deletion step), and `quick_reply_tests` in `commands/push.rs`

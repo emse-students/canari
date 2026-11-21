@@ -84,9 +84,9 @@ use crate::commands::push::{
     read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
     read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
     read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
-    set_push_context_locale, settle_unclaimed_quick_replies, store_device_identity,
-    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret,
-    take_background_joins, take_fcm_cache, take_key_group_push_joins,
+    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret, take_background_joins, take_fcm_cache,
+    take_key_group_push_joins, unclaimed_quick_replies,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -447,8 +447,8 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024C
 }
 
 /// The ids of the quick replies waiting for the page, one per line, read under the lock its take
-/// holds ([`commands::push::quick_reply_ids_waiting_in`]) - what the receiver's sweep weighs its
-/// "sending" record against. NULL when the file or the key cannot be read: nothing is then swept.
+/// holds ([`commands::push::quick_reply_ids_waiting_in`]) - what the receiver weighs its
+/// "sending" record against. NULL when the file or the key cannot be read: nothing is then answered.
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_00024Companion_nativeQuickReplyIdsWaiting<
@@ -1939,7 +1939,7 @@ pub fn run() {
             read_and_clear_pending_quick_replies,
             return_pending_quick_replies,
             acknowledge_quick_reply,
-            settle_unclaimed_quick_replies,
+            unclaimed_quick_replies,
             begin_background_flush,
             end_background_flush,
             delete_user_quick_replies,

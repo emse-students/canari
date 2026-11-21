@@ -18,8 +18,8 @@ the banner answered. Mechanism:
 
 1. The app open on another screen than the conversation, a peer sends a message, the banner shows:
    answer from its inline field. Logcat (`CanariNotifAction`) reads
-   `handleReply: the foreground guard holds - route PAGE` then
-   `handReplyToPage: reply id=... handed to the page in front, told`, the in-app log reads
+   ONE line, `handReplyToPage: route PAGE, the foreground guard holds - reply id=... handed over, the
+   page told`, the in-app log reads
    `[QuickReply] the native side says a reply waits: 1 native reply(ies) taken`, and the peer receives
    the reply within seconds, the app never leaving the front. No `encryptQueuedMessages` refusal and
    no `OutboxRetryWorker` line for it.
@@ -32,6 +32,9 @@ the banner answered. Mechanism:
    `✓ sent`), unchanged.
 5. A page that dies holding a reply: answer from the banner, then kill the app from the recents
    before the peer receives it (airplane mode makes the window wide). Reopen and sign in: logcat reads
-   `sweepHandedQuickReplies: reply id=... taken by a page that died before sending it - LOST` ONLY if
-   the reply was neither sent nor queued - otherwise nothing - and the banner then reads
-   `non envoyé, réécrivez-le`, never `envoi en cours` for good.
+   `unclaimedHandedQuickReplies: 1 reply(ies) a page life took and never settled`, and the in-app log
+   `[QuickReply] session ready: reply ... is held by the page (pending)` when the reply was queued -
+   the banner then answered, never `réécrivez-le` - or `... the page holds nothing of it - LOST` only
+   when it was neither sent nor queued, the banner then `non envoyé, réécrivez-le`. Never `envoi en
+   cours` for good. Then the same, signing OUT instead of killing: the in-app log reads
+   `[QuickReply] sign-out: the account's unsettled replies are settled`.

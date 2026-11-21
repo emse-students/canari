@@ -6,8 +6,8 @@ import {
   ACKNOWLEDGE_QUICK_REPLY_COMMAND,
   NATIVE_QUICK_REPLY_EVENT,
   RETURN_QUICK_REPLIES_COMMAND,
-  SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND,
   TAKE_QUICK_REPLIES_COMMAND,
+  UNCLAIMED_QUICK_REPLIES_COMMAND,
 } from './quickReplyDrain';
 
 /**
@@ -51,8 +51,15 @@ describe('an Android quick reply over a page that holds the MLS state', () => {
     expect(route).toBeGreaterThan(-1);
     // Never the activity's resume edge: a second fact could disagree with the refusal.
     expect(reply).not.toContain('MainActivity.isInForeground');
-    expect(reply).toContain('route PAGE');
-    expect(reply).toContain('route NATIVE');
+    // ONE INFO line per reply names its route: the NATIVE one here, the PAGE one where the
+    // hand-over's outcome is known - every line of the hand-over carries it.
+    expect(reply).toContain('route NATIVE, the foreground guard is released');
+    expect(reply).not.toContain('route PAGE');
+    const hand = body(receiver, 'private fun handReplyToPage(');
+    expect(hand.match(/Log\.i\(/g)).toHaveLength(1);
+    expect(hand.match(/Log\.[iwe]\(TAG, "handReplyToPage: /g)?.length).toBe(
+      hand.match(/handReplyToPage: route PAGE, the foreground guard holds - /g)?.length
+    );
     const handed = reply.indexOf('handReplyToPage(');
     expect(handed).toBeGreaterThan(route);
     expect(handed).toBeLessThan(reply.indexOf('nativeBuildTextMessageProto('));
@@ -83,7 +90,13 @@ describe('an Android quick reply over a page that holds the MLS state', () => {
     expect(service).toContain(
       'fun quickReplySettledByPage(replyId: String, outcome: Int): Boolean'
     );
-    expect(service).toContain('fun sweepHandedQuickReplies(accountId: String): Int');
+    // The native side LISTS the unclaimed replies and draws none: the page settles each one from
+    // what it holds (review of #3927 - "lost" decided from the file drew "retype it" over a sent one).
+    expect(service).toContain('fun unclaimedHandedQuickReplies(accountId: String): String?');
+    const from = service.indexOf('fun unclaimedHandedQuickReplies(');
+    const unclaimed = service.slice(from, service.indexOf('\n        }\n', from));
+    expect(unclaimed).not.toContain('drawHandedSettlement');
+    expect(unclaimed).not.toContain('HandedQuickReplyStore.take');
     expect(service).toContain('NOT_SENT_RETYPE(R.string.notif_reply_not_sent_retype, false)');
     expect(service).toContain('NOT_SENT_IN_APP(R.string.notif_reply_not_sent_in_app, false)');
     expect(service).toContain('SENDING(R.string.notif_reply_sending, true)');
@@ -91,12 +104,33 @@ describe('an Android quick reply over a page that holds the MLS state', () => {
       'if (line.awaited) extras.putString(LINE_PENDING_REPLY_ID, messageId)'
     );
     expect(pushRs).toContain('"quickReplySettledByPage"');
-    expect(pushRs).toContain('"sweepHandedQuickReplies"');
-    expect(pushRs).toContain(`pub(crate) async fn ${SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND}(`);
-    expect(libRs).toContain(`            ${SETTLE_UNCLAIMED_QUICK_REPLIES_COMMAND},`);
+    expect(pushRs).toContain('"unclaimedHandedQuickReplies"');
+    expect(pushRs).toContain(`pub(crate) async fn ${UNCLAIMED_QUICK_REPLIES_COMMAND}(`);
+    expect(libRs).toContain(`            ${UNCLAIMED_QUICK_REPLIES_COMMAND},`);
     const ack = pushRs.slice(pushRs.indexOf(`pub(crate) fn ${ACKNOWLEDGE_QUICK_REPLY_COMMAND}(`));
-    expect(ack.slice(0, ack.indexOf('\n}\n'))).toContain(
-      '#[cfg(any(target_os = "ios", target_os = "android"))]'
+    const ackBody = ack.slice(0, ack.indexOf('\n}\n'));
+    expect(ackBody).toContain('#[cfg(any(target_os = "ios", target_os = "android"))]');
+    // WHETHER THE NATIVE SIDE WAS TOLD is answered, never dropped: the page shows a loss nobody drew.
+    expect(ackBody).toContain('-> Result<bool, String>');
+    expect(ackBody).toContain('Ok(tell_quick_reply_settled(&reply_id, parsed))');
+  });
+
+  it('writes a handed-over reply under its reply id, and settles a sign-out from the leaving store', () => {
+    const shell = chatService;
+    expect(shell).toContain(
+      'globalMessaging.sendTextTo(reply.text, reply.groupId, msgCtx(), reply.replyId)'
+    );
+    expect(shell).toContain('heldAs: (replyId) => globalMessaging.heldAs(replyId, msgCtx()),');
+    const signedOut = shell.slice(shell.indexOf('function handleSignedOut()'));
+    // BEFORE the teardown lets go of the store, and not awaited: `clearAuth` needs the teardown
+    // synchronous.
+    expect(signedOut.indexOf('settleLeavingQuickReplies();')).toBeGreaterThan(-1);
+    expect(signedOut.indexOf('settleLeavingQuickReplies();')).toBeLessThan(
+      signedOut.indexOf('globalSession.endSession(sessionCb())')
+    );
+    const settles = shell.slice(shell.indexOf('function settleLeavingQuickReplies()'));
+    expect(settles.slice(0, settles.indexOf('\n  }\n'))).toContain(
+      'const leavingCtx = msgCtx();\n    void settleNativeQuickRepliesAtSignOut('
     );
   });
 

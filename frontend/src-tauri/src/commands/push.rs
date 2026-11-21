@@ -2380,7 +2380,7 @@ fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool 
 
 /// The ids of every reply waiting in `{dir}/pending_quick_replies.ndjson`, read UNDER the lock its
 /// take holds, without claiming it - what the Android receiver's sweep weighs its record against
-/// ([`settle_unclaimed_quick_replies`]). `None` when the file cannot be read: nothing can then be
+/// ([`unclaimed_quick_replies`]). `None` when the file cannot be read: nothing can then be
 /// said lost.
 #[cfg(any(target_os = "android", test))]
 pub(crate) fn quick_reply_ids_waiting_in(
@@ -2415,61 +2415,78 @@ pub(crate) fn quick_reply_ids_waiting_in(
     )
 }
 
-/// SETTLES THE REPLIES A DEAD PAGE TOOK (Android): run once per account and page life, BEFORE its
-/// first take (`quickReplyDrain.ts`, `setNativeQuickReplySender`). A reply the receiver handed over
-/// and still records as "sending", absent from the file, was taken by an earlier page that never
-/// said what became of it - its process died between the take and the send's durable write, the
-/// one loss window of the hand-over (mobile.md). It is LOST: its banner says "not sent". Answers how
-/// many; 0 off Android, where the native side keeps no such record.
+/// THE REPLIES OF `account_id` A PAGE LIFE TOOK AND NEVER SETTLED (Android): recorded by the
+/// receiver as handed over, and absent from the file (Kotlin `unclaimedHandedQuickReplies`). Only
+/// their ids: the PAGE settles each one from what it holds durably - a reply's id is the message id
+/// its send writes, so its outbox entry or its message row says sent, pending or failed, and only a
+/// reply it holds nothing of is lost (`quickReplyDrain.ts`, review of #3927: deciding "lost" here
+/// drew "retype it" over a reply that had been sent). Asked at an account's first registration in a
+/// page life and at its sign-out. `Err` when the native side could not answer: nothing is then
+/// settled, the records stay. Empty off Android, where the native side keeps no such record.
 #[tauri::command]
-pub(crate) async fn settle_unclaimed_quick_replies(account_id: String) -> u32 {
+pub(crate) async fn unclaimed_quick_replies(account_id: String) -> Result<Vec<String>, String> {
     #[cfg(target_os = "android")]
     {
-        let swept = tauri::async_runtime::spawn_blocking(move || {
-            let mut count = 0i32;
+        let asked = tauri::async_runtime::spawn_blocking(move || {
+            let mut answer: Option<String> = None;
             let reached = crate::commands::notifications::with_native_builder(|env, class| {
                 let account = match env.new_string(&account_id) {
                     Ok(account) => account,
                     Err(e) => {
-                        log::error!("[QUICK_REPLY] new_string failed: {e} - nothing swept");
+                        log::error!("[QUICK_REPLY] new_string failed: {e} - nothing answered");
                         return false;
                     }
                 };
-                match env
+                let value = match env
                     .call_static_method(
                         class,
-                        "sweepHandedQuickReplies",
-                        "(Ljava/lang/String;)I",
+                        "unclaimedHandedQuickReplies",
+                        "(Ljava/lang/String;)Ljava/lang/String;",
                         &[(&account).into()],
                     )
-                    .and_then(|v| v.i())
+                    .and_then(|v| v.l())
                 {
-                    Ok(n) => {
-                        count = n;
+                    Ok(value) => value,
+                    Err(e) => {
+                        log::error!("[QUICK_REPLY] unclaimedHandedQuickReplies failed: {e}");
+                        return false;
+                    }
+                };
+                if value.is_null() {
+                    // The native side could not read the file, and said so in its own log.
+                    return false;
+                }
+                match env.get_string(&jni::objects::JString::from(value)) {
+                    Ok(ids) => {
+                        answer = Some(ids.into());
                         true
                     }
                     Err(e) => {
-                        log::error!("[QUICK_REPLY] sweepHandedQuickReplies failed: {e}");
+                        log::error!("[QUICK_REPLY] the unclaimed ids could not be read: {e}");
                         false
                     }
                 }
             });
-            if reached {
-                u32::try_from(count).unwrap_or(0)
-            } else {
-                0
+            match (reached, answer) {
+                (true, Some(ids)) => Ok(ids
+                    .lines()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()),
+                _ => Err("the native side could not say which replies are unclaimed".to_string()),
             }
         })
         .await;
-        swept.unwrap_or_else(|e| {
-            log::error!("[QUICK_REPLY] the sweep task failed: {e}");
-            0
+        asked.unwrap_or_else(|e| {
+            log::error!("[QUICK_REPLY] the unclaimed-replies task failed: {e}");
+            Err(format!("the unclaimed-replies task failed: {e}"))
         })
     }
     #[cfg(not(target_os = "android"))]
     {
         let _ = account_id;
-        0
+        Ok(Vec::new())
     }
 }
 
@@ -2477,8 +2494,13 @@ pub(crate) async fn settle_unclaimed_quick_replies(account_id: String) -> u32 {
 /// how the queue SETTLED it, never merely "queued" (H1): the native side then ends the background
 /// task it held for it, completes the notification response, and tells the user what is not sent
 /// (`$lib/mobile/quickReplyDrain`).
+///
+/// ANSWERS WHETHER THE NATIVE SIDE WAS TOLD (review of #3927): `false` when no listener is
+/// registered (iOS), when the Android record of the reply is missing (its hand-over could not record
+/// it) or the JNI call failed. The page then shows a loss itself - nobody else would. Off mobile,
+/// where no native side exists, `false`.
 #[tauri::command]
-pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Result<(), String> {
+pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Result<bool, String> {
     log::info!("[QUICK_REPLY] the page settles reply {reply_id}: {outcome}");
     #[cfg(any(target_os = "ios", target_os = "android"))]
     {
@@ -2486,9 +2508,13 @@ pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Resu
             log::error!("[QUICK_REPLY] reply {reply_id}: unknown outcome {outcome:?} - not told");
             return Err(format!("unknown outcome {outcome:?}"));
         };
-        tell_quick_reply_settled(&reply_id, parsed);
+        Ok(tell_quick_reply_settled(&reply_id, parsed))
     }
-    Ok(())
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        let _ = outcome;
+        Ok(false)
+    }
 }
 
 #[cfg(test)]

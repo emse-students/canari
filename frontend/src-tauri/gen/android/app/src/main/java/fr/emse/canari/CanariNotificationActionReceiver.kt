@@ -107,16 +107,14 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         }
         // THE PAGE SENDS IT WHILE THE FOREGROUND GUARD HOLDS: the native encrypt would be refused on
         // that very fact, and the retry worker stands down for the page ([QuickReplyRoute]).
+        // ONE INFO line per reply names its route and the fact it was taken on: the PAGE route's is
+        // written by [handReplyToPage] once the hand-over's outcome is known, the NATIVE route's here.
         val route = QuickReplyRoute.of(CanariFirebaseMessagingService.nativeForegroundGuardHolds())
-        if (route == QuickReplyRoute.PAGE) {
-            Log.i(TAG, "handleReply: the foreground guard holds - route PAGE group=${ConversationRef.of(groupId)}")
-        } else {
-            Log.i(TAG, "handleReply: the foreground guard is released - route NATIVE group=${ConversationRef.of(groupId)}")
-        }
         if (route == QuickReplyRoute.PAGE) {
             handReplyToPage(context, groupId, pushCtx.userId, text, notifiedAt, notifiedServerAt)
             return
         }
+        Log.i(TAG, "handleReply: route NATIVE, the foreground guard is released group=${ConversationRef.of(groupId)}")
         val service = CanariFirebaseMessagingService()
         val messageId = UUID.randomUUID().toString()
         val sentAt = System.currentTimeMillis()
@@ -213,9 +211,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      * ([HandedQuickReplyStore]) and drawn "sending" (the inline-reply spinner ends), and only the
      * page's settlement draws it answered - sent, or queued in its outbox
      * ([CanariFirebaseMessagingService.quickReplySettledByPage]). A reply the page drops (another
-     * account's), or that a dying page took ([CanariFirebaseMessagingService.sweepHandedQuickReplies]),
-     * is drawn "not sent". All under [HandedQuickReplyStore.LOCK], so a settlement can never land
-     * between the hand-over and its record.
+     * account's) is drawn "not sent"; one a page life took and never settled is settled by the page
+     * from what it holds durably ([CanariFirebaseMessagingService.unclaimedHandedQuickReplies]). All
+     * under [HandedQuickReplyStore.LOCK], so a settlement can never land between the hand-over and
+     * its record.
      *
      * A reply that could not be handed over (no cache key, a write that failed) is LOST, and said:
      * a final "not sent, type it again" line, never the "retrying" one - nothing retries a reply that
@@ -247,9 +246,9 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             )
             if (handed != CanariFirebaseMessagingService.QUICK_REPLY_HANDED) {
                 if (handed == CanariFirebaseMessagingService.QUICK_REPLY_NO_KEY) {
-                    Log.e(TAG, "handReplyToPage: reply id=${replyId.take(8)} NOT handed to the page (no cache key) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
+                    Log.e(TAG, "handReplyToPage: route PAGE, the foreground guard holds - reply id=${replyId.take(8)} NOT handed over (no cache key) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
                 } else {
-                    Log.e(TAG, "handReplyToPage: reply id=${replyId.take(8)} NOT handed to the page (the write failed) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
+                    Log.e(TAG, "handReplyToPage: route PAGE, the foreground guard holds - reply id=${replyId.take(8)} NOT handed over (the write failed) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
                 }
                 CanariFirebaseMessagingService.repostReplyPending(
                     context, groupId, replyId, text, notifiedAt, notifiedServerAt,
@@ -264,7 +263,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             if (!recorded) {
                 // No record, no settlement can find this banner: "sending" would stay for good. The
                 // page tells what becomes of the reply itself (its settlement is answered "not told").
-                Log.e(TAG, "handReplyToPage: reply id=${replyId.take(8)} handed over but not recorded - the banner is answered now, the page shows its fate group=${ConversationRef.of(groupId)}")
+                Log.e(TAG, "handReplyToPage: route PAGE, the foreground guard holds - reply id=${replyId.take(8)} handed over but not recorded - the banner is answered now, the page shows its fate group=${ConversationRef.of(groupId)}")
                 CanariFirebaseMessagingService.answerReplyNotification(context, groupId, replyId, text, repliedAt, 0L, notifiedAt, notifiedServerAt)
                 return@synchronized
             }
@@ -274,9 +273,9 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             )
         }
         if (MainActivity.tellPage(QUICK_REPLY_EVENT)) {
-            Log.i(TAG, "handReplyToPage: reply id=${replyId.take(8)} handed to the page in front, told group=${ConversationRef.of(groupId)}")
+            Log.i(TAG, "handReplyToPage: route PAGE, the foreground guard holds - reply id=${replyId.take(8)} handed over, the page told group=${ConversationRef.of(groupId)}")
         } else {
-            Log.w(TAG, "handReplyToPage: reply id=${replyId.take(8)} handed over with no live page to tell - taken at its next registration or front edge group=${ConversationRef.of(groupId)}")
+            Log.w(TAG, "handReplyToPage: route PAGE, the foreground guard holds - reply id=${replyId.take(8)} handed over with no live page to tell - taken at its next registration or front edge group=${ConversationRef.of(groupId)}")
         }
     }
 

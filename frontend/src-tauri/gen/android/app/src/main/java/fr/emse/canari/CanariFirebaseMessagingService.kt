@@ -182,40 +182,39 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * SETTLES THE REPLIES A DEAD PAGE TOOK (Rust `settle_unclaimed_quick_replies`, once per
-         * account and page life, before its first take): a reply of [accountId] recorded as handed
-         * over and absent from the file was taken by an earlier page that never said what became of
-         * it - its process died between the take and the send's durable write. Its banner says "not
-         * sent". Returns how many; 0 when the file cannot be read (nothing is then said lost).
+         * THE REPLIES OF [accountId] NO TAKE CAN SETTLE ANY MORE (Rust `unclaimed_quick_replies`):
+         * recorded as handed over and absent from the file, so a page life took each one. Answered as
+         * ids, one per line, and NOTHING is drawn here: only the page knows whether it holds the
+         * reply durably (its outbox, its message row - the reply's id IS its message id), so the page
+         * settles each one through [quickReplySettledByPage]: sent or pending, failed, or lost when it
+         * holds nothing (review of #3927: deciding "lost" here drew "retype it" over a reply that had
+         * been sent, and the member sent it twice). Null when the file cannot be read: nothing is
+         * answered, and the records stay for the next ask.
          */
         @JvmStatic
-        fun sweepHandedQuickReplies(accountId: String): Int {
+        fun unclaimedHandedQuickReplies(accountId: String): String? {
             val context = CanariApplication.appContext()
             if (context == null) {
-                Log.e(TAG, "sweepHandedQuickReplies: no Application context - nothing swept")
-                return 0
+                Log.e(TAG, "unclaimedHandedQuickReplies: no Application context - nothing answered")
+                return null
             }
             synchronized(HandedQuickReplyStore.LOCK) {
                 val records = HandedQuickReplyStore.all(context)
                 if (records.none { it.accountId == accountId }) {
-                    Log.d(TAG, "sweepHandedQuickReplies: no reply of this account recorded - nothing to settle")
-                    return 0
+                    Log.d(TAG, "unclaimedHandedQuickReplies: no reply of this account recorded - none to settle")
+                    return ""
                 }
                 val waiting = nativeQuickReplyIdsWaiting(
                     MlsContextLoader.tauriDataDir(context).absolutePath,
                     NativeCacheKey.retrieve(context),
                 )
                 if (waiting == null) {
-                    Log.e(TAG, "sweepHandedQuickReplies: the waiting replies could not be read - nothing said lost, the record kept")
-                    return 0
+                    Log.e(TAG, "unclaimedHandedQuickReplies: the waiting replies could not be read - nothing answered, the records kept")
+                    return null
                 }
-                val lost = HandedQuickReplies.unclaimed(records, accountId, waiting.lines().filter { it.isNotEmpty() }.toSet())
-                lost.forEach { handed ->
-                    HandedQuickReplyStore.take(context, handed.replyId)
-                    Log.e(TAG, "sweepHandedQuickReplies: reply id=${handed.replyId.take(8)} taken by a page that died before sending it - LOST, its banner says not sent group=${ConversationRef.of(handed.groupId)}")
-                    drawHandedSettlement(context, handed, HandedQuickReplies.Settlement.NOT_SENT_RETYPE)
-                }
-                return lost.size
+                val unclaimed = HandedQuickReplies.unclaimed(records, accountId, waiting.lines().filter { it.isNotEmpty() }.toSet())
+                Log.i(TAG, "unclaimedHandedQuickReplies: ${unclaimed.size} reply(ies) a page life took and never settled - the page weighs each against what it holds") // log-safe: a count, no content
+                return unclaimed.joinToString("\n") { it.replyId }
             }
         }
 

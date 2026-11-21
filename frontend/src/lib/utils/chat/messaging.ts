@@ -868,12 +868,17 @@ export function quoteReference(replyingTo: ChatMessage): NonNullable<ChatMessage
  * (`queueSalonSend`, WP-OFF-3).
  *
  * Returns `{ success: false }` silently when the text is empty.
+ *
+ * `opts.messageId` names the message instead of a fresh UUID: a notification quick reply is written
+ * under its `replyId`, so what the page holds of it answers after a lost acknowledgement
+ * (`quickReplyDrain.ts`, review of #3927).
  */
 export async function sendChatMessage(
   text: string,
   contactName: string,
   replyingTo: ChatMessage | null,
-  deps: SendMessageDeps
+  deps: SendMessageDeps,
+  opts?: { messageId?: string }
 ): Promise<{ success: boolean; error?: string; echoed?: boolean; messageId?: string }> {
   const { userId, conversation, addMessageToChat } = deps;
 
@@ -886,7 +891,7 @@ export async function sendChatMessage(
     return { success: false };
   }
 
-  const messageId = crypto.randomUUID();
+  const messageId = opts?.messageId ?? crypto.randomUUID();
   const sentAt = Date.now();
 
   // Reply preview (from the quoted message envelope), shared by the proto and the local echo.

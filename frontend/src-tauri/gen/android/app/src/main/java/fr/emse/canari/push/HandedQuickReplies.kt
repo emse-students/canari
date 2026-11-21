@@ -8,8 +8,9 @@ package fr.emse.canari.push
  * page could drop it (typed under another account), die between its take and the send's durable
  * write, or never run (a frozen process). So the receiver RECORDS each reply it hands over and draws
  * it "sending"; the page's settlement (`acknowledge_quick_reply`, the Rust `QuickReplyOutcome`
- * codes) moves the banner ([Settlement]), and a page starting up sweeps the record: a reply recorded
- * but absent from the file was taken by a page that died - LOST, and said ([unclaimed]).
+ * codes) moves the banner ([Settlement]). A reply recorded but absent from the file was taken by a
+ * page life that never settled it ([unclaimed]); the PAGE settles it from what it holds durably -
+ * the reply's id is its message id - and only a reply it does not hold is lost (review of #3927).
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard and not a style rule.
@@ -60,9 +61,10 @@ object HandedQuickReplies {
 
     /**
      * The replies of [accountId] recorded as handed over and absent from the file ([waiting] - its
-     * ids, read under the take's lock): taken by an earlier page life that never settled them.
-     * Asked once per account and page life, BEFORE that life's first take, so no reply in flight in
-     * a live page can be among them.
+     * ids, read under the take's lock): taken by a page life that never settled them. Asked by the
+     * page at an account's first registration in its life (before that life's first take) and at
+     * its sign-out (after every take in flight has ended); the page skips the ids it is still
+     * sending itself.
      */
     fun unclaimed(records: Collection<Handed>, accountId: String, waiting: Set<String>): List<Handed> =
         records.filter { it.accountId == accountId && it.replyId !in waiting }

@@ -129,6 +129,7 @@ import {
   isEnqueueQuotaFailure,
   outboxReelSendDeleted,
   outboxReelTakeReachOf,
+  settlementHeld,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
 import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
@@ -4871,11 +4872,14 @@ export function useMessaging() {
    *
    * `queued` is true once the message is the queue's or a visible failed row's: it is then owned by
    * the page and must not be handed back. False means nothing was written.
+   *
+   * `messageId` names the message (a quick reply's `replyId`), so {@link heldAs} can answer for it.
    */
   async function sendTextTo(
     text: string,
     targetName: string,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    messageId?: string
   ): Promise<{ outcome: OutboxSettlement | 'not-queued' | 'gone'; error?: string }> {
     const convo = ctx.conversations.get(targetName);
     // A CONVERSATION THAT WILL NEVER TAKE IT is `gone`, read from the facts - the row in memory, else
@@ -4904,7 +4908,13 @@ export function useMessaging() {
       }
       return { outcome: 'not-queued', error: 'conversation not loaded yet' };
     }
-    const result = await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
+    const result = await sendChatMessage(
+      text,
+      targetName,
+      null,
+      makeSendDeps(ctx, convo),
+      messageId ? { messageId } : undefined
+    );
     if (!(result.success || result.echoed === true)) {
       return { outcome: 'not-queued', error: result.error };
     }
@@ -4913,6 +4923,22 @@ export function useMessaging() {
     // the queue; a notification never offers a reply into a salon, so it is only said pending.
     if (!result.messageId) return { outcome: 'pending' };
     return { outcome: await awaitOutboxSettled(result.messageId) };
+  }
+
+  /**
+   * What this account's store HOLDS of message `messageId`, read from disk and never from memory:
+   * a quick reply whose acknowledgement was lost is settled from it (`quickReplyDrain.ts`). Throws
+   * when there is no store or it cannot be read - nothing may then be called lost.
+   */
+  async function heldAs(
+    messageId: string,
+    ctx: MessagingContext
+  ): Promise<OutboxSettlement | null> {
+    const storage = ctx.storage;
+    if (!storage) throw new Error('no store to read the message from');
+    const entry = await storage.getOutboxEntry(messageId, ctx.deviceKeyB64, { withFile: false });
+    const row = entry ? null : await storage.getMessage(messageId, ctx.deviceKeyB64);
+    return settlementHeld(entry, row);
   }
 
   // ── Exposed API ───────────────────────────────────────────────────────────
@@ -4972,6 +4998,8 @@ export function useMessaging() {
     forwardMessage,
     /** Sends a text to any conversation through the composer's send path (a notification reply). */
     sendTextTo,
+    /** What the store holds of one message: a quick reply's settlement after a lost acknowledgement. */
+    heldAs,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
     /** Queues a raw reel take to several conversations at once (RC-12's send-to sheet). */
