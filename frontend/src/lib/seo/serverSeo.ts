@@ -1,4 +1,4 @@
-import { DELIVERY_URL, SOCIAL_URL, fetchJsonOrThrow, internalHeaders } from '$lib/seo/internalApi';
+import { SOCIAL_URL, fetchJsonOrThrow, internalHeaders } from '$lib/seo/internalApi';
 import {
   buildArticleJsonLd,
   buildAssociationJsonLd,
@@ -334,38 +334,6 @@ async function communityInviteSeo(token: string): Promise<Partial<SeoMeta> | nul
   };
 }
 
-interface GroupInvitePayload {
-  valid?: boolean;
-  groupName?: string | null;
-  /** The group avatar - a RAW public blob, which is what makes it fetchable with no session. */
-  imageMediaId?: string | null;
-}
-
-/**
- * The group half of the invite pair, and it had no picture at all until 2026-09-20: a community
- * invite carried its image while the group beside it showed the site logo, for no reason other
- * than `resolveGroupInvitePreview` not selecting the column. Groups have avatars, stored the same
- * public way community images are.
- */
-async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
-  const invite = await fetchJsonOrThrow<GroupInvitePayload>(
-    `${DELIVERY_URL()}/api/internal/group-invites/${encodeURIComponent(token)}`,
-    internalHeaders()
-  );
-  if (!invite?.valid || !invite.groupName?.trim()) return null;
-
-  const name = invite.groupName.trim();
-  return {
-    title: m.seo_group_invite_title({ name }),
-    description: m.seo_group_invite_description({ name }),
-    image: invite.imageMediaId
-      ? publicMediaUrl(`/api/media/public/${invite.imageMediaId}`)
-      : undefined,
-    imageAlt: invite.imageMediaId ? m.seo_invite_image_alt({ name }) : undefined,
-    noindex: true,
-  };
-}
-
 /**
  * The one enrichment table. Each entry owns a path shape and the single call that resolves it;
  * anything not listed falls through to `resolveSeoForPath` alone, which is a complete answer for
@@ -375,7 +343,7 @@ async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
  * A person's profile (`/profile/<id>`: their name, promo and formation) and the agenda's events
  * (`/calendar`) were enriched here until that day and are not any more: portail-etu.emse.fr shows
  * neither. What is left is the association page (the showcase's own fields), the single shared
- * post the owner kept, and the invite links a member hands out. See docs/wiki/anonymous-surface.md.
+ * post the owner kept, and a community's invite link (a group's names nothing). See docs/wiki/anonymous-surface.md.
  */
 const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta> | null>][] = [
   [/^\/posts\/([^/]+)\/?$/, postSeo],
@@ -383,7 +351,9 @@ const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta>
   [/^\/associations\/([^/]+)\/?$/, associationSeo],
   [ASSOCIATION_EDIT_PATH, associationEditSeo],
   [/^\/c\/join\/([^/]+)\/?$/, communityInviteSeo],
-  [/^\/g\/join\/([^/]+)\/?$/, groupInviteSeo],
+  // `/g/join/<token>` IS NOT ENRICHED (sealed names, step 3; owner, 2026-11-17): the group's name
+  // travels in the link's `#fragment`, which no unfurler sends, and the head names no group - the
+  // generic invitation title of `resolveSeoForPath`. Principle 1 of docs/principes.md.
 ];
 
 /**

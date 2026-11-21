@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
+  import { inviteCardName, readInviteNameFragment } from '$lib/mls/groupInviteName';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import { currentUserId } from '$lib/stores/user';
@@ -21,16 +22,33 @@
   let preview = $state<{ valid: boolean; groupId: string | null; groupName: string | null } | null>(
     null
   );
+  // THE NAME IS READ FROM THE LINK'S FRAGMENT, which no request carries (sealed names, step 3): the
+  // sharer's device wrote it there. The server's name is read only for a link with no fragment.
+  const fragmentName = readInviteNameFragment(page.url.hash);
+  const groupName = $derived(inviteCardName(fragmentName, preview?.groupName ?? null));
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto(resolve(`login?returnTo=${encodeURIComponent(`/g/join/${token}`)}`), {
-        replace: true,
-      });
+      // The fragment goes along so the name survives the sign-in; `/login` is reached by a
+      // client-side navigation and keeps `returnTo` on the device (`setOidcEntry`).
+      await goto(
+        resolve(`login?returnTo=${encodeURIComponent(`/g/join/${token}${page.url.hash}`)}`),
+        {
+          replace: true,
+        }
+      );
       return;
     }
     try {
       preview = await getGroupInvitePreview(token);
+      if ('absent' in fragmentName) {
+        // [LEGACY] a link minted before the name moved to the fragment, or for an unnamed group
+        // (docs/wiki/legacy-compatibility.md). The shape only, never the name.
+        Log.d(
+          'LEGACY',
+          `group invite link carries no name (${fragmentName.absent}) server-named=${!!preview.groupName?.trim()}`
+        );
+      }
     } catch (e) {
       Log.d('group invite preview failed', e);
       error = m.invite_not_found();
@@ -94,7 +112,7 @@
         </div>
         <p class="text-text-main text-sm font-semibold">{m.group_join_sent_title()}</p>
         <p class="text-text-muted text-xs leading-relaxed">
-          {m.group_join_sent_desc({ name: preview?.groupName ?? m.group_join_group_fallback() })}
+          {m.group_join_sent_desc({ name: groupName ?? m.group_join_group_fallback() })}
         </p>
         <a
           href={resolve('/chat')}
@@ -121,7 +139,7 @@
       <div>
         <p class="text-text-muted text-sm">{m.group_join_invited_text()}</p>
         <h1 class="text-text-main mt-1 text-xl font-bold">
-          {preview.groupName ?? m.group_join_group_fallback()}
+          {groupName ?? m.group_join_group_fallback()}
         </h1>
       </div>
       <button

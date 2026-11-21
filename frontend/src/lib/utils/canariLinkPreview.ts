@@ -15,6 +15,8 @@ import { avatarUrl } from '$lib/utils/avatarUrl';
 import { Log } from '$lib/utils/Log';
 import { getPost, isReel } from '$lib/posts/api';
 import { getGroupInvitePreview } from '$lib/mls/groupInvites';
+import { fragmentOf, inviteCardName, readInviteNameFragment } from '$lib/mls/groupInviteName';
+import { pathWithoutFragment } from '$lib/utils/logSanitize';
 import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import { m } from '$lib/paraglide/messages';
@@ -185,12 +187,17 @@ async function fetchCommunityInvitePreview(token: string): Promise<CanariLinkPre
   };
 }
 
-async function fetchGroupInvitePreview(token: string): Promise<CanariLinkPreview> {
+/**
+ * The card of a group invite link. Its name is the link's fragment, written by the sharer's device
+ * (sealed names, step 3); the server's name is read only for a link with no fragment (legacy).
+ */
+async function fetchGroupInvitePreview(token: string, href: string): Promise<CanariLinkPreview> {
   const preview = await getGroupInvitePreview(token);
+  const name = inviteCardName(readInviteNameFragment(fragmentOf(href)), preview.groupName);
   return {
     kind: 'route',
     categoryLabel: m.link_label_group_invite(),
-    title: preview.groupName?.trim() || m.link_label_chat(),
+    title: name ?? m.link_label_chat(),
     subtitle: preview.valid ? m.link_preview_join_conversation() : m.link_preview_invite_invalid(),
   };
 }
@@ -226,7 +233,7 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
         preview = await fetchCommunityInvitePreview(target.token);
         break;
       case 'group-invite':
-        preview = await fetchGroupInvitePreview(target.token);
+        preview = await fetchGroupInvitePreview(target.token, href);
         break;
       case 'route':
         // A plain route has no entity behind it, so the badge falls back to the brand -
@@ -248,7 +255,7 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
     const answered = isUnreadableAnswer(err);
     Log.d(
       'LINK_PREVIEW',
-      `${target.kind} ${href}: ${answered ? 'unreadable by this viewer' : 'not reached'}: ${String(err)}`
+      `${target.kind} ${pathWithoutFragment(href)}: ${answered ? 'unreadable by this viewer' : 'not reached'}: ${String(err)}`
     );
     const fallback: CanariLinkPreview = {
       kind: 'route',

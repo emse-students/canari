@@ -29,10 +29,14 @@ acceptance of its frame, and the inviter's join push hands it to a newcomer.
   and an existing one is restated once, both by a silent `groupNamed` frame that draws no notice. A
   rename always outranks such a statement. No migration of the server; the local store gains one
   column. No phone reading is owed.
+- **Step 3, part 1 - BUILT (2026-11-21):** a group invite link carries the name in its `#fragment`
+  and the cards read it there; the link's Open Graph head names no group. No floor needed: the
+  server's API still answers the name for older builds. Readings owed: the web rig and both phones
+  ([sealed-names](../protocols/sealed-names.md#step-3-part-1---built-2026-11-21-a-group-invite-link-carries-the-name-in-its-fragment)).
 - **Left, in order:**
   1. The server stops knowing group names: create and rename, the push fields, the join-ask push, the
-     native naming, the invite preview (the name moves to the link's `#fragment`). It ships behind the
-     minimum version decided below. About 1 week.
+     native naming, and the invite preview API's `groupName`. It ships behind the minimum version
+     decided below (`1.7.2`, the stable carrying step 2). About 1 week.
   2. A HELD migration nulls `dm_groups.name`, with a before and after count. About 1 day plus the
      owner's line.
   3. The sealed community state: name, photo, salons, role labels and nicknames under a key-group key.

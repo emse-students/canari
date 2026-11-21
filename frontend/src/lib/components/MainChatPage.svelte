@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { inviteLinkName } from '$lib/mls/groupInviteName';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
   import { onDestroy, onMount, untrack } from 'svelte';
@@ -1881,6 +1882,7 @@
             effectiveDisplayName={activeView?.displayName ?? ''}
             contactName={activeView?.contactName ?? ''}
             groupId={activeConversation?.id ?? ''}
+            inviteName={inviteLinkName(activeConversation)}
             isGroupConversation={activeView?.isGroup ?? false}
             imageMediaId={activeConversation?.imageMediaId ?? null}
             currentUserId={session.userId ?? ''}

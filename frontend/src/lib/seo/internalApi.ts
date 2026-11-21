@@ -1,9 +1,4 @@
-import {
-  CORE_SERVICE_URL,
-  DELIVERY_SERVICE_URL,
-  INTERNAL_SECRET,
-  SOCIAL_SERVICE_URL,
-} from '$app/env/private';
+import { CORE_SERVICE_URL, INTERNAL_SECRET, SOCIAL_SERVICE_URL } from '$app/env/private';
 // The fetchers live in `upstream.ts`, which reads no environment and so can be unit-tested; they
 // are re-exported so every caller keeps one door.
 export { FETCH_TIMEOUT_MS, fetchJson, fetchJsonOrThrow } from '$lib/seo/upstream';
@@ -23,8 +18,6 @@ export const SOCIAL_URL = (): string =>
   (SOCIAL_SERVICE_URL || 'http://social-service:3014').replace(/\/$/, '');
 export const CORE_URL = (): string =>
   (CORE_SERVICE_URL || 'http://core-service:3012').replace(/\/$/, '');
-export const DELIVERY_URL = (): string =>
-  (DELIVERY_SERVICE_URL || 'http://chat-delivery-service:3010').replace(/\/$/, '');
 
 /**
  * Headers proving a server-to-server call.

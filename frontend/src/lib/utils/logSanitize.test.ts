@@ -5,7 +5,7 @@
  * property escape - so the first thing these pin is that the split changed no behaviour.
  */
 import { describe, it, expect } from 'vitest';
-import { sanitizeForLog, MAX_LOGGED_VALUE_LENGTH } from './logSanitize';
+import { sanitizeForLog, MAX_LOGGED_VALUE_LENGTH, pathWithoutFragment } from './logSanitize';
 
 describe('sanitizeForLog', () => {
   it('leaves an ordinary value exactly as it is', () => {
@@ -63,5 +63,15 @@ describe('sanitizeForLog', () => {
 
   it('accepts an empty string rather than throwing on one', () => {
     expect(sanitizeForLog('')).toBe('');
+  });
+});
+
+describe('pathWithoutFragment - a group invite name never reaches a log', () => {
+  it('replaces the fragment by its presence', () => {
+    expect(pathWithoutFragment('/g/join/tok#name=Bureau+des+arts')).toBe('/g/join/tok +fragment');
+  });
+
+  it('leaves a path with no fragment unchanged', () => {
+    expect(pathWithoutFragment('/chat?x=1')).toBe('/chat?x=1');
   });
 });
