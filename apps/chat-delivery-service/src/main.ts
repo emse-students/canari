@@ -7,6 +7,7 @@ import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
 import { drainOnSigterm } from './drain-on-sigterm';
 import { finishJoinAskWorkInFlight } from './utils/join-ask-announce';
+import { PUSH_DELIVERY_RECORDER } from './utils/push-delivery-records';
 
 /**
  * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND NEITHER DOES ANY OTHER - THERE IS NO BROKER.
@@ -55,8 +56,18 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT || 3010);
   // A release retires this replica with SIGTERM once its successor is healthy; see the module. The
-  // join-ask announcements started after an answer are finished before the process leaves.
-  drainOnSigterm(app.getHttpServer(), undefined, undefined, finishJoinAskWorkInFlight);
+  // join-ask announcements started after an answer are finished before the process leaves, then the
+  // push delivery record they and every earlier send handed over (it says first what is pending).
+  drainOnSigterm(app.getHttpServer(), undefined, undefined, finishWorkOwedBeforeExit);
+}
+
+/**
+ * What this replica still owes once its last request was answered, in order: the join-ask
+ * announcements (which may push, and so hand the recorder more), then the push delivery record.
+ */
+async function finishWorkOwedBeforeExit(): Promise<void> {
+  await finishJoinAskWorkInFlight();
+  await PUSH_DELIVERY_RECORDER.drainForExit();
 }
 
 void bootstrap().catch((err) => {

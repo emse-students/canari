@@ -288,8 +288,15 @@ export async function recordPushFetches(
  *
  * No timer: the next write starts when the previous one ends, and the loop stops when nothing is
  * pending - in the same synchronous step as its last check, so nothing handed over can be stranded.
- * What is still pending when the process exits is lost, unlogged: at most what arrived during the
- * last write.
+ *
+ * WHAT IT DOES NOT SURVIVE, said rather than hidden:
+ * - A write that never settles (a database that accepts the connection and never answers) stalls
+ *   the writer with NO line: everything handed over after it piles up in memory, folded, unwritten.
+ *   No timer bounds it - a deadline here would be a guess about the database, and the sends it counts
+ *   are not affected. The pool's own errors still reach the WARN when they come.
+ * - The process's exit: SIGTERM ({@link drainForExit}, from `drainOnSigterm`) first SAYS what is
+ *   still pending - synchronously, so a SIGKILL after the grace period still leaves the line - then
+ *   waits for the writer. A process killed without SIGTERM loses what was pending, unlogged.
  */
 export class PushDeliveryRecorder {
   private readonly logger = new Logger('PushDeliveryRecorder');
@@ -300,6 +307,11 @@ export class PushDeliveryRecorder {
   private foldedBatches = 0;
   private manager: EntityManager | null = null;
   private running: Promise<void> | null = null;
+  /**
+   * What the last write carried - in flight while `running` is set, and kept after it for the ERROR
+   * line, which runs once the writer has already let go of `running`.
+   */
+  private inFlight = 'nothing';
 
   /**
    * Hands over what one send batch did. Returns at once; the write follows.
@@ -335,10 +347,35 @@ export class PushDeliveryRecorder {
     while (this.running) await this.running;
   }
 
+  /**
+   * The exit's hand-over (`drainOnSigterm`): logs, SYNCHRONOUSLY and before any wait, what is not yet
+   * written - the pending counter rows per kind, the pending fetched devices, whether a write is in
+   * flight - so a SIGKILL after the grace period still leaves the evidence of what it cost; then
+   * waits for the writer. Says nothing when nothing is pending or in flight.
+   */
+  async drainForExit(): Promise<void> {
+    const kinds = [...this.pendingTallies.values()].map(
+      (t) =>
+        `${t.kind}:${t.rows().reduce((n, r) => n + (r.outcome === 'attempted' ? r.count : 0), 0)}`
+    );
+    if (kinds.length > 0 || this.pendingFetches.size > 0 || this.running) {
+      this.logger.log(
+        `[PUSH_RECORD] exit - not yet written: attempted ${kinds.length > 0 ? kinds.join(' ') : 'none'}, ` +
+          `${this.pendingFetches.size} fetched device(s); write in flight: ${this.running ? this.inFlight : 'none'} ` +
+          `- waiting for the writer`
+      );
+    }
+    await this.settled();
+  }
+
   private kick(manager: EntityManager): void {
     this.manager = manager;
     if (this.running) return;
-    this.running = this.drain();
+    // `drain` catches every write's failure itself; a throw out of it is a defect of the writer, and
+    // what it dropped is named here, at ERROR.
+    this.running = this.drain().catch((e: unknown) => {
+      this.logger.error(`[PUSH_RECORD] the writer failed - DROPPED ${this.inFlight}: ${String(e)}`);
+    });
   }
 
   private async drain(): Promise<void> {
@@ -359,6 +396,9 @@ export class PushDeliveryRecorder {
         this.pendingFetches.clear();
         const routes = [...this.pendingRoutes].sort().join(',');
         this.pendingRoutes.clear();
+        this.inFlight =
+          `trace=${trace} kinds=${tallies.map((t) => t.kind).join(',') || 'none'} ` +
+          `fetched=${fetches.length}`;
         for (const tally of tallies) {
           await recordPushDeliveries(manager, tally, this.logger, trace);
         }

@@ -2131,9 +2131,19 @@ arrived. Without it, every batch was its own un-awaited autocommit upsert on the
 counter rows of the day, each holding a pool connection while it queued on the row lock. The bound
 is per process: N replicas write N at a time, which is what the deadlock rule below is for. **A write
 that fails logs `[PUSH_RECORD] ... NOT recorded|stamped` at WARN, naming what was lost, and never
-fails a send or a fetch.** No timer, no retry: the next write starts when the previous one ends. What
-is still pending when a process exits is lost without a line - at most what arrived during its last
-write.
+fails a send or a fetch.** No timer, no retry: the next write starts when the previous one ends. A
+throw out of the writer itself (a defect, every write's failure is caught inside it) is an ERROR
+naming what it dropped (`[PUSH_RECORD] the writer failed - DROPPED trace=... kinds=... fetched=N`).
+
+**What it does not survive, said rather than hidden.** A write that NEVER settles - a database that
+holds the connection and never answers - stalls the writer with no line at all: everything handed
+over after it piles up in memory, folded, unwritten, and the sends it counts are not affected. No
+timer bounds it; a deadline here would be a guess about the database. At a release's SIGTERM,
+`drainOnSigterm` finishes the join-ask work and then calls `PUSH_DELIVERY_RECORDER.drainForExit()`,
+which FIRST logs, synchronously, what is not yet written (`[PUSH_RECORD] exit - not yet written:
+attempted message:N social:M, K fetched device(s); write in flight: ...`) and only then waits for the
+writer - so a stalled write killed by the SIGKILL after the grace period still leaves that line. A
+process killed without a SIGTERM loses what was pending, unlogged.
 
 **Why it cannot deadlock.** The counter rows are inserted in one order (platform, outcome, code,
 `WITH ORDINALITY ... ORDER BY`), so two replicas' writes over the same rows wait for each other.

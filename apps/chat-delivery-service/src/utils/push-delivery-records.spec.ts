@@ -31,6 +31,8 @@ describe('push delivery records', () => {
     jest.spyOn(logger, 'debug').mockImplementation(() => {});
   });
 
+  afterEach(() => jest.restoreAllMocks());
+
   const managerOf = (query: jest.Mock) => ({ query }) as unknown as EntityManager;
 
   describe('PushDeliveryTally', () => {
@@ -244,6 +246,64 @@ describe('push delivery records', () => {
       expect(String(warnAll.mock.calls[0][0])).toContain(
         '[PUSH_RECORD] lastPushFetchedAt NOT stamped on 1 device(s) routes=fetch-proto'
       );
+    });
+
+    it('at exit, SAYS what is pending before it waits - so a SIGKILL after the grace leaves the line', async () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const { query, release } = gatedQuery();
+      const manager = managerOf(query);
+      recorder.record(manager, batch('message', 't1'), 'tr-1');
+      await new Promise((resolve) => setImmediate(resolve));
+      recorder.record(manager, batch('social', 't2'), 'tr-2');
+      recorder.record(manager, batch('social', 't3'), 'tr-3');
+      recorder.fetched(manager, 'user-1', 'phone-1', 'wake');
+
+      const exit = recorder.drainForExit();
+      // Synchronously: nothing was awaited between the call and this line.
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(String(log.mock.calls[0][0])).toBe(
+        '[PUSH_RECORD] exit - not yet written: attempted social:2, 1 fetched device(s); ' +
+          'write in flight: trace=tr-1 kinds=message fetched=0 - waiting for the writer'
+      );
+
+      let done = false;
+      void exit.then(() => {
+        done = true;
+      });
+      while (!done) {
+        release();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(query.mock.calls.some(([sql]) => String(sql).includes('"lastPushFetchedAt"'))).toBe(
+        true
+      );
+    });
+
+    it('at exit, says nothing when nothing is pending', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      await new PushDeliveryRecorder().drainForExit();
+      expect(log).not.toHaveBeenCalled();
+    });
+
+    it('a writer that throws is an ERROR naming what it dropped, and the recorder writes again', async () => {
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementationOnce(() => {
+        throw new Error('boom');
+      });
+      const recorder = new PushDeliveryRecorder();
+      const query = jest.fn().mockResolvedValue([]);
+      recorder.record(managerOf(query), batch('message', 't1'), 'tr-1');
+      await recorder.settled();
+      expect(String(error.mock.calls[0][0])).toBe(
+        '[PUSH_RECORD] the writer failed - DROPPED trace=tr-1 kinds=message fetched=0: Error: boom'
+      );
+
+      debug.mockImplementation(() => {});
+      recorder.record(managerOf(query), batch('message', 't2'), 'tr-2');
+      await recorder.settled();
+      expect(query.mock.calls.some(([, p]) => JSON.stringify(p) === '[["t2"]]')).toBe(true);
     });
 
     it('starts a new write for a hand-over that arrives after the last one ended', async () => {
