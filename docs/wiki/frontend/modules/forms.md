@@ -2908,7 +2908,7 @@ with and without unpaid cash, a closed cell, the bars, the refund control),
 
 Measured on dev 1.6.6-alpha.4: the grid's order bar (`ProductGridOrderBar`) floated at 65-80 % of the height with the next card visible under it. Cause: `position: sticky; bottom: 0` stops at the scroll container's PADDING edge, and `.page-scroll-wrap` reserved `--bottom-nav-reserve` (4rem + safe area) on every page, including `/f/:id` which renders no bottom navigation. `pageScrollPaddingClass` (`$lib/components/layout/pageScrollPadding.ts`) now applies the reserve only where `routes/+layout.svelte` mounts the app chrome (`!isLoginPage`). The guest wrapper clears the home indicator with `max(0.75rem, var(--safe-area-inset-bottom))`. Inside the app the member page's bar rests on the reserve's edge, and since 2026-11-07 that edge IS the navigation's top (owner: "la coller a la navigation"): the reserve had stayed 4rem after #648 cut the bar to 3rem, so it was 1rem of nothing; both now read `--bottom-nav-height` (`app.css`), the reserve adding the bar's 1px border and the safe area. Pinned by `pageScrollPadding.test.ts` and the wrapper test in `f/[id]/page.productGrid.svelte.test.ts`.
 
-## The question put to a form left open (owner, 2026-11-21, migration 178)
+## The question put to a form left open (owner, 2026-11-21, migration 180)
 
 **Why.** A read-only survey of production on 2026-11-21 (21 forms, 721 answers): 17 forms (81%) had no
 closing date, 9 of them had had no answer for 14 days or more and 3 never got one; only 4 forms had a

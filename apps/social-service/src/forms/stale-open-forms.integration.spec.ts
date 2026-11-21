@@ -1,9 +1,9 @@
 /**
- * THE QUESTION PUT TO A FORM LEFT OPEN, against a REAL PostgreSQL - migration 178.
+ * THE QUESTION PUT TO A FORM LEFT OPEN, against a REAL PostgreSQL - migration 180.
  *
  * The predicate, the claim (the sweep's only write) and its idempotence are SQL, so they are read
  * from the database that runs them: `forms` is built by `synchronize` WITHOUT the two new columns,
- * then migration 178 is applied to it, so the migration meets the shape it will meet in production.
+ * then migration 180 is applied to it, so the migration meets the shape it will meet in production.
  * Every instant is passed to the sweep (`sweep(at)`), never read from the wall clock.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
@@ -41,7 +41,7 @@ const NOW = new Date('2026-11-21T09:30:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
 const ago = (days: number, from: Date = NOW) => new Date(from.getTime() - days * DAY);
 
-maybe('the question put to a form left open against PostgreSQL (migration 178)', () => {
+maybe('the question put to a form left open against PostgreSQL (migration 180)', () => {
   const schema = `stale_open_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -65,9 +65,9 @@ maybe('the question put to a form left open against PostgreSQL (migration 178)',
     await ds.synchronize();
     // The table as production has it before this pull request, then the migration itself.
     await q(`ALTER TABLE forms DROP COLUMN "staleAskedAt", DROP COLUMN "staleKeptAt"`);
-    await q(migration('178_form_stale_open_notice.sql'));
+    await q(migration('180_form_stale_open_notice.sql'));
     // Re-running it is a no-op (idempotent for CD).
-    await q(migration('178_form_stale_open_notice.sql'));
+    await q(migration('180_form_stale_open_notice.sql'));
     await q(
       `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
     );

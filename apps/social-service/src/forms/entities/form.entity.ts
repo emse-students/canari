@@ -220,7 +220,7 @@ export class Form {
 
   /**
    * When the managers were last asked whether to close this form left open and unanswered
-   * (migration 178, `stale-open-forms.ts`). `select: false`: only the sweep and the list's own read
+   * (migration 180, `stale-open-forms.ts`). `select: false`: only the sweep and the list's own read
    * of it use it - a respondent's read of the form never carries it.
    */
   @Column({ type: 'timestamptz', nullable: true, select: false })

@@ -233,7 +233,7 @@ export interface Form extends CreateFormPayload {
   hasUnpublishedChanges?: boolean;
   /**
    * The question put to a form left open is still waiting for its answer (the managers' list only,
-   * migration 178): the row draws "Ce formulaire est toujours ouvert. Le fermer ?" with its three
+   * migration 180): the row draws "Ce formulaire est toujours ouvert. Le fermer ?" with its three
    * answers.
    */
   staleOpenAsk?: boolean;

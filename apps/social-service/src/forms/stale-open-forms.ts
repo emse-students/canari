@@ -13,7 +13,7 @@ import { associationArchivedSql } from '../associations/association-archived';
  * 13). Fourteen days would have asked it in the middle of its own rhythm; twenty-one never asks a
  * form inside the rhythm it has shown.
  *
- * ALL OF THE STATE IS TWO COLUMNS OF `forms` (migration 178), and THE SWEEP'S CLAIM IS ITS ONLY
+ * ALL OF THE STATE IS TWO COLUMNS OF `forms` (migration 180), and THE SWEEP'S CLAIM IS ITS ONLY
  * WRITE: {@link STALE_OPEN_CLAIM_SQL} selects the due forms `FOR UPDATE SKIP LOCKED` and stamps
  * `staleAskedAt` in one statement, so two replicas, a re-run or a crash cannot ask a form twice.
  * - ASKED ONCE: a form whose `staleAskedAt` is set is never asked again by the passing of time.
