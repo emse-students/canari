@@ -76,7 +76,7 @@ export function markPermissionPromptShown(): void {
 }
 
 /** Whether the OS permission dialog was ever opened on this install; false when unreadable. */
-export function permissionPromptShown(): boolean {
+function permissionPromptShown(): boolean {
   try {
     return localStorage.getItem(PROMPT_SHOWN_KEY) === '1';
   } catch {
