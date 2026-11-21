@@ -52,7 +52,7 @@ export const RECORDING_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 };
 
 /** Which configuration a voice note is captured under. */
-export type VoiceNoteCaptureMode = 'recording' | 'call';
+type VoiceNoteCaptureMode = 'recording' | 'call';
 
 /** The choice, and the constraints that carry it. */
 export interface VoiceNoteCapture {
