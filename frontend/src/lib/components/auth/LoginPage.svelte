@@ -23,6 +23,7 @@
     refreshAppVersionCheck,
   } from '$lib/stores/appVersionCheck.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { pathWithoutFragment } from '$lib/utils/logSanitize';
   import { attemptRestore } from '$lib/services/restoreCredential';
 
   // ─── Auth state ─────────────────────────────────────────────────────────────
@@ -92,7 +93,9 @@
         const { target: last, at } = JSON.parse(raw) as { target: string; at: number };
         if (last === target && now - at < AUTO_REDIRECT_LOOP_WINDOW_MS) {
           sessionStorage.removeItem(LAST_AUTO_REDIRECT_KEY);
-          console.warn(`[auth] redirect loop to ${target} broken - staying on /login`);
+          console.warn(
+            `[auth] redirect loop to ${pathWithoutFragment(target)} broken - staying on /login`
+          );
           loginError = m.auth_redirect_loop_blocked();
           return false;
         }

@@ -566,6 +566,20 @@ absent from production for a week. Then make `announcedFields` required on the m
 `assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
 entry.
 
+### Removal with step 3 of sealed names, behind the floor - a group invite link with no name in its fragment (2026-11-21)
+
+- **The shim.** A group invite card (`/g/join/<token>`, the in-chat card of a pasted link) reads the
+  group's name from the link's `#fragment` (`readInviteNameFragment`,
+  `frontend/src/lib/mls/groupInviteName.ts`). A link minted by a build older than this one carries
+  none, so `inviteCardName` reads the server's `groupName` from `GET mls/group-invites/:token` instead,
+  logged `[LEGACY] group invite link carries no name` with its shape, never the name.
+- **Why it stands.** Every link shared before this build, and every link a floor build still mints.
+- **Removal condition.** Step 3 of [sealed-names](protocols/sealed-names.md) - the server stops
+  knowing group names, behind `minClientVersion` at the stable carrying step 2 (`1.7.2`) - also stops
+  the preview answering `groupName`; the server branch goes in the same pull request. **Accepted
+  then:** a link minted before this build shows "a group" until it is re-shared. The `[LEGACY]` count
+  is read first, so the cost is measured before it is paid.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

@@ -1157,8 +1157,6 @@
   "seo_association_members_other": "{count} members.",
   "seo_community_invite_title": "Join {name}",
   "seo_community_invite_description": "An invitation to join the {name} community on Canari: discussions, announcements and student support at Mines Saint-Etienne.",
-  "seo_group_invite_title": "Join {name}",
-  "seo_group_invite_description": "An invitation to join the {name} conversation on Canari, the end-to-end encrypted messenger of Mines Saint-Etienne.",
   "seo_invite_image_alt": "{name} image",
   "admin_moderation_title": "Moderation",
   "admin_global_description": "Global tools and agenda moderation.",

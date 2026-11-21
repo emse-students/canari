@@ -454,6 +454,8 @@ export async function createNewGroup(
         save: () => saveConversation(conversationKey!),
         log,
       }).catch((e: unknown) => {
+        // ONE WRITE, AT ERROR LEVEL: `log` is `appendLog` in production, which is `console.log`
+        // (utils/sessionLog.ts), so writing the line to both would store it twice in the in-app log.
         console.error(
           `[GROUP_NAME] creation's name statement for ${groupId!.slice(0, 8)}… threw - the next sweep states it: ${String(e).slice(0, 120)}`
         );
