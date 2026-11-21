@@ -27,7 +27,7 @@ import {
   lastResortDeadline,
 } from '../entities/key-package.entity';
 import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
-import { parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
+import { parseNotificationState, parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -331,6 +331,8 @@ export class DevicesController {
       deviceAppVersion?: string;
       /** What the device's last push registration came to - see `parsePushOutcome`. */
       pushOutcome?: unknown;
+      /** What the OS lets notifications do - see `parseNotificationState`. Absent from old clients. */
+      notificationState?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -372,6 +374,7 @@ export class DevicesController {
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
     const pushOutcome = parsePushOutcome(body.pushOutcome);
+    const notification = parseNotificationState(body.notificationState);
 
     // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
     // that means and why the old row count was the wrong quantity. The device being registered is
@@ -400,6 +403,13 @@ export class DevicesController {
     }
 
     const traceId = this.makeTraceId('reg-device');
+    if (notification.state === 'invalid') {
+      // A client stated something outside the allowlist: stored as unknown, said once per call.
+      this.logger.warn(
+        `[REGISTER_DEVICE][${traceId}] NOTIFICATION_STATE_INVALID user=${userId} device=${deviceId} ` +
+          `- stored as unknown`
+      );
+    }
 
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
@@ -438,6 +448,12 @@ export class DevicesController {
         deviceOs,
         deviceAppVersion,
         pushOutcome: pushOutcome === 'unstated' ? null : pushOutcome,
+        // unknown and invalid are NULL: nothing stated is never read as granted.
+        notificationState:
+          notification.state === 'unknown' || notification.state === 'invalid'
+            ? null
+            : notification.state,
+        notificationChannels: notification.channels,
       },
       crypto.randomUUID()
     );

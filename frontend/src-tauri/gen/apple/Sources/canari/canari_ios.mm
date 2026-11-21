@@ -1763,7 +1763,71 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
   });
 }
 
+/// `UNNotificationSetting` by name - the term the Rust command parses.
+static NSString *CanariNotificationSettingName(UNNotificationSetting s) {
+  switch (s) {
+    case UNNotificationSettingEnabled:
+      return @"enabled";
+    case UNNotificationSettingDisabled:
+      return @"disabled";
+    default:
+      return @"not-supported";
+  }
+}
+
+/// `UNAuthorizationStatus` by name - the term the Rust command parses.
+static NSString *CanariAuthorizationName(UNAuthorizationStatus s) {
+  switch (s) {
+    case UNAuthorizationStatusAuthorized:
+      return @"granted";
+    case UNAuthorizationStatusDenied:
+      return @"denied";
+    case UNAuthorizationStatusProvisional:
+      return @"provisional";
+    case UNAuthorizationStatusNotDetermined:
+      return @"not-determined";
+    default:
+      return @"ephemeral";
+  }
+}
+
+/// WHAT THE OS LETS THIS APP'S NOTIFICATIONS DO, WRITTEN FOR THE PAGE (2026-11-21): one JSON snapshot
+/// in the data directory, rewritten at every activation, read by the Rust command
+/// `notification_delivery_state` (which pins the shape; file name and keys are shared). READ-ONLY:
+/// `getNotificationSettings` never prompts. A failed write is logged and leaves the previous one.
+static void CanariWriteNotificationDeliveryState(void) {
+  [[UNUserNotificationCenter currentNotificationCenter]
+      getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *s) {
+        NSString *dir = CanariTauriDataDir();
+        if (dir == nil) {
+          NSLog(@"[CanariIOS] notification state not written: no data dir");
+          return;
+        }
+        NSString *timeSensitive = @"not-supported";
+        if (@available(iOS 15.0, *)) {
+          timeSensitive = CanariNotificationSettingName(s.timeSensitiveSetting);
+        }
+        NSDictionary *snapshot = @{
+          @"platform" : @"ios",
+          @"authorization" : CanariAuthorizationName(s.authorizationStatus),
+          @"alert" : CanariNotificationSettingName(s.alertSetting),
+          @"sound" : CanariNotificationSettingName(s.soundSetting),
+          @"badge" : CanariNotificationSettingName(s.badgeSetting),
+          @"timeSensitive" : timeSensitive,
+        };
+        NSData *json = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
+        if (json == nil) return;
+        NSError *err = nil; // not logged: an error text can carry a path
+        if (![json writeToFile:[dir stringByAppendingPathComponent:@"notification_delivery_state.json"]
+                       options:NSDataWritingAtomic
+                         error:&err]) {
+          NSLog(@"[CanariIOS] notification state not written (the atomic write failed)");
+        }
+      }];
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
+  CanariWriteNotificationDeliveryState();
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();

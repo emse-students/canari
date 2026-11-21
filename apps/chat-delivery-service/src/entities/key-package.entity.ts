@@ -47,6 +47,18 @@ export class KeyPackage {
   @Column({ type: 'varchar', length: 32, nullable: true })
   pushOutcome?: string | null;
 
+  /**
+   * What the OS lets this device's notifications do (`parseNotificationState`: `on`, `off`,
+   * `not-asked`, `channel-off`, `alerts-off`), as stated on its latest `register-device`; null when
+   * the build states nothing - UNKNOWN, never granted (migration 054).
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  notificationState?: string | null;
+
+  /** The Android channel importances as stated (`messages=high posts=default`); migration 054. */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  notificationChannels?: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

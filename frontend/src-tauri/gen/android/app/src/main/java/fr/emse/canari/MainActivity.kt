@@ -961,6 +961,7 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        NotificationDeliveryState.write(this)
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
         // Opening the app clears lingering message notifications (read here or on another

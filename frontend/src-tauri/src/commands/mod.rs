@@ -20,6 +20,7 @@ pub mod mls_account_state;
 pub mod native_push_log;
 pub mod notifications;
 // The iOS notification extension's outcome log, carried into the app log (2026-11-01).
+pub mod notification_delivery_state;
 pub mod nse_outcomes;
 pub mod picked_files;
 pub mod push;

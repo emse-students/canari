@@ -1736,6 +1736,11 @@ export class MlsDeliveryApi {
      * server when it holds no registration for the device. Native only; the web registers none.
      */
     pushOutcome?: string;
+    /**
+     * What the OS lets this install's notifications do (`notificationStateReport`), stored with the
+     * device and counted by the daily coverage. Absent = unknown, which the server never reads as granted.
+     */
+    notificationState?: object;
   }): Promise<{ pushRegistered: boolean | null }> {
     return await this.underDeadline('register-device', async (signal) => {
       const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
@@ -1751,6 +1756,7 @@ export class MlsDeliveryApi {
           deviceOs: params.deviceOs,
           ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
           ...(params.pushOutcome ? { pushOutcome: params.pushOutcome } : {}),
+          ...(params.notificationState ? { notificationState: params.notificationState } : {}),
         }),
       });
 

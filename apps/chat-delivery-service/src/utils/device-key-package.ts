@@ -16,6 +16,10 @@ export interface DeviceKeyPackageWrite {
    * as given on every call, never kept from an earlier one.
    */
   pushOutcome?: string | null;
+  /** The device's stated notification state (`parseNotificationState`), `null` when it stated none. */
+  notificationState?: string | null;
+  /** The stated Android channel importances, `null` when none. */
+  notificationChannels?: string | null;
 }
 
 /**
@@ -49,8 +53,8 @@ export async function upsertDeviceKeyPackage(
   const rows = (await db.query(
     `INSERT INTO key_package
        (id, "userId", "deviceId", "keyPackage", "notAfter", "deviceName", "deviceOs",
-        "deviceAppVersion", "createdAt", "pushOutcome")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        "deviceAppVersion", "createdAt", "pushOutcome", "notificationState", "notificationChannels")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT ("userId", "deviceId") DO UPDATE SET
        "keyPackage" = EXCLUDED."keyPackage",
        "notAfter" = EXCLUDED."notAfter",
@@ -58,7 +62,9 @@ export async function upsertDeviceKeyPackage(
        "deviceOs" = COALESCE(EXCLUDED."deviceOs", key_package."deviceOs"),
        "deviceAppVersion" = COALESCE(EXCLUDED."deviceAppVersion", key_package."deviceAppVersion"),
        "createdAt" = EXCLUDED."createdAt",
-       "pushOutcome" = EXCLUDED."pushOutcome"
+       "pushOutcome" = EXCLUDED."pushOutcome",
+       "notificationState" = EXCLUDED."notificationState",
+       "notificationChannels" = EXCLUDED."notificationChannels"
      RETURNING (xmax = 0) AS inserted`,
     [
       newId,
@@ -71,6 +77,8 @@ export async function upsertDeviceKeyPackage(
       write.deviceAppVersion ?? null,
       now,
       write.pushOutcome ?? null,
+      write.notificationState ?? null,
+      write.notificationChannels ?? null,
     ]
   )) as Array<{ inserted: boolean }>;
   return { inserted: rows[0]?.inserted === true };

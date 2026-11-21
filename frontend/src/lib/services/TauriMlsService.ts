@@ -53,6 +53,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { notificationStateReport } from './notificationReport';
 import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
@@ -1910,6 +1911,8 @@ export class TauriMlsService extends BaseMlsService {
     const deviceAppVersion = getClientAppVersion();
     const deviceOs = detectRuntimeDeviceOs('desktop');
     const pushes = deviceOs === 'android' || deviceOs === 'ios';
+    // The OS's notification state, read here at every unlock and renewal; undefined is unknown.
+    const notificationState = pushes ? await notificationStateReport() : undefined;
     const answer = await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,
@@ -1917,6 +1920,7 @@ export class TauriMlsService extends BaseMlsService {
       deviceOs,
       deviceAppVersion,
       ...(pushes ? { pushOutcome: pushOutcomeForReport() } : {}),
+      ...(notificationState ? { notificationState } : {}),
     });
     // The delivery service's push row is the fact a registration is owed against - this call runs at
     // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.

@@ -2039,12 +2039,54 @@ the server could say a phone was silent, which is how a third of a build went un
   OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
   `registered` accuses a server-side deletion, any failure the client's attempt.
 - `[PUSH_COVERAGE]` (daily, and in the initial sweep): one line for the fleet, and one WARN per
-  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. A
+  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. **Only
+  INSTALLED-app devices are counted** (id prefix `tauri-`, `INSTALLED_APP_DEVICE_PREFIX`, the
+  `BaseMlsService.platform` that mints the id): a mobile browser reports `android` or `ios` as its OS
+  and can never hold a push token, and about 93 `web-` devices had made the alarm mostly false
+  (2026-11-21). The members reachable only through a mobile browser are one INFORMATION line, never a
+  WARN, and no install prompt exists. A
   phone whose stated outcome is `no-token` is **counted apart** (`noOsToken`, on the log line, never
   a WARN): its state is known and no fix of ours changes it. A live session counts only when it is
   the device's OWN account's (`s."userId" = k."userId"`). Each WARN carries `last:`, the tally of
   what its unregistered phones last stated (`key_package."pushOutcome"`), so the branch is read from
   the report itself, with no access to the per-device lines.
+
+#### Registered is not permitted (2026-11-21)
+
+A production read of 2026-11-21 found two members with missing notifications: both phones registered,
+sessions live, nothing pruned, no provider failure. The cause was on the phone - the OS permission,
+or a maker's autostart and battery rules - and the row could not say so: the client went on
+registering after a denial, and `registered` only means a token was stored.
+
+**The phone now states what the OS lets its notifications do, to the server only** (owner,
+2026-11-21: no banner, no prompt). `register-device` carries `notificationState`
+(`{ permission, enabled, alerts?, channels? }`, built by `notificationReport.ts` from the one command
+below); `parseNotificationState` allowlists it into ONE category - `on`, `off` (permission denied or
+the app switched off), `not-asked` (iOS dialog never shown), `channel-off` (the messages or posts
+channel at importance `none`), `alerts-off` (iOS alerts disabled) - plus the Android channel
+importances. Both are written with the key package on every call (`key_package."notificationState"`,
+`"notificationChannels"`, migration 054, additive, nullable). **An old client states nothing: NULL,
+UNKNOWN, never granted**; an out-of-allowlist value is stored NULL with a WARN
+(`NOTIFICATION_STATE_INVALID`). It lives on `key_package` beside `pushOutcome`, not on `push_token`:
+the one write that carries it is `register-device`, and a device with no push row has no
+`push_token` row to hold it. The daily count adds `permissionOff` - devices that HOLD a row and state
+the OS will not show it - as its own figure and its own WARN, `[PUSH_PERMISSION_OFF]`, apart from
+`withoutPush`: the server delivered and the phone is silent.
+
+**The page reads it through ONE typed command, `notification_delivery_state`** (read-only, no prompt;
+`commands/notification_delivery_state.rs` pins the shape). The native side writes a snapshot
+(`notification_delivery_state.json`, app data directory) at every launch and return to the
+foreground - `NotificationDeliveryState.kt` on Android, `CanariWriteNotificationDeliveryState` in
+`canari_ios.mm` - and the command reads it; no snapshot is `None`, unknown. The answer is tagged by
+`platform`:
+
+- `android`: `notificationsEnabled`, `postNotificationsGranted`, `channels: { messages, posts }`
+  (`none|min|low|default|high|unspecified|absent`), `isIgnoringBatteryOptimizations`, `manufacturer`.
+- `ios`: `authorization` (`not-determined|denied|granted|provisional|ephemeral`), `alert`, `sound`,
+  `badge`, `timeSensitive` (`enabled|disabled|not-supported`).
+
+The maker and battery fields are for the page's own use (the banner owed next) and are NOT reported
+to the server ([register](../compliance/register-of-processing.md)).
 
 **Re-measured 2026-11-17 (production read-only, still on `1.6.12`).** Same shape: of the phones that
 ran in 24 h, every older build holds a row (0 of 117), `1.6.12` does not on 15 of 75 Android and 12
