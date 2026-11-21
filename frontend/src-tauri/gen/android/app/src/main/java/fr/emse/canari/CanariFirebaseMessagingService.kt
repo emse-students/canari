@@ -104,11 +104,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * A drain learned it will NEVER go from here ([OutboxRetry.Prospect.NEVER]: refused by the
          * server, its group not held, malformed). No native writer deletes it, and every later drain
-         * skips it; the page adopts it at its next login as a failed message with its Retry
-         * (`outboxMirror.ts`). A page warm in the background still erases it with its next mirror
-         * rewrite (`store_outbox_mirror`) - the P1 `p1-a-warm-page-erases-the-native-only-outbox-entries`.
+         * skips it; the page adopts it as a failed message with its Retry, at its next login or
+         * its next return to the front (`outboxMirror.ts`). The page's own write keeps it
+         * (`outbox_mirror.rs`).
          */
         val unsendable: Boolean = false,
+        /**
+         * Who wrote the line: `"page"` for the page's outbox (`store_outbox_mirror`), null for a
+         * line queued here. The page's write replaces ITS lines and keeps every other one, so a
+         * native rewrite must carry this through unchanged - dropped, a page line would read as
+         * native and outlive the page's own settlement of it.
+         */
+        val owner: String? = null,
     )
 
     companion object {
@@ -148,6 +155,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * ([fr.emse.canari.push.QuickReplyRoute]).
          */
         external fun nativeForegroundGuardHolds(): Boolean
+
+        /**
+         * Appends one outbox line (JSON, with an `id`) to `outbox_journal.ndjson` in [dataDir] under
+         * the Rust journal lock ONLY - never [OUTBOX_LOCK], which a drain holds through its POSTs
+         * (Rust `outbox_mirror::append_journal`). True when the line is durably queued.
+         */
+        external fun nativeAppendOutboxJournal(dataDir: String, line: String): Boolean
+
+        /**
+         * Folds the journal (and every mirror file moved aside unreadable) into the outbox mirror in
+         * [dataDir] (Rust `outbox_mirror::fold_into_mirror`). The caller holds [OUTBOX_LOCK]. False
+         * leaves the journal for the next holder.
+         */
+        external fun nativeFoldOutboxMirror(dataDir: String): Boolean
 
         /**
          * The ids of the quick replies waiting in `pending_quick_replies.ndjson`, one per line, read
@@ -608,6 +629,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** App-private cleartext mirror of the outbox (written by the TS) drained by the background send. */
         private const val OUTBOX_PENDING_FILE = "outbox_pending.ndjson"
 
+        /** The append-only journal native code queues into (Rust `outbox_mirror::OUTBOX_JOURNAL_FILE`). */
+        private const val OUTBOX_JOURNAL_FILE = "outbox_journal.ndjson"
+
         /** List of messageIds delivered in the background (read then cleared by the TS at login). */
         private const val OUTBOX_SENT_FILE = "outbox_sent.ndjson"
 
@@ -1053,8 +1077,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             QUEUED,
 
             /**
-             * Not there, and not seen delivered: adopted by the app's outbox, or ERASED by its whole
-             * rewrite (`store_outbox_mirror` writes without [OUTBOX_LOCK]) - not distinguishable here.
+             * Not there, and not seen delivered: adopted by the app's outbox, which then sent or
+             * settled it. The page's write keeps every line it does not hold (`outbox_mirror.rs`).
              */
             ABSENT,
 
@@ -1065,7 +1089,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Where [messageId] stands in the outbox mirror - read under the outbox lock, whole. */
         internal fun mirrorPresence(context: Context, messageId: String): MirrorPresence =
             synchronized(OUTBOX_LOCK) {
-                val entries = readOutboxMirrorOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE
+                val entries = readOutboxQueuedOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE
                 if (entries.any { it.id == messageId }) MirrorPresence.QUEUED else MirrorPresence.ABSENT
             }
 
@@ -2391,21 +2415,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         /**
          * Serialises every read-modify-write of `outbox_pending.ndjson` in this process: the drain,
-         * and [enqueueOutboxMirror].
+         * the page's write and read (Rust, [outboxLock]), and every fold of the journal into it.
+         * NOT the append: [enqueueOutboxMirror] writes the journal under the Rust journal lock alone,
+         * so a reply typed in the shade is on disk before any drain's POSTs end (#3929 review).
          *
          * ONE ENTRY, ONE SEND. A drain reads the mirror, encrypts, POSTs, and only then rewrites it,
          * so two drains overlapping read the same entry and both sent it. Measured on a Mi 9T,
          * 2026-10-01: the quick-reply send and an [OutboxRetryWorker] run 5 ms apart both posted
          * entry `f79aac25`, each under its own ratchet generation. The second drain now waits and
-         * reads the mirror the first one rewrote, where the delivered entry no longer is. The same
-         * lock covers the append, which a concurrent rewrite would otherwise erase.
+         * reads the mirror the first one rewrote, where the delivered entry no longer is. An append
+         * cannot be erased by a rewrite: it lands in the journal, which only a holder of this lock
+         * folds into the mirror, at its start.
          *
          * Ordered BEFORE [MlsStateLock], which the drain takes inside it and only with a timeout.
          * The leaf locks taken under it, never the other way round: [AwaitedReplies]' own (a reply's
          * delivery, at the send) and, through the nudge's post ([callHoldsSound]),
-         * `RingSequencer.lock` (`CallRingPlayer.rings.nativeCount`).
+         * `RingSequencer.lock` (`CallRingPlayer.rings.nativeCount`), and Rust's journal lock (the
+         * fold) - which an appender takes ALONE.
          */
         private val OUTBOX_LOCK = Any()
+
+        /**
+         * [OUTBOX_LOCK] itself, for the page's write and read of the mirror (`outbox_mirror.rs`),
+         * which take this monitor from Rust over JNI: a file lock could not serialise with it, the
+         * page and this service being one process. Rust takes it holding no lock of its own and
+         * takes nothing under it, so the order above stands.
+         */
+        @JvmStatic
+        fun outboxLock(): Any = OUTBOX_LOCK
 
         /** What [encryptQueuedMessages] did with a batch. */
         private sealed interface EncryptBatch {
@@ -2423,12 +2460,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Appends [entry] to the outbox mirror under [OUTBOX_LOCK] - the one way native code queues a
-         * frame, so a drain running at that moment can neither miss nor erase it.
+         * Queues [entry] for the outbox - the one way native code queues a frame. Into the JOURNAL
+         * ([nativeAppendOutboxJournal]), never under [OUTBOX_LOCK]: a drain holds that lock through
+         * its POSTs, and a reply typed in the shade waited for it in memory, inside `goAsync`'s
+         * window, where the process can end (#3929 review). Durable on return; the next holder of
+         * [OUTBOX_LOCK] folds it into the mirror ([foldOutboxJournalLocked]), so a drain running now
+         * can neither miss nor erase it. False, logged, when nothing was queued.
          */
-        internal fun enqueueOutboxMirror(context: Context, entry: OutboxMirrorEntry) {
-            synchronized(OUTBOX_LOCK) {
-                rewriteOutboxMirror(context, readOutboxMirror(context) + entry)
+        internal fun enqueueOutboxMirror(context: Context, entry: OutboxMirrorEntry): Boolean {
+            val dir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
+            val queued = nativeAppendOutboxJournal(dir, outboxLineJson(entry).toString())
+            if (!queued) Log.e(TAG, "enqueueOutboxMirror: id=${entry.id.take(8)} NOT queued - the journal append failed")
+            return queued
+        }
+
+        /**
+         * Folds the outbox journal into the mirror; the caller holds [OUTBOX_LOCK]. A fold that fails
+         * leaves the journal whole for the next holder, logged.
+         */
+        private fun foldOutboxJournalLocked(context: Context, where: String) {
+            val dir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
+            if (!nativeFoldOutboxMirror(dir)) {
+                Log.e(TAG, "$where: the outbox journal was not folded - its lines wait for the next holder of the outbox lock")
             }
         }
 
@@ -2478,6 +2531,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             onSent: (SentOutboxId) -> Unit,
             delivered: MutableList<OutboxMirrorEntry>,
         ): List<OutboxRetry.Prospect> {
+            // What the native side queued meanwhile, into the mirror first: read after this, the
+            // journal holds only what is appended DURING this drain, folded by the next holder.
+            foldOutboxJournalLocked(context, "drainOutbox")
             val mirror = readOutboxMirror(context)
             // AN ENTRY ALREADY MARKED UNSENDABLE IS NEVER SENT AGAIN FROM HERE - not re-encrypted, not
             // re-POSTed by every push-woken drain - and never dropped: it stays for the page.
@@ -2822,9 +2878,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * apart where it is thrown, for a caller that must not read it as an empty queue
          * ([mirrorPresence]). [readOutboxMirror] is this with the failure read as nothing queued.
          */
-        internal fun readOutboxMirrorOrNull(context: Context): List<OutboxMirrorEntry>? {
+        internal fun readOutboxMirrorOrNull(context: Context): List<OutboxMirrorEntry>? =
+            readOutboxFileOrNull(File(MlsContextLoader.tauriDataDir(context), OUTBOX_PENDING_FILE))
+
+        /**
+         * EVERYTHING QUEUED, for a caller that only LOOKS: the mirror, then the journal's lines not
+         * in it yet. Never for a read-modify-write - a drain reads the mirror alone after its fold,
+         * or a line appended meanwhile would be sent from the mirror and folded in again from the
+         * journal. NULL when either file exists and could not be read.
+         */
+        internal fun readOutboxQueuedOrNull(context: Context): List<OutboxMirrorEntry>? {
+            val dir = MlsContextLoader.tauriDataDir(context)
+            val mirror = readOutboxMirrorOrNull(context) ?: return null
+            val journal = readOutboxFileOrNull(File(dir, OUTBOX_JOURNAL_FILE)) ?: return null
+            val ids = mirror.mapTo(HashSet()) { it.id }
+            return mirror + journal.filter { ids.add(it.id) }
+        }
+
+        /** One outbox file's entries, [] when absent, NULL when it exists and could not be read. */
+        private fun readOutboxFileOrNull(file: File): List<OutboxMirrorEntry>? {
             return try {
-                val file = File(MlsContextLoader.tauriDataDir(context), OUTBOX_PENDING_FILE)
                 if (!file.exists()) return emptyList()
                 file.readLines().filter { it.isNotBlank() }.mapNotNull { line ->
                     try {
@@ -2844,6 +2917,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             o.optBoolean("silent", false),
                             o.optBoolean("durable", true),
                             o.optBoolean("unsendable", false),
+                            o.optString("owner").takeIf { it.isNotEmpty() },
                         )
                     } catch (e: Exception) {
                         null
@@ -2855,6 +2929,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /** One outbox line, as the mirror and the journal hold it - the ONE serialiser of an entry. */
+        private fun outboxLineJson(e: OutboxMirrorEntry): JSONObject = JSONObject().apply {
+            put("id", e.id)
+            put("groupId", e.groupId)
+            put("proto", e.proto)
+            put("sentAt", e.sentAt)
+            put("silent", e.silent)
+            put("durable", e.durable)
+            if (e.unsendable) put("unsendable", true)
+            e.owner?.let { put("owner", it) }
+        }
+
         /** Rewrites the outbox mirror with the remaining entries (deletes the file if empty). */
         internal fun rewriteOutboxMirror(context: Context, remaining: List<OutboxMirrorEntry>) {
             try {
@@ -2863,17 +2949,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     if (file.exists()) file.delete()
                     return
                 }
-                val body = remaining.joinToString("\n") { e ->
-                    JSONObject().apply {
-                        put("id", e.id)
-                        put("groupId", e.groupId)
-                        put("proto", e.proto)
-                        put("sentAt", e.sentAt)
-                        put("silent", e.silent)
-                        put("durable", e.durable)
-                        if (e.unsendable) put("unsendable", true)
-                    }.toString()
-                }
+                val body = remaining.joinToString("\n") { e -> outboxLineJson(e).toString() }
                 file.writeText(body + "\n")
             } catch (e: Exception) {
                 Log.w(TAG, "rewriteOutboxMirror: ${e.javaClass.simpleName}")
@@ -2967,7 +3043,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * only what the shade showed standing ([withdrawOutboxNudge]); every other decision logs.
          */
         private fun settleOutboxNudgeLocked(context: Context, asked: Boolean, where: String) {
-            val queued = readOutboxMirrorOrNull(context)?.size
+            val queued = readOutboxQueuedOrNull(context)?.size
             val decision = OutboxNudge.decide(queued, asked)
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

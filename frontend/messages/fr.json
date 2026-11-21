@@ -133,6 +133,16 @@
   "chat_search_placeholder": "Rechercher…",
   "chat_new_channel_title": "Nouveau canal",
   "chat_new_discussion_title": "Nouvelle discussion",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message en attente d'envoi n'a pas pu être relu. Vérifiez vos derniers messages et retapez-le s'il manque.",
+        "countPlural=other": "{count} messages en attente d'envoi n'ont pas pu être relus. Vérifiez vos derniers messages et retapez-les s'ils manquent."
+      }
+    }
+  ],
   "chat_new_discussion_label": "Nouvelle discussion",
   "chat_new_channel_label": "Nouveau canal",
   "chat_manage_community_roles_label": "Gérer les communautés et rôles",

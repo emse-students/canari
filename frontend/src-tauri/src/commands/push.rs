@@ -599,71 +599,6 @@ pub(crate) fn take_key_group_push_joins(app: tauri::AppHandle) -> Vec<serde_json
     }
 }
 
-/// Rewrites {app_data_dir}/outbox_pending.ndjson from the current outbox snapshot.
-/// Each entry carries the AppMessage proto *in the clear* (base64), which the Android service
-/// encrypts against the live epoch via `nativeSendMessageBackground`. App-private plaintext file,
-/// consistent with push_context.json / fcm_message_cache.ndjson. Full rewrite, never an append.
-#[tauri::command]
-pub(crate) fn store_outbox_mirror(
-    app: tauri::AppHandle,
-    entries: Vec<serde_json::Value>,
-) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let path = data_dir.join("outbox_pending.ndjson");
-    // Empty queue -> delete the file so the native side sees "nothing pending" without parsing it.
-    if entries.is_empty() {
-        if let Err(e) = std::fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!("[OUTBOX_MIRROR] delete failed: {e}");
-            }
-        }
-        return Ok(());
-    }
-    let body = entries
-        .iter()
-        .map(|e| e.to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(&path, body + "\n").map_err(|e| e.to_string())?;
-    log::debug!("[OUTBOX_MIRROR] {} entry/entries written", entries.len());
-    Ok(())
-}
-
-/// Reads {app_data_dir}/outbox_pending.ndjson WITHOUT clearing it, so the frontend can adopt back
-/// into its own outbox any entry the native side queued on its own (a notification quick reply
-/// that did not deliver). Not clearing is deliberate: the file is authoritative for the background
-/// service until the next `store_outbox_mirror`, which rewrites it from the adopted TS queue.
-#[tauri::command]
-pub(crate) fn read_outbox_mirror(app: tauri::AppHandle) -> Vec<serde_json::Value> {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("[OUTBOX_MIRROR] app_data_dir() failed: {e}");
-            return vec![];
-        }
-    };
-    let path = data_dir.join("outbox_pending.ndjson");
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
-        Err(e) => {
-            log::warn!("[OUTBOX_MIRROR] mirror read failed: {e}");
-            return vec![];
-        }
-    };
-    let entries: Vec<serde_json::Value> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    log::debug!(
-        "[OUTBOX_MIRROR] {} mirror entry/entries read",
-        entries.len()
-    );
-    entries
-}
-
 /// An exclusive OS lock on `file`, held until it is closed.
 ///
 /// `flock` directly on every Unix, NOT `File::lock`: std implements that for Linux and the Apple
@@ -3184,8 +3119,9 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// (`remove_quick_replies_of`, `delete_user_quick_replies`). Not the device-notice ledger either:
 /// it is shared by every account on the install, so only this account's markers go
 /// ([`remove_device_notices_of`]).
-const ACCOUNT_PUSH_FILES: [&str; 4] = [
+const ACCOUNT_PUSH_FILES: [&str; 5] = [
     "outbox_pending.ndjson",
+    crate::commands::outbox_mirror::OUTBOX_JOURNAL_FILE,
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
@@ -3488,6 +3424,10 @@ fn remove_user_push_files_proved(
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     for (_, name) in taken_files(data_dir) {
+        crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    // The mirror files moved aside unreadable (`outbox_mirror::set_aside`): the same account's protos.
+    for name in crate::commands::outbox_mirror::aside_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);
@@ -4439,7 +4379,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -4512,7 +4452,7 @@ mod delete_user_push_files_tests {
         let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
         let dir = dir_with("group_own", Some(ctx));
         let group = extension_container(&dir, ctx);
-        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 10);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
         // Only the deleted account's device notices go; the other account's stay.
@@ -4543,7 +4483,7 @@ mod delete_user_push_files_tests {
         let quarantine = group.join(crate::backup_exclusion::SUPERSEDED_DIR);
         std::fs::create_dir_all(quarantine.join("device_notices")).unwrap();
         std::fs::write(quarantine.join("graine_seeds.json"), b"v1").unwrap();
-        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 10);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 11);
         assert!(!quarantine.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -4594,7 +4534,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("5 push file(s) removed"), "{err}");
+        assert!(err.contains("6 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -4623,7 +4563,7 @@ mod delete_user_push_files_tests {
         merge_conversation_nicknames(&group, "a", &nick, &[], &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            5
+            6
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());

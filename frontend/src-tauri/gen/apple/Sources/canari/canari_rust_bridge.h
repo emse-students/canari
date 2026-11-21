@@ -114,6 +114,19 @@ char *canari_native_build_text_message_proto(
 
 char *canari_native_build_read_watermark_proto(long long at);
 
+/// Runs `work(ctx)` holding the outbox mirror lock the page's Rust commands take
+/// (`commands/outbox_mirror.rs`). Every read-modify-write of `outbox_pending.ndjson` goes through it
+/// (`CanariWithOutboxMirrorLock`). Not reentrant.
+void canari_with_outbox_mirror_lock(void *ctx, void (*work)(void *ctx));
+
+/// Appends one outbox line (JSON with an `id`) to `outbox_journal.ndjson` in `data_dir`, synced,
+/// under the journal lock ALONE - never the mirror lock above. 1 when queued, 0 (logged) otherwise.
+int canari_outbox_journal_append(const char *data_dir, const char *line);
+
+/// Folds the journal and every mirror file moved aside into `outbox_pending.ndjson`; the caller
+/// holds the mirror lock. 1 when folded, 0 (logged) otherwise: the journal is kept.
+int canari_outbox_fold(const char *data_dir);
+
 char *canari_native_build_call_hangup_proto(
     const char *message_id,
     long long sent_at,
