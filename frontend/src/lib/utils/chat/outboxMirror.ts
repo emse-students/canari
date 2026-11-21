@@ -25,11 +25,14 @@
  * costs a duplicate proto on the next foreground flush, deduplicated by the receiver on messageId.
  *
  * The mirror is not write-only, though: the notification quick reply builds its proto natively and
- * appends it here, so an entry the background drain could NOT deliver exists only in this file -
- * and `syncOutboxMirror` rewrites the file from the TS queue, which would wipe it. That is what
- * `adoptOrphanedMirrorEntries()` prevents: at login, any mirror entry the TS outbox does not know
- * about is turned back into a real outbox entry (plus the local message the sender never got), so
- * the ordinary flusher owns it from then on. It is the symmetric twin of `reconcileOutboxSent`.
+ * appends it here, so an entry the background drain could NOT deliver exists only in this file.
+ * **THE FILE HAS TWO WRITERS AND SAYS WHICH LINE IS WHOSE** (`outbox_mirror.rs`, 2026-11-21): the
+ * page writes ITS lines only, stamped `owner: "page"`, under the lock the native writers take, and
+ * keeps every other line - so a warm page in the background no longer erases a reply typed in the
+ * shade with its next mutation. `adoptOrphanedMirrorEntries()` then turns every native line the TS
+ * outbox does not know about into a real outbox entry (plus the local message the sender never got),
+ * at login AND whenever the page returns to the front (`OutboxController.adoptNativeEntries`), so the
+ * ordinary flusher owns it from then on. It is the symmetric twin of `reconcileOutboxSent`.
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
@@ -70,12 +73,16 @@ export interface OutboxMirrorEntry {
   /**
    * Set by the native drain only (`OutboxMirrorEntry.unsendable`): it learned this entry will NEVER
    * go from there - the server refused it, its group is not held, it is malformed. The drains skip
-   * it and keep it; adopted at the next login, a text or a reply is parked as FAILED, with its Retry
-   * ({@link adoptMirrorEntry}). Never written by this side - and, until the P1
-   * `p1-a-warm-page-erases-the-native-only-outbox-entries` ships, erased by this side's next
-   * {@link syncOutboxMirror} while the page is warm.
+   * it and keep it, and so does this side's write; adopted, a text or a reply is parked as FAILED,
+   * with its Retry ({@link adoptMirrorEntry}). Never written by this side.
    */
   unsendable?: boolean;
+  /**
+   * `"page"` on every line this side wrote - stamped by `store_outbox_mirror`, not here. Absent on a
+   * line the native side queued, and on one written before the stamp existed: both are adopted, and
+   * both are kept by this side's write until its queue holds them.
+   */
+  owner?: 'page';
 }
 
 /** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
@@ -108,19 +115,38 @@ export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
   };
 }
 
+/** The page's mirror writes, in the order they were asked for ({@link syncOutboxMirror}). */
+let mirrorWrites: Promise<boolean> = Promise.resolve(true);
+
 /**
- * Rewrite the native mirror from the current outbox snapshot (Tauri only; no-op on web/desktop-web).
- * Called after every outbox mutation so the background service always sees the live queue.
+ * Write the page's lines of the native mirror from an outbox snapshot (Tauri only; no-op on
+ * web/desktop-web). Called after every outbox mutation so the background service always sees the
+ * live queue. `entries` is the WHOLE queue: what it mirrors is written, and every id in it is
+ * `held` - a native line under a held id is the page's, mirrored or not (a failed text is not).
+ * Every other native line is kept (`outbox_mirror.rs`).
+ *
+ * **ONE AT A TIME, IN THE ORDER ASKED.** The command waits for the native writers' lock, which a
+ * background drain holds through its POSTs, so two writes in flight could land in either order and
+ * the older snapshot win. Each write starts when the previous one ended.
+ *
+ * @returns whether the write landed; a failure is logged here.
  */
-export async function syncOutboxMirror(entries: OutboxEntry[]): Promise<void> {
-  if (!isTauriRuntime()) return;
+export function syncOutboxMirror(entries: OutboxEntry[]): Promise<boolean> {
+  if (!isTauriRuntime()) return Promise.resolve(true);
   const mirror = entries.map(toMirrorEntry).filter((e): e is OutboxMirrorEntry => e !== null);
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('store_outbox_mirror', { entries: mirror });
-  } catch (e) {
-    appendLog(`[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${String(e)}`);
-  }
+  const held = entries.map((e) => e.id);
+  const write = mirrorWrites.then(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('store_outbox_mirror', { entries: mirror, held });
+      return true;
+    } catch (e) {
+      appendLog(`[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${String(e)}`);
+      return false;
+    }
+  });
+  mirrorWrites = write;
+  return write;
 }
 
 /**
@@ -308,11 +334,16 @@ export function adoptMirrorEntry(
 }
 
 /**
- * Adopt into the TypeScript outbox every mirror entry it does not already know about, and persist
- * the local copy of each so the sender finally sees what they sent. Tauri only; no-op elsewhere.
+ * Adopt into the TypeScript outbox every NATIVE mirror line it does not already know about, and
+ * persist the local copy of each so the sender finally sees what they sent. Tauri only; no-op
+ * elsewhere.
  *
- * Must run BEFORE conversations are loaded: the adopted message is written to the store and picked
- * up by the ordinary history load, which is also what gives it its `pending` status afterwards.
+ * At login it runs BEFORE conversations are loaded: the adopted message is written to the store and
+ * picked up by the ordinary history load, which is also what gives it its `pending` status. On a
+ * return to the front the controller puts it on screen itself (`OutboxController.adoptNativeEntries`).
+ *
+ * A LINE THE PAGE WROTE IS NEVER ADOPTED: absent from the queue, the page settled it - sent,
+ * withdrawn, discarded - after the last write that named it, and the next write drops it.
  *
  * A delivered background send is removed from the mirror by the native drain, so an entry still
  * present here was NOT delivered. Should one race through anyway, `reconcileOutboxSent` deletes it
@@ -345,7 +376,13 @@ export async function adoptOrphanedMirrorEntries(
     .then((entries) => (entries ? new Set(entries.map((e) => e.id)) : null));
   if (!known) return 0;
 
-  const orphans = mirror.filter((e) => e.id && !known.has(e.id));
+  const stale = mirror.filter((e) => e.owner === 'page' && !known.has(e.id));
+  if (stale.length) {
+    appendLog(
+      `[OUTBOX_MIRROR] ${stale.length} line(s) the page wrote and no longer queues - not adopted, the next write drops them`
+    );
+  }
+  const orphans = mirror.filter((e) => e.id && e.owner !== 'page' && !known.has(e.id));
   if (!orphans.length) return 0;
   appendLog(`[OUTBOX_MIRROR] ${orphans.length} orphan mirror entr(y/ies) to adopt`);
 

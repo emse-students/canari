@@ -299,6 +299,13 @@ static CanariDecryptedMessage *_Nullable CanariParseDecryptedJson(NSString *json
  * path delivered it would decide whether an absent device can ever learn about it.
  */
 @property(nonatomic, assign) BOOL durable;
+/**
+ * The line as it was read, nil for an entry queued here. A rewrite starts from it, so every field
+ * this file does not name survives: `owner` (the page's write replaces only the lines it stamped
+ * `"page"` and keeps every other, `outbox_mirror.rs`) and `unsendable` above all - dropped, a page
+ * line would read as native and outlive the page's own settlement of it.
+ */
+@property(nonatomic, copy) NSDictionary *fields;
 @end
 
 @implementation CanariOutboxEntry
@@ -2079,6 +2086,7 @@ static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
     // Defaults to YES: every entry the outbox mirrors carries conversation state, so a mirror file
     // written before this field existed must not be read as frames nobody may ever recover.
     entry.durable = o[@"durable"] == nil ? YES : [o[@"durable"] boolValue];
+    entry.fields = o;
     [entries addObject:entry];
   }
   return entries;
@@ -2096,14 +2104,15 @@ static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
   }
   NSMutableArray<NSString *> *lines = [NSMutableArray array];
   for (CanariOutboxEntry *e in remaining) {
-    NSDictionary *obj = @{
+    NSMutableDictionary *obj = e.fields != nil ? [e.fields mutableCopy] : [NSMutableDictionary dictionary];
+    [obj addEntriesFromDictionary:@{
       @"id" : e.entryId,
       @"groupId" : e.groupId,
       @"proto" : e.proto,
       @"sentAt" : @(e.sentAt),
       @"silent" : @(e.silent),
       @"durable" : @(e.durable),
-    };
+    }];
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
     if (data != nil) {
       [lines addObject:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];

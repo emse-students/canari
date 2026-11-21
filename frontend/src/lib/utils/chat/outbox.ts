@@ -63,7 +63,7 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
-import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
+import { adoptOrphanedMirrorEntries, syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
@@ -713,6 +713,12 @@ export interface OutboxController {
   retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
+  /**
+   * Take into the queue what the native side queued while the page was away - a reply typed in the
+   * shade, an entry its drain marked unsendable - on a return to the front. Resolves to how many
+   * were adopted. See {@link adoptNativeOutboxEntries}.
+   */
+  adoptNativeEntries: () => Promise<number>;
   /** Stop the internal backoff timer. */
   dispose: () => void;
   /**
@@ -4726,7 +4732,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return siblings;
   }
 
-  return {
+  const controller: OutboxController = {
     async enqueue(entry: OutboxEntry, opts: EnqueueOptions = {}): Promise<void> {
       // REJECTS RATHER THAN RETURNS: a no-op here told the caller its message was queued when
       // nothing would ever send it.
@@ -4999,6 +5005,28 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
     },
 
+    async adoptNativeEntries(): Promise<number> {
+      if (!storage) return 0;
+      const adopted = await adoptOrphanedMirrorEntries(storage, deviceKey(), deps.userId);
+      if (adopted === 0) return 0;
+      // THE CLAIM: the mirror's next lines name them as the page's, so no later adoption takes them
+      // again. Failed, they stay native lines there while the queue holds them - the next write of
+      // this queue claims them (`held`), and until then a background drain may send what this
+      // flusher sends: the double send the claim exists to close, so it is an ERROR.
+      if (!(await syncOutboxMirror(await readQueue('native adoption')))) {
+        console.error(
+          `[OUTBOX] ${adopted} native entr${adopted === 1 ? 'y' : 'ies'} adopted but NOT claimed in the mirror - a background drain may send them too until the next mirror write`
+        );
+      }
+      // On screen, pending - or failed with its Retry, for an entry the native drain marked unsendable.
+      await controller.applyPendingStatuses();
+      log(
+        `[OUTBOX] ${adopted} native entr${adopted === 1 ? 'y' : 'ies'} adopted on the return to the front - flushing`
+      );
+      runFlush();
+      return adopted;
+    },
+
     async enqueueTake(
       take: OutboxEntry,
       sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
@@ -5136,6 +5164,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
     },
   };
+  return controller;
 }
 
 // ── Registry (module singleton, mirrors mlsStatePersisterRegistry) ────────────
@@ -5316,6 +5345,20 @@ export function drainOutboxForExit(
 /** Mark loaded messages still queued as `pending` (no-op when none). */
 export function applyOutboxPendingStatuses(): Promise<void> {
   return active ? active.applyPendingStatuses() : Promise.resolve();
+}
+
+/**
+ * {@link OutboxController.adoptNativeEntries} on the active controller; `0` with none.
+ *
+ * **THE PAGE RETURNING TO THE FRONT IS THE SECOND MOMENT OF ADOPTION**, after the login: a warm page
+ * never logs in again, so a reply typed in the shade while it slept, or an entry the native drain
+ * gave up on, waited in the mirror until the next cold start - with no bubble, and, until
+ * 2026-11-21, erased by the page's next mirror write. Run by the resume sequence AFTER
+ * `reconcileOutboxSent`, so an entry the background already delivered is gone before it is looked
+ * for, and while the page holds the MLS state, so the native drain can no longer encrypt.
+ */
+export function adoptNativeOutboxEntries(): Promise<number> {
+  return active ? active.adoptNativeEntries() : Promise.resolve(0);
 }
 
 /**

@@ -4114,11 +4114,10 @@ needs "can a retry ever succeed".
   end the whole retry and set the failure flag). It is MARKED in the mirror (`unsendable`; no native
   writer deletes it), skipped by every later drain - no push-woken drain re-encrypts or re-POSTs it -
   and TOLD: the drain that marked it asks for the nudge ("Vous avez peut-etre des messages en
-  attente"), which stays while the mirror holds it. The page adopts it at its next LOGIN - a cold
-  start or a sign-in, NOT a warm return to the front - as a FAILED message with its Retry
-  (`adoptMirrorEntry`, parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has no
-  bubble, is adopted pending). **What this does not yet hold: a page warm in the background erases
-  it** (below).
+  attente"), which stays while the mirror holds it. The page adopts it at its next login AND at its
+  next return to the front (1.7.3, below) as a FAILED message with its Retry (`adoptMirrorEntry`,
+  parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has no bubble, is adopted
+  pending), and the page's own mirror write keeps it until then.
 - **The worker decides on them** (`OutboxRetry.decide`): any entry `NOT_YET` is a `Result.retry()`
   with no cap - WorkManager's backoff bounds the cost, up to five hours between runs; none left that
   can go ends the request; a `BLOCKED` drain, or an unreadable push context, sets the failure flag
@@ -4142,14 +4141,16 @@ needs "can a retry ever succeed".
   `mobile/background.rs` (a key that does not open the state, a group not held, a malformed proto, a
   refused write), `outboxMirror.adopt.test.ts` (an unsendable entry adopted failed),
   `androidOutboxRetry.test.ts` (the wiring).
-- **Not closed here, and pre-existing - P1, [backlog](../backlog.d/p1-a-warm-page-erases-the-native-only-outbox-entries.md):
-  a native-only entry is erased by a warm page's mirror rewrite.** `store_outbox_mirror` rewrites the file from the page's queue, and the page adopts the
-  entries it does not know only at a login (`adoptOrphanedMirrorEntries`). An entry queued natively
-  in the background therefore waits, while the app is warm in front, until the next `onPause`, and is
-  ERASED by the first outbox mutation of the page before then - an unsendable one included, so the
-  "kept, shown failed" above holds only when the next page to read the mirror is a cold one (review
-  of #3928, observation 5, confirmed by the re-review).
-  The reading: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md).
+- **A warm page no longer erases a native-only entry (1.7.3, the P1 found by the review of #3928,
+  observation 5).** The page used to rewrite the mirror WHOLE from its queue, under no lock the
+  native writers take, and to adopt the entries it did not know only at a login - so a reply queued
+  natively while the app was warm in the background, or an entry the drain had marked unsendable,
+  was erased by the page's first outbox mutation after it: neither sent, nor shown failed, nor
+  retried. The file now says which line is whose, the page writes only its own under `OUTBOX_LOCK`,
+  and it adopts the native lines on every return to the front -
+  [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
+  The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
+  and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the

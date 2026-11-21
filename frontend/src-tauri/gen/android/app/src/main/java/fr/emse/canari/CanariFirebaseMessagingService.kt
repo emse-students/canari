@@ -104,11 +104,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * A drain learned it will NEVER go from here ([OutboxRetry.Prospect.NEVER]: refused by the
          * server, its group not held, malformed). No native writer deletes it, and every later drain
-         * skips it; the page adopts it at its next login as a failed message with its Retry
-         * (`outboxMirror.ts`). A page warm in the background still erases it with its next mirror
-         * rewrite (`store_outbox_mirror`) - the P1 `p1-a-warm-page-erases-the-native-only-outbox-entries`.
+         * skips it; the page adopts it as a failed message with its Retry, at its next login or
+         * its next return to the front (`outboxMirror.ts`). The page's own write keeps it
+         * (`outbox_mirror.rs`).
          */
         val unsendable: Boolean = false,
+        /**
+         * Who wrote the line: `"page"` for the page's outbox (`store_outbox_mirror`), null for a
+         * line queued here. The page's write replaces ITS lines and keeps every other one, so a
+         * native rewrite must carry this through unchanged - dropped, a page line would read as
+         * native and outlive the page's own settlement of it.
+         */
+        val owner: String? = null,
     )
 
     companion object {
@@ -1053,8 +1060,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             QUEUED,
 
             /**
-             * Not there, and not seen delivered: adopted by the app's outbox, or ERASED by its whole
-             * rewrite (`store_outbox_mirror` writes without [OUTBOX_LOCK]) - not distinguishable here.
+             * Not there, and not seen delivered: adopted by the app's outbox, which then sent or
+             * settled it. The page's write keeps every line it does not hold (`outbox_mirror.rs`).
              */
             ABSENT,
 
@@ -2407,6 +2414,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         private val OUTBOX_LOCK = Any()
 
+        /**
+         * [OUTBOX_LOCK] itself, for the page's write and read of the mirror (`outbox_mirror.rs`),
+         * which take this monitor from Rust over JNI: a file lock could not serialise with it, the
+         * page and this service being one process. Rust takes it holding no lock of its own and
+         * takes nothing under it, so the order above stands.
+         */
+        @JvmStatic
+        fun outboxLock(): Any = OUTBOX_LOCK
+
         /** What [encryptQueuedMessages] did with a batch. */
         private sealed interface EncryptBatch {
             /**
@@ -2844,6 +2860,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             o.optBoolean("silent", false),
                             o.optBoolean("durable", true),
                             o.optBoolean("unsendable", false),
+                            o.optString("owner").takeIf { it.isNotEmpty() },
                         )
                     } catch (e: Exception) {
                         null
@@ -2872,6 +2889,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         put("silent", e.silent)
                         put("durable", e.durable)
                         if (e.unsendable) put("unsendable", true)
+                        e.owner?.let { put("owner", it) }
                     }.toString()
                 }
                 file.writeText(body + "\n")
