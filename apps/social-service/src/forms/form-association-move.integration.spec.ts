@@ -63,9 +63,9 @@ maybe('the association of a form, against PostgreSQL', () => {
     });
     await ds.initialize();
     await ds.query(readFileSync(join(__dirname, '../migrations/146_form_drafts.sql'), 'utf8'));
-    // A publication under an association tells its followers (engagement WP-4,
-    // `announceOpeningToFollowers`): the tables that statement reads, in the shape it reads them.
-    // Nobody follows here, so it writes no row - this file is about the association link.
+    // The association tables the publication's other reads touch, in the shape they read them. A
+    // form tells no follower at its publication (owner, 2026-11-17) - this file is about the
+    // association link.
     await ds.query(
       `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
     );

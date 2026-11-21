@@ -13,6 +13,29 @@ export const FORM_DRAFT_EMPTY = 'FORM_DRAFT_EMPTY';
  */
 export const FORM_CHANGED_SINCE_REVISION = 'FORM_CHANGED_SINCE_REVISION';
 
+/**
+ * The 409 refusing to move a published form's opening EARLIER while people asked to be told of it:
+ * the move pushes them (owner, 2026-11-17). Carries `askers`; confirmed by sending the publication
+ * again with `confirmOpeningNotify` set to the count it showed (a count that moved is refused again).
+ */
+export const FORM_OPENING_NOTIFIES = 'FORM_OPENING_NOTIFIES';
+
+/**
+ * The sentence for a `FORM_OPENING_NOTIFIES` refusal naming how many people the move would push, or
+ * `null` for another code or a body that carried no count (the caller then falls through to its
+ * generic wording rather than print a number it does not have).
+ */
+export function openingNotifiesMessage(
+  code: string | null | undefined,
+  askerCount: number | null | undefined,
+  immediate: boolean | null | undefined
+): string | null {
+  if (code !== FORM_OPENING_NOTIFIES || !askerCount || immediate == null) return null;
+  return immediate
+    ? m.form_opening_notifies_now_refusal({ count: askerCount })
+    : m.form_opening_notifies_later_refusal({ count: askerCount });
+}
+
 /** The 400 of a revision the edit route's validation refuses at its publication. */
 export const FORM_DRAFT_INVALID = 'FORM_DRAFT_INVALID';
 

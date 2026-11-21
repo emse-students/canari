@@ -24,6 +24,7 @@ import {
   askOpening,
   cancelOpening,
   followOpeningMove,
+  countUntoldOpenings,
   isTold,
   PURGE_STALE_OPENINGS_SQL,
 } from './opening-reminders';
@@ -96,7 +97,11 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
   const opensIn = (minutes: number) => new Date(Date.now() + minutes * 60_000);
   /** Moves every row's opening to the past, by the DATABASE's clock - no wall clock asserted. */
   const openNow = () => q(`UPDATE opening_reminders SET "opensAt" = now() - interval '1 second'`);
-  const announceForm = (opensAt: Date | null) =>
+  /**
+   * The follower rows of a form - which NO build writes since 2026-11-17 (a form tells only the
+   * people who pressed its bell). Kept to prove the rows an older build left tell nobody.
+   */
+  const announceFormLegacy = (opensAt: Date | null) =>
     announceOpeningToFollowers(ds.manager, {
       kind: 'form',
       targetId: FORM,
@@ -268,7 +273,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('writes the followers who see the association, never the publisher, the far follower or a stranger', async () => {
-      expect(await announceForm(opensIn(60))).toBe(3);
+      expect(await announceFormLegacy(opensIn(60))).toBe(3);
       expect(await rows()).toEqual(
         sorted([
           `form:${FAN}:followed:true/false`,
@@ -281,21 +286,21 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         BDE,
         FAR_FAN,
       ]);
-      expect(await announceForm(opensIn(60))).toBe(1);
+      expect(await announceFormLegacy(opensIn(60))).toBe(1);
       // An archived association announces nothing.
       await q(`UPDATE associations SET archived = true`);
       await q(`DELETE FROM opening_reminders`);
-      expect(await announceForm(opensIn(60))).toBe(0);
+      expect(await announceFormLegacy(opensIn(60))).toBe(0);
       await q(`UPDATE associations SET archived = false`);
     });
 
-    it('a follower who also asked gets ONE opening push; a follower the opening and no heads-up; a non-follower who asked both', async () => {
-      await announceForm(opensIn(3));
+    it('a form tells only who asked: its follower rows (an older build) are claimed and told nothing, and the bell row names the association and the form', async () => {
+      await announceFormLegacy(opensIn(3));
       // Asked AFTER the follower row (the upsert) and BEFORE any row (a new ask).
       await askOpening(ds.manager, 'form', FORM, FAN_ASKER, opensIn(3));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
       // A re-announcement (a later move, a retried publication) never overwrites an ask.
-      await announceForm(opensIn(3));
+      await announceFormLegacy(opensIn(3));
       expect(await rows()).toEqual(
         sorted([
           `form:${ASKER}:asked:false/false`,
@@ -315,44 +320,50 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
       await openNow();
       await scheduler.checkReminders();
       await scheduler.checkReminders();
-      expect(pushes()).toEqual(
-        sorted([
-          `${ASKER}:form_open`,
-          `${FAN}:form_open`,
-          `${FAN_ASKER}:form_open`,
-          `${MUTED_FAN}:form_open`,
-        ])
-      );
+      expect(pushes()).toEqual(sorted([`${ASKER}:form_open`, `${FAN_ASKER}:form_open`]));
       expect(await inApp()).toEqual(
         sorted([
           `${ASKER}:form_reminder`,
           `${ASKER}:form_reminder`,
-          `${FAN}:form_reminder`,
           `${FAN_ASKER}:form_reminder`,
           `${FAN_ASKER}:form_reminder`,
-          `${MUTED_FAN}:form_reminder`,
         ])
       );
+      // Every row is claimed (decided once at the opening), the followers' too.
+      const left = await q(
+        `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
+      );
+      expect(left.rows[0].n).toBe(0);
+      // WHO AND WHAT (owner, 2026-11-17): the association is the actor, the form's title the text.
+      const bell = await q(
+        `SELECT DISTINCT "actorName", "associationId", (text LIKE '%Gala%') AS "namesForm"
+           FROM post_notifications WHERE type = 'form_reminder'`
+      );
+      expect(bell.rows).toEqual([{ actorName: 'BDE', associationId: BDE, namesForm: true }]);
     });
 
-    it("a follower's reduced bell withholds the opening push, never an ask's, and the bell row is still written", async () => {
+    it("a reduced bell never withholds an ask's opening push, and a form's follower row tells nobody", async () => {
       await q(
         `INSERT INTO account_bells ("userId", "targetKind", "targetId", level)
          VALUES ($1, 'association', $3, 'none'), ($2, 'association', $3, 'lives')`,
         [MUTED_FAN, FAN_ASKER, BDE]
       );
-      await announceForm(null);
+      await announceFormLegacy(null);
       await askOpening(ds.manager, 'form', FORM, FAN_ASKER, opensIn(60));
       await openNow();
       await scheduler.checkReminders();
-      expect(pushes()).toEqual(sorted([`${FAN}:form_open`, `${FAN_ASKER}:form_open`]));
-      expect(await inApp()).toEqual(
-        sorted([`${FAN}:form_reminder`, `${FAN_ASKER}:form_reminder`, `${MUTED_FAN}:form_reminder`])
-      );
+      expect(pushes()).toEqual(sorted([`${FAN_ASKER}:form_open`]));
+      expect(await inApp()).toEqual(sorted([`${FAN_ASKER}:form_reminder`]));
     });
 
     it('two replicas running the same tick push each row once', async () => {
-      await announceForm(null);
+      await announceOpeningToFollowers(ds.manager, {
+        kind: 'booking',
+        targetId: SPACE,
+        associationId: BDE,
+        opensAt: null,
+        actorId: PUBLISHER,
+      });
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(2));
       await Promise.all([scheduler.checkReminders(), replica.checkReminders()]);
       await openNow();
@@ -361,15 +372,15 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         sorted([
           `${ASKER}:form_open`,
           `${ASKER}:form_opening_soon`,
-          `${FAN}:form_open`,
-          `${FAN_ASKER}:form_open`,
-          `${MUTED_FAN}:form_open`,
+          `${FAN}:social_booking_open`,
+          `${FAN_ASKER}:social_booking_open`,
+          `${MUTED_FAN}:social_booking_open`,
         ])
       );
     });
 
     it('a moved opening carries the untold rows and re-arms an ask, never a told opening', async () => {
-      await announceForm(opensIn(2));
+      await announceFormLegacy(opensIn(2));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(2));
       await scheduler.checkReminders();
       expect(pushes()).toEqual(sorted([`${ASKER}:form_opening_soon`]));
@@ -381,8 +392,81 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
       expect(pushes()).toEqual(sorted([]));
     });
 
+    it('a moved opening re-arms a stamp already spent, for an ask and for a follower of a space, only when it moved to an instant still to come', async () => {
+      await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
+      await announceOpeningToFollowers(ds.manager, {
+        kind: 'booking',
+        targetId: SPACE,
+        associationId: BDE,
+        opensAt: null,
+        actorId: PUBLISHER,
+      });
+      await openNow();
+      await scheduler.checkReminders();
+      expect(pushes()).toEqual(
+        sorted([
+          `${ASKER}:form_open`,
+          `${FAN}:social_booking_open`,
+          `${FAN_ASKER}:social_booking_open`,
+          `${MUTED_FAN}:social_booking_open`,
+        ])
+      );
+      // Moved to NOW after it was told: one opening, one push - nothing is re-armed.
+      pushed.length = 0;
+      expect(await followOpeningMove(ds.manager, 'form', FORM, null)).toBe(0);
+      expect(await followOpeningMove(ds.manager, 'booking', SPACE, null)).toBe(0);
+      await scheduler.checkReminders();
+      expect(pushes()).toEqual([]);
+      // Moved LATER (the 2026-11-17 case): the real opening is owed, and told.
+      expect(await followOpeningMove(ds.manager, 'form', FORM, opensIn(60))).toBe(1);
+      expect(await followOpeningMove(ds.manager, 'booking', SPACE, opensIn(60))).toBe(3);
+      expect(await rows()).toContain(`form:${ASKER}:asked:false/false`);
+      await scheduler.checkReminders();
+      expect(pushes()).toEqual([]);
+      await openNow();
+      await scheduler.checkReminders();
+      expect(pushes()).toEqual(
+        sorted([
+          `${ASKER}:form_open`,
+          `${FAN}:social_booking_open`,
+          `${FAN_ASKER}:social_booking_open`,
+          `${MUTED_FAN}:social_booking_open`,
+        ])
+      );
+    });
+
+    it("a form's legacy follower rows are neither counted nor read as told (they never will be)", async () => {
+      await announceFormLegacy(opensIn(60));
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(0);
+      expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(false);
+      await askOpening(ds.manager, 'form', FORM, FAN, opensIn(60));
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(1);
+      expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(true);
+      // A booking space's follower still reads as told.
+      await announceOpeningToFollowers(ds.manager, {
+        kind: 'booking',
+        targetId: SPACE,
+        associationId: BDE,
+        opensAt: opensIn(60),
+        actorId: PUBLISHER,
+      });
+      expect(await isTold(ds.manager, 'booking', SPACE, FAN_ASKER)).toBe(true);
+      expect(await countUntoldOpenings(ds.manager, 'booking', SPACE)).toBe(3);
+    });
+
+    it('counts the people a move of the opening would push: the rows not yet told', async () => {
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(0);
+      await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
+      await askOpening(ds.manager, 'form', FORM, FAN, opensIn(60));
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(2);
+      await openNow();
+      await scheduler.checkReminders();
+      expect(await countUntoldOpenings(ds.manager, 'form', FORM)).toBe(0);
+    });
+
     it('"Ne plus me prévenir" removes the row, follower or not, and the status reads it', async () => {
-      await announceForm(opensIn(60));
+      await announceFormLegacy(opensIn(60));
+      await askOpening(ds.manager, 'form', FORM, FAN, opensIn(60));
       expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(true);
       await cancelOpening(ds.manager, 'form', FORM, FAN);
       expect(await isTold(ds.manager, 'form', FORM, FAN)).toBe(false);
@@ -485,14 +569,21 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
           BDE,
           FAR_FAN,
         ]);
-        expect(await announceForm(opensIn(60))).toBe(4);
+        const space = {
+          kind: 'booking',
+          targetId: SPACE,
+          associationId: BDE,
+          opensAt: opensIn(60),
+          actorId: PUBLISHER,
+        } as const;
+        expect(await announceOpeningToFollowers(ds.manager, space)).toBe(4);
         await q(`DELETE FROM association_follows WHERE "followerUserId" = $1`, [FAN]);
         await q(`DELETE FROM association_members WHERE "userId" = $1`, [FAR_FAN]);
         await q(`UPDATE users SET campus = 'gardanne' WHERE id = $1`, [FAN_ASKER]);
         await openNow();
         await scheduler.checkReminders();
-        expect(pushes()).toEqual([`${MUTED_FAN}:form_open`]);
-        expect(await inApp()).toEqual([`${MUTED_FAN}:form_reminder`]);
+        expect(pushes()).toEqual([`${MUTED_FAN}:social_booking_open`]);
+        expect(await inApp()).toEqual([`${MUTED_FAN}:booking_open`]);
         // Decided at the opening, once: every row claimed.
         const left = await q(
           `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
@@ -506,7 +597,9 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         await scheduler.checkReminders();
         expect(pushes()).toEqual([`${ASKER}:form_open`]);
         pushed.length = 0;
-        expect(await followOpeningMove(ds.manager, 'form', FORM, opensIn(3))).toBe(0);
+        // Moved ahead after it was told, the row is RE-ARMED by the move itself (2026-11-17)...
+        expect(await followOpeningMove(ds.manager, 'form', FORM, opensIn(3))).toBe(1);
+        // ...and a re-ask on it changes nothing more.
         await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
         expect(await rows()).toEqual([`form:${ASKER}:asked:false/false`]);
         await scheduler.checkReminders();
@@ -700,7 +793,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
 
     describe('an image older than WP-4, still writing form_reminders during the rollover', () => {
       it('its ask (insert, then its upsert) and its unsubscribe are the same writes on the new store', async () => {
-        await announceForm(opensIn(60));
+        await announceFormLegacy(opensIn(60));
         // The old subscribe of a FOLLOWER: their row becomes an ask, its heads-up armed.
         await q(
           `INSERT INTO form_reminders ("formId", "userId", "opensAt") VALUES ($1, $2, now() + interval '1 hour')`,
@@ -756,7 +849,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     });
 
     it('the erasure deletes the account rows of both stores', async () => {
-      await announceForm(opensIn(60));
+      await announceFormLegacy(opensIn(60));
       await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
       for (const label of ['form_reminders', 'opening_reminders']) {
         const statement = ERASURE_STATEMENTS.find((s) => s.label === label);
