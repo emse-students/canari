@@ -36,7 +36,7 @@
 #
 # `ANDROID_GRADLE_DIR` and `CARGO` exist for `tests/android-app-compile.test.sh` and nothing else.
 #
-# Needs: a JDK 21, rustup with the aarch64-linux-android target, the Android SDK and NDK
+# Needs: a JDK 21, rustup with the aarch64-linux-android and armv7-linux-androideabi targets, the Android SDK and NDK
 # (ANDROID_HOME, ANDROID_NDK_HOME). Usage: bash .github/scripts/android-app-compile.sh
 set -euo pipefail
 
@@ -66,6 +66,14 @@ mkdir -p "$root/frontend/build"
   export AR_aarch64_linux_android="$bin/llvm-ar"
   export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android24-clang"
   "$cargo_bin" check --locked --lib --target aarch64-linux-android
+  # THE 32-BIT PHONE (2026-11-21). Releases ship armeabi-v7a too (#3932), and a change that only
+  # breaks that target (a `usize`/`u32` assumption, a 64-bit atomic) would otherwise surface at
+  # release. A `cargo check` like the line above: no link, no APK. The NDK names its 32-bit clang
+  # `armv7a-linux-androideabi24-clang`, while the Rust target says `armv7-linux-androideabi`.
+  export CC_armv7_linux_androideabi="$bin/armv7a-linux-androideabi24-clang"
+  export AR_armv7_linux_androideabi="$bin/llvm-ar"
+  export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$bin/armv7a-linux-androideabi24-clang"
+  "$cargo_bin" check --locked --lib --target armv7-linux-androideabi
 )
 for f in tauri.settings.gradle app/tauri.build.gradle.kts; do
   [ -s "$android/$f" ] || { echo "::error::$f was not generated - the Rust build script did not run for the Android target"; exit 1; }
