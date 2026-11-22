@@ -176,7 +176,9 @@
      * The stream's owner re-fetches whatever a seek lands on (a live replay's `ReplayPlayer`), so the
      * buffered part is a WINDOW around the playhead, never what the clip still holds: the seek is not
      * clamped to `buffered.start(0)`. Without it a backward drag lands on the window's own start - the
-     * playhead stays put (iPhone 12, 1.7.3-alpha.5).
+     * playhead stays put. THE DEPENDENCY: the owner must be alive to refetch, which holds because
+     * `ReplayPane` unmounts the player in every terminal state (`isTerminalReplayState`); a stream with
+     * no owner left to refetch must not set this.
      */
     seekAnywhere?: boolean;
     /**
@@ -719,6 +721,16 @@
       streamed && !seekAnywhere ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
     if (seconds < floor) {
       Log.d('VideoPlayer', `seek to ${seconds.toFixed(1)} s clamped to ${floor.toFixed(1)} s`);
+    }
+    if (
+      streamed &&
+      seekAnywhere &&
+      seconds < streamSeekFloor(streamProgressOf(src), video.buffered)
+    ) {
+      Log.d(
+        'VideoPlayer',
+        `seek to ${seconds.toFixed(1)} s is before the buffered window - refetched`
+      );
     }
     video.currentTime = Math.min(end, Math.max(floor, seconds));
     currentTime = video.currentTime;
