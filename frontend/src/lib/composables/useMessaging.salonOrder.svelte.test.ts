@@ -35,13 +35,10 @@ import type { Conversation } from '$lib/types';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { openSalonSendGate, resetSalonSendGate } from '$lib/utils/graine/salonSendGate';
 import { decodeAppMessage } from '$lib/proto/codec';
-import {
-  noteSalonSendAnswer,
-  resetSalonRepeatProofForTests,
-} from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
-import { clearAllUploads } from '$lib/utils/chat/uploadProgress.svelte';
-import { forgetSalonSendsOfEndedSession } from '$lib/utils/chat/messaging';
+import { clearAllUploads, textWaitOf } from '$lib/utils/chat/uploadProgress.svelte';
+import { forgetSalonSendsOfEndedSession, runInSalonTurn } from '$lib/utils/chat/messaging';
+import { MAX_UNAVAILABLE_ANSWERS } from '$lib/utils/chat/retryLadder';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 
 const CHANNEL = 'channel_7a1d0c2e-0000-4000-8000-000000000002';
@@ -111,10 +108,6 @@ beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   resetSalonSendGate();
   openSalonSendGate(CHANNEL);
-  resetSalonRepeatProofForTests();
-  noteSalonSendAnswer('00000000-0000-4000-8000-0000000000ff', {
-    clientMessageId: '00000000-0000-4000-8000-0000000000ff',
-  });
   clearAllUploads();
   forgetSalonSendsOfEndedSession();
   // `connectivity.reset()` drops every reconnect listener, the owed writes' included.
@@ -226,7 +219,15 @@ describe('the lane holds only what the machine will send by itself', () => {
     await messaging.handleSendChat(ctx, 'refused');
     expect(rows(ctx)[0].status).toBe('error');
     await messaging.handleSendChat(ctx, 'next');
-    await vi.waitFor(() => expect(rows(ctx)[1]).toMatchObject({ id: 'srv-after', status: 'sent' }));
+    // Rows are ordered for display (the server's time), so the sent one is found by its id.
+    await vi.waitFor(() =>
+      expect(rows(ctx).find((r) => r.id === 'srv-after')).toMatchObject({ status: 'sent' })
+    );
+    expect(
+      rows(ctx)
+        .map((r) => r.status)
+        .sort()
+    ).toEqual(['error', 'sent']);
   });
 
   it('a held head given up by its author lets the next one go, which was waiting behind it', async () => {
@@ -267,5 +268,132 @@ describe('what a past page life left goes in the order it was written', () => {
     await vi.waitFor(() => expect(server.stored).toHaveLength(3));
     expect(server.stored).toEqual(['P1', 'P2', 'P3']);
     expect(asked()).toEqual(['P1', 'P2', 'P3']);
+  });
+});
+
+/**
+ * Review of #3964: probes the lane against the cases its first version got wrong. The page life is
+ * a fresh one in every test - no answer has been seen before the outage starts.
+ */
+describe('the review probes of #3964', () => {
+  it('B1: twelve texts typed fast behind a held head do not spend its bound: H X1..X12 Z', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const server = fakeServer();
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    server.up = false;
+    await messaging.handleSendChat(ctx, 'H');
+    const xs = Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, (_, i) => `X${i + 1}`);
+    for (const text of xs) {
+      await messaging.handleSendChat(ctx, text);
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    // Every text typed asked H again, and none of those answers was counted: H is still held.
+    expect(asked().filter((t) => t === 'H').length).toBeGreaterThan(MAX_UNAVAILABLE_ANSWERS);
+    expect(rows(ctx).some((r) => r.status === 'unconfirmed')).toBe(false);
+
+    server.up = true;
+    await messaging.handleSendChat(ctx, 'Z');
+    await vi.waitFor(() => expect(server.stored).toHaveLength(MAX_UNAVAILABLE_ANSWERS + 2));
+    expect(server.stored).toEqual(['H', ...xs, 'Z']);
+  });
+
+  it('A: an outage before the first send of the page life: A B C, then D after the return', async () => {
+    const server = fakeServer();
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    server.up = false;
+    for (const text of ['A', 'B', 'C']) await messaging.handleSendChat(ctx, text);
+    // Held for the server, never handed to the author: no answer had to prove anything first.
+    expect(rows(ctx).map((r) => r.status)).toEqual(['pending', 'pending', 'pending']);
+    server.up = true;
+    await messaging.handleSendChat(ctx, 'D');
+    await vi.waitFor(() => expect(server.stored).toHaveLength(4));
+    expect(server.stored).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('C: a reload during the outage: the ledger P1 P2 P3, then NEW typed, then the return', async () => {
+    const entries = ['P1', 'P2', 'P3'].map((text, i) => ({
+      messageId: `1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5${i}`,
+      conversationKey: CHANNEL,
+      text,
+      sentAt: 2_000 + i,
+    }));
+    localStorage.setItem(LEDGER_KEY, JSON.stringify(entries));
+    const server = fakeServer();
+    server.up = false;
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    await messaging.resumeUnsentSends(ctx, null);
+    await vi.waitFor(() => expect(asked()).toContain('P1'));
+    await messaging.handleSendChat(ctx, 'NEW');
+    // Nothing behind P1 was ever on the wire during the outage.
+    expect(new Set(asked())).toEqual(new Set(['P1']));
+
+    server.up = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(server.stored).toHaveLength(4));
+    expect(server.stored).toEqual(['P1', 'P2', 'P3', 'NEW']);
+  });
+
+  it('a text waiting behind another says so: "waiting for the previous message"', async () => {
+    const server = fakeServer();
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    server.up = false;
+    await messaging.handleSendChat(ctx, 'first');
+    await messaging.handleSendChat(ctx, 'second');
+    const [first, second] = (
+      JSON.parse(localStorage.getItem(LEDGER_KEY) ?? '[]') as { messageId: string }[]
+    ).map((e) => e.messageId);
+    expect(textWaitOf(first)).toBe('server');
+    expect(textWaitOf(second)).toBe('turn');
+
+    server.up = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(server.stored).toEqual(['first', 'second']));
+    expect(textWaitOf(second)).toBeUndefined();
+  });
+
+  it('S3: a poll (or a forwarded file) waits its turn behind a held text, and goes after it', async () => {
+    const server = fakeServer();
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    server.up = false;
+    await messaging.handleSendChat(ctx, 'before the poll');
+    const poll = vi.fn(async () => {
+      server.stored.push('POLL');
+    });
+    const posted = runInSalonTurn(CHANNEL, 'poll', poll);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(poll).not.toHaveBeenCalled();
+
+    server.up = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await posted;
+    expect(server.stored).toEqual(['before the poll', 'POLL']);
+  });
+
+  it('S3: a poll whose post is refused leaves the lane: the next text is not held by it', async () => {
+    const server = fakeServer();
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+
+    await expect(
+      runInSalonTurn(CHANNEL, 'poll', () => Promise.reject(new Error('refused')))
+    ).rejects.toThrow('refused');
+    await messaging.handleSendChat(ctx, 'after the poll');
+    expect(server.stored).toEqual(['after the poll']);
   });
 });

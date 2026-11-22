@@ -22,6 +22,7 @@ import {
   forgetSalonSendsOfEndedSession,
   deliverSalonAttachment,
   quoteReference,
+  runInSalonTurn,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -4812,13 +4813,16 @@ export function useMessaging() {
     if (isChannelConversationId(targetName)) {
       try {
         if (env.kind === 'media') {
-          await sendEncryptedChannelMessage(
-            targetName,
-            encodeAppMessage({
-              ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
-              messageId: crypto.randomUUID(),
-              sentAt: Date.now(),
-            })
+          // In the salon's lane, like a text: received after every message written before it.
+          await runInSalonTurn(targetName, 'forward', () =>
+            sendEncryptedChannelMessage(
+              targetName,
+              encodeAppMessage({
+                ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
+                messageId: crypto.randomUUID(),
+                sentAt: Date.now(),
+              })
+            )
           );
           return { success: true };
         }

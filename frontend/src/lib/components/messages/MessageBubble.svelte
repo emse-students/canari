@@ -23,6 +23,7 @@
     uploadViewOf,
     textWaitOf,
     uploadCancelOf,
+    type TextWait,
     type UnsentReason,
     type UploadView,
   } from '$lib/utils/chat/uploadProgress.svelte';
@@ -886,7 +887,7 @@
    * the outbox for a DM, `messaging.ts` for a salon): the server that answered "not now", or the
    * link. `null`: a plain "en attente".
    */
-  const waitingOn = $derived.by((): 'network' | 'server' | null => {
+  const waitingOn = $derived.by((): TextWait | null => {
     if (!isOwn || mediaRef || status !== 'pending') return null;
     // A device KNOWN offline waits for the link first, whatever the server said before it went.
     if (connectivity.isOffline) return 'network';

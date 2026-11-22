@@ -674,6 +674,7 @@
   "msg_en_attente": "En attente…",
   "msg_waiting_for_network": "En attente du réseau…",
   "msg_waiting_for_server": "En attente du serveur…",
+  "msg_waiting_for_previous": "En attente du message précédent…",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",
   "msg_remettre_dans_le_champ": "Remettre dans le champ",

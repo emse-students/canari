@@ -17,7 +17,7 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { flushOwedDmReadMarks } from '$lib/utils/chat/messaging';
+  import { flushOwedDmReadMarks, runInSalonTurn } from '$lib/utils/chat/messaging';
   import { getOutbox } from '$lib/utils/chat/outbox';
   import { holdWhileLeaving } from '$lib/utils/backgroundFlush';
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
@@ -1587,7 +1587,8 @@
   async function handleCreatePoll(draft: ChannelPollDraft) {
     const channelId = convs.selectedContact;
     if (!channelId) return;
-    await sendChannelPoll(channelId, draft);
+    // In the salon's lane: a poll is received after every text written before it.
+    await runInSalonTurn(channelId, 'poll', () => sendChannelPoll(channelId, draft));
   }
 
   /**

@@ -633,6 +633,7 @@
   "msg_en_attente": "Pending…",
   "msg_waiting_for_network": "Waiting for the network…",
   "msg_waiting_for_server": "Waiting for the server…",
+  "msg_waiting_for_previous": "Waiting for the previous message…",
   "msg_echec": "Failed",
   "msg_non_confirme": "Not confirmed",
   "msg_remettre_dans_le_champ": "Put back in the composer",
