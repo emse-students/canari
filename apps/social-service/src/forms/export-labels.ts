@@ -56,9 +56,9 @@ export interface ExportLabels {
   edited?: string;
   /**
    * The word that follows a question's label in the header of its free-comment column (`Question
-   * - Commentaire`, `choice-notes.ts`). Optional HERE, required by `exportSubmissions` when a
-   * question takes a comment or an answer holds one - the same refusal as `file`: this service owns
-   * no word, and a build older than the comment cannot have sent it.
+   * - Commentaire`, `choice-notes.ts`). Optional HERE: `exportSubmissions` leaves the comment columns
+   * out when it is absent (a build older than the comment cannot have sent it, [LEGACY] in
+   * `docs/wiki/legacy-compatibility.md`).
    */
   comment?: string;
   /**

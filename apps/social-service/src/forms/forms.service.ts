@@ -4760,16 +4760,20 @@ export class FormsService {
     // A choice question's free comment is a column of its own, right after its answer: the answer
     // column stays one value per row to count, and the comment is read beside it. Written when the
     // question takes a comment now or an answer holds one from when it did (`choice-notes.ts`).
-    const commentColumns = new Set(
-      form.items
-        .filter(
-          (item: FormItemLike) =>
-            item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
-        )
-        .map((item: FormItemLike) => item.id)
-    );
-    if (commentColumns.size > 0 && !labels.comment) {
-      throw new BadRequestException('export label "comment" is required');
+    const wantedCommentColumns = form.items
+      .filter(
+        (item: FormItemLike) =>
+          item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
+      )
+      .map((item: FormItemLike) => item.id);
+    // A store build older than the comment sends no word for the column: the organiser still gets
+    // the export, without it, rather than none at all (`docs/wiki/legacy-compatibility.md`).
+    const commentColumns = new Set<string>(labels.comment ? wantedCommentColumns : []);
+    if (wantedCommentColumns.length > 0 && !labels.comment) {
+      this.logger.debug(
+        `[LEGACY] export of ${formId.slice(0, 8)} without the comment word (a build older than the ` +
+          `choice comment): ${wantedCommentColumns.length} comment column(s) left out`
+      );
     }
     form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
