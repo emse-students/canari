@@ -17,7 +17,7 @@ export const FORM_SUMMARIES_MAX = 50;
 export type SummaryFetcher = (ids: string[]) => Promise<FormSummary[]>;
 
 /** The real fetcher: one request for the whole batch. */
-export async function fetchFormSummaries(ids: string[]): Promise<FormSummary[]> {
+async function fetchFormSummaries(ids: string[]): Promise<FormSummary[]> {
   const url = `${socialUrl()}/api/forms/summaries?ids=${ids.map(encodeURIComponent).join(',')}`;
   const res = await apiFetch(url);
   if (!res.ok) throw new Error(`form summaries: HTTP ${res.status}`);
