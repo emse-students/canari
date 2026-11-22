@@ -5086,6 +5086,28 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     errors.mockRestore();
   });
 
+  it('a text parked in one life is accused once across the reloads that follow', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mls = scripted(Array(5).fill('5xx'));
+    const first = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(first.outbox, first.storage, 't1', 5);
+    expect(first.status('t1')).toBe('error');
+    first.outbox.dispose();
+    expect(errors).toHaveBeenCalledTimes(1);
+
+    for (let boot = 0; boot < 2; boot++) {
+      const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+      const outbox = createOutbox(
+        makeDeps({ mlsService: mls, storage: first.storage, conversations })
+      );
+      await attempt(outbox, first.storage, 't1', 2);
+      expect(conversations.get('g1')!.messages[0].status).toBe('error');
+      outbox.dispose();
+    }
+    expect(errors).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+  });
+
   it('says each parked cause as its own, never the 5xx run for a refusal or a "not now"', () => {
     const base = { ...textEntry('c', 'g1', 1), serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS };
     expect(terminalFailureCause({ ...base, nativeRefusal: 'refused' })).toMatch(/refused/);
