@@ -453,9 +453,11 @@ export interface CommunityBootReads {
   listChannels(workspaceId: string): Promise<ChannelDto[]>;
   /**
    * `workspaceId`'s key-group version ({@link KeyGroupVersion}), or null when none is known - an older
-   * server, a refused item, a failed request. The FIRST call asks every community of the load in one
-   * request (per {@link COMMUNITY_BOOT_READS_MAX}), so it is asked after MLS is ready and before any
-   * roster pass of this load reads; later calls share that answer. Never throws.
+   * server, a refused item, a failed request, a handle already released. Every community of the
+   * load is asked in one request (per {@link COMMUNITY_BOOT_READS_MAX}) the moment the load starts,
+   * beside the salon listings, so no pass waits a round trip for it - and a version read that early
+   * is still read before any roster pass of the load reads, which is all the record needs. Never
+   * throws.
    */
   keyGroupVersion(workspaceId: string): Promise<KeyGroupVersion | null>;
   /** Forgets what THIS load held and no read took. Touches nothing else. */
@@ -772,9 +774,10 @@ export class ChannelService {
    * were - the reference carries a roster of this user's devices that decides whether the device
    * forgets its tree, and read before MLS is ready it can be stale against an owed Welcome.
    *
-   * STARTS THE REQUEST AND RETURNS AT ONCE: the handle's `listChannels` waits for the pending batch,
-   * so the caller's other chains (the key-group join among them) start without waiting a round trip
-   * for it.
+   * STARTS THE REQUESTS AND RETURNS AT ONCE: the batched listings and the key-group versions
+   * ({@link readKeyGroupVersions}) leave together; the handle's `listChannels` and `keyGroupVersion`
+   * wait for their own answer, so the caller's other chains (the key-group join among them) start
+   * without waiting a round trip for either.
    *
    * NEVER THROWS, and the pending batch never rejects. A batch that fails (an older server answers
    * 404, the link drops) leaves the handle empty, every listing then reads its own route as it
@@ -818,12 +821,18 @@ export class ChannelService {
         }
       })
     );
-    // ASKED LAZILY, ON THE FIRST ROSTER PASS'S DEMAND - after MLS is ready, before that pass reads.
-    let versions: Promise<Map<string, KeyGroupVersion>> | null = null;
+    // ASKED NOW, BESIDE THE LISTINGS (review of #3960): asked on the first pass's demand, it put a
+    // round trip in front of every key-group pass of a cold start. Read this early it is still read
+    // before any pass of the load reads, which is what the record needs (`keyGroupConvergence.ts`).
+    // Never rejects. Asked for one community too: one request against that community's two.
+    const versions: Promise<Map<string, KeyGroupVersion>> =
+      ids.length > 0 ? this.readKeyGroupVersions(ids, log) : Promise.resolve(new Map());
     return {
       keyGroupVersion: async (workspaceId) => {
-        versions ??= this.readKeyGroupVersions(ids, log);
-        return (await versions).get(workspaceId) ?? null;
+        // A released handle answers nothing more: its load has ended, and no request starts here.
+        if (released) return null;
+        const known = await versions;
+        return released ? null : (known.get(workspaceId) ?? null);
       },
       listChannels: async (workspaceId) => {
         await pending;

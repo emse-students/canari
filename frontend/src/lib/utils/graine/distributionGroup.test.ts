@@ -1,13 +1,18 @@
 import {
   distributionGapListener,
   ensureCommunityDistributionGroup,
+  ensureDistributionGroupFor,
   enterPrivateSalonGroup,
   rejoinBehindDistributionGroup,
 } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
-import { forgetAllKeyGroupConvergence } from './keyGroupConvergence';
+import {
+  convergenceTicket,
+  forgetAllKeyGroupConvergence,
+  forgetKeyGroupConvergence,
+} from './keyGroupConvergence';
 
 const reconcile = vi.fn().mockResolvedValue([]);
 vi.mock('./rosterReconcile', () => ({
@@ -567,7 +572,7 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
       storage: {} as never,
       deviceKey: () => 'device-key',
       userId: 'alice',
-      mlsService: {} as never,
+      mlsService: { getDeviceId: () => 'dev-me' } as never,
     });
   });
   afterEach(() => setGraineRuntime(null));
@@ -1097,7 +1102,7 @@ describe('a held key group whose own leaf is gone', () => {
       storage: {} as never,
       deviceKey: () => 'k',
       userId: 'me',
-      mlsService: {} as never,
+      mlsService: { getDeviceId: () => 'dev-me' } as never,
     });
   });
   afterEach(() => setGraineRuntime(null));
@@ -1197,7 +1202,7 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
       storage: {} as never,
       deviceKey: () => 'device-key',
       userId: 'alice',
-      mlsService: {} as never,
+      mlsService: { getDeviceId: () => 'dev-me' } as never,
     });
     forgetAllKeyGroupConvergence();
     reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['alice'], converged: true });
@@ -1312,5 +1317,63 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
     forgetAllKeyGroupConvergence();
     await runOn(mls, channels, version('v1'));
     expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('a converged pass this load only SHARED records nothing - it read before this load did', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const mls = current();
+    const channels = makeChannels({
+      getDistributionGroup: vi.fn(async () => {
+        await gate;
+        return ref;
+      }),
+    });
+    // Another caller's pass (no version) is in flight; the load arrives and shares it.
+    const other = run(mls, channels);
+    const load = runOn(mls, channels, version('v1'));
+    release(null);
+    await Promise.all([other, load]);
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+
+    // Shared, so nothing was recorded: the next load on the same version runs in full.
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('a pass of another caller that fails while this load runs refuses this load its record', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const mls = current();
+    const lines: string[] = [];
+    reconcile.mockImplementationOnce(async () => {
+      await gate;
+      return { removedUserIds: [], heldUserIds: ['alice'], converged: true };
+    });
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    const load = runOn(mls, channels, version('v1'), (m) => lines.push(m));
+    // While the load's roster pass runs, another caller's pass (the actor of a removal) does not
+    // converge - the lane withdraws the record, which this load must not overwrite.
+    forgetKeyGroupConvergence('ws-1');
+    release(null);
+    await load;
+    expect(lines.join(' | ')).toContain('not recorded');
+
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('a join that did not converge withdraws the record, whoever asked for it (the re-join of a group behind)', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(mls, channels, version('v1'));
+    expect(convergenceTicket('ws-1')).toBe(0);
+    // Through the join's own entry, as `rejoinBehindDistributionGroup` reaches it.
+    reconcile.mockResolvedValueOnce({ removedUserIds: [], heldUserIds: null });
+    await ensureDistributionGroupFor(mls as never, channels as never, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1')).toBe(1);
+
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
   });
 });

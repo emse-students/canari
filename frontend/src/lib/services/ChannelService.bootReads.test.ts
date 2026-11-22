@@ -58,7 +58,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   const nine = Array.from({ length: 9 }, (_, i) => `w${i}`);
 
-  it('MEASURED: nine communities are 27 requests without the batch, 19 with it', async () => {
+  it('MEASURED: nine communities are 27 requests without the batch, 19 with it (+1 versions)', async () => {
     const without = serviceOnNetwork(server(nine));
     await Promise.all(nine.map((id) => walk(without.svc, without.svc, id)));
     expect(without.urls).toHaveLength(27);
@@ -68,8 +68,11 @@ describe('ChannelService - the batched salon listing of a load', () => {
     await Promise.all(nine.map((id) => walk(withBatch.svc, reads, id)));
     reads.release();
 
-    // One batch of listings, plus each community's key-group reference and roster.
-    expect(withBatch.urls).toHaveLength(19);
+    // One batch of listings, the key-group versions asked beside it (which this walk, reading every
+    // reference and roster itself, does not use - the skip is `distributionGroup.ts`'s), plus each
+    // community's key-group reference and roster.
+    expect(withBatch.urls).toHaveLength(20);
+    expect(withBatch.urls.filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
     expect(withBatch.urls.filter((u) => u.includes('/boot-reads'))).toHaveLength(1);
     expect(withBatch.urls.filter((u) => u.includes('/distribution-group'))).toHaveLength(9);
     expect(withBatch.urls.filter((u) => u.endsWith('/members'))).toHaveLength(9);
@@ -206,10 +209,11 @@ describe('ChannelService - the batched salon listing of a load', () => {
     expect(urls.filter((u) => u.includes('/user/me'))).toHaveLength(1);
   });
 
-  it('asks nothing for a single community, and chunks above the server bound', async () => {
+  it('batches no listing for a single community, and chunks above the server bound', async () => {
     const one = serviceOnNetwork(server(['a']));
     one.svc.startCommunityBootReads(['a'], one.log);
-    expect(one.urls).toHaveLength(0);
+    // Only the versions: one request against that community's two key-group reads.
+    expect(one.urls.filter((u) => u.includes('/boot-reads'))).toHaveLength(0);
 
     const many = Array.from({ length: COMMUNITY_BOOT_READS_MAX + 1 }, (_, i) => `w${i}`);
     const big = serviceOnNetwork((url) => {
@@ -217,7 +221,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
       return server(ids)(url);
     });
     big.svc.startCommunityBootReads(many, big.log);
-    expect(big.urls).toHaveLength(2);
+    expect(big.urls.filter((u) => u.includes('/boot-reads'))).toHaveLength(2);
   });
 
   it('the client bound is the server bound', () => {
@@ -262,23 +266,36 @@ describe('ChannelService - the key-group versions of a load', () => {
     });
   };
 
-  it('asks every community of the load in ONE request, on the first demand, and shares it', async () => {
+  it('asks every community of the load in ONE request, AT THE START beside the listings, and shares it', async () => {
     const { svc, urls, log } = serviceOnNetwork((url) =>
       url.includes('/key-group-versions') ? versions(url) : Response.json({ items: [] })
     );
     const reads = svc.startCommunityBootReads(nine, log);
-    const before = urls.length;
+    // Already on the wire before any pass asks: no pass waits a round trip for it.
+    expect(urls.filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
 
     const answers = await Promise.all(nine.map((id) => reads.keyGroupVersion(id)));
 
-    expect(urls.slice(before).filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
+    expect(urls.filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
     expect(answers[0]).toEqual({ version: 'v-w0', groupId: 'g-w0', activeEpoch: 4, baseEpoch: 4 });
     // A refused item is no version: that community runs its full pass, which meets the refusal.
     expect(answers[8]).toBeNull();
     reads.release();
   });
 
-  it('an older server (404) leaves every version unknown and says so once - every pass runs', async () => {
+  it('a released handle answers no version and starts no request', async () => {
+    const { svc, urls, log } = serviceOnNetwork((url) =>
+      url.includes('/key-group-versions') ? versions(url) : Response.json({ items: [] })
+    );
+    const reads = svc.startCommunityBootReads(nine, log);
+    reads.release();
+    const asked = urls.length;
+
+    expect(await reads.keyGroupVersion('w0')).toBeNull();
+    expect(urls).toHaveLength(asked);
+  });
+
+  it('an older server (404) leaves every version unknown and says so once per load - every pass runs', async () => {
     const { svc, log } = serviceOnNetwork((url) =>
       url.includes('/key-group-versions')
         ? new Response('not found', { status: 404 })

@@ -9,6 +9,7 @@ import {
   userIdOfLeaf,
 } from '$lib/mls-client/leafIdentity';
 import { observeAdmissionState } from './admissionGate';
+import { forgetKeyGroupConvergence } from './keyGroupConvergence';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
   AcceptedCommitNotMergedError,
@@ -175,7 +176,7 @@ export function reconcileDistributionGroupRosterReported(
   const pass: Promise<RosterPassReport> = lane.tail.then(() => {
     // Started: it reads from here on, so a caller arriving now needs the pass after it.
     if (lane.waiting?.pass === pass) lane.waiting = null;
-    return reconcileOnce(channelService, scope, fanOut);
+    return withdrawUnlessConverged(scope, reconcileOnce(channelService, scope, fanOut));
   });
   lane.waiting = { pass, logs };
   const tail = pass.then(
@@ -204,6 +205,30 @@ const passes = new Map<
   }
 >();
 
+/**
+ * A community pass that did not converge WITHDRAWS the convergence record, here in the lane every
+ * pass runs through - whoever started it (a load, the actor of a removal, the departure committer,
+ * the re-join of a group behind its server). Done at each caller it held only for the callers that
+ * remembered (review of #3960): in the lane, it holds by construction. A pass that threw is one that
+ * did not converge.
+ */
+function withdrawUnlessConverged(
+  scope: DistributionScope,
+  pass: Promise<RosterPassReport>
+): Promise<RosterPassReport> {
+  if (scope.kind !== 'workspace') return pass;
+  return pass.then(
+    (report) => {
+      if (report.converged !== true) forgetKeyGroupConvergence(scope.workspaceId);
+      return report;
+    },
+    (error: unknown) => {
+      forgetKeyGroupConvergence(scope.workspaceId);
+      throw error;
+    }
+  );
+}
+
 /** One pass of {@link reconcileDistributionGroupRoster}, unserialised. Never called directly. */
 async function reconcileOnce(
   channelService: ChannelService,
@@ -227,6 +252,8 @@ async function reconcileOnce(
 
   let leafIdentities: string[] | null = null;
   let rosterUserIds: string[];
+  // A ledger write that failed is no convergence: a skipped pass would stop its in-session retry.
+  let admissionRecorded = true;
   try {
     // Read together, and the tree first: a roster fetched before a leaf joined would name that
     // leaf's user as absent. Ordered this way, the worst case is a stray surviving until the next
@@ -239,7 +266,7 @@ async function reconcileOnce(
     if (scope.kind === 'workspace') {
       const rows = await channelService.listWorkspaceMembers(scope.workspaceId);
       rosterUserIds = rows.map((m) => m.userId);
-      await recordAdmissionState(scope.workspaceId, groupId, rows, log);
+      admissionRecorded = await recordAdmissionState(scope.workspaceId, groupId, rows, log);
     } else {
       rosterUserIds = (await channelService.listMembers(scope.channelId, 'channel')).map((m) =>
         String(m.userId)
@@ -300,7 +327,7 @@ async function reconcileOnce(
     log(
       `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove${reused ? ' (the revocation answer of an unchanged tree reused)' : ''}`
     );
-    return revocationAnswered
+    return revocationAnswered && admissionRecorded
       ? { removedUserIds: [], heldUserIds: leafUsers(tree), converged: true }
       : { removedUserIds: [], heldUserIds: leafUsers(tree) };
   }
@@ -574,19 +601,23 @@ async function removeRevokedLeaves(
  * The community sync is where the admission ledger's ROOTS are fixed (channel-encryption section
  * 25), at the first one after the proof existed. Removals are not recorded here: the MLS layer
  * records them at merge time (`removalEpochs`). Never fails the reconciliation -
- * a ledger left unfed only means the next sync or the next check records it - but says so.
+ * a ledger left unfed only means the next sync or the next check records it - but says so, and
+ * answers false: the pass then did not converge, so the next load does not skip the sync that
+ * would retry it.
  */
 async function recordAdmissionState(
   workspaceId: string,
   groupId: string,
   rows: Parameters<typeof observeAdmissionState>[2],
   log: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   try {
     await observeAdmissionState(workspaceId, groupId, rows);
+    return true;
   } catch (e) {
     log(
       `[GRAINE] admission state of community ${workspaceId.slice(0, 8)} not recorded at this sync: ${String(e)}`
     );
+    return false;
   }
 }

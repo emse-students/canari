@@ -2518,14 +2518,7 @@ export class ChannelService implements OnApplicationBootstrap {
     userId: string,
     deviceId?: string
   ): Promise<DistributionGroupRef> {
-    await this.assertWorkspaceMember(workspaceId, userId);
-
-    const ref = await readDistributionGroup(
-      this.internalSecret,
-      workspaceScope(workspaceId),
-      userId,
-      deviceId
-    );
+    const ref = await this.readMemberDistributionGroup(workspaceId, userId, deviceId);
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
       // So this is not a state to repair silently: it is a community that cannot carry seeds, and
@@ -2543,6 +2536,27 @@ export class ChannelService implements OnApplicationBootstrap {
       `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
+  }
+
+  /**
+   * The community's key-group reference for one of its members, or null when the community has
+   * none - the read {@link getDistributionGroupForMember} serves, WITHOUT its lines. The route says
+   * what it served (or the missing group, at error); {@link listKeyGroupVersions} reads the same
+   * thing for a digest and must not say it a second time - a community with no key group is ONE
+   * error, the route's, met by the full pass the client then runs.
+   */
+  private async readMemberDistributionGroup(
+    workspaceId: string,
+    userId: string,
+    deviceId?: string
+  ): Promise<DistributionGroupRef | null> {
+    await this.assertWorkspaceMember(workspaceId, userId);
+    return readDistributionGroup(
+      this.internalSecret,
+      workspaceScope(workspaceId),
+      userId,
+      deviceId
+    );
   }
 
   /**
@@ -2622,7 +2636,11 @@ export class ChannelService implements OnApplicationBootstrap {
    *
    * Each item is its own verdict, as in {@link listCommunityBootReads}: a refusal (a community just
    * left, one with no key group) is carried on its item and the client runs the full pass for it,
-   * which meets the same refusal on its own route and handles it as it always did.
+   * which meets the same refusal on its own route and handles it as it always did. A community with
+   * no key group is not logged here: the route the full pass reads logs it, once, at error.
+   *
+   * WHAT IT SAVES IS CLIENT ROUND TRIPS, NOT SERVER WORK: the server still reads both answers for
+   * every community, once per load, to hash them. Two requests per community become one per load.
    */
   async listKeyGroupVersions(
     userId: string,
@@ -2640,9 +2658,25 @@ export class ChannelService implements OnApplicationBootstrap {
           slice.map(async (workspaceId): Promise<KeyGroupVersionItem> => {
             try {
               const [ref, roster] = await Promise.all([
-                this.getDistributionGroupForMember(workspaceId, userId),
+                this.readMemberDistributionGroup(workspaceId, userId),
                 this.listWorkspaceMembers(workspaceId, userId),
               ]);
+              if (!ref) {
+                // NOT LOGGED HERE: the client runs the full pass for this community, and the route it
+                // reads says it once, at error (see `readMemberDistributionGroup`).
+                return {
+                  workspaceId,
+                  version: null,
+                  groupId: null,
+                  activeEpoch: null,
+                  baseEpoch: null,
+                  refusal: {
+                    status: HttpStatus.NOT_FOUND,
+                    code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP',
+                    message: 'This community has no key distribution group.',
+                  },
+                };
+              }
               return {
                 workspaceId,
                 version: keyGroupVersionOf(ref, roster),

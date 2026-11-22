@@ -1,4 +1,4 @@
-import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { ChannelService, COMMUNITY_BOOT_READS_MAX, keyGroupVersionOf } from './channel.service';
 
 /**
@@ -82,9 +82,16 @@ describe('ChannelService.listKeyGroupVersions', () => {
     );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const keyGroup = jest.spyOn(service, 'getDistributionGroupForMember');
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    // The route's reader without its lines (private): what the route serves, read for a digest.
+    const keyGroup = jest.spyOn(
+      service as unknown as {
+        readMemberDistributionGroup: (ws: string, user: string) => Promise<unknown>;
+      },
+      'readMemberDistributionGroup'
+    );
     const members = jest.spyOn(service, 'listWorkspaceMembers');
-    return { service, keyGroup, members, warn };
+    return { service, keyGroup, members, warn, error };
   }
 
   afterEach(() => jest.restoreAllMocks());
@@ -112,12 +119,12 @@ describe('ChannelService.listKeyGroupVersions', () => {
   });
 
   it('carries a refusal on its own item and answers the others', async () => {
-    const { service, keyGroup, members } = makeService();
+    const { service, keyGroup, members, warn, error } = makeService();
     keyGroup.mockImplementation((ws) =>
       ws === 'left'
         ? Promise.reject(new ForbiddenException('nope'))
         : ws === 'bare'
-          ? Promise.reject(new NotFoundException({ code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP' }))
+          ? Promise.resolve(null)
           : Promise.resolve({ groupId: 'g', groupInfo: null, baseEpoch: null, activeEpoch: 0 })
     );
     members.mockResolvedValue([] as never);
@@ -131,6 +138,11 @@ describe('ChannelService.listKeyGroupVersions', () => {
       version: null,
       refusal: { status: 404, code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP' },
     });
+    // A community with no key group is NOT said here: the route the full pass then reads says it,
+    // once, at error. Only the 403 is warned.
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('workspace=left');
   });
 
   it('reads a repeated id once and answers no more than the bound', async () => {

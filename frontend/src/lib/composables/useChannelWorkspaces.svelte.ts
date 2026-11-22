@@ -694,9 +694,10 @@ export function useChannelWorkspaces() {
     // A community removed live since the request is not joined again: its purge has just left the
     // group. Said by the caller (`loadCommunitySalons`), which asks the same question after this.
     if (goneSinceRequest()) return;
-    // THE VERSION IS READ HERE, AFTER MLS IS READY AND BEFORE THE PASS READS ANYTHING: the first
-    // community to reach this asks every community's in one request, and a pass that converges is
-    // recorded against the version read before it (`keyGroupConvergence.ts`). Never throws: no
+    // THE VERSION, READ BEFORE THE PASS READS ANYTHING: asked for every community when the load
+    // started (beside the salon listings, so usually already here), and a pass that converges is
+    // recorded against it (`keyGroupConvergence.ts`). The session and the live removal are asked
+    // again AFTER it arrived - either may have changed while it was on the wire. Never throws: no
     // version known is the full pass.
     const version = await bootReads.keyGroupVersion(workspaceId);
     assertListingSession(session, `the key-group version of ${workspaceId}`);

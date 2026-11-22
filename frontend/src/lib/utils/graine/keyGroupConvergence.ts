@@ -18,13 +18,15 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
  * log (1.7.1, 2026-11-19..22): 131 resumes, 2 325 of 5 050 requests spent on these two reads, every
  * one of them concluding "agrees with its roster, nobody to remove".
  *
- * THE SKIP AND WHY IT IS SAFE. The server answers, in one request per load, a digest of exactly the
- * two answers the pass reads (`listKeyGroupVersions`, social-service). A pass is skipped when:
+ * THE SKIP AND WHY IT IS SAFE. The server answers, in one request per load sent when the load
+ * starts, a digest of exactly the two answers the pass reads (`listKeyGroupVersions`,
+ * social-service). What it saves is client round trips, not server work. A pass is skipped when:
  * 1. the digest equals the one read BEFORE this device's last pass that CONVERGED (held, live,
- *    current, base usable, tree agreeing with the roster, revocation question answered) - so the
- *    pass would read the same two answers; and the digest cannot come back to an earlier value
- *    through a change that matters (the epochs only grow, a device row returns only through a
- *    commit, a membership row is a fresh id per admission - see the server method);
+ *    current, base usable, tree agreeing with the roster, revocation question answered, admission
+ *    ledger written) - so the pass would read the same two answers; and the digest cannot come
+ *    back to an earlier value through a change that matters (the epochs only grow, a device row
+ *    returns only through a commit, a membership row is a fresh id per admission - see the server
+ *    method);
  * 2. this device still holds that group, still as a member, at exactly the server's active epoch,
  *    and the published base is not behind it - the facts the pass reads on THIS side, re-checked
  *    here because a reload of `mls.bin` or a forget can move them without the server noticing.
@@ -34,17 +36,42 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
  * between that read and the pass's own reads makes the next version differ from the recorded one, so
  * the next load runs the pass again. The error can only cost a pass, never skip one that was owed.
  *
+ * A PASS THAT DID NOT CONVERGE WITHDRAWS THE RECORD, WHOEVER RAN IT, BY CONSTRUCTION: the roster
+ * lane (`rosterReconcile.ts`) and the coalesced join (`distributionGroup.ts`) both call
+ * {@link forgetKeyGroupConvergence} on a community scope whose pass did not converge - every caller
+ * goes through one of the two. And a withdrawal is COUNTED: a load takes a {@link convergenceTicket}
+ * before its pass, and {@link recordKeyGroupConvergence} refuses to record when any withdrawal
+ * landed since - so a pass of another caller that failed while this load's pass ran can never be
+ * overwritten by this load's record.
+ *
  * SESSION MEMORY, ON PURPOSE. The first load of every process runs every pass in full: a device
  * revoked while its member stays and the tree stands still is invisible to both answers, and the
  * revocation question (`askRevokedLeaves`) is put again at the first pass of a session - exactly as
- * before this skip existed. Held per account, and forgotten at sign-out with the revocation answers.
+ * before this skip existed. Held per account and device, and forgotten at sign-out with the
+ * revocation answers.
  */
 const converged = new Map<string, string>();
 
+/** Withdrawals per community, ever: what a {@link convergenceTicket} is compared against. */
+const withdrawals = new Map<string, number>();
+
+/**
+ * The record's key: the account, THIS DEVICE and the community. A record vouches for one device's
+ * tree; an identity rotation (a revoked id re-enrolled) is a new device with a tree of its own.
+ */
 function keyOf(workspaceId: string): string | null {
   if (!isGraineReady()) return null;
-  const { userId } = requireGraineRuntime('key-group convergence');
-  return `${canonicalUserId(userId)}|${workspaceId}`;
+  const { userId, mlsService } = requireGraineRuntime('key-group convergence');
+  return `${canonicalUserId(userId)}|${mlsService.getDeviceId()}|${workspaceId}`;
+}
+
+/**
+ * Taken by a load BEFORE its pass: the number of withdrawals so far, which
+ * {@link recordKeyGroupConvergence} compares with the number when the pass ends.
+ */
+export function convergenceTicket(workspaceId: string): number {
+  const key = keyOf(workspaceId);
+  return key ? (withdrawals.get(key) ?? 0) : 0;
 }
 
 /**
@@ -94,14 +121,25 @@ export async function convergedPassCanBeSkipped(
   return true;
 }
 
-/** Records that the pass started on `version` converged: the next load on the same version skips. */
+/**
+ * Records that the pass started on `version`, under `ticket`, converged: the next load on the same
+ * version skips. REFUSED when a pass withdrew the record since the ticket was taken - that pass,
+ * whoever ran it, is newer evidence than this one - and said so.
+ */
 export function recordKeyGroupConvergence(
   workspaceId: string,
   version: KeyGroupVersion,
+  ticket: number,
   log: (message: string) => void
 ): void {
   const key = keyOf(workspaceId);
   if (!key) return;
+  if ((withdrawals.get(key) ?? 0) !== ticket) {
+    log(
+      `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged, but another pass that did not converge ended while it ran - not recorded, the next load runs it in full`
+    );
+    return;
+  }
   if (converged.get(key) !== version.version) {
     log(
       `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged at epoch ${version.activeEpoch} - an unchanged version skips the next one`
@@ -110,13 +148,16 @@ export function recordKeyGroupConvergence(
   converged.set(key, version.version);
 }
 
-/** Drops `workspaceId`'s record: a pass that did not converge vouches against it. */
+/** Drops `workspaceId`'s record and counts the withdrawal: a pass that did not converge vouches against it. */
 export function forgetKeyGroupConvergence(workspaceId: string): void {
   const key = keyOf(workspaceId);
-  if (key) converged.delete(key);
+  if (!key) return;
+  converged.delete(key);
+  withdrawals.set(key, (withdrawals.get(key) ?? 0) + 1);
 }
 
 /** Drops every record: at sign-out (the next account runs its own passes), and for a test. */
 export function forgetAllKeyGroupConvergence(): void {
   converged.clear();
+  withdrawals.clear();
 }

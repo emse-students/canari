@@ -12,6 +12,7 @@ import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repai
 import { reconcileDistributionGroupRosterReported } from './rosterReconcile';
 import {
   convergedPassCanBeSkipped,
+  convergenceTicket,
   forgetKeyGroupConvergence,
   recordKeyGroupConvergence,
 } from './keyGroupConvergence';
@@ -115,9 +116,22 @@ function ensureDistributionGroupReported(
     log(`[GRAINE] ${key}: a join is already in flight for this scope - awaiting it`);
     return { outcome: running, shared: true };
   }
-  const attempt = joinDistributionGroup(mlsService, channelService, scope, log).finally(() =>
-    inFlight.delete(key)
-  );
+  const attempt = joinDistributionGroup(mlsService, channelService, scope, log)
+    .then(
+      (outcome) => {
+        // A JOIN THAT DID NOT CONVERGE WITHDRAWS THE RECORD HERE, whoever asked for it (a load, a
+        // salon creation, the re-join of a group behind its server) - see `keyGroupConvergence.ts`.
+        if (scope.kind === 'workspace' && !outcome.converged) {
+          forgetKeyGroupConvergence(scope.workspaceId);
+        }
+        return outcome;
+      },
+      (error: unknown) => {
+        if (scope.kind === 'workspace') forgetKeyGroupConvergence(scope.workspaceId);
+        throw error;
+      }
+    )
+    .finally(() => inFlight.delete(key));
   inFlight.set(key, attempt);
   return { outcome: attempt, shared: false };
 }
@@ -580,6 +594,9 @@ export async function ensureCommunityDistributionGroup(
   version: KeyGroupVersion | null = null
 ): Promise<boolean> {
   const scope = workspaceScope(workspaceId);
+  // TAKEN BEFORE ANYTHING ELSE: a pass of any caller that fails to converge from here on refuses
+  // this load's record (`recordKeyGroupConvergence`).
+  const ticket = convergenceTicket(workspaceId);
   if (version && (await convergedPassCanBeSkipped(mlsService, workspaceId, version, log))) {
     // NOTHING THE PASS READS HAS CHANGED, AND THE TREE IS WHERE IT LEFT IT. Registering is what the
     // pass would have done first (idempotent); the history ask decides for itself, without a
@@ -595,13 +612,11 @@ export async function ensureCommunityDistributionGroup(
     log
   );
   const result = await outcome;
+  // A pass that did not converge has already withdrawn the record (in the join, and in the roster
+  // lane). A converged pass this caller only SHARED read before this caller's version, so it records
+  // nothing and leaves an earlier record standing.
   if (version && result.converged && !shared) {
-    recordKeyGroupConvergence(workspaceId, version, log);
-  } else if (!result.converged) {
-    // A pass that did not converge - from a load or from any other caller - vouches against the one
-    // recorded: the next load runs the pass in full. (A converged pass this caller only SHARED read
-    // before this caller's version, so it records nothing, and leaves an earlier record standing.)
-    forgetKeyGroupConvergence(workspaceId);
+    recordKeyGroupConvergence(workspaceId, version, ticket, log);
   }
   return result.held;
 }

@@ -12,6 +12,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
+import { convergenceTicket, forgetAllKeyGroupConvergence } from './keyGroupConvergence';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { DEADLINE_MS, fetchUnderDeadline } from '$lib/utils/requestDeadline';
@@ -804,5 +805,39 @@ describe('a pass says it CONVERGED only when a repetition would do nothing', () 
   it('a roster it could not read did not', async () => {
     listWorkspaceMembers.mockRejectedValue(new Error('offline'));
     expect((await report()).converged).toBeUndefined();
+  });
+});
+
+describe('a community pass that did not converge withdraws the convergence record, in the lane', () => {
+  // By construction, whoever ran it: the actor of a removal (`commitRemoval.ts`) and the departure
+  // committer call the lane directly, never `ensureCommunityDistributionGroup`.
+  beforeEach(() => forgetAllKeyGroupConvergence());
+
+  it('a converged pass leaves it; a removal, an unreadable roster, an unrecorded admission withdraw it', async () => {
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1')).toBe(0);
+
+    listWorkspaceMembers.mockResolvedValueOnce([{ userId: 'alice' }]);
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1')).toBe(1);
+
+    listWorkspaceMembers.mockRejectedValueOnce(new Error('offline'));
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1')).toBe(2);
+
+    observeAdmissionState.mockRejectedValueOnce(new Error('ledger write failed'));
+    const report = await reconcileDistributionGroupRosterReported(
+      channelService,
+      workspaceScope('ws-1'),
+      () => {}
+    );
+    expect(report.converged).toBeUndefined();
+    expect(convergenceTicket('ws-1')).toBe(3);
+  });
+
+  it('a private salon pass touches no community record', async () => {
+    listMembers.mockRejectedValueOnce(new Error('offline'));
+    await reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'));
+    expect(convergenceTicket('ws-1')).toBe(0);
   });
 });

@@ -80,7 +80,7 @@ const listChannels = vi.fn();
 const releaseBootReads = vi.fn();
 const startCommunityBootReads = vi.fn(() => ({
   listChannels: (id: string) => listChannels(id),
-  keyGroupVersion: async () => null,
+  keyGroupVersion: async (_id: string): Promise<unknown> => null,
   release: releaseBootReads,
 }));
 const createWorkspace = vi.fn();
@@ -2351,5 +2351,72 @@ describe('useChannelWorkspaces - a live removal is noted for the pages in hand',
     expect(watch.has('row-not-drawn')).toBe(true);
     expect(watch.has('row-of-no-salon')).toBe(true);
     watch.close();
+  });
+});
+
+describe('useChannelWorkspaces - the key-group version a load hands each pass', () => {
+  // The version is what a converged pass is recorded against (`keyGroupConvergence.ts`), so it must
+  // be read BEFORE the pass reads anything, and the checks that guard the pass - the session, a
+  // community removed live - must be asked AFTER the version arrived, not before it was asked.
+  const version = { version: 'v-ws1', groupId: 'g-ws1', activeEpoch: 3, baseEpoch: 3 };
+  let keyGroupVersion: ReturnType<typeof vi.fn<(id: string) => Promise<unknown>>>;
+  let answerVersion: (v: unknown) => void = () => {};
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    ensureCommunityDistributionGroup.mockResolvedValue(true);
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'Com', 'com')]);
+    listChannels.mockResolvedValue([]);
+    const pending = new Promise((resolve) => (answerVersion = resolve));
+    keyGroupVersion = vi.fn((_id: string) => pending);
+    startCommunityBootReads.mockImplementationOnce(() => ({
+      listChannels: (id: string) => listChannels(id),
+      keyGroupVersion,
+      release: releaseBootReads,
+    }));
+    setMlsReady(true);
+  });
+  afterEach(() => setMlsReady(false));
+
+  async function loadUntilTheVersionIsAsked() {
+    const api = useChannelWorkspaces();
+    const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue({}) } as never);
+    const loading = api.loadChannelWorkspacesFromBackend(ctx);
+    await vi.waitFor(() => expect(keyGroupVersion).toHaveBeenCalledWith('ws1'));
+    return { api, ctx, loading };
+  }
+
+  it('hands the server version to the pass, and starts the pass only once it arrived', async () => {
+    const { loading } = await loadUntilTheVersionIsAsked();
+    await tick();
+    // The version is on the wire: no reference or roster has been read for this community.
+    expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
+
+    answerVersion(version);
+    await loading;
+
+    expect(ensureCommunityDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(ensureCommunityDistributionGroup.mock.calls[0][2]).toBe('ws1');
+    expect(ensureCommunityDistributionGroup.mock.calls[0][4]).toEqual(version);
+  });
+
+  it('passes nothing for a community removed live while its version was on the wire', async () => {
+    const { api, ctx, loading } = await loadUntilTheVersionIsAsked();
+    await api.handleWorkspaceDeleted({ workspaceId: 'ws1' }, ctx);
+    answerVersion(version);
+    await loading;
+
+    expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  it('passes nothing for a session that signed out while the version was on the wire', async () => {
+    const { api, loading } = await loadUntilTheVersionIsAsked();
+    api.forgetAccount(vi.fn());
+    answerVersion(version);
+    await loading.catch(() => {});
+
+    expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
   });
 });

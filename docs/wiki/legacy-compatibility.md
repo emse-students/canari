@@ -643,7 +643,8 @@ together with the drop of the table ([backlog](backlog.d/drop-the-global-associa
 **Site:** `ChannelService.readKeyGroupVersions` (`frontend/src/lib/services/ChannelService.ts`).
 **What it humours:** a client carrying the key-group versions asks `GET /api/channels/workspaces/key-group-versions`
 once per community listing; a server older than the route answers 404, the client logs
-`[KEY_GROUP_VERSIONS] warn: ... each runs its full roster pass` once per load, and every community
+`[KEY_GROUP_VERSIONS] warn: ... each runs its full roster pass` - it warns once per load (a cold start,
+every resume), not once - and every community
 runs the pass it always ran. An older CLIENT never asks the route and needs nothing: the
 per-community routes it reads are unchanged
 ([offline-and-weak-network](frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
