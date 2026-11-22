@@ -10,6 +10,7 @@ import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
   OutboxResumableUpload,
+  ParkedCause,
   PendingGroupExit,
   StoredMessage,
 } from '$lib/db/types';
@@ -265,7 +266,14 @@ export function terminalFailureCause(entry: OutboxEntry): string {
     case 'unrecorded':
       return 'the background service marked it unsendable (its build recorded no cause)';
     case undefined:
-      return `the server answered 5xx on ${entry.serverErrors} attempts in a row`;
+      switch (entry.parkedCause) {
+        case 'server_error':
+          return `the server answered 5xx on ${entry.serverErrors} attempts in a row`;
+        case 'not_now':
+          return `the server answered "not now" ${entry.unavailableAnswers ?? 0} times with no success between`;
+        case undefined:
+          return 'parked by a build that recorded no cause';
+      }
   }
 }
 
@@ -1065,6 +1073,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * `serverErrors`, so a retry taken in another tab un-parks the entry here too.
    */
   const serverFailed = new Set<string>();
+  /** Parked entries met already terminal this page life, said in ONE line (`tellCarriedParked`). */
+  const carriedParked = new Set<string>();
+  let carriedTold = 0;
   const lanes = new Map<string, Promise<void>>();
   /** The callers of {@link OutboxController.awaitSettled}, by message id. */
   const settleWaiters = new Map<string, Array<(s: OutboxSettlement) => void>>();
@@ -2664,11 +2675,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * member retries: the decision is the durable count, so this runs again after a reload, and the
    * accusing line is written once per page life.
    */
-  function parkServerFailure(entry: OutboxEntry, cause: string): FlushOutcome {
+  function parkServerFailure(entry: OutboxEntry, cause: string, carried = false): FlushOutcome {
+    // ONCE, WHEN IT IS PARKED. An entry read back already terminal (a reload, another tab, an
+    // adoption the mirror already said) is CARRIED FORWARD: nothing happened, so no accusation -
+    // only the count in one summary line per page life (`carriedParked`).
     if (!serverFailed.has(entry.id)) {
-      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED: ${cause} - parked as failed, Retry offered, entry kept`;
-      console.error(line);
-      log(line);
+      if (carried) carriedParked.add(entry.id);
+      else {
+        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED: ${cause} - parked as failed, Retry offered, entry kept`;
+        console.error(line);
+        log(line);
+      }
     }
     const first = !serverFailed.has(entry.id);
     serverFailed.add(entry.id);
@@ -2678,6 +2695,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // A follower tab draws the same bubble: it never flushes, so it would not know until a reload.
     if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0);
     return 'parked';
+  }
+
+  /**
+   * ONE debug-level line for the parked entries this page life found already parked, as many as the
+   * pass met since the last line. They were accused when they were parked; saying them again at
+   * ERROR on every start is a line its reader learns to skip.
+   */
+  function tellCarriedParked(): void {
+    if (carriedParked.size <= carriedTold) return;
+    log(`[OUTBOX] ${carriedParked.size} parked entries carried forward (failed, Retry offered)`);
+    carriedTold = carriedParked.size;
   }
 
   /**
@@ -2772,9 +2800,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           serverErrors: 0,
           nextAttemptAt: 0,
           unavailableAnswers: unavailableRunStart(stored.unavailableAnswers ?? 0),
-          // The native verdict was about the attempt the member is retrying: a later failure is
-          // said as its own (a payload field, so present only when there is one to clear).
+          // The verdict was about the attempt the member is retrying: a later failure is said as
+          // its own (payload fields, so present only when there is one to clear).
           ...(stored.nativeRefusal ? { nativeRefusal: undefined } : {}),
+          ...(stored.parkedCause ? { parkedCause: undefined } : {}),
         },
         deviceKey()
       )
@@ -2784,9 +2813,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /** Writes a new consecutive-5xx count without touching the backoff. Logged when lost. */
-  async function writeServerErrors(id: string, count: number): Promise<void> {
+  async function writeServerErrors(
+    id: string,
+    count: number,
+    parkedCause?: ParkedCause
+  ): Promise<void> {
     await storage
-      ?.updateOutboxEntry(id, { serverErrors: count }, deviceKey())
+      ?.updateOutboxEntry(
+        id,
+        { serverErrors: count, ...(parkedCause ? { parkedCause } : {}) },
+        deviceKey()
+      )
       .catch((err: unknown) =>
         log(`[OUTBOX] ${id.slice(0, 8)}… 5xx count ${count} not persisted: ${String(err)}`)
       );
@@ -2886,7 +2923,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     parked.delete(entry.id);
     // FAILED ON 5xx, read from the DURABLE count: after a reload as well as in this page life.
     if (!resumed && isServerFailureTerminal(entry)) {
-      return parkServerFailure(entry, terminalFailureCause(entry));
+      return parkServerFailure(entry, terminalFailureCause(entry), true);
     }
     // Reset elsewhere (a retry in another tab wrote the count back): it goes again, said once.
     if (serverFailed.delete(entry.id)) {
@@ -3475,14 +3512,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         await storage
           ?.updateOutboxEntry(
             entry.id,
-            { unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+            {
+              unavailableAnswers: answers,
+              serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS,
+              parkedCause: 'not_now',
+            },
             deviceKey()
           )
           .catch((err: unknown) =>
             log(`[OUTBOX] ${entry.id.slice(0, 8)}… "not now" park not persisted: ${String(err)}`)
           );
         return parkServerFailure(
-          { ...entry, unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+          {
+            ...entry,
+            unavailableAnswers: answers,
+            serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS,
+            parkedCause: 'not_now',
+          },
           `the server answered "not now" (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… ${MAX_UNAVAILABLE_ANSWERS} times with no success between - the route is not coming back by itself`
         );
       }
@@ -3500,9 +3546,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (e instanceof SendServerError && boundedOnServerErrors(entry)) {
       const count = (entry.serverErrors ?? 0) + 1;
       if (count >= MAX_CONSECUTIVE_SERVER_ERRORS) {
-        await writeServerErrors(entry.id, count);
+        await writeServerErrors(entry.id, count, 'server_error');
         return parkServerFailure(
-          { ...entry, serverErrors: count },
+          { ...entry, serverErrors: count, parkedCause: 'server_error' },
           `the server answered ${e.status} (${e.origin}) in ${terminalId.slice(0, 8)}…, the ${count}th 5xx in a row`
         );
       }
@@ -3572,6 +3618,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await runFlushOnce();
     } finally {
       flushesRunning--;
+      tellCarriedParked();
       releaseUnsettled('no flush left running');
     }
   }

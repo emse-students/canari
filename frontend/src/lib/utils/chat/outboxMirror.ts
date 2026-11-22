@@ -351,9 +351,6 @@ export function adoptMirrorEntry(
   const parked = entry.unsendable
     ? (() => {
         const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
-        appendLog(
-          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain (${nativeRefusal}) - adopted failed, with its Retry`
-        );
         return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
       })()
     : {};
@@ -605,6 +602,14 @@ export async function adoptOrphanedMirrorEntries(
         `[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed, the line stays native for the next pass: ${String(e)}`
       );
       continue;
+    }
+    // THE ONE TIME THIS PARK IS ACCUSED, at the commit point: once the queue holds the entry, the
+    // flusher reads it back as carried forward, so no pass or restart says it again. The builder
+    // stays pure - a pass that waits or fails to write has adopted nothing and says nothing.
+    if (rebuilt.outbox.nativeRefusal) {
+      const line = `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… was marked unsendable by the native drain (${rebuilt.outbox.nativeRefusal}) - adopted failed, with its Retry`;
+      console.error(line);
+      appendLog(line);
     }
     adopted.push(orphan.id);
   }
