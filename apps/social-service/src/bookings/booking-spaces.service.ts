@@ -36,6 +36,7 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import { isFormBlock } from '../forms/form-blocks';
 import { announceOpeningToFollowers, followOpeningMove } from '../openings/opening-reminders';
 import {
   BookingNotificationsService,
@@ -280,6 +281,13 @@ export class BookingSpacesService {
     const ids = items.map((i) => i.id);
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
       throw new BadRequestException({ code: 'item-id' });
+    }
+    // A text or image block is a FORM's (`form-blocks.ts`): no booking screen offers one, and an
+    // image block's picture would be released with the form whose upload it is.
+    const block = items.find((i) => isFormBlock(i));
+    if (block) {
+      this.logger.debug(`[BOOKINGS] item-block refused: ${block.type} ${block.id}`);
+      throw new BadRequestException({ code: 'item-block' });
     }
     // A booking question carries no image: nothing uploads one for a space, and a form's question
     // image is deleted once no FORM cites it (`form-item-images.service.ts`), so a space citing one

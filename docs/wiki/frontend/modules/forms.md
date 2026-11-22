@@ -2,7 +2,7 @@
 
 **Routes**: `src/routes/forms/[id]/` (fill), `src/routes/f/[id]/` (a public form, answered without an account), `src/routes/forms/create/` + `src/routes/forms/[id]/edit/` (admin)
 **Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
-**Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
+**Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`, `formBlocks.ts`)
 
 **What forms cannot do yet, and the decided priced grid**: [forms capability audit, 2026-11-06](../../forms-capability-audit-2026-11-06.md).
 
@@ -1871,6 +1871,90 @@ again (production, read 2026-11-06: no form cites one). Asserted in
 `form-item-images.integration.spec.ts`.
 
 **Submissions and exports are unchanged**: an image is part of the question, never of an answer.
+
+## Text and image blocks, between the questions (owner, 2026-11-21)
+
+**The ask.** *"L'editeur du formulaire ne permet actuellement pas de mettre un texte (description) ou
+un media (affiche, logo), hors d'une question."* A production survey the same day (21 forms, read
+only, counts): 17 forms carry a description averaging ~700 characters - programmes, rules and
+instructions squeezed into the one block above the form - and 1 a cover image.
+
+**The design: a new item KIND in the same ordered list.** `forms.items` is one JSON array, so a block
+is an item whose `type` is `text_block` or `image_block`; order, drag, the arrows, duplication and
+removal come for free, and **no migration** is needed. A block reuses fields a question already has,
+which is also what an older app understands:
+
+| Kind | Fields | Rendered by |
+|---|---|---|
+| `text_block` | `label` = optional heading, `description` = optional paragraph; one of the two | `FormBlock.svelte`: an `h2`, then `ProfileBioMarkdown` - the renderer of the FORM's own description, so the two read the same |
+| `image_block` | `imageUrl` (required), `imageAlt`, `label` = optional caption | `FormBlock.svelte`: the picture whole (`object-contain`), the caption as `figcaption`; alt = `imageAlt`, else the caption, else "Image du formulaire « titre »" - never empty |
+
+**The image is a question image in every respect but its place**: uploaded through
+`POST /api/forms/:id/items/image` (or `/api/forms/items/image` from the create page), stored as a
+PUBLIC asset a guest on `/f/:id` can read, re-encoded to WebP with EXIF dropped, at most 1600 px and
+2 MiB, cited through `form_item_images`, released when no form or revision cites it and swept by the
+hourly reconciliation - all of it keyed on `items[].imageUrl` whatever the item's type
+([a question's image](#a-questions-image-2026-11-06)). Only a form MANAGER uploads one, so the
+guest-upload abuse design ([backlog](../../backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md))
+does not apply; no E2E path is involved, a public form being unencrypted.
+
+**What makes a block not a question - one module per side** (`apps/social-service/src/forms/form-blocks.ts`,
+`frontend/src/lib/forms/formBlocks.ts`):
+
+- **At save** (`normaliseFormBlocks`, called by `create` and `update`, so the publication of a
+  revision too): a block is STORED with a block's fields alone and `required: false`. Refused with the
+  typed 400 `FORM_BLOCK_INVALID` (`itemId` names the item): a block `required`, carrying options,
+  rows, a priced grid or a condition; a text block with no text; an image block with no image; a
+  question whose condition (`showIf.answer` or the legacy `dependsOn`) names a block. Dropped as
+  inert: an empty option or row list, `scale`, `requireEveryRow` - what an older editor adds to every
+  card. `FormItemDto.label` may be empty on a block only (`ValidateIf`). The editor says the empty
+  cases on the card before the save (`formBlockProblem`, through `formItemsProblem`). A revision is
+  stored as typed and judged only at its publication, as before.
+- **At submit and at an answer edit** (`withoutBlockAnswers`): a key naming a block is dropped,
+  logged at WARN, before anything reads the answers - so nothing below ever sees one.
+- **A booking space takes none**: `item-block` 400 (`booking-spaces.service.ts`); its editor does not
+  offer them (`offerBlocks={false}`).
+- `FORM_MAX_QUESTIONS` (100) counts every item, blocks included: the bound on an answer's keys stays
+  true and the form stays answerable in full.
+
+**Every consumer of the item list, and why a block is inert in each** (enumerated 2026-11-21):
+
+| Consumer | Why a block changes nothing |
+|---|---|
+| Submit validation, `required` (`submit`, `judgeEdit`, `isQuestionAnswered`) | `required` is forced false at save; its answer is dropped first |
+| Grid answers (`withNormalisedGridAnswers`), file answers (`fileAnswersOf`), `answerSelections` | typed on grid / file / declared id; the block's key is already gone |
+| Pricing (`assertDeclaredOptionAnswers`, `calculateModifiers`, the price matrix, `decidesPrice`, priced grids, `form-quote.ts`) | each reads choice options or `product_grid`; a block has neither |
+| Conditions (`visibleItemIds`, `profileHiddenItemIds`, `normaliseCondition`, `assertAudienceConditionValid`) | a block carries none and no question may name one |
+| The edit lock (`editLockedItemIds`, `priceSnapshot`) | only price-deciding questions and their parents |
+| Options ruling each other out (`form-option-rules.ts`) | options only |
+| Anonymity, account fields, guest identity | form-level, never per item |
+| Notifications (opening, reminder, organiser alert) | name the form, never an item |
+| XLSX / CSV export | one column per QUESTION (`questionItemsOf`); grid sheets read `product_grid` only |
+| Responses screen (`FormResponsesPanel`: table, search, choice results, grid totals) | reads `questionItemsOf(form.items)` |
+| Fill pages (`/forms/:id`, `/f/:id`, the preview) | a block is drawn by `FormBlock`; `initialSelections` and `visibleAnswers` skip it; numbers and the progress bar count questions only (`questionNumbers`) |
+| Editor (save bar summary, "n questions" badge, card numbers) | count questions only; the card's type menu never offers a block, the add wizard inserts one at once |
+| Question images (`form_item_images`) | keyed on `imageUrl`, any type - an image block is covered as is |
+
+**An older app** (the client floor is `1.7.0`, which knows neither kind) draws a block with its
+`FormQuestion`: the heading or caption as a label, the paragraph as help, the image, and its
+"Mettez à jour l'application pour répondre à cette question" line - no crash, and since a block is
+never required, nothing blocks the send (`firstMissingAnswer` stops only on a REQUIRED unknown type).
+Its EDITOR shows a block as a question card of an unknown type, with an options list and a required
+switch it would not otherwise show; a save that sets either is refused `FORM_BLOCK_INVALID`, worded
+by that build's generic line. Asserted in `FormBlock.svelte.test.ts` ("an older build").
+
+**A question's help text is rendered with the same Markdown** (coordinator, 2026-11-21: 30 of 108
+questions carry one, and it was plain text while the form description was Markdown). `FormQuestion`
+now hands `description` to `ProfileBioMarkdown`, small and muted through an ancestor override. One
+Enter is still one line break (`normalizePostLineBreaks`), so a help text typed as plain lines reads
+as before; what changes is that `**x**`, `- item` and a bare domain now format. The renderer draws
+no `{@html}`: raw HTML becomes inert components with attributes sanitised, and link schemes are
+allowlisted (`http`, `https`, `mailto`, `tel`, relative) by `@humanspeak/svelte-markdown` - the
+posture the form description and every post already have. Asserted in `FormQuestion.svelte.test.ts`.
+
+**Not built**: page breaks and "go to section" (G-SECTIONS, [backlog](../../backlog.d/p2-forms-the-gaps-left-after-the-priced-grid.md)).
+A future `section` item would be one more block kind in the same list; nothing here assumes the list
+is a single page beyond the fill pages' one loop.
 
 ## A draft's association may change; a published form's may not (owner, 2026-11-09)
 
