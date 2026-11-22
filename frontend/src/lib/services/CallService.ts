@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
+import { setCallRecordOwner } from '$lib/utils/chat/callRecordOwner';
 import type { CallFocusState } from '$lib/mobile/androidCallService';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
@@ -155,7 +156,13 @@ export interface CallChatNotifier {
     /** The instant this device ended the call - the one its hangup frame carries as `sentAt`. */
     at: CallEndTime,
     outcome?: CallEndReason,
-    starterId?: string
+    starterId?: string,
+    /**
+     * `not-connected` only: this device's end was a FAILURE (a terminal failure, the other party's
+     * seat lost, ICE failed), never a deliberate hangup - the record then says the connection could
+     * not be made. A deliberate quick hangup is a neutral "not completed".
+     */
+    failed?: boolean
   ) => void | Promise<void>;
   /** The server accepted this device's hangup at `serverTimestamp`: patched onto the record. */
   onCallEndAnswered?: (
@@ -765,6 +772,20 @@ export class CallService {
   /** Registers callbacks that insert call system messages into the chat timeline. */
   public setChatNotifier(notifier: CallChatNotifier | null): void {
     this.chatNotifier = notifier;
+    // The record of a 1:1 call this device is IN is written by this device, from its own facts:
+    // the signal path defers to it (`handleCallSignalForChat`), whatever arrives first.
+    setCallRecordOwner(notifier ? (callId) => this.ownsCallRecord(callId) : null);
+  }
+
+  /**
+   * Whether this device writes the record of `callId` itself: it is in that 1:1 call now - answered
+   * here (`incall`), or a caller whose callee reached the room. Read synchronously by the signal
+   * path BEFORE this service handles the same frame, so the answer is the state the frame met.
+   */
+  private ownsCallRecord(callId: string): boolean {
+    if (this.groupCall || this.currentCallId !== callId) return false;
+    const state = get(this.callState);
+    return state === 'incall' || (state === 'calling' && this.peerArrived);
   }
 
   /**
@@ -812,7 +833,8 @@ export class CallService {
     if (callMsg.hangup) {
       if (this.currentCallId === callMsg.callId) {
         if (group && !this.groupHangupEnds(senderNorm, callMsg)) return;
-        // Remote origin: `handleCallSignalForChat` writes this call's record from the same frame.
+        // Remote origin. A device that was IN the 1:1 call writes its record from its own facts
+        // (`endCall`); otherwise `handleCallSignalForChat` writes it from the same frame.
         this.endCall(false, callEndReasonFromWire(callMsg.endReason), true);
       }
       return;
@@ -1445,7 +1467,7 @@ export class CallService {
       const msg = String(e);
       appendLog(`[Call] acceptCall failed: ${msg}`);
       showToast(describeCallFailure(e), 'warning');
-      this.endCall();
+      this.endCall(true, undefined, false, true);
     }
   }
 
@@ -1479,12 +1501,20 @@ export class CallService {
    *   it is inferred from what this device was doing: a ring refused is 'declined', a ring the user
    *   abandoned is 'cancelled'. A call whose media connected carries none. A 1:1 call whose
    *   callee answered (or reached the room, `peerArrived`) but whose media NEVER connected is
-   *   `not-connected`, whatever `reason` says - so the record cannot depend on whether the relay's
-   *   `PeerLeft` or the MLS hangup arrives first (both reach the one writer with the same fact).
-   * @param remoteOrigin True when the OTHER party ended it (its MLS hangup): the call-record writer
-   *   already has that frame, so this device writes nothing.
+   *   `not-connected`, whatever `reason` says, read from THIS device's `connectedAt`.
+   * @param remoteOrigin True when the OTHER party ended it (its MLS hangup). A device that was in
+   *   the 1:1 call still writes its own record, from its own facts, so the record cannot depend on
+   *   whether the relay's `PeerLeft` or the MLS hangup arrives first, nor on the other side's
+   *   build; any other device leaves the record to the signal path, which has that frame.
+   * @param failed True when this end is a FAILURE (a terminal failure, a lost seat, ICE failed),
+   *   never a person's hangup: a `not-connected` record then says the connection could not be made.
    */
-  public endCall(notify: boolean = true, reason?: CallEndReason, remoteOrigin: boolean = false) {
+  public endCall(
+    notify: boolean = true,
+    reason?: CallEndReason,
+    remoteOrigin: boolean = false,
+    failed: boolean = false
+  ) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
     // Guard against double-calls: if cleanup already ran - or the call is already showing its
@@ -1502,10 +1532,8 @@ export class CallService {
     // connected did not happen: it is written `not-connected`, never as an answered call with a
     // duration (2026-11-22: 27 s of "Connexion..." then a record that read "answered"). Both ends
     // compute it from their own connection, and the hangup carries it to the other.
-    const neverConnected =
-      !this.groupCall &&
-      get(this.connectedAt) === null &&
-      (state === 'incall' || (wasCalling && this.peerArrived));
+    const inOneToOne = !this.groupCall && (state === 'incall' || (wasCalling && this.peerArrived));
+    const neverConnected = inOneToOne && get(this.connectedAt) === null;
     const outcome: CallEndReason | undefined =
       state === 'incoming'
         ? (reason ?? 'declined')
@@ -1519,7 +1547,7 @@ export class CallService {
     // else was ANSWERED. One label for both read as a doubt on every answered call (#2706).
     const ended = outcome ?? (wasCalling && !this.peerArrived ? 'unrung' : 'answered');
     appendLog(
-      `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`
+      `[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin} failed=${failed}`
     );
     // The ringback stops FIRST, with the outcome as its reason: declined, busy, cancelled, not
     // answered (the window closed, or the setup failed after the invite).
@@ -1565,10 +1593,12 @@ export class CallService {
         );
       }
     }
-    if (groupId && callId && !remoteOrigin) {
+    if (groupId && callId && (!remoteOrigin || inOneToOne)) {
       // The one record writer, told WHY the call ended. A call that failed before its invite
       // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
-      const starterId = state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined;
+      // The starter is the caller: the one who rang THIS device (`incomingCallerId`, kept through
+      // the answered call), or this account when it placed the call.
+      const starterId = this.incomingCallerId ?? undefined;
       const notifier = this.chatNotifier;
       const recorded = Promise.resolve(
         notifier?.onCallEnded(
@@ -1576,7 +1606,8 @@ export class CallService {
           callId,
           { timestamp: new Date(endedAt), ownAct: true },
           outcome,
-          starterId
+          starterId,
+          outcome === 'not-connected' && failed
         )
       );
       // After the row exists: a patch that ran first would find nothing to patch.
@@ -1635,7 +1666,7 @@ export class CallService {
     // failure, the connection lost.
     showToast(cause ? describeCallFailure(cause) : m.call_connection_lost(), 'error');
     // The hangup goes out: the other party's row is finalized by it, and its ring (if any) stops.
-    this.endCall(true, 'not-answered');
+    this.endCall(true, 'not-answered', false, true);
   }
 
   /**
@@ -2351,7 +2382,7 @@ export class CallService {
         // the token, it never guesses one.
         leg.awayCause = peerAwayCauseOf(frame.disposition);
         appendLog(
-          `[Call]${leg.tag} the other party lost its signalling connection (relay: ${leg.awayCause}, media ${leg.mediaEverConnected ? 'had connected' : 'never connected'}) - waiting for it`
+          `[Call]${leg.tag} the other party lost its signalling connection (relay: ${leg.awayCause}, media ${get(this.connectedAt) === null ? 'never connected' : 'had connected'}) - waiting for it`
         );
         leg.away = true;
         // Its microphone report is about a device we can no longer hear from: no fresh evidence,
@@ -2461,7 +2492,9 @@ export class CallService {
           ? '[Call] the other party left the call room'
           : '[Call] this device was replaced in the call room by another of this account'
       );
-      this.endCall(false);
+      // A seat that was AWAY and never came back is a lost connection; a party that left from a
+      // present seat hung up.
+      this.endCall(false, undefined, false, this.legs.get(ONE_TO_ONE_LEG)?.away === true);
       return;
     }
     const user = peerUserOf(peerId);
@@ -2623,7 +2656,7 @@ export class CallService {
       if (e instanceof CallSetupAbandonedError) return;
       if (e instanceof CallSignallingRefusedError) {
         appendLog(`[Call] signalling resume refused (${e.reason}) - the call is over`);
-        this.endCall(true, 'not-answered');
+        this.endCall(true, 'not-answered', false, true);
         return;
       }
       appendLog(`[Call] signalling resume attempt ${this.resumeAttempts} failed: ${String(e)}`);
@@ -2891,12 +2924,13 @@ export class CallService {
   }
 
   /**
-   * Recomputes {@link peerLost}: a 1:1 call whose other party is away and whose media never
-   * connected. Logged on every change, so the screen's words are explained in the exported log.
+   * Recomputes {@link peerLost}: a 1:1 call whose other party is away and that never connected
+   * (`connectedAt`, which no rebuild clears). Logged on every change, so the screen's words are explained in the exported log.
    */
   private updatePeerLost(): void {
     const leg = this.groupCall ? undefined : this.legs.get(ONE_TO_ONE_LEG);
-    const next = !!leg && leg.away && !leg.mediaEverConnected;
+    // The CALL's first connection, never the leg's: a rebuilt peer connection clears its own.
+    const next = !!leg && leg.away && get(this.connectedAt) === null;
     if (next === get(this.peerLost)) return;
     appendLog(
       `[Call] peer_lost=${next} before the first connection (${leg ? this.mediaLayers(leg) : 'no leg'})`
@@ -3245,9 +3279,10 @@ export class CallService {
     leg.epoch = this.transformEpoch;
     if (!awaitingPeer) this.armCallReport(leg, pc);
 
-    // Counted per peer connection, both directions: a rebuilt one starts from nothing.
+    // Counted per peer connection, both directions: a rebuilt one starts from nothing. `gathered`
+    // is what ICE produced (the gathering line); `leg.candsOut` what was handed to the socket.
     const gathered = emptyCandidateCounts();
-    leg.candsOut = gathered;
+    leg.candsOut = emptyCandidateCounts();
     leg.candsIn = emptyCandidateCounts();
     /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
     let relayGap = false;
@@ -3258,10 +3293,21 @@ export class CallService {
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         const kind = iceCandidateKindOf(e.candidate.candidate);
-        if (kind && countCandidate(gathered, kind.type)) {
+        if (!kind) {
+          appendLog(
+            `[Call]${leg.tag} WARN a local ICE candidate names no known type - not counted`
+          );
+        } else {
+          countCandidate(gathered, kind.type);
+        }
+        const sent = this.sendSignal(
+          { type: 'IceCandidate', candidate: JSON.stringify(e.candidate) },
+          leg
+        );
+        // `cands_out` counts what reached the signalling socket, never what was only gathered.
+        if (kind && sent && countCandidate(leg.candsOut, kind.type)) {
           appendLog(`[Call]${leg.tag} first local ${kind.type} candidate (${kind.protocol}) sent`);
         }
-        this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) }, leg);
       } else {
         appendLog(
           `[Call]${leg.tag} ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} errors=${candidateErrors} ice=${pc.iceConnectionState})`
@@ -3860,15 +3906,17 @@ export class CallService {
    * silently. A GROUP call's frame for one leg is ADDRESSED to that leg's seat (`to`, WP-GC2), and the
    * relay stamps `from`; a 1:1 call's frames carry no `to`, byte for byte as before group calls.
    */
-  private sendSignal(msg: Record<string, unknown>, leg?: CallLeg) {
+  /** Sends one signalling frame; `true` when it was handed to an OPEN socket. */
+  private sendSignal(msg: Record<string, unknown>, leg?: CallLeg): boolean {
     if (this.signaledWs && this.signaledWs.readyState === WebSocket.OPEN) {
       const frame = leg?.isGroup && leg.peerId ? { ...msg, to: leg.peerId } : msg;
       this.signaledWs.send(JSON.stringify(frame));
-    } else {
-      appendLog(
-        `[Call] signalling ${String(msg.type)} NOT sent - socket ${this.signaledWs ? `state ${this.signaledWs.readyState}` : 'absent'}`
-      );
+      return true;
     }
+    appendLog(
+      `[Call] signalling ${String(msg.type)} NOT sent - socket ${this.signaledWs ? `state ${this.signaledWs.readyState}` : 'absent'}`
+    );
+    return false;
   }
 
   /**

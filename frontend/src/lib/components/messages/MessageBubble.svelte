@@ -1096,7 +1096,7 @@
     >
       <span><EmojiText text={textContent} /></span>
       {#if callNotConnected && onCallBack}
-        <Button variant="soft" size="compact" class="ml-1" onclick={() => onCallBack?.()}>
+        <Button variant="soft" class="ml-1" onclick={() => onCallBack?.()}>
           <Phone size={12} strokeWidth={2.5} />
           {m.chat_system_call_back()}
         </Button>

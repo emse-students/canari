@@ -2287,7 +2287,8 @@ export async function loginImpl(
         callId: string,
         at: CallEndTime,
         outcome?: CallEndReason,
-        starterId?: string
+        starterId?: string,
+        failed?: boolean
       ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
@@ -2295,7 +2296,8 @@ export async function loginImpl(
           callId,
           at,
           outcome,
-          starterId ?? ctx.getUserId()
+          starterId ?? ctx.getUserId(),
+          failed === true
         ),
       onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
         patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),

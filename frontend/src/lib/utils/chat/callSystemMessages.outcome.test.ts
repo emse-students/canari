@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { setCallRecordOwner } from '$lib/utils/chat/callRecordOwner';
 import { SvelteMap } from 'svelte/reactivity';
 
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -119,9 +120,24 @@ describe('the ONE call-record writer (B15)', () => {
       const { ctx, rows } = makeCtx();
       await recordCallStarted(ctx, G, id, starter, AT);
       await recordCallEnded(ctx, G, id, AT, 'not-connected', starter);
-      expect(rows()[0].text).toBe("Appel non abouti : la connexion n'a pas pu s'établir");
+      // A deliberate quick hangup: neutral, it claims no technical failure.
+      expect(rows()[0].text).toBe('Appel non abouti');
       expect(rows()[0].callEvent?.outcome).toBe('not-connected');
+      expect(rows()[0].callEvent?.failed).toBeUndefined();
     }
+  });
+
+  it('only a FAILURE says the connection could not be made', async () => {
+    const { ctx, rows } = makeCtx();
+    await recordCallStarted(ctx, G, 'f1', 'caller', AT);
+    await recordCallEnded(ctx, G, 'f1', AT, 'not-connected', 'caller', true);
+    expect(rows()[0].text).toBe("Appel non abouti : la connexion n'a pas pu s'établir");
+    expect(rows()[0].callEvent?.failed).toBe(true);
+    // `failed` means nothing on any other outcome.
+    const other = makeCtx();
+    await recordCallStarted(other.ctx, G, 'f2', 'me', AT);
+    await recordCallEnded(other.ctx, G, 'f2', AT, 'cancelled', 'me', true);
+    expect(other.rows()[0].callEvent?.failed).toBeUndefined();
   });
 
   it('an answered call keeps its duration', async () => {
@@ -226,6 +242,38 @@ describe('the signal path of the record', () => {
     await handleCallSignalForChat(b.ctx, 'me', G, hangup(R.CALL_END_REASON_CANCELLED), 'me', AT);
     expect(a.rows()).toHaveLength(0);
     expect(b.rows()).toHaveLength(0);
+  });
+
+  it('a device that was IN the call writes its own record: the hangup frame decides nothing there', async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me', AT);
+    setCallRecordOwner((id) => id === 'h1');
+    try {
+      await handleCallSignalForChat(
+        ctx,
+        'caller',
+        G,
+        hangup(R.CALL_END_REASON_NOT_CONNECTED),
+        'me',
+        AT
+      );
+    } finally {
+      setCallRecordOwner(null);
+    }
+    expect(rows()[0].callEvent?.endedAt).toBeUndefined();
+  });
+
+  it('a NOT CONNECTED hangup on a device with no row writes none: its sender is no starter', async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(
+      ctx,
+      'callee',
+      G,
+      hangup(R.CALL_END_REASON_NOT_CONNECTED),
+      'me',
+      AT
+    );
+    expect(rows()).toHaveLength(0);
   });
 
   it("the other side's NOT CONNECTED hangup finalizes the started row as not connected", async () => {

@@ -12,6 +12,7 @@ import {
   CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
+import { callRecordOwnedHere } from '$lib/utils/chat/callRecordOwner';
 import { canari } from '$lib/proto/canari.js';
 import { decodeAppMessage, mkCallBusy, mkCallHangup, mkCallInvite } from '$lib/proto/codec';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
@@ -2450,7 +2451,8 @@ describe('when a busy answer is, and is not, given', () => {
       'room-1',
       ENDED_AT,
       'cancelled',
-      undefined
+      undefined,
+      false
     );
     expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
   });
@@ -2496,18 +2498,60 @@ describe('a call whose callee reached the room but whose media never connected i
     expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
   });
 
-  it('the callee MLS hangup first: the same fact, written by the signal path alone', async () => {
-    const { chat, service } = await asked();
-    await service.handleCallSignal(
+  /** The callee's MLS hangup, as a 1.7.x build sends it (no reason) or as this build does. */
+  const calleeHangup = (service: CallService, endReason?: number) =>
+    service.handleCallSignal(
       'callee@example.org',
       'group-1',
-      { callId: 'room-1', hangup: true },
+      { callId: 'room-1', hangup: true, ...(endReason !== undefined ? { endReason } : {}) },
       'me@example.org',
       'device-1'
     );
+
+  it('the callee MLS hangup FIRST (a 1.7.x callee, no reason): this device writes its own fact', async () => {
+    const { chat, service, ws } = await asked();
+    // The signal path is told this device owns the record, before the service handles the frame.
+    expect(callRecordOwnedHere('room-1')).toBe(true);
+    await calleeHangup(service);
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
     expect(['ended', 'idle']).toContain(get(service.callState));
     await recordWritten();
-    expect(chat.onCallEnded).not.toHaveBeenCalled();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    // The other party hung up: nothing says the connection failed.
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
+  });
+
+  it('PeerLeft FIRST, the MLS hangup after: the same record', async () => {
+    const { chat, service, ws } = await asked();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+    await calleeHangup(service, canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
+    await recordWritten();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
+  });
+
+  it("this device's own connection decides, never the other side's reason", async () => {
+    const { chat, service } = await asked();
+    FakePeerConnection.instances[0].setConnection('connected');
+    await calleeHangup(service, canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
+    await recordWritten();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it('a seat that went AWAY and never came back ends the call as a FAILURE', async () => {
+    const { chat, ws } = await asked();
+    ws.deliver({ type: 'PeerAway', disposition: 'transport-error' });
+    await settle();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+    await recordWritten();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(true);
   });
 
   it('a hang-up by the caller after the callee arrived, before any media, says NOT CONNECTED on the wire', async () => {
@@ -2516,6 +2560,8 @@ describe('a call whose callee reached the room but whose media never connected i
 
     await recordWritten();
     expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    // A person hung up: a neutral "not completed", never a claimed failure.
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
   });
@@ -2526,6 +2572,7 @@ describe('a call whose callee reached the room but whose media never connected i
 
     await recordWritten();
     expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(true);
     expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
   });
 
@@ -2604,7 +2651,8 @@ describe('a call that fails after its invite left (B15)', () => {
       'room-1',
       ENDED_AT,
       'not-answered',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
@@ -2634,7 +2682,14 @@ describe('a busy answer, caller side (B16)', () => {
     expect(showToast).toHaveBeenCalledWith(m.call_busy(), 'info');
     await recordWritten();
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', ENDED_AT, 'busy', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'busy',
+      undefined,
+      false
+    );
     // The hangup stops the callee's other devices ringing, and says why.
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_BUSY);
@@ -2685,7 +2740,8 @@ describe('the typed end reason of an unanswered call (B15)', () => {
       'room-1',
       ENDED_AT,
       'cancelled',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_CANCELLED);
@@ -2735,7 +2791,8 @@ describe('the typed end reason of an unanswered call (B15)', () => {
       'room-1',
       ENDED_AT,
       'declined',
-      'peer@example.org'
+      'peer@example.org',
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_DECLINED);
@@ -2803,7 +2860,8 @@ describe('the ring window, both sides', () => {
       'room-1',
       ENDED_AT,
       'not-answered',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
@@ -5092,6 +5150,28 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
     expect(lines.some((l) => l.includes('first remote srflx candidate (udp'))).toBe(true);
     expect(lines.some((l) => l.includes('first local relay candidate (udp) sent'))).toBe(true);
     expect(lines.some((l) => /192\.0\.2\.7|198\.51\.100/.test(l))).toBe(false);
+  });
+
+  it('cands_out counts only what reached the socket; a local candidate of no known type is named', async () => {
+    const { service, ws, pc } = await liveCall();
+    const onCandidate = pc.onicecandidate as unknown as (e: {
+      candidate: { candidate: string } | null;
+    }) => void;
+    onCandidate({ candidate: { candidate: 'candidate:1 1 udp 1 198.51.100.9 50002 typ host' } });
+    onCandidate({ candidate: { candidate: 'candidate:2 1 udp 1 198.51.100.9 50003 typ bogus' } });
+    // The socket is gone: a candidate gathered now is not sent, and not counted as sent.
+    (ws as unknown as { readyState: number }).readyState = 3;
+    onCandidate({ candidate: { candidate: 'candidate:3 1 udp 1 198.51.100.9 50004 typ srflx' } });
+    pc.setConnection('connected');
+    service.endCall();
+    await settle();
+    const [end] = await reports('end');
+    expect(end).toContain('cands_out=h1/s0/r0');
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.includes('WARN a local ICE candidate names no known type'))).toBe(
+      true
+    );
   });
 
   it('names an icecandidateerror by its server host and code only, once per server and code', async () => {
