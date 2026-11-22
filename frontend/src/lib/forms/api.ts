@@ -571,7 +571,14 @@ export interface CursusSlice {
   productGridPrices: ProductGridPrices;
 }
 
-export async function checkSubmission(formId: string): Promise<{
+/**
+ * The caller's state on a form. `withAnswers` (the fill page) asks for their OWN answers too
+ * (`myAnswers`); the feed's cards do not ask.
+ */
+export async function checkSubmission(
+  formId: string,
+  opts: { withAnswers?: boolean } = {}
+): Promise<{
   hasSubmitted: boolean;
   paymentStatus?: string;
   /** The id of the caller's own answer when there is one (a `pending` one is confirmed on load). */
@@ -598,8 +605,15 @@ export async function checkSubmission(formId: string): Promise<{
    * Absent from a server older than the priced grid, which holds none.
    */
   productGridPrices?: ProductGridPrices;
+  /**
+   * The caller's own answers, newest first, each with the questions that fixed its price - only
+   * when asked (`withAnswers`). Always empty on an anonymous form (its rows name nobody). Absent from
+   * a server older than it (2026-11-21): the page then draws what it drew before.
+   */
+  myAnswers?: EditableAnswer[];
 }> {
-  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
+  const query = opts.withAnswers ? '?answers=1' : '';
+  const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check${query}`);
   if (!res.ok) throw await refusal(res, 'Failed to check submission status');
   return res.json();
 }
@@ -977,7 +991,10 @@ export async function cancelPendingSubmission(
   return res.json();
 }
 
-/** One of the caller's own answers they may still change, as `GET :id/my-answers` serves it. */
+/**
+ * One of the caller's own answers, as `GET :id/my-answers` (those they may still change) and the
+ * check's `myAnswers` (all of them, read-only) serve it.
+ */
 export interface EditableAnswer {
   id: string;
   formId: string;

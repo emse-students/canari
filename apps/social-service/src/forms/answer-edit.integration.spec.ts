@@ -587,6 +587,68 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     expect((await row(sent.submissionId)).answers['q-name']).toBe('A');
   });
 
+  it('reads their own answer back with the switch off, its price lock shown; another account reads none', async () => {
+    // Owner, 2026-11-21: "je voudrais pouvoir voir ma reponse, meme si l'editeur m'interdit de la
+    // modifier". A cash answer waiting for its money: the meal supplement fixed its price.
+    const formId = await makeForm({ allowAnswerEdit: false });
+    const sent: any = await service.submit(formId, {
+      userId: ALICE,
+      paymentMethod: 'cash',
+      answers: { 'q-name': 'Mine', 'q-meal': 'm-yes' },
+    } as any);
+    const mine = (await service.hasSubmission(formId, ALICE, true)).myAnswers ?? [];
+    expect(mine.map((a) => [a.id, a.answers['q-name'], a.paymentStatus])).toEqual([
+      [sent.submissionId, 'Mine', 'pending_cash'],
+    ]);
+    expect(mine[0].lockedItemIds).toContain('q-meal');
+    // Nothing else of the row than the submitter's allowlist.
+    expect(mine[0]).not.toHaveProperty('userId');
+    expect(mine[0]).not.toHaveProperty('paymentRequestId');
+    // Another account: exactly what an account with no answer reads.
+    expect((await service.hasSubmission(formId, BOB, true)).myAnswers).toEqual([]);
+    // Not asked (the feed's cards): not served.
+    expect(await service.hasSubmission(formId, ALICE)).not.toHaveProperty('myAnswers');
+    // Closed: still theirs to read.
+    await ds.query(`UPDATE forms SET "closedAt" = now() - interval '1 minute' WHERE id = $1`, [
+      formId,
+    ]);
+    expect((await service.hasSubmission(formId, ALICE, true)).myAnswers).toHaveLength(1);
+  });
+
+  it('reads back every answer of a several-answers form, newest first, and none of an anonymous one', async () => {
+    const formId = await makeForm({
+      requiresPayment: false,
+      allowCashPayment: false,
+      allowMultipleSubmissions: true,
+      allowAnswerEdit: false,
+    });
+    for (const name of ['Un', 'Deux']) {
+      await service.submit(formId, {
+        userId: ALICE,
+        answers: { 'q-name': name, 'q-meal': 'm-none' },
+      } as any);
+    }
+    const mine = (await service.hasSubmission(formId, ALICE, true)).myAnswers ?? [];
+    expect(mine.map((a) => a.answers['q-name'])).toEqual(['Deux', 'Un']);
+    expect((await service.hasSubmission(formId, BOB, true)).myAnswers).toEqual([]);
+
+    // An anonymous form: the row names nobody, so the server has no answer of hers to give back -
+    // only that she answered (the registry), which the page turns into "already answered".
+    const anon = await makeForm({
+      requiresPayment: false,
+      allowCashPayment: false,
+      allowAnswerEdit: false,
+      anonymous: true,
+    });
+    await service.submit(anon, {
+      userId: ALICE,
+      answers: { 'q-name': 'Secret', 'q-meal': 'm-none' },
+    } as any);
+    const check = await service.hasSubmission(anon, ALICE, true);
+    expect(check.hasSubmitted).toBe(true);
+    expect(check.myAnswers).toEqual([]);
+  });
+
   it('refuses an answer that is no longer one (cancelled)', async () => {
     const formId = await makeForm();
     const sent: any = await service.submit(formId, {

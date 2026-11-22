@@ -195,10 +195,11 @@ export async function postNativeReactionNotification(
 }
 
 /**
- * Which socket event told this device that its account read a conversation elsewhere: an own
- * MLS `read_watermark` from another device, or an own salon `channel.read`.
+ * Which event told this device that its account read a conversation: an own MLS `read_watermark`
+ * from another device, an own salon `channel.read`, or `read_here` - THIS device's reader opening
+ * it, which no push and no socket echo ever reports back (`openedConversationDismissal.ts`).
  */
-export type ReadElsewhereEvent = 'read_watermark' | 'channel.read';
+export type ReadElsewhereEvent = 'read_watermark' | 'channel.read' | 'read_here';
 
 /**
  * Tells the Android builder that this account read a conversation on another device, as this

@@ -6,7 +6,7 @@ import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
 import { drainOnSigterm } from './drain-on-sigterm';
-import { finishJoinAskWorkInFlight } from './utils/join-ask-announce';
+import { finishWorkOwedBeforeExit } from './work-owed-before-exit';
 
 /**
  * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND NEITHER DOES ANY OTHER - THERE IS NO BROKER.
@@ -55,8 +55,9 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT || 3010);
   // A release retires this replica with SIGTERM once its successor is healthy; see the module. The
-  // join-ask announcements started after an answer are finished before the process leaves.
-  drainOnSigterm(app.getHttpServer(), undefined, undefined, finishJoinAskWorkInFlight);
+  // join-ask announcements started after an answer are finished before the process leaves, then the
+  // push delivery record they and every earlier send handed over (it says first what is pending).
+  drainOnSigterm(app.getHttpServer(), undefined, undefined, finishWorkOwedBeforeExit);
 }
 
 void bootstrap().catch((err) => {

@@ -255,6 +255,31 @@ export async function deleteAccountPushTokens(
 }
 
 /**
+ * Deletes every push registration not renewed since `cutoff` (the 90-day sweep), their envelopes
+ * going with them by the cascade. Answers the number deleted.
+ *
+ * LOCKS THE ROWS IN ("userId", "deviceId") ORDER FIRST - within one account the `deviceId` order of
+ * {@link deleteAccountPushTokens} and {@link storeEnvelopes}, across accounts the order the push
+ * delivery record's stamps take (`utils/push-delivery-records.ts`). A bare multi-account DELETE locks
+ * rows in scan order, and against a stamp holding `b` and waiting for `a` that is a deadlock.
+ */
+export async function deleteStalePushTokens(manager: EntityManager, cutoff: Date): Promise<number> {
+  return manager.transaction(async (tx) => {
+    const locked = (await tx.query(
+      `SELECT id FROM push_token WHERE "updatedAt" < $1 ORDER BY "userId", "deviceId" FOR UPDATE`,
+      [cutoff]
+    )) as Array<{ id: string }>;
+    if (locked.length === 0) return 0;
+    const rows = (await tx.query(
+      `WITH gone AS (DELETE FROM push_token WHERE id = ANY($1::uuid[]) RETURNING 1)
+       SELECT count(*)::int AS n FROM gone`,
+      [locked.map((r) => r.id)]
+    )) as Array<{ n: number }>;
+    return rows[0]?.n ?? 0;
+  });
+}
+
+/**
  * What a fetch of one envelope found.
  *
  * - `served`: the device's own envelope; `times` is how often it has now been served (above one, a

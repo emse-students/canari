@@ -4925,6 +4925,11 @@
   "form_view_edit_locked_note": "Sets the price paid: can no longer be changed.",
   "form_view_my_answers_title": "Your answers",
   "form_view_my_answer_row": "Answer of {date}",
+  "form_view_answer_view": "View",
+  "form_view_answer_view_banner": "Your answer of {date}, read-only.",
+  "form_view_answer_view_close": "Close",
+  "form_view_already_answered_title": "You have already answered",
+  "form_view_already_answered_anonymous_note": "This form is anonymous: Canari keeps no link between your account and your answer, so it cannot show it back to you.",
   "form_responses_edited_at": "changed on {date}",
   "form_criterion_any_tier": "Any membership tier",
   "form_criterion_no_formations": "No track is known yet.",
@@ -6658,5 +6663,9 @@
   "attachment_chip_pdf": "PDF",
   "attachment_chip_event": "Event",
   "attachment_event_open": "See the event",
-  "pdf_open_named_document_label": "Open {name}"
+  "pdf_open_named_document_label": "Open {name}",
+  "webview_outdated_title": "Update Android System WebView",
+  "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
+  "webview_outdated_button": "Open the Play Store",
+  "webview_outdated_version": "Detected version: {version}"
 }
