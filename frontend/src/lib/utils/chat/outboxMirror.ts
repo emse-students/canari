@@ -144,6 +144,16 @@ const sentNativeLines = new Set<string>();
 const waitingForConversation = new Map<string, string>();
 
 /**
+ * Replaces the waiting lines with those a pass that READ the mirror found waiting, and hands back
+ * `result`. A pass that could not read it changes nothing: it learned nothing.
+ */
+function settleWaiting<T>(found: Map<string, string>, result: T): T {
+  waitingForConversation.clear();
+  for (const [id, groupId] of found) waitingForConversation.set(id, groupId);
+  return result;
+}
+
+/**
  * Whether a native line was left unadopted for want of `conversationId`'s row - so its write is
  * what adopts it. Read by the outbox controller on every row written: a map scan, no I/O.
  */
@@ -454,6 +464,9 @@ export async function adoptOrphanedMirrorEntries(
   claims?: MirrorClaims
 ): Promise<string[]> {
   if (!isTauriRuntime()) return [];
+  // THIS PASS'S OWN WAITING LINES: a line that left the mirror (sent by a drain), was found sent, or
+  // could not be adopted is in none, so it stops naming its conversation (review of #3969, N1).
+  const stillWaiting = new Map<string, string>();
   let mirror: OutboxMirrorEntry[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -468,7 +481,7 @@ export async function adoptOrphanedMirrorEntries(
     appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
     throw new MirrorAdoptionError('mirror', e);
   }
-  if (!mirror.length) return [];
+  if (!mirror.length) return settleWaiting(stillWaiting, []);
 
   const queued = await storage
     .getOutboxQueue(deviceKeyB64)
@@ -513,7 +526,7 @@ export async function adoptOrphanedMirrorEntries(
     );
   }
   const orphans = mirror.filter((e) => e.id && e.owner !== 'page' && !known.has(e.id));
-  if (!orphans.length) return [];
+  if (!orphans.length) return settleWaiting(stillWaiting, []);
   appendLog(`[OUTBOX_MIRROR] ${orphans.length} orphan mirror entr(y/ies) to adopt`);
 
   const adopted: string[] = [];
@@ -562,7 +575,7 @@ export async function adoptOrphanedMirrorEntries(
             `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, which this device does not store - not adopted, kept native in the mirror; adopted when that conversation's row is written, never if it was deleted here`
           );
         }
-        waitingForConversation.set(orphan.id, orphan.groupId);
+        stillWaiting.set(orphan.id, orphan.groupId);
         continue;
       }
     }
@@ -588,11 +601,10 @@ export async function adoptOrphanedMirrorEntries(
       );
       continue;
     }
-    waitingForConversation.delete(orphan.id);
     adopted.push(orphan.id);
   }
   appendLog(`[OUTBOX_MIRROR] ${adopted.length}/${orphans.length} orphan entr(y/ies) adopted`);
-  return adopted;
+  return settleWaiting(stillWaiting, adopted);
 }
 
 /**

@@ -91,6 +91,7 @@ import type { Conversation } from '$lib/types';
 import { toBase64 } from '$lib/utils/hex';
 import { parseEnvelope } from '$lib/envelope';
 import { announceConversationStored } from '$lib/db/conversationStored';
+import { invoke } from '@tauri-apps/api/core';
 import { m } from '$lib/paraglide/messages';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
@@ -688,7 +689,6 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
   // adopted the line, and the second re-inserted what a flush had sent and deleted in between.
   it('two adoptions at once and a flush between them send the line once', async () => {
     connectivity.reset();
-    tauri.mirror = [line('shade')];
     tauri.mergeWrites = true;
     const storage = makeStorage();
     const { outbox, sendMessage } = controllerOver(storage);
@@ -707,16 +707,22 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
       return save(e);
     });
 
-    const first = outbox.adoptNativeEntries();
-    const second = outbox.adoptNativeEntries();
-    outbox.flush();
-    await Promise.all([first, second]);
-    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
-    await vi.waitFor(() => expect(storage._queue.has('shade')).toBe(false));
-    outbox.flush();
-    await new Promise((r) => setTimeout(r, 20));
+    // 1. The page life's start pass, over an empty mirror, settles first: nothing else is chained.
+    tauri.mirror = [];
+    await outbox.flush();
+    tauri.mirror = [line('shade')];
+
+    // 2. Two passes at once. Unchained, both read the line native and the queue empty; the first
+    // queues and claims it and its flush sends it, then the second's write - held until that send -
+    // queues it again, and its claim's flush sends it a second time.
+    await Promise.all([outbox.adoptNativeEntries(), outbox.adoptNativeEntries()]);
+
+    // 3. The controller's own settle, then one more flush: nothing left to send.
+    await outbox.awaitSettled('shade');
+    await outbox.flush();
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(saves).toBe(1);
+    expect(storage._queue.has('shade')).toBe(false);
   });
 
   // Review of #3969 (S2): a line left native for want of its conversation's row is adopted by the
@@ -742,6 +748,36 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(parseEnvelope(storage._rows.get('late')!.content)).toMatchObject({ kind: 'text' });
     // Said once, not once per pass.
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('Orphan late')).length).toBe(1);
+    warn.mockRestore();
+  });
+
+  // Review of #3969 (N1): a waiting record was cleared only by an adoption, so a line that left the
+  // mirror another way (a drain sent it) kept naming its conversation, and every later write of that
+  // row ran a full pass. Each pass now records only the lines it found waiting.
+  it('a waiting line that left the mirror stops naming its conversation', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('gone', { groupId: 'g3' })];
+    const storage = makeStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { outbox } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.has('gone')).toBe(false);
+    const reads = () =>
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'read_outbox_mirror').length;
+
+    // A background drain sent it: the line left the mirror. The row is written twice.
+    tauri.mirror = [];
+    storage._conversationRows.add('g3');
+    const before = reads();
+    announceConversationStored('g3');
+    // That pass, then a pass of our own chained behind it: both settled once this one resolves.
+    await outbox.adoptNativeEntries();
+    expect(reads()).toBe(before + 2);
+    announceConversationStored('g3');
+    await outbox.adoptNativeEntries();
+    // Only our own pass ran: the second write found nothing waiting for g3.
+    expect(reads()).toBe(before + 3);
+    expect(storage._queue.size).toBe(0);
     warn.mockRestore();
   });
 
