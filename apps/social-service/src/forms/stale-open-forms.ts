@@ -39,8 +39,17 @@ const logger = new Logger('StaleOpenForms');
 
 const short = (id: string) => id.slice(0, 8);
 
-/** The newest answer row of form `f` (a precise time, or the day for an anonymous form). */
-const LAST_ANSWER_SQL = `(SELECT max(s."createdAt") FROM submissions s WHERE s."formId" = f.id)`;
+/**
+ * The UTC instant a `timestamp without time zone` column holds: `forms`/`submissions` `createdAt` and
+ * `updatedAt` are naive, and comparing one with a timestamptz would read it in the SESSION's zone, so
+ * the verdict would depend on the connection. `AT TIME ZONE 'UTC'` names the zone instead.
+ */
+const utc = (naive: string) => `(${naive} AT TIME ZONE 'UTC')`;
+
+/** The newest answer row of form `f` (a precise time, or the day for an anonymous form), as an instant. */
+const LAST_ANSWER_SQL = utc(
+  `(SELECT max(s."createdAt") FROM submissions s WHERE s."formId" = f.id)`
+);
 
 /**
  * THE PREDICATE, over form alias `f`, with `$1` the instant to judge at and `$2` the window in days:
@@ -52,7 +61,7 @@ const STALE_OPEN_WHERE = `f."deletedAt" IS NULL
      AND f."closedAt" IS NULL
      AND (f."opensAt" IS NULL OR f."opensAt" <= $1::timestamptz)
      AND NOT ${associationArchivedSql('f."associationId"')}
-     AND GREATEST(f."createdAt", f."updatedAt", ${LAST_ANSWER_SQL})
+     AND GREATEST(${utc('f."createdAt"')}, ${utc('f."updatedAt"')}, ${LAST_ANSWER_SQL})
            <= $1::timestamptz - make_interval(hours => 24 * $2::int)
      AND (f."staleAskedAt" IS NULL
           OR ${LAST_ANSWER_SQL} >= date_trunc('day', f."staleAskedAt" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;

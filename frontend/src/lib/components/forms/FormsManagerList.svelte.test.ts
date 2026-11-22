@@ -659,6 +659,23 @@ describe('FormsManagerList - the question put to a form left open', () => {
     await vi.waitFor(() => expect(card(target)).toBeNull());
   });
 
+  it('takes the card away when the server says the form is not open any more (409), and says so', async () => {
+    api.setFormClosingDate.mockRejectedValueOnce(
+      new ApiRefusalError(409, 'FORM_CLOSING_DATE_NOT_OPEN', 'not open')
+    );
+    const target = await render([form({ staleOpenAsk: true })]);
+    press(target, 'form-stale-open-date');
+    flushSync();
+    press(target, 'form-stale-open-date-confirm');
+    await vi.waitFor(() => expect(api.setFormClosingDate).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(toastStore.toasts.map((t) => t.message)).toContain(
+        m.form_refusal_closing_date_not_open()
+      )
+    );
+    await vi.waitFor(() => expect(card(target)).toBeNull());
+  });
+
   it('keeps the card and says so when the server refuses an answer', async () => {
     api.keepFormOpen.mockRejectedValueOnce(new Error('network'));
     const target = await render([form({ staleOpenAsk: true })]);

@@ -208,6 +208,28 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
     });
   });
 
+  it.each(['Asia/Tokyo', 'America/New_York'])(
+    'judges the window the same under a %s session: the naive columns are read as UTC, never in the session zone',
+    async (zone) => {
+      await form(1);
+      await answer(id(1), ago(STALE_OPEN_FORM_DAYS));
+      await form(2);
+      await answer(id(2), new Date(ago(STALE_OPEN_FORM_DAYS).getTime() + 1000));
+      const runner = ds.createQueryRunner();
+      try {
+        await runner.query(`SET TIME ZONE '${zone}'`);
+        const rows = (await runner.query(STALE_OPEN_DUE_SQL, [
+          NOW.toISOString(),
+          STALE_OPEN_FORM_DAYS,
+        ])) as { id: string }[];
+        // 21 days to the instant is due, a second less is not - exactly as under a UTC session.
+        expect(rows.map((r) => r.id)).toEqual([id(1)]);
+      } finally {
+        await runner.release();
+      }
+    }
+  );
+
   /** A member of ASSO with the given permission bits. */
   const member = (userId: string, permissions: number, association: string = ASSO) =>
     q(

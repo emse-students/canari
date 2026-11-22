@@ -58,7 +58,7 @@
   import { formatLocalDateTime, fromDate } from '$lib/components/ui/dateTimeField';
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
-  import { isClosedForm, opensLater } from '$lib/forms/formWindow';
+  import { FORM_CLOSING_DATE_NOT_OPEN, isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
   import { markdownToPlainText } from '$lib/seo/text';
 
@@ -277,6 +277,11 @@
       showToast(m.form_stale_open_dated_toast());
     } catch (e) {
       console.error(`[FORMS] dating the close of form ${form.id.slice(0, 8)} failed:`, e);
+      // The server says the form is not open any more (closed or unpublished elsewhere): the question
+      // is no longer put to it, so its card goes rather than staying to be answered again.
+      if (refusalCode(e) === FORM_CLOSING_DATE_NOT_OPEN) {
+        setForms(forms.map((f) => (f.id === form.id ? { ...f, staleOpenAsk: false } : f)));
+      }
       showToast(formCodeMessage(refusalCode(e)) ?? m.form_stale_open_error());
     } finally {
       closingId = null;

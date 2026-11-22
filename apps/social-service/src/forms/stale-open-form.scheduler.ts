@@ -133,7 +133,15 @@ export class StaleOpenFormScheduler {
           )
         );
       }
-      this.logger.log(`${TAG} form ${form.id.slice(0, 8)}: told ${recipients.length} manager(s)`);
+      // A claimed form nobody hears about is a swallowed outcome: the question is stamped asked and no
+      // bell row exists, so the form stays open and unasked-about until an answer re-arms it.
+      if (recipients.length === 0) {
+        this.logger.warn(
+          `${TAG} form ${form.id.slice(0, 8)}: claimed but told 0 manager(s) (no MANAGE_FORMS holder left)`
+        );
+      } else {
+        this.logger.log(`${TAG} form ${form.id.slice(0, 8)}: told ${recipients.length} manager(s)`);
+      }
       return recipients.length;
     });
   }
