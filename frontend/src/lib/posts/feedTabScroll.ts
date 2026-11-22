@@ -28,5 +28,8 @@ export function centredTabScrollLeft(
   if (maxScroll <= 0) return 0;
   const tabStartInContent = tab.left - row.left + scrollLeft;
   const centred = tabStartInContent + tab.width / 2 - row.width / 2;
-  return Math.min(maxScroll, Math.max(0, Math.round(centred)));
+  // A tab wider than the row cannot be centred: its LEADING edge wins, never clipped first letters
+  // (iPhone, 2026-11-22: "...ations"). A tab that fits is whole whenever it is centred.
+  const target = Math.min(centred, tabStartInContent);
+  return Math.min(maxScroll, Math.max(0, Math.round(target)));
 }

@@ -10,14 +10,18 @@
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
-   * AT A DOUBLED FONT THE LABELS WRAP INSTEAD OF RUNNING OFF (Mi 9T, `font_scale` 2.0, S9: "Campus"
-   * left the screen): a tab is `flex-1 min-w-0`, so it keeps its equal share at rest and shrinks
-   * with the row, its label hyphenating or breaking inside a word (`overflow-wrap: anywhere`) rather
-   * than overflowing; the pill grows in height (`min-h-11`). The text size is never reduced.
+   * AT A DOUBLED FONT A LABEL WRAPS BETWEEN WORDS, NEVER INSIDE ONE (Mi 9T, `font_scale` 2.0, S9:
+   * "Campus" left the screen; then a large system font showed "Organisa-tions" hyphenated over two
+   * lines while "Pour toi" and "Campus" had room to spare, 2026-11-22). A tab is `flex-auto` (basis =
+   * its own label), so the long label takes the width the short ones do not need, and shrinks
+   * proportionally only when the row truly cannot hold them; `min-w-min` stops it at its longest word,
+   * so no `overflow-wrap` or `hyphens` is needed. A row whose longest words still do not fit is the
+   * scroller's case (faded edge, selected tab revealed), never a mid-word break. The pill grows in
+   * height (`min-h-11`). The pill is measured from the real tab boxes, so unequal widths are fine.
    *
    * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
-   * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and under
-   * 24rem the text drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
+   * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and a crowded row
+   * (measured, `compactWhenCrowded`) drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
    * fallback for a 2x text size, never the normal state. Since 1.6.9 the labels are "Organisations"
    * (the tab mixes associations, lists and institutions - owner, 2026-11-10), "Pour toi" and "Campus".
    *
@@ -42,6 +46,30 @@
   }
 
   let { feed, onFeed, authToken }: Props = $props();
+
+  /**
+   * THE SMALLER TEXT STEP IS DECIDED BY MEASUREMENT, NEVER BY VIEWPORT WIDTH (the old `max-[24rem]`
+   * ignored the system font: a 2x font at 430 px overflowed, a 1x font at 360 px did not). The order
+   * of fallbacks: content-sized tabs, wrap between words, THIS step (`data-compact` on the scroller),
+   * and only then the sideways scroll. The attribute is cleared, the row read at the normal size and
+   * set again when it overflows, all inside one ResizeObserver callback (before paint), so it is
+   * stateless and cannot get stuck compact after the room comes back.
+   */
+  function compactWhenCrowded(node: HTMLElement) {
+    const decide = () => {
+      node.removeAttribute('data-compact');
+      if (node.scrollWidth > node.clientWidth) {
+        node.setAttribute('data-compact', '');
+        console.debug('[feed-tabs] the row is crowded: one text step down');
+      }
+    };
+    decide();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(decide);
+    observer.observe(node);
+    void document.fonts?.ready.then(decide);
+    return { destroy: () => observer.disconnect() };
+  }
 
   /** The feed's three modes, in the order they are drawn. */
   const FEED_TABS: { feed: PostFeed; label: () => string }[] = [
@@ -175,7 +203,8 @@
   >
     <div
       bind:this={tabs}
-      class="no-scrollbar relative isolate flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      use:compactWhenCrowded
+      class="group/tabs no-scrollbar relative isolate flex min-w-0 flex-1 snap-x snap-proximity gap-1 overflow-x-auto"
       data-feed-tabs
       use:scrollFades
     >
@@ -202,7 +231,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-0 flex-1 rounded-full px-2.5 text-sm leading-tight [overflow-wrap:anywhere] hyphens-auto transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-min flex-auto snap-start rounded-full px-2.5 text-sm leading-tight transition-colors group-data-compact/tabs:px-2 group-data-compact/tabs:text-xs focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'

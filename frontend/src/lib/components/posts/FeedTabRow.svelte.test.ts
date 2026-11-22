@@ -170,7 +170,7 @@ it('never draws an ink label on the glass: not before the pill is measured, not 
   expect(arriving.classList.contains('text-on-accent')).toBe(true);
 });
 
-it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down under 24rem', () => {
+it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down when the row is crowded', () => {
   mounted = mount(FeedTabRow, {
     target: document.body,
     props: { feed: 'all', onFeed: () => {}, authToken: 't' },
@@ -179,11 +179,17 @@ it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step d
   const tab = document.querySelector<HTMLElement>('[data-feed-tab="all"]')!;
   expect(tab.className).toContain('px-2.5');
   expect(tab.className).not.toContain('px-3.5');
-  expect(tab.className).toContain('max-[24rem]:text-xs');
-  // A doubled font wraps the label inside the tab; it never runs off the row.
-  expect(tab.className).not.toContain('whitespace-nowrap');
-  expect(tab.className).toContain('min-w-0');
-  expect(tab.className.split(' ')).toContain('flex-1');
-  expect(tab.className).not.toContain('flex-auto');
-  expect(tab.className).toContain('[overflow-wrap:anywhere]');
+  expect(tab.className).toContain('group-data-compact/tabs:text-xs');
+  expect(tab.className).not.toContain('max-[24rem]');
+  expect(tab.className).toContain('snap-start');
+  // A tab is as wide as its label asks (basis auto) and a label wraps BETWEEN words only: a
+  // hyphenated "Organisa-tions" came from equal thirds plus `overflow-wrap:anywhere` + `hyphens:auto`.
+  const classes = tab.className.split(' ');
+  expect(classes).not.toContain('whitespace-nowrap');
+  expect(classes).toContain('flex-auto');
+  expect(classes).not.toContain('flex-1');
+  expect(classes).toContain('min-w-min');
+  expect(classes).not.toContain('min-w-0');
+  expect(tab.className).not.toContain('overflow-wrap');
+  expect(tab.className).not.toContain('hyphens');
 });

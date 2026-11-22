@@ -21,6 +21,11 @@ describe('centredTabScrollLeft', () => {
     expect(centredTabScrollLeft(row, { left: 16 + 160 - 40, width: 100 }, 40, MAX)).toBe(60);
   });
 
+  it('shows the LEADING edge of a tab wider than the row, never its middle', () => {
+    // A 340 px tab at 100-440 in the content, row 300 px: centring would clip its first 20 px.
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200)).toBe(100);
+  });
+
   it('leaves a row that does not overflow at 0', () => {
     expect(centredTabScrollLeft(row, { left: 200, width: 100 }, 0, 0)).toBe(0);
   });
