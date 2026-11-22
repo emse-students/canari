@@ -27,6 +27,12 @@ vi.mock('./appForeground', () => ({
   },
 }));
 
+// Which shell this is, driven by hand: the unclean-end marker is kept on the mobile shells only.
+const shell = vi.hoisted(() => ({ mobile: false }));
+vi.mock('./appVersion', () => ({ isMobileTauriRuntime: () => shell.mobile }));
+
+const ON_SCREEN_KEY = 'canari_applog_on_screen';
+
 type AppLog = typeof import('./appLog');
 
 let appLog: AppLog;
@@ -414,17 +420,33 @@ describe('the device wipe', () => {
 });
 
 describe('a crash must not take the lines that explain it (call killed during setup)', () => {
-  it('a WARN or ERROR line is on disk at once, an L or I line is not', async () => {
+  it('an ERROR line is on disk at once, with the batch before it; L, I and W lines are not', async () => {
     appLog.captureConsoleLine('log', ['[A] quiet']);
     appLog.captureConsoleLine('info', ['[A] quiet too']);
+    appLog.captureConsoleLine('warn', ['[A] a warning']);
     await Promise.resolve();
     expect(await records()).toHaveLength(0);
 
-    appLog.captureConsoleLine('warn', ['[A] something is wrong']);
+    appLog.captureConsoleLine('error', ['[A] something is wrong']);
     await appLog.flushAppLog();
     const text = (await records()).map((r) => r.text).join('\n');
-    expect(text).toMatch(/quiet[\s\S]*quiet too[\s\S]* W \[A\] something is wrong/);
+    expect(text).toMatch(
+      /quiet[\s\S]*quiet too[\s\S]* W \[A\] a warning[\s\S]* E \[A\] something is wrong/
+    );
   });
+
+  it('a storm of events cannot leave more than MAX_PERSISTED_RECORDS records, oldest first out', async () => {
+    const total = appLog.MAX_PERSISTED_RECORDS + 40;
+    for (let i = 0; i < total; i++) {
+      appLog.captureConsoleLine('error', [`[STORM] ${i}`]);
+      await appLog.flushAppLog();
+    }
+    const stored = await records();
+    expect(stored.length).toBeLessThanOrEqual(appLog.MAX_PERSISTED_RECORDS);
+    const text = stored.map((r) => r.text).join('\n');
+    expect(text).not.toContain('[STORM] 0\n');
+    expect(text).toContain(`[STORM] ${total - 1}`);
+  }, 60_000);
 
   it('a storm of warnings coalesces: writes follow the write speed, never the line count', async () => {
     const added = vi.spyOn(FakeObjectStore.prototype, 'add');
@@ -453,7 +475,7 @@ describe('a crash must not take the lines that explain it (call killed during se
 
 describe('an unclean end is reported at the next boot', () => {
   const tauri = () => {
-    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    shell.mobile = true;
   };
 
   beforeEach(() => {
@@ -462,7 +484,7 @@ describe('an unclean end is reported at the next boot', () => {
   });
 
   afterEach(() => {
-    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    shell.mobile = false;
     localStorage.clear();
   });
 
@@ -506,7 +528,7 @@ describe('an unclean end is reported at the next boot', () => {
     tauri();
     vi.spyOn(console, 'info').mockImplementation(() => {});
     appLog.installAppLogFlushTriggers();
-    expect(localStorage.getItem(appLog.ON_SCREEN_KEY)).not.toBeNull();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).not.toBeNull();
     appLog.captureConsoleLine('log', ['[A] before']);
     await appLog.flushAppLog(); // the connection is open from here on
     vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementationOnce(() => {
@@ -515,19 +537,19 @@ describe('an unclean end is reported at the next boot', () => {
     appLog.captureConsoleLine('log', ['[A] pending']);
     screen.change(false);
     await appLog.flushAppLog();
-    expect(localStorage.getItem(appLog.ON_SCREEN_KEY)).toBeNull();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
     screen.change(true);
-    expect(localStorage.getItem(appLog.ON_SCREEN_KEY)).not.toBeNull();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).not.toBeNull();
   });
 
   it('a boot while the app is off screen sets no marker', async () => {
     tauri();
     screen.on = false;
     appLog.installAppLogFlushTriggers();
-    expect(localStorage.getItem(appLog.ON_SCREEN_KEY)).toBeNull();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
   });
 
-  it('is read in the Tauri runtime only - a second browser tab is not a crash', async () => {
+  it('is kept on the mobile shells only - a second browser tab or a desktop quit is not a crash', async () => {
     appLog.installAppLogFlushTriggers();
     await nextProcess();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

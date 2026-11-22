@@ -1701,6 +1701,8 @@ export class CallService {
   }
 
   /** The pending close of the ended summary; cleared by `cleanup` so it cannot cut a LATER call's summary short. */
+  /** The call whose end already wrote the in-app log (see `cleanup`). */
+  private callEndFlushedFor: string | null = null;
   private endedSummaryTimer: number | null = null;
 
   private clearEndedSummaryTimer(): void {
@@ -1711,7 +1713,6 @@ export class CallService {
   }
 
   private cleanup() {
-    void flushAppLogAtMilestone('call end');
     this.clearEndedSummaryTimer();
     // Any setup still awaiting belongs to the call ending here (`assertSetupLive`).
     this.callSetupSeq += 1;
@@ -1824,6 +1825,12 @@ export class CallService {
     this.remoteStreams.set(new Map());
     this.connectedAt.set(null);
     this.endedAt.set(null);
+    // Once per call, after the cleanup's own lines: `cleanup` has several call sites and may run
+    // twice for one call.
+    if (endedCallId !== null && endedCallId !== this.callEndFlushedFor) {
+      this.callEndFlushedFor = endedCallId;
+      void flushAppLogAtMilestone('call end');
+    }
   }
 
   /**
@@ -2864,7 +2871,6 @@ export class CallService {
         `[Call]${leg.tag} ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
       this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
-      if (seq === 1) void flushAppLogAtMilestone('first offer sent');
     } catch (e) {
       if (leg.pc !== pc) return;
       this.failCall(`ICE restart offer could not be made: ${String(e)}`);
@@ -3161,6 +3167,7 @@ export class CallService {
         `[Call]${leg.tag} offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
       this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
+      if (seq === 1) void flushAppLogAtMilestone('first offer sent');
     } catch (e) {
       appendLog(`[Call]${leg.tag} creating an offer failed: ${String(e)}`);
     } finally {
