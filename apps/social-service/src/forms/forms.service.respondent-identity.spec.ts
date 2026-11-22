@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { SubmitFormDto } from './dto/form.dto';
 import * as ExcelJS from 'exceljs';
+import { heldRowOf } from './held-answer.spec-fixture';
 import {
   FORM_GUEST_IDENTITY_MISSING,
   FORM_GUEST_IDENTITY_NOT_ASKED,
@@ -78,7 +79,12 @@ describe('the respondent account fields of a form', () => {
   function makeService(form: Record<string, unknown>) {
     const saved: Record<string, unknown>[] = [];
     const manager: any = {
-      query: jest.fn(() => Promise.resolve([{ formId: 'f1' }])),
+      // An anonymous answer is HELD for its batch: what it holds is what the spec reads as stored.
+      query: jest.fn((sql: string, params: unknown[]) => {
+        const held = heldRowOf(sql, params);
+        if (held) saved.push(held);
+        return Promise.resolve([{ formId: 'f1' }]);
+      }),
       create: jest.fn((_entity: unknown, row: Record<string, unknown>) => row),
       save: jest.fn((row: Record<string, unknown>) => {
         saved.push(row);
@@ -98,7 +104,11 @@ describe('the respondent account fields of a form', () => {
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
-      manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
+      manager: {
+        transaction: jest.fn((_l: string, fn: any) => fn(manager)),
+        // The release after an anonymous submit counts what waits (`heldAnswerCount`): below a batch.
+        query: jest.fn(() => Promise.resolve([{ n: '1' }])),
+      },
     };
     const accountIdentity = jest.fn(() => Promise.resolve(ACCOUNT));
     const service = new FormsService(
@@ -873,7 +883,11 @@ describe('the respondent account fields of a form', () => {
           findOne: jest.fn(() => Promise.resolve(form)),
           manager: { query },
         } as any,
-        { find: jest.fn(() => Promise.resolve(submissions)) } as any,
+        {
+          find: jest.fn(() => Promise.resolve(submissions)),
+          // Nothing waits for its batch (`heldAnswerCount`): the export reads what is stored.
+          manager: { query: jest.fn(() => Promise.resolve([{ n: '0' }])) },
+        } as any,
         {} as any,
         { get: jest.fn() } as any,
         {} as any,

@@ -953,6 +953,9 @@ const KEPT_AT_TOP_LEVEL: &[&str] = &[
     // of the OS push token is no longer owed, and a push that still arrives is no longer dropped.
     crate::commands::push_registration::SIGNED_OUT_FILE,
     crate::commands::push_registration::DELETION_OWED_FILE,
+    // And the notifications' erase it owes: the wipe empties the app's files, never what the system
+    // holds as shortcuts and donated interactions.
+    crate::commands::push_registration::NOTIFICATION_ERASE_OWED_FILE,
     // Shared with Firebase - emptied by prefix, not wholesale.
     "files",
     "shared_prefs",
@@ -2112,10 +2115,13 @@ mod tests {
     /// arrives stays dropped until a new registration is answered.
     #[test]
     fn keeps_the_marks_a_sign_out_wrote_for_the_push_registration() {
-        use crate::commands::push_registration::{DELETION_OWED_FILE, SIGNED_OUT_FILE};
+        use crate::commands::push_registration::{
+            DELETION_OWED_FILE, NOTIFICATION_ERASE_OWED_FILE, SIGNED_OUT_FILE,
+        };
         let dir = temp_dir("push-marks");
         file(&dir, SIGNED_OUT_FILE);
         file(&dir, DELETION_OWED_FILE);
+        file(&dir, NOTIFICATION_ERASE_OWED_FILE);
         file(&dir, "push_context.json");
 
         wipe_app_data(&dir).unwrap();
@@ -2127,6 +2133,10 @@ mod tests {
         assert!(
             dir.join(DELETION_OWED_FILE).exists(),
             "the owed deletion was wiped"
+        );
+        assert!(
+            dir.join(NOTIFICATION_ERASE_OWED_FILE).exists(),
+            "the owed erase was wiped"
         );
         assert!(!dir.join("push_context.json").exists());
         std::fs::remove_dir_all(&dir).ok();

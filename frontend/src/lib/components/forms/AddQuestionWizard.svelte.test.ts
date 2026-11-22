@@ -78,6 +78,7 @@ describe('step 1: the types, grouped', () => {
       m.qfamily_choice(),
       m.qfamily_grids(),
       m.qfamily_other(),
+      m.qfamily_content(),
     ]);
     const keys = [...document.querySelectorAll<HTMLElement>('[data-menu-item]')].map(
       (b) => b.dataset.menuItem
@@ -92,6 +93,8 @@ describe('step 1: the types, grouped', () => {
       'matrix',
       'product_grid',
       'file',
+      'text_block',
+      'image_block',
     ]);
     const item = menuItem('matrix');
     expect(item.className).toContain('text-left');

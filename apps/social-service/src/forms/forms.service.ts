@@ -51,6 +51,7 @@ import {
   type FormDraftState,
 } from './form-draft-revision';
 import { plainToInstance } from 'class-transformer';
+import { normaliseFormBlocks, questionItemsOf, withoutBlockAnswers } from './form-blocks';
 import { validate, type ValidationError } from 'class-validator';
 
 /** Every constraint a validation refused, nested ones (a question, an option) included, as the pipe says them. */
@@ -80,6 +81,12 @@ import {
   type RequestState,
 } from './seat-hold';
 import { Submission } from './entities/submission.entity';
+import {
+  ANONYMOUS_BATCH_SIZE,
+  heldAnswerCount,
+  holdAnonymousAnswer,
+  releaseHeldAnswers,
+} from './anonymous-answer-batches';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
   askOpening,
@@ -981,6 +988,14 @@ export class FormsService {
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
+    // A text or image block keeps a block's fields alone, and no question may depend on one.
+    input = {
+      ...input,
+      items: normaliseFormBlocks(input.items, {
+        submitCondition: input.submitCondition,
+        priceMatrix: input.priceMatrix,
+      }),
+    };
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     assertMultipleChoiceGridOneGroup(
@@ -1223,7 +1238,7 @@ export class FormsService {
       );
       throw new NotFoundException('Form not found');
     }
-    const submissionCount = await this.countActiveSubmissions(id);
+    const submissionCount = await this.countActiveSubmissions(form);
     // A paid form granting a cotisation its association cannot grant (no mode) is not buyable: its
     // submit is refused `COTISATION_DISABLED` (`assertGrantedTierIsARise`, the SAME
     // `cotisationGrantRefusal`), so the read says so rather than offer a payment that cannot open.
@@ -1318,10 +1333,17 @@ export class FormsService {
 
   /**
    * The submissions holding a place on the form: answered, paid, or waiting to be - an online
-   * `pending` only while it is younger than the hold (`seatHoldingWhere`).
+   * `pending` only while it is younger than the hold (`seatHoldingWhere`) - and the anonymous answers
+   * waiting for their batch (`anonymous-answer-batches.ts`), which are answers like the others.
    */
-  private countActiveSubmissions(formId: string): Promise<number> {
-    return this.submissionRepo.count({ where: seatHoldingWhere(formId) });
+  private async countActiveSubmissions(form: Pick<Form, 'id' | 'anonymous'>): Promise<number> {
+    if (!form.anonymous) return this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
+    // Both counts from ONE snapshot: a release between two reads would count its batch twice (held
+    // in the first, stored in the second) or not at all.
+    return this.submissionRepo.manager.transaction('REPEATABLE READ', async (m) => {
+      const stored = await m.count(Submission, { where: seatHoldingWhere(form.id) });
+      return stored + (await heldAnswerCount(m, form.id));
+    });
   }
 
   /**
@@ -1359,7 +1381,7 @@ export class FormsService {
       throw new NotFoundException('Form not found');
     }
     const formFull =
-      !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
+      !!form.maxSubmissions && (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
@@ -1573,14 +1595,24 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
-    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
-    const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
     if (input.items !== undefined) {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
+      // A text or image block keeps a block's fields alone, and no question may depend on one.
+      // The condition and grid the form WILL hold: the sent ones, else the stored ones.
+      input = {
+        ...input,
+        items: normaliseFormBlocks(input.items, {
+          submitCondition:
+            input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+        }),
+      };
     }
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
     // The form as this edit WILL save it: an absent field keeps the stored value, for every field a
     // rule reads, or an edit sending only `isPublic: true` would publish a stored cotisation grant or
     // an audience restriction nobody re-checked - and a rule judged on the edit alone would depend on
@@ -1853,6 +1885,9 @@ export class FormsService {
         message: 'A form revision is the editor payload, as one JSON object.',
       });
     }
+    // A revision is the editor payload, stored as is in `form_drafts`, never in `forms.items`: it
+    // reaches `items` only through `publishChanges` -> `validatedRevision` -> `update`, which runs
+    // `normaliseFormBlocks`, so a block is judged exactly once, where it becomes a form's own.
     // A question image the revision cites is bound to this form NOW, under the saver's id: an image
     // uploaded before the form existed (the create page) is then this form's, and a co-manager
     // publishing the revision later is not refused it as somebody else's upload.
@@ -2033,7 +2068,11 @@ export class FormsService {
    */
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    await retireForms(this.formRepo.manager, { formId: form.id });
+    // ONE transaction: an anonymous form's waiting answers are released under its lock, which a plain
+    // manager would drop at once (`releaseHeldAnswersUnderLock` refuses to run without one).
+    await this.formRepo.manager.transaction('READ COMMITTED', (m) =>
+      retireForms(m, { formId: form.id })
+    );
     // A removed form cites nothing any more; an archived one still does, and keeps its images.
     const images = questionImageIds(form.items);
     if (images.length > 0) await this.formItemImages.releaseUncited(images, 'form deleted');
@@ -2071,6 +2110,9 @@ export class FormsService {
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
     );
     await this.formRepo.update({ id: formId }, { closedAt });
+    // A closed anonymous form delivers its waiting answers now, as its state allows. The close is
+    // done whatever happens here: a failed release stays held and the hourly sweep takes it.
+    if (closed && form.anonymous) await this.releaseOrAccuse(formId, 'close', now);
     // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
     return {
       id: formId,
@@ -2509,7 +2551,7 @@ export class FormsService {
     // Check global capacity independently of per-user state
     let formFull = false;
     if (form.maxSubmissions) {
-      formFull = (await this.countActiveSubmissions(formId)) >= form.maxSubmissions;
+      formFull = (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
     }
 
     const facts = await this.factsFor(form, userId);
@@ -2687,7 +2729,14 @@ export class FormsService {
 
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
-    input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
+    // A block takes no answer: a key naming one is dropped before anything below reads the answers.
+    input = {
+      ...input,
+      answers: withNormalisedGridAnswers(
+        form.items ?? [],
+        withoutBlockAnswers(form.items, input.answers ?? {}, `submit ${formTag(form)}`)
+      ),
+    };
 
     // The files this answer cites: their SHAPE here, their ownership inside the transaction below
     // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
@@ -2913,6 +2962,8 @@ export class FormsService {
     }
 
     let savedSubmission!: Submission;
+    // An anonymous answer is held for its batch: it has no submission id to hand back.
+    let heldAnswer = false;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       // The association BEFORE the form: the lock order its delete takes (association first).
       await this.assertAssociationLiveUnderLock(manager, form, 'submit');
@@ -2966,7 +3017,10 @@ export class FormsService {
         })) > 0;
 
       if (form.maxSubmissions && !holdsSeat) {
-        const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
+        // An anonymous answer waiting for its batch holds its place like a stored one.
+        const count =
+          (await manager.count(Submission, { where: seatHoldingWhere(id) })) +
+          (form.anonymous ? await heldAnswerCount(manager, id) : 0);
         if (count >= form.maxSubmissions) throw formRefusal(FORM_FULL, 'Form is full');
       }
       // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
@@ -3007,10 +3061,9 @@ export class FormsService {
         if (totalCents > 0) {
           throw new BadRequestException('An anonymous form cannot charge for an option.');
         }
-        // The registry insert and the answer are ONE transaction, and the answer carries nothing
-        // that names the respondent: no account, no address, and a time cut to the day, because a
-        // precise clock would re-join the two tables by order alone. A guest is never in the
-        // registry: a public form takes several answers, and there is no account to write.
+        // The registry insert refuses a second answer from the same account, in this transaction.
+        // The answer itself is not written beside it: it waits for its batch (below). A guest is
+        // never in the registry: a public form takes several answers, and there is no account.
         if (!guest && !form.allowMultipleSubmissions) {
           const inserted: unknown[] = await manager.query(
             `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
@@ -3024,10 +3077,27 @@ export class FormsService {
             });
           }
         }
+        if (form.anonymous) {
+          // An anonymous form never asks a name or an e-mail (`FORM_ANONYMOUS_GUEST_IDENTITY`), so
+          // there is none to drop here; one reaching this line is a broken save rule, not an answer.
+          if (Object.values(guestIdentity).some((value) => value !== null && value !== undefined)) {
+            throw new Error(`guest identity reached the anonymous answer path on ${formTag(form)}`);
+          }
+          // The answer waits for its batch and moves into `submissions` with the others of this
+          // form, in one write of its own (`anonymous-answer-batches.ts`): nothing stored pairs it
+          // with the registry row above. Released after this transaction, below.
+          await holdAnonymousAnswer(manager, {
+            formId: id,
+            answers: storedAnswers,
+            lines,
+            priceLockedItemIds,
+            respondentIdentity,
+          });
+          heldAnswer = true;
+          return;
+        }
         // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
         // forgetting, and the answer carries no account for a clock to re-join.
-        const day = new Date();
-        day.setUTCHours(0, 0, 0, 0);
         savedSubmission = await manager.save(
           manager.create(Submission, {
             formId: id,
@@ -3042,7 +3112,6 @@ export class FormsService {
             paymentStatus: 'free',
             paymentMethod: null,
             cashExpiresAt: null,
-            ...(form.anonymous ? { createdAt: day, updatedAt: day } : {}),
           })
         );
         return;
@@ -3096,6 +3165,24 @@ export class FormsService {
         await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
+
+    if (heldAnswer) {
+      // The batch this answer completes is released in a transaction of its OWN, never the one that
+      // wrote the registry row. The answer is already safe: a failure here leaves the batch waiting,
+      // and the next submit, the close, a manager's read or the hourly sweep releases it.
+      try {
+        await releaseHeldAnswers(this.submissionRepo.manager, id);
+      } catch (e) {
+        this.logger.error(
+          '[FORMS] an anonymous batch could not be released after a submit; it stays held for the next release',
+          e
+        );
+      }
+      // No id: the answer is not a submission yet, and an id handed out now would be one more
+      // thing that pairs the request with the row its batch writes later.
+      this.logger.debug('[FORMS] an anonymous answer is held for its batch');
+      return { held: true as const };
+    }
 
     // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
@@ -3438,7 +3525,10 @@ export class FormsService {
   ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
     const items = form.items ?? [];
     const locked = rowLockedItemIds(form, row);
-    const sent = withNormalisedGridAnswers(items, answersIn);
+    const sent = withNormalisedGridAnswers(
+      items,
+      withoutBlockAnswers(items, answersIn, `edit ${tag}`)
+    );
     const merged: Record<string, unknown> = { ...sent };
     for (const itemId of locked) {
       if (itemId in sent && !sameAnswer(sent[itemId], row.answers?.[itemId])) {
@@ -3658,15 +3748,41 @@ export class FormsService {
   ): Promise<void> {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
-    await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    const form = await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    if (form.anonymous) {
+      // Under the form's lock, like every release of its waiting answers: a release that writes this
+      // answer's group again (`anonymous-answer-batches.ts`) and this delete never interleave. Either
+      // the delete ran first and the release no longer sees the answer, or the release ran first, the
+      // answer lives on under a new id, and this id is truthfully not found.
+      const [gone] = (await this.submissionRepo.manager.transaction('READ COMMITTED', async (m) => {
+        await lockFormSeats(m, sub.formId);
+        // The paid and pending guard of a named form holds here too, though an anonymous form takes
+        // no payment: defence in depth, so a row that ever carried money is never deleted.
+        return m.query(
+          `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+          [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
+        );
+      })) as [unknown[], number];
+      if (gone.length === 0) {
+        this.logger.log(
+          `[Forms] Submission ${submissionId} not deleted by ${callerId}: no longer under this id ` +
+            '(rewritten by a release, or deleted meanwhile)'
+        );
+        throw new NotFoundException('Submission not found');
+      }
+      this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
+      return;
+    }
     if (sub.paymentStatus === 'pending') {
       // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
       await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
     }
-    const deleted = (await this.submissionRepo.query(
+    // A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never the rows alone:
+    // read as the rows, the result always had length 2, and a refused delete read as a deletion.
+    const [deleted] = (await this.submissionRepo.query(
       `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
       [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
-    )) as unknown[];
+    )) as [unknown[], number];
     if (deleted.length === 0) {
       const now = await this.submissionRepo.findOne({
         where: { id: submissionId },
@@ -4620,12 +4736,47 @@ export class FormsService {
   }
 
   /**
+   * Releases an anonymous form's waiting answers as its state allows, on behalf of a manager's
+   * action or read - which is answered whatever happens here. A failure is logged as one (the answers
+   * stay held, safely, and the hourly sweep releases them), never turned into the caller's 500.
+   */
+  private async releaseOrAccuse(
+    formId: string,
+    during: 'close' | 'read' | 'export',
+    now?: Date
+  ): Promise<void> {
+    try {
+      await releaseHeldAnswers(this.submissionRepo.manager, formId, now);
+    } catch (e) {
+      this.logger.error(
+        `[FORMS] releasing the waiting anonymous answers failed during a ${during} of form ` +
+          `${formId.slice(0, 8)}; they stay held for the sweep`,
+        e
+      );
+    }
+  }
+
+  /**
+   * The anonymous answers of a form waiting for their batch, and the batch size: the responses
+   * screen says how many are not listed yet and why. Read AFTER the release a read triggers, so a
+   * closed form answers 0. Zero on a named form, which holds nothing.
+   */
+  async heldAnswers(formId: string): Promise<{ held: number; batchSize: number }> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
+    const held = await heldAnswerCount(this.submissionRepo.manager, formId);
+    return { held, batchSize: ANONYMOUS_BATCH_SIZE };
+  }
+
+  /**
    * Returns all submissions for a form enriched with the submitter's first/last name, a payment
    * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
    * something to.
    */
   async getSubmissions(formId: string) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
+    // A form that stopped taking answers delivers the ones still waiting for their batch first.
+    if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the day-precision `createdAt` was cut to hide.
     const subs = overCapacityFirst(
@@ -4681,6 +4832,8 @@ export class FormsService {
     const gridWords = productGridExportLabels(form.items, labels);
     // A CSV is one grid sheet: a form without a grid is refused here, not written empty.
     assertExportFormatFits(format, gridWords);
+    // As the responses list: a form that stopped taking answers delivers the waiting ones first.
+    if (form.anonymous) await this.releaseOrAccuse(formId, 'export');
 
     // Same order as the responses list, a payment over capacity first.
     const submissions = overCapacityFirst(
@@ -4777,7 +4930,9 @@ export class FormsService {
       });
     }
 
-    form.items.forEach((item: FormItemLike) => {
+    // One column per QUESTION: a text or image block takes no answer, so it has no column.
+    const questions = questionItemsOf<FormItemLike>(form.items);
+    questions.forEach((item) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
     });
 
@@ -4834,7 +4989,7 @@ export class FormsService {
       if (editedColumn) row.editedAt = sub.editedAt ? new Date(sub.editedAt) : null;
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
-      form.items.forEach((item: FormItemLike) => {
+      questions.forEach((item) => {
         row[item.id] = answerText(sub.answers[item.id], item, words, sub.lines);
       });
 

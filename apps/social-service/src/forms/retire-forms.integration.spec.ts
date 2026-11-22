@@ -40,9 +40,12 @@ maybe('retireForms against PostgreSQL', () => {
       extra: { options: `-c search_path=${schema},public` },
     });
     await ds.initialize();
-    // Only the columns the two statements touch, and the RESTRICT key of migration 081.
+    // Only the columns the statements touch, and the RESTRICT key of migration 081. `anonymous`:
+    // an anonymous form's waiting answers are released first (none here; the anonymous case is in
+    // `anonymous-answer-batches.integration.spec.ts`).
     await q(`
       CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid,
+        anonymous boolean NOT NULL DEFAULT false,
         "deletedAt" timestamptz, "updatedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE submissions (id uuid PRIMARY KEY,
         "formId" uuid NOT NULL REFERENCES forms (id) ON DELETE RESTRICT);

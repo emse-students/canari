@@ -30,7 +30,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
   const log = jest.fn();
   const warn = jest.fn();
 
-  const BODY = { userId: 'u1', deviceId: 'd1', keyPackage: 'a2V5', deviceOs: 'android' };
+  const BODY = { userId: 'u1', deviceId: 'tauri-u1-d1', keyPackage: 'a2V5', deviceOs: 'android' };
 
   beforeEach(async () => {
     held = true;
@@ -82,7 +82,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
   it('answers that the row is held, looked up by the account AND the device, and says nothing', async () => {
     const answer = await controller.registerDevice(BODY, 'u1');
     expect(answer).toEqual({ status: 'registered', push: { registered: true } });
-    expect(existsBy).toHaveBeenCalledWith({ userId: 'u1', deviceId: 'd1' });
+    expect(existsBy).toHaveBeenCalledWith({ userId: 'u1', deviceId: 'tauri-u1-d1' });
     expect(missingLines(warn)).toHaveLength(0);
     expect(missingLines(log)).toHaveLength(0);
   });

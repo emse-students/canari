@@ -208,6 +208,13 @@ static void CanariObserveDocumentScrollRange(void) {
 /// clamp above never touches); or the page laid the composer out at 186 itself (`composerTop` 186,
 /// both scrolls 0). This line separates the three on the next build, from the bench's syslog alone,
 /// since a store build's WebView cannot be inspected (docs/wiki/device-verification.md).
+///
+/// THE THREAD'S HALF (iPhone 12, `1.7.3-alpha.4`, 2026-11-22): in a DM ending in portrait photos the
+/// thread rose 176 pt while the composer rose 278, leaving the last photo 71 pt under the composer,
+/// identically in three runs - and Android passes. Two causes fit and only the thread's own numbers
+/// separate them: the pane is NOT at the end of its range (`threadTop` < `threadMax`: the bottom was
+/// left - a flag that fell, or a scroll write the engine clamped), or it IS and the range itself ends
+/// short of the padding (`threadTop` = `threadMax` with `lastRowBottom` past `composerTop`).
 static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   UIScrollView *scrollView = webView.scrollView;
   CGFloat offset = scrollView.contentOffset.y;
@@ -215,12 +222,18 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   CGFloat bounds = CGRectGetHeight(scrollView.bounds);
   NSString *js =
       @"(function(){var s=document.scrollingElement,v=window.visualViewport,"
-       "f=document.querySelector('.chat-composer-footer');"
+       "f=document.querySelector('.chat-composer-footer'),"
+       "t=document.querySelector('.chat-messages-scroll'),"
+       "rs=t?t.querySelectorAll('[id^=\"msg-\"]'):[],l=rs.length?rs[rs.length-1]:null;"
        "function r(n){return Math.round(n*10)/10}"
        "return 'scrollY='+r(window.scrollY)+' scrollHeight='+(s?r(s.scrollHeight):'none')+"
        "' innerHeight='+r(window.innerHeight)+' vvHeight='+(v?r(v.height):'none')+"
        "' vvOffsetTop='+(v?r(v.offsetTop):'none')+' vvPageTop='+(v?r(v.pageTop):'none')+"
-       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')})()";
+       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')+"
+       "' threadTop='+(t?r(t.scrollTop):'none')+"
+       "' threadMax='+(t?r(t.scrollHeight-t.clientHeight):'none')+"
+       "' threadPad='+(t?getComputedStyle(t).paddingBottom:'none')+"
+       "' lastRowBottom='+(l?r(l.getBoundingClientRect().bottom):'none')})()";
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
               if (error != nil || ![result isKindOfClass:[NSString class]]) {
@@ -1763,7 +1776,88 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
   });
 }
 
+/// `UNNotificationSetting` by name - the term the Rust command parses.
+static NSString *CanariNotificationSettingName(UNNotificationSetting s) {
+  switch (s) {
+    case UNNotificationSettingEnabled:
+      return @"enabled";
+    case UNNotificationSettingDisabled:
+      return @"disabled";
+    default:
+      return @"not-supported";
+  }
+}
+
+/// `UNAuthorizationStatus` by name - the term the Rust command parses.
+static NSString *CanariAuthorizationName(UNAuthorizationStatus s) {
+  switch (s) {
+    case UNAuthorizationStatusAuthorized:
+      return @"granted";
+    case UNAuthorizationStatusDenied:
+      return @"denied";
+    case UNAuthorizationStatusProvisional:
+      return @"provisional";
+    case UNAuthorizationStatusNotDetermined:
+      return @"not-determined";
+    default:
+      return @"ephemeral";
+  }
+}
+
+/// WHAT THE OS LETS THIS APP'S NOTIFICATIONS DO, WRITTEN FOR THE PAGE (2026-11-21): one JSON snapshot
+/// in the data directory, rewritten at every activation, read by the Rust command
+/// `notification_delivery_state` (which pins the shape; file name and keys are shared). READ-ONLY:
+/// `getNotificationSettings` never prompts. A failed write is logged and leaves the previous one.
+static void CanariWriteNotificationDeliveryState(void) {
+  [[UNUserNotificationCenter currentNotificationCenter]
+      getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *s) {
+        NSString *dir = CanariTauriDataDir();
+        if (dir == nil) {
+          NSLog(@"[CanariIOS] notification state not written: no data dir");
+          return;
+        }
+        NSString *timeSensitive = @"not-supported";
+        if (@available(iOS 15.0, *)) {
+          timeSensitive = CanariNotificationSettingName(s.timeSensitiveSetting);
+        }
+        NSDictionary *snapshot = @{
+          @"platform" : @"ios",
+          @"authorization" : CanariAuthorizationName(s.authorizationStatus),
+          @"alert" : CanariNotificationSettingName(s.alertSetting),
+          @"sound" : CanariNotificationSettingName(s.soundSetting),
+          @"badge" : CanariNotificationSettingName(s.badgeSetting),
+          @"timeSensitive" : timeSensitive,
+        };
+        NSError *serializeErr = nil;
+        NSData *json = [NSJSONSerialization dataWithJSONObject:snapshot options:0 error:&serializeErr];
+        if (json == nil) {
+          // Domain and code only: an error's text can carry a path.
+          NSLog(@"[CanariIOS] notification state not serialized (%@ %ld)", serializeErr.domain,
+                (long)serializeErr.code);
+          return;
+        }
+        NSError *err = nil;
+        if (![json writeToFile:[dir stringByAppendingPathComponent:@"notification_delivery_state.json"]
+                       options:NSDataWritingAtomic
+                         error:&err]) {
+          NSLog(@"[CanariIOS] notification state not written (%@ %ld)", err.domain, (long)err.code);
+          return;
+        }
+        // The fresh snapshot is on disk: tell the page, so a permission answered in the system
+        // dialog or a switch flipped in Settings reaches the server now (event, never a clock).
+        dispatch_async(dispatch_get_main_queue(), ^{
+          WKWebView *webView = CanariFindWebView();
+          // No WebView on a cold launch is EXPECTED and silent: the page's reporter re-reads the
+          // snapshot itself once `register-device` has answered, so no event is owed to it then.
+          if (webView == nil) return;
+          [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:notification-state'));"
+                    completionHandler:nil];
+        });
+      }];
+}
+
 static void CanariOnDidBecomeActive(__unused NSNotification *note) {
+  CanariWriteNotificationDeliveryState();
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
   canari_ios_on_resume();
