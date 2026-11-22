@@ -83,10 +83,18 @@ ciphertext, so `willPresent` could not build its key anyway.
 
 **What is left: a kill between the claim and the handoff.** Jetsam ends an extension for its memory,
 which peaks during the decrypt and the image work, all done before `finish`; between the ledger's
-rename and `handler(content)` the run allocates nothing but a log line. If it is killed there, the
-key reads "the extension's" for a banner that never showed, and the page stands down for it. Nothing
-here can tell that apart from a banner the reader swiped (the notification centre forgets both), so
-this window is closed by keeping it empty, not by a second record.
+rename and `handler(content)` the run allocates nothing but a log line. If it is killed there, iOS
+delivers the push's ORIGINAL payload, unstamped, while the key reads "the extension's":
+
+- **app not active** (killed, suspended, inactive): iOS shows that original payload - the server's
+  generic text - so the reader is told, and the page standing down for the key costs nothing;
+- **app active**: `willPresent` finds no stamp and the push is answered as an unclaimed one (not
+  presented, the page holding the socket), while the page stands down for the key. **This is the
+  known residual loss: an unacknowledged push to an ACTIVE app, plus a jetsam kill between the
+  ledger rename and the handoff.**
+
+Nothing here can tell that kill apart from a banner the reader swiped (the notification centre
+forgets both), so the window is closed by keeping it empty, not by a second record.
 
 **A page banner covering several messages is never removed.** The extension's `after-page` replace
 removes only a page banner whose `announces` is exactly its one key. A catch-up banner standing for
