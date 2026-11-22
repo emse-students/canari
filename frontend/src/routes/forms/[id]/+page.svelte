@@ -94,7 +94,10 @@
     Ban,
     QrCode,
     Pencil,
+    Eye,
   } from '@lucide/svelte';
+  import { ownAnswersOf, shownOwnAnswer, type OwnAnswer } from '$lib/forms/ownAnswers';
+  import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
   import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
@@ -204,8 +207,48 @@
   let editableAnswers = $state<EditableAnswer[]>([]);
   /** The answer being changed, or null: the questions then draw IT, its price-setting ones locked. */
   let editing = $state<EditableAnswer | null>(null);
-  /** The locked questions of the answer being changed: drawn read-only, never sent. */
-  const editLocked = $derived(new Set(editing?.lockedItemIds ?? []));
+  /**
+   * The respondent's own answers, read-only (owner, 2026-11-21): the server's rows of this account
+   * (`ownAnswers.ts`), none on an anonymous form; `null` when the estate does not serve them (older
+   * than `myAnswers`), and the page draws what it drew before.
+   */
+  let ownAnswers = $state<OwnAnswer[] | null>(null);
+  /**
+   * The own answer drawn read-only: a single-answer form's once answered, or the one a form taking
+   * several opened from "Vos réponses". Null: nothing of theirs is drawn.
+   */
+  let shownAnswer = $state<OwnAnswer | null>(null);
+  /** Nothing can be typed: an answer sent, or one of theirs opened to read. */
+  const readOnly = $derived(!editing && (submitted || shownAnswer !== null));
+  /**
+   * An anonymous form this account answered (the registry's yes, `hasSubmitted`, which names no
+   * answer): nobody can give the answer back - the server keeps no link between the account and it,
+   * and no copy is kept on the device (owner, 2026-11-21) - so the page says "already answered"
+   * instead of drawing an empty form that looks answerable.
+   */
+  const answeredAnonymously = $derived(
+    !!form?.anonymous && !form.allowMultipleSubmissions && submitted && !editing
+  );
+  /**
+   * The questions that fixed the price of the answer drawn: shut while it is changed, and marked
+   * with the lock line while it is read.
+   */
+  const lockedItems = $derived(
+    new Set(editing?.lockedItemIds ?? (readOnly ? (shownAnswer?.lockedItemIds ?? []) : []))
+  );
+  /**
+   * "Vos réponses" on a form taking several answers: each to read and, where the form allows, to
+   * change. From the estate's own answers when served, else (an older estate) the changeable ones.
+   */
+  const answerRows = $derived(
+    (ownAnswers ?? editableAnswers).map((a) => ({
+      id: a.id,
+      createdAt: a.createdAt,
+      paymentStatus: a.paymentStatus,
+      own: ownAnswers ? (a as OwnAnswer) : null,
+      editable: editableAnswers.find((e) => e.id === a.id) ?? null,
+    }))
+  );
   let loading = $state(true);
   let error = $state('');
   let successMessage = $state('');
@@ -345,6 +388,8 @@
     win.clear();
     selections = {};
     submitted = false;
+    ownAnswers = null;
+    shownAnswer = null;
     paymentPending = false;
     paymentRetry = null;
     pendingCheckout = null;
@@ -450,7 +495,7 @@
           );
           return { linkedEvent: null };
         }),
-        checkSubmission(f.id),
+        checkSubmission(f.id, { withAnswers: true }),
       ]);
       if (stale()) return;
       linkedAgendaEvent = linked.linkedEvent;
@@ -492,13 +537,29 @@
         void reminder.load();
       }
       if (offersAnswerEdit(f, !!userId, serverFormAnswerEdit())) void loadEditableAnswers(f.id);
-      if (hasSubmitted) {
+      const own = ownAnswersOf(submission.myAnswers);
+      ownAnswers = own;
+      if (hasSubmitted && own) {
+        // Their own answer, read-only, whether or not the form lets them change it.
+        shownAnswer = f.allowMultipleSubmissions
+          ? null
+          : shownOwnAnswer(own, submission.submissionId);
+        if (shownAnswer) {
+          selections = selectionsFromAnswers(f.items, shownAnswer.answers as Record<string, any>);
+        } else {
+          Log.d('FormView', `answered, no answer of theirs served (anonymous=${!!f.anonymous})`);
+        }
+      } else if (hasSubmitted) {
+        // [LEGACY] An estate older than `myAnswers`: the single answer, as the page always read it.
         try {
           const sub = await getSubmission(f.id);
           if (stale()) return;
           if (sub?.answers) selections = selectionsFromAnswers(f.items, sub.answers);
-        } catch {
-          // ignore
+        } catch (err) {
+          console.warn(
+            `[FormView] own answer read failed status=${refusalStatus(err) ?? 'transport'}`,
+            err
+          );
         }
       }
     } catch (e: any) {
@@ -523,7 +584,7 @@
   const visibleItems = $derived(
     // Nothing to fill in when the form is not open to this person - the questions would only
     // invite an answer the server is going to refuse.
-    form && (maySubmit || editing)
+    form && (maySubmit || editing) && !answeredAnonymously
       ? visibleItemsOf(form.items, selections, new Set(hiddenItemIds))
       : []
   );
@@ -641,6 +702,8 @@
       if (outcome === 'declined' || outcome === 'ended') {
         paymentRetry = outcome;
         submitted = false;
+        // Released: the answer drawn is theirs to send again, no longer a read-only one.
+        shownAnswer = null;
       } else {
         // A final state that is neither paid nor a dead request (cancelled elsewhere): the
         // in-progress block goes, and the server's own answer says whether this person answered.
@@ -651,7 +714,10 @@
       const check = await checkSubmission(formShown);
       if (form?.id !== formShown) return;
       formFull = check.formFull;
-      if (outcome === 'error') submitted = check.hasSubmitted;
+      if (outcome === 'error') {
+        submitted = check.hasSubmitted;
+        if (!submitted) shownAnswer = null;
+      }
     }
   }
 
@@ -673,6 +739,8 @@
   function startEdit(answer: EditableAnswer) {
     if (!form) return;
     Log.d('FormView', `edit opened: ${answer.lockedItemIds.length} locked question(s)`);
+    // A form taking several answers: the one being read gives way to the one being changed.
+    if (!submitted) shownAnswer = null;
     editing = answer;
     selections = selectionsFromAnswers(form.items, answer.answers as Record<string, any>);
     error = '';
@@ -689,12 +757,37 @@
     if (!form || !editing) return;
     Log.d('FormView', saved ? 'edit closed after a save' : 'edit cancelled');
     const shown = saved ?? editing.answers;
+    if (saved) {
+      // What is read back afterwards is what was saved.
+      const id = editing.id;
+      ownAnswers = ownAnswers?.map((a) => (a.id === id ? { ...a, answers: saved } : a)) ?? null;
+      if (shownAnswer?.id === id) shownAnswer = { ...shownAnswer, answers: saved };
+    }
     editing = null;
     missingAnswer = null;
     error = '';
     selections = submitted
       ? selectionsFromAnswers(form.items, shown as Record<string, any>)
       : initialSelections(form.items);
+  }
+
+  /** Opens one of the respondent's answers to READ (a form taking several): drawn, nothing typable. */
+  function openOwnAnswer(answer: OwnAnswer) {
+    if (!form) return;
+    Log.d('FormView', 'own answer opened to read');
+    shownAnswer = answer;
+    selections = selectionsFromAnswers(form.items, answer.answers as Record<string, any>);
+    error = '';
+    missingAnswer = null;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  /** Closes the answer being read: the form is blank again, for a new answer. */
+  function closeOwnAnswer() {
+    if (!form) return;
+    Log.d('FormView', 'own answer closed');
+    shownAnswer = null;
+    selections = initialSelections(form.items);
   }
 
   /** Sends the changed answer; nothing about the price or the payment moves (server-enforced). */
@@ -990,6 +1083,14 @@
   </Button>
 {/snippet}
 
+<!-- Where one of their answers' payment stands, worded and coloured as the responses table does. -->
+{#snippet statusChip(status: string)}
+  <span
+    class="rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap {statusClass(status)}"
+    data-testid="form-own-answer-status">{statusLabel(status)}</span
+  >
+{/snippet}
+
 <!-- Who is answering and at which price category: a form whose grids price by category. -->
 {#snippet viewerTier()}
   <FormViewerTier name={getSavedDisplayName()} {tierLabels} />
@@ -1068,7 +1169,7 @@
     <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
     <!-- ── Progress bar ── -->
-    {#if (!submitted || editing) && totalCount > 0}
+    {#if !readOnly && totalCount > 0}
       <div class="mb-5 flex items-center gap-3">
         <div class="bg-cn-border/60 h-2 flex-1 overflow-hidden rounded-full">
           <div
@@ -1172,7 +1273,7 @@
     <!-- The combination they answered their way into does not exist. Separate from the block above
          on purpose: that one is about who they ARE and is fixed for the whole visit, this one moves
          as they answer and is theirs to undo. -->
-    {#if maySubmit && priceUnavailable && !submitted && !editing}
+    {#if maySubmit && priceUnavailable && !readOnly && !editing}
       <div
         class="border-cn-border bg-cn-border/10 mb-4 flex items-start gap-3 rounded-2xl border px-5 py-4"
       >
@@ -1200,22 +1301,68 @@
           {m.form_view_edit_cancel()}
         </Button>
       </div>
-    {:else if form.allowMultipleSubmissions && editableAnswers.length > 0}
-      <!-- A form taking several answers: each is changed separately. -->
-      <div class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-4 py-3">
+    {:else if shownAnswer && !submitted}
+      <!-- A form taking several answers: one of theirs opened to read. -->
+      <div
+        class="border-cn-border mb-4 flex items-start justify-between gap-3 rounded-2xl border bg-(--cn-surface) px-4 py-3"
+        role="status"
+        data-testid="form-own-answer-banner"
+      >
+        <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-medium">
+          {m.form_view_answer_view_banner({ date: formatFormOpensAt(shownAnswer.createdAt) })}
+          {@render statusChip(shownAnswer.paymentStatus)}
+        </p>
+        <Button variant="ghost" size="compact" class="shrink-0" onclick={closeOwnAnswer}>
+          {m.form_view_answer_view_close()}
+        </Button>
+      </div>
+    {:else if form.allowMultipleSubmissions && answerRows.length > 0}
+      <!-- A form taking several answers: each is read, and changed where the form allows, separately. -->
+      <div
+        class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-4 py-3"
+        data-testid="form-own-answers"
+      >
         <p class="text-text-main mb-2 text-sm font-bold">{m.form_view_my_answers_title()}</p>
         <ul class="space-y-1">
-          {#each editableAnswers as answer (answer.id)}
+          {#each answerRows as row (row.id)}
             <li class="flex items-center justify-between gap-3">
-              <span class="text-text-muted text-sm">
-                {m.form_view_my_answer_row({ date: formatFormOpensAt(answer.createdAt) })}
+              <span class="text-text-muted flex flex-wrap items-center gap-2 text-sm">
+                {m.form_view_my_answer_row({ date: formatFormOpensAt(row.createdAt) })}
+                {@render statusChip(row.paymentStatus)}
               </span>
-              <Button variant="soft" size="compact" onclick={() => startEdit(answer)}>
-                <Pencil size={14} class="mr-1" />{m.form_view_edit_answer_short()}
-              </Button>
+              <span class="flex shrink-0 items-center gap-1">
+                {#if row.own}
+                  {@const own = row.own}
+                  <Button variant="ghost" size="compact" onclick={() => openOwnAnswer(own)}>
+                    <Eye size={14} class="mr-1" />{m.form_view_answer_view()}
+                  </Button>
+                {/if}
+                {#if row.editable}
+                  {@const editable = row.editable}
+                  <Button variant="soft" size="compact" onclick={() => startEdit(editable)}>
+                    <Pencil size={14} class="mr-1" />{m.form_view_edit_answer_short()}
+                  </Button>
+                {/if}
+              </span>
             </li>
           {/each}
         </ul>
+      </div>
+    {/if}
+
+    <!-- ── Answered, anonymously: never an empty form that looks answerable ── -->
+    {#if answeredAnonymously}
+      <div
+        class="border-cn-border mb-4 rounded-2xl border bg-(--cn-surface) px-5 py-5 text-center"
+        data-testid="form-already-answered"
+      >
+        <div
+          class="bg-green-ok/15 text-green-ok mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl"
+        >
+          <Check size={20} />
+        </div>
+        <p class="text-text-main text-sm font-bold">{m.form_view_already_answered_title()}</p>
+        <p class="text-text-muted mt-1 text-xs">{m.form_view_already_answered_anonymous_note()}</p>
       </div>
     {/if}
 
@@ -1250,10 +1397,7 @@
             {item}
             grid={item.productGrid}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) ||
-              isNotOpenYet ||
-              isClosed ||
-              editLocked.has(item.id)}
+            disabled={readOnly || isNotOpenYet || isClosed || lockedItems.has(item.id)}
             prices={price.productGridPrices[item.id]}
             currency={form.currency}
             error={questionError(item)}
@@ -1263,10 +1407,7 @@
             {item}
             index={(numbers.get(item.id) ?? 1) - 1}
             bind:value={selections[item.id]}
-            disabled={(submitted && !editing) ||
-              isNotOpenYet ||
-              isClosed ||
-              editLocked.has(item.id)}
+            disabled={readOnly || isNotOpenYet || isClosed || lockedItems.has(item.id)}
             formId={form.id}
             currency={form.currency}
             fileRetentionDays={form.fileRetentionDays}
@@ -1277,8 +1418,9 @@
               busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
           />
         {/if}
-        <!-- A question that set the price stays as answered: no top-up, no partial refund. -->
-        {#if editLocked.has(item.id)}
+        <!-- A question that set the price stays as answered: no top-up, no partial refund - said
+             while it is changed and while it is read. -->
+        {#if lockedItems.has(item.id)}
           <p class="text-text-muted -mt-1 flex items-center gap-1.5 px-1 text-xs">
             <Lock size={12} />{m.form_view_edit_locked_note()}
           </p>
@@ -1287,7 +1429,7 @@
     </div>
 
     <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
-    {#if onlinePaymentPaused && !submitted && !editing}
+    {#if onlinePaymentPaused && !readOnly && !editing}
       <div
         class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text mt-4 rounded-2xl border px-4 py-3 text-sm"
         role="status"
@@ -1299,7 +1441,7 @@
 
     <!-- ── Who answered: declared on an anonymous form, joined from the account (and said) on a
          named one ── -->
-    {#if !submitted && !editing}
+    {#if !readOnly && !editing}
       <DeclaredIdentityFields
         asked={askedDeclared}
         bind:values={declared}
@@ -1315,7 +1457,7 @@
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->
-    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly && !editing}
+    {#if calculateTotal() > 0 && form.allowCashPayment && !readOnly && !cashOnly && !editing}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
     {/if}
 
@@ -1342,7 +1484,8 @@
 </PageContainer>
 
 <!-- ── Submit bar: sits at the end by default, sticks for good once earned ── -->
-{#if form && !loading}
+<!-- Hidden while one of several answers is READ: nothing is sent from there, "Fermer" goes back. -->
+{#if form && !loading && !(shownAnswer && !submitted)}
   <!-- `position: sticky`, never `fixed`: .page-scroll-wrap (the ancestor this bar renders
        inside) has `will-change: transform` (app.css, for swipe-nav-between-tabs), which makes
        it the containing block for `position: fixed` descendants - and on real mobile browsers,
@@ -1374,7 +1517,7 @@
   >
     <!-- AN ORDER IS TOTALLED WHERE IT IS PAID, from the first item (owner's mockup, 2026-11-06): a
          form with a priced grid keeps the bar stuck from the start, with the order's recap. -->
-    {#if hasProductGrid && !submitted && !priceUnavailable && !editing}
+    {#if hasProductGrid && !readOnly && !priceUnavailable && !editing}
       <ProductGridOrderBar
         lines={price.gridLines}
         totalCents={calculateTotal()}

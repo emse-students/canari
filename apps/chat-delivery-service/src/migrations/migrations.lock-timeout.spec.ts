@@ -80,6 +80,13 @@ describe.each([
     '049_report_accusations.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
   ],
+  // `push_token` again: the push delivery record's two dates. The new table comes first, then the
+  // ALTER - the timeout must precede both.
+  [
+    '054_push_delivery_records.sql',
+    /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?push_delivery_daily"?/im,
+  ],
+  ['054_push_delivery_records.sql', /^\s*ALTER\s+TABLE\s+"?push_token"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);
