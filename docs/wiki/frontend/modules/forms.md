@@ -207,6 +207,91 @@ l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else
 one blocks the send with the same sentence (`firstMissingAnswer`, kind `update`), instead of an empty
 card the server refuses.
 
+## Product grids may share their columns (owner, 2026-11-21)
+
+**Why.** A read-only survey of production found a shop form with 18 priced grids, one per product,
+each with its own image and description, a price in `single` mode on 18 of 19 grids, and the same 6-7
+size columns retyped on almost every grid: eighteen editor cards to keep, the sizes copied eighteen
+times. The owner's answer of 2026-11-21 launched "shared size columns for product grids". Charter:
+principle 7 (simple - the smallest change that removes the retyping) and principle 2 (the essential
+is never lost - a past order keeps its label and price when a size changes).
+
+**The choice: a named column set the grids reference, not one grid holding many products.** One grid
+with a row per product would have moved the evidence the wrong way: what a shop sells per product
+(image, description, ONE price, a cap per cell, closed cells, a category criterion) is grid-level in
+every consumer, so a row would have to carry its own image, description and price, the colours of a
+product would need a second level of rows, and `single` pricing (18 of 19 grids) would become
+`per_row` with the price retyped on every colour row. Every consumer keying on rows (answer keys,
+`lines`, "Articles", "Totaux", `answerText`) would have read a new shape. The set leaves the grid as
+it is and shares only what the evidence says is retyped.
+
+**The stored shape.** A grid carries an optional `productGrid.columnSet: { id, name }` NEXT TO its
+own `columns`. `columns` stays the grid's full copy: **every reader keeps reading it unchanged** -
+`parseProductGridAnswer`, `productGridLines`, the price keys of `per_column`, `closedCells`,
+`productGridTotals`, `answerText`, the export and an older app. The set is only the statement
+"these grids keep identical copies", judged at save:
+
+- `productGridItemRefusal` refuses a malformed set (`PRODUCT_GRID_COLUMN_SET_INVALID`: an id of the
+  axis pattern, a name of 1-100 characters);
+- `productGridColumnSetRefusal` (both copies of the contract) refuses a form whose grids of one set
+  differ in column ids, labels, order or set name (`PRODUCT_GRID_COLUMN_SET_DIVERGED`, naming the
+  second grid, `itemId` in the 400 body so the editor draws it under that grid). It runs in
+  `normaliseProductGridItems` after every grid is valid, and in the editor's own pre-save check, so
+  the page refuses first and in the same words;
+- a set has no row of its own: it exists as long as a grid names it. No form column, **no migration,
+  no data rewrite** - a grid stored before this carries no `columnSet` and is stored byte for byte as
+  it was (`columnSet` is spread only when present). A respondent's view (`productGridView`) never
+  carries the set.
+
+**What keys on what, and why nothing moved** (the consumers of `product_grid`):
+
+| Consumer | Keys on | Effect of a shared set |
+| --- | --- | --- |
+| Answer (`{"rowId:colId": qty}`), `answer-bounds.ts`, `parseProductGridAnswer` | the grid's rows and columns, per question id | none: the same column id in two grids is two cells of two questions |
+| Price (`viewerPricesFor`, `productGridLines`), the Stripe/Lydia amount | `item.id` then axis key (`*`, row id, column id) | none: each grid prices from its own `pricing`, so two grids of one set have different prices |
+| `submissions.lines` snapshot, "Articles" and "Totaux" sheets (`productGridTotals`) | `itemId`, row/column ids and labels | none: filtered per grid, and past lines keep their labels |
+| `answerText` (both copies), the responses panel, `submission.projection` | the labels of the grid's own columns | none |
+| Required/ordered predicate (`productGridOrdered`), hidden-question rule | the answer only | none |
+| Duplicate a question (`withFreshProductGridIds`) | row and column ids | a copy of a grid in a set keeps the set's column ids (fresh rows), so it stays in the set |
+| Older app | `columns` | renders the grids and takes the order exactly as before; the unknown `columnSet` is ignored |
+
+**Older clients: they render the new shape correctly, they do not refuse it.** The columns are in
+every grid, so an app older than this change draws every grid and sends the same answer keys. An
+OLDER EDITOR opening such a form keeps working: if it edits a column of one grid and keeps the
+`columnSet` it round-tripped, the save is refused with `PRODUCT_GRID_COLUMN_SET_DIVERGED` (an old
+editor prints the server's English sentence); if it drops the field the grid simply leaves the set
+(`normaliseProductGridItems` stores what it is sent). Neither writes a wrong price or answer.
+
+**The editor** (`ProductGridEditor.svelte`, model in `forms/productGridColumnSets.ts`; the section is
+not drawn in the add wizard):
+
+- *Partager ces colonnes*: name the columns of this grid (the sizes). The grids that already hold
+  exactly the same labels in the same order, in no set and with no answer, are offered in the same
+  click ("Tout partager"): the 17 other cards of the 18-grid form are one confirm, not seventeen
+  gestures. `gridsWithSameColumns` never matches blank labels.
+- *Utiliser des colonnes partagées*: a grid with its own columns picks a set a sibling made. Its
+  columns become the set's; a column whose label already existed carries its closed cells and its
+  per-column price over to the new id, a column the set lacks takes them with it, a new one is
+  seeded like any added column.
+- Every edit of a shared column (rename, add, paste, move, remove) is written to every grid of the
+  set in the same gesture (`propagateColumnSet`), and so is the set's name. *Ne plus partager*
+  keeps the grid's columns as its own.
+
+**The rule for changing a shared column after answers exist is the one the editor already applies
+to a published grid:** removing a row or column that an answer ordered asks first ("Des réponses
+contiennent cet article..."), because past orders keep their label and price (`submissions.lines`)
+but the article stops being offered; a rename is always safe because answers and prices are keyed by
+id. For a shared column the question reads the orders of EVERY grid of the set
+(`orderedCellsOfSet`), since the removal reaches all of them; putting a grid that has answers on a
+set (its columns get the set's ids, so its past answer keys no longer match a cell) asks the same
+way and says so. The server never refuses a removal, as before.
+
+Tests: `product-grid-contract.spec.ts` (set shape, divergence, an old grid judged as before),
+`forms.service.product-grid.spec.ts` (save, stored byte for byte without a set, the divergence 400
+naming the grid, a two-grid order charged per grid, a row of another grid refused on a shared
+column), `productGridColumnSets.test.ts` and `ProductGridSharedColumns.svelte.test.ts` (the model
+and the editor as a manager drives it).
+
 ## A form is a draft until it is published (owner, 2026-11-08)
 
 **Why.** A paid form could not be built for an association before its Lydia was ready: every save of a

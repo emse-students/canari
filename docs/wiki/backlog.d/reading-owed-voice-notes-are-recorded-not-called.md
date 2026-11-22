@@ -1,6 +1,8 @@
 ## Reading owed - voice notes are recorded, not captured as a phone call (both phones)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built** ([sounds](../frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)):
 a voice note asks `RECORDING_AUDIO_CONSTRAINTS` (echo cancellation, noise suppression and auto gain

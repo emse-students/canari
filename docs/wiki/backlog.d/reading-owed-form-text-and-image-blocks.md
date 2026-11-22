@@ -1,6 +1,8 @@
 ## Reading owed - text and image blocks in a form
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built (owner, 2026-11-21: *"mettre un texte (description) ou un media (affiche, logo), hors d'une
 question"*): the `text_block` and `image_block` items, offered under "Contenu (pas une question)" in

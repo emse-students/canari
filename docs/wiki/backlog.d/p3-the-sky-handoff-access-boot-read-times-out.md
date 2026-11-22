@@ -1,6 +1,8 @@
 ## P3 - core-service's boot read of Sky's handoff access timed out against MiConnect, once (2026-11-20)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-22, production ([reading](../device-verification.md#the-production-reading-of-2026-11-22-the-172-stable-26-hours-on)): **ONE of the two boots is read, and it is clean.** The `1.7.2` boot (2026-11-20 22:18Z) logged all three `[HANDOFF_ACCESS]` lines at LOG within 3 seconds (`migallery` 22:18:29, `le-cercle` 22:18:30, `site=sky` 22:18:31, each `bindings=0 flow_bindings=0 consent_bindings=0 default_access=true`), no `could not be read`. One more clean boot (the `1.7.3` stable's) closes it as a one-off; a second timeout earns the named timeout and the fail-closed or fail-open decision._
 

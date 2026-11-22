@@ -1,6 +1,8 @@
 ## Birthdays on profiles (#3180, first stable `v1.6.9`): "gone the next day" and the settings lock, owed on the phones (a reading moved to 1.7.1)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
