@@ -10,7 +10,7 @@ export async function mapWithConcurrency<T, R>(
   limit: number,
   fn: (item: T) => Promise<R>
 ): Promise<R[]> {
-  const out = new Array<R>(items.length);
+  const out = Array.from<R>({ length: items.length });
   let next = 0;
   let failed = false;
   const worker = async (): Promise<void> => {
