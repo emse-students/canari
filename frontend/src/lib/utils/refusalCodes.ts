@@ -110,6 +110,11 @@ export const TYPED_ELSEWHERE_CODES: readonly string[] = [
   // A notes conversation created while one is already live is a typed
   // `SelfConversationExistsError` carrying the live group's id: this device waits for its Welcome.
   'SELF_CONVERSATION_EXISTS',
+  // Server guards for builds that predate "Mes notes" (a device that does not state the capability,
+  // a delete that does not state the kind). This build states both, so a refusal is a bug of ours
+  // and is logged, never worded.
+  'SELF_CONVERSATION_DEVICE_UNAWARE',
+  'SELF_CONVERSATION_KIND_UNSTATED',
 ];
 
 /** Every code {@link describeRefusalCode} words. */
