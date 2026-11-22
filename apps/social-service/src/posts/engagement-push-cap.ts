@@ -153,6 +153,8 @@ export const PUSH_BUDGET: Readonly<
   // An item waiting in a global admin's queue (owner, 2026-11-18): workflow, never counted.
   admin_profile_correction: FREE,
   admin_report: FREE,
+  // The question put to a form left open (owner, 2026-11-21): a bell row, never pushed.
+  form_stale_open: FREE,
 };
 
 /**

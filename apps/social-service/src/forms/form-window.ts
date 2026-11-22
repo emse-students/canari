@@ -28,6 +28,18 @@ export function assertWindowOrdered(
   throw formRefusal(FORM_CLOSE_BEFORE_OPEN, 'The closing date must be after the opening date.');
 }
 
+/**
+ * The 400 refusing "Fixer une date" with an instant that is not in the future (the question put to a
+ * form left open): that is a close, and "Clore le formulaire" says so. Worded by the client.
+ */
+export const FORM_CLOSING_DATE_PAST = 'FORM_CLOSING_DATE_PAST';
+
+/**
+ * The 409 refusing "Fixer une date" on a form that is closed, already has an end, or is not
+ * published: the write is conditional on the form still being open. Worded by the client.
+ */
+export const FORM_CLOSING_DATE_NOT_OPEN = 'FORM_CLOSING_DATE_NOT_OPEN';
+
 /** Refuses (400, `FORM_CLOSE_NOT_OPEN_YET`) closing at `now` a form whose opening is after it. */
 export function assertMayCloseAt(opensAt: Date | null | undefined, now: Date): void {
   if (!opensAt || new Date(opensAt).getTime() <= now.getTime()) return;

@@ -51,6 +51,7 @@
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
+  import { suggestClosingDate } from '$lib/forms/closingSuggestion';
   import Input from '$lib/components/ui/Input.svelte';
   import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -723,8 +724,8 @@
     };
   }
 
-  // Every edit is saved as the unpublished revision, debounced (`FormAutosave`).
-  $effect(() => {
+  /** Hands the editor's current payload to the autosave when it differs from what it holds. */
+  function scheduleRevision() {
     const document = buildPayload();
     const json = JSON.stringify(document);
     untrack(() => {
@@ -732,7 +733,10 @@
       autosaveBaseline = json;
       autosave.schedule(document);
     });
-  });
+  }
+
+  // Every edit is saved as the unpublished revision, debounced (`FormAutosave`).
+  $effect(scheduleRevision);
 
   // Hidden, left or torn down: saved at once; back online: an edit that reached no server is sent
   // again. The cleanup saves too - an in-app navigation fires no `pagehide`.
@@ -1084,6 +1088,17 @@
                 : isDraft
                   ? m.form_publish_button()
                   : m.form_publish_changes_button(),
+            // Offered at the FIRST publication only: a published form's edits are not asked again.
+            closingSuggestion: () =>
+              isDraft
+                ? suggestClosingDate(buildPayload(), { opensAt, closedAt }, new Date())
+                : null,
+            // Handed to the autosave NOW, not by the effect that follows: the publication that
+            // comes next flushes what is pending, and an effect has not run by then.
+            onAcceptClosing: (value) => {
+              closedAt = value;
+              scheduleRevision();
+            },
           }
         : null}
       discard={hasUnpublishedChanges ? { onDiscard: handleDiscard, busy: isDiscarding } : null}
