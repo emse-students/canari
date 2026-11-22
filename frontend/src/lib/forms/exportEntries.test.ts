@@ -33,8 +33,14 @@ describe('exportEntries', () => {
 
 describe('downloadFormExport', () => {
   it('asks for the format picked and names the file after the form', async () => {
-    await downloadFormExport('f1', 'Merch: hiver', 'totals-csv');
+    await downloadFormExport('f1', 'Merch: hiver', 'totals-csv', false);
+    expect(api.exportLabels).toHaveBeenCalledWith({ anonymous: false });
     expect(api.exportSubmissions).toHaveBeenCalledWith('f1', { date: 'Date' }, 'totals-csv');
     expect(vi.mocked(downloadDecryptedFile).mock.calls[0][1]).toMatch(/^Merch_ hiver - .+\.csv$/);
+  });
+
+  it("asks an anonymous form's labels, whose date column is headed by the week", async () => {
+    await downloadFormExport('f2', 'Sondage', 'xlsx', true);
+    expect(api.exportLabels).toHaveBeenCalledWith({ anonymous: true });
   });
 });

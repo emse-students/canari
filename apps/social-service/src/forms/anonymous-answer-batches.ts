@@ -25,15 +25,41 @@ import { FORM_WINDOW_OPEN, formWindowState } from './form-window';
  *   submit, a close, a manager's read or the hourly sweep releases them.
  * - fewer wait and the form takes no more answers (closed, past its end date, not open yet, or full):
  *   the short tail is released ONCE per form (`form_anonymous_tail_released`), joining the answers
- *   released on the form's latest release day. Later, a short tail stays held until a batch is full
+ *   released in the form's latest release week. Later, a short tail stays held until a batch is full
  *   or the form is retired.
  * - the form is retired (archived or deleted): everything waiting is released, joining as above.
  *
  * Joining means the joined group is DELETED and written again, with new random ids, in the SAME
  * shuffled insert as the new answers: one write, one date, and no physical order of old then new.
- * An answer is dated with the day its group was written, never the day it was given.
+ * An answer is dated with the WEEK its group was written (`anonymousAnswerWeekSql`), never the day
+ * it was given.
  */
 export const ANONYMOUS_BATCH_SIZE = 5;
+
+/**
+ * THE ONLY CLOCK AN ANONYMOUS ANSWER KEEPS: the start of the ISO week of `instant` - Monday 00:00,
+ * on the UTC wall clock the `submissions` columns (`timestamp`, no zone) are written in (owner,
+ * 2026-11-22, charter principle 1). A DAY was the precision before, and a day on which one person
+ * answered was a group of one the manager could put a name on; a week holds the batches of several
+ * days. Every write of an anonymous answer's dates goes through this ONE expression - the release
+ * (`RELEASED_ROW`) and the join of a short tail - and migration 181 cut the rows stored before it
+ * with the same `date_trunc('week', ...)`.
+ */
+export function anonymousAnswerWeekSql(instant = "now() AT TIME ZONE 'UTC'"): string {
+  return `date_trunc('week', ${instant})`;
+}
+
+/**
+ * {@link anonymousAnswerWeekSql} applied to a value already READ: the Monday 00:00 starting the week
+ * of a stored `timestamp`. The driver hands a `timestamp` (no zone) back as that wall clock in the
+ * process's zone, so the local getters recover the stored wall clock exactly, whatever the zone. A
+ * reader that SHOWS an anonymous answer's date (the export) passes it through this rather than trust
+ * the stored value: a row the cut has not reached yet still reads as its week.
+ */
+export function anonymousAnswerWeekOf(stored: Date): Date {
+  const sinceMonday = (stored.getDay() + 6) % 7; // getDay: Sunday 0 ... Saturday 6
+  return new Date(stored.getFullYear(), stored.getMonth(), stored.getDate() - sinceMonday);
+}
 
 const logger = new Logger('AnonymousAnswerBatches');
 
@@ -65,7 +91,7 @@ export class HeldAnswersOutsideTransactionError extends Error {
 
 /**
  * What a release writes into each `submissions` column, as SQL over `o` (the new id) and `src` (the
- * held or joined row), `$3` being the release's day. Content is copied; everything that could name,
+ * held or joined row), `$3` being the release's week (`anonymousAnswerWeekSql`). Content is copied; everything that could name,
  * price or date the answer more precisely than its group is written as the anonymous constant.
  */
 const RELEASED_ROW: Readonly<Record<string, string>> = {
@@ -193,18 +219,19 @@ export async function releaseHeldAnswersUnderLock(
       return 0;
     }
   }
-  // A short tail JOINS the latest group, which is written again with it: one write, one date.
-  const [{ day }]: { day: string }[] = await manager.query(
+  // A short tail JOINS the latest group, which is written again with it: one write, one date. The
+  // latest group's date is itself a week start, so the tail takes that week, never a newer one.
+  const [{ week }]: { week: string }[] = await manager.query(
     `SELECT (COALESCE(
-       ${tail ? '(SELECT max("createdAt") FROM submissions WHERE "formId" = $1)' : 'NULL'},
-       date_trunc('day', now() AT TIME ZONE 'UTC')
-     ))::text AS day`,
+       ${tail ? `(SELECT ${anonymousAnswerWeekSql('max("createdAt")')} FROM submissions WHERE "formId" = $1)` : 'NULL'},
+       ${anonymousAnswerWeekSql()}
+     ))::text AS week`,
     tail ? [formId] : []
   );
   const joined: { id: string }[] = tail
     ? await manager.query(
-        'SELECT id FROM submissions WHERE "formId" = $1 AND "createdAt" = $2::timestamp',
-        [formId, day]
+        `SELECT id FROM submissions WHERE "formId" = $1 AND ${anonymousAnswerWeekSql('"createdAt"')} = $2::timestamp`,
+        [formId, week]
       )
     : [];
   // Every row gets a NEW random id: a held row's id, or a joined row's old one, would let an old
@@ -222,7 +249,7 @@ export async function releaseHeldAnswersUnderLock(
            FROM submissions s WHERE s.id = o.source
        ) src ON true
       ORDER BY o.n`,
-    [rows.map((row) => row.source), rows.map((row) => row.id), day]
+    [rows.map((row) => row.source), rows.map((row) => row.id), week]
   );
   if (joined.length > 0) {
     await manager.query('DELETE FROM submissions WHERE id = ANY($1::uuid[])', [

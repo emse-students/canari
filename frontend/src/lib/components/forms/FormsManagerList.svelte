@@ -362,7 +362,7 @@
   }
 
   async function handleDeleteSubmission(formId: string, sub: Submission) {
-    // An anonymous answer is deleted by its content and its day alone: there is no one to name.
+    // An anonymous answer is deleted by its content and its week alone: there is no one to name.
     const prompt = sub.userId
       ? m.form_list_delete_submission_confirm({ name: submitterName(sub) })
       : m.form_list_delete_anonymous_submission_confirm();
@@ -447,7 +447,7 @@
     if (exportingId === form.id) return;
     exportingId = form.id;
     try {
-      await downloadFormExport(form.id, form.title, format);
+      await downloadFormExport(form.id, form.title, format, form.anonymous === true);
     } finally {
       exportingId = null;
     }
