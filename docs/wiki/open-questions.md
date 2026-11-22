@@ -703,7 +703,7 @@ group the device left), not shown (the page has nowhere to draw it), and said on
 WARN (`not adopted, kept native in the mirror`). The native drain's own notification is the only
 place the member saw it fail.
 
-**The question for the owner:** what should that text become?
+**DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](backlog.d/owner-decisions-of-2026-11-22.md), item 7; [entry](backlog.d/a-shade-reply-to-a-deleted-conversation-is-shown-as-failed.md)). The options below are kept as the record of what was weighed.
 
 - **Show it** (recommended, principle 2: the essential is never lost): restore the conversation as a
   read-only "removed" row holding the failed message, with Delete. This creates a row the member

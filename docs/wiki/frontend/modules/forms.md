@@ -207,6 +207,91 @@ l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else
 one blocks the send with the same sentence (`firstMissingAnswer`, kind `update`), instead of an empty
 card the server refuses.
 
+## Product grids may share their columns (owner, 2026-11-21)
+
+**Why.** A read-only survey of production found a shop form with 18 priced grids, one per product,
+each with its own image and description, a price in `single` mode on 18 of 19 grids, and the same 6-7
+size columns retyped on almost every grid: eighteen editor cards to keep, the sizes copied eighteen
+times. The owner's answer of 2026-11-21 launched "shared size columns for product grids". Charter:
+principle 7 (simple - the smallest change that removes the retyping) and principle 2 (the essential
+is never lost - a past order keeps its label and price when a size changes).
+
+**The choice: a named column set the grids reference, not one grid holding many products.** One grid
+with a row per product would have moved the evidence the wrong way: what a shop sells per product
+(image, description, ONE price, a cap per cell, closed cells, a category criterion) is grid-level in
+every consumer, so a row would have to carry its own image, description and price, the colours of a
+product would need a second level of rows, and `single` pricing (18 of 19 grids) would become
+`per_row` with the price retyped on every colour row. Every consumer keying on rows (answer keys,
+`lines`, "Articles", "Totaux", `answerText`) would have read a new shape. The set leaves the grid as
+it is and shares only what the evidence says is retyped.
+
+**The stored shape.** A grid carries an optional `productGrid.columnSet: { id, name }` NEXT TO its
+own `columns`. `columns` stays the grid's full copy: **every reader keeps reading it unchanged** -
+`parseProductGridAnswer`, `productGridLines`, the price keys of `per_column`, `closedCells`,
+`productGridTotals`, `answerText`, the export and an older app. The set is only the statement
+"these grids keep identical copies", judged at save:
+
+- `productGridItemRefusal` refuses a malformed set (`PRODUCT_GRID_COLUMN_SET_INVALID`: an id of the
+  axis pattern, a name of 1-100 characters);
+- `productGridColumnSetRefusal` (both copies of the contract) refuses a form whose grids of one set
+  differ in column ids, labels, order or set name (`PRODUCT_GRID_COLUMN_SET_DIVERGED`, naming the
+  second grid, `itemId` in the 400 body so the editor draws it under that grid). It runs in
+  `normaliseProductGridItems` after every grid is valid, and in the editor's own pre-save check, so
+  the page refuses first and in the same words;
+- a set has no row of its own: it exists as long as a grid names it. No form column, **no migration,
+  no data rewrite** - a grid stored before this carries no `columnSet` and is stored byte for byte as
+  it was (`columnSet` is spread only when present). A respondent's view (`productGridView`) never
+  carries the set.
+
+**What keys on what, and why nothing moved** (the consumers of `product_grid`):
+
+| Consumer | Keys on | Effect of a shared set |
+| --- | --- | --- |
+| Answer (`{"rowId:colId": qty}`), `answer-bounds.ts`, `parseProductGridAnswer` | the grid's rows and columns, per question id | none: the same column id in two grids is two cells of two questions |
+| Price (`viewerPricesFor`, `productGridLines`), the Stripe/Lydia amount | `item.id` then axis key (`*`, row id, column id) | none: each grid prices from its own `pricing`, so two grids of one set have different prices |
+| `submissions.lines` snapshot, "Articles" and "Totaux" sheets (`productGridTotals`) | `itemId`, row/column ids and labels | none: filtered per grid, and past lines keep their labels |
+| `answerText` (both copies), the responses panel, `submission.projection` | the labels of the grid's own columns | none |
+| Required/ordered predicate (`productGridOrdered`), hidden-question rule | the answer only | none |
+| Duplicate a question (`withFreshProductGridIds`) | row and column ids | a copy of a grid in a set keeps the set's column ids (fresh rows), so it stays in the set |
+| Older app | `columns` | renders the grids and takes the order exactly as before; the unknown `columnSet` is ignored |
+
+**Older clients: they render the new shape correctly, they do not refuse it.** The columns are in
+every grid, so an app older than this change draws every grid and sends the same answer keys. An
+OLDER EDITOR opening such a form keeps working: if it edits a column of one grid and keeps the
+`columnSet` it round-tripped, the save is refused with `PRODUCT_GRID_COLUMN_SET_DIVERGED` (an old
+editor prints the server's English sentence); if it drops the field the grid simply leaves the set
+(`normaliseProductGridItems` stores what it is sent). Neither writes a wrong price or answer.
+
+**The editor** (`ProductGridEditor.svelte`, model in `forms/productGridColumnSets.ts`; the section is
+not drawn in the add wizard):
+
+- *Partager ces colonnes*: name the columns of this grid (the sizes). The grids that already hold
+  exactly the same labels in the same order, in no set and with no answer, are offered in the same
+  click ("Tout partager"): the 17 other cards of the 18-grid form are one confirm, not seventeen
+  gestures. `gridsWithSameColumns` never matches blank labels.
+- *Utiliser des colonnes partagées*: a grid with its own columns picks a set a sibling made. Its
+  columns become the set's; a column whose label already existed carries its closed cells and its
+  per-column price over to the new id, a column the set lacks takes them with it, a new one is
+  seeded like any added column.
+- Every edit of a shared column (rename, add, paste, move, remove) is written to every grid of the
+  set in the same gesture (`propagateColumnSet`), and so is the set's name. *Ne plus partager*
+  keeps the grid's columns as its own.
+
+**The rule for changing a shared column after answers exist is the one the editor already applies
+to a published grid:** removing a row or column that an answer ordered asks first ("Des réponses
+contiennent cet article..."), because past orders keep their label and price (`submissions.lines`)
+but the article stops being offered; a rename is always safe because answers and prices are keyed by
+id. For a shared column the question reads the orders of EVERY grid of the set
+(`orderedCellsOfSet`), since the removal reaches all of them; putting a grid that has answers on a
+set (its columns get the set's ids, so its past answer keys no longer match a cell) asks the same
+way and says so. The server never refuses a removal, as before.
+
+Tests: `product-grid-contract.spec.ts` (set shape, divergence, an old grid judged as before),
+`forms.service.product-grid.spec.ts` (save, stored byte for byte without a set, the divergence 400
+naming the grid, a two-grid order charged per grid, a row of another grid refused on a shared
+column), `productGridColumnSets.test.ts` and `ProductGridSharedColumns.svelte.test.ts` (the model
+and the editor as a manager drives it).
+
 ## A form is a draft until it is published (owner, 2026-11-08)
 
 **Why.** A paid form could not be built for an association before its Lydia was ready: every save of a
@@ -3107,10 +3192,10 @@ functions in `lib/forms/responsesView.ts`.
   `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
   "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
   in neither list, so it never counts (owner).
-- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
-  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
-  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
-  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **"Résumé"**: since 2026-11-21 the SERVER's per-question results, not a count in the browser -
+  see [the per-question results summary](#the-per-question-results-summary-g-results-owner-2026-11-21).
+  **Managers only** (owner): the whole screen is - `getSubmissions` answers a form manager and
+  nobody else - and the tab says so.
 - **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
   workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
   from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
@@ -3123,9 +3208,89 @@ functions in `lib/forms/responsesView.ts`.
   export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
 
 Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
-with and without unpaid cash, a closed cell, the bars, the refund control),
+with and without unpaid cash, a closed cell, the Résumé tab fed by the server, the refund control),
 `FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
 `product-grid-export.spec.ts` (both CSVs read back, both refusals).
+
+## The per-question results summary (G-RESULTS, owner, 2026-11-21)
+
+**Decision.** Owner, 2026-11-21, on a read-only production survey of 21 forms and 668 answers (four
+forms with 101-126 answers, 2091 single-choice answers in all, every count rebuilt by hand in a
+spreadsheet): *"Oui, en 1.8.0"* for the per-question results summary, moved up from 1.10.0. The
+same answers refused an opens counter (*"Non, pas maintenant"*): **nothing here counts views**.
+The charter principle it touches is the FIRST, *your messages are yours* ([principes](../../../principes.md)):
+see the floor below.
+
+**What it is.** `GET /api/forms/:id/results`, answered by `FormsController.getResults` after
+`assertFormManager` - **the same rule as the responses list** (`getSubmissions`): a global admin, the
+holder of `MANAGE_FORMS` on the association, the owner of a personal form, and nobody else; a
+member who answered reads nothing. The "Résumé" tab (`FormResultsSummary.svelte`) draws it. The tab
+used to count choice questions in the browser from every answer the list had shipped; that function
+(`choiceResults`) is deleted.
+
+**Computed by SQL, never shipped.** `forms/form-results.ts` runs at most eight statements, each
+over the ids of ONE family of question, each one `jsonb_each(s.answers)` pass with a `GROUP BY`:
+the payload is a number per option, cell or scale step whatever the number of answers.
+
+| Question | What comes back |
+| --- | --- |
+| single choice, dropdown | a count per option, and `unlisted` (picks naming no declared option: an old label that matches nothing, or the "Autre" write-in another change adds - it needs no change here) |
+| multiple choice | a count per tick; `answered` is the people, so the percentages may pass 100 % |
+| linear scale | the count per step of `scale.min..max` (empty steps at 0), and the mean over the answers inside the scale |
+| matrix (single / multiple) | a rows x columns table of counts |
+| product grid | pieces per cell, the grid's total, and how many answers ordered anything; a closed cell nobody ordered stays struck through |
+| short / long text | the number of answers, and a link to the responses table. No word cloud |
+| file | nothing (it has no results) |
+
+**What counts** (`COUNTED_ANSWER_SQL`): paid, free, waiting for cash, paid over capacity, and an
+online payment still inside its 30-minute hold - the seat-hold rule. A refunded, cancelled or
+expired answer is not a person's answer now, so it never counts (what the browser tab already did).
+
+**The denominator is always said.** Every question carries `answered`, the counted answers that
+gave THAT question an answer, and a percentage is over it - never over the form's total, since a
+question behind a condition is answered by few. A single choice's `answered` is the sum of its own
+picks and a scale's the sum of its own in-range steps, so a stray stored shape (a number where a list
+belongs) can never make the bars disagree with the denominator they are divided by. The card says it
+in words; a multiple choice adds that the total may pass 100 %.
+
+**The anonymity floor** (`ANONYMOUS_MIN_ANSWERS = 5`, charter principle 1). On an ANONYMOUS form a
+question is detailed only once at least five answers gave it an answer; below that it arrives
+`suppressed: true` with no figure at all - not its count either, because a count of one says
+"somebody skipped it" about the only person who answered. The floor is per QUESTION, because that is
+the unit a stranger would read: a form of 40 answers where 2 people filled the optional comment has a
+thin comment question, and only that one is hidden.
+
+**There are NO cross-tabs.** No question split by another, none by promo, formation or status. A
+cross-tab is the way a floor of five over the whole becomes a cell of one, so the rule is not
+"apply the floor to each cell" (a suppressed cell reads as a missing number a subtraction recovers)
+but that the summary offers no cut that could reach one. If one is ever built it must name its own
+floor and the test that pins it.
+
+**The table keeps listing every answer (owner, 2026-11-22).** On an anonymous form the responses
+TABLE lists each answer to a manager, without a name or a time (`getSubmissions`), and it stays so:
+organisers need the table for orders and sign-ups, and the form is anonymous by account, not by
+content. The floor of five therefore applies to the SUMMARY only - the view that is quoted,
+screenshotted and shared - under principle 1 ([principes](../../../principes.md)); it does not
+restrict the table and must not be read as doing so.
+
+**Performance.** Measured on production, read-only, 2026-11-21: each statement over ALL 690 counted
+answers of every form (a form of 1000 answers is the same order) runs in 7-17 ms. The first draft
+looked answers up per question (`answers -> id`) and paid a function scan per row per question; the
+single `jsonb_each` pass removed it. **The survey-grid statement was compiled by the JIT** - the
+planner prices a nested `jsonb_each` at 1000 rows per level - taking 430-500 ms to run a 7 ms query,
+so `FormsService.getResults` runs in a read-only transaction with `SET LOCAL jit = off` (it ends with
+the transaction, the pooled connection is left as found). Production holds no linear-scale or
+survey-grid question yet, so those two statements are proven by `form-results.integration.spec.ts`
+(real Postgres, in CI) and by the same statements run over literal rows in a read-only session; the
+priced grid's totals were checked equal to the sum of the stored `lines` quantities (35 and 124).
+
+**Old clients.** The route is new and read by the tab only; an app older than this release does not
+call it and keeps its own client-side tab, which cannot disagree with the server since both exclude
+the same statuses. Nothing stored changes - **no migration**.
+
+Tests: `form-results.spec.ts` (every family's shape, the floor's boundary at 4 and 5, what counts),
+`form-results.integration.spec.ts` (the SQL on a real database), `forms.controller.results.spec.ts`
+(managers only), `resultsView.test.ts`, `FormResponsesPanel.svelte.test.ts`.
 
 ## The order bar rests on the bottom of the screen (2026-11-07)
 

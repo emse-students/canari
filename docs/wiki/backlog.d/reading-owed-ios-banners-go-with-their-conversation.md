@@ -1,6 +1,8 @@
 ## Reading owed - iOS: a banner goes with its conversation, never with the app coming up (owner decision 2026-11-21)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built** (owner, 2026-11-21: *"N'effacer que les lues"*, as Android):
 `CanariPushCancelMessageNotifications` (`canari_push.mm`, run at every `didBecomeActive`) now removes

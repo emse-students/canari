@@ -1,6 +1,8 @@
 ## Reading owed - an anonymous form that reads the cursus from the account
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built (owner, 2026-11-21: "Oui, en option, avec avis"): the box "Promo et formation lues sur le compte
 (certifiées)" on an anonymous form, the member's notice before sending, the snapshot

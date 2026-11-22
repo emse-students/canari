@@ -1,6 +1,8 @@
 ## Reading owed - a phone with notifications switched off states it, and the daily count shows it
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _The owner asked for 1.8.0 (2026-11-21); a reading may only target the earliest tier
 ([plan](../../../tools/backlog-plan/plan.mjs)), so it sits in 1.7.3 and is read on the pre-release that carries migration 055._

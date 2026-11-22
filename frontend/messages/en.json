@@ -3209,8 +3209,19 @@
       }
     }
   ],
-  "form_responses_summary_units_chart": "Pieces per product",
-  "form_responses_summary_empty": "This form has no choice question.",
+  "form_results_loading": "Computing the summary...",
+  "form_results_error": "The summary could not be loaded.",
+  "form_results_retry": "Retry",
+  "form_results_total": "Responses counted: {answers}. A refunded, cancelled or expired response is not counted.",
+  "form_results_denominator_single": "Percentages of the responses to this question: {answers}.",
+  "form_results_denominator_multiple": "{answers} to this question. Every ticked choice is counted: the percentages, taken over these responses, can add up past 100 %.",
+  "form_results_unlisted": "Other answer (not in the list)",
+  "form_results_scale_mean": "Mean: {mean} over {answers}",
+  "form_results_matrix_note": "Each cell counts the responses that picked it ({answers} to this question).",
+  "form_results_grid_note": "{orders} with at least one piece",
+  "form_results_see_table": "See the responses in the table",
+  "form_results_suppressed": "Hidden: on an anonymous form a question is detailed only from {min} responses, so that no response can be recognised.",
+  "form_results_anonymous_note": "Anonymous form: questions with fewer than {min} responses are hidden, and no cross-tabulation between questions is offered.",
   "form_responses_export_xlsx": "Excel",
   "form_responses_export_xlsx_hint": "One row per response",
   "form_responses_export_xlsx_grid_hint": "Two sheets: Items, Totals",
@@ -3439,6 +3450,48 @@
   "form_pgrid_cell_open_aria": "{row} {column}: open, click to close",
   "form_pgrid_cell_reopen_title": "Click to reopen",
   "form_pgrid_close_hint": "Click a cell to close a combination that does not exist (Cream in XS, say). The buyer sees it struck through.",
+  "form_pgrid_colset_apply_ordered_confirm": "Answers already exist on this grid's columns. Past orders keep their label and price, but the shared columns replace these ones. Continue?",
+  "form_pgrid_colset_apply_ordered_confirm_button": "Replace",
+  "form_pgrid_colset_in_use": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Shared columns \"{name}\": {count} grid. Any change to the columns applies to it.",
+        "countPlural=other": "Shared columns \"{name}\": {count} grids. Any change to the columns applies to all of them."
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} other grid has exactly the same columns. Share them too?",
+        "countPlural=other": "{count} other grids have exactly the same columns. Share them too?"
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm_button": "Share all",
+  "form_pgrid_colset_join_matching_only_this": "This one only",
+  "form_pgrid_colset_leave": "Stop sharing",
+  "form_pgrid_colset_name_label": "Name of the shared columns",
+  "form_pgrid_colset_name_placeholder": "Name, for example Sizes",
+  "form_pgrid_colset_share": "Share these columns",
+  "form_pgrid_colset_share_hint": "The same columns for several grids: edit them once, they change everywhere.",
+  "form_pgrid_colset_title": "Shared columns",
+  "form_pgrid_colset_use": "Use shared columns",
+  "form_pgrid_colset_use_option": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{name} ({count} column)",
+        "countPlural=other": "{name} ({count} columns)"
+      }
+    }
+  ],
+  "form_pgrid_colset_waiting": "Sharing columns is available once the answers already given on this form have been read. Reload the page if this lasts.",
   "form_pgrid_column_label": "Column {n}",
   "form_pgrid_column_placeholder": "Size",
   "form_pgrid_corner": "Rows \\ Columns",
@@ -3486,6 +3539,8 @@
   "form_pgrid_price_row": "Price of row {label}",
   "form_pgrid_problem_in_question": "\"{label}\": {problem}",
   "form_pgrid_refusal_all_closed": "Every cell is closed: reopen at least one.",
+  "form_pgrid_refusal_column_set_diverged": "Two grids that share the same columns no longer have the same ones: change them from either grid, or stop sharing them.",
+  "form_pgrid_refusal_column_set_invalid": "This grid's shared columns need a name.",
   "form_pgrid_refusal_definition": "The grid is incomplete: every row and every column must be filled in.",
   "form_pgrid_refusal_duplicate_label": "Two rows or two columns have the same name.",
   "form_pgrid_refusal_guest_price": "Public form: give \"Others\" a price, it is what a guest pays.",

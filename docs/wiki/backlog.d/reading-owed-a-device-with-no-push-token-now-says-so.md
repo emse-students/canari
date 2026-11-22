@@ -1,6 +1,8 @@
 ## Reading owed - a native device with no push token row now says why, and registers again (production, after the `1.7.0` stable)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-22, production read-only: **the `unstated` population was phone BROWSERS, not phones, and
 `1.7.2` is not a regression.** The daily line of 2026-11-21 read `1.7.2` Android 18/29 and iOS 25/26
