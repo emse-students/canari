@@ -9,6 +9,8 @@ import {
   Table2,
   Paperclip,
   ShoppingBag,
+  Pilcrow,
+  Image,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
 import { m } from '$lib/paraglide/messages';
@@ -38,6 +40,9 @@ export const QUESTION_TYPES: QuestionType[] = [
   { value: 'file', label: () => m.qtype_file(), Icon: Paperclip },
   // An order: rows x columns of quantities, priced by the server (WP-G1; editor WP-G3, fill WP-G2).
   { value: 'product_grid', label: () => m.qtype_product_grid(), Icon: ShoppingBag },
+  // Content, not questions (`formBlocks.ts`): a heading and a paragraph, an image. Never answered.
+  { value: 'text_block', label: () => m.qtype_text_block(), Icon: Pilcrow },
+  { value: 'image_block', label: () => m.qtype_image_block(), Icon: Image },
 ];
 
 /** The types every surface of this build handles: the editor writes them, the fill page draws them. */
@@ -65,6 +70,8 @@ const TYPES_WITH_EVERY_SURFACE: readonly string[] = [
 export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [
   ...TYPES_WITH_EVERY_SURFACE,
   'product_grid',
+  'text_block',
+  'image_block',
 ];
 
 /** {@link QUESTION_TYPES} restricted to {@link AUTHORABLE_QUESTION_TYPE_VALUES}, in canonical order. */
@@ -81,6 +88,8 @@ export const AUTHORABLE_QUESTION_TYPES: QuestionType[] = QUESTION_TYPES.filter((
 export const FILLABLE_QUESTION_TYPE_VALUES: readonly string[] = [
   ...TYPES_WITH_EVERY_SURFACE,
   'product_grid',
+  'text_block',
+  'image_block',
 ];
 
 /** A survey grid answered with ONE column per row (radio buttons). */
@@ -120,7 +129,7 @@ export interface EditorQuestionKind {
 
 /** A titled group of kinds: the add wizard's step 1 and the card's type menu draw these. */
 export interface EditorQuestionFamily {
-  id: 'text' | 'choice' | 'grids' | 'other';
+  id: 'text' | 'choice' | 'grids' | 'other' | 'content';
   title: () => string;
   kinds: EditorQuestionKind[];
 }
@@ -135,6 +144,8 @@ const KIND_DESCRIPTIONS: Record<string, () => string> = {
   [CHOICE_GRID_KIND]: () => m.qtype_desc_matrix(),
   file: () => m.qtype_desc_file(),
   product_grid: () => m.qtype_desc_product_grid(),
+  text_block: () => m.qtype_desc_text_block(),
+  image_block: () => m.qtype_desc_image_block(),
 };
 
 /** The families and their order (owner, 2026-11-07). Every authorable kind sits in exactly one. */
@@ -147,6 +158,9 @@ const FAMILY_LAYOUT: { id: EditorQuestionFamily['id']; title: () => string; kind
   },
   { id: 'grids', title: () => m.qfamily_grids(), kinds: [CHOICE_GRID_KIND, 'product_grid'] },
   { id: 'other', title: () => m.qfamily_other(), kinds: ['file'] },
+  // Not questions: what the form SAYS between them (owner, 2026-11-21). The add wizard inserts one
+  // at once; a card's type menu never offers it, since a question does not turn into a block.
+  { id: 'content', title: () => m.qfamily_content(), kinds: ['text_block', 'image_block'] },
 ];
 
 /** The kind a stored type is edited as: both survey grids are the "Grille de choix". */
