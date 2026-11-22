@@ -35,3 +35,5 @@ account in at least 5 communities.
 
 A fail is a resume reading `distribution-group` for an unchanged community, the removed member's
 community skipped, or a cold-start key-group step a round trip slower than before.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** In `1.8.0-alpha.1` (#3960): takeable now on the Mi 9T, with the test account in at least 5 communities.

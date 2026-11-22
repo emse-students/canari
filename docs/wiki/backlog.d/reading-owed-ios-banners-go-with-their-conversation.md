@@ -33,3 +33,5 @@ by absence exists (see social-service).
 **Expected merge conflict:** #3929 also edits `canari_push.mm` (the outbox parts); this change is the
 body of `CanariPushCancelMessageNotifications` and a new class at the end of the file, so a conflict
 is textual and resolves by keeping both.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Fix shipped in `1.7.3`: takeable now on the iPhone 12 (rows 1 to 5).

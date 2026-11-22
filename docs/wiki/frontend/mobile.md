@@ -4449,7 +4449,7 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   WebView empties in the background leaves the nudge up until the next drain, worker run or open.
 - **Read on the Mi 9T, 1.7.3-alpha.2**: the nudge goes up under 999 and leaves with the reply a
   push-woken drain delivers, the app never opened
-  ([backlog](../backlog.d/reading-owed-the-outbox-nudge-leaves-with-the-delivered-reply.md)).
+  (backlog (entry deleted 2026-11-22, read)).
 
 **A RESIDUE AFTER A DRAIN WAITS FOR THE NEXT TRIGGER, AND MAY WAIT A LONG TIME.** Observed on A1,
 2026-08-11: a 110-message backlog drained to **3** and then stopped, with the app foregrounded,

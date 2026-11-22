@@ -45,7 +45,7 @@ the counts.
 - **(lead, reversible) The push-token P1 is reduced to a reading taken in production AFTER the
   `1.7.0` stable** (#3765 makes the outcome name its cause). It does not block the stable; it is
   taken the day after both stores carry `1.7.0`, and a non-zero count opens a `1.7.1` P1
-  ([the reading](reading-owed-a-device-with-no-push-token-now-says-so.md)).
+  (the reading was deleted 2026-11-22, read).
 - **(lead, reversible, #3770) An association officer sees their OWN name small under the
   association** on the posts they wrote, as an anonymous post's author does; the association's other
   holders of the posting right are not served the writer

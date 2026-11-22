@@ -825,6 +825,8 @@ server. When the data came by Quick Start or a restore while the OLD phone is st
 same id, the retirement reaches the old phone too: it meets its id revoked and rotates its own
 identity. Nothing of the account's PIN or its other devices changes; that phone pays one rotation.
 
+**The phone reading of this restart is closed, not taken (readings rule, 2026-11-22).** No documented safe way to lose a key exists on the bench: a release APK is not debuggable, the only other Android phone is the owner's own, and an iPhone Keychain item cannot be removed from outside the app. It is pinned instead by `WebMlsService.lostState.test.ts` (a kept id with a lost state rotates once and retires the old id, a present state that does not open never rotates, an absence the store could not prove never rotates) and `PinModal.gate.svelte.test.ts`. What would make it readable is a debuggable bench build that deletes the Keystore alias alone.
+
 **Android: `absent` is answered only when the Keystore proves it** (`KeystorePlugin.kt`,
 `storedEntryState`). The wrapped key lives in SharedPreferences and opens only under a wrapping key
 held by the Android Keystore. A SharedPreferences file that cannot be parsed loads as an EMPTY map, so

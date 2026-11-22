@@ -42,3 +42,5 @@ the number keeps its rights. Write the reading into
 [device-verification](../device-verification.md) and delete this file.
 
 **2026-11-22: UNREAD.** `LYDIA_RESPONSABLE_HANDOVER_ENABLED` is `false` on main and on dev `1.7.3-alpha.5`; the flip's pull request is not merged, so no call can reach the sandbox.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Still blocked on the same fact: the switch is OFF, so alpha.1 cannot run it. The lead's flip pull request (all four switches on) is the next step; the run itself is a dev reading with test accounts and the sandbox, no human hand.

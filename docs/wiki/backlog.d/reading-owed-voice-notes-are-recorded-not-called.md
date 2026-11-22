@@ -95,3 +95,5 @@ plays at -18, but **a quiet one does not**: 1 kHz and 14 kHz tones at -30 dBFS m
 playback normalisation" is not a property of the law, so it cannot be closed by a test; the owner's call is whether a voice note gets its own speech
 target (-16 to -18, the lever named above, peak clamp kept). **Still open:** that call, the iPhone half (row 1's capture line shows no
 `noise`/`agc`, mono on the iPhone, rows 3, 6 and 7).
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Loudness is decided: the owner chose a playback law of its own for voice notes ([decisions](owner-decisions-of-2026-11-22.md), item 6, [the entry](voice-notes-have-their-own-playback-loudness-law.md)), so row 3's loudness leaves this entry. Fix shipped in `1.7.3`, takeable now. Left for the next phone sitting: the iPhone's capture line (row 1) and mono file (row 3), row 6 on the iPhone and once on the Mi 9T, row 7 on the Mi 9T and once on the iPhone.

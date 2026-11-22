@@ -31,3 +31,5 @@ conversation ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-202
    notification the page raised is gone from Notification Center once the conversation is opened from
    inside the app (one drawn by a push while the app was away is not reached, and `willPresent` already
    keeps it out of the foreground).
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Fix shipped in `1.7.3`: takeable now. Row 3 (the hidden web tab) cannot be read, the rig seats are denied notification permission; it is closed by `reactionNotification.test.ts` and the harness entry linked in the row. Left: rows 1 and 2 on the Mi 9T, row 4 on the iPhone 12.

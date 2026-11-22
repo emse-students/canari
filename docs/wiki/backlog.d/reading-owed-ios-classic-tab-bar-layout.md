@@ -21,3 +21,5 @@ with the classic bar and the opaque fallback SIMULATED - no iPhone below iOS 26 
    (83 on a notched iPhone, 49 on one with a home button).
 
 A FAIL on 3 or 4 names the plugin's `bottomInset` on the classic bar; a FAIL on 1 or 2 names the feed.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** The bench iPhone 12 runs iOS 26, so the classic bar never draws on it: the reading needs an iPhone on iOS 16 to 25, which only a human hand can bring. Asked of the owner; with no such phone, this entry closes on the simulated Chrome measurement already taken.

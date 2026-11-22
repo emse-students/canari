@@ -13,3 +13,5 @@ session ended while on screen` line. Then repeat with a kill while ON screen (fo
 app switcher after a call setup) and confirm exactly ONE such line, naming a last written line
 close to the kill. Both pass: delete this file. A false report: the marker needs a durable home
 (the log database) instead.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** In `1.8.0-alpha.1` (#3976): takeable now on the iPhone 12.

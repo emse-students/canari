@@ -34,3 +34,5 @@ A WARN `Lydia did not accept the call (...) - the re-read decides` alone is not 
 `the re-read still shows N right(s)` or `the re-read failed` is, and the row then stays live with its
 "Retirer" offered again (repeating a removal is safe). Write the reading into
 [device-verification](../device-verification.md) and delete this file.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** The fix is in the `1.7.1` stable, takeable now. Owner's hand only (his Lydia account on a real Business).

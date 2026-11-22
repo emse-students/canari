@@ -25,3 +25,5 @@ longer shows the Business on the old holder's phone. Nothing at WARN or ERROR.
 If the removal of the old number reads `the re-read still shows N right(s)`, the hand-over stands and
 the card flags that number: "Retirer cet autre numéro" asks again (safe to repeat). Write the reading
 into [device-verification](../device-verification.md) and delete this file.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Owner's hand only, after the homologation run above and the flip.
