@@ -335,6 +335,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/image-user.test.mjs
 	@bun .github/scripts/tests/image-prod-deps.test.mjs
 	@bun .github/scripts/tests/route-params-wired.test.mjs
+	@bun .github/scripts/tests/brand-css-alignment.test.mjs
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
 	@bash .github/scripts/tests/upstream-reachability-report.test.sh
