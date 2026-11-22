@@ -68,7 +68,7 @@ for the ten minutes its suite took, and merged the moment `CI passed` concluded.
 **THE ONE EXCEPTION: A PULL REQUEST THAT IS ALREADY MERGEABLE IS MERGED, NOT ARMED (#3244, Canari
 only).** GitHub refuses `--auto` on a pull request whose requirements are already met (#3202, marked
 ready after its CI finished: "unstable status"), so the step reads `mergeStateStatus` and, when it is
-`CLEAN` or `UNSTABLE`, merges at once with `--match-head-commit` on the judged head. **No ruleset
+`CLEAN`, `UNSTABLE` or `UNKNOWN`, merges at once with `--match-head-commit` on the judged head. **No ruleset
 judges that merge**: `canari-auto-merge` is a bypass actor of ruleset `22152902` with
 `bypass_mode: always` (it pushes the release bump), so a merge it makes directly is never refused for
 a missing `CI passed` or a CodeQL finding. The step's reads ARE the gate, so each is strict:
@@ -90,9 +90,15 @@ Each further attempt therefore answers one observed change of that tip, there ar
 most, and nothing waits. Every other refusal fails once and names what was read: the pull request's state and
 merge state, whether its head moved, whether the base moved, and the `CI passed` reading when that
 is what refused the immediate merge. A pull request found merged after a refusal ends the step
-green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal text never varies. **What it
-does not close**: right after a base moves GitHub reads the merge state `UNKNOWN` for a moment, and a
-refusal met there with the base standing still fails once, naming `UNKNOWN`.
+green. `arm-auto-merge-app.test.sh` B35 pins these with a fake whose refusal text never varies. 
+
+**`UNKNOWN` IS "NOT COMPUTED YET", NOT AN ANSWER (2026-11-22, #3945).** Right after a base moves GitHub
+recomputes the merge state and reads `UNKNOWN`; attempt 2 of #3945 failed a ready, green pull request
+there. `UNKNOWN` now passes the same reads as `CLEAN` and `UNSTABLE` (open, not a draft, the judged
+head, GitHub Actions' newest `CI passed` green on it) and is merged on directly: GitHub computes
+mergeability synchronously on a merge request, so a real conflict is refused by GitHub with an answer,
+and the ruleset never judged this merge anyway (its only required check is the one the step reads
+itself). No wait, no poll. `BLOCKED`, `BEHIND`, `DIRTY` and `HAS_HOOKS` stay refusals. B33 and B35 pin it.
 
 **THE ARMING IS GITHUB'S MUTATION, NEVER `gh pr merge --auto`: THE STEP CAN ARM, OR MERGE BEHIND ITS
 OWN READS, AND NOTHING ELSE DECIDES (2026-11-14, Canari first).** `gh pr merge --auto` reads the merge
