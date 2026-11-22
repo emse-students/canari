@@ -84,10 +84,18 @@ function build() {
     save: jest.fn(async (row: Partial<MinesweeperReplay>) => void savedReplays.push(row)),
     findOne: jest.fn(),
   };
+  // A ban is a row the next read counts: `ban()` writes it, `isBanned()` finds it.
+  const bannedUsers = new Set<string>();
+  const bans = {
+    create: (row: Partial<MinesweeperBan>) => row as MinesweeperBan,
+    save: jest.fn(async (row: Partial<MinesweeperBan>) => void bannedUsers.add(row.userId!)),
+    count: async ({ where }: { where: { userId: string } }) =>
+      bannedUsers.has(where.userId) ? 1 : 0,
+  };
   const service = new MinesweeperService(
     challenges as unknown as Repository<MinesweeperChallenge>,
     scores as unknown as Repository<MinesweeperScore>,
-    { count: async () => 0 } as unknown as Repository<MinesweeperBan>,
+    bans as unknown as Repository<MinesweeperBan>,
     replays as unknown as Repository<MinesweeperReplay>
   );
   return { service, challenges, scores, replays, savedChallenges, savedReplays, storedScores };
@@ -307,4 +315,43 @@ describe('reading a replay', () => {
       });
     });
   });
+});
+
+/**
+ * THE WHOLE CHAIN OF A BANNED WINNER'S GAME (reading `1.7.3-alpha.6`: dev holds no banned player and
+ * banning a test account is a write the sitting does not own). A real win is submitted, then the
+ * winner is banned through `ban()` itself, then the replay is read by a plain member and by a global
+ * admin - nothing stubs the ban, so the rule is the one production runs.
+ */
+describe('a banned winner, from the win to the replay', () => {
+  beforeEach(() => {
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+  });
+
+  it('opens for a global admin with the moves, and is a 404 for a plain member', async () => {
+    const { service, challenges, replays, savedReplays } = build();
+    challenges.findOne.mockResolvedValue(challengeRow());
+    const moves = winningLog();
+    const result = await service.submit('user-1', 'challenge-1', {
+      moves,
+      claimedDurationMs: moves[moves.length - 1].t,
+    });
+    expect(result.accepted).toBe(true);
+    replays.findOne.mockImplementation(async () => savedReplays[0]);
+
+    // Before the ban a member watches the best win; after it, only the admin does.
+    await expect(service.replay('score-1', 'member-1', false)).resolves.toMatchObject({
+      userId: 'user-1',
+    });
+    await service.ban('user-1', 'cheating', 'admin-1');
+
+    await expect(service.replay('score-1', 'member-1', false)).rejects.toBeInstanceOf(
+      NotFoundException
+    );
+    const seen = await service.replay('score-1', 'admin-1', true);
+    expect(seen.userId).toBe('user-1');
+    expect(seen.moves).toEqual(moves);
+  }, 60_000);
 });

@@ -21,6 +21,9 @@ vi.mock('$lib/posts/api', () => ({
 }));
 
 import FormCard from './FormCard.svelte';
+import { attachedFormsLoader, type AttachedFormInfo } from '$lib/posts/attachedForms.svelte';
+import { createFormSummaryBatcher } from '$lib/forms/formSummaries';
+import { m } from '$lib/paraglide/messages';
 
 const future = () => new Date(Date.now() + 86_400_000).toISOString();
 const past = () => new Date(Date.now() - 86_400_000).toISOString();
@@ -132,5 +135,55 @@ describe('FormCard bell', () => {
     flushSync();
     expect(subscribeFormReminder).toHaveBeenCalledWith('f2');
     expect(bell(target)?.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+/**
+ * A STALLED OR EMPTY SUMMARY READ NEVER MAKES THE CARD CLAIM AN ANSWER (reading `1.7.3-alpha.6`,
+ * #3958 row 2, second half - a stall cannot be produced on a bench without touching the network).
+ *
+ * The real chain: the summary batcher feeds the attached-forms loader, which feeds the card its
+ * `submitted`. A fetcher that rejects (no answer) leaves the title the post carries and a `null`
+ * state: the card is drawn NEUTRAL - neither "Response sent" nor an error. A fetcher that resolves
+ * `[]` is an ANSWER (the form is not readable by this reader): the loader draws no card at all, so
+ * "Response sent" cannot appear either.
+ */
+describe('FormCard over the summary batcher', () => {
+  async function infosFor(fetcher: () => Promise<never[]>): Promise<AttachedFormInfo[]> {
+    const batcher = createFormSummaryBatcher(fetcher);
+    let loader!: ReturnType<typeof attachedFormsLoader>;
+    const cleanup = $effect.root(() => {
+      loader = attachedFormsLoader(() => [{ id: 'f1', title: 'Inscriptions' }], {
+        readSummary: batcher,
+      });
+    });
+    mounted.push(cleanup);
+    flushSync();
+    await new Promise<void>((r) => setTimeout(r, 0));
+    flushSync();
+    return [...loader.infos];
+  }
+
+  it('a fetcher that rejects draws the card neutral: no answered label, no error', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const infos = await infosFor(() => Promise.reject(new Error('stalled')));
+    warn.mockRestore();
+    expect(infos).toHaveLength(1);
+    expect(infos[0].submitted).toBeNull();
+    const { target } = render(FormCard, {
+      formId: 'f1',
+      href: '/forms/f1',
+      title: infos[0].title,
+      submitted: infos[0].submitted,
+    });
+    expect(target.querySelector('[data-attachment-card="form"]')).not.toBeNull();
+    expect(target.textContent).not.toContain(m.post_form_response_sent());
+    expect(target.textContent).not.toContain(m.link_preview_form_open());
+    expect(target.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('a fetcher resolving [] draws no card, so nothing claims an answer either', async () => {
+    const infos = await infosFor(() => Promise.resolve([]));
+    expect(infos).toHaveLength(0);
   });
 });
