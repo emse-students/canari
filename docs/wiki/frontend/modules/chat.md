@@ -5701,10 +5701,34 @@ connection to advertise image MIME types and, on commit, reads the content URI a
 rebuilds a `File`, and routes it through the normal media pipeline (`handleFilesSelected`), so a
 keyboard GIF is encrypted and sent like any picked file, in DMs, groups, and channels.
 
-The single hook lives in the auto-generated `RustWebView.onCreateInputConnection` (marked
-`CANARI CUSTOM PATCH`); all logic is in the non-generated `KeyboardMediaBridge`, so re-applying the
-patch after a `tauri android` regeneration is one line. Reliable IME `commitContent` needs a recent
-Android WebView; on devices where it is unavailable the in-app GIF picker still works.
+**The one hook, `RustWebView.onCreateInputConnection`, lives in the vendored wry TEMPLATE**
+(`frontend/src-tauri/patches/wry/src/android/kotlin/RustWebView.kt`, a `CANARI PATCH`), never in
+`gen/android/.../generated/RustWebView.kt`: wry's `build.rs` rewrites every file of `generated/`
+from its templates on each Android build, so the tracked copy is an OUTPUT, refreshed by a build and
+committed with it. All logic stays in the non-generated `KeyboardMediaBridge`, in the same package,
+which is why the template can name it unqualified.
+
+**The hook was lost for four months (2026-07-25 to 2026-11-22).** It was first written into the
+generated copy (`ebdc943366`, 2026-07-02, with a comment asking to *"re-apply after `tauri android`
+regeneration"*), and the next regeneration, committed as `3614a79518` ("fix"), erased it. The bridge
+kept compiling with no caller, the WebView advertised no image MIME type, and Gboard answered
+*"GIF non disponibles ici avec cette appli"* on every Android build since. A comment
+asking a human to re-apply a hunk after a tool rewrites the file is not a mechanism: the hook moved
+to the template, which no build rewrites, and
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` (in `make test-ci-scripts`) fails if
+the template or the tracked generated copy loses the override, if the override stops returning the
+bridge's wrapper of `super`'s connection, or if the bridge stops offering `image/gif`; it proves each
+check against the upstream class and against an override that drops the wrapper. The bridge logs
+`KeyboardMedia: input connection wrapped` once per process - the line that says on a device that the
+hook is live.
+
+**Who listens.** Two composers answer the `canari-keyboard-media` event: `MainChatPage` (the chat
+composer of a DM, a group or a channel, while a conversation is open) and `posts/CommentComposer`
+(a post's comment box, only while it is focused - every feed card mounts one). **No other composer
+takes a keyboard GIF**: the post composer (`CreatePostForm`), the poll composer, a reel's caption and
+the message-edit field do not listen, so a GIF committed there is dropped silently on the web side
+(the native bridge has already accepted it). Reliable IME `commitContent` needs a recent Android
+WebView; on devices where it is unavailable the in-app GIF picker still works.
 
 ### The thread sticks to its own bottom, and ONE boolean says whether it should (2026-09-22)
 

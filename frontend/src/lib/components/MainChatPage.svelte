@@ -1312,7 +1312,15 @@
    * exactly like a picked file - in DMs, groups, and channels alike.
    */
   function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
-    if (!convs.selectedContact || !detail?.data) return;
+    if (!convs.selectedContact || !detail?.data) {
+      log(
+        `[keyboard-media] committed content ignored: ${convs.selectedContact ? 'no data' : 'no conversation open'}`
+      );
+      return;
+    }
+    log(
+      `[keyboard-media] committed ${detail.mime ?? 'no mime'}, ${detail.data.length} base64 chars`
+    );
     try {
       const bin = atob(detail.data);
       const bytes = new Uint8Array(bin.length);

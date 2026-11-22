@@ -25,8 +25,11 @@ import org.json.JSONObject
  * `canari-keyboard-media` DOM event so it can send them through the normal media pipeline
  * (encrypted upload for DMs/groups and channels alike).
  *
- * All work lives here (a non-generated file); the generated `RustWebView` only delegates one call,
- * so re-applying the patch after a Tauri Android regeneration is a single line.
+ * All work lives here (a non-generated file). The one hook, `RustWebView.onCreateInputConnection`,
+ * is written in the vendored wry TEMPLATE (`frontend/src-tauri/patches/wry/src/android/kotlin/
+ * RustWebView.kt`), never in `generated/`, which wry's build.rs rewrites on every Android build: the
+ * hook written there was lost on 2026-07-25 and Gboard answered "GIF non disponibles ici" for
+ * months. `.github/scripts/tests/android-keyboard-media-hook.test.mjs` fails if it goes again.
  */
 object KeyboardMediaBridge {
     private const val TAG = "KeyboardMedia"
@@ -36,6 +39,9 @@ object KeyboardMediaBridge {
 
     /** Skip payloads too large to bridge as a JS string (Gboard GIFs are far smaller). */
     private const val MAX_BYTES = 12 * 1024 * 1024
+
+    /** Whether the first wrap of this process was logged: the device reading's proof the hook is live. */
+    @Volatile private var wrapLogged = false
 
     /**
      * Wraps [ic] so the keyboard can commit rich content into [webView]. Returns [ic] unchanged when
@@ -47,6 +53,10 @@ object KeyboardMediaBridge {
         editorInfo: EditorInfo,
     ): InputConnection? {
         if (ic == null) return null
+        if (!wrapLogged) {
+            wrapLogged = true
+            Log.d(TAG, "input connection wrapped, image MIME types offered to the keyboard")
+        }
         EditorInfoCompat.setContentMimeTypes(editorInfo, MIME_TYPES)
         ViewCompat.setOnReceiveContentListener(webView, MIME_TYPES) { view, payload ->
             handleReceive(view, payload)
@@ -61,9 +71,14 @@ object KeyboardMediaBridge {
      */
     private fun handleReceive(view: View, payload: ContentInfoCompat): ContentInfoCompat? {
         if (payload.source != ContentInfoCompat.SOURCE_INPUT_METHOD) return payload
-        val webView = view as? WebView ?: return payload
+        val webView = view as? WebView
+        if (webView == null) {
+            Log.w(TAG, "keyboard content on a view that is not a WebView - passed through")
+            return payload
+        }
         val clip = payload.clip
         val mimeHint = if (clip.description.mimeTypeCount > 0) clip.description.getMimeType(0) else null
+        Log.d(TAG, "keyboard committed ${clip.itemCount} item(s)")
         for (i in 0 until clip.itemCount) {
             val uri = clip.getItemAt(i).uri ?: continue
             readAndDispatch(webView, uri, mimeHint)
@@ -92,6 +107,7 @@ object KeyboardMediaBridge {
                 val name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                     ?: "keyboard-${System.currentTimeMillis()}.${mime.substringAfterLast('/')}"
                 val dataB64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                Log.d(TAG, "dispatching keyboard media: ${bytes.size} bytes")
                 dispatchToWeb(webView, mime, name, dataB64)
             } catch (e: Exception) {
                 Log.e(TAG, "readAndDispatch failed: ${e.javaClass.simpleName}")

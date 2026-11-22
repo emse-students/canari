@@ -273,7 +273,14 @@
 
   /** Rebuilds a File from a keyboard-committed GIF (base64, Android/iOS) and stages it. */
   function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
-    if (!inputFocused || !detail?.data) return;
+    // Every card on the feed mounts a composer and hears the event: only the focused one answers,
+    // and the others stay silent (one line per card per GIF would be noise).
+    if (!inputFocused) return;
+    if (!detail?.data) {
+      Log.w('CommentComposer', 'keyboard media event carried no data');
+      return;
+    }
+    Log.d('CommentComposer', `keyboard media committed: ${detail.mime ?? 'no mime'}`);
     try {
       const bin = atob(detail.data);
       const bytes = new Uint8Array(bin.length);
