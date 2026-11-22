@@ -25,6 +25,7 @@ const ANDROID = '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari
 const nativeCacheRs = read('../../../src-tauri/src/native_cache.rs');
 const pushRs = read('../../../src-tauri/src/commands/push.rs');
 const keyGroupJoinRs = read('../../../src-tauri/src/mobile/key_group_join.rs');
+const announcedRs = read('../../../src-tauri/src/mobile/announced.rs');
 const nativeCacheKeyKt = read(`${ANDROID}NativeCacheKey.kt`);
 const firebaseKt = read(`${ANDROID}CanariFirebaseMessagingService.kt`);
 const applicationKt = read(`${ANDROID}CanariApplication.kt`);
@@ -174,6 +175,28 @@ describe('the push key-group join ledger is sealed by Rust alone', () => {
       /nativeKeyGroupJoinSettle\(filesDir, cacheKey, ctx\.userId, groupId,/
     );
     expect(firebaseKt).not.toMatch(/File\([^)]*"key_group_push_joins\.json"\)/);
+  });
+});
+
+describe('the iOS announced-messages ledger is sealed by Rust alone', () => {
+  // It names conversations and senders, in a file the notification extension reads and writes with
+  // the app shut (`mobile/announced.rs`, docs/wiki/frontend/ios-notification-ownership.md).
+  const ledgerWriter = between(announcedRs, /pub fn with_ledger</, /\n}\n/);
+
+  it('writes the ledger sealed, and re-excludes it after its atomic write', () => {
+    expect(ledgerWriter).toContain('seal_file(key, Purpose::AnnouncedLedger, &plain)');
+    expect(ledgerWriter).toMatch(
+      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*exclude_from_backup\(&path\);/
+    );
+  });
+
+  it('every ledger call takes the cache key, and both native halves hand it over', () => {
+    expect(between(announcedRs, /pub fn with_ledger</, /\) -> /)).toContain('key: &CacheKey');
+    expect(between(announcedRs, /pub fn page_claim_in\(/, /\) -> /)).toContain('key: &CacheKey');
+    expect(swift).toContain('canari_announced_by_extension(dir.path, cacheKey, key)');
+    expect(pushMm).toMatch(
+      /canari_announced_settle_in_front\(dir\.UTF8String,\s*CanariRetrieveNativeCacheKey\(\)\.UTF8String,/
+    );
   });
 });
 

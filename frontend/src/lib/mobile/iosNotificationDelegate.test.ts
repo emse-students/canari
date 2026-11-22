@@ -167,8 +167,10 @@ describe('willPresent: only a remote push is an arrival (no re-post loop)', () =
     // EVERY active push, chosen by IDENTIFIER, never by its data: a wake whose fetch failed or came
     // back `gone` keeps `type=wake` in its userInfo yet carries the reaction's collapse id (round 4).
     expect(branch).toMatch(
-      /CanariPushProcessRemoteNotificationUserInfo\(request\.content\.userInfo\);\s*(\/\/[^\n]*\n\s*)*CanariPresentForegroundPush\(center, request\.identifier, completionHandler\);\s*$/
+      /CanariPushProcessRemoteNotificationUserInfo\(request\.content\.userInfo\);\s*(\/\/[^\n]*\n\s*)*UNNotificationPresentationOptions announced;[^\n]*\n\s*if \(CanariSettleAnnouncedInFront\(request\.content\.userInfo, &announced\)\) \{\s*completionHandler\(announced\);\s*return;\s*\}\s*(\/\/[^\n]*\n\s*)*CanariPresentForegroundPush\(center, request\.identifier, completionHandler\);\s*$/
     );
+    // The one step before the identifier read: a message the extension claimed settles its claim
+    // in the shared ledger first (`CanariSettleAnnouncedInFront`, iosOneBannerPerMessage.test.ts).
     expect(branch).not.toContain('CanariIsReactionData');
     expect(branch).not.toContain('UNNotificationPresentationOptionNone');
     const present = body('static void CanariPresentForegroundPush(');

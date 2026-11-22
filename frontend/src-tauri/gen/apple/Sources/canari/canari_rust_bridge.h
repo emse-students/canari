@@ -16,6 +16,13 @@ void canari_free_string(char *ptr);
 /// Free with canari_free_string. Reached through `CanariAppGroupPath` only.
 char *canari_app_group_store_dir(void);
 
+/// An extension banner reaches an ACTIVE app: 1 present it (the page stood down for it), 0 its
+/// claim was given back, 2 the page's banner announces it, 3 its key left the ledger (present it,
+/// recorded again), -1 ledger failure (the claim stands). The ledger is sealed under
+/// `cache_key_b64`, the install's native cache key.
+int32_t canari_announced_settle_in_front(const char *data_dir, const char *cache_key_b64,
+                                         const char *key);
+
 char *canari_native_decrypt_message(
     const unsigned char *state_ptr,
     size_t state_len,
