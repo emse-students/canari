@@ -5,6 +5,7 @@ import {
   PRODUCT_GRID_OTHERS_TIER,
   PRODUCT_GRID_RECEIVED_STATUSES,
   parseProductGridAnswer,
+  productGridColumnSetRefusal,
   productGridItemRefusal,
   productGridLines,
   productGridLinesOf,
@@ -365,5 +366,68 @@ describe('the totals rule - shared by the export and the responses screen', () =
   it('reads only the lines of its own question', () => {
     const other = { ...at('vert', 'm', 9), itemId: 'other' };
     expect(productGridTotals({ id: 'q', productGrid: grid() }, [other]).total.units).toBe(0);
+  });
+});
+
+describe('product grid contract - shared column sets (owner, 2026-11-21)', () => {
+  const sizes = { id: 'tailles', name: 'Tailles' };
+  const shared = (over: Partial<ProductGrid> = {}) => grid({ columnSet: sizes, ...over });
+  const asItem = (id: string, g: ProductGrid) => ({ id, type: 'product_grid', productGrid: g });
+
+  it('a grid stored before the sets, with no columnSet, is judged exactly as before', () => {
+    expect(grid()).not.toHaveProperty('columnSet');
+    expect(refusal(grid())).toBeNull();
+    expect(refusal(grid({ columnSet: null }))).toBeNull();
+    expect(productGridColumnSetRefusal([asItem('a', grid()), asItem('b', grid())])).toBeNull();
+  });
+
+  it('a grid naming a set is valid, and a malformed set is refused by its code', () => {
+    expect(refusal(shared())).toBeNull();
+    for (const bad of [
+      'tailles',
+      { id: '', name: 'Tailles' },
+      { id: 'a b', name: 'Tailles' },
+      { id: 'tailles', name: '  ' },
+      { id: 'tailles', name: 'x'.repeat(101) },
+      { id: 'tailles' },
+    ]) {
+      expect(refusal(grid({ columnSet: bad as never }))).toBe('PRODUCT_GRID_COLUMN_SET_INVALID');
+    }
+  });
+
+  it('grids of one set must hold the same columns, ids, labels and order', () => {
+    const other = shared({ rows: [{ id: 'r2', label: 'Bleu' }], closedCells: [] });
+    expect(productGridColumnSetRefusal([asItem('a', shared()), asItem('b', other)])).toBeNull();
+    const reordered = shared({ columns: [...grid().columns].reverse() });
+    expect(productGridColumnSetRefusal([asItem('a', shared()), asItem('b', reordered)])).toEqual({
+      itemId: 'b',
+      refusal: { code: 'PRODUCT_GRID_COLUMN_SET_DIVERGED', detail: 'tailles' },
+    });
+    const renamed = shared({ columns: grid().columns.map((c) => ({ ...c, id: `n-${c.id}` })) });
+    expect(productGridColumnSetRefusal([asItem('a', shared()), asItem('b', renamed)])?.itemId).toBe(
+      'b'
+    );
+    const named = grid({ columnSet: { id: 'tailles', name: 'Pointures' } });
+    expect(productGridColumnSetRefusal([asItem('a', shared()), asItem('b', named)])?.itemId).toBe(
+      'b'
+    );
+  });
+
+  it('a grid outside every set, or in another set, is never compared with them', () => {
+    const own = grid({ columns: [{ id: 'xl', label: 'XL' }], closedCells: [] });
+    const elsewhere = { ...own, columnSet: { id: 'autre', name: 'Autre' } };
+    expect(
+      productGridColumnSetRefusal([asItem('a', shared()), asItem('b', own), asItem('c', elsewhere)])
+    ).toBeNull();
+  });
+
+  it('a respondent is never handed the set: the columns are all an app needs', () => {
+    expect(productGridView(shared())).not.toHaveProperty('columnSet');
+    expect(productGridView(shared()).columns).toEqual(grid().columns);
+  });
+
+  it('an answer keys on row and column ids whatever the set', () => {
+    const ok = parseProductGridAnswer(shared(), { 'vert:m': 2 });
+    expect(ok).toMatchObject({ ok: true, units: 2 });
   });
 });

@@ -1,6 +1,8 @@
 ## Reading owed - the "messages en attente" nudge leaves the shade when its reply is delivered (Mi 9T)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built.** The nudge ("Vous avez peut-etre des messages en attente") follows the outbox
 mirror: every native drain settles it under `OUTBOX_LOCK` and withdraws it when the mirror is empty,
