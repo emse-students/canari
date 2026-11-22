@@ -2425,6 +2425,61 @@ rather than in the app therefore says something about App Link verification on t
 about the code - `adb shell pm get-app-links fr.emse.canari` is what settles it, and a scanner that
 renders the page in its own webview never consults the resolver at all.
 
+## A choice question's free comment and its "Autre" (owner, 2026-11-21, 1.8.0)
+
+**Decision** (owner, 2026-11-21, on a read-only survey of production: 21 forms, 668 answers - *"Oui, en 1.8.0"*).
+In one anonymous survey, 6 of 18 questions were a `long_text` "Commentaire" placed right after a yes/no, answered
+20-57% of the time, while only 1 of the 42 choice questions offered an "Autre". So a **single choice, a multiple
+choice and a drop-down** may now carry (1) an optional **free comment** per question, and (2) ONE **"Autre"
+option** whose picker may type what they mean. Charter: principle 2 (the essential is never lost - what a
+person says beside a choice is kept, and a build that cannot draw the new boxes still sends its choice), principle 1
+(an anonymous form stays anonymous: both texts are free text stored in the answer's own record, no new identity),
+principle 7 (one toggle each, nothing else to configure).
+
+**Model.**
+- Question: `allowComment?: boolean`. Option: `other?: boolean` (at most one per question). Both on choice types only;
+  `normaliseChoiceNotes` (`forms/choice-notes.ts`) corrects anything else at save and LOGS it, because the editor can
+  never draw such a payload (an old editor round-tripping a question turned into text; a hand-made call).
+- Answer: the choice stays an option id (or a list), so pricing, conditions and results are untouched. The two texts
+  ride in the same record under `<id>#comment` and `<id>#other` (`answer-text.ts`: `commentKey`, `otherKey`,
+  `noteKeyOwner`). They are NOT questions: `answerSelections` never sees them, so a condition keyed on the option
+  chosen treats "Autre" like any other option (its id is in `showIf.answer.optionIds` as usual) and ignores the text.
+- **Decision: the "Autre" text is ALLOWED, never required.** A client built before this draws "Autre" as a plain
+  option with no box and could not satisfy a requirement; requiring it would lock those clients out of the form.
+
+**Submit and edit** (`settleAnswerNotes`, run where hidden answers were already dropped). A text is stored, trimmed,
+only when its question is visible and (comment) the question takes one or (other) the answer really picks the "Autre"
+option; otherwise it is dropped and logged at debug. A text of a question the form does not declare is dropped. An
+empty text is the absence, like every unanswered question. The DTO counts the texts apart from the questions' cap
+(100 + 100). On an answer EDIT the `#other` of a price-locked question stays with its locked choice; the comment is
+free to change.
+
+**Every consumer of an answer, enumerated (2026-11-21).**
+
+| Consumer | What it does with the texts |
+| --- | --- |
+| XLSX export (`exportSubmissions`) | "Autre" reads `Autre: text` INSIDE the answer cell (one value per row to count); a comment gets its own column `<label> - <comment word>`, written when the question takes one or an answer holds one from when it did. The word is the client's (`ExportLabels.comment`, required like `file`: an app older than this one exporting such a form is refused with a clear 400 until updated). |
+| Responses table / panel (`submissionTable.ts`, `FormSubmissionsTable`) | the cell reads `Autre: text`; the comment shows under the answer in the detail panel, which opens whenever a comment exists (`panelAddsNothing`). A person who left ONLY a comment is listed. |
+| Responses search (`responsesView.ts`) | searches both texts. |
+| Results summary (`choiceResults`) | counts "Autre" as an option; the texts are not aggregated. |
+| Pricing / `calculateModifiers` / price grid / `answerSelections` / conditions | unchanged: they read the option id only. |
+| Organiser alert, guest receipt, payment, reminders | read no answer. |
+| Own-answer page and edit | the fill pages bind both texts; `selectionsFromAnswers` passes them through; `editedAnswers` leaves a locked question's `#other` out. |
+| Booking spaces | not offered (`offerChoiceNotes={false}` in the space editor): bookings answers are not stored by this service. |
+| Account erasure / retention | the texts are free text of the same class as a long answer, in the same record. |
+
+**Editor.** `ChoiceNotesEditor.svelte`, under a choice question's options (the card, not the add wizard): a switch
+"Option Autre" that adds or removes the one `other` option (the option stays editable in the options list; the
+switch reads whether one exists), and a switch "Commentaire libre". The fill card draws "Autre" last whatever its
+stored place, shows the text box only while "Autre" is picked, and sends neither text when it is empty or when
+"Autre" is no longer the answer.
+
+**Old clients.** An old app FILLING a form with these: draws "Autre" as a plain option, no comment box - nothing is
+lost, nothing blocks. An old app EDITING such a form round-trips both marks (its editor spreads unknown fields),
+so they survive its save. A new editor on a server older than this change (a store build reaches phones before
+production deploys): the whitelist drops both fields, the toggles read off again after the save - the same
+visible, harmless failure as any new field; no estate gate was added for it.
+
 ## Note on form management
 
 Association admins reach the same list, scoped to their association, through the associations

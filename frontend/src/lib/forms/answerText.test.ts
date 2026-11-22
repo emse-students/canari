@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { answerText, type AnswerQuestion } from './answerText';
+import {
+  answerText,
+  commentText,
+  noteKeyOwner,
+  otherText,
+  type AnswerQuestion,
+} from './answerText';
 
 /**
  * The reading of a stored answer, client side.
@@ -96,5 +102,34 @@ describe('answerText - a file answer', () => {
 
   it('refuses to read a file answer without words, rather than print its id', () => {
     expect(() => answerText(FILE_ID, FILE)).toThrow('words of its reader');
+  });
+});
+
+// The comment and "Autre" texts of a choice answer (owner, 2026-11-21): same cases as the server copy.
+describe('answerText - the "Autre" option and the free comment', () => {
+  const COLOUR: AnswerQuestion = {
+    options: [
+      { id: 'red', label: 'Rouge' },
+      { id: 'oth', label: 'Autre', other: true },
+    ],
+  };
+
+  it('reads "Autre" as what was typed beside it, alone or among several', () => {
+    expect(answerText('oth', COLOUR, undefined, null, 'Vert')).toBe('Autre: Vert');
+    expect(answerText(['red', 'oth'], COLOUR, undefined, null, 'Vert')).toBe('Rouge, Autre: Vert');
+    expect(answerText('oth', COLOUR)).toBe('Autre');
+    expect(answerText('red', COLOUR, undefined, null, 'ignored')).toBe('Rouge');
+  });
+
+  it('reads the comment and the typed text out of the record, trimmed, empty when absent', () => {
+    const record = { 'q#comment': ' ok ', 'q#other': 'Vert' };
+    expect(commentText(record, 'q')).toBe('ok');
+    expect(otherText(record, 'q')).toBe('Vert');
+    expect(commentText({}, 'q')).toBe('');
+  });
+
+  it('names the question a key belongs to', () => {
+    expect(noteKeyOwner('q#comment')).toEqual({ itemId: 'q', kind: 'comment' });
+    expect(noteKeyOwner('q')).toBeNull();
   });
 });

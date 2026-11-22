@@ -2518,14 +2518,7 @@ export class ChannelService implements OnApplicationBootstrap {
     userId: string,
     deviceId?: string
   ): Promise<DistributionGroupRef> {
-    await this.assertWorkspaceMember(workspaceId, userId);
-
-    const ref = await readDistributionGroup(
-      this.internalSecret,
-      workspaceScope(workspaceId),
-      userId,
-      deviceId
-    );
+    const ref = await this.readMemberDistributionGroup(workspaceId, userId, deviceId);
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
       // So this is not a state to repair silently: it is a community that cannot carry seeds, and
@@ -2543,6 +2536,27 @@ export class ChannelService implements OnApplicationBootstrap {
       `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null} base=${ref.baseEpoch ?? 'none'} active=${ref.activeEpoch} devices=${ref.memberDevices?.length ?? '?'} seat=${ref.seat?.status ?? 'unasked'}`
     );
     return ref;
+  }
+
+  /**
+   * The community's key-group reference for one of its members, or null when the community has
+   * none - the read {@link getDistributionGroupForMember} serves, WITHOUT its lines. The route says
+   * what it served (or the missing group, at error); {@link listKeyGroupVersions} reads the same
+   * thing for a digest and must not say it a second time - a community with no key group is ONE
+   * error, the route's, met by the full pass the client then runs.
+   */
+  private async readMemberDistributionGroup(
+    workspaceId: string,
+    userId: string,
+    deviceId?: string
+  ): Promise<DistributionGroupRef | null> {
+    await this.assertWorkspaceMember(workspaceId, userId);
+    return readDistributionGroup(
+      this.internalSecret,
+      workspaceScope(workspaceId),
+      userId,
+      deviceId
+    );
   }
 
   /**
@@ -2591,6 +2605,102 @@ export class ChannelService implements OnApplicationBootstrap {
                     : ` ${e instanceof Error ? e.message : String(e)}`)
               );
               return { workspaceId, channels: null, channelsRefusal: refusal };
+            }
+          })
+        ))
+      );
+    }
+    return { items };
+  }
+
+  /**
+   * The KEY-GROUP VERSION of several communities in ONE answer: per community, a digest of the two
+   * answers a member's roster pass reads - the key-group reference
+   * ({@link getDistributionGroupForMember}, asked without a device, as the pass asks it) and the
+   * roster ({@link listWorkspaceMembers}, without presence) - plus the three numbers the client's
+   * skip predicate compares with its own tree (`groupId`, `activeEpoch`, `baseEpoch`).
+   *
+   * WHY IT EXISTS (owner's Android log, 1.7.1, 2026-11-19..22): every return of the live stream
+   * re-listed the communities, and every community's pass read both routes to conclude "agrees with
+   * its roster, nobody to remove" - 2 325 of 5 050 requests over 131 resumes. A device that holds
+   * the version its last CONVERGED pass started from, and finds it unchanged, has nothing to learn
+   * from the two reads: the digest is a function of exactly their bodies, through the very methods
+   * the routes call, so an unchanged digest is an unchanged pair of answers.
+   *
+   * A DIGEST, NOT A COUNTER BUMPED AT EACH WRITE. A counter is correct only while every write site
+   * remembers it, across two services (the roster here, the epochs and device rows in
+   * chat-delivery); the digest is correct by construction. Its one weakness - a value that returns
+   * to an earlier one (A-B-A) - cannot reach a decision: the epochs only grow, a device row only
+   * comes back through a commit (which moves the epoch), and a membership row is a fresh id per
+   * admission. A field that may return (a role) decides nothing in the pass.
+   *
+   * Each item is its own verdict, as in {@link listCommunityBootReads}: a refusal (a community just
+   * left, one with no key group) is carried on its item and the client runs the full pass for it,
+   * which meets the same refusal on its own route and handles it as it always did. A community with
+   * no key group is not logged here: the route the full pass reads logs it, once, at error.
+   *
+   * WHAT IT SAVES IS CLIENT ROUND TRIPS, NOT SERVER WORK: the server still reads both answers for
+   * every community, once per load, to hash them. Two requests per community become one per load.
+   */
+  async listKeyGroupVersions(
+    userId: string,
+    workspaceIds: readonly string[]
+  ): Promise<{ items: KeyGroupVersionItem[] }> {
+    const ids = [...new Set(workspaceIds)].slice(0, COMMUNITY_BOOT_READS_MAX);
+    this.logger.log(
+      `[KEY_GROUP_VERSIONS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
+    );
+    const items: KeyGroupVersionItem[] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_CONCURRENCY) {
+      const slice = ids.slice(i, i + COMMUNITY_BOOT_READS_CONCURRENCY);
+      items.push(
+        ...(await Promise.all(
+          slice.map(async (workspaceId): Promise<KeyGroupVersionItem> => {
+            try {
+              const [ref, roster] = await Promise.all([
+                this.readMemberDistributionGroup(workspaceId, userId),
+                this.listWorkspaceMembers(workspaceId, userId),
+              ]);
+              if (!ref) {
+                // NOT LOGGED HERE: the client runs the full pass for this community, and the route it
+                // reads says it once, at error (see `readMemberDistributionGroup`).
+                return {
+                  workspaceId,
+                  version: null,
+                  groupId: null,
+                  activeEpoch: null,
+                  baseEpoch: null,
+                  refusal: {
+                    status: HttpStatus.NOT_FOUND,
+                    code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP',
+                    message: 'This community has no key distribution group.',
+                  },
+                };
+              }
+              return {
+                workspaceId,
+                version: keyGroupVersionOf(ref, roster),
+                groupId: ref.groupId,
+                activeEpoch: ref.activeEpoch,
+                baseEpoch: ref.baseEpoch,
+                refusal: null,
+              };
+            } catch (e) {
+              const refusal = bootReadRefusal(e);
+              this.logger.warn(
+                `[KEY_GROUP_VERSIONS] workspace=${workspaceId} user=${userId.slice(0, 8)} refused=${refusal.status}` +
+                  (e instanceof HttpException
+                    ? ''
+                    : ` ${e instanceof Error ? e.message : String(e)}`)
+              );
+              return {
+                workspaceId,
+                version: null,
+                groupId: null,
+                activeEpoch: null,
+                baseEpoch: null,
+                refusal,
+              };
             }
           })
         ))
@@ -7321,6 +7431,62 @@ export interface CommunityBootReadItem {
   workspaceId: string;
   channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
   channelsRefusal: BootReadRefusal | null;
+}
+
+/**
+ * One community's part of {@link ChannelService.listKeyGroupVersions}: the digest and the three
+ * numbers the client compares with its own tree, or the refusal (every other field then null).
+ */
+export interface KeyGroupVersionItem {
+  workspaceId: string;
+  version: string | null;
+  groupId: string | null;
+  activeEpoch: number | null;
+  baseEpoch: number | null;
+  refusal: BootReadRefusal | null;
+}
+
+/**
+ * `value` as JSON with every object's keys sorted, after the JSON conversion a route applies (a
+ * `Date` becomes its ISO string) - so two equal answers always give the same text, whatever order a
+ * query or a spread produced their keys in.
+ */
+function canonicalJson(value: unknown): string {
+  const plain: unknown = JSON.parse(JSON.stringify(value ?? null));
+  const sortKeys = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.keys(o)
+          .sort()
+          .map((k) => [k, sortKeys(o[k])])
+      );
+    }
+    return v;
+  };
+  return JSON.stringify(sortKeys(plain));
+}
+
+/**
+ * The key-group version: SHA-256 of the two answers a roster pass reads, canonicalised. The roster
+ * is ordered by membership id and the device list sorted, because the database returns them in no
+ * promised order and an order change is not a change. PURE, so the claim "same answers, same
+ * version" is asserted without a database (`key-group-versions.spec.ts`).
+ */
+export function keyGroupVersionOf(
+  ref: DistributionGroupRef,
+  roster: readonly { id: string }[]
+): string {
+  const canonicalRef = {
+    ...ref,
+    ...(ref.memberDevices ? { memberDevices: [...ref.memberDevices].sort() } : {}),
+  };
+  const canonicalRoster = [...roster].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return crypto
+    .createHash('sha256')
+    .update(canonicalJson({ ref: canonicalRef, roster: canonicalRoster }))
+    .digest('hex');
 }
 
 /**
