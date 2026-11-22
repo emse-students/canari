@@ -983,7 +983,13 @@ export class FormsService {
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
     // A text or image block keeps a block's fields alone, and no question may depend on one.
-    input = { ...input, items: normaliseFormBlocks(input.items) };
+    input = {
+      ...input,
+      items: normaliseFormBlocks(input.items, {
+        submitCondition: input.submitCondition,
+        priceMatrix: input.priceMatrix,
+      }),
+    };
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     assertMultipleChoiceGridOneGroup(
@@ -1582,7 +1588,15 @@ export class FormsService {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
       // A text or image block keeps a block's fields alone, and no question may depend on one.
-      input = { ...input, items: normaliseFormBlocks(input.items) };
+      // The condition and grid the form WILL hold: the sent ones, else the stored ones.
+      input = {
+        ...input,
+        items: normaliseFormBlocks(input.items, {
+          submitCondition:
+            input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+        }),
+      };
     }
     // The questions the form WILL have: an absent list keeps the stored one, file questions included.
     const items = input.items ?? form.items;
@@ -1858,6 +1872,9 @@ export class FormsService {
         message: 'A form revision is the editor payload, as one JSON object.',
       });
     }
+    // A revision is the editor payload, stored as is in `form_drafts`, never in `forms.items`: it
+    // reaches `items` only through `publishChanges` -> `validatedRevision` -> `update`, which runs
+    // `normaliseFormBlocks`, so a block is judged exactly once, where it becomes a form's own.
     // A question image the revision cites is bound to this form NOW, under the saver's id: an image
     // uploaded before the form existed (the create page) is then this form's, and a co-manager
     // publishing the revision later is not refused it as somebody else's upload.

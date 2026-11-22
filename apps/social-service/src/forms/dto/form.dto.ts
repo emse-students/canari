@@ -34,6 +34,8 @@ import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-it
 import {
   ANSWER_MAX_SELECTIONS,
   ANSWER_MAX_TEXT_LENGTH,
+  FORM_ITEM_DESCRIPTION_MAX_LENGTH,
+  FORM_ITEM_LABEL_MAX_LENGTH,
   FORM_MAX_QUESTIONS,
   GRID_MAX_ROWS,
   isAcceptedAnswerValue,
@@ -101,6 +103,7 @@ export class FormItemDto {
   @ValidateIf((item: { type?: unknown }) => !isFormBlock(item))
   @IsString()
   @IsNotEmpty()
+  @MaxLength(FORM_ITEM_LABEL_MAX_LENGTH)
   label: string;
 
   @IsBoolean()
@@ -153,6 +156,7 @@ export class FormItemDto {
   /** Optional help text displayed below the question label in the fill page. */
   @IsString()
   @IsOptional()
+  @MaxLength(FORM_ITEM_DESCRIPTION_MAX_LENGTH)
   description?: string;
 
   /**

@@ -1,5 +1,10 @@
 import { Logger } from '@nestjs/common';
-import { FORM_BLOCK_INVALID, formRefusal } from './answer-bounds';
+import {
+  FORM_BLOCK_INVALID,
+  FORM_ITEM_DESCRIPTION_MAX_LENGTH,
+  FORM_ITEM_LABEL_MAX_LENGTH,
+  formRefusal,
+} from './answer-bounds';
 
 /**
  * TEXT AND IMAGE BLOCKS: ITEMS OF A FORM THAT ARE NOT QUESTIONS (owner, 2026-11-21).
@@ -57,6 +62,41 @@ interface SavedFormItem {
   imageAlt?: unknown;
 }
 
+/** The form-level settings that may name a question by id, as the form WILL hold them. */
+export interface FormBlockRefs {
+  submitCondition?: unknown;
+  priceMatrix?: unknown;
+}
+
+/**
+ * Refuses a `submitCondition.answer.questionId` or a price-grid dimension of kind `answer` that
+ * names a block: no answer could ever meet it, so the form would admit nobody or price nobody.
+ * (The generic parsers refuse it too, but as an untyped 400 about options; this is the typed one.)
+ */
+function assertNoBlockReference(blockIds: ReadonlySet<string | undefined>, refs: FormBlockRefs) {
+  if (blockIds.size === 0) return;
+  const named: string[] = [];
+  const condition = refs.submitCondition as
+    | { answer?: { questionId?: unknown } }
+    | null
+    | undefined;
+  if (typeof condition?.answer?.questionId === 'string') named.push(condition.answer.questionId);
+  const dimensions = (refs.priceMatrix as { dimensions?: unknown } | null | undefined)?.dimensions;
+  if (Array.isArray(dimensions)) {
+    for (const d of dimensions as { kind?: unknown; questionId?: unknown }[]) {
+      if (d?.kind === 'answer' && typeof d.questionId === 'string') named.push(d.questionId);
+    }
+  }
+  const hit = named.find((id) => blockIds.has(id));
+  if (hit === undefined) return;
+  logger.log(`[FORM_BLOCK] save refused: the form's condition or price grid names block ${hit}`);
+  throw formRefusal(
+    FORM_BLOCK_INVALID,
+    `The submit condition or price grid names block ${hit}, which takes no answer.`,
+    hit
+  );
+}
+
 function isNonEmptyList(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0;
 }
@@ -78,12 +118,14 @@ function refuse(item: SavedFormItem, why: string): never {
  * Refused with {@link FORM_BLOCK_INVALID}: a block `required`, carrying options, rows, a priced grid
  * or a condition (what a client sends only when it takes the block for a question); a text block
  * with neither heading nor paragraph; an image block with no image; a label that is not text; and a
- * QUESTION whose condition (`showIf.answer` or the legacy `dependsOn`) names a block, which no
- * answer could ever meet. Dropped silently, because an older editor adds them to every card it
+ * QUESTION whose condition (`showIf.answer` or the legacy `dependsOn`), the form's
+ * `submitCondition` or a price-grid `answer` dimension names a block, which no answer could ever
+ * meet. Dropped silently, because an older editor adds them to every card it
  * draws and they mean nothing: an empty option or row list, `scale`, `requireEveryRow`.
  */
 export function normaliseFormBlocks<T extends SavedFormItem>(
-  items: readonly T[] | null | undefined
+  items: readonly T[] | null | undefined,
+  refs: FormBlockRefs = {}
 ): T[] {
   const list = items ?? [];
   const blockIds = new Set(
@@ -92,6 +134,7 @@ export function normaliseFormBlocks<T extends SavedFormItem>(
       .map((item) => item.id)
       .filter(Boolean)
   );
+  assertNoBlockReference(blockIds, refs);
   const out = list.map((item) => {
     if (!isFormBlock(item)) {
       const answer = (item.showIf as { answer?: { questionId?: unknown } } | null | undefined)
@@ -115,6 +158,16 @@ export function normaliseFormBlocks<T extends SavedFormItem>(
     if (item.productGrid != null) refuse(item, 'carries a priced grid');
     if (item.showIf != null || hasText(item.dependsOn)) refuse(item, 'carries a condition');
     if (item.label !== undefined && typeof item.label !== 'string') refuse(item, 'label not text');
+    // `ValidateIf` lifts the DTO's length cap on a block's label, so the cap is held here.
+    if (typeof item.label === 'string' && item.label.length > FORM_ITEM_LABEL_MAX_LENGTH) {
+      refuse(item, 'label too long');
+    }
+    if (
+      typeof item.description === 'string' &&
+      item.description.length > FORM_ITEM_DESCRIPTION_MAX_LENGTH
+    ) {
+      refuse(item, 'description too long');
+    }
     if (item.type === 'text_block' && !hasText(item.label) && !hasText(item.description)) {
       refuse(item, 'holds no text');
     }

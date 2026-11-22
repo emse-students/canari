@@ -122,6 +122,34 @@ describe('form blocks', () => {
     });
   });
 
+  describe('form-level references to a block', () => {
+    it('refuses a submit condition naming a block', () => {
+      const refs = { submitCondition: { answer: { questionId: 'b_text', optionIds: ['x'] } } };
+      expect(refusal(() => normaliseFormBlocks([text(), question()], refs))).toEqual(
+        expect.objectContaining({ code: FORM_BLOCK_INVALID, itemId: 'b_text' })
+      );
+    });
+
+    it('refuses a price-grid answer dimension naming a block, and lets a question one through', () => {
+      const grid = (questionId: string) => ({
+        priceMatrix: { dimensions: [{ id: 'd', kind: 'answer', questionId, buckets: [] }] },
+      });
+      expect(refusal(() => normaliseFormBlocks([image(), question()], grid('b_img')))).toEqual(
+        expect.objectContaining({ code: FORM_BLOCK_INVALID, itemId: 'b_img' })
+      );
+      expect(() => normaliseFormBlocks([image(), question()], grid('q1'))).not.toThrow();
+    });
+  });
+
+  it('refuses a block label or paragraph over the bound', () => {
+    expect(refusal(() => normaliseFormBlocks([{ ...text(), label: 'x'.repeat(501) }]))).toEqual(
+      expect.objectContaining({ code: FORM_BLOCK_INVALID })
+    );
+    expect(
+      refusal(() => normaliseFormBlocks([{ ...text(), description: 'x'.repeat(5001) }]))
+    ).toEqual(expect.objectContaining({ code: FORM_BLOCK_INVALID }));
+  });
+
   describe('withoutBlockAnswers', () => {
     it('drops a key naming a block and keeps every other one', () => {
       expect(

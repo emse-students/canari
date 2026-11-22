@@ -133,6 +133,18 @@ describe('FormItemDto.imageUrl - only the public route of an uploaded image', ()
   });
 });
 
+describe('FormItemDto label and description bounds', () => {
+  const item = (extra: Record<string, unknown>) =>
+    plainToInstance(FormItemDto, { label: 'Q', required: false, type: 'short_text', ...extra });
+
+  it('bounds the label and the help text', () => {
+    expect(failedProps(item({ label: 'x'.repeat(500) }))).toEqual([]);
+    expect(failedProps(item({ label: 'x'.repeat(501) }))).toEqual(['label']);
+    expect(failedProps(item({ description: 'x'.repeat(5000) }))).toEqual([]);
+    expect(failedProps(item({ description: 'x'.repeat(5001) }))).toEqual(['description']);
+  });
+});
+
 describe('FormItemDto.label on a block', () => {
   const item = (type: string, label: string) =>
     plainToInstance(FormItemDto, { label, required: false, type });
