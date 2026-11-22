@@ -37,6 +37,18 @@ describe('registerDeviceKeyPackage and the push registration', () => {
     expect(answer).toEqual({ pushRegistered: expected });
   });
 
+  it('states the notification state when given one, and only then', async () => {
+    const report = { permission: 'denied', enabled: false };
+    const stated = api({ status: 'registered' });
+    await stated.client.registerDeviceKeyPackage({ ...PARAMS, notificationState: report });
+    const silent = api({ status: 'registered' });
+    await silent.client.registerDeviceKeyPackage(PARAMS);
+    const bodyOf = (f: ReturnType<typeof vi.fn>) =>
+      JSON.parse((f.mock.calls[0][1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(bodyOf(stated.fetchFn).notificationState).toEqual(report);
+    expect(bodyOf(silent.fetchFn)).not.toHaveProperty('notificationState');
+  });
+
   it('states the last outcome when given one, and only then', async () => {
     const stated = api({ status: 'registered' });
     await stated.client.registerDeviceKeyPackage({ ...PARAMS, pushOutcome: 'unauthorized' });

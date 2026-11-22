@@ -16,17 +16,22 @@ export interface HorizontalBox {
 
 /**
  * The `scrollLeft` that centres `tab` in `row`, clamped to what the row can scroll (`maxScroll`,
- * i.e. `scrollWidth - clientWidth`). `scrollLeft` is the row's current offset: `tab` is measured on
+ * i.e. `scrollWidth - clientWidth`). `lead` is the room kept before a tab's leading edge - the width of
+ * the fade `scrollFades` draws there - so a tab scrolled to its start is not faded. `scrollLeft` is the row's current offset: `tab` is measured on
  * screen, so its position in the content is its distance from the row plus that offset.
  */
 export function centredTabScrollLeft(
   row: HorizontalBox,
   tab: HorizontalBox,
   scrollLeft: number,
-  maxScroll: number
+  maxScroll: number,
+  lead = 0
 ): number {
   if (maxScroll <= 0) return 0;
   const tabStartInContent = tab.left - row.left + scrollLeft;
   const centred = tabStartInContent + tab.width / 2 - row.width / 2;
-  return Math.min(maxScroll, Math.max(0, Math.round(centred)));
+  // A tab wider than the row cannot be centred: its LEADING edge wins, `lead` clear of the edge, never
+  // clipped first letters (iPhone, 2026-11-22: "...ations"). A tab that fits stays centred and whole.
+  const target = tab.width > row.width ? tabStartInContent - lead : centred;
+  return Math.min(maxScroll, Math.max(0, Math.round(target)));
 }
