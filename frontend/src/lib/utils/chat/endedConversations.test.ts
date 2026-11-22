@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { endedConversationIds, watchEndings, snapshotConversations } from './endedConversations';
+import {
+  confirmEnding,
+  endedConversationIds,
+  recordRekey,
+  snapshotConversations,
+  takeEndingFacts,
+  watchEndings,
+} from './endedConversations';
 
 const snap = (...rows: [string, string?][]) =>
   snapshotConversations(rows.map(([id, lifecycle]) => ({ id, lifecycle })));
@@ -9,12 +16,36 @@ describe('endedConversationIds', () => {
     expect(endedConversationIds(snap(['g1'], ['g2']), snap(['g2']))).toEqual(['g1']);
   });
 
-  it('a row turned removed (deleted by a peer, excluded) ended', () => {
-    expect(endedConversationIds(snap(['g1', 'active']), snap(['g1', 'removed']))).toEqual(['g1']);
+  const confirmed = (...ids: string[]) => ({ rekeyed: new Set<string>(), confirmed: new Set(ids) });
+
+  it('a row turned removed on CONFIRMED evidence (a Remove commit, a deletion) ended', () => {
+    expect(
+      endedConversationIds(snap(['g1', 'active']), snap(['g1', 'removed']), confirmed('g1'))
+    ).toEqual(['g1']);
   });
 
-  it('a pending conversation that turns removed ended too', () => {
-    expect(endedConversationIds(snap(['g1', 'pending']), snap(['g1', 'removed']))).toEqual(['g1']);
+  it('a pending conversation that turns removed on confirmed evidence ended too', () => {
+    expect(
+      endedConversationIds(snap(['g1', 'pending']), snap(['g1', 'removed']), confirmed('g1'))
+    ).toEqual(['g1']);
+  });
+
+  it('a row turned removed by a MISS keeps its banners: a Welcome may re-admit it', () => {
+    expect(endedConversationIds(snap(['g1', 'active']), snap(['g1', 'removed']))).toEqual([]);
+    // ...and the re-admission that follows ends nothing either.
+    expect(endedConversationIds(snap(['g1', 'removed']), snap(['g1', 'active']))).toEqual([]);
+  });
+
+  it('a re-keyed row (its id replaced by the joined group) did not end: its thread continues', () => {
+    const facts = { rekeyed: new Set(['old']), confirmed: new Set<string>() };
+    expect(endedConversationIds(snap(['old']), snap(['new']), facts)).toEqual([]);
+    // Without the fact the vanished id is an ending, as for any deleted row.
+    expect(endedConversationIds(snap(['old']), snap(['new']))).toEqual(['old']);
+  });
+
+  it('only the re-keyed id is spared, not another one that vanished in the same look', () => {
+    const facts = { rekeyed: new Set(['old']), confirmed: new Set<string>() };
+    expect(endedConversationIds(snap(['old'], ['gone']), snap(['new']), facts)).toEqual(['gone']);
   });
 
   it('a conversation moved to another key keeps its id and did not end', () => {
@@ -32,6 +63,19 @@ describe('endedConversationIds', () => {
 
   it('a row with no lifecycle reads as active', () => {
     expect(endedConversationIds(snap(['g1']), snap())).toEqual(['g1']);
+  });
+});
+
+describe('ending facts', () => {
+  it('are handed over once and forgotten, so a later look starts clean', () => {
+    recordRekey('old');
+    confirmEnding('g1');
+    const first = takeEndingFacts();
+    expect([...first.rekeyed]).toEqual(['old']);
+    expect([...first.confirmed]).toEqual(['g1']);
+    const second = takeEndingFacts();
+    expect(second.rekeyed.size).toBe(0);
+    expect(second.confirmed.size).toBe(0);
   });
 });
 

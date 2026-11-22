@@ -93,7 +93,11 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
-  import { watchEndings, snapshotConversations } from '$lib/utils/chat/endedConversations';
+  import {
+    watchEndings,
+    snapshotConversations,
+    takeEndingFacts,
+  } from '$lib/utils/chat/endedConversations';
   import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
@@ -232,7 +236,9 @@
     const signedIn = globalSession.isLoggedIn;
     const next = snapshotConversations(globalConvs.conversations.values());
     // Signed out (a lost session clears the map in the same tick), nothing ended: `watchEndings`.
-    const watched = untrack(() => watchEndings(signedIn, knownConversations, next));
+    const watched = untrack(() =>
+      watchEndings(signedIn, knownConversations, next, takeEndingFacts())
+    );
     knownConversations = watched.known;
     for (const id of watched.ended) {
       appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);

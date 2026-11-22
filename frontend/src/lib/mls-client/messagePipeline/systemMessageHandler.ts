@@ -1462,6 +1462,7 @@ export async function handleSystemEvent(
         key: convoKey,
         groupId: convo.id,
         saveConversation,
+        confirmed: true,
       });
       log(`[INFO] Group deleted by ${senderNorm} - conversation marked removed`);
     }

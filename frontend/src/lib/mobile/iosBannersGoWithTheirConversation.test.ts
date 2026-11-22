@@ -56,6 +56,16 @@ describe('iOS: a banner goes with its conversation, never with the app coming up
     expect(activation).toContain('[n.request.identifier isEqualToString:pendingSyncId]');
   });
 
+  it('a conversation id is never allocated from the fixed notification ids', () => {
+    const table = push.match(/kFixedNotifIds\[\] = \{([^}]*)\}/)?.[1] ?? '';
+    const fixed = [...push.matchAll(/static const int (k\w+NotifId) = \d+;/g)].map((x) => x[1]);
+    expect(fixed.length).toBeGreaterThan(1);
+    for (const name of fixed) expect(table, `${name} is in the table`).toContain(name);
+    expect(bodyOf(push, 'static int CanariStableNotifId(NSString *groupId) {')).toContain(
+      'while (CanariIsFixedNotifId(next))'
+    );
+  });
+
   it('the Tauri command reaches that class through the runtime and is registered', () => {
     expect(rust).toContain('pub(crate) fn cancel_conversation_notifications(');
     expect(rust).toContain('AnyClass::get(c"CanariConversationNotifications")');

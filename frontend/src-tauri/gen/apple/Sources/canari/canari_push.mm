@@ -1014,6 +1014,18 @@ static NSString *CanariReactionBody(NSString *emoji) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.reaction.body"), safeEmoji];
 }
 
+/** The fixed notification ids: the table `CanariStableNotifId` never allocates from. */
+static const int kFixedNotifIds[] = {kPendingSyncNotifId, kQuickReplyNotSentNotifId};
+
+static BOOL CanariIsFixedNotifId(int candidate) {
+  for (size_t i = 0; i < sizeof(kFixedNotifIds) / sizeof(kFixedNotifIds[0]); i++) {
+    if (kFixedNotifIds[i] == candidate) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
 static int CanariStableNotifId(NSString *groupId) {
   if (groupId.length == 0) {
     return 0;
@@ -1027,9 +1039,9 @@ static int CanariStableNotifId(NSString *groupId) {
   if (next < 1000) {
     next = 1000;
   }
-  // `canari-<kPendingSyncNotifId>` is the pending-sync notice's request id and is retired by it on
-  // activation: a conversation must never be handed the same id.
-  if (next == kPendingSyncNotifId) {
+  // Every fixed id is a request id of its own notice (`canari-<id>`): a conversation must never be
+  // handed one, or its banner would be retired or replaced by that notice. One table, one loop.
+  while (CanariIsFixedNotifId(next)) {
     next++;
   }
   [prefs setObject:@(next) forKey:groupId];

@@ -1067,7 +1067,17 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   correspondent is listed only after the catch-up (FCM cache), a failed restore still reads as
   restored, a salon is listed once its community answers - and a row restored as `removed` can be
   re-admitted by a Welcome processed later in the catch-up, so neither is acted on. A conversation
-  that ended while the app was closed keeps its banner until the user reads it.
+  that ended while the app was closed, or is already gone when the app boots, keeps its banner
+  until it is swiped away (nothing reads it any more; the residual is
+  [a P3 entry](../backlog.d/banners-of-a-conversation-gone-before-the-watcher-saw-it.md)).
+  **A `removed` ROW ENDS BANNERS ONLY ON POSITIVE EVIDENCE, AND A RE-KEY ENDS NONE** (4th review):
+  the watcher is handed two facts, never infers them. `retireConversation({ confirmed: true })` is
+  passed by the writers holding a confirmed ending (a Remove commit, an announced exclusion, a
+  group deletion the server reported or a peer announced); a miss (a refused send, a failed
+  membership check) does not, because a Welcome can re-admit the row and a stale notice is the
+  safer error (principle 2). A Welcome folding a duplicate DM onto the joined group, and the boot
+  merge, CHANGE the id: `recordRekey(oldId)` tells the watcher the thread continues, and the old
+  id's banners stay (the native layer cannot re-tag them).
   **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
   by `PushRegistrationEnd.endForSignOutFromRust`: every message, mention and reaction notification,
   the summary, the records and the read marks), since nothing else would before the next account.

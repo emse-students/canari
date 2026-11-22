@@ -23,6 +23,7 @@ import {
   markConversationDeletedRemotely,
 } from './conversations';
 import { forgetGroupReconciliation } from './historyReconcile';
+import { takeEndingFacts } from './endedConversations';
 
 vi.mock('./historyReconcile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./historyReconcile')>();
@@ -37,6 +38,26 @@ const forgotten = () => vi.mocked(forgetGroupReconciliation).mock.calls.some(([g
 
 const makeConvo = (over: Partial<Conversation> = {}): Conversation =>
   ({ id: GROUP, name: 'G', messages: [], ...over }) as unknown as Conversation;
+
+describe('retireConversation - which endings take banners down', () => {
+  it('a confirmed retire hands its id to the watcher; a miss does not', async () => {
+    takeEndingFacts();
+    const miss = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    await retireConversation({ conversations: miss, key: 'k', groupId: GROUP });
+    expect(takeEndingFacts().confirmed.size).toBe(0);
+
+    const sure = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    await retireConversation({ conversations: sure, key: 'k', groupId: GROUP, confirmed: true });
+    expect([...takeEndingFacts().confirmed]).toEqual([GROUP]);
+  });
+
+  it('a server-reported deletion is confirmed', () => {
+    takeEndingFacts();
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    markConversationDeletedRemotely(conversations, GROUP, USER);
+    expect([...takeEndingFacts().confirmed]).toEqual([GROUP]);
+  });
+});
 
 describe('retireConversation', () => {
   beforeEach(() => {

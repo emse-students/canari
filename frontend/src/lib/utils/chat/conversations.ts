@@ -6,6 +6,7 @@
 import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { confirmEnding, recordRekey } from './endedConversations';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta } from '$lib/db';
 import {
@@ -266,10 +267,17 @@ export async function retireConversation(params: {
   saveConversation?: (key: string) => Promise<void>;
   /** Extra fields to merge into the row, for callers that repair it in the same write. */
   patch?: Partial<Conversation>;
+  /**
+   * The ending is CONFIRMED by positive evidence (a Remove commit, an announced exclusion, a
+   * deletion the server reported): the row's notifications are then taken down. Left unset for a
+   * miss, which a Welcome may still undo - a stale notice is the safer error.
+   */
+  confirmed?: boolean;
 }): Promise<boolean> {
-  const { conversations, key, groupId, saveConversation, patch } = params;
+  const { conversations, key, groupId, saveConversation, patch, confirmed } = params;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle === 'removed') return false;
+  if (confirmed) confirmEnding(convo.id);
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
   clearConversationControlRefusals(groupId);
@@ -364,7 +372,7 @@ export function markConversationDeletedRemotely(
   if (!key) return false;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle === 'removed') return false;
-  void retireConversation({ conversations, key, groupId, saveConversation });
+  void retireConversation({ conversations, key, groupId, saveConversation, confirmed: true });
   return true;
 }
 
@@ -947,6 +955,7 @@ export async function mergeDirectConversationDuplicates(
           serverAnswer = 'the server had already deleted it';
         }
         await storage.deleteConversation(loser.id);
+        recordRekey(loser.id);
         mergedAway.add(loser.id);
         log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${serverAnswer}`);
       } catch (error) {

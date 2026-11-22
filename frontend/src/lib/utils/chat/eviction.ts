@@ -199,7 +199,14 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
   // one's; otherwise the notice is deduplicated on the thread's own contents by `writeRemovalNotice`.
   const linesBefore = removalLineIds(conversations.get(key));
 
-  const retired = await retireConversation({ conversations, key, groupId, saveConversation });
+  const retired = await retireConversation({
+    conversations,
+    key,
+    groupId,
+    saveConversation,
+    // Only the two evidences that ARE the ending; a miss may be undone by a Welcome.
+    confirmed: evidence === 'remove-commit' || evidence === 'system-event',
+  });
 
   if (addMessageToChat) {
     // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local clock
