@@ -15,12 +15,14 @@ import {
   PRODUCT_GRID_TYPE,
   productGridAxisKeys,
   productGridCellKey,
+  productGridColumnSetRefusal,
   productGridItemRefusal,
   productGridLabelKey,
   productGridTierIds,
   productGridView,
   type ProductGrid,
   type ProductGridAxisEntry,
+  type ProductGridColumnSet,
   type ProductGridDefinitionCode,
   type ProductGridPriceMode,
   type ProductGridTiers,
@@ -53,6 +55,8 @@ export type ProductGridTierDimension = Dimension & { kind: 'cotisation' | 'promo
 export interface EditorProductGrid {
   rows: ProductGridAxisEntry[];
   columns: ProductGridAxisEntry[];
+  /** The shared column set this grid belongs to, if any (`productGridColumnSets.ts`). */
+  columnSet?: ProductGridColumnSet | null;
   maxPerCell: number;
   closedCells: string[];
   pricing: {
@@ -147,7 +151,7 @@ function seedPrice(
 }
 
 /** Fills every missing price of the current mode, in every category, from that category's own list. */
-function seedMissingPrices(grid: EditorProductGrid): void {
+export function seedMissingPrices(grid: EditorProductGrid): void {
   const keys = editorAxisKeys(grid);
   for (const tierId of editorTierIds(grid)) {
     const list = (grid.pricing.prices[tierId] ??= {});
@@ -444,6 +448,8 @@ export function productGridPayload(grid: EditorProductGrid): ProductGrid {
   return {
     rows: grid.rows.map((r) => ({ id: r.id, label: r.label })),
     columns: grid.columns.map((c) => ({ id: c.id, label: c.label })),
+    // Absent for a grid with no set: its payload is what it always was.
+    ...(grid.columnSet ? { columnSet: { id: grid.columnSet.id, name: grid.columnSet.name } } : {}),
     maxPerCell: grid.maxPerCell,
     closedCells: grid.closedCells.filter((k) => live.has(k)),
     pricing: {
@@ -498,6 +504,7 @@ export function editorProductGrid(stored: unknown): EditorProductGrid {
   return {
     rows: grid.rows.map((r) => ({ id: r.id, label: r.label })),
     columns: grid.columns.map((c) => ({ id: c.id, label: c.label })),
+    ...(grid.columnSet ? { columnSet: { id: grid.columnSet.id, name: grid.columnSet.name } } : {}),
     maxPerCell: grid.maxPerCell ?? PRODUCT_GRID_DEFAULT_MAX_PER_CELL,
     closedCells: [...(grid.closedCells ?? [])],
     pricing: {
@@ -516,7 +523,10 @@ export function editorProductGrid(stored: unknown): EditorProductGrid {
 export function withFreshProductGridIds<G extends EditorProductGrid | ProductGrid>(grid: G): G {
   const copy = JSON.parse(JSON.stringify(grid)) as G;
   const ids = new Map<string, string>();
-  for (const entry of [...copy.rows, ...copy.columns]) {
+  // The columns of a shared set keep their ids: the copy stays in the set, and a set is the same
+  // ids in every grid (`productGridColumnSetRefusal`).
+  for (const column of copy.columnSet ? copy.columns : []) ids.set(column.id, column.id);
+  for (const entry of copy.columnSet ? copy.rows : [...copy.rows, ...copy.columns]) {
     const next = newProductGridId();
     ids.set(entry.id, next);
     entry.id = next;
@@ -581,6 +591,10 @@ export function productGridDefinitionMessage(code: string | null): string | null
       return m.form_pgrid_refusal_prices_incomplete();
     case 'PRODUCT_GRID_PRICE_INVALID':
       return m.form_pgrid_refusal_price_invalid();
+    case 'PRODUCT_GRID_COLUMN_SET_INVALID':
+      return m.form_pgrid_refusal_column_set_invalid();
+    case 'PRODUCT_GRID_COLUMN_SET_DIVERGED':
+      return m.form_pgrid_refusal_column_set_diverged();
     default:
       return null;
   }
@@ -647,6 +661,21 @@ export function firstProductGridProblem(
     if (!code) continue;
     Log.d(TAG, `question ${item.id} refused before the save: ${code}`);
     return productGridFault(item, code);
+  }
+  // Across grids, as the save judges them: every grid of one column set holds the same columns.
+  const diverged = productGridColumnSetRefusal(
+    items.map((i) => ({
+      id: i.id,
+      type: i.type,
+      productGrid: i.productGrid ? productGridPayload(i.productGrid) : undefined,
+    }))
+  );
+  if (diverged) {
+    const item = items.find((i) => i.id === diverged.itemId);
+    if (item) {
+      Log.d(TAG, `question ${item.id} refused before the save: ${diverged.refusal.code}`);
+      return productGridFault(item, diverged.refusal.code);
+    }
   }
   return null;
 }
