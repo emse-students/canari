@@ -51,3 +51,5 @@ the push cache before `notifyInbound`; the same title and body shape as the exte
 **Owed on the iPhone:** a cold start from a tap shows no `absent-conversation`; no second banner after
 a tap from a killed state nor after a background tap and a resume; a foreground group message is titled
 by the group; new messages still notify.
+
+**2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`): the defect is reproduced on this build** (two cold launches, one of them through the share notice; [details](p2-ios-opening-the-app-through-the-share-notice-reshowed-a-banner-for-a-delivered-message.md)): the notification of a message the extension showed is raised again at the launch (`[NOTIF] Inbound ... asking`), its row jumping to "now". The reading that closes this entry is a cold launch after a killed-app push with that row's time unchanged.

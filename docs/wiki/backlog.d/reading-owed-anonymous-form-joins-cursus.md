@@ -26,11 +26,17 @@ manager's list and the xlsx export carry a Source column (`compte` / `déclaré`
 a guest answer through the public API reads `déclaré`. Then on the Mi 9T (sitting r173a2), Android **PASS**: the phone submit succeeded, its notice saying
 the promo and formation are read from the account, and the manager's list shows source `compte`;
 with the joined fields changed on the live form, the first "Envoyer" showed the changed-form message,
-the notice was redrawn, the typed answer kept, and the second press succeeded. **Still owed:** only
-the guest PAGE in a signed-out browser (the cursus asked).
+the notice was redrawn, the typed answer kept, and the second press succeeded. **2026-11-21, on `1.7.3-alpha.2` (`/api/version` build `dev.69fee4a`): the guest PAGE PASS** - fresh isolated
+browser context, no session, public link `/f/<id>` of the public anonymous form: it opens without an account; the
+"Promo et formation lues sur le compte" option is absent for a guest (the page says the cursus is asked by the
+organiser and declared by the guest, not read from the account); a guest submission (Formation ISMIN, year 2025)
+`POST .../submit` 200 and "Reponse envoyee, merci"; the console holds only `[debug]` lines, no error, no warning.
+The guest-page row is closed; only the editor row below stays owed.
 
 **iPhone, `1.7.3-alpha.4`: the editor dropped the box silently** when "Promo et formation" was not ticked
 too. Fixed: ticking the box ticks the chip, unticking the chip unticks the box, and the note under the box
 says so ([forms](../frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).
 **Also owed:** in the editor of an anonymous form, tick only "Promo et formation lues sur le compte" -
 "Promo et formation" ticks itself; save, reopen: both still ticked. Untick "Promo et formation": both go.
+
+**2026-11-21, `1.7.3-alpha.4`, dev, the last owed row: PASS.** The guest page of a PUBLIC anonymous form with "Promo et formation" and the account box both ticked, in a signed-out isolated browser: it asks "Formation" and "Année d'entrée" under "À propos de vous". Setup trap: the account box alone, without the "Promo et formation" chip, is dropped at save and the guest is then asked only the other ticked field (first attempt) - the form editor does not say so.

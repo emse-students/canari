@@ -30,3 +30,5 @@ No timer is needed to fix it: the order is a fact the client already holds.
 
 **The reading that closes it:** the same drill (dev `social-service` stopped about 45 s, the phone writing a text
 every few seconds through the outage): the texts reach the peer in the order they were written.
+
+**2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`, iPhone 12): REPRODUCED, the fix is not built.** Dev's `social-service` stopped 07:28:38 to 07:30:01; `gamma` wrote `T1` (before), `T2` to `T6` every 5 to 14 s during the outage, `T7` and `T8` just after the restart. The salon read, live and again after a terminate and relaunch (the server's order): **T1, T6, T7, T8, T2, T3, T4, T5**. Each text once, no "Echec" or "Non confirme". Evidence outside the repository.

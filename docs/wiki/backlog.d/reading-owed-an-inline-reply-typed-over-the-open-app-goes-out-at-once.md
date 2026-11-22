@@ -45,3 +45,29 @@ cancel every message banner, so the reading above could never have a banner to t
 lues" ([social-service](../services/social-service.md)) a banner for a conversation nobody opened
 stays: post it with the app in the background, bring the app up WITHOUT opening that conversation,
 and type the reply in the banner's field.
+
+**Readings of 2026-11-21 on `1.7.3-alpha.3` (Mi 9T, dev, `dev.0d2bc4b`): rows 1, 2, 3 and 5 OWED, row 4 PASS.**
+The precondition of rows 1-3 and 5 - a banner on screen while the app is in front - could not be
+produced on this build, three ways tried: (a) with the app in front the push is never shown
+(`[PUSH_SHOW] outcome=suppressed-foreground-guard`, also with the page's socket cut by Wi-Fi off for
+75 s); (b) a banner posted while the app was in the background is REMOVED within one second of the
+app coming to the front (`am start`, polled each second: gone at t+1 s), with the network up or
+with a failing private DNS, and **no Canari log line says why** (a silent dismissal - the
+2026-11-20 `Every swallowed branch logs` rule); (c) a force-stop clears them anyway. The route
+`PAGE` (`handReplyToPage`) was therefore never reached, and nothing of rows 1, 2, 3 or 5 was
+read. What is left to try: a banner and the front edge racing (the push landing between the
+activity's start and the guard being held), which no sitting here could time.
+- **Row 4 (control, background) PASS:** `CanariNotifAction: handleReply: route NATIVE, the foreground
+  guard is released`, `handleReply: queued id=...`, `drainOutboxBackground: sent id=...` (HTTP 201),
+  the banner kept with the answer (`answerReplyNotification: answered - KEPT_UNTIL_READ`); the
+  peer's pane holds the reply.
+
+**2026-11-21, iPhone 12 on `1.7.3-alpha.3` ([S20](../device-verification.md#the-iphone-readings-of-2026-11-21-173-alpha3-the-invite-link-fragment-and-a-banner-reply)): the iOS road of the shared drain PASSES, the Mi 9T rows above stay owed.** The entry names no iPhone row; read here
+as the control for the shared `quickReplyDrain`: a banner reply typed in Notification Center with the app suspended was taken
+on the next foreground (`[QuickReply] the native side says a reply waits: 1 native reply(ies) taken`, then `[SEND] ... chars=24`,
+`queued (pending)`, outbox flush), reached the conversation once, sent (single tick), and the banner left the list; no `LOST`
+or `not told` WARN in the ring. **Not read:** the `acknowledge_quick_reply` boolean line itself (the ring is written in batches and
+ended 2 s after the take), a reply typed with the app IN FRONT, and the banner's `envoi en cours` state on iOS.
+A first attempt (reply typed, Send tapped at a stale coordinate while the field had grown) sent nothing, which is a rig slip, not an app fault.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. The front reply and its settlement were exercised on the Mi; the row where the page dies holding an unsettled reply stays UNREAD (a forced crash flipped the route instead of reproducing it). The per-row verdicts of the sitting were not carried through a context reset, so none is promoted to PASS; re-read on the next alpha.**
