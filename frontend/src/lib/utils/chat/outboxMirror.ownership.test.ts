@@ -420,6 +420,25 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(storage._queue.has('stuck')).toBe(true);
   });
 
+  it('a refused line still waiting on its conversation accuses nothing, until it is adopted', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('w', { groupId: 'g2', unsendable: true, unsendableCause: 'refused' })];
+    const storage = makeStorage();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { outbox } = controllerOver(storage);
+    expect(await outbox.adoptNativeEntries()).toBe(0);
+    expect(await outbox.adoptNativeEntries()).toBe(0);
+    expect(errors).not.toHaveBeenCalled();
+    storage._conversationRows.add('g2');
+    expect(await outbox.adoptNativeEntries()).toBe(1);
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(await outbox.adoptNativeEntries()).toBe(0);
+    expect(errors).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
+    warns.mockRestore();
+  });
+
   it('says an adopted refusal as the refusal, once, and the Retry clears the native verdict', async () => {
     connectivity.reset();
     tauri.mirror = [line('refused', { unsendable: true, unsendableCause: 'refused' })];
@@ -430,9 +449,18 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(storage._queue.get('refused')?.nativeRefusal).toBe('refused');
     outbox.flush();
     await vi.waitFor(() =>
-      expect(errors.mock.calls.some((c) => String(c[0]).includes('refused it for good'))).toBe(true)
+      expect(errors.mock.calls.some((c) => String(c[0]).includes('(refused)'))).toBe(true)
     );
+    // Said ONCE, at the adoption, and never as the 5xx run.
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes('refused'))).toHaveLength(1);
     expect(errors.mock.calls.some((c) => String(c[0]).includes('5xx'))).toBe(false);
+
+    // A second boot over the same durable queue and the same mirror says nothing again.
+    errors.mockClear();
+    const second = controllerOver(storage);
+    await second.outbox.adoptNativeEntries();
+    await second.outbox.flush();
+    expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
 
     outbox.retryUpload('refused');

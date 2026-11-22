@@ -83,7 +83,7 @@ describe('adoptMirrorEntry', () => {
     }
 
     // A text the page's own sends failed on 5xx keeps its own words.
-    expect(terminalFailureCause({ ...text, serverErrors: 5 })).toBe(
+    expect(terminalFailureCause({ ...text, serverErrors: 5, parkedCause: 'server_error' })).toBe(
       'the server answered 5xx on 5 attempts in a row'
     );
   });
