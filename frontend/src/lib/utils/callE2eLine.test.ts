@@ -16,6 +16,8 @@ describe('callE2eLine', () => {
     ['ringing', true, 'none'],
     ['connecting', false, 'verifying'],
     ['connecting', true, 'proven'],
+    ['peer-lost', false, 'verifying'],
+    ['peer-lost', true, 'proven'],
     ['live', false, 'verifying'],
     ['live', true, 'proven'],
     ['reconnecting', false, 'verifying'],

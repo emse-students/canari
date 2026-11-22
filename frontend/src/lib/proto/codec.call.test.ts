@@ -6,6 +6,7 @@ import {
   callEndReasonFromWire,
   decodeAppMessage,
   encodeAppMessage,
+  groupHangupEndsRecord,
   mkCallAnswered,
   mkCallBusy,
   mkCallHangup,
@@ -31,7 +32,13 @@ describe('call multi-device codec', () => {
 
 describe('call end reason and busy answer (B15, B16)', () => {
   it('carries the typed reason on a hangup, and none on an ordinary one', () => {
-    for (const reason of ['cancelled', 'declined', 'not-answered', 'busy'] as const) {
+    for (const reason of [
+      'cancelled',
+      'declined',
+      'not-answered',
+      'busy',
+      'not-connected',
+    ] as const) {
       const wire = mkCallHangup('room-1', 'device-a', reason).call?.endReason;
       expect(callEndReasonFromWire(wire)).toBe(reason);
     }
@@ -101,5 +108,14 @@ describe('a group call signal is a kind an older build does not know (WP-GC2)', 
   it('leaves a message that is not a call signal untouched', () => {
     const text = { text: { content: 'hello' } };
     expect(asGroupCallSignal(text)).toBe(text);
+  });
+});
+
+describe('groupHangupEndsRecord', () => {
+  it('a member whose own leg never connected ends nothing for the others', () => {
+    expect(groupHangupEndsRecord('not-connected')).toBe(false);
+    expect(groupHangupEndsRecord('declined')).toBe(false);
+    expect(groupHangupEndsRecord(undefined)).toBe(false);
+    expect(groupHangupEndsRecord('cancelled')).toBe(true);
   });
 });

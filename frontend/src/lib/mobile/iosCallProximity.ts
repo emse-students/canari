@@ -25,7 +25,13 @@ export function callHoldsProximity(
   speaker: boolean
 ): boolean {
   if (!micHeld || speaker) return false;
-  return kind === 'ringing' || kind === 'connecting' || kind === 'live' || kind === 'reconnecting';
+  return (
+    kind === 'ringing' ||
+    kind === 'connecting' ||
+    kind === 'peer-lost' ||
+    kind === 'live' ||
+    kind === 'reconnecting'
+  );
 }
 
 /** The last value posted, so an effect re-running with the same answer posts and logs nothing. */

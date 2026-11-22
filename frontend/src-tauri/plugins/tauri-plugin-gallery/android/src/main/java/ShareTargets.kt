@@ -213,24 +213,20 @@ internal object ShareTargets {
         pending: List<Pair<Int, Target>>,
         started: Long
     ) {
-        var done = 0
-        for ((rank, target) in pending) {
-            val avatar = target.avatar ?: continue
-            try {
-                val picture = icons.fetch(context, avatar) ?: continue
-                val current = generations.runIfCurrent(started) {
-                    if (pushOne(context, activityClass, target, rank, picture)) done++
-                    else Log.w(TAG, "upgradeIcons: the platform refused the picture of target #$rank")
-                    true
-                }
-                if (current == null) {
-                    Log.d(TAG, "upgradeIcons: superseded by a later publish or a clear, the rest dropped")
-                    return
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "upgradeIcons: target #$rank failed: ${e.javaClass.simpleName}")
-            }
+        val outcome = ShareTargetsUpgrade.run(
+            pending,
+            started,
+            generations,
+            fetch = { (_, target) -> target.avatar?.let { icons.fetch(context, it) } },
+            push = { (rank, target), picture -> pushOne(context, activityClass, target, rank, picture) },
+            onRefused = { (rank, _) -> Log.w(TAG, "upgradeIcons: the platform refused the picture of target #$rank") },
+            onFailed = { (rank, _), e -> Log.e(TAG, "upgradeIcons: target #$rank failed: ${e.javaClass.simpleName}") },
+        )
+        if (outcome.superseded) {
+            Log.d(TAG, "upgradeIcons: superseded by a later publish or a clear, the rest dropped")
+            return
         }
+        val done = outcome.done
         Log.i(TAG, "upgradeIcons: $done of ${pending.size} picture(s) set")
     }
 

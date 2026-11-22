@@ -256,7 +256,12 @@ describe('the launcher shortcuts are drawn with one icon helper', () => {
     const removed = targets.indexOf('remove(context, stale)');
     expect(advanced).toBeGreaterThan(-1);
     expect(removed).toBeGreaterThan(advanced);
-    expect(targets).toMatch(/generations\.runIfCurrent\(started\)/);
+    // Every push of the upgrade goes through the guard: ShareTargets hands the loop its generation and
+    // the one it started under, and the loop (pure/ShareTargetsUpgrade.kt, JVM-tested) pushes only
+    // inside `runIfCurrent(started)`.
+    const loop = codeOnly(readFileSync(resolve(JAVA, 'pure/ShareTargetsUpgrade.kt'), 'utf8'));
+    expect(targets).toMatch(/ShareTargetsUpgrade\.run\(\s*pending,\s*started,\s*generations,/);
+    expect(loop).toMatch(/generations\.runIfCurrent\(started\)/);
     // The check and the push are one step under the guard's lock (JVM-tested: UpgradeGenerationTest).
     expect(guard).toMatch(/@Synchronized\s+fun <T> runIfCurrent/);
   });

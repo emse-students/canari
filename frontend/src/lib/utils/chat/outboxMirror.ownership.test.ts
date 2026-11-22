@@ -28,6 +28,11 @@ const tauri = vi.hoisted(() => ({
   failReads: 0,
   /** Every write fails while set: the fold cannot delete a source, so no page write lands. */
   failWrites: false,
+  /**
+   * Each write lands as the native merge does (`merge_outbox_mirror`): the page lines replace the
+   * mirror's, stamped `owner: "page"`, and a native line whose id the page holds is dropped.
+   */
+  mergeWrites: false,
 }));
 
 const toast = vi.hoisted(() => ({ shown: [] as string[] }));
@@ -65,6 +70,14 @@ vi.mock('@tauri-apps/api/core', () => ({
         throw new Error('the outbox lock could not be taken');
       }
       tauri.writes.push(args as (typeof tauri.writes)[number]);
+      if (tauri.mergeWrites) {
+        const held = args.held as string[];
+        const native = (tauri.mirror as OutboxMirrorEntry[]).filter(
+          (l) => l.owner !== 'page' && !held.includes(l.id)
+        );
+        const page = (args.entries as OutboxMirrorEntry[]).map((e) => ({ ...e, owner: 'page' }));
+        tauri.mirror = [...native, ...page];
+      }
       return tauri.unreadable;
     }
     if (cmd === 'read_and_clear_outbox_sent') return [];
@@ -76,12 +89,16 @@ import type { OutboxEntry } from '$lib/db';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
 import { toBase64 } from '$lib/utils/hex';
+import { parseEnvelope } from '$lib/envelope';
+import { announceConversationStored } from '$lib/db/conversationStored';
+import { invoke } from '@tauri-apps/api/core';
 import { m } from '$lib/paraglide/messages';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
   buildOutboxProto,
   createOutbox,
+  isServerFailureTerminal,
   type OutboxController,
 } from './outbox';
 import {
@@ -122,9 +139,13 @@ function line(id: string, extra: Partial<OutboxMirrorEntry> = {}): OutboxMirrorE
 function makeStorage(seed: OutboxEntry[] = []) {
   const queue = new Map(seed.map((e) => [e.id, structuredClone(e)]));
   const rows = new Map<string, StoredMessage>();
+  /** The conversation rows the store holds: a message row naming another is refused (SQLite's FK). */
+  const conversationRows = new Set(['g1']);
   return {
     _queue: queue,
     _rows: rows,
+    _conversationRows: conversationRows,
+    getConversation: vi.fn(async (id: string) => (conversationRows.has(id) ? { id } : null)),
     getPendingGroupExits: vi.fn(async () => []),
     getOutboxQueue: vi.fn(async () => [...queue.values()]),
     getOutboxEntry: vi.fn(async (id: string) => queue.get(id) ?? null),
@@ -137,6 +158,9 @@ function makeStorage(seed: OutboxEntry[] = []) {
     saveMessagesIfAbsent: vi.fn(async (msgs: StoredMessage[]) => {
       const written = new Set<string>();
       for (const m of msgs) {
+        if (!conversationRows.has(m.conversationId)) {
+          throw new Error('(code: 787) FOREIGN KEY constraint failed');
+        }
         if (rows.has(m.id)) continue;
         rows.set(m.id, m);
         written.add(m.id);
@@ -162,6 +186,7 @@ beforeEach(() => {
   tauri.unreadable = 0;
   tauri.failReads = 0;
   tauri.failWrites = false;
+  tauri.mergeWrites = false;
   toast.shown = [];
 });
 
@@ -223,6 +248,47 @@ describe('adoptOrphanedMirrorEntries - only the native lines', () => {
     await expect(adoptOrphanedMirrorEntries(makeStorage(), 'key', 'me')).rejects.toBeInstanceOf(
       MirrorAdoptionError
     );
+  });
+
+  // Mi 9T, 1.7.3-alpha.6: a shade reply in a conversation not stored yet was queued, its row refused
+  // by the foreign key - an entry with no row, parked failed on every page life, its text invisible.
+  // The entry is now written only beside its row, and a conversation not stored keeps the line native.
+  it('never queues an entry without its row: a conversation not stored keeps the line native', async () => {
+    tauri.mirror = [line('shade', { groupId: 'g2', unsendable: true })];
+    const storage = makeStorage();
+    const held = new Set<string>();
+    const claims = {
+      hold: (id: string) => void held.add(id),
+      release: (id: string) => void held.delete(id),
+    };
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me', claims)).toEqual([]);
+    expect(storage._queue.size).toBe(0);
+    expect(storage._rows.size).toBe(0);
+    expect(held.size).toBe(0);
+
+    // The conversation is stored now: the next pass adopts the line, row and entry together.
+    storage._conversationRows.add('g2');
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me', claims)).toEqual(['shade']);
+    expect(storage._queue.get('shade')?.conversationId).toBe('g2');
+    expect(parseEnvelope(storage._rows.get('shade')!.content)).toMatchObject({
+      kind: 'text',
+      text: 'hello shade',
+    });
+  });
+
+  it('a row the store refuses queues no entry, and the claim is released', async () => {
+    tauri.mirror = [line('shade')];
+    const storage = makeStorage();
+    storage.saveMessagesIfAbsent.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'));
+    const held = new Set<string>();
+    expect(
+      await adoptOrphanedMirrorEntries(storage, 'key', 'me', {
+        hold: (id) => void held.add(id),
+        release: (id) => void held.delete(id),
+      })
+    ).toEqual([]);
+    expect(storage._queue.has('shade')).toBe(false);
+    expect(held.size).toBe(0);
   });
 
   // A queued entry whose line is still native was adopted by a page life whose claim never landed:
@@ -352,6 +418,61 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
     expect(storage._queue.has('shade')).toBe(false);
     expect(storage._queue.has('stuck')).toBe(true);
+  });
+
+  it('says an adopted refusal as the refusal, once, and the Retry clears the native verdict', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('refused', { unsendable: true, unsendableCause: 'refused' })];
+    const storage = makeStorage();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { outbox, sendMessage } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.get('refused')?.nativeRefusal).toBe('refused');
+    outbox.flush();
+    await vi.waitFor(() =>
+      expect(errors.mock.calls.some((c) => String(c[0]).includes('refused it for good'))).toBe(true)
+    );
+    expect(errors.mock.calls.some((c) => String(c[0]).includes('5xx'))).toBe(false);
+    errors.mockRestore();
+
+    outbox.retryUpload('refused');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(storage._queue.has('refused')).toBe(false));
+    expect(storage.updateOutboxEntry).toHaveBeenCalledWith(
+      'refused',
+      expect.objectContaining({ serverErrors: 0, nativeRefusal: undefined }),
+      'key'
+    );
+  });
+
+  // Reading `1.7.3-alpha.6`, warm-page row 4: a banner from a conversation this device was removed
+  // from cannot be produced on a bench without a dev write the sitting does not own. The line the
+  // native drain marked unsendable is adopted FAILED, with its Retry at once, and the page's own
+  // later outbox work - another message queued, a flush, the status pass - leaves it where it is.
+  it('an unsendable native line is adopted FAILED, stays failed under later outbox work, and Retry sends it', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('stuck', { unsendable: true })];
+    const storage = makeStorage();
+    const { outbox, conversations, sendMessage } = controllerOver(storage);
+    const statusOf = (id: string) =>
+      conversations.get('g1')!.messages.find((m) => m.id === id)?.status;
+
+    expect(await outbox.adoptNativeEntries()).toBe(1);
+    expect(statusOf('stuck')).toBe('error');
+    expect(isServerFailureTerminal(storage._queue.get('stuck'))).toBe(true);
+
+    // A following page mutation: another message is queued and flushed, the statuses are re-applied.
+    await storage.saveOutboxEntry(textEntry('after', { sentAt: 2_000, createdAt: 2_000 }));
+    await outbox.flush();
+    await outbox.applyPendingStatuses();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(storage._queue.has('after')).toBe(false);
+    expect(storage._queue.has('stuck')).toBe(true);
+    expect(statusOf('stuck')).toBe('error');
+
+    // Its Retry is available at once, and sends it.
+    outbox.retryUpload('stuck');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
   });
 
   // Review of #3929: a failed claim leaves the line native in the mirror, where a background drain
@@ -563,6 +684,156 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(tauri.writes).toHaveLength(1);
     release();
     await vi.waitFor(() => expect(tauri.writes.length).toBeGreaterThan(1));
+  });
+
+  // The entry an older build left alone (no row): rebuilt from its own text, shown failed with its
+  // Retry so the member can see and delete it, and accused ONCE - not on every page life.
+  it('an entry queued with no row gets its row back from its own text, accused once', async () => {
+    connectivity.reset();
+    const storage = makeStorage([
+      textEntry('orphan', { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS }),
+    ]);
+    const { outbox, conversations } = controllerOver(storage);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const accused = () =>
+      errors.mock.calls.filter((c) => String(c[0]).includes('was queued with no stored message'))
+        .length;
+
+    await outbox.applyPendingStatuses();
+    expect(parseEnvelope(storage._rows.get('orphan')!.content)).toMatchObject({
+      kind: 'text',
+      text: 'hello orphan',
+    });
+    const row = () => conversations.get('g1')!.messages.find((msg) => msg.id === 'orphan');
+    expect(row()?.status).toBe('error');
+    expect(accused()).toBe(1);
+
+    // The next page life reads the row: nothing accused again.
+    conversations.set('g1', { ...conversations.get('g1')!, messages: [] });
+    await outbox.applyPendingStatuses();
+    expect(row()?.status).toBe('error');
+    expect(accused()).toBe(1);
+    errors.mockRestore();
+  });
+
+  // Review of #3969 (P1): two passes reading the mirror and the queue before either wrote both
+  // adopted the line, and the second re-inserted what a flush had sent and deleted in between.
+  it('two adoptions at once and a flush between them send the line once', async () => {
+    connectivity.reset();
+    tauri.mergeWrites = true;
+    const storage = makeStorage();
+    const { outbox, sendMessage } = controllerOver(storage);
+    // The widest window: a second write of the entry is held until the first send has landed - the
+    // moment a pass that read before the first one wrote would put it back.
+    let sent!: () => void;
+    const firstSent = new Promise<void>((r) => (sent = r));
+    sendMessage.mockImplementation(async () => {
+      sent();
+      return { sealed: new Uint8Array(), authorProof: new Uint8Array(), receivedAt: 1 };
+    });
+    const save = storage.saveOutboxEntry;
+    let saves = 0;
+    storage.saveOutboxEntry = vi.fn(async (e: OutboxEntry) => {
+      if (++saves > 1) await firstSent;
+      return save(e);
+    });
+
+    // 1. The page life's start pass, over an empty mirror, settles first: nothing else is chained.
+    tauri.mirror = [];
+    await outbox.flush();
+    tauri.mirror = [line('shade')];
+
+    // 2. Two passes at once. Unchained, both read the line native and the queue empty; the first
+    // queues and claims it and its flush sends it, then the second's write - held until that send -
+    // queues it again, and its claim's flush sends it a second time.
+    await Promise.all([outbox.adoptNativeEntries(), outbox.adoptNativeEntries()]);
+
+    // 3. The controller's own settle, then one more flush: nothing left to send.
+    await outbox.awaitSettled('shade');
+    await outbox.flush();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(saves).toBe(1);
+    expect(storage._queue.has('shade')).toBe(false);
+  });
+
+  // Review of #3969 (S2): a line left native for want of its conversation's row is adopted by the
+  // write of that row, not at the next return to the front.
+  it('adopts a waiting line the moment its conversation row is written', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('late', { groupId: 'g2' })];
+    const storage = makeStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { outbox, sendMessage } = controllerOver(storage);
+    expect(await outbox.adoptNativeEntries()).toBe(0);
+    expect(storage._queue.has('late')).toBe(false);
+
+    // A row of another conversation adopts nothing.
+    announceConversationStored('g9');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(storage._queue.has('late')).toBe(false);
+
+    storage._conversationRows.add('g2');
+    announceConversationStored('g2');
+    // Adopted with its row, claimed, and sent - by the row's write alone.
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(parseEnvelope(storage._rows.get('late')!.content)).toMatchObject({ kind: 'text' });
+    // Said once, not once per pass.
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('Orphan late')).length).toBe(1);
+    warn.mockRestore();
+  });
+
+  // Review of #3969 (N1): a waiting record was cleared only by an adoption, so a line that left the
+  // mirror another way (a drain sent it) kept naming its conversation, and every later write of that
+  // row ran a full pass. Each pass now records only the lines it found waiting.
+  it('a waiting line that left the mirror stops naming its conversation', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('gone', { groupId: 'g3' })];
+    const storage = makeStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { outbox } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.has('gone')).toBe(false);
+    const reads = () =>
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'read_outbox_mirror').length;
+
+    // A background drain sent it: the line left the mirror. The row is written twice.
+    tauri.mirror = [];
+    storage._conversationRows.add('g3');
+    const before = reads();
+    announceConversationStored('g3');
+    // That pass, then a pass of our own chained behind it: both settled once this one resolves.
+    await outbox.adoptNativeEntries();
+    expect(reads()).toBe(before + 2);
+    announceConversationStored('g3');
+    await outbox.adoptNativeEntries();
+    // Only our own pass ran: the second write found nothing waiting for g3.
+    expect(reads()).toBe(before + 3);
+    expect(storage._queue.size).toBe(0);
+    warn.mockRestore();
+  });
+
+  // Re-review of #3969: a conversation read that failed dropped the line from the waiting set - its
+  // row-write trigger lost, its WARN said again. A failed read proves nothing: it keeps waiting.
+  it('a conversation read that fails keeps the line waiting, and says nothing again', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('flaky', { groupId: 'g4' })];
+    const storage = makeStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const said = () => warn.mock.calls.filter((c) => String(c[0]).includes('Orphan flaky')).length;
+    const { outbox, sendMessage } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(said()).toBe(1);
+
+    storage.getConversation.mockRejectedValueOnce(new Error('database is locked'));
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.has('flaky')).toBe(false);
+
+    // Still waiting: the row's write adopts it, and nothing was said a second time.
+    storage._conversationRows.add('g4');
+    announceConversationStored('g4');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(said()).toBe(1);
+    warn.mockRestore();
   });
 
   it('adopts nothing and writes nothing when the mirror holds only the page lines', async () => {

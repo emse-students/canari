@@ -7,6 +7,8 @@
 package {{package}}
 
 import android.annotation.SuppressLint
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.webkit.*
 import android.content.Context
 import androidx.webkit.WebViewCompat
@@ -91,6 +93,17 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
     fun getCookies(url: String): String {
         val cookieManager = CookieManager.getInstance()
         return cookieManager.getCookie(url)
+    }
+
+    // CANARI PATCH: let the soft keyboard commit rich content (a Gboard GIF) into the WebView.
+    // Without this override the WebView advertises no image MIME type and Gboard answers "GIF not
+    // available here". All the logic is in the non-generated `KeyboardMediaBridge` (same package);
+    // this is the only hook. It lives HERE, in the template, because `gen/.../generated/` is
+    // rewritten from this file by wry's build.rs on every Android build - an edit there is lost.
+    // Guarded by .github/scripts/tests/android-keyboard-media-hook.test.mjs.
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val ic = super.onCreateInputConnection(outAttrs)
+        return KeyboardMediaBridge.wrapInputConnection(this, ic, outAttrs)
     }
 
     {{class-extension}}

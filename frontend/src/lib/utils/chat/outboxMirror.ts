@@ -36,11 +36,13 @@
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
+import { asNativeRefusal } from '$lib/db/outboxCodec';
 import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
   buildOutboxProto,
   deliveryForOutboxEntry,
   isServerFailureTerminal,
+  ownRowOfQueuedText,
 } from '$lib/utils/chat/outbox';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -79,6 +81,13 @@ export interface OutboxMirrorEntry {
    * with its Retry ({@link adoptMirrorEntry}). Never written by this side.
    */
   unsendable?: boolean;
+  /**
+   * WHY the native drain marked the line {@link unsendable}, typed where the answer was read
+   * (`UnsendableCause` in the Android service): `refused` or `not_encryptable`. Absent on a line a
+   * build before the field marked - adopted then as `unrecorded`, never guessed. Carried by the
+   * page's write like the mark itself (`NATIVE_VERDICTS`, `outbox_mirror.rs`).
+   */
+  unsendableCause?: string;
   /**
    * `"page"` on every line this side wrote - stamped by `store_outbox_mirror`, not here. Absent on a
    * line the native side queued, and on one written before the stamp existed: both are adopted, and
@@ -126,6 +135,34 @@ let mirrorWrites: Promise<boolean> = Promise.resolve(true);
  * again. Forgotten once a write holding them lands.
  */
 const sentNativeLines = new Set<string>();
+
+/**
+ * Native lines left unadopted because their conversation is not stored on this device yet, by line
+ * id, with that conversation: the line saying so is written once per page life, and the write of
+ * that conversation's row adopts them ({@link nativeLinesWaitFor}, `conversationStored.ts`).
+ */
+const waitingForConversation = new Map<string, string>();
+
+/**
+ * Replaces the waiting lines with those a pass that READ the mirror found waiting, and hands back
+ * `result`. A pass that could not read it changes nothing: it learned nothing.
+ */
+function settleWaiting<T>(found: Map<string, string>, result: T): T {
+  waitingForConversation.clear();
+  for (const [id, groupId] of found) waitingForConversation.set(id, groupId);
+  return result;
+}
+
+/**
+ * Whether a native line was left unadopted for want of `conversationId`'s row - so its write is
+ * what adopts it. Read by the outbox controller on every row written: a map scan, no I/O.
+ */
+export function nativeLinesWaitFor(conversationId: string): boolean {
+  for (const groupId of waitingForConversation.values()) {
+    if (groupId === conversationId) return true;
+  }
+  return false;
+}
 
 /** Whether a mirror line found already sent still waits for the write that drops it. */
 export function mirrorHoldsSentLines(): boolean {
@@ -309,12 +346,15 @@ export function adoptMirrorEntry(
     adoptedFromMirror: true as const,
   };
   // Typed entries only: a control frame has no Retry to park it behind.
+  // The cause travels with the entry, so its failure is said as what it was - never as the 5xx run
+  // its parked count otherwise reads as.
   const parked = entry.unsendable
     ? (() => {
+        const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
         appendLog(
-          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain - adopted failed, with its Retry`
+          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain (${nativeRefusal}) - adopted failed, with its Retry`
         );
-        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS };
+        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
       })()
     : {};
 
@@ -334,30 +374,18 @@ export function adoptMirrorEntry(
       senderId: app.reply.replyTo.senderId ?? '',
       preview: app.reply.replyTo.preview ?? '',
     };
-    const text = app.reply.content ?? '';
-    return {
-      outbox: { ...base, ...parked, kind: 'reply', text, replyTo },
-      message: {
-        id: entry.id,
-        conversationId: entry.groupId,
-        senderId: userId.toLowerCase(),
-        content: text,
-        timestamp: entry.sentAt,
-      },
+    const outbox: OutboxEntry = {
+      ...base,
+      ...parked,
+      kind: 'reply',
+      text: app.reply.content ?? '',
+      replyTo,
     };
+    return { outbox, message: ownRowOfQueuedText(outbox, userId) };
   }
   if (app?.text?.content !== undefined) {
-    const text = app.text.content ?? '';
-    return {
-      outbox: { ...base, ...parked, kind: 'text', text },
-      message: {
-        id: entry.id,
-        conversationId: entry.groupId,
-        senderId: userId.toLowerCase(),
-        content: text,
-        timestamp: entry.sentAt,
-      },
-    };
+    const outbox: OutboxEntry = { ...base, ...parked, kind: 'text', text: app.text.content ?? '' };
+    return { outbox, message: ownRowOfQueuedText(outbox, userId) };
   }
   appendLog(
     `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… is neither text nor reply - cannot adopt it`
@@ -436,6 +464,9 @@ export async function adoptOrphanedMirrorEntries(
   claims?: MirrorClaims
 ): Promise<string[]> {
   if (!isTauriRuntime()) return [];
+  // THIS PASS'S OWN WAITING LINES: a line that left the mirror (sent by a drain), was found sent, or
+  // could not be adopted is in none, so it stops naming its conversation (review of #3969, N1).
+  const stillWaiting = new Map<string, string>();
   let mirror: OutboxMirrorEntry[];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -450,7 +481,7 @@ export async function adoptOrphanedMirrorEntries(
     appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
     throw new MirrorAdoptionError('mirror', e);
   }
-  if (!mirror.length) return [];
+  if (!mirror.length) return settleWaiting(stillWaiting, []);
 
   const queued = await storage
     .getOutboxQueue(deviceKeyB64)
@@ -495,7 +526,7 @@ export async function adoptOrphanedMirrorEntries(
     );
   }
   const orphans = mirror.filter((e) => e.id && e.owner !== 'page' && !known.has(e.id));
-  if (!orphans.length) return [];
+  if (!orphans.length) return settleWaiting(stillWaiting, []);
   appendLog(`[OUTBOX_MIRROR] ${orphans.length} orphan mirror entr(y/ies) to adopt`);
 
   const adopted: string[] = [];
@@ -519,40 +550,66 @@ export async function adoptOrphanedMirrorEntries(
     }
     const rebuilt = adoptMirrorEntry(orphan, userId);
     if (!rebuilt) continue;
+    // THE ROW FIRST, THE ENTRY SECOND, AND NO ENTRY WITHOUT ITS ROW. The entry was queued first and
+    // the row written "best-effort" after it: a row the store refused (its conversation not stored
+    // yet - the foreign key) left an entry with nothing to show, parked failed for ever, its text
+    // invisible and undeletable (Mi 9T, 1.7.3-alpha.6). Here the line is the durable record until
+    // the queue holds it, so a tear between the two writes leaves the row, and the line adopts it
+    // at the next pass; and a conversation not stored is read as the fact it is, never learnt from
+    // the refusal - the line waits, still native, for a pass that finds it stored.
+    if (rebuilt.message) {
+      const stored = await storage.getConversation(orphan.groupId).catch((e) => {
+        appendLog(
+          `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… its conversation not read - not adopted yet, the line stays native: ${String(e)}`
+        );
+        return undefined;
+      });
+      if (stored === undefined) {
+        // A read that failed proves nothing: a line already waiting keeps waiting - its row-write
+        // trigger, and its WARN said once.
+        if (waitingForConversation.has(orphan.id)) stillWaiting.set(orphan.id, orphan.groupId);
+        continue;
+      }
+      if (stored === null) {
+        // Said ONCE per page life, and truthfully: the write of that row adopts it - a Welcome, a
+        // discovery, a restore. A conversation this device deleted is never written again, and what
+        // its line then becomes is an open question (`open-questions.md`, "A native line naming a
+        // conversation this device no longer stores").
+        if (!waitingForConversation.has(orphan.id)) {
+          console.warn(
+            `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, which this device does not store - not adopted, kept native in the mirror; adopted when that conversation's row is written, never if it was deleted here`
+          );
+        }
+        stillWaiting.set(orphan.id, orphan.groupId);
+        continue;
+      }
+    }
     // HELD BEFORE IT IS QUEUED: a flush reading the queue between the write and the hold would send
     // a line the background drain may send too.
     claims?.hold(orphan.id);
     try {
+      if (rebuilt.message) {
+        // Written only where no row stands: a row already stored under this id is the truth, never
+        // replaced by this rebuild.
+        const written = await storage.saveMessagesIfAbsent([rebuilt.message], deviceKeyB64);
+        if (!written.has(orphan.id)) {
+          appendLog(
+            `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… already stored - left as it is`
+          );
+        }
+      }
       await storage.saveOutboxEntry(rebuilt.outbox, deviceKeyB64);
     } catch (e) {
       claims?.release(orphan.id);
-      appendLog(`[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed: ${String(e)}`);
+      appendLog(
+        `[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed, the line stays native for the next pass: ${String(e)}`
+      );
       continue;
     }
     adopted.push(orphan.id);
-    if (rebuilt.message) {
-      // Best-effort: the entry is queued either way, this only decides whether the user can see it
-      // before it lands. A missing conversation row is the expected failure (FK), and it means the
-      // group is gone, in which case the flusher will drop the entry too. Written only where no row
-      // stands: a row already stored under this id is the truth, never replaced by this rebuild.
-      await storage
-        .saveMessagesIfAbsent([rebuilt.message], deviceKeyB64)
-        .then((written) => {
-          if (!written.has(orphan.id)) {
-            appendLog(
-              `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… already stored - left as it is`
-            );
-          }
-        })
-        .catch((e) =>
-          appendLog(
-            `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… not saved: ${String(e)}`
-          )
-        );
-    }
   }
   appendLog(`[OUTBOX_MIRROR] ${adopted.length}/${orphans.length} orphan entr(y/ies) adopted`);
-  return adopted;
+  return settleWaiting(stillWaiting, adopted);
 }
 
 /**

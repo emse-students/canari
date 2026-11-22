@@ -427,6 +427,107 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
     json_to_c_string(value)
 }
 
+/// The key of one message in the announced-messages ledger (`mobile::announced::announce_key`):
+/// `<conversation>:<sender>:<instant>`, built here only so the extension and the page's command
+/// spell it once. NULL when the message cannot be keyed (no conversation, no sender, no instant).
+/// Free with `canari_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_announce_key(
+    conversation: *const c_char,
+    sender: *const c_char,
+    at: i64,
+) -> *mut c_char {
+    if conversation.is_null() || sender.is_null() {
+        return std::ptr::null_mut();
+    }
+    super::announced::announce_key(&str_from_c_str(conversation), &str_from_c_str(sender), at)
+        .and_then(|key| CString::new(key).ok())
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// The ledger call both FFI entries share: the arguments read, the cache key decoded, `edit` run
+/// over the sealed ledger in `data_dir`. `None` (said, under `label`) when an argument is missing,
+/// the key is unusable, or the ledger could not be read or written.
+unsafe fn with_announced_ledger<R>(
+    label: &str,
+    data_dir: *const c_char,
+    cache_key_b64: *const c_char,
+    key: *const c_char,
+    edit: impl FnOnce(&mut Vec<super::announced::Announced>, &str) -> R,
+) -> Option<R> {
+    if data_dir.is_null() || cache_key_b64.is_null() || key.is_null() {
+        log::error!("[NOTIF_LEDGER] {label}: null argument");
+        return None;
+    }
+    let Some(cache_key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        log::error!("[NOTIF_LEDGER] {label}: no usable native cache key");
+        return None;
+    };
+    let key = str_from_c_str(key);
+    match super::announced::with_ledger(&path_from_c_str(data_dir), &cache_key, |ledger| {
+        edit(ledger, key.as_str())
+    }) {
+        Ok(answer) => Some(answer),
+        Err(e) => {
+            log::error!("[NOTIF_LEDGER] {label}: {e}");
+            None
+        }
+    }
+}
+
+/// The notification extension draws the message `key` (`mobile::announced::claim_by_extension`)
+/// over the sealed ledger in `data_dir` (the App Group store). Answers 1 when the extension is
+/// first, 0 when the page announced it first, -1 when the ledger could not be read or written or
+/// the cache key is unusable (the cause is in the app's log only: the extension has no Rust logger,
+/// and says the -1 itself).
+#[no_mangle]
+pub unsafe extern "C" fn canari_announced_by_extension(
+    data_dir: *const c_char,
+    cache_key_b64: *const c_char,
+    key: *const c_char,
+) -> i32 {
+    match with_announced_ledger(
+        "the extension's claim was not recorded",
+        data_dir,
+        cache_key_b64,
+        key,
+        super::announced::claim_by_extension,
+    ) {
+        Some(super::announced::ExtensionClaim::First) => 1,
+        Some(super::announced::ExtensionClaim::AfterPage) => 0,
+        None => -1,
+    }
+}
+
+/// An extension banner reaches the app while it is ACTIVE (`willPresentNotification`), where a
+/// message push is not presented on its own (`mobile::announced::settle_in_front`). Answers 1 when
+/// the page stood down for it (present the push), 0 when its claim was given back (do not present),
+/// 2 when the page's banner announces it (do not present), 3 when its key is no longer in the
+/// ledger (present it: it is recorded as the extension's again), -1 when the ledger failed: the
+/// claim then STANDS, and the caller presents the push rather than let the page stand down for
+/// nothing.
+#[no_mangle]
+pub unsafe extern "C" fn canari_announced_settle_in_front(
+    data_dir: *const c_char,
+    cache_key_b64: *const c_char,
+    key: *const c_char,
+) -> i32 {
+    match with_announced_ledger(
+        "an in-front push could not settle its claim",
+        data_dir,
+        cache_key_b64,
+        key,
+        super::announced::settle_in_front,
+    ) {
+        Some(super::announced::InFront::PageAsked) => 1,
+        Some(super::announced::InFront::Released) => 0,
+        Some(super::announced::InFront::PageAnnounced) => 2,
+        Some(super::announced::InFront::Absent) => 3,
+        None => -1,
+    }
+}
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
 /// (WP-XP-3). `key_b64`/`iv_b64` are the CEK (32 bytes) + IV (12 bytes) in base64, extracted from
 /// the MLS-decrypted `MediaMsg`; `cipher_ptr`/`cipher_len` point at the `ciphertext||tag`

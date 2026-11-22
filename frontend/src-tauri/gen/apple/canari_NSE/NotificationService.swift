@@ -112,6 +112,14 @@ class NotificationService: UNNotificationServiceExtension {
   private var namesContentOf: String?
   /// This run's outcome record (`NseOutcomeLog`), written once by `finish` or the expiry.
   private var trace: NseOutcomeLog.Trace?
+  /// The announced-messages key of the message this run draws (`noteAnnouncement`), claimed by
+  /// `finish` in the step that hands the content over (`claimAnnouncement`). Nil when the run draws
+  /// no keyable message.
+  private var announceKey: String?
+  /// The app's banners standing for exactly this message and nothing else (`applyBadgeCount`,
+  /// which reads the delivered list anyway): removed once this run's banner, claimed after the
+  /// page's, is handed over. A page banner covering other messages too is never removed.
+  private var pageTwinIds: [String] = []
   /// Orders `finish` against `serviceExtensionTimeWillExpire`, which iOS calls on ANOTHER thread
   /// while the decrypt may still be running: the content is handed back exactly once.
   private let deliveryLock = NSLock()
@@ -648,19 +656,42 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Delivers the current best-attempt content exactly once, after writing the run's outcome.
+  ///
+  /// THE ANNOUNCED-MESSAGES CLAIM IS MADE HERE AND NOWHERE ELSE (review of #3968): under
+  /// `deliveryLock`, in the step that takes the handler, so the expiry - which delivers the content
+  /// UNSTAMPED - either went first and nothing is claimed (the app may then announce the message
+  /// again: a double, never a loss), or waits for this step and finds nothing to deliver. A claim
+  /// made earlier, during the decrypt, could be followed by the expiry's unstamped delivery: the
+  /// ledger would say "the extension's" while the app read no stamp, the page would stand down,
+  /// and an active app would answer the push `None` - the message seen nowhere. Nothing slow sits
+  /// between the claim and the handoff: the key and the directory are read BEFORE the lock, and the
+  /// page's twin is removed AFTER the handoff (a kill in between leaves a quiet double).
   private func finish() {
+    let key = announceKey
+    let dir = key == nil ? nil : Self.appGroupDir()
+    let cacheKey = key == nil ? "" : Self.retrieveNativeCacheKey()
     deliveryLock.lock()
     let handler = contentHandler
     contentHandler = nil
+    var afterPage = false
+    if handler != nil, let content = bestAttemptContent {
+      if let trace = trace {
+        let outcome = trace.outcome
+        trace.end(outcome: outcome ?? "fallback", cause: outcome == nil ? "no-outcome-set" : nil)
+      }
+      Self.holdSoundForCall(content)
+      if let key = key {
+        afterPage = claimAnnouncement(key: key, dir: dir, cacheKey: cacheKey, content: content)
+      }
+    }
     deliveryLock.unlock()
     guard let handler = handler, let content = bestAttemptContent else { return }
-    if let trace = trace {
-      let outcome = trace.outcome
-      trace.end(outcome: outcome ?? "fallback", cause: outcome == nil ? "no-outcome-set" : nil)
-    }
-    Self.holdSoundForCall(content)
     Self.logFiling(content, via: "finish")
     handler(content)
+    if afterPage, !pageTwinIds.isEmpty {
+      UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: pageTwinIds)
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app's banner of this message: \(self.pageTwinIds.count, privacy: .public) removed, replaced by this one")
+    }
   }
 
   /// Records why this run falls back - the FIRST cause found is the one kept, since every later
@@ -1271,6 +1302,12 @@ class NotificationService: UNNotificationServiceExtension {
         isGroup: isGroup, result: msg)
     }
 
+    // ONE NOTIFICATION PER MESSAGE: this banner is claimed in the ledger the app shares, keyed by
+    // the sender and the sender's instant - an undecrypted message has no instant, and is not
+    // claimed. The claim itself is made by `finish`, with the handoff (`claimAnnouncement`).
+    if let msg = decrypted {
+      noteAnnouncement(conversation: groupId, senderId: senderId, at: msg.sentAt)
+    }
     applyMessageContent(
       content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
       body: body,
@@ -1278,6 +1315,59 @@ class NotificationService: UNNotificationServiceExtension {
       level: Self.levelDecision(
         level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
         groupId: groupId))
+  }
+
+  /// Notes the message this run draws - `conversation`, its sender, its instant - for the claim
+  /// `finish` makes (`claimAnnouncement`). A message that cannot be keyed is said, and not claimed.
+  private func noteAnnouncement(conversation: String, senderId: String, at: Int64) {
+    guard let rawKey = canari_announce_key(conversation, senderId, at) else {
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] not claimed: the message carries no sender or instant - the app may announce it again")
+      return
+    }
+    announceKey = String(cString: rawKey)
+    canari_free_string(rawKey)
+  }
+
+  /// Claims `key` in the announced-messages ledger the app shares (`announced_messages.json`,
+  /// sealed, Rust `mobile::announced`; docs/wiki/frontend/ios-notification-ownership.md) and stamps
+  /// the outcome on `content`, where the app's `willPresentNotification` reads it. Called by
+  /// `finish` ONLY, under `deliveryLock`, once the handler is taken: the claim and its stamp reach
+  /// the app together or not at all - an expiry that delivered the content first finds no handler
+  /// here, and claims nothing.
+  ///
+  /// Returns true when the PAGE announced it first: this banner is then filed quietly (the reader
+  /// was alerted once already) and replaces the page's banner standing for exactly this message
+  /// (`pageTwinIds`). An extension cannot withhold an alert push without Apple's filtering
+  /// entitlement, so replacing is the only way to keep one row per message - and a page banner
+  /// covering other messages too is kept: at worst a double, never a loss.
+  private func claimAnnouncement(
+    key: String, dir: URL?, cacheKey: String, content: UNMutableNotificationContent
+  ) -> Bool {
+    guard let dir = dir else {
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR not claimed: no App Group - the app may announce it again")
+      return false
+    }
+    switch canari_announced_by_extension(dir.path, cacheKey, key) {
+    case 1:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "first"
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] shown first by the extension")
+      return false
+    case 0:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "after-page"
+      content.sound = nil
+      if #available(iOS 15.0, *) { content.interruptionLevel = .passive }
+      if pageTwinIds.isEmpty {
+        NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app announced it first, in a banner that also stands for other messages or is gone - this one is filed quietly beside it")
+      } else {
+        NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app announced it first - this banner replaces the app's, quietly")
+      }
+      return true
+    default:
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR the ledger could not be read or written - not claimed, the app may announce it again")
+      return false
+    }
   }
 
   /// How loud one MLS message may be, given the member's level for its conversation.
@@ -2304,11 +2394,16 @@ class NotificationService: UNNotificationServiceExtension {
     }
     content.threadIdentifier = "channel_\(channelId)"
     if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
-    // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
-    // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
-    // without it. iOS has no notification-channel concept, so this is the whole Android twin of
-    // posting on `canari_mentions`.
+    // ONE NOTIFICATION PER MESSAGE, keyed by the sender and the message's server `createdAt` (ms),
+    // the instant the socket frame carries too - a blind banner announces its message all the same.
+    // Claimed by `finish`, with the handoff (`claimAnnouncement`).
+    let createdAt = Int64(Self.string(userInfo["createdAt"]) ?? "") ?? 0
+    noteAnnouncement(conversation: "channel_\(channelId)", senderId: senderId, at: createdAt)
     if mentionsMe, #available(iOS 15.0, *) {
+      // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
+      // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
+      // without it. iOS has no notification-channel concept, so this is the whole Android twin of
+      // posting on `canari_mentions`.
       content.interruptionLevel = .timeSensitive
     }
     // The sender's face, exactly as the MLS path and both Android paths do it, once the open proved
@@ -2817,8 +2912,17 @@ class NotificationService: UNNotificationServiceExtension {
     let center = UNUserNotificationCenter.current()
     let sem = DispatchSemaphore(value: 0)
     var keys = Set<String>()
+    let announced = announceKey
+    var twins: [String] = []
     center.getDeliveredNotifications { delivered in
       for n in delivered {
+        // The app's banner standing for exactly the message this run draws: `finish` removes it if
+        // the claim finds the page first (`claimAnnouncement`). The page stamps the keys it covers
+        // (`useNotifications.svelte.ts`).
+        if let announced, Self.pageBannerStandsOnlyFor(n.request.content.userInfo, key: announced) {
+          twins.append(n.request.identifier)
+          continue
+        }
         let thread = n.request.content.threadIdentifier
         let deepLink = (n.request.content.userInfo["deepLink"] as? String) ?? ""
         let isChat = thread == "canari_messages" || deepLink.hasPrefix("fr.emse.canari://chat")
@@ -2828,11 +2932,24 @@ class NotificationService: UNNotificationServiceExtension {
       sem.signal()
     }
     _ = sem.wait(timeout: .now() + 2.0)
+    pageTwinIds = twins
     if !incomingThreadId.isEmpty {
       keys.insert(incomingThreadId)
     }
     content.badge = NSNumber(value: keys.count)
     NseLog.log.notice("[CanariNSE] applyBadgeCount: badge=\(keys.count, privacy: .public)")
+  }
+
+  /// Whether a delivered notification is the PAGE's banner standing for the message `key` AND
+  /// NOTHING ELSE: the notification plugin files the page's `extra` under `__EXTRA__`, and the page
+  /// writes there the space-separated keys its one banner covers (`announces`). A banner covering
+  /// other messages too is not this message's twin - removing it would take those messages out of
+  /// Notification Center with it.
+  static func pageBannerStandsOnlyFor(_ userInfo: [AnyHashable: Any], key: String) -> Bool {
+    guard let extra = userInfo["__EXTRA__"] as? [String: Any],
+      let announces = extra["announces"] as? String
+    else { return false }
+    return announces.split(separator: " ").map(String.init) == [key]
   }
 
   // MARK: - Shared App Group state --------------------------------------------
