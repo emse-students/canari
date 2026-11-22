@@ -92,6 +92,11 @@ cancel it instead - the payment's record keeps its Lydia Business either way
 `pending` answer is cancelled first by `cancelSubmission`'s rules, its Lydia request settled, so a
 request left payable never lands on a deleted answer; one that cannot be settled is a 409
 `PREVIOUS_PAYMENT_OPEN`, worded for the manager.
+**Until 2026-11-22 the refusal never reached the manager**: TypeORM's postgres driver answers a
+`DELETE ... RETURNING` with `[rows, rowCount]`, the service read that pair as the rows, so its length
+was always 2 and a delete the guard refused was answered as done while the answer stayed. It reads the
+pair now; `anonymous-answer-batches.integration.spec.ts` deletes a paid answer against PostgreSQL and
+expects the 409 and the row still there.
 
 ## Key component: forms/[id]/+page.svelte
 
@@ -1019,8 +1024,11 @@ So the answer is never written near the registry row; it is written later, with 
    messages sont à vous", is the measure): the manager sees the waiting count live and may close the
    form at will, and the answer that fills a full form releases its own tail. A manager who compares
    the list of answers before and after that moment can tell which answers the tail added - a group
-   of fewer than 5, at most ONE such group per form, since the tail is released once. The database
-   rows and their order say nothing more than that list does; what the list shows is the real bound.
+   of fewer than 5. There are at most TWO such groups per form: the tail of the first stop (a close
+   or the form filling up, released once), and the tail its retirement releases (step 4), whatever
+   came before - a form closed, reopened, answered twice more and then archived gives the second. The
+   database rows and their order say nothing more than that list does; what the list shows is the
+   real bound.
 4. A retired form (archived or deleted) releases everything still waiting, joining the same way: no
    answer is lost.
 5. The release is a predicate over durable state (`ReleaseMode`: open, closed, retired), looked at by:

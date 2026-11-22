@@ -3724,12 +3724,17 @@ export class FormsService {
       // answer lives on under a new id, and this id is truthfully not found.
       const [gone] = (await this.submissionRepo.manager.transaction('READ COMMITTED', async (m) => {
         await lockFormSeats(m, sub.formId);
-        return m.query('DELETE FROM submissions WHERE id = $1 RETURNING id', [submissionId]);
+        // The paid and pending guard of a named form holds here too, though an anonymous form takes
+        // no payment: defence in depth, so a row that ever carried money is never deleted.
+        return m.query(
+          `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+          [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
+        );
       })) as [unknown[], number];
       if (gone.length === 0) {
         this.logger.log(
           `[Forms] Submission ${submissionId} not deleted by ${callerId}: no longer under this id ` +
-            '(its anonymous group was written again)'
+            '(rewritten by a release, or deleted meanwhile)'
         );
         throw new NotFoundException('Submission not found');
       }

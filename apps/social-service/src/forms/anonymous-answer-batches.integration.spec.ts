@@ -416,6 +416,21 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     }
   });
 
+  it('a paid answer of a named form is never deleted, and the manager is told so (409)', async () => {
+    // Against PostgreSQL, not a mock of the driver: a DELETE ... RETURNING answers [rows, rowCount],
+    // and reading that pair as the rows once told the manager a refused delete was done.
+    const formId = await makeForm({ anonymous: false });
+    const [{ id }]: { id: string }[] = await ds.query(
+      `INSERT INTO submissions ("formId", "userId", answers, "totalPaid", "paymentStatus")
+       VALUES ($1, $2, '{"q1":"paye"}'::jsonb, 500, 'paid') RETURNING id`,
+      [formId, member(++next)]
+    );
+    await expect(service.deleteSubmission(id, OWNER, false)).rejects.toMatchObject({
+      response: { code: 'FORM_ANSWER_PAID' },
+    });
+    expect(await n(`SELECT count(*) AS n FROM submissions WHERE id = $1`, [id])).toBe(1);
+  });
+
   it('refuses to release outside a transaction, where the form lock would not hold', async () => {
     const formId = await makeForm();
     await answer(formId, 1);
