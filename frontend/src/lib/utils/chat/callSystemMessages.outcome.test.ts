@@ -22,6 +22,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
 
 import {
   handleCallSignalForChat,
+  forgetCallRecordServerTime,
   patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
@@ -400,6 +401,25 @@ describe('a call record is dated by its frame, never by when this device drained
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('a hangup whose send answered no server time drops its pending patch', async () => {
+    const { ctx, conversations } = makeCtx();
+    await recordCallEnded(
+      ctx,
+      G,
+      't9',
+      { timestamp: AT.timestamp, ownAct: true, awaitsServerTime: true },
+      'busy',
+      'me'
+    );
+    forgetCallRecordServerTime('t9');
+    // Nothing is pending any more: a late acceptance finds no patch to apply.
+    await patchCallRecordServerTime(ctx, G, 't9', 1_700_000_000_999);
+    const row = conversations.get(G)!.messages.find((x) => x.id === 'call-t9') as {
+      serverTimestamp?: number;
+    };
+    expect(row.serverTimestamp).toBeUndefined();
   });
 
   it('an own end that sends no hangup is never waited for: nothing is kept to patch', async () => {

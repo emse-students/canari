@@ -285,6 +285,17 @@ export async function patchCallRecordServerTime(
 }
 
 /**
+ * Drops the pending server-time patch of `callId`: its hangup was meant to be sent and answered no
+ * server time, so nothing will ever patch the row - it keeps the time of its own act.
+ */
+export function forgetCallRecordServerTime(callId: string): void {
+  if (!rowsWrittenByTheEnd.delete(callId)) return;
+  appendLog(
+    `[CallRecord] ${callId} hangup answered no server time - the row keeps its own act's time, no patch pending`
+  );
+}
+
+/**
  * Finalizes the EXISTING row of a call, read from the timeline as it is NOW (never a snapshot taken
  * before an await: writing back an old list would erase what arrived meanwhile).
  */

@@ -164,6 +164,11 @@ export interface CallChatNotifier {
      */
     failed?: boolean
   ) => void | Promise<void>;
+  /**
+   * This device's hangup was meant to be sent and answered NO server time (its send failed, or the
+   * server's acceptance carried none): the record's pending patch is dropped, never kept waiting.
+   */
+  onCallEndUnsent?: (callId: string) => void;
   /** The server accepted this device's hangup at `serverTimestamp`: patched onto the record. */
   onCallEndAnswered?: (
     groupId: string,
@@ -1615,6 +1620,7 @@ export class CallService {
         if (sent?.serverTimestamp !== undefined) {
           return notifier?.onCallEndAnswered?.(groupId, callId, sent.serverTimestamp);
         }
+        if (notify) notifier?.onCallEndUnsent?.(callId);
       });
     }
 

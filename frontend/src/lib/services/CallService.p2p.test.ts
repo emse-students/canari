@@ -2543,6 +2543,23 @@ describe('a call whose callee reached the room but whose media never connected i
     expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
   });
 
+  it('a hangup whose send fails drops the record patch it was waiting for', async () => {
+    const { service } = await asked();
+    const chat = {
+      onCallStarted: vi.fn(),
+      onCallEnded: vi.fn(),
+      onCallEndAnswered: vi.fn(),
+      onCallEndUnsent: vi.fn(),
+    };
+    service.setChatNotifier(chat);
+    vi.mocked(fakeMls.sendMessage).mockRejectedValueOnce(new Error('send failed'));
+    service.endCall();
+    await settle();
+    await recordWritten();
+    expect(chat.onCallEndUnsent).toHaveBeenCalledWith('room-1');
+    expect(chat.onCallEndAnswered).not.toHaveBeenCalled();
+  });
+
   it('a seat that went AWAY and never came back ends the call as a FAILURE', async () => {
     const { chat, ws } = await asked();
     ws.deliver({ type: 'PeerAway', disposition: 'transport-error' });
