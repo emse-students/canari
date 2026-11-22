@@ -784,6 +784,20 @@ screen and starts the icons' jiggle mode (`button home` ends it). The display sl
 wakes it and a `tree` costs about 1 s, so do wake, find and tap in ONE process, a couple of seconds after the
 send. `tools/ios-device` has no README: the usage lives in the header of `ios.mjs`.
 
+## The iPhone 12 readings of 2026-11-22 (`1.7.3-alpha.6`): the cold-start re-announce, the banners, the outage drill, the replay bar
+
+TestFlight offered `1.7.3 (100700306)`; "Update" installed it and Settings > About read `1.7.3-alpha.6`. `gamma` on dev (English UI), `delta` on a harness web seat as sender, driven over WDA (`tools/ios-device`), syslog from `pymobiledevice3 syslog live`, the app log from `applog.mjs`. The phone arrived in landscape and was set to portrait through WDA. Evidence is outside the repository.
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| The re-announce after a cold start ([entry](backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)) | **FAIL (not fixed)** | App killed, one DM: the extension showed ONE banner; a cold launch left TWO rows for the same message. A warm resume raised two more local banners for a group message the extension had shown (three rows). The entry's ledger was never merged; #3938 and #3951 do not touch it |
+| #3951 on iOS, banners go with their conversation ([entry](backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)) | **PARTIAL** | 1 PASS: a cold launch and a warm resume cleared nothing. 2 PASS: opening the DM in the app removed its banners, the other conversation's stayed. 3 **FAIL**: a group deleted by its peer while the app ran logged `conversation ... ended - taking its notifications down` and `cancelConversationNotification removed=1` of five delivered, but the banners the APP had raised for that group stayed in Notification Center (they carry no thread the removal matches). 4, 5 and the icon badge: unread |
+| #3964, salon texts across an outage | **PASS** | `social-service` stopped about 100 s; three texts typed during it (two more were refused by the WDA keyboard guard and never sent), two after: `WAITS ITS TURN`, settled in written order, pane order T1 T3 T5 T6 T7 T8, once each, no failure mark. Alpha.5 stored them out of order |
+| #3963, a backward drag in a replay | **PASS** | Slider 1:14 to 0:20 on a 2:33 replay and it kept playing; two quick drags 0:41 to 0:13, then playing on |
+| #3957, the no-glass fallback | **UNREAD** | The fallback is for iOS below 26; this phone runs 27 with Liquid Glass. On the glass path the first tab is whole and there is no band |
+| #3938, communication notifications (rows 3, 4) | **PASS by eye** | Sender face with the app badge; a group banner names the sender, then the group. Focus rows 1-2 and sign-out rows 6-7 not run |
+| Rotation (video, live, camera), the landscape close circle, the live viewer's sound at open, the landscape reactions | **PASS (owner decision 2026-11-22)** | Not read by the bench |
+
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
 Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
