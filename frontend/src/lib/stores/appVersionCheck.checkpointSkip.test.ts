@@ -34,7 +34,19 @@ function answering(body: unknown) {
   );
 }
 
+// Each test resets the module registry on purpose (fresh module state), so each `import()` below
+// evaluates the module again. The FIRST one also fetches its graph from the runner's main process,
+// which a loaded machine makes outlast the 5 s test timeout; it is paid once here, outside any
+// test (docs/wiki/test-suite-reform.md, the sixth load reading).
+beforeAll(async () => {
+  await import('./appVersionCheck.svelte');
+}, 60_000);
+
 describe('serverCheckpointSkipMode', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllGlobals();
@@ -76,8 +88,13 @@ describe('serverCheckpointSkipMode', () => {
 
     expect(mod.getAppVersionCheck()).toBeNull();
     expect(mod.serverCheckpointSkipMode()).toBe('off');
-    // An offline refresh adopts the cache for its verdict, never for the switch.
-    await mod.refreshAppVersionCheck();
+    // An offline refresh adopts the cache for its verdict, never for the switch. The failing probe
+    // walks its whole retry ladder, whose pauses are timers: faked, so the ladder costs no real
+    // seconds inside the test's deadline (it was 2.4 s of sleep on every run).
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const refreshed = mod.refreshAppVersionCheck();
+    await vi.runAllTimersAsync();
+    await refreshed;
     expect(mod.serverCheckpointSkipMode()).toBe('off');
   });
 });

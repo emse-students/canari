@@ -214,6 +214,7 @@ export function useNotifications() {
    * builder's, cancelled there. A push-drawn one is not here: the page never held it.
    */
   type RaisedReaction = { key: string; id?: number; notification?: Notification };
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- handles to browser/plugin notifications, read only by dismissConversationReactions (imperative); no template or effect reads it, so reactive tracking would only add overhead
   const raisedReactions = new Map<string, RaisedReaction[]>();
 
   // ---------- Audio ----------

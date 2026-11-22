@@ -99,11 +99,9 @@ ok('"seen for the first time here are not new" is forgiven; at warn it is NOT', 
 ok("joining the row's own channel is forgiven, another channel is NOT", forgiven(K, 'W2', JOINED) && !forgiven(K, 'W2', JOINED.replace('22222222', '99999999')));
 
 // THE ONE SALON MESSAGE W1 SENDS, and the owner's other devices asking for its seed.
-const REPEAT = (n) => `log: [01:10:57.752] [SALON-REPEAT] the server echoed client id a677dd1a...: a repeated send is answered with its row - ${n} waiting repeat(s) released`;
 const ANSWERED = (u) => `info: [01:10:58.468] [GRAINE] answered ${u.slice(0, 8)}…:tauri-${u.slice(0, 8)}…-mvn33w3u-4b2d with 1 seed(s) in 1 page(s)`;
 ok('the send echo, its settling and the unsent ledger cleared are forgiven on W1', ['log: [SALON-ECHO] a677dd1a… sending', 'log: [SALON-ECHO] a677dd1a… settled as 858b036a…', 'debug: [SALON-UNSENT] 1 entr(y/ies) forgotten: the server holds them'].every((l) => forgiven(K, 'W1', l)));
 ok('... NOT on W2, which sent nothing', !forgiven(K, 'W2', 'log: [SALON-ECHO] a677dd1a… sending'));
-ok('the repeat proof with nothing waiting is forgiven; a waiting repeat (a send that went twice) is NOT', forgiven(K, 'W1', REPEAT(0)) && !forgiven(K, 'W1', REPEAT(1)));
 ok("answering the owner's other device is forgiven; another account's device is NOT", forgiven(K, 'W1', ANSWERED(OWNER)) && !forgiven(K, 'W1', ANSWERED(SUBJ)));
 ok('an answer with zero seeds is NOT (that is "I hold nothing" said as an answer)', !forgiven(K, 'W1', ANSWERED(OWNER).replace('with 1 seed(s)', 'with 0 seed(s)')));
 
@@ -158,7 +156,7 @@ ok('the zero counts stay dirt: 0 overlays, 0 entries forgotten', forgiven(S, 'W1
 ok('... 0 seeds withheld, 0 seeds not answered', !forgiven(DV, 'W1', WITHHOLD.replace('withholding 1', 'withholding 0'), devIds) && !forgiven(DV, 'W1', NOT_ANSWERING.replace(': 1 seed(s)', ': 0 seed(s)'), devIds));
 
 // THE ROW'S OWN IDS (review, 2026-10-29): the message the row sent, the owner's own devices.
-ok('the echo of another message is NOT forgiven (client id, server id)', !forgiven(K, 'W1', 'log: [SALON-ECHO] 99999999… sending') && !forgiven(K, 'W1', 'log: [SALON-ECHO] a677dd1a… settled as 99999999…') && !forgiven(K, 'W1', REPEAT(0).replace('a677dd1a', '99999999')));
+ok('the echo of another message is NOT forgiven (client id, server id)', !forgiven(K, 'W1', 'log: [SALON-ECHO] 99999999… sending') && !forgiven(K, 'W1', 'log: [SALON-ECHO] a677dd1a… settled as 99999999…'));
 ok('a view holding another count of messages than the row sent is NOT forgiven', !forgiven(K, 'W1', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=follow-bottom)') && !forgiven(S, 'W2', 'debug: [CHAT_VIEW] channel_ messages 2 (hasNewMessage=true, response=repin-entry)'));
 ok("an answer to an owner device that is not one of the row's is NOT forgiven", !forgiven(K, 'W1', ANSWERED(OWNER).replace('mvn33w3u-4b2d', 'zzzzzzzz-9999')));
 
@@ -227,7 +225,6 @@ for (const [file, text] of [
   ['utils/chat/deviceNotices.svelte.ts', 'device(s) seen for the first time here are not new`'],
   ['utils/chat/deviceNotices.svelte.ts', '... - not a conversation, nothing to say`'],
   ['utils/chat/deviceNotices.svelte.ts', '[DEVICE_NOTICE] a new device was added to this account (${event.trust})'],
-  ['utils/chat/salonRepeatProof.ts', 'a repeated send is answered with its row - ${waiters.size} waiting repeat(s) released`'],
   ['utils/chat/salonUnsent.ts', 'entr(y/ies) forgotten: the server holds them`'],
   ['utils/graine/frameHandler.ts', 'of a salon riding another key group, ${notListed} not listed on this device`'],
   ['utils/graine/frameHandler.ts', "' - v2 endorsement verified from the tree'"],

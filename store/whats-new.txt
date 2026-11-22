@@ -1,3 +1,3 @@
-version: 1.7.2
+version: 1.7.3
 
-Vous choisissez si votre live est rediffusé : l'interrupteur « Rediffusion » est proposé au lancement, et le couper supprime ce qui a été gardé. L'anneau d'anniversaire se pose proprement autour de la photo. Un nouveau groupe reçoit un nom daté. Les textes du code PIN sont plus courts. Les boutons du champ de message ne se touchent plus.
+Formulaires : blocs de texte et d'image entre les questions, relecture de sa propre réponse, promo et formation lues sur le compte pour un formulaire anonyme. Notifications plus justes : l'alerte disparaît quand vous lisez ailleurs, et elle peut montrer le visage de l'expéditeur. Les onglets du fil ne coupent plus un mot. Messages vocaux corrigés, plus de bandeau noir sur les anciens modèles sans Liquid Glass, installation de nouveau possible sur les téléphones 32 bits.

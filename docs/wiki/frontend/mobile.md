@@ -3984,9 +3984,9 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
 - **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a
   restored data set without its key read as a typed state. Excluded together with the data they
   describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
-- **The device reading** is owed on the iPhone 12
-  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md), and for the App Group store
-  [its own](../backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)).
+- **The device reading passed on `1.7.3-alpha.5` (iPhone 12, 2026-11-22):** `6/6` at three cold launches
+  and a `backup2` with no file in the app, the App Group or either extension domain; the per-file passes
+  it releases are deleted by [this entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md).
 
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
@@ -4420,9 +4420,9 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   through `android16-release` and `main`. Measured too: on the Mi 9T, a 9998 nudge standing on
   1.7.3-alpha.1 was gone after `adb install -r` of alpha.2, and the shade held no Canari
   notification at all. So no code cancels `FixedNotifIds.WORKER_FOREGROUND` BY ID
-  (`androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers). The
-  app-open sweep cancels every messages-channel record by `sbn.id`, a standing 9998 included; the
-  platform refuses that cancel while the record is a foreground-service record.
+  (`androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers). (Until 2026-11-21 an
+  app-open sweep cancelled every messages-channel record by `sbn.id`, a standing 9998 included, and the
+  platform refused that cancel while the record is a foreground-service record; the sweep is gone.)
 - **Residual.** The app's own `store_outbox_mirror` rewrite does not settle the nudge: a mirror the
   WebView empties in the background leaves the nudge up until the next drain, worker run or open.
 - **Read on the Mi 9T, 1.7.3-alpha.2**: the nudge goes up under 999 and leaves with the reply a

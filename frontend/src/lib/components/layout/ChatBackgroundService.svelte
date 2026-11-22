@@ -93,6 +93,8 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
+  import { watchConversationEndings } from '$lib/utils/chat/conversationEndingsWatch.svelte';
+  import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
@@ -221,6 +223,21 @@
 
   // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
   $effect(() => callView.setLocked(showPinModal));
+
+  // A CONVERSATION THAT ENDED TAKES ITS NOTIFICATIONS WITH IT. Opening the app clears no banner any
+  // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
+  // community is gone would keep its banner for good. Observed on the list every ending writes to,
+  // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
+  // The page logs the DECISION; the native side logs the OUTCOME (`endConversationNotifications:
+  // ... banner id=N`, -1 when none was recorded), which is a different fact.
+  watchConversationEndings(
+    () => ({ signedIn: globalSession.isLoggedIn, rows: globalConvs.conversations.values() }),
+    (id) => {
+      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - taking its notifications down`);
+      void endNativeConversationNotifications(id);
+      void globalNotifs.dismissConversationReactions(id);
+    }
+  );
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
