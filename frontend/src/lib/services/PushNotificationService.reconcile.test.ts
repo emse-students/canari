@@ -26,7 +26,8 @@ Object.defineProperty(globalThis, '__TAURI_INTERNALS__', {
   value: {
     invoke: (cmd?: string, args?: unknown) => {
       if (cmd === 'complete_owed_push_token_deletion') return Promise.resolve(true);
-      if (cmd === 'end_push_registration') return Promise.resolve(true);
+      if (cmd === 'end_push_registration')
+        return Promise.resolve({ deleted: true, eraseTicket: 1, filesError: null });
       if (cmd === 'get_fcm_token') return Promise.resolve(osToken);
       if (cmd === 'store_push_secret') {
         nativeSecret = (args as { secret: string }).secret;

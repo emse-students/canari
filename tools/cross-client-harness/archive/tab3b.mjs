@@ -19,6 +19,15 @@
  *   3. the message sent while it was down arrives, exactly once
  *   4. the relaunch leaves exactly ONE app tab - a second tab is a second MLS client on the profile
  *
+ * THE KILL IS A CRASH ON PURPOSE (that is TAB-3's subject), AND A CRASH CAN TAKE THE COOKIE JAR WITH
+ * IT: Chrome commits its cookie store lazily, so a relaunch can arrive with no `canari_refresh` although
+ * the file on disk was intact (W3, 2026-11-22: empty cookie header, refresh 401, login page - reported
+ * here as a cold-start failure). So, as the KILL rows do (`cookiejar.mjs`), each kill waits for the
+ * newest refresh cookie to reach disk, the file is read back after the kill and must hold it
+ * (`refreshCookieAtKill`), and the revived page's storage is probed before the PIN (`storageLost`).
+ * A seat that is signed out after a hard kill is a RIG casualty - the row is INVALID (BLOCKED-ON-RIG,
+ * replay on a fresh profile), never a product FAIL.
+ *
  * WHAT IS REPORTED AND NOT ASSERTED: every duration. A latency ceiling this rig cannot defend from a
  * measured population would be a number invented to be met, and asserting a wall clock is forbidden
  * anyway. The population is what this row produces; a ceiling can be derived from it afterwards, and
@@ -32,6 +41,8 @@
  */
 import { APP_TAB, awaitAppReady, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from '../chat.mjs';
 import { listTargets } from '../cdp.mjs';
+import { awaitCookieCommitted, quotaDbOf, refreshInMemory, refreshOnDisk, siteCookies, STORAGE_PROBE } from '../cookiejar.mjs';
+import { refreshCookieAtKill, storageLost } from '../killrows.mjs';
 import { killBrowser, startBrowser } from '../launch.mjs';
 import { unlockClient } from './pingate.mjs';
 import { mark, recordObserved } from '../results.mjs';
@@ -55,11 +66,47 @@ await openConversation(w2, peerNameFor('W2'));
 const o2 = await watch(w2, 'TAB3B-W2');
 
 const runs = [];
+/** The rig-side reasons a run says nothing about the product: the kill took the jar or the storage. */
+const rig = [];
+/** What a hard kill is KNOWN to cost the product (the P2 entry): the jar's newest state did not reach disk. */
+const knownP2 = [];
+/** Signed out with the jar intact, storage whole and cookies present: nothing of the rig's to blame. */
+const jarIntact = [];
+let w1 = await client(PORTS.W1, SITE);
 for (let i = 1; i <= RUNS; i++) {
   const marker = mark(`TAB3B${i}`);
 
+  // 1a. THE NEWEST REFRESH COOKIE ON DISK BEFORE THE KILL, and the quota database and a cookie in the jar.
+  // A premise that cannot be met is a rig casualty RECORDED with its evidence, never a throw that skips the record.
+  let cookieWaitMs = null;
+  try {
+    cookieWaitMs = await awaitCookieCommitted(w1, `W1#${i}`, 'tab3b');
+    if (!quotaDbOf('w1')) throw new Error('the profile has no quota database BEFORE the kill');
+    if ((await siteCookies(w1)) === 0) throw new Error('the browser holds no cookie for the site BEFORE the kill');
+  } catch (e) {
+    rig.push(`run ${i}: ${String(e?.message ?? e).slice(0, 200)}`);
+    break;
+  }
+  const memoryExpiresS = await refreshInMemory(w1).catch(() => null);
+
   // 1. down, PROVEN down - `killBrowser` throws rather than returning if the port still answers.
   const downInMs = await killBrowser('w1');
+  w1.close?.();
+
+  // 1b. the file after the kill, before the relaunch: it must hold the cookie memory held.
+  let refreshAtKill;
+  try {
+    refreshAtKill = refreshCookieAtKill({ memoryExpiresS, diskExpiresS: refreshOnDisk('w1') });
+  } catch (e) {
+    refreshAtKill = `unread: ${String(e?.message ?? e).slice(0, 120)}`;
+  }
+  // `refreshCookieAtKill`'s contract: not-on-disk / older-on-disk is the product's known P2 (an HttpOnly
+  // cookie is not durable across an unclean kill); only an unread file or no cookie before the kill is the rig's.
+  if (refreshAtKill === 'not-on-disk' || refreshAtKill === 'older-on-disk') knownP2.push(`run ${i}: the refresh cookie was ${refreshAtKill} after the kill`);
+  else if (refreshAtKill !== 'on-disk') {
+    rig.push(`run ${i}: the refresh cookie could not be judged after the kill (${refreshAtKill})`);
+    break;
+  }
 
   // 2. the message that has to survive the outage. Sent while W1 is provably gone, so it can only
   //    reach it through the queue on the way back up - which is the whole subject.
@@ -72,7 +119,7 @@ for (let i = 1; i <= RUNS; i++) {
 
   // `client()` resolves a target by URL, and for a few hundred ms after the port answers there is no
   // page yet. Retry rather than treat a not-yet-existing tab as a failure.
-  let w1 = null;
+  w1 = null;
   for (let a = 0; a < 40 && !w1; a++) {
     w1 = await client(PORTS.W1, SITE).catch(() => null);
     if (!w1) await sleep(500);
@@ -85,6 +132,13 @@ for (let i = 1; i <= RUNS; i++) {
 
   // 4. session or login? Read BEFORE unlocking: once the PIN is entered the distinction is gone.
   const loginShowing = await evaluate(w1, LOGIN_SHOWING);
+  const jarCookies = await siteCookies(w1);
+  // A hard kill can take the profile's storage with it (`storageLost`): read before the PIN, or the
+  // gate a storage-less page can only show is recorded as the product's.
+  const lost = storageLost({ quotaDb: quotaDbOf('w1'), ...(await evaluate(w1, STORAGE_PROBE)), cookies: await siteCookies(w1) });
+  if (lost) rig.push(`run ${i}: the hard kill lost the profile's storage (${lost})`);
+  else if (loginShowing && jarCookies === 0) rig.push(`run ${i}: relaunched with an empty cookie jar (file said ${refreshAtKill}) and showed the login form`);
+  else if (loginShowing && refreshAtKill === 'on-disk') jarIntact.push(`run ${i}: signed out with the jar intact (file on-disk, storage whole, ${jarCookies} cookies)`);
 
   // 5. the PIN, and a PROVEN verdict rather than "the CLI said something".
   const tUnlock = Date.now();
@@ -107,6 +161,8 @@ for (let i = 1; i <= RUNS; i++) {
   const run = {
     run: i,
     marker,
+    cookieWaitMs,
+    refreshAtKill,
     downInMs,
     upInMs,
     readyMs,
@@ -133,17 +189,22 @@ for (let i = 1; i <= RUNS; i++) {
   console.log(
     `[tab3b] run ${i}/${RUNS} - down ${downInMs}ms, up ${upInMs}ms, ready ${readyMs}ms, unlock ${unlockMs}ms (${pin.verdict}), caught up ${catchupMs}ms, copies ${copies}, tabs ${tabs}, dominated by ${run.dominantPhase}`
   );
+  // A rig casualty ends the loop: the next kill would stand on a premise already known broken.
+  if (rig.length) break;
 }
 
 const fail = [];
 for (const r of runs) {
-  if (r.reLoginRequired) fail.push(`run ${r.run}: the cold start lost the SESSION - a login form, not the PIN gate`);
+  if (r.reLoginRequired && !knownP2.some((k) => k.startsWith(`run ${r.run}:`)) && !rig.some((k) => k.startsWith(`run ${r.run}:`)) && !jarIntact.some((k) => k.startsWith(`run ${r.run}:`)))
+    fail.push(`run ${r.run}: the cold start lost the SESSION - a login form, not the PIN gate`);
   if (r.pin === 'LOCKED') fail.push(`run ${r.run}: still locked after the PIN (${r.pinSaid})`);
   if (r.catchupMs === null)
     fail.push(`run ${r.run}: the message sent during the outage never arrived within ${CATCHUP_MS / 1000} s`);
   else if (r.copies !== 1) fail.push(`run ${r.run}: ${r.copies} copies of the message after the cold start`);
   if (r.appTabs !== 1) fail.push(`run ${r.run}: the relaunch left ${r.appTabs} app tab(s) - each is another MLS client`);
 }
+
+fail.push(...jarIntact, ...knownP2.map((k) => `${k} - the product's known P2, an unclean kill`));
 
 const vacuous = [];
 if (runs.length !== RUNS) vacuous.push(`only ${runs.length} of ${RUNS} runs completed`);
@@ -160,7 +221,7 @@ const spread = timings.length
     }
   : null;
 
-const verdict = vacuous.length ? 'VACUOUS' : fail.length ? 'FAIL' : 'PASS';
+const verdict = rig.length ? 'INVALID' : vacuous.length ? 'VACUOUS' : fail.length ? 'FAIL' : 'PASS';
 const observers = { W2: o2 };
 for (const r of runs) observers[`W1r${r.run}`] = r.observed;
 
@@ -175,6 +236,9 @@ const row = await recordObserved(
     // The claim this row was written to settle, answered against a named build by the record itself.
     boardClaimedOutlierMs: 77_700,
     reproducedTheOutlier: spread ? spread.slowestMs >= 70_000 : null,
+    blockedOnRig: rig,
+    knownP2,
+    signedOutWithJarIntact: jarIntact,
     vacuousBecause: vacuous,
     failures: fail,
   },
@@ -182,7 +246,7 @@ const row = await recordObserved(
 );
 console.log(
   `[tab3b] VERDICT ${row.verdict}${spread ? ` - catch-up ${spread.fastestMs}/${spread.medianMs}/${spread.slowestMs} ms (fastest/median/slowest over ${spread.runs})` : ''}${
-    vacuous.length ? ' - ' + vacuous.join('; ') : fail.length ? ' - ' + fail.join('; ') : ''
+    rig.length ? ' - BLOCKED-ON-RIG, replay on a fresh profile: ' + rig.join('; ') : vacuous.length ? ' - ' + vacuous.join('; ') : fail.length ? ' - ' + fail.join('; ') : ''
   }`
 );
 process.exit(row.verdict === 'PASS' ? 0 : 1);

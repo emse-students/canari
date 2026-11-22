@@ -45,7 +45,7 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { PostCardLedger, servedAt } from '$lib/posts/postCardSync';
-  import { getForm, checkSubmission } from '$lib/forms/api';
+  import { formSummaryOf } from '$lib/forms/formSummaries';
   import { attachedFormSources, attachedFormsLoader } from '$lib/posts/attachedForms.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -267,8 +267,7 @@
 
   // Each attached form read once and drawn once, keyed by form (`attachedFormsLoader`).
   const attachedForms = attachedFormsLoader(() => attachedFormSources(localPost), {
-    getForm,
-    checkSubmission,
+    readSummary: formSummaryOf,
   });
   /** The forms in the post's order and those read so far, for `PostContent`'s card zone. */
   const attachedFormsView = $derived({

@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="19/11/2026"
+  updated="21/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -1236,15 +1236,25 @@
             >
           </tr>
           <tr>
-            <td>Suggestions de partage (application iPhone)</td>
+            <td>Suggestions de partage et notifications de message (application iPhone)</td>
             <td>
               Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
               iOS pour les proposer dans son menu Partager - jamais le contenu d'un message. iOS
               peut aussi afficher ces noms dans les suggestions de Siri : Spotlight, le widget de
               suggestions et, selon vos réglages iOS, l'écran verrouillé. Activé par défaut,
-              désactivable dans Paramètres &gt; Préférences &gt; Suggestions dans le partage
+              désactivable dans Paramètres &gt; Préférences &gt; Suggestions dans le partage. Chaque
+              notification de message confie aussi à iOS le nom et la photo de son expéditeur,
+              l'identifiant de la conversation et, pour un groupe, son nom - jamais le contenu du
+              message - pour l'afficher avec la photo de l'expéditeur et la laisser passer un mode
+              Concentration si vous l'y autorisez ; iOS peut ensuite les suggérer de la même façon.
+              Le réglage « Suggestions dans le partage » ne concerne que le menu Partager : il
+              n'empêche pas cette transmission, comme sur Android. Rien de cela n'est envoyé à nos
+              serveurs
             </td>
-            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
+            <td
+              >Effacés à la déconnexion ; les suggestions de partage aussi à la désactivation du
+              réglage, pas les données des notifications de message</td
+            >
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>

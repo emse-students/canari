@@ -150,6 +150,22 @@ class GalleryPlugin: Plugin {
     }
   }
 
+  /// Removes what the message notifications donated for their communication style
+  /// (`ShareSuggestions.clearMessageNotifications`), at sign-out - Android's conversation shortcuts'
+  /// command, the same erase on both phones.
+  @objc public func clearConversationShortcuts(_ invoke: Invoke) {
+    GalleryLog.log.notice("[GalleryPlugin] clearConversationShortcuts")
+    ShareSuggestions.clearMessageNotifications { outcome in
+      switch outcome {
+      case .success(let removed):
+        invoke.resolve(["removed": removed])
+      case .failure(.deleteFailed(let code)):
+        invoke.reject(
+          "clearConversationShortcuts: the donations were not deleted", code: "deleteFailed\(code)")
+      }
+    }
+  }
+
   /// This app's page in Settings, where a refused camera, microphone or photo access is given back.
   @objc public func openAppSettings(_ invoke: Invoke) {
     GalleryLog.log.notice("[GalleryPlugin] openAppSettings")

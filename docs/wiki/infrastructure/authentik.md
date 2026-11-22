@@ -1225,6 +1225,15 @@ collection of name and first name, as one required tick, for new AND existing ac
 > ticks it once per version ([cicd](../cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)),
 > the cross-client rig's accounts tick it in `tools/cross-client-harness/idpform.mjs`, and
 > `test-pkce.py` gives its probe user the current version. The page `/legal/miconnect` is published on both estates.
+>
+> **MEASURED IN PRODUCTION, 2026-11-22 (read-only, 26 h after the `1.7.2` stable's apply):** all eight providers
+> read `authorization_flow = miconnect-authorization` (the binding survived a stable's apply, which the `1.7.0`
+> one had reset), the event log shows no `policy_exception` from either consent policy since (the only two, both
+> 2026-11-21 15:56Z, came from the PASSWORD stage's `miconnect-password-superuser`, another flow), and **83 accounts
+> carry `cgu_version` `2026-11-20`, the text the stage stamps**: real people were shown the page and accepted it, with
+> 109 `authorize_application` events since the apply and no stuck sign-in. The way to take the reading again is the
+> read-only `authentik_core_provider` join on `authentik_flows_flow` (`default_transaction_read_only=on`) and a
+> `GROUP BY attributes->>'cgu_version'` on `authentik_core_user`: counts only, never a name.
 
 - **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, named by the providers
   `50-providers.yaml` binds to it (above) instead of `default-provider-authorization-implicit-consent`. The enrolment flow

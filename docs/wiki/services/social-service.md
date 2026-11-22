@@ -869,7 +869,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   branch, so the usual case cancelled id -1.)
 - **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
   between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
-  `withdraw`s it, `cancelAllMessageNotifications` (the app coming to the front) `forgetAll`s, and the
+  `withdraw`s it, an ENDING `end`s it (below), a SIGN-OUT `clear`s every record, and the
   user's swipe does too, through the delete intent of a conversation banner
   (`ACTION_BANNER_DISMISSED`, then `forgetPostedBanner`) - otherwise the next post would bring back
   the lines the user dismissed.
@@ -882,13 +882,13 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   process with no record logs nothing (`forget` says whether it dropped one). A post whose dismissal
   broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
 - **A banner this process removed is not asked of the shade again** (`ReadElsewhereMarks.withdrawn`,
-  and every conversation after `forgetAll`): the shade lags a `cancel` as it lags a `notify`, so its
+  and every conversation after a sign-out's `clear`): the shade lags a `cancel` as it lags a `notify`, so its
   copy is stale. A second dismissal of the same banner - a salon's `channel.read` on the socket, then
   its `channel_read` push - finds nothing and says so at debug only (`no notif`), where it used to
   log a second `notif removed`; a post rebuilds on nothing, and the pending reply's re-post does not
   bring the banner back. Two cancels BY ID close what that blind spot could hide (round-7 review):
-  `forgetAll` cancels every banner it recorded by id under the lock (the sweep of the shade before
-  it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
+  `clear` (the sign-out) cancels every banner it recorded by id under the lock (the sweep of the shade
+  beside it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
   cancels the conversation's stable id, silently - the system orders a cancel by id after its
   `notify`, where a shade read is not ordered at all.
 - **The pending reply** (`repostReplyPending`) asks the record FIRST, under the lock, for both its
@@ -964,8 +964,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     the post delay would meet the old record, so the duration would carry the ordering.
 
   The rule, with no assumption about latency: EVERY cancel of a recorded banner (a read's
-  `recordThenCancel`, a dismissal's `withdraw`, a delivery's `replyDelivered`, the answer, the app's
-  start in `forgetAll`) first asks the shade whether the platform holds it. A held banner is posted
+  `recordThenCancel`, a dismissal's `withdraw`, a delivery's `replyDelivered`, the answer) first asks the shade whether the platform holds it. A held banner is posted
   again, silently and through the one rebuild (`rebuildBanner`), which ends the hold, and it STAYS
   recorded. The next event asks again, and either finds it released and cancels it, or updates it
   again. None forgets it. WHAT THE RE-POST DRAWS IS WHAT THE RECORD HOLDS (round 15):
@@ -987,10 +986,10 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     inline reply) posts on the held banner's channel instead. That post ends the hold, and the switch
     is left to the next post. Otherwise the switch's cancel would be dropped, and the re-enqueued old
     record would bury the new line.
-  - The app's start takes ONE shade snapshot for every "held?" (only the system sets the flag) and
-    leaves held banners out of its sweep. `releaseUnrecordedHold` then asks THE RECORD FIRST (round
-    14, B2): a banner it holds was re-posted and kept by `forgetAll`, and that re-post may land at
-    once and read as released - cancelling it then left a record of a banner that was gone. Only one
+  - (Until 2026-11-21 the app's start swept the shade with one snapshot for every "held?" and a
+    `releaseUnrecordedHold`; opening the app clears no conversation banner any more, so both are gone.)
+    <!-- the paragraph below described that sweep; what survives of it is the rule above -->
+    Only one
     the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
     is cancelled; still held, it is re-posted empty and recorded under its conversation.
 
@@ -1019,9 +1018,6 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     legacy reactor sending `sentAt` 0, can make the second post rebuild on the shade's copy from
     before the cancel (`reactionPosted` lets the shade answer again once a post went out, and both
     may still be queued). Closing it costs a full reaction record, for a window of milliseconds.
-  - **A reaction posted milliseconds before the app's start sweep.** It is not yet in the sweep's
-    snapshot and survives it. The app is open, nothing is lost, and `forgetAll`'s cancel by id
-    (round 16) covers every reaction this process recorded.
   - **A late read clears a newer lone reaction.** A read handed over after a reaction it predates
     removes that reaction's notification. This is inherent to the decision that the reaction's alert
     goes with the conversation: a reaction carries no server instant to weigh. The reaction itself
@@ -1036,15 +1032,63 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
   sent is newer and stays, and the banner is rebuilt silently with it.
-- **Coming to the front removes every message, mention, ring and reaction banner, read or not (by
-  design, `MainActivity.onResume` -> `cancelAllMessageNotifications`), and says so (2026-11-21).** A
-  banner posted in the background was gone about a second after the app came to the front on the Mi
-  9T (`1.7.3-alpha.3`) with no line saying why; this sweep was the remover (not the #3912 read
-  dismissal). Each removal now logs `cancelAllMessageNotifications: removed id=<n> channel=<c>
-  conversation=<ref, "?" when unknown> - the app came to the foreground`. Whether opening the app should clear a
-  conversation nobody read is a product question, not settled here: the unread badge still counts
-  it. A banner therefore cannot be on screen while the app is in front, which is why the inline-reply
-  reading over the open app needs the banner held by a direct reply (the sweep spares those).
+- **OPENING THE APP CLEARS NO CONVERSATION BANNER (owner, 2026-11-21: "N'effacer que les lues"; Messenger
+  and Signal behave so).** `MainActivity.onResume` used to cancel every message, mention and reaction
+  banner, read or not, and logged nothing: a banner posted in the background was gone a second after
+  the app came to the front (Mi 9T, `1.7.3-alpha.3`). It now calls `retireTakenOverNotifications`,
+  and a banner goes only with ITS conversation. What removed each kind, and what removes it now:
+
+  | kind | removed by the sweep | now removed by |
+  | --- | --- | --- |
+  | a message banner (channel `messages`) | yes | the conversation opened on this device (the page's `read_here` hand-over to `readElsewhereFromWebSocket`), read on another device (`read_watermark`, `channel.read`, the silent-from-self push), answered, "mark as read", the user's swipe; a conversation that ENDED (below) |
+  | a mention (channel `mentions`) | yes | the same, they share the conversation's id |
+  | a reaction (channel `reactions`) | yes | with its conversation, by the round-14 rule above; an ended conversation takes it too |
+  | the generic "message to read" banner (no content decrypted) | yes | the same - it is posted under the conversation's id too; the real banner replaces it |
+  | the group summary | yes | follows its children (`refreshBadgeSummary` at each conversation cancel) |
+  | an incoming-call ring (channel `calls`) | yes | **still on the app's coming to the front**: the in-app overlay rings now and the ring's own screen must not outlive it; its end (`call_ring_end`), the answer and the decline also remove it. No missed-call notification exists, so no call banner stays behind |
+  | the outbox nudge, "a new device was added", the wake-up "could not be loaded", the background worker's failure | yes | **still on the app's coming to the front**: each invites to open the app, which satisfies it, and none names a conversation; the nudge also goes when the outbox mirror empties |
+  | a Welcome / invitation | not on these channels (never swept) | unchanged |
+
+  **A conversation that ENDS takes its banners with it** - deleted, left, excluded, its salon or
+  community gone: the page watches the conversation list every ending writes to
+  (`endedConversations.ts`; the effect lives in `conversationEndingsWatch.svelte.ts`, started by `ChatBackgroundService`; keyed by id, so a re-keyed row is
+  not an ending) and hands each ended id to its OWN native entry (`end_conversation_notifications`,
+  Kotlin `endConversationNotifications`): the banner (a pending reply and a held banner included),
+  the reaction notification and the summary's share go UNCONDITIONALLY, and **NO READ MARK is
+  recorded** - an ending is not a read, a mark is a process-lifetime suppressor, and one written for
+  an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
+  The event decides, never a timer. Two lines, two facts: the page logs the DECISION
+  (`[NOTIF] conversation <id> ended - taking its notifications down`, in the effect's `onEnded`),
+  and Kotlin logs the OUTCOME (`endConversationNotifications: ... ended, banner id=`, -1 when none
+  was recorded).
+  **SIGNED OUT, NOTHING ENDED** (`watchEndings`): a lost session (the resume that finds no native
+  session) clears the conversation map in the same tick `isLoggedIn` goes false, so every id
+  "vanishes" although nothing ended; the watcher ends nothing while signed out and forgets what it
+  knew. **NOTHING ENDS A BANNER BY WHAT THE LIST FAILS TO SHOW AT BOOT** (re-review of #3951): a
+  reconcile against "the conversations the page lists" ended live banners - a first DM from a new
+  correspondent is listed only after the catch-up (FCM cache), a failed restore still reads as
+  restored, a salon is listed once its community answers - and a row restored as `removed` can be
+  re-admitted by a Welcome processed later in the catch-up, so neither is acted on. A conversation
+  that ended while the app was closed, or is already gone when the app boots, keeps its banner
+  until it is swiped away (nothing reads it any more; the residual is
+  [a P3 entry](../backlog.d/banners-of-a-conversation-gone-before-the-watcher-saw-it.md)).
+  **A `removed` ROW ENDS BANNERS ONLY ON POSITIVE EVIDENCE, AND A RE-KEY ENDS NONE** (4th review):
+  the watcher is handed two facts, never infers them, and remembers which ids it ENDED (an unconfirmed `removed` row stays not-ended, so a later purge or confirmation still ends it; facts are dropped when used, or at sign-out; a confirmation is read at the NEXT look and dropped by it, so it must be written in the same synchronous step as the `removed` row). `retireConversation({ confirmed: true })` is
+  passed by the writers holding a confirmed ending (a Remove commit, an announced exclusion, a
+  group deletion the server reported or a peer announced); a miss (a send refused as evicted, a
+  delivery-service refusal; `EVICTION_EVIDENCE[...].missed`) does not, because a Welcome can re-admit the row and a stale notice is the
+  safer error (principle 2). A Welcome folding a duplicate DM onto the joined group, and the boot
+  merge, CHANGE the id: `recordRekey(oldId)` tells the watcher the thread continues, and the old
+  id's banners stay (the native layer cannot re-tag them).
+  **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
+  by `PushRegistrationEnd.endForSignOutFromRust`: every message, mention and reaction notification,
+  the summary, the records and the read marks), since nothing else would before the next account.
+  Every cancel path, the early returns included, refreshes the summary and the badge (a `finally`).
+  **iOS does the same** (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
+  call's ring alert and the pending-sync notice and recomputes the badge; the page's `read_here` and `conversation_ended` reach
+  `cancel_conversation_notifications`, which takes the conversation's delivered notifications down by
+  thread ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)).
+  In split-screen the activity does not resume either, so the page's hand-over is the only trigger there.
 - **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
   `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
   its reaction notification too: an answer, a read that cancels the banner or finds it held after
@@ -1064,11 +1108,11 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     and dismissal paths alike, so a reaction post cannot fall between the decision and the cancel.
   - A reaction post rebuilds on the shade, which lags a `cancel`: a reaction removed a moment before
     came back with the next one. The record now says when the shade's copy is stale
-    (`reactionWithdrawn` on every cancel, every reaction at the app's start sweep): the next post
+    (`reactionWithdrawn` on every cancel, every reaction at a sign-out's `clear`): the next post
     builds on nothing (`reactionBaseOf`), and the shade answers again once one was posted on that
-    fresh base (`reactionPosted`). The app's start also cancels BY ID every reaction this process
-    posted since the last sweep (`forgetAll`), as it does the banners: its sweep reads a shade that
-    lags a `notify` (round 16).
+    fresh base (`reactionPosted`). A sign-out cancels BY ID every reaction this process
+    posted (`clear`), as it does the banners: the sweep beside it reads a shade that lags a `notify`
+    (round 16).
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
@@ -1131,6 +1175,7 @@ mark is handed over, moved or not, and a peer's is not), `nativeNotification.tes
 | GET | `/api/forms/:id` | Get form definition |
 | POST | `/api/forms/:id/submit` | Submit form (with optional Lydia or cash payment) |
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
+| GET | `/api/forms/:id/held-answers` | An anonymous form's answers waiting for their batch, and the batch size (managers only; [forms](../frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
 A form's `items` holds questions AND text or image blocks (`text_block`, `image_block`): a block is

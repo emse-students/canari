@@ -2972,7 +2972,6 @@ export const SALON_SESSION_NARRATION = [
   // The sender's own row going out and settling under the server's id. A `failed` or `removed` echo
   // is another spelling and stays dirt.
   /^\[SALON-ECHO\] [0-9a-f]{8}… (?:sending|settled as [0-9a-f]{8}…)$/,
-  /^\[SALON-REPEAT\] the server echoed client id [0-9a-f]{8}\.\.\.: a repeated send is answered with its row - \d+ waiting repeat\(s\) released$/,
   /^\[channelSettings\.loadChannelAccess\] channel_[0-9a-f]{8}…$/,
   /^\[channelSettings\.addAllowedUser\] \{"channelId":"channel_[0-9a-f]{8}…","userId":"[0-9a-f]{8}…"\}$/,
   /^\[CHANNEL\] #[0-9a-f]{8}… updated - canWrite=(?:true|false|unchanged) writePolicy=\w+$/,

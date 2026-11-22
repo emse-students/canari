@@ -34,3 +34,5 @@ the same thirteen exits show no `FORTIFY` line.
 Back at a root tab, the pid the same throughout, each logging `MainActivity: Back at the root with no
 history on API 36 - moving the task to the background`; 0 `onDestroy`, 0 `FORTIFY`. **Still owed:** a
 way out of the app that reaches `onDestroy` with the WebView's render thread alive.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): no new way out of the app was found during the whole sitting (one induced crash only, not a reproduction); recommendation to the lead: delete this entry.**

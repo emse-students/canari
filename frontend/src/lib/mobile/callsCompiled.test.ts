@@ -316,8 +316,13 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
     expect(end).not.toContain('groupId');
   });
 
-  it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {
-    expect(pushMm).toContain('[deepLink hasPrefix:@"fr.emse.canari://chat"]');
+  it('app activation retires the ring alert by its canariCallId, never by a chat link', () => {
+    const activation = pushMm.slice(
+      pushMm.indexOf('void CanariPushCancelMessageNotifications(void) {')
+    );
+    expect(activation.slice(0, activation.indexOf('\n}\n'))).toContain(
+      'userInfo[@"canariCallId"] != nil'
+    );
     expect(nse).toContain('"fr.emse.canari://chat/\\(prefix)\\(id)"');
   });
 });

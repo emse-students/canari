@@ -47,7 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   answers = {
     get_fcm_token: 'fcm-token-1',
-    end_push_registration: true,
+    end_push_registration: { deleted: true, eraseTicket: 1, filesError: null },
     complete_owed_push_token_deletion: true,
   };
   tauriInvokeStub.mockImplementation((cmd?: string) =>
@@ -84,9 +84,9 @@ describe('a sign-out on the device', () => {
   });
 
   it('logs an error when the deletion is owed rather than done, and does not reject', async () => {
-    answers.end_push_registration = false;
+    answers.end_push_registration = { deleted: false, eraseTicket: 1, filesError: null };
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(endPushRegistration('chosen')).resolves.toBeUndefined();
+    await expect(endPushRegistration('chosen')).resolves.toBe(1);
     expect(error.mock.calls.some(([line]) => String(line).includes('OWED'))).toBe(true);
     error.mockRestore();
   });
@@ -94,7 +94,7 @@ describe('a sign-out on the device', () => {
   it('logs an error when the native step fails, and does not reject', async () => {
     tauriInvokeStub.mockImplementation(() => Promise.reject(new Error('native failure')));
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(endPushRegistration('chosen')).resolves.toBeUndefined();
+    await expect(endPushRegistration('chosen')).resolves.toBeNull();
     expect(error).toHaveBeenCalled();
     error.mockRestore();
   });

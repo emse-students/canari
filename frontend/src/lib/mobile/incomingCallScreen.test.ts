@@ -101,9 +101,9 @@ describe('the call screen never outlives its ring', () => {
   it("the app's resume closes every ring's screen before it forgets the rings", () => {
     const body = between(
       push,
-      'fun cancelAllMessageNotifications(context: Context)',
+      'fun retireTakenOverNotifications(context: Context)',
       'CallRingAnswer.forgetAll(context)',
-      'cancelAllMessageNotifications'
+      'retireTakenOverNotifications'
     );
     expect(body).toContain('CallRingPlayer.rings.clearNative {');
     expect(body).toContain('IncomingCallActivity.finishFor(ringing,');

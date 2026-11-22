@@ -343,6 +343,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/pre-commit-restage.test.sh
 	@bash .github/scripts/tests/local-ci.test.sh
+	@bash .github/scripts/tests/machine-slot.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
 	@bun test ./tools/play-vitals/
