@@ -1252,9 +1252,17 @@ describe('the scanner', () => {
   });
 });
 
+/**
+ * THE SCAN RUNS ONCE, AT COLLECTION, which no test deadline covers. It walks and reads every native
+ * source from disk; inside a test, twice, that walk was charged to the 5 s timeout, and on a loaded
+ * machine it outlasted it (docs/wiki/test-suite-reform.md, the sixth load reading).
+ */
+const usedReviews = new Map<string, number>();
+const nativeFindings = scan(usedReviews);
+
 describe('native log lines in every build', () => {
   it('carry no message text, name, emoji, seed, secret or token', () => {
-    const findings = scan();
+    const findings = nativeFindings;
     expect(
       findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr.slice(0, 140)}\``)
     ).toEqual([]);
@@ -1263,8 +1271,7 @@ describe('native log lines in every build', () => {
   it('covers exactly the lines each reviewed expression was read on', () => {
     // A stale entry, or a count above what is there, is a free pass waiting for the next line that
     // happens to spell it; a count below means a line nobody read rides an old review.
-    const used = new Map<string, number>();
-    scan(used);
+    const used = usedReviews;
     expect(
       [...REVIEWED.entries()]
         .filter(([k, n]) => (used.get(k) ?? 0) !== n)

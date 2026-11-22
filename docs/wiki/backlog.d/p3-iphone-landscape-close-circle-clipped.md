@@ -17,3 +17,5 @@ whether `1.6.12` draws it the same. Cosmetic: the control taps.
 inset it ignores, and re-read on the iPhone 12. If `1.6.12` draws it whole, it is a regression of
 `1.7.0` and comes back to that version. Mechanism of the turned screens:
 [screen-orientation](../frontend/screen-orientation.md).
+
+**2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill):** NOT read - WDA cannot turn the phone ("Unable To Rotate Device"; Control Center is out of its reach), so no screen was seen in landscape.

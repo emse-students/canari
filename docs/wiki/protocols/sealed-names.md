@@ -496,3 +496,12 @@ phone through the app link: the card names the group).
 - **The minimum client version for step 3** (the server stops knowing group names): **the version
   carrying step 1 and the creation dating (step 2).** An older build reads only the server's list, and
   would show unnamed groups.
+
+**Reading, iPhone 12, `1.7.3-alpha.3`, dev ([S20](../device-verification.md#the-iphone-readings-of-2026-11-21-173-alpha3-the-invite-link-fragment-and-a-banner-reply)):**
+on the phone, `Generate link` in a group's settings produced `https://dev.canari-emse.fr/g/join/<token>#name=<name>`. Pasted into the
+group, the in-chat card named the group; a link with a FORGED fragment (`#name=Forged+Fragment+Name`) made both the card and the
+join page (`/g/join/<token>`, opened by tapping the card in the app) read the forged name, which proves the fragment, not the server,
+is the source; the same token with no fragment still named the real group (the legacy branch, the server still answers). **Not read:**
+the link opened on a SECOND phone through the app link (one bench phone; the app's entitlements claim only production hosts), the
+sign-in survival of the fragment from a signed-out reader (web rig), the `[LEGACY]` log line (ring not flushed), and the old-link "a group"
+rendering (it waits for the part that stops the server naming groups).

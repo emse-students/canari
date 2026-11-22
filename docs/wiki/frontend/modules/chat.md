@@ -930,8 +930,7 @@ subdivision flag's tag characters (U+E0020-U+E007F) survive in the app and not i
 A media envelope holds ONE file (several files are several messages), so there is no `N photos` line.
 **A reply quote already stored as `[Média]` stays as persisted:** it is written once, into the reply,
 and is not rebuilt. Tests: `envelope.mediaPreview.test.ts`, and `push_text.rs` / `proto_fields.rs`.
-**Owed: one look at the list and a banner on a phone** (backlog entry
-`reading-owed-media-preview-names-the-kind`); no reading has been taken.
+**Read on both phones (2026-11-22, `1.7.3-alpha.5`; Mi 9T 2026-11-20 in French, iPhone 12 in English):** the list row, the reply strip and the stored quote, and the native banner give the same words (`GIF`, `Video: caption`, `File: name`; a file with a caption drops its name, `Attachment: caption`).
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
