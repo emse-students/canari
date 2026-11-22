@@ -30,6 +30,7 @@ import { withoutComments } from '$lib/styles/markupSources';
 const CONTAINER = 'src/lib/components/layout/PageContainer.svelte';
 const PANEL = 'src/lib/components/posts/ConversationsMiniPanel.svelte';
 const CSS = 'src/app.css';
+const FEED = 'src/routes/posts/+page.svelte';
 
 const read = (path: string) => withoutComments(readFileSync(path, 'utf8'));
 
@@ -53,5 +54,43 @@ describe('the page column and the aside that sticks to it read one number', () =
     const markup = read(PANEL);
     expect(markup).toContain('top-(--page-column-top)');
     expect(/(?:^|\s)(?:md:|lg:|xl:)?top-\d/.test(markup)).toBe(false);
+  });
+
+  it('starts the feed tab row by cancelling the column top with the token, never a number', () => {
+    // The 2026-11-22 report (an iPhone without Liquid Glass, an app before 1.6.9): nothing cancelled
+    // the column's top padding, so the tab pill sat 32 px under the opaque header. Cancelled with a
+    // raw `-mt-6`, it is right only while the token says 1.5rem.
+    const markup = read(FEED);
+    expect(markup).toContain('-mt-(--page-column-top)');
+    expect(/(?:^|\s|')(?:md:|lg:|xl:)?-mt-\d/.test(markup)).toBe(false);
+  });
+});
+
+describe('the no-glass path changes the paint of the chrome, never its geometry', () => {
+  // WHICH PHONE GETS WHICH CHROME (docs/wiki/frontend/design-reference.md): a WebView without
+  // `backdrop-filter`, or a reader asking for less transparency, gets opaque chrome from these two
+  // blocks. If either set a length, an opaque bar would keep space sized for a translucent one, or
+  // the reverse - the bands of the 2026-11-22 report. Only the `--glass-*` paint variables move.
+  const css = readFileSync(CSS, 'utf8');
+  const block = (opener: string) => {
+    const start = css.indexOf(opener);
+    expect(start).toBeGreaterThan(-1);
+    let depth = 0;
+    for (let i = css.indexOf('{', start); i < css.length; i++) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}' && --depth === 0) return css.slice(start, i + 1);
+    }
+    throw new Error(`unclosed block ${opener}`);
+  };
+  const declared = (text: string) =>
+    [...text.matchAll(/(--[\w-]+|[a-z-]+)\s*:(?!:)[^;{}]*;/g)].map((m) => m[1]);
+
+  it.each([
+    '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))',
+    '@media (prefers-reduced-transparency: reduce)',
+  ])('%s sets glass paint variables only', (opener) => {
+    const names = declared(block(opener));
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.filter((n) => !n.startsWith('--glass-'))).toEqual([]);
   });
 });
