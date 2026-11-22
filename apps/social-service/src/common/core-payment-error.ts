@@ -73,6 +73,13 @@ export const LYDIA_BUSINESS_NOT_VALIDATED = 'LYDIA_BUSINESS_NOT_VALIDATED';
 /** Mirrors core-service's `LYDIA_BUSINESS_BLOCKED`: `request/do` answered error 2701, a blocked Business. */
 export const LYDIA_BUSINESS_BLOCKED = 'LYDIA_BUSINESS_BLOCKED';
 
+/**
+ * Mirrors core-service's `CHECKOUT_REQUEST_INVALID` (`lydia-payment-provider.ts`): core refused the
+ * checkout on its own reading - a payload, an e-mail, a lifetime, its configuration - BEFORE calling
+ * Lydia, so nothing was created there.
+ */
+export const CHECKOUT_REQUEST_INVALID = 'CHECKOUT_REQUEST_INVALID';
+
 /** The body `code` of a failed core call, when core answered one. */
 function coreCodeOf(err: unknown): unknown {
   const data = (err as CoreAnswer | null)?.response?.data;
@@ -101,15 +108,19 @@ export function lydiaReadinessRefusal(
  *   outside core's `LYDIA_HTTP_NOT_A_REFUSAL` (`postForm`);
  * - `LYDIA_BUSINESS_NOT_VALIDATED` / `LYDIA_BUSINESS_BLOCKED`: Lydia's error 5 / 2701, answered before
  *   any request exists;
- * - `AMOUNT_OUT_OF_RANGE`: core refused the amount before calling Lydia.
- * Everything else core can answer - an untyped 400 (a payload or configuration core would not
- * read), a 401, any 5xx (its 502 for a `request/do` with no answer) - is NOT that promise.
+ * - `AMOUNT_OUT_OF_RANGE`: core refused the amount before calling Lydia;
+ * - `CHECKOUT_REQUEST_INVALID`: core refused the request on its own reading (a payload, an e-mail,
+ *   a lifetime, its configuration) before calling Lydia.
+ * Everything else core can answer - a 401/403 (the internal secret: a misconfiguration, read as
+ * unknown because that reading fails closed), any 5xx (its 502 for a `request/do` with no answer),
+ * an untyped 400 nothing promises about - is NOT that promise.
  */
 export const CHECKOUT_REFUSAL_CODES: ReadonlySet<string> = new Set([
   PAYMENT_PROVIDER_REFUSED,
   LYDIA_BUSINESS_NOT_VALIDATED,
   LYDIA_BUSINESS_BLOCKED,
   AMOUNT_OUT_OF_RANGE,
+  CHECKOUT_REQUEST_INVALID,
 ]);
 
 /**

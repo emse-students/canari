@@ -2695,6 +2695,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       'LYDIA_BUSINESS_NOT_VALIDATED',
       'LYDIA_BUSINESS_BLOCKED',
       'AMOUNT_OUT_OF_RANGE',
+      'CHECKOUT_REQUEST_INVALID',
     ])('records a typed %s refusal as unissued', async (code) => {
       const { service, rows, core } = lydia([released()]);
       core.createAnswer = coreAnswered(400, { code, message: 'refused' });
@@ -2704,6 +2705,24 @@ describe('FormsService - the seat a pending payment holds', () => {
         paymentRequestId: null,
         paymentCancelOrigin: 'unissued',
       });
+    });
+
+    // A resume core refused before calling Lydia (no payer e-mail it would send) created nothing:
+    // the answer stays resumable, never `issue-unknown`.
+    it('keeps an answer resumable when core refuses the resume with CHECKOUT_REQUEST_INVALID', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(400, {
+        code: 'CHECKOUT_REQUEST_INVALID',
+        message: 'Lydia request/do requires payerRecipient (email or phone)',
+      });
+      await expect(resume(service)).rejects.toMatchObject({ status: 400 });
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelOrigin: 'unissued',
+      });
+      core.createAnswer = null;
+      await expect(resume(service)).resolves.toMatchObject({ submissionId: 'ans' });
+      expect(rows[0].paymentStatus).toBe('pending');
     });
 
     // THE WEBHOOK RACE: Lydia's callbacks about the OLD request land after the new one exists.

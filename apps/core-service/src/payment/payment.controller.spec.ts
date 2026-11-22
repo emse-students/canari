@@ -174,6 +174,24 @@ describe('PaymentController.createCheckout', () => {
     expect(createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  // Refused before Lydia: TYPED, so social-service releases the attempt instead of reading an
+  // untyped 400 as an outcome unknown.
+  it.each([
+    ['a malformed payerEmail', { payerEmail: 'a@b' }],
+    ['a payload with no lineItems', { lineItems: undefined }],
+    ['a zero lifetime', { expireAfterSeconds: 0 }],
+  ])('refuses %s with the typed CHECKOUT_REQUEST_INVALID', async (_label, over) => {
+    const controller = makeController(jest.fn());
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        ...(over as object),
+      } as Parameters<typeof controller.createCheckout>[0])
+    ).rejects.toMatchObject({ response: { code: provider.CHECKOUT_REQUEST_INVALID } });
+  });
+
   it('refuses a pathological payerEmail of 100k characters quickly', async () => {
     const controller = makeController(jest.fn());
     const started = Date.now();

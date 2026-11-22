@@ -39,6 +39,7 @@ import {
   LydiaCashierAddedUnconfirmedException,
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
+  checkoutRequestInvalid,
 } from './lydia-payment-provider';
 import { RouteParams, isUuidShaped } from '../common/route-params';
 
@@ -899,15 +900,18 @@ export class PaymentController {
     },
     @Headers('x-internal-secret') secret?: string
   ) {
+    // A 401/403 here is left UNTYPED on purpose: it is a misconfiguration of the caller (the
+    // internal secret), and social-service reads it as an outcome unknown - the reading that fails
+    // closed. Every refusal of the REQUEST below is the typed `CHECKOUT_REQUEST_INVALID`.
     assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
-      throw new BadRequestException('Invalid payload');
+      throw checkoutRequestInvalid('Invalid payload');
     }
     if (
       body.expireAfterSeconds !== undefined &&
       (!Number.isInteger(body.expireAfterSeconds) || body.expireAfterSeconds <= 0)
     ) {
-      throw new BadRequestException('Invalid expireAfterSeconds');
+      throw checkoutRequestInvalid('Invalid expireAfterSeconds');
     }
 
     if (!(await this.paymentService.isConfigured())) {
@@ -919,7 +923,7 @@ export class PaymentController {
       payerEmail &&
       (payerEmail.length > PAYER_EMAIL_MAX_LENGTH || !PAYER_EMAIL_RE.test(payerEmail))
     ) {
-      throw new BadRequestException('Invalid payerEmail');
+      throw checkoutRequestInvalid('Invalid payerEmail');
     }
 
     try {

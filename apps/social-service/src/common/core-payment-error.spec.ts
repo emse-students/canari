@@ -10,6 +10,7 @@ import { join } from 'path';
 import {
   AMOUNT_OUT_OF_RANGE,
   CHECKOUT_REFUSAL_CODES,
+  CHECKOUT_REQUEST_INVALID,
   coreRefusedRequest,
   LYDIA_BUSINESS_BLOCKED,
   LYDIA_BUSINESS_NOT_VALIDATED,
@@ -186,6 +187,7 @@ describe('coreRefusedRequest', () => {
     LYDIA_BUSINESS_NOT_VALIDATED,
     LYDIA_BUSINESS_BLOCKED,
     AMOUNT_OUT_OF_RANGE,
+    CHECKOUT_REQUEST_INVALID,
   ])('reads a 400 typed %s as refused', (code) => {
     expect(coreRefusedRequest(coreAnswer(400, { code, message: 'refused' }))).toBe(true);
   });
@@ -230,5 +232,26 @@ describe('coreRefusedRequest', () => {
     for (const code of CHECKOUT_REFUSAL_CODES) {
       expect(provider).toMatch(new RegExp(`export const \\w+ = '${code}'`));
     }
+  });
+
+  // Every refusal core raises BEFORE calling Lydia must carry a typed code: an untyped one reads
+  // here as an outcome unknown, so a typo'd e-mail would hold a boutique attempt open and make a
+  // form answer never resumable. Reads the three places a checkout is refused before `postForm`.
+  it.each([
+    ['payment.controller.ts', 'async createCheckout(', '\n  /**'],
+    ['lydia-payment-provider.ts', 'async createCheckoutSession(', 'this.postForm'],
+    ['payment.service.ts', 'function toGenericLineItem(', '\n}'],
+  ])('core-service %s refuses a checkout before Lydia only with a typed code', (file, from, to) => {
+    const source = readFileSync(
+      join(__dirname, '..', '..', '..', 'core-service', 'src', 'payment', file),
+      'utf8'
+    );
+    const start = source.indexOf(from);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf(to, start);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toMatch(/new BadRequestException\(\s*[`'"]/);
+    expect(body).not.toMatch(/throw new Error\(/);
   });
 });

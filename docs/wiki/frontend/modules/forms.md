@@ -2792,9 +2792,13 @@ not name, and releases it `issue-unknown` (logged at WARN), which is never offer
 resuming it would make a second payable request for one answer repeatable. **The decision reads a
 CODE, never a status class** (`coreRefusedRequest`, `CHECKOUT_REFUSAL_CODES` in
 `apps/social-service/src/common/core-payment-error.ts`, review of #3949): only `PAYMENT_PROVIDER_REFUSED`,
-`LYDIA_BUSINESS_NOT_VALIDATED`, `LYDIA_BUSINESS_BLOCKED` and `AMOUNT_OUT_OF_RANGE` - each a 400 core
-answers on a fact it holds - mean "nothing created". An untyped 400, a 401, any 5xx, an answer with no
-URL and a transport failure are `issue-unknown`. Core used to answer a `request/do` whose answer never
+`LYDIA_BUSINESS_NOT_VALIDATED`, `LYDIA_BUSINESS_BLOCKED`, `AMOUNT_OUT_OF_RANGE` and
+`CHECKOUT_REQUEST_INVALID` (core refused the payload, the payer e-mail, the lifetime or its own
+configuration BEFORE calling Lydia) - each a 400 core answers on a fact it holds - mean "nothing
+created". A 401/403 (the internal secret: a misconfiguration, left unknown because that reading fails
+closed), any 5xx, an answer with no URL and a transport failure are `issue-unknown`. The frontend's
+`normalizePayerEmail` uses core's own `PAYER_EMAIL_RE` and length cap (a spec compares the two), so the
+client never sends an address core refuses. Core used to answer a `request/do` whose answer never
 came (a timeout, a reset, a Lydia 5xx) as an untyped **400** `Payment error: ...`, which a "any 4xx"
 reader took for a refusal while Lydia held a payable request; it now answers **502**
 (`PaymentController.createCheckout`), and the boutique's `openCheckoutAttempt` reads the same
@@ -2805,9 +2809,10 @@ answers anew, as before this feature.
 **The premise an orphan rests on**: a request Lydia created that the row does not name dies at Lydia
 before the hold that issued it ends - its lifetime is the hold minus `PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS`
 (120 s, `seat-hold.ts`), and core's `request/do` is bounded by `LYDIA_CALL_TIMEOUT_MS` (60 s) - but
-social-service's call to core (`internalCoreRequestConfig`) and core's calls back to social-service
-(`internalSocialRequestConfig`) carry NO axios timeout, so nothing on the Canari side bounds the wait
-end to end. The follow-up that writes the order_ref before the call removes the dependence on that
+the forms' issuing call to core (a bare `axios.post` with `internalCoreRequestConfig`, which sets no
+timeout) and core's calls back to social-service (`internalSocialRequestConfig`) carry NO axios
+timeout, so nothing on the Canari side bounds the forms' wait end to end. (The boutique's call goes
+through `HttpService`, registered with a 120 s timeout in `associations.module.ts`.) The follow-up that writes the order_ref before the call removes the dependence on that
 premise.
 
 **The state machine of an online answer** (`resumePayment`, `submit`, `markPaid`, the callbacks):
