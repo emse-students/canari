@@ -55,7 +55,7 @@
     return peers[0] ?? null;
   });
   const peerName = $derived(visible ? peer?.displayName || m.call_label() : '');
-  const statusText = $derived(callStatusText(call.kind, call.duration));
+  const statusText = $derived(callStatusText(call.kind, call.duration, peer?.displayName));
   /** An OS holding a microphone, either side, in place of the timer while it lasts. */
   const micNotice = $derived(
     callMicNotice(call.kind, call.localMicSuspended, call.peerMicSuspended, peerName)

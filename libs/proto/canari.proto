@@ -122,6 +122,7 @@ enum CallEndReason {
   CALL_END_REASON_DECLINED     = 2; // the callee refused the ring
   CALL_END_REASON_NOT_ANSWERED = 3; // the ring window closed with nobody answering
   CALL_END_REASON_BUSY         = 4; // the callee was in another call (ends the caller's ring)
+  CALL_END_REASON_NOT_CONNECTED = 5; // 1:1: answered, but the media never connected (an older build reads it as unspecified)
 }
 
 message CallMsg {

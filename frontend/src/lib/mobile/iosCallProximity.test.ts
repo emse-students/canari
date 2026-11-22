@@ -23,7 +23,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('callHoldsProximity', () => {
   it('holds while the call has the microphone and the voice is on the receiver', () => {
-    for (const kind of ['ringing', 'connecting', 'live', 'reconnecting'] as const) {
+    for (const kind of ['ringing', 'connecting', 'peer-lost', 'live', 'reconnecting'] as const) {
       expect(callHoldsProximity(kind, true, false)).toBe(true);
     }
   });

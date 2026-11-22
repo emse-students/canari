@@ -1,5 +1,5 @@
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import type { OutboxBlobRef, OutboxEntry } from './types';
+import type { NativeRefusal, OutboxBlobRef, OutboxEntry } from './types';
 
 // ---------------------------------------------------------------------------
 // Shared (de)serialization for persisted outbox rows.
@@ -120,7 +120,28 @@ export function encodeOutboxSensitive(
   }
   if (entry.take) payload.take = entry.take;
   if (entry.adoptedFromMirror) payload.adoptedFromMirror = true;
+  if (entry.nativeRefusal) payload.nativeRefusal = entry.nativeRefusal;
   return payload;
+}
+
+const NATIVE_REFUSALS: ReadonlySet<unknown> = new Set<NativeRefusal>([
+  'refused',
+  'not_encryptable',
+  'unrecorded',
+]);
+
+/**
+ * The value read as a {@link NativeRefusal} when it is one of the causes, `undefined` otherwise - the
+ * ONE allowlist both the payload decoder and the mirror adoption read a cause through.
+ */
+export function asNativeRefusal(value: unknown): NativeRefusal | undefined {
+  return NATIVE_REFUSALS.has(value) ? (value as NativeRefusal) : undefined;
+}
+
+/** `{ nativeRefusal }` when `value` is a cause, `{}` otherwise: an absent field stays absent. */
+function nativeRefusalField(value: unknown): { nativeRefusal?: NativeRefusal } {
+  const cause = asNativeRefusal(value);
+  return cause ? { nativeRefusal: cause } : {};
 }
 
 /**
@@ -160,6 +181,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
         : undefined,
     ...(payload?.take && Array.isArray(payload.take.sends) ? { take: payload.take } : {}),
     ...(payload?.adoptedFromMirror === true ? { adoptedFromMirror: true as const } : {}),
+    ...nativeRefusalField(payload?.nativeRefusal),
   };
 }
 
@@ -180,10 +202,15 @@ export const OUTBOX_CLEAR_PATCH_KEYS = [
  * True when a patch touches ONLY the clear scheduling columns ({@link OUTBOX_CLEAR_PATCH_KEYS}), so a
  * store can update them in place without decoding or re-encrypting the payload - which for a media
  * entry holds the whole file.
+ *
+ * An `undefined` CLEAR column is no change (the in-place update keeps it); an `undefined` PAYLOAD
+ * field is a removal (`{ nativeRefusal: undefined }` beside a count reset), which only the
+ * rewrite can make - so it makes the patch a payload one.
  */
 export function isOutboxClearPatch(patch: Partial<OutboxEntry>): boolean {
+  const clear = OUTBOX_CLEAR_PATCH_KEYS as readonly string[];
   const keys = Object.keys(patch).filter(
-    (k) => (patch as Record<string, unknown>)[k] !== undefined
+    (k) => (patch as Record<string, unknown>)[k] !== undefined || !clear.includes(k)
   );
   return (
     keys.length > 0 && keys.every((k) => (OUTBOX_CLEAR_PATCH_KEYS as readonly string[]).includes(k))
