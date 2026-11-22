@@ -21,6 +21,198 @@
         } catch (_) {}
       })();
     </script>
+    <!-- OLD ANDROID SYSTEM WEBVIEW GUARD (docs/wiki/frontend/mobile.md#an-old-android-system-webview-shows-an-update-screen-not-a-blank-page-owner-2026-11-21). The bundle needs
+         Chrome 111 or newer (Vite's default target, Tailwind 4, the MLS WASM module); on an older
+         engine the page stays blank and nothing is reported, because it is not a crash. This is
+         the one script that must parse on ANY engine, so it is ES5 only (webviewGuard.test.ts
+         parses it as ES5) and it runs before the bundle. Two triggers, neither a timer. (1) The
+         ONLY one that draws: an Android WebView whose user agent names Chrome below FLOOR, so the
+         "update the WebView" screen is never drawn for an engine that is not old. (2) LOG ONLY: a
+         parse failure of the app's own /_app/ module before the layout mounted, caught by error
+         and unhandledrejection listeners that are registered only when trigger 1 did not fire.
+         It is classified by type and source, never by message, and logged at error
+         ([webview-guard]); it never draws, because on an engine at or above FLOOR (or a plain
+         browser such as Samsung Internet) "update the WebView" would be wrong advice. Whether a
+         failed import() rejection carries the /_app/ asset in its stack depends on the engine, so
+         it may not match on some; trigger 1 is what covers a WebView like the S8's. The layout calls window.__canariWebViewGuard.mounted(), which removes the screen if
+         the app runs after all. Its strings are a small table pinned to messages/fr.json and
+         en.json by the same test. -->
+    <script>
+      (function () {
+        // CANARI_WEBVIEW_GUARD
+        // The oldest Chrome major the bundle runs on: Vite's default build target (chrome111),
+        // which Tailwind 4 and the MLS WASM module also need. Raise it with the build target.
+        var FLOOR = 111;
+        var PLAY_URL = 'https://play.google.com/store/apps/details?id=com.google.android.webview';
+        var SCREEN_ID = 'canari-webview-update';
+        var STRINGS = {
+          fr: {
+            title: 'Mettez à jour Android System WebView',
+            body: 'Canari ne peut pas démarrer : le composant Android System WebView de ce téléphone est trop ancien. Mettez-le à jour depuis le Play Store, puis rouvrez Canari.',
+            button: 'Ouvrir le Play Store',
+            version: 'Version détectée : {version}',
+          },
+          en: {
+            title: 'Update Android System WebView',
+            body: 'Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.',
+            button: 'Open the Play Store',
+            version: 'Detected version: {version}',
+          },
+        };
+
+        function logError(text) {
+          try {
+            if (window.console && console.error) console.error('[webview-guard] ' + text);
+          } catch (_) {}
+        }
+        function chromeMajor(ua) {
+          var m = /Chrome\/(\d+)/.exec(ua || '');
+          return m ? parseInt(m[1], 10) : null;
+        }
+        // The WebView marker ("; wv)") separates a WebView from Chrome, which updates itself.
+        // A desktop or iOS agent has no "Android".
+        function isAndroidWebView(ua) {
+          return /Android/.test(ua || '') && /; wv\)/.test(ua || '');
+        }
+        function isBelowFloor(ua) {
+          var major = chromeMajor(ua);
+          return major !== null && major < FLOOR;
+        }
+        // Where an error came from, never what it says: only a failure inside the app's own
+        // hashed assets can mean "this engine cannot read the bundle".
+        function isAppAsset(url) {
+          return /\/_app\//.test(String(url || ''));
+        }
+        // A parse failure (by TYPE) of an app asset: an error event names the file; a rejection
+        // of the entry import() carries it in its stack.
+        function isBundleParseFailure(error, filename) {
+          if (!error || error.name !== 'SyntaxError') return false;
+          return isAppAsset(filename) || isAppAsset(error.stack);
+        }
+
+        var shown = false;
+        var settled = false; // the layout mounted
+        function render(version) {
+          var lang = /^fr/i.test(navigator.language || '') ? 'fr' : 'en';
+          var t = STRINGS[lang];
+          var root = document.createElement('div');
+          root.id = SCREEN_ID;
+          root.setAttribute('role', 'alert');
+          root.style.cssText =
+            'position:fixed;top:0;right:0;bottom:0;left:0;z-index:10000;overflow:auto;' +
+            'background:#151b2c;color:#fff;padding:32px 24px;text-align:center;' +
+            'font-family:system-ui,sans-serif;line-height:1.5;box-sizing:border-box';
+          function add(tag, text, css) {
+            var el = document.createElement(tag);
+            el.appendChild(document.createTextNode(text));
+            el.style.cssText = css;
+            root.appendChild(el);
+            return el;
+          }
+          add('h1', t.title, 'font-size:22px;margin:48px 0 16px;color:#fac809');
+          add('p', t.body, 'font-size:16px;margin:0 0 24px');
+          // https, never the market scheme: wry lets the navigation start and the WebView then replaces
+          // the app with ERR_UNKNOWN_URL_SCHEME (appVersion.ts, PLAY_STORE_URL). In the Tauri shell
+          // the click goes to the opener plugin (the same command openExternal() calls, allowed by
+          // opener:allow-open-url), so the app is not navigated away; a plain browser follows href.
+          var button = add(
+            'a',
+            t.button,
+            'display:block;max-width:320px;margin:0 auto 24px;padding:14px 20px;' +
+              'border-radius:999px;background:#fac809;color:#151b2c;font-weight:700;' +
+              'text-decoration:none'
+          );
+          button.href = PLAY_URL;
+          button.addEventListener('click', function (event) {
+            var tauri = window.__TAURI_INTERNALS__;
+            if (!tauri || !tauri.invoke) return;
+            try {
+              tauri.invoke('plugin:opener|open_url', { url: PLAY_URL }).then(null, function (e) {
+                logError('opener refused the Play link: ' + e);
+              });
+              event.preventDefault();
+            } catch (e) {
+              // A synchronous throw: leave the click alone, so the href is followed.
+              logError('opener threw, following the link: ' + e);
+            }
+          });
+          if (version) {
+            add(
+              'p',
+              t.version.replace('{version}', version),
+              'font-size:13px;opacity:0.7;margin:0'
+            );
+          }
+          document.body.appendChild(root);
+        }
+        function show(version) {
+          if (shown || settled) return;
+          shown = true;
+          try {
+            if (document.body) render(version);
+            else
+              document.addEventListener('DOMContentLoaded', function () {
+                if (!settled) render(version);
+              });
+          } catch (_) {}
+        }
+        // Called by the root layout once it is up. If the screen was drawn, the floor was wrong
+        // for this engine: take it away and say so.
+        function mounted() {
+          settled = true;
+          var screen = document.getElementById ? document.getElementById(SCREEN_ID) : null;
+          if (screen && screen.parentNode) {
+            screen.parentNode.removeChild(screen);
+            logError('the app mounted on an engine the screen was drawn for; screen removed');
+          }
+        }
+        function onBundleFailure(major, webView) {
+          if (settled) return;
+          // LOG ONLY: the listeners exist only on an engine the floor did not already catch (the
+          // startup code draws and returns before registering them on a WebView below FLOOR), so
+          // a parse failure reaching here is a defect to report, never an old WebView to name.
+          logError(
+            'the app bundle failed to parse on an engine at or above the floor (' +
+              (webView ? 'WebView' : 'browser') +
+              ', Chrome ' +
+              (major === null ? 'unknown' : major) +
+              '): logged only, no screen drawn'
+          );
+        }
+
+        window.__canariWebViewGuard = {
+          FLOOR: FLOOR,
+          STRINGS: STRINGS,
+          chromeMajor: chromeMajor,
+          isBelowFloor: isBelowFloor,
+          isAndroidWebView: isAndroidWebView,
+          isBundleParseFailure: isBundleParseFailure,
+          mounted: mounted,
+        };
+
+        try {
+          var ua = navigator.userAgent;
+          if (!/Android/.test(ua)) return; // desktop and iOS: no-op
+          var detected = chromeMajor(ua);
+          var webView = isAndroidWebView(ua);
+          if (webView && isBelowFloor(ua)) {
+            show(String(detected));
+            return;
+          }
+          window.addEventListener(
+            'error',
+            function (event) {
+              if (isBundleParseFailure(event.error, event.filename))
+                onBundleFailure(detected, webView);
+            },
+            true
+          );
+          window.addEventListener('unhandledrejection', function (event) {
+            if (isBundleParseFailure(event.reason, '')) onBundleFailure(detected, webView);
+          });
+        } catch (_) {}
+      })();
+    </script>
     <!-- Only the native Tauri WebView draws edge-to-edge behind the system's own gesture/button
          area, so only there does env(safe-area-inset-*) answer a real question. A plain mobile
          browser tab already excludes that area from its own viewport - env() reports it there

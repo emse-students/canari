@@ -379,11 +379,19 @@ export class FormsController {
     return this.pricingFacts.listFormations();
   }
 
-  /** Returns whether the calling user has already submitted the specified form, with payment status. */
+  /**
+   * Returns whether the calling user has already submitted the specified form, with payment status.
+   * `?answers=1` (the fill page) adds the caller's OWN answers, read-only (`myAnswers`; always empty
+   * on an anonymous form).
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id/check')
-  async checkSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
-    return this.service.hasSubmission(id, xUserId);
+  async checkSubmission(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Query('answers') answers?: string
+  ) {
+    return this.service.hasSubmission(id, xUserId, answers === '1');
   }
 
   /** Submits a filled form on behalf of the calling user. */

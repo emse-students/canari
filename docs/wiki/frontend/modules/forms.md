@@ -1598,6 +1598,8 @@ le" column - present when the form allows changes or any row was changed. No not
 **Logs**: `[FORM_EDIT]` at entry, at each refusal (with its reason) and at the write (status, files
 claimed); the fill page logs under `FormView`.
 
+With the switch OFF the answer is still shown, read-only: [a respondent sees their own answer](#a-respondent-sees-their-own-answer-owner-2026-11-21).
+
 **Schema**: migration 166 (`166_form_answer_edit.sql`), ADDITIVE and therefore plain (not held):
 `forms."allowAnswerEdit" boolean NOT NULL DEFAULT false`, `submissions."editedAt" timestamptz
 NULL` and `submissions."priceLockedItemIds" jsonb NULL` (the price snapshot above). Reverse: drop the
@@ -1609,6 +1611,64 @@ on a paid answer, pending cash locked too, a full form keeping its seat, a hidde
 closed form, an anonymous form and a switch-off form refused, another person's answer 404, a
 cancelled answer, several answers edited separately, file claims, an edit queued behind a cash
 validation's row lock, and concurrent cash validations and edits with no lost write.
+
+## A respondent sees their own answer (owner, 2026-11-21)
+
+The owner, on an anonymous production form he had answered: *"Quand je retourne sur le formulaire
+(j'ai déjà répondu), il est vide. [...] je voudrais pouvoir voir ma réponse, même si l'éditeur
+m'interdit de la modifier."* Read against the owner's form decisions of the same day (the follow-ups
+to the read-only survey of 21 forms: G-RESULTS and the rest planned for 1.8.0, "Non, pas maintenant"
+for any open counter), this one cites **principle 1** ("chaque donnée que nous gardons est déclarée",
+and an anonymous form's promise *"the server cannot tell you who answered what"*), which wins over
+the convenience asked for wherever the two meet.
+
+**What the page did before (measured in the code, 2026-11-21).**
+
+| Form | Before | After |
+|---|---|---|
+| named, one answer, `paid` / `free` | drawn read-only (`GET :id/submission`) | the same, from `myAnswers`; the price-fixing questions carry the lock line |
+| named, one answer, `pending_cash`, `pending` or `paid_over_capacity` | **an EMPTY disabled form** (`GET :id/submission` reads `paid`/`free` only) | drawn read-only, lock line included |
+| named, several answers | nothing unless `allowAnswerEdit` and open ("Vos réponses" listed only changeable rows) | "Vos réponses" lists EVERY answer, open or closed, switch on or off, each with its payment status as a chip (`statusLabel` / `statusClass`, the responses table's own words and colours): "Voir" draws it read-only (banner with the same chip, "Fermer", no send bar), "Modifier" where the edit is offered |
+| anonymous, one answer, already answered | **an EMPTY disabled form** under "Réponse envoyée" - the owner's report | no questions: "Vous avez déjà répondu" and a note that the form is anonymous and Canari keeps no link between the account and the answer |
+| anonymous, several answers | a blank form (correct: it takes another) | unchanged |
+
+The page never showed an anonymous respondent an empty FILLABLE form: `hasSubmitted` (the
+`form_respondents` registry) already shut it. It showed an empty DISABLED one, which reads as "my
+answer was lost".
+
+**The server half.** `GET /api/forms/:id/check?answers=1` adds `myAnswers` to the check: every row
+`answerHoldingWhere` counts as an answer of the CALLER (`userId` in the query - another account's row
+is never among them, so another account reads exactly what an account with no answer reads), newest
+first, each the submitter's allowlist (`toSubmitterView`) plus `lockedItemIds` (`rowLockedItemIds`,
+the edit's own lock rule). Only when asked: the feed's cards call the same check and do not ask. On
+an ANONYMOUS form it is always `[]` and no submission is read (`noOwnAnswerOnAnonymous`): its rows
+name nobody. No new route, no migration, no version flag: an estate older than the field omits it,
+and the page then reads the single answer through `GET :id/submission` as it always did, logging
+`[LEGACY] myAnswers not served` at warn
+([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---own-answers-read-back---myanswers-2026-11-21)).
+
+**Anonymous forms: no copy of the answer on the device - owner decision, 2026-11-21.** A device
+copy written at submit (an account-scoped IndexedDB erased at sign-out) was built first and REMOVED
+before review: the owner chose to wait for the planned MLS conversation with oneself ("Attendre la
+discussion"), through which the answer will travel to the member's own devices, end-to-end encrypted,
+instead of living in one browser's storage. So today an anonymous answer, once sent, is shown back to
+nobody: the page says "already answered" from the registry's yes (`hasSubmitted`, a boolean that
+names no answer and no time), and the register and the privacy policy are unchanged (nothing new is
+kept anywhere). **The follow-up** is the backlog entry
+[the anonymous answer copy through the conversation with oneself](../../backlog.d/p3-forms-anonymous-answer-copy-through-the-conversation-with-oneself.md).
+
+**What an older app shows.** Nothing changes for it: it never asks `answers=1`, and `GET
+:id/submission` and `GET :id/my-answers` answer as before - a pending-cash single answer and an
+anonymous answer still draw an empty disabled form there.
+
+**Code**: `FormsService.hasSubmission(formId, userId, withAnswers)`, `ownAnswerViews` (shared with
+`myEditableAnswers`), `OwnAnswerView` (`submission.projection.ts`); `frontend/src/lib/forms/ownAnswers.ts`,
+the fill page's `shownAnswer`, `readOnly`, `answeredAnonymously` and `answerRows`. **Tests**:
+`answer-edit.integration.spec.ts` (the switch off, a pending-cash row read back with its lock,
+another account reading none, a closed form still read, several answers newest first, an anonymous
+form answered with none served), `forms.service.anonymous.spec.ts` (no row read on an anonymous form,
+one or several answers), `page.ownAnswer.svelte.test.ts` (each row of the table above, and an older
+estate). **Logs**: `[FORMS] own answers ...` (social-service), `FormView` on the page.
 
 ## The file question (2026-10-15)
 
