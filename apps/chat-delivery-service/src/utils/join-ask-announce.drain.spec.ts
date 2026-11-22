@@ -72,10 +72,13 @@ describe('the join-ask work a retiring replica still owes', () => {
     await expect(finishJoinAskWorkInFlight()).resolves.toBeUndefined();
   });
 
-  it('is what main.ts hands the drain as the work owed before exit', () => {
+  it('is part of what main.ts hands the drain as the work owed before exit', () => {
     const main = readFileSync(join(__dirname, '..', 'main.ts'), 'utf8');
     expect(main).toMatch(
-      /drainOnSigterm\(\s*app\.getHttpServer\(\),\s*undefined,\s*undefined,\s*finishJoinAskWorkInFlight\s*\)/
+      /drainOnSigterm\(\s*app\.getHttpServer\(\),\s*undefined,\s*undefined,\s*finishWorkOwedBeforeExit\s*\)/
     );
+    // ...whose first step is this work (`work-owed-before-exit.spec.ts` proves the order).
+    const owed = readFileSync(join(__dirname, '..', 'work-owed-before-exit.ts'), 'utf8');
+    expect(owed).toMatch(/await finishJoinAskWorkInFlight\(\);/);
   });
 });
