@@ -638,104 +638,116 @@
     {/if}
 
     <!-- The table: the shared rows-and-columns editor, the cells and prices drawn here. -->
-    <GridAxesTable
-      rows={grid.rows}
-      columns={grid.columns}
-      isDuplicate={(axis, label) =>
-        (axis === 'rows' ? duplicateRows : duplicateColumns).has(productGridLabelKey(label))}
-      onRename={renameEntry}
-      onAddBlank={(axis) => {
-        const added = addBlankEntry(grid, axis);
-        if (axis === 'columns') columnsChanged();
-        return added;
-      }}
-      onAddMany={addPasted}
-      onMove={(axis, from, to) => {
-        const moved = moveAxisEntry(grid, axis, from, to);
-        if (axis === 'columns') columnsChanged();
-        return moved;
-      }}
-      onRemove={removeEntry}
-      maxOf={axisMax}
-      rowPlaceholder={m.form_pgrid_row_placeholder()}
-      columnPlaceholder={m.form_pgrid_column_placeholder()}
+    <!-- A shared grid's columns are written to its siblings by label: locked until the orders are known. -->
+    {#if grid.columnSet && !orderedReady}
+      <p class="text-text-muted mb-2 text-xs" data-testid="columns-waiting">
+        {m.form_pgrid_colset_waiting()}
+      </p>
+    {/if}
+    <fieldset
+      class="m-0 min-w-0 border-0 p-0"
+      disabled={!!grid.columnSet && !orderedReady}
+      data-testid="grid-table-lock"
     >
-      {#snippet afterCornerHeader()}
-        {#if mode === 'per_row'}
-          <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
-            >{m.form_pgrid_price_header()}</th
-          >
-        {/if}
-      {/snippet}
-      {#snippet headerRow()}
-        {#if mode === 'per_column'}
-          <tr>
-            <th
-              scope="row"
-              class="text-text-main bg-cn-surface sticky left-0 z-1 pr-2 pb-2 text-left text-xs font-bold"
+      <GridAxesTable
+        rows={grid.rows}
+        columns={grid.columns}
+        isDuplicate={(axis, label) =>
+          (axis === 'rows' ? duplicateRows : duplicateColumns).has(productGridLabelKey(label))}
+        onRename={renameEntry}
+        onAddBlank={(axis) => {
+          const added = addBlankEntry(grid, axis);
+          if (axis === 'columns') columnsChanged();
+          return added;
+        }}
+        onAddMany={addPasted}
+        onMove={(axis, from, to) => {
+          const moved = moveAxisEntry(grid, axis, from, to);
+          if (axis === 'columns') columnsChanged();
+          return moved;
+        }}
+        onRemove={removeEntry}
+        maxOf={axisMax}
+        rowPlaceholder={m.form_pgrid_row_placeholder()}
+        columnPlaceholder={m.form_pgrid_column_placeholder()}
+      >
+        {#snippet afterCornerHeader()}
+          {#if mode === 'per_row'}
+            <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
               >{m.form_pgrid_price_header()}</th
             >
-            {#each grid.columns as column (column.id)}
-              <td class="px-1 pb-2">
-                <span class="{priceBoxClass} justify-center">
-                  <input
-                    inputmode="decimal"
-                    class={priceInputClass}
-                    aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
-                    value={priceText(column.id)}
-                    onchange={(e) => commitPrice(column.id, e)}
-                  />
-                  <span class="text-text-muted text-xs" aria-hidden="true"
-                    >{m.form_pgrid_euro()}</span
-                  >
-                </span>
-              </td>
-            {/each}
-            <td></td>
-          </tr>
-        {/if}
-      {/snippet}
-      {#snippet afterRowLabel(row)}
-        {#if mode === 'per_row'}
-          <td class="px-1.5 py-0.5">
-            <span class={priceBoxClass}>
-              <input
-                inputmode="decimal"
-                class={priceInputClass}
-                aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
-                value={priceText(row.id)}
-                onchange={(e) => commitPrice(row.id, e)}
-              />
-              <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
-                >{m.form_pgrid_euro()}</span
+          {/if}
+        {/snippet}
+        {#snippet headerRow()}
+          {#if mode === 'per_column'}
+            <tr>
+              <th
+                scope="row"
+                class="text-text-main bg-cn-surface sticky left-0 z-1 pr-2 pb-2 text-left text-xs font-bold"
+                >{m.form_pgrid_price_header()}</th
               >
-            </span>
-          </td>
-        {/if}
-      {/snippet}
-      {#snippet cell(row, column)}
-        {@const closed = isCellClosed(grid, row.id, column.id)}
-        <button
-          type="button"
-          aria-pressed={closed}
-          data-cell="{row.id}:{column.id}"
-          onclick={() => {
-            tableFeedback = '';
-            toggleClosedCell(grid, row.id, column.id);
-          }}
-          aria-label={closed
-            ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
-            : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
-          title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
-          class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
-            ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
-            : 'bg-cn-surface text-text-muted hover:bg-accent/15 border border-black/10 font-semibold dark:border-white/10'}"
-          ><span class="max-sm:hidden"
-            >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
-          >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
-        >
-      {/snippet}
-    </GridAxesTable>
+              {#each grid.columns as column (column.id)}
+                <td class="px-1 pb-2">
+                  <span class="{priceBoxClass} justify-center">
+                    <input
+                      inputmode="decimal"
+                      class={priceInputClass}
+                      aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
+                      value={priceText(column.id)}
+                      onchange={(e) => commitPrice(column.id, e)}
+                    />
+                    <span class="text-text-muted text-xs" aria-hidden="true"
+                      >{m.form_pgrid_euro()}</span
+                    >
+                  </span>
+                </td>
+              {/each}
+              <td></td>
+            </tr>
+          {/if}
+        {/snippet}
+        {#snippet afterRowLabel(row)}
+          {#if mode === 'per_row'}
+            <td class="px-1.5 py-0.5">
+              <span class={priceBoxClass}>
+                <input
+                  inputmode="decimal"
+                  class={priceInputClass}
+                  aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
+                  value={priceText(row.id)}
+                  onchange={(e) => commitPrice(row.id, e)}
+                />
+                <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
+                  >{m.form_pgrid_euro()}</span
+                >
+              </span>
+            </td>
+          {/if}
+        {/snippet}
+        {#snippet cell(row, column)}
+          {@const closed = isCellClosed(grid, row.id, column.id)}
+          <button
+            type="button"
+            aria-pressed={closed}
+            data-cell="{row.id}:{column.id}"
+            onclick={() => {
+              tableFeedback = '';
+              toggleClosedCell(grid, row.id, column.id);
+            }}
+            aria-label={closed
+              ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
+              : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
+            title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
+            class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
+              ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
+              : 'bg-cn-surface text-text-muted hover:bg-accent/15 border border-black/10 font-semibold dark:border-white/10'}"
+            ><span class="max-sm:hidden"
+              >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
+            >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
+          >
+        {/snippet}
+      </GridAxesTable>
+    </fieldset>
     <p class="text-text-muted pt-1 text-xs">{m.form_pgrid_close_hint()}</p>
     {#if tableFeedback}
       <p class="text-red-err pt-1 text-xs font-semibold" role="status" data-testid="table-feedback">

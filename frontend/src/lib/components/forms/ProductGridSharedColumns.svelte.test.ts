@@ -78,6 +78,19 @@ const columnLabels = (items: ColumnSetQuestion[], id: string) =>
 const paid = { isPublic: false, requiresPayment: true };
 
 describe('the grid editor - shared columns', () => {
+  it('locks the columns of a shared grid until the ordered cells are known, and never writes the siblings', async () => {
+    const a = shopGrid('Sweat');
+    const b = shopGrid('Tote');
+    a.columnSet = { id: 'set1', name: 'Tailles' };
+    b.columnSet = { id: 'set1', name: 'Tailles' };
+    const { target, state } = render([question('a', a), question('b', b)], {}, false);
+    const root = section(target, 'a');
+    expect(hid(root, 'columns-waiting')).not.toBeNull();
+    expect((hid(root, 'grid-table-lock') as HTMLFieldSetElement).disabled).toBe(true);
+    // The fieldset is the browser's own lock: every column input and button inside it is inert.
+    expect(columnLabels(state.items, 'b')).toEqual(['S', 'M', 'L']);
+  });
+
   it('waits for the ordered cells: sharing and using a set are off until they are known', async () => {
     const shared = shopGrid('Tote');
     shared.columnSet = { id: 'set1', name: 'Tailles' };
