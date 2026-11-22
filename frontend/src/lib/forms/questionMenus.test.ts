@@ -10,22 +10,25 @@ import {
   isMatrixType,
   matrixTypeFor,
 } from './questionTypes';
+import { isFormBlockType } from './formBlocks';
 
 describe('the type families (owner, 2026-11-07)', () => {
-  it('groups the types in four titled families, in order', () => {
+  it('groups the types in five titled families, in order, the blocks last', () => {
     const families = editorQuestionFamilies();
-    expect(families.map((f) => f.id)).toEqual(['text', 'choice', 'grids', 'other']);
+    expect(families.map((f) => f.id)).toEqual(['text', 'choice', 'grids', 'other', 'content']);
     expect(families.map((f) => f.kinds.map((k) => k.kind))).toEqual([
       ['short_text', 'long_text'],
       ['single_choice', 'multiple_choice', 'dropdown', 'linear_scale'],
       [CHOICE_GRID_KIND, 'product_grid'],
       ['file'],
+      ['text_block', 'image_block'],
     ]);
     expect(families.map((f) => f.title())).toEqual([
       m.qfamily_text(),
       m.qfamily_choice(),
       m.qfamily_grids(),
       m.qfamily_other(),
+      m.qfamily_content(),
     ]);
   });
 
@@ -78,7 +81,9 @@ describe('the "Grille de choix"', () => {
 
 describe('the menus as sections', () => {
   it('the type menu: one titled section per family, the current kind ticked', () => {
-    const sections = questionKindSections(editorQuestionFamilies(), {
+    // As the card builds it: a question never turns into a block, so the content family is absent.
+    const questionTypes = AUTHORABLE_QUESTION_TYPES.filter((t) => !isFormBlockType(t.value));
+    const sections = questionKindSections(editorQuestionFamilies(questionTypes), {
       currentType: 'matrix_multiple',
     });
     expect(sections.map((s) => s.title)).toEqual([

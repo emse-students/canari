@@ -23,6 +23,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'export-labels',
   'item-id',
   'item-image',
+  'item-block',
   'audience-invalid',
   'unknown-account',
   'line-kind',
@@ -147,6 +148,7 @@ function sentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_export();
     case 'item-id':
     case 'item-image':
+    case 'item-block':
     case 'audience-invalid':
       return m.bookings_refusal_questions();
     case 'unknown-account':

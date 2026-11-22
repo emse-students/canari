@@ -25,6 +25,9 @@ export const SUPPORTED_QUESTION_TYPES = [
   'file',
   // An order: rows x columns of quantities, priced server-side (`forms/product-grid.ts`).
   'product_grid',
+  // Content, not questions: a heading and paragraph, an image (`form-blocks.ts`). Never answered.
+  'text_block',
+  'image_block',
 ] as const;
 
 /** One of the question types a write may carry. */
