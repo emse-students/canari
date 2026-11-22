@@ -250,6 +250,25 @@ export function isServerFailureTerminal(entry: OutboxEntry): boolean {
 }
 
 /**
+ * The author's own row a queued TEXT or REPLY stands for, built from the entry alone - its text is
+ * encrypted in it, so the entry is enough to show what will be sent. `null` for every other kind: a
+ * control frame has no row, and a file's placeholder needs what only its send path knows.
+ *
+ * ONE builder for the two places a row is made from an entry: the adoption of a native mirror line
+ * (`adoptMirrorEntry`) and an entry found queued with no row (`restoreQueuedRow`).
+ */
+export function ownRowOfQueuedText(entry: OutboxEntry, userId: string): StoredMessage | null {
+  if (entry.kind !== 'text' && entry.kind !== 'reply') return null;
+  return {
+    id: entry.id,
+    conversationId: entry.conversationId,
+    senderId: userId.toLowerCase(),
+    content: entry.text ?? '',
+    timestamp: entry.sentAt,
+  };
+}
+
+/**
  * True when the server (or something in front of it) ANSWERED the attempt, read from the TYPE: a
  * status-carrying refusal, `sender_not_active`, an edge refusal, a 410. A transport failure and a
  * local error are not answers.
@@ -2631,10 +2650,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (!stored) {
+      // Reached only through a tear the writer reported (SQLite's `saveMessageWithOutboxEntry` keeps
+      // the entry when its row write fails) or an entry an older build left alone: the mirror adoption
+      // no longer queues an entry before its row. Without the row the member can neither see what
+      // waits nor delete it (principle 2). A text or a reply carries its own text, so
+      // its row is written back from it: said once, at the level that accuses, since the next pass
+      // finds the row. Any other kind has nothing to rebuild from, and stays accused.
+      const rebuilt = ownRowOfQueuedText(entry, deps.userId);
+      if (!rebuilt) {
+        console.error(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… (${entry.kind}) is queued with no stored message - the send has nothing to show`
+        );
+        return;
+      }
+      try {
+        await storage.saveMessagesIfAbsent([rebuilt], deviceKey());
+      } catch (e) {
+        console.error(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message, and its row could not be written back: ${String(e)}`
+        );
+        return;
+      }
       console.error(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message - the send has nothing to show`
+        `[OUTBOX] ${entry.id.slice(0, 8)}… was queued with no stored message (left alone by an earlier writer) - its row is written back from the entry`
       );
-      return;
+      stored = rebuilt;
     }
     // Read again after the await: a page or a live echo may have put the row there meanwhile.
     if (findMessage(entry.id)) return;

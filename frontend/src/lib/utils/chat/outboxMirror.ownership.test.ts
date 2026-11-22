@@ -122,9 +122,13 @@ function line(id: string, extra: Partial<OutboxMirrorEntry> = {}): OutboxMirrorE
 function makeStorage(seed: OutboxEntry[] = []) {
   const queue = new Map(seed.map((e) => [e.id, structuredClone(e)]));
   const rows = new Map<string, StoredMessage>();
+  /** The conversation rows the store holds: a message row naming another is refused (SQLite's FK). */
+  const conversationRows = new Set(['g1']);
   return {
     _queue: queue,
     _rows: rows,
+    _conversationRows: conversationRows,
+    getConversation: vi.fn(async (id: string) => (conversationRows.has(id) ? { id } : null)),
     getPendingGroupExits: vi.fn(async () => []),
     getOutboxQueue: vi.fn(async () => [...queue.values()]),
     getOutboxEntry: vi.fn(async (id: string) => queue.get(id) ?? null),
@@ -137,6 +141,9 @@ function makeStorage(seed: OutboxEntry[] = []) {
     saveMessagesIfAbsent: vi.fn(async (msgs: StoredMessage[]) => {
       const written = new Set<string>();
       for (const m of msgs) {
+        if (!conversationRows.has(m.conversationId)) {
+          throw new Error('(code: 787) FOREIGN KEY constraint failed');
+        }
         if (rows.has(m.id)) continue;
         rows.set(m.id, m);
         written.add(m.id);
@@ -223,6 +230,44 @@ describe('adoptOrphanedMirrorEntries - only the native lines', () => {
     await expect(adoptOrphanedMirrorEntries(makeStorage(), 'key', 'me')).rejects.toBeInstanceOf(
       MirrorAdoptionError
     );
+  });
+
+  // Mi 9T, 1.7.3-alpha.6: a shade reply in a conversation not stored yet was queued, its row refused
+  // by the foreign key - an entry with no row, parked failed on every page life, its text invisible.
+  // The entry is now written only beside its row, and a conversation not stored keeps the line native.
+  it('never queues an entry without its row: a conversation not stored keeps the line native', async () => {
+    tauri.mirror = [line('shade', { groupId: 'g2', unsendable: true })];
+    const storage = makeStorage();
+    const held = new Set<string>();
+    const claims = {
+      hold: (id: string) => void held.add(id),
+      release: (id: string) => void held.delete(id),
+    };
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me', claims)).toEqual([]);
+    expect(storage._queue.size).toBe(0);
+    expect(storage._rows.size).toBe(0);
+    expect(held.size).toBe(0);
+
+    // The conversation is stored now: the next pass adopts the line, row and entry together.
+    storage._conversationRows.add('g2');
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me', claims)).toEqual(['shade']);
+    expect(storage._queue.get('shade')?.conversationId).toBe('g2');
+    expect(storage._rows.get('shade')?.content).toBe('hello shade');
+  });
+
+  it('a row the store refuses queues no entry, and the claim is released', async () => {
+    tauri.mirror = [line('shade')];
+    const storage = makeStorage();
+    storage.saveMessagesIfAbsent.mockRejectedValueOnce(new Error('FOREIGN KEY constraint failed'));
+    const held = new Set<string>();
+    expect(
+      await adoptOrphanedMirrorEntries(storage, 'key', 'me', {
+        hold: (id) => void held.add(id),
+        release: (id) => void held.delete(id),
+      })
+    ).toEqual([]);
+    expect(storage._queue.has('shade')).toBe(false);
+    expect(held.size).toBe(0);
   });
 
   // A queued entry whose line is still native was adopted by a page life whose claim never landed:
@@ -563,6 +608,33 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(tauri.writes).toHaveLength(1);
     release();
     await vi.waitFor(() => expect(tauri.writes.length).toBeGreaterThan(1));
+  });
+
+  // The entry an older build left alone (no row): rebuilt from its own text, shown failed with its
+  // Retry so the member can see and delete it, and accused ONCE - not on every page life.
+  it('an entry queued with no row gets its row back from its own text, accused once', async () => {
+    connectivity.reset();
+    const storage = makeStorage([
+      textEntry('orphan', { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS }),
+    ]);
+    const { outbox, conversations } = controllerOver(storage);
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const accused = () =>
+      errors.mock.calls.filter((c) => String(c[0]).includes('was queued with no stored message'))
+        .length;
+
+    await outbox.applyPendingStatuses();
+    expect(storage._rows.get('orphan')?.content).toBe('hello orphan');
+    const row = () => conversations.get('g1')!.messages.find((msg) => msg.id === 'orphan');
+    expect(row()?.status).toBe('error');
+    expect(accused()).toBe(1);
+
+    // The next page life reads the row: nothing accused again.
+    conversations.set('g1', { ...conversations.get('g1')!, messages: [] });
+    await outbox.applyPendingStatuses();
+    expect(row()?.status).toBe('error');
+    expect(accused()).toBe(1);
+    errors.mockRestore();
   });
 
   it('adopts nothing and writes nothing when the mirror holds only the page lines', async () => {
