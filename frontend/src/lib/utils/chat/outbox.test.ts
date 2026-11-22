@@ -48,6 +48,7 @@ import {
   MAX_CONCURRENT_UPLOADS,
   MAX_UNEXPECTED_ATTEMPTS,
   MAX_CONSECUTIVE_SERVER_ERRORS,
+  terminalFailureCause,
   MAX_UNAVAILABLE_ANSWERS,
   isServerFailureTerminal,
   unavailableRunStart,
@@ -5044,6 +5045,53 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     expect(mls.sendMessage).not.toHaveBeenCalled();
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
     outbox.dispose();
+  });
+
+  it('a parked entry is accused once, when parked: a reload carries it forward in one quiet line', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const lines: string[] = [];
+    const parkedEntries = (): OutboxEntry[] => [
+      {
+        ...textEntry('p1', 'g1', 100),
+        serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS,
+        nativeRefusal: 'refused',
+      },
+      {
+        ...textEntry('p2', 'g1', 200),
+        serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS,
+        parkedCause: 'server_error',
+      },
+    ];
+    // Two boots over the same durable entries.
+    for (let boot = 0; boot < 2; boot++) {
+      const conversations = new SvelteMap<string, Conversation>([
+        ['g1', convoWith('g1', ['p1', 'p2'])],
+      ]);
+      const storage = makeStorage(parkedEntries());
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService: makeMls(),
+          storage,
+          conversations,
+          log: (l: string) => lines.push(l),
+        })
+      );
+      await attempt(outbox, storage, 'p1');
+      await attempt(outbox, storage, 'p1');
+      outbox.dispose();
+    }
+    expect(errors).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes('FAILED'))).toBe(false);
+    expect(lines.filter((l) => l.includes('2 parked entries carried forward'))).toHaveLength(2);
+    errors.mockRestore();
+  });
+
+  it('says each parked cause as its own, never the 5xx run for a refusal or a "not now"', () => {
+    const base = { ...textEntry('c', 'g1', 1), serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS };
+    expect(terminalFailureCause({ ...base, nativeRefusal: 'refused' })).toMatch(/refused/);
+    expect(terminalFailureCause({ ...base, parkedCause: 'server_error' })).toMatch(/5xx/);
+    expect(terminalFailureCause({ ...base, parkedCause: 'not_now' })).toMatch(/not now/);
+    expect(terminalFailureCause(base)).not.toMatch(/5xx/);
   });
 
   it('a reload puts back a queued or failed own message older than the page held (review of #2824, P2-3)', async () => {

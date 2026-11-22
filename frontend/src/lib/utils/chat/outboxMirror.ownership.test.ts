@@ -430,8 +430,10 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(storage._queue.get('refused')?.nativeRefusal).toBe('refused');
     outbox.flush();
     await vi.waitFor(() =>
-      expect(errors.mock.calls.some((c) => String(c[0]).includes('refused it for good'))).toBe(true)
+      expect(errors.mock.calls.some((c) => String(c[0]).includes('(refused)'))).toBe(true)
     );
+    // Said ONCE, at the adoption, and never as the 5xx run.
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes('refused'))).toHaveLength(1);
     expect(errors.mock.calls.some((c) => String(c[0]).includes('5xx'))).toBe(false);
     errors.mockRestore();
 

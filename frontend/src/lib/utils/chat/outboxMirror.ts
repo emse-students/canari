@@ -351,9 +351,11 @@ export function adoptMirrorEntry(
   const parked = entry.unsendable
     ? (() => {
         const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
-        appendLog(
-          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain (${nativeRefusal}) - adopted failed, with its Retry`
-        );
+        // THE ONE TIME THIS PARK IS ACCUSED: the flusher reads it back as carried forward, so a
+        // restart never says it again.
+        const line = `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain (${nativeRefusal}) - adopted failed, with its Retry`;
+        console.error(line);
+        appendLog(line);
         return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
       })()
     : {};
