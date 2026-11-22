@@ -1094,8 +1094,8 @@ Notification Center over an open app was lost. The fix:
   selection), `androidQuickReplyHandoff.test.ts` (the route on the guard, the line written, recorded
   and drawn sending before the page is told, the settlement wiring), the Android cases of
   `quickReplyDrain.test.ts` (the sweep before any take), and `an_android_hand_over_*` and
-  `the_sweep_reads_the_waiting_ids_without_claiming_them` in `quick_reply_tests`. The reading:
-  [backlog](../backlog.d/reading-owed-an-inline-reply-typed-over-the-open-app-goes-out-at-once.md).
+  `the_sweep_reads_the_waiting_ids_without_claiming_them` in `quick_reply_tests`. Read on a phone (2026-11-22, `1.7.3-alpha.6`)
+  and pinned by `quickReplyDrain.test.ts` for the page that dies holding a reply.
 - `CanariHandleQuickReplyAction` asks the fact first (`canari_ios_page_holds_mls`, Rust
   `live_manager_in_process`).
 - When a manager is loaded, `CanariHandQuickReplyToPage` APPENDS the reply to
@@ -2542,7 +2542,17 @@ being a SIGABRT from the looper callback, so read the frames below `cb_handler` 
 replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
 reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
-The fork is deleted once an upstream release carries every hunk.
+
+**One hunk is PERMANENT, so the fork is no longer deleted when upstream carries the main-pipe fixes.**
+`src/android/kotlin/RustWebView.kt` (a Kotlin template, not Rust) overrides
+`onCreateInputConnection` to hand the WebView's input connection to the app's `KeyboardMediaBridge`,
+which is what lets the soft keyboard commit a GIF. That is an app hook upstream will never carry,
+and it has to live in the TEMPLATE: wry's `build.rs` rewrites `gen/android/.../generated/` from it on
+every Android build, which is how the hook, first written in the generated copy, was lost for four
+months ([chat](modules/chat.md#android-keyboard-media-commitcontent)). Once an upstream release carries
+every main-pipe hunk, the fork stays as a re-applied template patch: the next rebase takes the
+upstream crate whole and re-applies this one hunk, which
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` fails without.
 
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
@@ -4339,8 +4349,9 @@ needs "can a retry ever succeed".
   goes to `outbox_journal.ndjson` under its own short lock, and every holder of the mirror lock
   folds it in first -
   [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
-  The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
-  and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).
+  Read on a phone and pinned by tests (2026-11-22, `1.7.3-alpha.6`): the retry in
+  [the retry section](#the-retry-ends-on-durable-state-never-on-a-count-173), the warm page in
+  [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
@@ -4349,6 +4360,15 @@ generation. Every native read-modify-write of the mirror (the drain, after foldi
 `enqueueOutboxMirror` appends to) holds one process lock, `OUTBOX_LOCK`, taken before
 `MlsStateLock`; the second drain waits and reads the mirror the first one rewrote. The append
 itself takes only the journal's lock, so a shade reply is on disk before any drain's POSTs end.
+
+**Pinned by tests, not by a bench (reading of 2026-11-22, `1.7.3-alpha.6`).** A validated-network outage for one
+app cannot be produced on a bench (a per-app deny leaves the worker unscheduled, so no run happens) and the shared dev
+backend may not be made to answer 5xx, so the "several failed runs before a success" row is
+`OutboxRetryTest.kt` (`twenty-five failed runs in a row never end it...`: 25 retry decisions, no `NEVER` prospect, then
+a drained queue ends `DONE`); the in-front run ending its request is `a run in front ends its request`, the refused
+entry beside one that can go is `a refused entry is told and does not strand the ones that can still go`, and the
+refused entry adopted failed with its Retry is `outboxMirror.ownership.test.ts` (`an unsendable native line is adopted
+FAILED`).
 
 #### The outbox nudge
 
@@ -4531,7 +4551,7 @@ uninstall and therefore that phone's identity and history.
 
 ### Keyboard media (Android)
 
-`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
+`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events routed by ONE dispatcher (`utils/keyboardMedia.ts`) to the focused composer, or refused with a toast → through the normal media pipeline. Its one hook is in the vendored wry template, not in `generated/`, which every Android build rewrites - the hook was lost that way for four months ([chat](modules/chat.md#android-keyboard-media-commitcontent)).
 
 ### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS verified on hardware 2026-08-27)
 
@@ -5400,6 +5420,12 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 ## Notification quick actions are on every Android message notification, whoever posts it (resolved 2026-09-18, audited 2026-10-10)
 
 The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notify_native_message` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
+
+**A page that dies holding a reply is pinned by `quickReplyDrain.test.ts`** (`a reply taken by a session that died is
+settled by the next one`, 2026-11-22): the kill inside the 134 ms window between the hand-over and the page's
+settlement cannot be timed from a shell, so the next session is staged - its queue holding the id is acknowledged
+`pending` (`is held by the page (pending)`), an empty queue `lost` (the `LOST` error line), and a sign-out settles the
+account's unsettled replies (`sign-out: the account's unsettled replies are settled`).
 
 ## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, built 2026-10-18)
 

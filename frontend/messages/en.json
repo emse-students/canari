@@ -891,6 +891,8 @@
   "post_comment_as_association_caption": "Comment on behalf of {name}",
   "post_comment_add_image_label": "Add an image",
   "post_comment_media_error": "Could not attach that media to the comment.",
+  "keyboard_media_refused": "GIFs can't be added here.",
+  "keyboard_media_unreadable": "This GIF could not be read.",
   "post_media_expired_label": "Media expired.",
   "post_image_alt": "Post image",
   "post_zoom_image_label": "Enlarge media",

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LoudnessMeter, type MediaLoudness } from '$lib/video/loudnessMeter';
+import {
+  LOUDNESS_TARGET_LUFS,
+  MAX_BOOST_DB,
+  PEAK_CEILING_DBFS,
+  loudnessGainDb,
+} from '$lib/video/loudnessPlayback';
 import type { LoudnessTapBatch } from '$lib/workers/loudnessTap.worklet';
 import {
   LOUDNESS_TAP_PROCESSOR,
@@ -195,5 +201,85 @@ describe('the tap context follows the microphone rate', () => {
     } as unknown as MediaStream;
     tapRecordingLoudness(stream, { createContext, workletUrl: 'x' });
     expect(createContext).toHaveBeenCalledWith(undefined);
+  });
+});
+
+/**
+ * THE SOUND OF A NOTE, FROM A SYNTHETIC BUFFER (reading `1.7.3-alpha.6`, voice row 3: the bench room
+ * was silent and no speech source stood near the phone, so the loudness figures were not read). A
+ * 1 kHz and a 14 kHz tone - the second one stands for the high band a 12 kHz cutoff must keep - are
+ * measured the way a recording is (`RecordingLoudness`, fed in the 128-frame quanta of the worklet),
+ * then brought through the one playback law (`loudnessGainDb`).
+ *
+ * WHAT THESE CASES FOUND: the law brings a note to -14 LUFS (the video target) with at most +6 dB,
+ * so the row's "-18 +/- 2 LUFS" is met by a note measured near -24 LUFS (a typical speech level) and
+ * NOT by a quiet one: tones at -30 dBFS are measured -34 LUFS and play at -28. The row's number is
+ * not a property of the law; the quiet case below pins what the law really does, and the level of
+ * the "-18" claim is left to the owner (a speech target of -16 to -18 is the lever the entry names).
+ */
+describe('a voice note through the playback law, from a synthetic 48 kHz buffer', () => {
+  /** 1 kHz and 14 kHz tones, each at `perToneDbfs`, as one mono plane. */
+  function twoTones(perToneDbfs: number, seconds = 5): Float32Array {
+    const amplitude = 10 ** (perToneDbfs / 20);
+    const plane = new Float32Array(seconds * RATE);
+    for (let i = 0; i < plane.length; i++) {
+      plane[i] =
+        (amplitude *
+          (Math.sin((2 * Math.PI * 1000 * i) / RATE) +
+            Math.sin((2 * Math.PI * 14000 * i) / RATE))) /
+        2;
+    }
+    return plane;
+  }
+
+  /** What the recording tap measures from `plane`, quantum by quantum. */
+  function measured(plane: Float32Array): MediaLoudness {
+    const tap = new RecordingLoudness(RATE);
+    for (let at = 0; at < plane.length; at += 128) {
+      const part = plane.subarray(at, Math.min(plane.length, at + 128));
+      tap.accept({ frames: part.length, planes: [part] });
+    }
+    return tap.result()!;
+  }
+
+  /** The note as the player plays it: measured, then raised or lowered by the law. */
+  function played(perToneDbfs: number) {
+    const loudness = measured(twoTones(perToneDbfs));
+    const gainDb = loudnessGainDb(loudness);
+    return {
+      loudness,
+      gainDb,
+      lufs: loudness.integratedLufs + gainDb,
+      peakDbfs: loudness.samplePeakDbfs + gainDb,
+    };
+  }
+
+  it('a note at a typical speech level plays at -18 +/- 2 LUFS with its peak under -1 dBFS', () => {
+    const note = played(-20);
+    expect(note.loudness.integratedLufs).toBeCloseTo(-24, 0);
+    expect(Math.abs(note.lufs - -18)).toBeLessThanOrEqual(2);
+    expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
+  });
+
+  it('a louder note is brought down to the target, never past the peak ceiling', () => {
+    const note = played(-12);
+    expect(note.lufs).toBeCloseTo(LOUDNESS_TARGET_LUFS, 1);
+    expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
+    const hot = played(-6);
+    expect(hot.gainDb).toBeLessThan(0);
+    expect(hot.lufs).toBeCloseTo(LOUDNESS_TARGET_LUFS, 1);
+  });
+
+  it('a quiet note (-30 dBFS tones) is raised by the +6 dB cap and no more: it stays far under -18', () => {
+    const note = played(-30);
+    expect(note.loudness.integratedLufs).toBeCloseTo(-34, 0);
+    expect(note.gainDb).toBe(MAX_BOOST_DB);
+    expect(note.lufs).toBeCloseTo(-28, 0);
+    expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
+  });
+
+  it('the same buffer fed whole and fed in quanta is the same measurement (the tap loses nothing)', () => {
+    const plane = twoTones(-20);
+    expectSameMeasurement(measured(plane), wholeRecording(plane));
   });
 });

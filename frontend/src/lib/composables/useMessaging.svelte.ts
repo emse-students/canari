@@ -9,6 +9,7 @@
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
+import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
@@ -1396,6 +1397,8 @@ export function useMessaging() {
     serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /** The sender and instant of each of them - see `NativeMessageNotification.announced`. */
+    announced: readonly AnnouncedMessage[],
     /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
     authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
@@ -1470,6 +1473,7 @@ export function useMessaging() {
             sentAt,
             serverAt,
             covers,
+            announced,
             authorProven,
             true
           );
@@ -1582,6 +1586,7 @@ export function useMessaging() {
           sentAt,
           serverAt: serverAt ?? 0,
           covers,
+          announced,
           authorProven,
         })
       );
@@ -2467,6 +2472,7 @@ export function useMessaging() {
           resolvedTimestamp.getTime(),
           newMsg.serverTimestamp,
           1,
+          [{ senderId, at: resolvedTimestamp.getTime() }],
           options.authorProven === true
         )
       );
@@ -3096,6 +3102,7 @@ export function useMessaging() {
           lastInbound.serverTimestamp,
           // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
           inbound.length,
+          inbound.map((msg) => ({ senderId: msg.senderId, at: msg.timestamp.getTime() })),
           // The banner's message is the LAST one, so its proof is the one that names the speaker.
           authorProvenIds.has(lastInbound.id)
         );

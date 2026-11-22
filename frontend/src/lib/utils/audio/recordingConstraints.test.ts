@@ -18,6 +18,38 @@ describe('RECORDING_AUDIO_CONSTRAINTS', () => {
   });
 });
 
+/**
+ * A CALL IS NOT BROKEN BY A NOTE (reading `1.7.3-alpha.6`, voice row 4: it needs a second device
+ * holding a call with media, and the web seats have no fake media device). The page's half is the
+ * constraints it asks: the call's own while a call is placed or answered, none of the three
+ * processings when there is no call. The OS half - the audio mode after the note - is held by
+ * `CallSoundHoldTest.kt`; the page never sets a mode.
+ */
+describe('the constraints a voice note asks, by call phase', () => {
+  it("'incall' asks echo cancellation, noise suppression and auto gain, as the call does", () => {
+    const { audio, mode } = voiceNoteCapture('incall');
+    expect(mode).toBe('call');
+    expect(audio).toMatchObject({
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+    });
+    expect(audio).toEqual(buildCallAudioConstraints());
+  });
+
+  it("'none' asks RECORDING_AUDIO_CONSTRAINTS: all three off, one channel", () => {
+    const { audio, mode } = voiceNoteCapture('none');
+    expect(mode).toBe('recording');
+    expect(audio).toBe(RECORDING_AUDIO_CONSTRAINTS);
+    expect(audio).toMatchObject({
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: { ideal: 1 },
+    });
+  });
+});
+
 describe('voiceNoteCapture', () => {
   it('is a recording when no call holds the microphone, a ring coming in included', () => {
     for (const phase of ['none', 'incoming'] as const) {
