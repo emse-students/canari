@@ -125,24 +125,25 @@ object KeyboardMediaBridge {
     /**
      * Tells the frontend a commit could not be bridged, so its dispatcher shows
      * `keyboard_media_unreadable` instead of the GIF vanishing. [kind] is one of the fixed reasons
-     * below; the event carries no data.
+     * above; the event carries no data.
      */
     private fun dispatchErrorToWeb(webView: WebView, kind: String) {
-        val script =
-            "window.dispatchEvent(new CustomEvent('canari-keyboard-media',{detail:{error:'$kind'}}))"
-        webView.post {
-            webView.evaluateJavaScript(script, null)
-        }
+        postKeyboardMediaEvent(webView, JSONObject().put("error", kind))
     }
 
     /** Dispatches the committed media to the frontend as a `canari-keyboard-media` DOM event. */
     private fun dispatchToWeb(webView: WebView, mime: String, name: String, dataB64: String) {
-        // JSONObject.toString() is valid JS; base64 contains no characters needing extra escaping.
-        val detail = JSONObject()
-            .put("mime", mime)
-            .put("name", name)
-            .put("data", dataB64)
-            .toString()
+        postKeyboardMediaEvent(
+            webView,
+            JSONObject().put("mime", mime).put("name", name).put("data", dataB64),
+        )
+    }
+
+    /**
+     * The ONE place the `canari-keyboard-media` script is built and posted, for data and error
+     * events alike, so the two shapes cannot drift. `JSONObject.toString()` is a valid JS literal.
+     */
+    private fun postKeyboardMediaEvent(webView: WebView, detail: JSONObject) {
         val script =
             "window.dispatchEvent(new CustomEvent('canari-keyboard-media',{detail:$detail}))"
         webView.post {

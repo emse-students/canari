@@ -153,6 +153,11 @@ static void DispatchToWeb(WKWebView *webView, NSString *mime, NSString *name, NS
   });
 }
 
+/// The error kinds an event may carry instead of data - the set `utils/keyboardMedia.ts` reads,
+/// and the same strings `KeyboardMediaBridge.kt` sends.
+static NSString *const kKeyboardMediaErrorTooLarge = @"too-large";
+static NSString *const kKeyboardMediaErrorUnreadable = @"unreadable";
+
 /// Tells the frontend an image arrived and could not be bridged, so its dispatcher can say so
 /// (`keyboard_media_unreadable`) instead of the image vanishing. `kind` is one of the fixed reasons
 /// `too-large` / `unreadable`; the event carries no data. The dispatcher applies its no-focus rule
@@ -195,12 +200,12 @@ static void OnPasteboardChanged(__unused NSNotification *note) {
   NSData *data = ReadImageData(pb, imageIdx);
   if (data == nil || data.length == 0) {
     NSLog(@"[KeyboardMediaBridge] image item could not be read - reported as unreadable");
-    DispatchErrorToWeb(webView, @"unreadable");
+    DispatchErrorToWeb(webView, kKeyboardMediaErrorUnreadable);
     return;
   }
   if (data.length > kMaxBytes) {
     NSLog(@"[KeyboardMediaBridge] image too large (%lu bytes), skipped", (unsigned long)data.length);
-    DispatchErrorToWeb(webView, @"too-large");
+    DispatchErrorToWeb(webView, kKeyboardMediaErrorTooLarge);
     return;
   }
 
