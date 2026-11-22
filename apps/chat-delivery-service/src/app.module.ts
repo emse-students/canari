@@ -45,6 +45,7 @@ import { SeatEviction } from './entities/seat-eviction.entity';
 import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { PushEnvelope } from './entities/push-envelope.entity';
+import { PushDeliveryDaily } from './entities/push-delivery-daily.entity';
 import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from './entities/uninvited-entry.entity';
 import { ReportAccusation } from './entities/report-accusation.entity';
@@ -116,6 +117,7 @@ class RedisShutdown implements OnModuleDestroy {
         JoinAskPush,
         RevokedDeviceGroup,
         PushEnvelope,
+        PushDeliveryDaily,
         SentFrameReceipt,
         UninvitedEntry,
         ReportAccusation,

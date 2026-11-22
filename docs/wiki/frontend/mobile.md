@@ -3431,7 +3431,7 @@ after that phone's app socket opened, and the socket closed 20 s later - the pus
 nothing else could draw it. The rest of this paragraph's list is unchanged: in the background the
 reaction is posted on `canari_reactions_v2` (IMPORTANCE_DEFAULT: a sound and a shade entry, no
 heads-up, no vibration - by design), and `MainActivity.onResume` clears it with the message
-notifications. Fixed for `1.7.1` by the frame trigger below ([backlog](../backlog.d/p2-a-reaction-to-my-message-notifies-nobody-while-the-app-is-open.md)).
+notifications. Fixed for `1.7.1` by the frame trigger below ([below](#the-frame-trigger-of-a-reaction-2026-11-17)).
 
 #### The frame trigger of a reaction (2026-11-17)
 
@@ -3467,6 +3467,27 @@ when the row first opens, so a seed a peer answers hours later announces the rea
 once, since the push was dropped in front; principle 2 (the essential is never lost) over a
 notification that reads as old. Tests: `channelEventHandler.reaction.test.ts`,
 `useConversations.owedLiveReaction.svelte.test.ts`.
+
+**A reaction's alert goes with its conversation - also when THIS device's reader opens it (2026-11-21).**
+The native cancel had two triggers: a push (a silent self frame) and an own read learned over the
+socket from ANOTHER device. The server never reports a read back to the device that took it, and the
+activity does not resume when the app was already open, so an alert the frame trigger raised for a
+conversation the reader then opened in the same session stood on screen. The receipt effect in
+`MainChatPage` now hands the reading to the native side once per reading AND per advance of its mark
+(`openedConversationDismissal.ts`: a first run can see a stale mark, which the native side keeps as
+UNREAD, and only a later hand-over removes it; a hand-over the native side refused is not spent and
+the next run retries it; then `recordNativeReadElsewhere(..., 'read_here', ...)` ->
+`readElsewhereFromWebSocket`): the same decision as a read elsewhere, so the message banner and the
+reaction go unless a message line newer than the read is unread. It runs BEFORE the effect's
+`target <= held` return - a reaction moves no mark - and not for an idle window; leaving the
+conversation, the app going away or an idle window re-arms it, so coming back dismisses what was
+raised meanwhile. **iOS, desktop and web too:** the page remembers the reaction notifications it
+raised through the plugin or the browser, per conversation, and `dismissConversationReactions`
+removes them by id (`removeActive`) or closes them (a browser one also closes itself after 8 s); a
+push-drawn one was never held by the page and is not reached. In split-screen the activity does not
+resume either, and this reading hand-over is what clears them there.
+Tests: `openedConversationDismissal.test.ts`, `nativeNotification.test.ts`,
+`useNotifications.dismissReactions.svelte.test.ts`.
 
 **A salon's level is not applied**, on either path: the server cannot read it for a reaction
 (`sendPushToUser` reads a level only for a group uuid), and one rule written in only one builder is
@@ -4118,11 +4139,10 @@ needs "can a retry ever succeed".
   end the whole retry and set the failure flag). It is MARKED in the mirror (`unsendable`; no native
   writer deletes it), skipped by every later drain - no push-woken drain re-encrypts or re-POSTs it -
   and TOLD: the drain that marked it asks for the nudge ("Vous avez peut-etre des messages en
-  attente"), which stays while the mirror holds it. The page adopts it at its next LOGIN - a cold
-  start or a sign-in, NOT a warm return to the front - as a FAILED message with its Retry
-  (`adoptMirrorEntry`, parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has no
-  bubble, is adopted pending). **What this does not yet hold: a page warm in the background erases
-  it** (below).
+  attente"), which stays while the mirror holds it. The page adopts it at its next login AND at its
+  next return to the front (1.7.3, below) as a FAILED message with its Retry (`adoptMirrorEntry`,
+  parked at `MAX_CONSECUTIVE_SERVER_ERRORS`; a control frame, which has no bubble, is adopted
+  pending), and the page's own mirror write keeps it until then.
 - **The worker decides on them** (`OutboxRetry.decide`): any entry `NOT_YET` is a `Result.retry()`
   with no cap - WorkManager's backoff bounds the cost, up to five hours between runs; none left that
   can go ends the request; a `BLOCKED` drain, or an unreadable push context, sets the failure flag
@@ -4146,21 +4166,27 @@ needs "can a retry ever succeed".
   `mobile/background.rs` (a key that does not open the state, a group not held, a malformed proto, a
   refused write), `outboxMirror.adopt.test.ts` (an unsendable entry adopted failed),
   `androidOutboxRetry.test.ts` (the wiring).
-- **Not closed here, and pre-existing - P1, [backlog](../backlog.d/p1-a-warm-page-erases-the-native-only-outbox-entries.md):
-  a native-only entry is erased by a warm page's mirror rewrite.** `store_outbox_mirror` rewrites the file from the page's queue, and the page adopts the
-  entries it does not know only at a login (`adoptOrphanedMirrorEntries`). An entry queued natively
-  in the background therefore waits, while the app is warm in front, until the next `onPause`, and is
-  ERASED by the first outbox mutation of the page before then - an unsendable one included, so the
-  "kept, shown failed" above holds only when the next page to read the mirror is a cold one (review
-  of #3928, observation 5, confirmed by the re-review).
-  The reading: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md).
+- **A warm page no longer erases a native-only entry (1.7.3, the P1 found by the review of #3928,
+  observation 5).** The page used to rewrite the mirror WHOLE from its queue, under no lock the
+  native writers take, and to adopt the entries it did not know only at a login - so a reply queued
+  natively while the app was warm in the background, or an entry the drain had marked unsendable,
+  was erased by the page's first outbox mutation after it: neither sent, nor shown failed, nor
+  retried. The file now says which line is whose, the page writes only its own under the lock the
+  native writers take (`OUTBOX_LOCK` on Android, `OUTBOX_MIRROR_LOCK` on iOS), and it adopts the
+  native lines on every return to the front. A native append no longer waits behind a drain: it
+  goes to `outbox_journal.ndjson` under its own short lock, and every holder of the mirror lock
+  folds it in first -
+  [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
+  The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
+  and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
 quick-reply send and the worker 5 ms apart both posted `f79aac25`, each under its own ratchet
-generation. Every native read-modify-write of the mirror (the drain, and `enqueueOutboxMirror`,
-which the shade actions append through) now holds one process lock, `OUTBOX_LOCK`, taken before
-`MlsStateLock`; the second drain waits and reads the mirror the first one rewrote.
+generation. Every native read-modify-write of the mirror (the drain, after folding the journal
+`enqueueOutboxMirror` appends to) holds one process lock, `OUTBOX_LOCK`, taken before
+`MlsStateLock`; the second drain waits and reads the mirror the first one rewrote. The append
+itself takes only the journal's lock, so a shade reply is on disk before any drain's POSTs end.
 
 #### The outbox nudge
 
@@ -4171,7 +4197,8 @@ attente" stayed in the shade until the app opened. Every drain that left sends p
 reply's own "not sent yet" line, and the nudge had no counterpart.
 
 - **One decision, from durable state.** `settleOutboxNudgeLocked` is the only place the nudge is
-  posted or cancelled. It runs under `OUTBOX_LOCK`, reads the mirror (`readOutboxMirrorOrNull`) and
+  posted or cancelled. It runs under `OUTBOX_LOCK`, reads what is queued - the mirror and the
+  journal not folded yet (`readOutboxQueuedOrNull`) - and
   applies `OutboxNudge.decide` (`push/`, pinned by `OutboxNudgeTest`): an empty mirror WITHDRAWS (an
   idempotent cancel), sends still queued KEEP what stands, an ask with sends queued POSTS, and an
   unreadable mirror withdraws nothing (`UNKNOWN`, a WARN - an unreadable file is not an empty queue).
@@ -5346,3 +5373,22 @@ width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 p
 ## Back at a root tab goes to the background (owner, 2026-11-14)
 
 Back at a root tab with no history used to reach `super.onBackPressed()`, which finishes `MainActivity`; tao's Android event loop then ends with `std::process::exit`, so the process died about 400 ms later and the next launch was a cold start (read on the Mi 9T, 2026-11-14). The owner chose "Arriere-plan, comme Messenger": `MainActivity.onBackPressed` now calls `moveTaskToBack(true)` on every API level once the page has no overlay left to close, and logs the decision (`Back at the root with no history ... moving the task to the background`). The overlay hand-over to the page and the pre-Android-12 call branch are unchanged. `MainActivity.kt` is compiled by no PR gate: the reading (Back at a root tab, the app listed in Recents, the process alive, a warm reopen) is taken on a phone after the next pre-release.
+
+## An old Android System WebView shows an update screen, not a blank page (owner, 2026-11-21)
+
+The bundle needs Chrome 111 or newer: Vite's default build target, Tailwind 4 and the MLS WASM module. On an older Android System WebView (a Galaxy S8 was reported) the engine cannot parse it, the page stays white and says nothing, and Play vitals never see it because it is not a crash. The owner chose an "update" screen over a silent failure (principle 2 of [principes](../../principes.md): a user must be told what is wrong, not left with a blank page).
+
+**The guard is the second inline script of `src/app.html`**, ES5 only, running before the bundle. It is one more hashed inline script (the CSP hashes it from the file, `cspPolicy.js`; `csp.test.ts` counts five now). It renders a static overlay (inline CSS, DOM built with `createElement`, no inline handler): the title "Mettez à jour Android System WebView", a short explanation, one button to the https Play page of `com.google.android.webview`, and the detected Chrome major. **Only trigger 1 draws, and it needs an engine below `FLOOR`: the screen "update your WebView" is never drawn for an engine that is not old. Trigger 2 is LOG ONLY.** Neither is a timer:
+
+1. **The version floor**: the user agent is an Android WebView (the `; wv)` marker) whose `Chrome/NN` is below `FLOOR` (111, the ONE constant, named in the script with its origin: raise it with the build target). Drawn immediately.
+2. **LOG ONLY: a parse failure of the app's own module before mount.** The listeners are registered only when trigger 1 did not fire (the startup code draws and returns first on a WebView below the floor), so this path never sees an engine the floor caught and never draws. `window` `error` (capture) and `unhandledrejection` listeners classify by TYPE and SOURCE, never by message text: a `SyntaxError` whose `filename` (or, for a rejected entry `import()`, whose stack) names a `/_app/` asset. A `JSON.parse` of a captive-portal or 502 page, corrupt stored JSON, an extension or an init script are SyntaxErrors from elsewhere and draw nothing. The failure is logged at error (`[webview-guard]`) and nothing is drawn, whatever the engine (a plain browser such as Samsung Internet, a current or unknown WebView), because "update the WebView" would be wrong advice. The root layout calls `window.__canariWebViewGuard.mounted()` in `onMount`: the signal is an event the app emits, never a delay; it stops the watching AND removes the screen if it was drawn (logged at error: the floor was wrong for that engine). A failed fetch (offline, a deploy replaced the chunks) stays with `vite:preloadError` ([staleBuild](../../../frontend/src/lib/utils/staleBuild.ts)). A runtime `TypeError` from a missing API is not caught, because it cannot be told from an ordinary bug without a guess; the floor covers it. Best effort: whether a rejected module `import()` stack names the asset depends on the engine and may not match on some; trigger 1 is what covers the S8's WebView (and is the only thing that ever draws).
+
+**Scope.** Desktop and iOS (no `Android` in the user agent): the script does nothing. A plain Android browser tab (Chrome, Samsung Internet, no `; wv)`): trigger 1 does not match and trigger 2 only logs.
+
+**The link.** `https`, never `market://`: wry lets the navigation start and the WebView then shows `ERR_UNKNOWN_URL_SCHEME` in place of the app (the reason `PLAY_STORE_URL` in `appVersion.ts` is https; a synchronous throw of the opener call leaves the click alone, so the `href` is followed, and is logged). The bundle's own opener (`openExternal`) is not there when the bundle failed, so in the Tauri shell the click calls the same `plugin:opener|open_url` command through `__TAURI_INTERNALS__` (allowed by `opener:allow-open-url`), and a plain browser follows the `href`.
+
+**Strings.** `app.html` runs before Paraglide exists and the project has no other pre-bundle string mechanism, so the guard carries a two-entry table (`fr`, `en`, chosen from `navigator.language`, English unless it starts with `fr`). Its entries are the Paraglide messages `webview_outdated_title|body|button|version`; `src/lib/security/webviewGuard.test.ts` pins each entry to `messages/fr.json` and `en.json`, so editing one side fails the suite. No source names the keys (the table is a string in `app.html`), so they sit in `frontend/dead-code-allowlist.json` with that reason.
+
+**Tests.** `webviewGuard.test.ts` reads the script out of the real `app.html`, parses it with acorn as ECMAScript 5 (ES2015 syntax fails the test), and runs it in a `vm` context standing in for a page: the floor decision on a table of user agents, the SyntaxError triggers, "nothing once mounted", "nothing on desktop or iOS".
+
+**Native side: log only.** `CanariApplication.logWebViewVersion` logs the WebView package and version at startup, at info level (`adb logcat -s CanariApplication`, whatever `TAG` holds). It is not sent with the device registration: that payload is being changed in another pull request, and the page already knows the version from its user agent.
