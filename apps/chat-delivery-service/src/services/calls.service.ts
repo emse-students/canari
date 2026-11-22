@@ -12,6 +12,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { callsAllowedFor, GroupMember } from '../entities/group-member.entity';
+import { type Group, isSelfConversation } from '../entities/group.entity';
 import { cutUserId } from '../utils/log-repeat';
 import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
@@ -1503,6 +1504,21 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     if (standing === null) {
       this.logger.warn(`[${scope}] user ${userId} is not a member of group ${groupId}`);
       throw new ForbiddenException('Not a member of this group');
+    }
+    // "MES NOTES" HAS NOBODY TO CALL (migration 056): its only member is the caller's own account.
+    // Asked after the membership, so a stranger learns nothing about the group's kind.
+    const [row] = (await this.groupMemberRepo.manager.query(
+      `SELECT "kind" FROM dm_groups WHERE id = $1`,
+      [groupId]
+    )) as Array<{ kind: string }>;
+    if (isSelfConversation(row as Pick<Group, 'kind'> | undefined)) {
+      this.logger.warn(
+        `[${scope}] REFUSED user ${cutUserId(userId)} group ${groupId} is a self conversation - no call is placed in it (403 SELF_CONVERSATION)`
+      );
+      throw new ForbiddenException({
+        code: RefusalCode.SELF_CONVERSATION,
+        message: 'A self conversation has nobody to call.',
+      });
     }
   }
 

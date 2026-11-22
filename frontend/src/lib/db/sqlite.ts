@@ -84,6 +84,7 @@ import {
   conversationStartedAtStatement,
   conversationNameAtStatement,
   conversationNameRankStatements,
+  conversationKindStatement,
   conversationNameSyncStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
@@ -280,7 +281,8 @@ export class SqliteStorage implements IStorage {
                 name_sync        TEXT,
                 name_from_statement INTEGER,
                 name_rename_at   INTEGER,
-                name_renamed_by  TEXT
+                name_renamed_by  TEXT,
+                kind             TEXT
             )
         `);
 
@@ -678,6 +680,12 @@ export class SqliteStorage implements IStorage {
       console.info(`[SQLite] conversations rank column added: ${add.split(' ').slice(-2)[0]}`);
       await this.db.execute(add);
     }
+    // EVERY OPEN too, for the same reason: "Mes notes" says what it is on its row (`kind`).
+    const addKind = conversationKindStatement(rankColumns.map((c) => String(c.name)));
+    if (addKind) {
+      console.info('[SQLite] conversations kind column added');
+      await this.db.execute(addKind);
+    }
 
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
     // rows with no order key (`MESSAGE_ORDER_MISSING_INDEX_STATEMENT`), and no page would reach
@@ -693,9 +701,9 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, ' +
         CONVERSATION_LOCAL_READ_SEED_VALUE +
-        ', $12, $13, $14, $15, $16)',
+        ', $12, $13, $14, $15, $16, $17)',
       [
         conv.id,
         conv.name,
@@ -713,6 +721,7 @@ export class SqliteStorage implements IStorage {
         conv.nameFromStatement === true ? 1 : null,
         conv.nameRenameAt ?? null,
         conv.nameRenamedBy ?? null,
+        conv.kind === 'self' ? 'self' : null,
       ]
     );
     // What waits for this row acts now (a native mirror line naming it, `conversationStored.ts`).
@@ -753,6 +762,8 @@ export class SqliteStorage implements IStorage {
       ...nameSyncField(parseNameSync(r.name_sync)),
       // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
       localReadSeed: parseLocalReadSeed(r.local_read_seed),
+      // "Mes notes", or nothing: any other value is an ordinary conversation.
+      ...(r.kind === 'self' ? { kind: 'self' as const } : {}),
     };
   }
 
@@ -1570,7 +1581,7 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
       // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed, name_at, name_sync, name_from_statement, name_rename_at, name_renamed_by, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)',
       [
         conv.id,
         conv.name,
@@ -1588,6 +1599,7 @@ export class SqliteStorage implements IStorage {
         conv.nameFromStatement === true ? 1 : null,
         conv.nameRenameAt ?? null,
         conv.nameRenamedBy ?? null,
+        conv.kind === 'self' ? 'self' : null,
       ]
     );
     announceConversationStored(conv.id);

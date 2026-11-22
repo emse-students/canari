@@ -40,6 +40,14 @@ export class KeyPackage {
   deviceAppVersion?: string | null;
 
   /**
+   * The "Mes notes" capability the device's build states on every `register-device` (migration 056,
+   * `SELF_CONVERSATION_VERSION`): 0 for a build that states nothing. A device below the version is
+   * never seated, admitted or Welcomed into a self group (`utils/self-conversation.ts`).
+   */
+  @Column({ type: 'smallint', default: 0 })
+  selfConversationVersion: number;
+
+  /**
    * What the device's last push registration came to, as stated on its latest `register-device`
    * (`parsePushOutcome`); null from a build that does not state it (migration 052). Read by the
    * daily `[PUSH_COVERAGE]` count only.

@@ -21,6 +21,7 @@ import {
 } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
+import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
@@ -1259,6 +1260,7 @@ export class CallService {
     }
     this.tapAt = performance.now();
     const seq = ++this.callSetupSeq;
+    void flushAppLogAtMilestone('call start');
 
     try {
       this.callState.set('calling');
@@ -1419,6 +1421,7 @@ export class CallService {
     // `incomingHasVideo` is already false on an audio-only build; an explicit `video` is held too.
     const useVideo = CALLS_VIDEO_ENABLED && (video ?? this.incomingHasVideo);
     const seq = ++this.callSetupSeq;
+    void flushAppLogAtMilestone('call accept');
 
     try {
       if (!canUseRtpScriptTransform()) {
@@ -1698,6 +1701,8 @@ export class CallService {
   }
 
   /** The pending close of the ended summary; cleared by `cleanup` so it cannot cut a LATER call's summary short. */
+  /** The call whose end already wrote the in-app log (see `cleanup`). */
+  private callEndFlushedFor: string | null = null;
   private endedSummaryTimer: number | null = null;
 
   private clearEndedSummaryTimer(): void {
@@ -1820,6 +1825,12 @@ export class CallService {
     this.remoteStreams.set(new Map());
     this.connectedAt.set(null);
     this.endedAt.set(null);
+    // Once per call, after the cleanup's own lines: `cleanup` has several call sites and may run
+    // twice for one call.
+    if (endedCallId !== null && endedCallId !== this.callEndFlushedFor) {
+      this.callEndFlushedFor = endedCallId;
+      void flushAppLogAtMilestone('call end');
+    }
   }
 
   /**
@@ -2074,6 +2085,9 @@ export class CallService {
       return;
     }
     await pc.setRemoteDescription({ type: sdp.type, sdp: sdp.sdp });
+    if (sdp.type === 'offer' && (sdp.seq ?? 1) === 1) {
+      void flushAppLogAtMilestone('first offer received');
+    }
     await this.flushPendingRemoteIceCandidates(leg);
     if (sdp.type === 'answer') {
       leg.pendingOfferSeq = null;
@@ -3153,6 +3167,7 @@ export class CallService {
         `[Call]${leg.tag} offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
       this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
+      if (seq === 1) void flushAppLogAtMilestone('first offer sent');
     } catch (e) {
       appendLog(`[Call]${leg.tag} creating an offer failed: ${String(e)}`);
     } finally {
@@ -3387,7 +3402,10 @@ export class CallService {
           return;
         }
         if (callState === 'calling' || callState === 'incoming') this.callState.set('incall');
-        if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
+        if (get(this.connectedAt) === null) {
+          this.connectedAt.set(Date.now());
+          void flushAppLogAtMilestone('first connection');
+        }
         void pc
           .getStats()
           .then((stats) =>

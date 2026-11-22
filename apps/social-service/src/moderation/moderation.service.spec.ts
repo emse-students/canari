@@ -346,6 +346,20 @@ describe('ModerationService - reports', () => {
       );
     });
 
+    it("refuses a report naming the reporter's own account, writing nothing", async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await expect(
+        service.createReport({
+          reporterId: 'alice',
+          contentType: 'user',
+          contentId: 'Alice',
+          reason: 'harassment',
+        })
+      ).rejects.toMatchObject({ response: { code: 'REPORT_SELF' } });
+
+      expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
     it('auto-hides a post at the threshold, and counts content_reports to decide it', async () => {
       reportRepo.count.mockResolvedValue(5);
 

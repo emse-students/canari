@@ -1,10 +1,24 @@
 import {
+  Check,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
+
+/** `Group.kind` of every group chat and every 1:1 - the column's default. */
+export const GROUP_KIND_CONVERSATION = 'conversation';
+/** `Group.kind` of "Mes notes", an account's conversation with itself (migration 056). */
+export const GROUP_KIND_SELF = 'self';
+/** The values `chk_dm_groups_kind` admits. */
+export type GroupKind = typeof GROUP_KIND_CONVERSATION | typeof GROUP_KIND_SELF;
+
+/** Whether `group` is an account's conversation with itself ("Mes notes"). */
+export function isSelfConversation(group: Pick<Group, 'kind'> | null | undefined): boolean {
+  return group?.kind === GROUP_KIND_SELF;
+}
 
 /**
  * Server-side metadata for an MLS group (either a 1-to-1 direct message or a
@@ -14,6 +28,17 @@ import {
  * the structural/crypto metadata needed to coordinate device membership.
  */
 @Entity('dm_groups')
+// The two constraints of migration 056, named as it names them, so a `TYPEORM_SYNCHRONIZE` stack
+// carries the same "one live notes conversation per account" and the same kind values as
+// production - the precedent of `GroupMember`'s `IDX_dm_group_members_user`.
+@Index('idx_dm_groups_one_live_self_per_account', ['createdBy'], {
+  unique: true,
+  where: `"kind" = 'self' AND "deletedAt" IS NULL`,
+})
+@Check(
+  'chk_dm_groups_kind',
+  `"kind" IN ('conversation', 'self') AND ("kind" <> 'self' OR ("isGroup" = false AND "distributionWorkspaceId" IS NULL AND "distributionChannelId" IS NULL))`
+)
 export class Group {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -41,9 +66,22 @@ export class Group {
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   createdBy?: string | null;
 
-  /** True for multi-member group chats; false for 1-to-1 direct messages. */
+  /** True for multi-member group chats; false for 1-to-1 direct messages and for a self group. */
   @Column({ default: false })
   isGroup: boolean;
+
+  /**
+   * What this conversation IS, beyond the `isGroup` flag (migration 056):
+   * - `conversation` - a group chat or a 1:1 with a peer, every row written before the column;
+   * - `self` - "Mes notes", the account's conversation with itself: its creator's devices are its
+   *   only members, `isGroup` is false and it names no peer. One LIVE such row per account, said by
+   *   the unique partial index `idx_dm_groups_one_live_self_per_account` on `createdBy`.
+   *
+   * Returned to the client (the group read and `GET mls/users/:id/groups`), which keys its
+   * `conversationType: 'self'` on it and never resolves a peer for such a row.
+   */
+  @Column({ type: 'varchar', length: 16, default: GROUP_KIND_CONVERSATION })
+  kind: GroupKind;
 
   /**
    * Set when this group is a community's Graine key-distribution group, to the id of that

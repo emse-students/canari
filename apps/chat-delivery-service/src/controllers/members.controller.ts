@@ -428,6 +428,13 @@ export class MembersController {
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
+      // `self` for "Mes notes" (migration 056): the client builds that row with no peer to resolve.
+      // An older client ignores the field. Listed alone, the row reads to it as a 1:1 whose peer it
+      // cannot resolve, and its listing pass builds nothing from it - but a WELCOME would make it a
+      // group it may rename, invite into and delete. So the older build is never given one: no seat,
+      // Admit, Welcome or welcome request reaches a device that has not stated the capability, and a
+      // delete without `?kind=self` is refused (`utils/self-conversation.ts`).
+      kind: g.kind,
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
       createdAt: g.createdAt ?? null,

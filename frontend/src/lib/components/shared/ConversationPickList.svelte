@@ -15,7 +15,7 @@
    * `bare` - one tap on a surface that draws itself.
    */
   import type { Snippet } from 'svelte';
-  import { Hash, Search } from '@lucide/svelte';
+  import { Bookmark, Hash, Search } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -134,6 +134,13 @@
                 size="md"
                 fallbackLabel={cand.label}
               />
+            {:else if cand.conversation.conversationType === 'self'}
+              <div
+                class="bg-accent/15 text-accent-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                data-self-conversation-icon
+              >
+                <Bookmark size={16} strokeWidth={2.25} />
+              </div>
             {:else if cand.conversation.conversationType === 'channel'}
               <div class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">
                 <Hash size={18} strokeWidth={2.5} />

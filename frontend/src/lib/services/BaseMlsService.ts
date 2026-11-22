@@ -4789,6 +4789,8 @@ export abstract class BaseMlsService implements IMlsService {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** The "Mes notes" capability its build stated (`SELF_CONVERSATION_VERSION`), 0 if none. */
+      selfConversationVersion: number;
     }>
   > {
     return this.delivery.fetchUserDevices(userId);
@@ -5116,8 +5118,13 @@ export abstract class BaseMlsService implements IMlsService {
     this.addLockExpiryWakes.clear();
   }
 
-  async createRemoteGroup(name: string | null, isGroup = true): Promise<string> {
-    return this.delivery.createRemoteGroup(name, isGroup);
+  async createRemoteGroup(
+    name: string | null,
+    isGroup = true,
+    kind: 'conversation' | 'self' = 'conversation',
+    opts: { replaceUnheld?: boolean } = {}
+  ): Promise<string> {
+    return this.delivery.createRemoteGroup(name, isGroup, kind, opts);
   }
 
   async fetchHistory(
@@ -5179,8 +5186,8 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.setGroupImage(groupId, mediaId);
   }
 
-  async deleteGroupOnServer(groupId: string): Promise<void> {
-    return this.delivery.deleteGroupOnServer(groupId);
+  async deleteGroupOnServer(groupId: string, kind?: 'self'): Promise<void> {
+    return this.delivery.deleteGroupOnServer(groupId, kind);
   }
 
   async removeMemberFromServer(groupId: string, userId: string): Promise<void> {

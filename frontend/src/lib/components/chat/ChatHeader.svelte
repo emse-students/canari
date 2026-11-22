@@ -11,6 +11,7 @@
     Images,
     Hash,
     Ellipsis,
+    Bookmark,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -40,6 +41,12 @@
     isGroupConversation?: boolean;
     /** Whether the conversation is a community channel. */
     isChannel?: boolean;
+    /**
+     * Whether the conversation is "Mes notes", this account's conversation with itself: drawn with
+     * the bookmark and the line saying where it is visible, and offering no call, no profile and no
+     * settings - there is nobody else in it.
+     */
+    isSelfConversation?: boolean;
     /** Optional media ID for the group avatar image. Ignored for channels (name only, no avatar). */
     imageMediaId?: string | null;
     /** Callback to invite one or more members by user ID. */
@@ -88,6 +95,7 @@
     isReady,
     isGroupConversation = true,
     isChannel = false,
+    isSelfConversation = false,
     imageMediaId = null,
     onInviteMembers,
     onBack,
@@ -110,7 +118,7 @@
   }: Props = $props();
 
   const showCallButtons = $derived(
-    Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && isReady)
+    Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && !isSelfConversation && isReady)
   );
 
   /** The phone apps draw the glass header; the website keeps the classic one (`usesGlassChrome`). */
@@ -132,7 +140,11 @@
    * desktop gear, the phone menu's "Settings" entry.
    */
   const peerLinked = $derived(
-    !isGroupConversation && !isChannel && !!contactName.trim() && !isAbsentUser(contactName)
+    !isGroupConversation &&
+      !isChannel &&
+      !isSelfConversation &&
+      !!contactName.trim() &&
+      !isAbsentUser(contactName)
   );
 
   /** What the phone pill does: the peer's profile in a DM, the conversation's settings otherwise. */
@@ -194,12 +206,15 @@
         active: searchActive,
       });
     }
-    items.push({
-      id: 'settings',
-      label: m.chat_settings_title(),
-      icon: Settings,
-      onSelect: () => onOpenSettings?.(),
-    });
+    // "Mes notes" has no settings to open: no peer to block or report, no one to name it for.
+    if (!isSelfConversation) {
+      items.push({
+        id: 'settings',
+        label: m.chat_settings_title(),
+        icon: Settings,
+        onSelect: () => onOpenSettings?.(),
+      });
+    }
     return items;
   });
 
@@ -217,13 +232,13 @@
    * nobody).
    */
   const peerName = userDisplayName(
-    () => (!isGroupConversation && !isChannel ? contactName : ''),
+    () => (!isGroupConversation && !isChannel && !isSelfConversation ? contactName : ''),
     () => displayName,
     () => groupId
   );
 
   const effectiveDisplayName = $derived(
-    !isGroupConversation && !isChannel ? peerName.current : displayName
+    !isGroupConversation && !isChannel && !isSelfConversation ? peerName.current : displayName
   );
 
   const pillLabel = $derived(
@@ -297,6 +312,13 @@
           >
             <Hash size={18} strokeWidth={2.5} />
           </span>
+        {:else if isSelfConversation}
+          <span
+            data-glass-avatar
+            class="bg-accent/15 text-accent-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+          >
+            <Bookmark size={16} strokeWidth={2.25} />
+          </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
             <GroupAvatar id={groupId} {imageMediaId} name={displayName} size="md" shape="circle" />
@@ -364,6 +386,12 @@
     <div class="text-text-muted flex h-10 w-10 shrink-0 items-center justify-center">
       <Hash size={22} strokeWidth={2.5} />
     </div>
+  {:else if isSelfConversation}
+    <div
+      class="bg-accent/15 text-accent-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+    >
+      <Bookmark size={20} strokeWidth={2.25} />
+    </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
       <GroupAvatar id={groupId} {imageMediaId} name={displayName} fill />
@@ -398,6 +426,19 @@
     {#if isChannel}
       <span class="text-text-muted text-2xs inline-flex items-center font-semibold md:text-xs">
         {m.chat_community_channel_label()}
+      </span>
+    {:else if isSelfConversation}
+      <span
+        class="text-text-muted text-2xs inline-flex items-center gap-1 font-semibold md:text-xs"
+        data-self-conversation-subtitle
+      >
+        <LockKeyhole
+          size={12}
+          strokeWidth={2.5}
+          class="text-emerald-600 dark:text-emerald-400"
+          title={m.chat_e2e_verified_title()}
+        />
+        {m.conversation_self_subtitle()}
       </span>
     {:else}
       <!--
@@ -488,17 +529,19 @@
       this component mounted itself. The page decides which panel now, so there is nothing to fall
       back to.
     -->
-    <button
-      onclick={onOpenSettings}
-      aria-label={isChannel
-        ? m.chat_channel_settings_label()
-        : isGroupConversation
-          ? m.chat_group_settings_label()
-          : m.chat_dm_settings_label()}
-      class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
-      title={m.chat_settings_title()}
-    >
-      <Settings size={20} strokeWidth={2.5} />
-    </button>
+    {#if !isSelfConversation}
+      <button
+        onclick={onOpenSettings}
+        aria-label={isChannel
+          ? m.chat_channel_settings_label()
+          : isGroupConversation
+            ? m.chat_group_settings_label()
+            : m.chat_dm_settings_label()}
+        class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
+        title={m.chat_settings_title()}
+      >
+        <Settings size={20} strokeWidth={2.5} />
+      </button>
+    {/if}
   </div>
 </header>

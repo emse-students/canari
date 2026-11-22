@@ -21,10 +21,11 @@ const MAY_CLAIM: Record<string, string[]> = {
   'lib/mls-client/IMlsService.ts': ['fetchUserDevices'],
   'lib/mls-client/mlsDeliveryApi.ts': ['fetchUserDevices'],
   'lib/services/BaseMlsService.ts': ['fetchUserDevices', 'fetchUserDevices'],
-  // adders: group and direct-conversation creation add every device of a person (and the
-  // creator's own), the Graine admission adds every device of a newcomer
+  // adders: group, "Mes notes" and direct-conversation creation add every device of a person (and
+  // the creator's own - `createOwnedGroup` serves both a group and the self conversation), the
+  // Graine admission adds every device of a newcomer
   'lib/utils/chat/groupCreation.ts': [
-    'createNewGroup',
+    'createOwnedGroup',
     'readDevicesWithRetry',
     'startNewConversation',
   ],

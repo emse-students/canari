@@ -227,6 +227,17 @@ export function conversationNameSyncStatement(columns: readonly string[]): strin
 }
 
 /**
+ * The conversation row's `kind` (`ConversationMeta.kind`, TEXT): `self` for "Mes notes", NULL for
+ * every other row. Added on EVERY OPEN, guarded by name like the rank columns - no version stamp, so
+ * no historical branch can skip it. Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationKindStatement(columns: readonly string[]): string | null {
+  return columns.includes('kind') ? null : 'ALTER TABLE conversations ADD COLUMN kind TEXT';
+}
+
+/**
  * The v21 -> v22 step: the RANK of the dated name (`NameRank`, `groupNameSupersedes`), three columns:
  * - `name_from_statement` (`ConversationMeta.nameFromStatement`): 1 when a silent `groupNamed`
  *   statement dated it, which any rename beats;

@@ -103,6 +103,32 @@ export const RefusalCode = {
    * is gone, and re-sending the same bytes cannot make it exist.
    */
   WELCOME_TARGET_UNKNOWN: 'WELCOME_TARGET_UNKNOWN',
+  /**
+   * 403 - "Mes notes" (`dm_groups.kind = 'self'`, migration 056) is one account's conversation with
+   * itself: no other person is admitted into it, and no call is placed in it. Terminal: there is
+   * nobody to add and nobody to ring.
+   */
+  SELF_CONVERSATION: 'SELF_CONVERSATION',
+  /**
+   * 409 - `POST mls/groups` with `kind: 'self'` while the account already holds a live notes
+   * conversation (the unique partial index of migration 056). Nothing was written; the body names the
+   * live one (`groupId`, never null) and `otherHolders`, how many OTHER devices of the account hold it.
+   * The client decides from those facts: open it when it holds that group itself, wait for the
+   * own-device Welcome when another device holds it, else create again with `replaceUnheld`.
+   */
+  SELF_CONVERSATION_EXISTS: 'SELF_CONVERSATION_EXISTS',
+  /**
+   * 403 - a device whose build does not state the "Mes notes" capability
+   * (`key_package."selfConversationVersion"`) would enter a self group: an Admit, a Welcome, an
+   * external join or a welcome request. `deviceIds` names them. Such a build reads the group as an
+   * ordinary one it may delete (`utils/self-conversation.ts`).
+   */
+  SELF_CONVERSATION_DEVICE_UNAWARE: 'SELF_CONVERSATION_DEVICE_UNAWARE',
+  /**
+   * 403 - `DELETE mls/groups/:id` of a self group by a request that does not say it knows the kind
+   * (`?kind=self`): every build before "Mes notes". Nothing was deleted.
+   */
+  SELF_CONVERSATION_KIND_UNSTATED: 'SELF_CONVERSATION_KIND_UNSTATED',
 } as const;
 
 /** A stable refusal code of this service. */

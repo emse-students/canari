@@ -2,6 +2,7 @@ import {
   SCHEMA_VERSION,
   conversationAwaitingAdmissionStatement,
   conversationNameAtStatement,
+  conversationKindStatement,
   conversationNameRankStatements,
   conversationNameSyncStatement,
   conversationServerReadWatermarksStatement,
@@ -301,6 +302,12 @@ describe('conversationNameAtStatement (v21)', () => {
         .get()
     ).toEqual({ name_from_statement: null, name_rename_at: null, name_renamed_by: null });
     expect(conversationNameRankStatements(columnsOf())).toEqual([]);
+    // Every open: the kind of "Mes notes", NULL on arrival - an ordinary conversation.
+    const kind = conversationKindStatement(columnsOf());
+    expect(kind).not.toBeNull();
+    engine.exec(kind!);
+    expect(engine.prepare('SELECT kind FROM conversations').get()).toEqual({ kind: null });
+    expect(conversationKindStatement(columnsOf())).toBeNull();
     expect(SCHEMA_VERSION).toBe(22);
   });
 });
