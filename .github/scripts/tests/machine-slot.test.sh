@@ -44,7 +44,15 @@ echo "A granted" >>"$events"
 b_runner=$!
 # Released only once B has said it waits for A, so the order below proves B was REFUSED while A
 # held - not merely that B started late. The loop ends on that line, never on a count of looks.
-until grep -q "B waits for A" "$waits"; do sleep 0.1; done
+# It also ends, loudly, if B's runner dies without ever saying it waits.
+until grep -q "B waits for A" "$waits"; do
+  if ! kill -0 "$b_runner" 2>/dev/null; then
+    echo "FAIL the waiter exited without waiting for A; what it said:"
+    sed 's/^/    /' "$waits"
+    exit 1
+  fi
+  sleep 0.1
+done
 echo "A released" >>"$events"
 exec {a_out}>&- {a_in}<&-
 wait "$holder_a" || true

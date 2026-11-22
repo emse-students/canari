@@ -141,10 +141,12 @@ MERGED_NOTE=""
 # five pushes were verifying at once on 16 cores (run queue 69-92, paging), and tests costing 16 ms
 # of CPU failed vitest's 5 s wall-clock deadline - the victims random, the machine the cause. The
 # slot is a listening socket (`machine-slot.mjs`), so a holder that dies releases it with no stale
-# state, and a waiter wakes on the holder's close, not on a clock. The measurements:
-# docs/wiki/test-suite-reform.md, the sixth load reading.
+# state, and a waiter wakes on the holder's close, not on a clock. There is no queue (the first
+# waiter to bind wins) and no clock ends a hold: a waiter names the holder's pid, `kill` frees it.
+# The measurements: docs/wiki/test-suite-reform.md, the sixth load reading.
 # The commit tier's checks are not here: they run the touched modules' few files, wait for nobody,
 # and a commit must not queue behind a push's suite.
+# GUARD: a check listed here must never run_check another listed check - it would wait for itself.
 uses_every_core() { # <check name>
   case "$1" in
     frontend-generated | frontend-lint | frontend-test) return 0 ;;

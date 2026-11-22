@@ -8,8 +8,17 @@
  * `svelte-check` on 16 cores: measured 2026-11-22, a run queue of 69 to 92 threads, paging at
  * 4,000 to 27,000 pages a second, and tests that take 16 ms of CPU failing vitest's 5 s wall-clock
  * deadline. The deadline was measuring the machine. This slot is what bounds the machine: a check
- * that uses every core waits for the one already running, in arrival order, and starts on a
- * machine it has to itself (docs/wiki/test-suite-reform.md, the sixth load reading).
+ * that uses every core waits for the one already running, and starts on a machine it has to itself
+ * (docs/wiki/test-suite-reform.md, the sixth load reading).
+ *
+ * THERE IS NO QUEUE: when the holder goes, every waiter tries to listen and the first to bind wins,
+ * so a push can be overtaken at each of its heavy checks. What the slot guarantees is ONE holder at
+ * a time, which is what bounds the load; an order was not worth a queue's state.
+ *
+ * NO CLOCK ENDS A HOLD. A holder that hangs keeps the slot until it exits, so every waiter prints
+ * the holder's pid and start time and the way out: `kill <pid>`, after which the system frees the
+ * address. The slot assumes ONE trust domain (one user's sessions): anything that can listen on the
+ * address can hold it.
  *
  * THE SLOT IS A LISTENING SOCKET, NOT A FILE. The kernel gives one address to one listener and
  * takes it back when that process dies, however it dies, so there is no stale lock to detect and no
@@ -71,18 +80,23 @@ function waitForHolder() {
     const line = holder.split('\n')[0];
     if (holder.includes('\n') && line !== announced) {
       announced = line;
-      say(`${label} waits for ${line}`);
+      const pid = /pid (\d+)/.exec(line)?.[1] ?? '<pid>';
+      // A Windows pid, which Git Bash's `kill` does not take: PowerShell's Stop-Process does.
+      const way = process.platform === 'win32' ? `Stop-Process -Id ${pid}` : `kill ${pid}`;
+      say(`${label} waits for ${line}. No clock ends a hold: if it hangs, \`${way}\` frees it`);
     }
   });
   conn.on('close', (hadError) => {
     if (!hadError) acquire();
   });
   conn.on('error', (e) => {
-    // The holder left between our refused listen and this connect: the address is free again.
-    if (e.code === 'ENOENT') return acquire();
+    // The holder left between our refused listen and this connect: the address is free again. A
+    // named pipe with no listener answers ENOENT, an abstract socket ECONNREFUSED.
+    const fileBacked = !address.startsWith('\0') && process.platform !== 'win32';
+    if (e.code === 'ENOENT' || (e.code === 'ECONNREFUSED' && !fileBacked)) return acquire();
     // A socket FILE nobody listens on: its holder was killed before it could remove it. Only the
     // file-backed address (macOS) can leave one; the pipe and the abstract socket vanish with it.
-    if (e.code === 'ECONNREFUSED' && !address.startsWith('\0') && process.platform !== 'win32') {
+    if (e.code === 'ECONNREFUSED') {
       say(`${label} found a slot file nobody listens on (a holder killed outright) and removes it`);
       try {
         unlinkSync(address);
@@ -96,10 +110,13 @@ function waitForHolder() {
   });
 }
 
+/** When this process took the slot, told to every waiter. */
+let heldSince = '';
+
 function acquire() {
   // The connection stays OPEN: its close, when this process exits, is the waiter's signal.
   const server = net.createServer((conn) => {
-    conn.write(`${label} (pid ${process.pid}, ${process.cwd()})\n`);
+    conn.write(`${label} (pid ${process.pid}, holding since ${heldSince}, ${process.cwd()})\n`);
     // A waiter that went away (its push was cancelled): nothing here depends on it.
     conn.on('error', (e) => say(`a waiter left (${e.code})`));
   });
@@ -108,7 +125,10 @@ function acquire() {
     say(`cannot listen on ${address}: ${e.code} ${e.message}`);
     process.exit(2);
   });
-  server.listen(address, () => hold(server));
+  server.listen(address, () => {
+    heldSince = new Date().toISOString();
+    hold(server);
+  });
 }
 
 acquire();

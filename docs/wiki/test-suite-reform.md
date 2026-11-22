@@ -788,11 +788,16 @@ worker's `process.cpuUsage()`; wall minus CPU is time the worker was not computi
 
 **Fixed in the hooks: one machine-wide slot for the checks that use every core** (`frontend-generated`,
 `frontend-lint`, `frontend-test`; `local-ci.sh` `uses_every_core`). A second push's heavy check waits for the
-first, in arrival order, and says whom it waits for. The slot is a listening socket
+first and says whom it waits for. **There is no queue**: on release every waiter tries to bind and the first
+wins, so a push can be overtaken at each heavy check; the guarantee is one holder at a time, which is what
+bounds the load. **No clock ends a hold**: a hung holder keeps the slot until it exits, so the waiter prints
+its pid and start time and the way out, `kill <pid>`, or `Stop-Process -Id <pid>` on Windows (the system then frees the address). A heavy check
+must never run another heavy check through `run_check`: it would wait for itself. The slot assumes one
+trust domain (one user's sessions): anything that can listen on the address can hold it. The slot is a listening socket
 (`.github/scripts/machine-slot.mjs`: a named pipe on Windows, an abstract socket on Linux): the kernel gives the
 address to one listener and takes it back when that process dies, so there is no stale lock and no clock; a
 waiter wakes on the holder's connection CLOSING. The commit tier does not take it (a few files, and a commit
-must not queue behind a suite). Guarded by `.github/scripts/tests/machine-slot.test.sh` (order of grant, and a
+must not queue behind a suite). Guarded by `.github/scripts/tests/machine-slot.test.sh` (no grant while another holds, and a
 holder killed outright releasing it). **What it costs:** three serialized runs took 417-505 s against 223-230 s
 concurrently - but each concurrent run failed 6-9 tests, so its push was refused and ran again; the
 serialized total is the first one that is true. **What it does not cover:** load that is not a hook - another
