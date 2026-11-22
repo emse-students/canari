@@ -1262,6 +1262,12 @@ release was **half-shipped by construction**. `tools/app-store/submit.mjs` close
 about how, including the release-notes file a human owes each stable and why its first line names
 its own version, is in [its README](../../tools/app-store/README.md), the only copy.
 
+### The Android release build packages both ABIs because Gradle builds them (2026-11-21)
+
+`v1.7.3-alpha.4` failed the new ABI check ("has no native library for armeabi-v7a") although `--target aarch64 armv7` was passed. The log shows ONE `cargo` run (`Finished release ... in 4m 37s`), one `symlinking lib ... jniLibs/arm64-v8a`, then Gradle's "There are no .so files available to package in the APK for armeabi-v7a". The tauri CLI compiles only the FIRST target itself; every other ABI is built by the Gradle task `rustBuild<Arch><Profile>`, which runs `tauri android android-studio-script --target <t>`. In this repo those tasks were empty `DefaultTask`s: `d4b181ef40` (2026-04-10, "routine Tauri gen update") deleted `buildSrc/.../BuildTask.kt` and its wiring in `RustPlugin.kt`. That is why the build was arm64-only before #3932 too, and why `--target` changed nothing.
+
+The fix restores both files at the tauri-cli 2.12.5 template's own path (`buildSrc/src/main/kotlin/`, so a future `tauri android init` diffs empty), with the template's body: `ExecOperations` (Gradle 9 removed `Project.exec`), `projectDir` captured as an `@Input`, `tasks.register`. Two things differ, on purpose: the binary is `bun`, and `rustBuildUniversal` stays what the template makes it. PR CI cannot run those tasks, so `android-app-compile.sh` asks Gradle (`:app:help --task rustBuildArmRelease` and two siblings) and fails unless each is a `BuildTask`; its self-test covers the refusal. The ABI check in `android.yml` remains the proof on a release: the next pre-release must show a second cargo run and `lib/armeabi-v7a/libmines_app_lib.so` in the AAB and the APK. Do not "tidy" `buildSrc` back to empty tasks.
+
 ### The Android release build restores Gradle, it never saves it (2026-11-09)
 
 `android.yml` cached nothing under `~/.gradle`, so every release fetched the Gradle wrapper
