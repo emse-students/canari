@@ -378,8 +378,8 @@ async function republishStaleBase(
 /** The reason each declined private salon was last said to be declined. */
 const declinedSalons = new Map<string, string>();
 
-/** Test seam: forgets which declined salons were said. */
-export function resetDeclinedSalonsForTests(): void {
+/** Forgets which declined salons were said: they are salons of the account that logs out. */
+export function resetDeclinedSalons(): void {
   declinedSalons.clear();
 }
 

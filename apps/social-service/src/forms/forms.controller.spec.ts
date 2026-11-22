@@ -170,7 +170,7 @@ describe('FormsController.summaries - the batched card read', () => {
     expect(out.forms).toHaveLength(1);
   });
 
-  it.each([[undefined], [''], ['not-a-uuid'], [Array(51).fill(A).join(',')]])(
+  it.each([[undefined], [[A, B]], [''], ['not-a-uuid'], [Array(51).fill(A).join(',')]])(
     'refuses %s with a 400 and asks nothing',
     async (ids) => {
       const summaries = jest.fn();

@@ -146,8 +146,13 @@ import { measureRestoreShortfall } from '$lib/utils/chat/restoreShortfall';
 import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/runtime';
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
-import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
-import { installGraineSweepResume, sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
+import { distributionGapListener, resetDeclinedSalons } from '$lib/utils/graine/distributionGroup';
+import { resetKeylessHistoryAsks } from '$lib/mls-client/messagePipeline/systemMessageHandler';
+import {
+  installGraineSweepResume,
+  resetGraineSweepState,
+  runGraineSweep,
+} from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
   activeMlsStatePersister,
@@ -2878,9 +2883,7 @@ export async function loginImpl(
     // - it is maintenance, not startup, and nothing waits on it. Its own failures are logged and
     // swallowed inside; the catch here only exists because this call site cannot await it.
     installGraineSweepResume();
-    sweepExpiredGraineSeeds().catch((e: unknown) => {
-      console.warn(`[GRAINE] retention sweep threw: ${String(e)}`);
-    });
+    void runGraineSweep();
 
     for (const delay of [35_000, 70_000]) {
       setTimeout(() => {
@@ -3777,6 +3780,10 @@ export function tearDownLiveSession(
   bindGroupTreeReader(null);
   // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
   setGraineRuntime(null);
+  // And what the log lines and the sweep remembered about it: said-once latches, the owed sweep.
+  resetGraineSweepState();
+  resetDeclinedSalons();
+  resetKeylessHistoryAsks();
   // So are the seed asks parked for a drain (sender ids, request ids); the MLS service's destroy
   // settles its own drain waiters.
   clearParkedAsks();

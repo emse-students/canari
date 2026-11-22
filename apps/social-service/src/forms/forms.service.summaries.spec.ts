@@ -44,3 +44,29 @@ describe('FormsService.summaries', () => {
     await expect(service(get, has).summaries(['x'], viewer)).rejects.toThrow('db down');
   });
 });
+
+describe('FormsService.summaries - bounded fan-out', () => {
+  it('never reads more than FORM_SUMMARIES_CONCURRENCY forms at once', async () => {
+    const { FORM_SUMMARIES_CONCURRENCY } = await import('./forms.service');
+    let inFlight = 0;
+    let peak = 0;
+    const get = jest.fn(async (id: string) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setImmediate(r));
+      inFlight--;
+      return { id, title: 't', opensAt: null };
+    });
+    const svc = Object.create(FormsService.prototype) as FormsService;
+    Object.assign(svc, {
+      get,
+      hasSubmission: jest.fn(async () => ({ hasSubmitted: false })),
+      logger: { debug: jest.fn() },
+    });
+    const ids = Array.from({ length: 50 }, (_, i) => `f${i}`);
+    await expect(svc.summaries(ids, { userId: 'u', isGlobalAdmin: false })).resolves.toHaveLength(
+      50
+    );
+    expect(peak).toBe(FORM_SUMMARIES_CONCURRENCY);
+  });
+});

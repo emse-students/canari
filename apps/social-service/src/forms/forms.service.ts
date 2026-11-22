@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { assertMayCollect } from '../associations/collection-policy';
 import {
   BadRequestException,
@@ -509,6 +510,13 @@ function isImageNotYours(err: unknown): boolean {
     (body as { code?: string }).code === 'QUESTION_IMAGE_NOT_YOURS'
   );
 }
+
+/**
+ * Forms `summaries` reads at once. One form costs about seven queries (`get` plus `hasSubmission`), so
+ * the 50-id cap would otherwise be ~350 concurrent queries per feed render; six keeps one request to
+ * roughly forty in flight, well inside the pool, for a page that is a handful of forms in practice.
+ */
+export const FORM_SUMMARIES_CONCURRENCY = 6;
 
 @Injectable()
 export class FormsService {
@@ -1271,23 +1279,21 @@ export class FormsService {
     viewer: { userId: string; isGlobalAdmin: boolean }
   ): Promise<{ id: string; title: string; opensAt: Date | null; hasSubmitted: boolean }[]> {
     const unique = [...new Set(ids)];
-    const rows = await Promise.all(
-      unique.map(async (id) => {
-        try {
-          const form = await this.get(id, viewer);
-          const check = await this.hasSubmission(id, viewer.userId);
-          return {
-            id,
-            title: form.title,
-            opensAt: form.opensAt ?? null,
-            hasSubmitted: check.hasSubmitted,
-          };
-        } catch (e) {
-          if (e instanceof NotFoundException) return null;
-          throw e;
-        }
-      })
-    );
+    const rows = await mapWithConcurrency(unique, FORM_SUMMARIES_CONCURRENCY, async (id) => {
+      try {
+        const form = await this.get(id, viewer);
+        const check = await this.hasSubmission(id, viewer.userId);
+        return {
+          id,
+          title: form.title,
+          opensAt: form.opensAt ?? null,
+          hasSubmitted: check.hasSubmitted,
+        };
+      } catch (e) {
+        if (e instanceof NotFoundException) return null;
+        throw e;
+      }
+    });
     this.logger.debug(
       `[FORMS] summaries asked=${unique.length} served=${rows.filter((r) => r).length}`
     );

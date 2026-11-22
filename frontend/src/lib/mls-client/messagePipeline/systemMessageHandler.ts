@@ -728,22 +728,21 @@ export const KEYLESS_HISTORY_ASK = 'history-ask-without-answer-key' as const;
 /** Asks already said once: (tag, sender, conversation) - a peer repeats its ask on every resume. */
 const keylessAsksSaid = new Set<string>();
 
-/** Test seam: forgets which keyless asks were said. */
-export function resetKeylessHistoryAsksForTests(): void {
+/** Forgets which keyless asks were said: they name senders of the account that logs out. */
+export function resetKeylessHistoryAsks(): void {
   keylessAsksSaid.clear();
 }
 
 /**
  * Says, ONCE per sender and conversation, that an ask without an `answerKey` was refused.
  *
- * WHY THIS IS A WARNING AND NOT AN ERROR (owner's 2026-11-22 log, a `HISTORY_DIGEST` line). The
- * premise "every build mints one, so it is malformed" holds for a build AT the floor (`1.7.0`, option
- * B, #3775) but the floor is enforced IN THE CLIENT ONLY (legacy-compatibility.md): a device below
- * it that has not met the update gate yet - a `1.6.x` build, or a `1.7.0` alpha before #3775 - still
- * sends keyless asks, and no supported build can be told from it by the frame (it carries no build).
- * So the line is expected for a bounded population and necessary (it is what measures the drain of
- * that population, [legacy-compatibility](docs/wiki/legacy-compatibility.md)); it is deduplicated
- * because a peer asks again on each resume, and it names the cause instead of calling the ask malformed.
+ * STAYS AT ERROR, DEDUPLICATED (owner's 2026-11-22 log, a `HISTORY_DIGEST` line; review of #3958).
+ * The frame cannot say who sent it: a device below the `1.7.0` floor that has not met the update gate
+ * (the floor is enforced IN THE CLIENT ONLY, legacy-compatibility.md) still sends keyless asks, but a
+ * CURRENT build sending one would be a defect or a forgery, and nothing in the frame (it carries no
+ * build) separates the two. A line that cannot rule out a bug must accuse, so it is not demoted; it is
+ * said once per (tag, sender, conversation) because a peer asks again on each resume, and it names
+ * both possible causes. Cleared on logout: it names senders of the account that left.
  */
 function noteKeylessHistoryAsk(
   tag: string,
@@ -755,8 +754,8 @@ function noteKeylessHistoryAsk(
   log(`[${tag}] ${KEYLESS_HISTORY_ASK}: ask without a well-formed answer key ignored`);
   if (keylessAsksSaid.has(key)) return;
   keylessAsksSaid.add(key);
-  console.warn(
-    `[${tag}] ${KEYLESS_HISTORY_ASK} from ${senderNorm} for ${convoKey.slice(0, 8)}… - a build older than the 1.7.0 floor that has not met the update gate (the frame names no build); refused, answered nothing`
+  console.error(
+    `[${tag}] ${KEYLESS_HISTORY_ASK} from ${senderNorm} for ${convoKey.slice(0, 8)}… - a build below the 1.7.0 floor that has not met the update gate, or a defect or forgery (the frame names no build, so it cannot tell); refused, answered nothing`
   );
 }
 

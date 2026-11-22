@@ -3,7 +3,7 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
   rejoinBehindDistributionGroup,
-  resetDeclinedSalonsForTests,
+  resetDeclinedSalons,
 } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
@@ -15,7 +15,7 @@ vi.mock('./rosterReconcile', () => ({
 }));
 
 beforeEach(() => {
-  resetDeclinedSalonsForTests();
+  resetDeclinedSalons();
   reconcile.mockClear();
 });
 
@@ -885,10 +885,15 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
     await declined();
     expect(lines).toHaveLength(1);
 
+    // A logout forgets what was said: the next account's walk says it again.
+    resetDeclinedSalons();
+    await declined();
+    expect(lines).toHaveLength(2);
+
     // Access regained (entered), then lost: the new refusal is a new fact.
     await enter(channels, () => {}, { viewerHasAccess: true });
     await declined();
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(3);
   });
 
   it('every moment that enters a salon goes through this entrance, into a real log', async () => {

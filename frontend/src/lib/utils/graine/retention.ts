@@ -92,6 +92,7 @@ export function boundGraineRetentionDays(serverDays: number): number | null {
  * @returns How many durable sessions were dropped; 0 when there was nothing to drop or nothing ran.
  */
 export async function sweepExpiredGraineSeeds(): Promise<number> {
+  const gen = sweepGeneration;
   if (!isGraineReady()) {
     console.warn('[GRAINE] retention sweep skipped - no Graine runtime is wired');
     return 0;
@@ -118,6 +119,8 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
   let dropped = 0;
   let liveCount = 0;
   for (let i = 0; i < held.length; i += LIVE_QUERY_CHUNK) {
+    // The account that started this sweep logged out: its answers say nothing about the next one's.
+    if (gen !== sweepGeneration) return dropped;
     const chunkRows = held.slice(i, i + LIVE_QUERY_CHUNK);
     let answer: { live: string[]; retentionDays: number };
     try {
@@ -125,7 +128,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     } catch (e) {
       // A chunk that never got an answer is not swept (silence means nothing), but the chunks that
       // did answer have already been acted on, and the sweep is OWED until one run completes.
-      sweepOwed = true;
+      if (gen === sweepGeneration) sweepOwed = true;
       console.warn(
         `[GRAINE] retention sweep interrupted after ${i} of ${held.length} session(s) (${dropped} dropped so far), resumes on the next foreground or connection: ${String(e)}`
       );
@@ -135,7 +138,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     // enough, and the sweep would delete the seed of every salon this device has not yet posted in.
     const windowDays = boundGraineRetentionDays(answer.retentionDays);
     if (windowDays === null) {
-      sweepOwed = true;
+      if (gen === sweepGeneration) sweepOwed = true;
       return dropped;
     }
     const live = new Set(answer.live);
@@ -152,7 +155,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     try {
       dropped += await storage.deleteGraineSessions(sessionIds);
     } catch (e) {
-      sweepOwed = true;
+      if (gen === sweepGeneration) sweepOwed = true;
       console.warn(
         `[GRAINE] retention sweep failed to drop ${sessionIds.length} expired seed(s): ${String(e)}`
       );
@@ -163,7 +166,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     await forgetGraineMirroredSessions(sessionIds, userId);
   }
 
-  sweepOwed = false;
+  if (gen === sweepGeneration) sweepOwed = false;
   console.info(
     `[GRAINE] retention sweep dropped ${dropped} seed(s) whose messages are gone (held=${held.length}, live=${liveCount})`
   );
@@ -171,28 +174,55 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
 }
 
 /**
- * True while a sweep started on this boot stopped before the last chunk. Module state is enough: it
- * is not a decision about the seeds (the store is the truth about those), only about whether to
- * ASK again, and a reload starts a fresh sweep anyway.
+ * True while a sweep of THIS session stopped before the last chunk. Module state is enough: it is
+ * not a decision about the seeds (the store is the truth about those), only about whether to ASK
+ * again.
  */
 let sweepOwed = false;
-let sweepRunning = false;
 
 /**
- * Runs the sweep when the previous one left work owed, one at a time. Called on every foreground
- * edge and every connection regained, so the retry is driven by the events that make a failed
- * request likely to succeed - not by a timer.
+ * Bumped on logout. A sweep started under an older value neither sets nor clears the owed flag and
+ * stops at its next chunk, so a logout/login overlap cannot hand the next account a flag, or a
+ * "running" latch, that belongs to the previous one.
+ */
+let sweepGeneration = 0;
+let flight: { gen: number; promise: Promise<void> } | null = null;
+
+/**
+ * THE ONE ENTRANCE: the boot sweep and the resume both come through here, so two can never run at
+ * once (they would ask the same chunks and race each other's deletes). A flight of an older session
+ * does not block the current one.
+ */
+export function runGraineSweep(): Promise<void> {
+  if (flight && flight.gen === sweepGeneration) return flight.promise;
+  const gen = sweepGeneration;
+  const promise = sweepExpiredGraineSeeds()
+    .then(() => undefined)
+    .catch((e: unknown) => {
+      console.warn(`[GRAINE] retention sweep threw: ${String(e)}`);
+    })
+    .finally(() => {
+      if (flight?.promise === promise) flight = null;
+    });
+  flight = { gen, promise };
+  return promise;
+}
+
+/**
+ * Runs the sweep when the previous one left work owed. Called on every foreground edge and every
+ * connection regained, so the retry is driven by the events that make a failed request likely to
+ * succeed - not by a timer.
  */
 export async function resumeGraineSweepIfOwed(): Promise<void> {
-  if (!sweepOwed || sweepRunning || !isGraineReady()) return;
-  sweepRunning = true;
-  try {
-    await sweepExpiredGraineSeeds();
-  } catch (e) {
-    console.warn(`[GRAINE] retention sweep resume threw: ${String(e)}`);
-  } finally {
-    sweepRunning = false;
-  }
+  if (!sweepOwed || !isGraineReady()) return;
+  await runGraineSweep();
+}
+
+/** Logout: forgets the owed flag and orphans any sweep still running for the account that left. */
+export function resetGraineSweepState(): void {
+  sweepGeneration++;
+  sweepOwed = false;
+  flight = null;
 }
 
 let resumeInstalled = false;
@@ -213,10 +243,4 @@ export function installGraineSweepResume(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') resume();
   });
-}
-
-/** Test seam: forgets the owed flag. */
-export function resetGraineSweepOwedForTests(): void {
-  sweepOwed = false;
-  sweepRunning = false;
 }

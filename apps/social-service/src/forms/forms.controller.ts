@@ -97,11 +97,16 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get('summaries')
   async summaries(
-    @Query('ids') ids: string | undefined,
+    @Query('ids') ids: unknown,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    const list = (ids ?? '').split(',').filter(Boolean);
+    // `?ids=a&ids=b` parses to an array: a malformed request is a 400, never a TypeError's 500.
+    if (typeof ids !== 'string')
+      throw new BadRequestException(
+        `ids must be 1 to ${FORM_SUMMARIES_MAX} comma-separated form ids`
+      );
+    const list = ids.split(',').filter(Boolean);
     if (
       list.length === 0 ||
       list.length > FORM_SUMMARIES_MAX ||
