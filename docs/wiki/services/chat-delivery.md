@@ -2892,9 +2892,10 @@ told you.*
 
 **App-open cancel**
 
-When the app opens, `CanariPushCancelMessageNotifications` now clears every delivered chat
-notification — both the legacy flat-thread ones and the new per-conversation ones — by checking
-the `deepLink` prefix (`fr.emse.canari://chat`) in addition to the `threadIdentifier`.
+(Superseded 2026-11-21, owner: *"N'effacer que les lues"*.) When the app opens,
+`CanariPushCancelMessageNotifications` no longer clears chat notifications: it removes only a call's
+ring alert (`canariCallId` in `userInfo`) and the pending-sync notice. A conversation's banners go
+with the conversation - read here, read elsewhere, answered, ended.
 
 #### Shared deferred-retry engine (WP-XP-8)
 

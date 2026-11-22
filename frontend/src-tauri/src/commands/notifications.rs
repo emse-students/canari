@@ -248,6 +248,8 @@ pub(crate) fn record_read_elsewhere(
 ) -> bool {
     #[cfg(target_os = "android")]
     {
+        use jni::objects::JValue;
+
         with_native_builder(|env, class| {
             let (group, why) = match (env.new_string(&group_id), env.new_string(&reason)) {
                 (Ok(group), Ok(why)) => (group, why),

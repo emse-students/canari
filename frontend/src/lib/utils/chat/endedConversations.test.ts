@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  endedConversationIds,
-  removedConversationIds,
-  snapshotConversations,
-} from './endedConversations';
+import { endedConversationIds, watchEndings, snapshotConversations } from './endedConversations';
 
 const snap = (...rows: [string, string?][]) =>
   snapshotConversations(rows.map(([id, lifecycle]) => ({ id, lifecycle })));
@@ -39,16 +35,16 @@ describe('endedConversationIds', () => {
   });
 });
 
-describe('removedConversationIds', () => {
-  it('names only the rows the list marks removed - never a row that is merely absent or not yet listed', () => {
-    const rows = [
-      { id: 'g1' },
-      { id: 'g2', lifecycle: 'removed' },
-      { id: 'g3', lifecycle: 'active' },
-    ];
-    expect(removedConversationIds(rows)).toEqual(['g2']);
-    // A conversation that is not in the list at all (a new correspondent's first DM still in the FCM
-    // cache, a salon whose community has not answered) is never named.
-    expect(removedConversationIds([])).toEqual([]);
+describe('watchEndings', () => {
+  it('ends a row that is gone while signed in', () => {
+    expect(watchEndings(true, snap(['g1'], ['g2']), snap(['g2'])).ended).toEqual(['g1']);
+  });
+
+  it('ends nothing while signed out - a lost session clears the map, no conversation ended', () => {
+    const lost = watchEndings(false, snap(['g1'], ['g2']), snap());
+    expect(lost.ended).toEqual([]);
+    expect(lost.known.size).toBe(0);
+    // The sign-in that follows restores the list: a first look, so nothing is compared to the old one.
+    expect(watchEndings(true, lost.known, snap(['g1'])).ended).toEqual([]);
   });
 });

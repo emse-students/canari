@@ -49,21 +49,20 @@ export function endedConversationIds(
 }
 
 /**
- * THE IDS WITH POSITIVE EVIDENCE OF HAVING ENDED: the rows the list itself marks `removed`. Handed to
- * the native side once each, so a conversation that was already `removed` when the page restored
- * (the watcher above only sees a transition) still loses its banner.
+ * One look at the list, from the watcher: what ENDED since the last look and what to remember.
  *
- * **NEVER AN ABSENCE.** A destructive control takes an allowlist of what it may touch, not "whatever
- * the page does not list": the list is NOT the complete set at boot (a first DM from a new
- * correspondent reaches it only through the FCM cache, after the catch-up; a restore that failed
- * still reads as restored; a salon appears in `channelWorkspaces` only once its community answers),
- * so reasoning from a row's absence ended banners of live conversations. Only a `removed` row, or the
- * ledger of a conversation known gone, names an ending.
+ * **SIGNED OUT, NOTHING ENDED.** A lost session (`reportMlsSessionLost`, the resume that finds no
+ * native session) tears the live session down and clears the conversation map in the same tick that
+ * `isLoggedIn` goes false: every id "vanishes" although nothing ended, and ending them would delete
+ * every unread banner of an account that is only reconnecting. While not signed in the watcher
+ * therefore ends nothing and forgets what it knew, so the list the next sign-in restores is a first
+ * look, never a comparison with the one that was torn down.
  */
-export function removedConversationIds(rows: Iterable<WatchedConversation>): string[] {
-  const removed: string[] = [];
-  for (const row of rows) {
-    if (row.id && row.lifecycle === 'removed') removed.push(row.id);
-  }
-  return removed;
+export function watchEndings(
+  signedIn: boolean,
+  previous: KnownConversations,
+  next: KnownConversations
+): { ended: string[]; known: KnownConversations } {
+  if (!signedIn) return { ended: [], known: new Map() };
+  return { ended: endedConversationIds(previous, next), known: next };
 }

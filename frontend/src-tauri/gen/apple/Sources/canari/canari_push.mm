@@ -1027,6 +1027,11 @@ static int CanariStableNotifId(NSString *groupId) {
   if (next < 1000) {
     next = 1000;
   }
+  // `canari-<kPendingSyncNotifId>` is the pending-sync notice's request id and is retired by it on
+  // activation: a conversation must never be handed the same id.
+  if (next == kPendingSyncNotifId) {
+    next++;
+  }
   [prefs setObject:@(next) forKey:groupId];
   [prefs setInteger:next + 1 forKey:@"__counter__"];
   [prefs synchronize];
@@ -5224,7 +5229,7 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
     // `canariCallId`) is taken off the lock screen too, so a call already over is not left ringing
     // there. Best effort: a background push can be dropped. The alert's `apns-expiration` only bounds APNs
     // store-and-forward; a DELIVERED banner stays until removed - here, or on app activation, where
-    // `CanariPushCancelMessageNotifications` clears it (its `deepLink` is a chat link).
+    // `CanariPushCancelMessageNotifications` clears it (it matches the `canariCallId` in its `userInfo`).
     if (callId.length > 0) {
       UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
       [center getDeliveredNotificationsWithCompletionHandler:^(
@@ -5285,8 +5290,9 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
  * - the same allowlist a full silent frame meets, never a second one.
  *
  * One request, no retry, no timer beyond the request's own timeout. A failure is logged at ERROR with
- * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and app activation
- * clears message notifications anyway (`CanariPushCancelMessageNotifications`). `done` is called
+ * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and that IS a loss:
+ * opening the app clears no message banner any more (owner, 2026-11-21), so the banner stays until its
+ * conversation is read. The ERROR line below is the accusation, never a fallback. `done` is called
  * exactly once, on every path.
  */
 static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {

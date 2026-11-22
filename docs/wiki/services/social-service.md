@@ -1059,13 +1059,15 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
   The event decides, never a timer. Logged on both sides: the page (`[NOTIF] conversation <id> ended`)
   and Kotlin (`endConversationNotifications: ... ended, banner id=`).
-  **A row already `removed` when the page restored** (the watcher only sees a transition) is handed over
-  once by `removedConversationIds`. **NOTHING ENDS A BANNER BY ABSENCE** (re-review of #3951): a reconcile
-  against "the conversations the page lists" ended live banners - a first DM from a new correspondent
-  is listed only after the catch-up (FCM cache), a failed restore still reads as restored, a salon is
-  listed once its community answers - and a destructive control takes an allowlist, so only positive
-  evidence (a `removed` row) names an ending. A conversation that ended while the app was closed keeps
-  its banner until the user reads it or the server's own ending event reaches it.
+  **SIGNED OUT, NOTHING ENDED** (`watchEndings`): a lost session (the resume that finds no native
+  session) clears the conversation map in the same tick `isLoggedIn` goes false, so every id
+  "vanishes" although nothing ended; the watcher ends nothing while signed out and forgets what it
+  knew. **NOTHING ENDS A BANNER BY WHAT THE LIST FAILS TO SHOW AT BOOT** (re-review of #3951): a
+  reconcile against "the conversations the page lists" ended live banners - a first DM from a new
+  correspondent is listed only after the catch-up (FCM cache), a failed restore still reads as
+  restored, a salon is listed once its community answers - and a row restored as `removed` can be
+  re-admitted by a Welcome processed later in the catch-up, so neither is acted on. A conversation
+  that ended while the app was closed keeps its banner until the user reads it.
   **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
   by `PushRegistrationEnd.endForSignOutFromRust`: every message, mention and reaction notification,
   the summary, the records and the read marks), since nothing else would before the next account.

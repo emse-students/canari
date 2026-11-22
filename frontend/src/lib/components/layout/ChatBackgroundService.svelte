@@ -93,11 +93,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
-  import {
-    endedConversationIds,
-    removedConversationIds,
-    snapshotConversations,
-  } from '$lib/utils/chat/endedConversations';
+  import { watchEndings, snapshotConversations } from '$lib/utils/chat/endedConversations';
   import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
@@ -233,31 +229,15 @@
   // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
   let knownConversations: ReadonlyMap<string, string> = new Map();
   $effect(() => {
+    const signedIn = globalSession.isLoggedIn;
     const next = snapshotConversations(globalConvs.conversations.values());
-    const ended = untrack(() => endedConversationIds(knownConversations, next));
-    knownConversations = next;
-    for (const id of ended) {
+    // Signed out (a lost session clears the map in the same tick), nothing ended: `watchEndings`.
+    const watched = untrack(() => watchEndings(signedIn, knownConversations, next));
+    knownConversations = watched.known;
+    for (const id of watched.ended) {
       appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);
       void endNativeConversationNotifications(id);
       void globalNotifs.dismissConversationReactions(id);
-    }
-  });
-
-  // THE ENDING NO WATCHER SAW, by POSITIVE evidence only: a row the list already marks `removed`
-  // (restored that way, or turned so before this effect ran) loses its banner once. NEVER by absence
-  // from the list - the list is not the complete set at boot (a first DM from a new correspondent
-  // arrives through the FCM cache after the catch-up, a failed restore still reads as restored, a
-  // salon exists only once its community answers), and a destructive control takes an allowlist.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a once-only ledger read by this effect alone, nothing renders from it
-  const handedRemoved = new Set<string>();
-  $effect(() => {
-    if (!globalSession.isLoggedIn) return;
-    const removed = removedConversationIds(globalConvs.conversations.values());
-    for (const id of removed) {
-      if (handedRemoved.has(id)) continue;
-      handedRemoved.add(id);
-      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} is removed - its notifications go`);
-      void endNativeConversationNotifications(id);
     }
   });
 
