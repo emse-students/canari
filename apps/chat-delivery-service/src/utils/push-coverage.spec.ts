@@ -31,6 +31,9 @@ describe('reportPushCoverage', () => {
   it('asks about the phones that RAN - a key package reset by register-device - never row age', () => {
     expect(PUSH_COVERAGE_SQL).toMatch(/k\."createdAt" > \$1\s+AND k\."createdAt" <= \$2/);
     expect(PUSH_COVERAGE_SQL).toContain(`k."deviceOs" IN ('android', 'ios')`);
+    // The NATIVE app only: a phone browser states the phone's OS and registers no push by design
+    // (production 2026-11-22: all 43 `1.7.2` devices of the line were phone browsers).
+    expect(PUSH_COVERAGE_SQL).toContain(`k."deviceId" LIKE 'tauri-%'`);
     expect(PUSH_COVERAGE_SQL).toContain(`s."userId" = k."userId"`);
     expect(PUSH_COVERAGE_SQL).toMatch(
       /t\."userId" = l\."userId"\s+AND t\."deviceId" = l\."deviceId"/

@@ -32,6 +32,26 @@ export const PUSH_COVERAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PUSH_PLATFORMS = ['android', 'ios'] as const;
 
 /**
+ * The prefix of a device id minted by the NATIVE client - the only client that registers a push
+ * token. A client mints its id once as `<platform>-<userId>-...` (`BaseMlsService.generateDeviceId`),
+ * where `platform` is the MLS runtime it runs: `tauri` for the app, `web` for a browser.
+ *
+ * WHY THE ID AND NOT `deviceOs`: `deviceOs` answers "which OS", and a browser on a phone states the
+ * phone's (`detectRuntimeDeviceOs` reads the user agent), so `android`/`ios` never meant "the app".
+ * Production, 2026-11-22: every one of the 43 `1.7.2` "phones without a push registration" of the
+ * daily line was a phone BROWSER on the `1.7.2` web bundle (`web-` ids, `last: unstated` because the
+ * web states no outcome); all 13 native `1.7.2` devices held their row or stated `no-token`. The
+ * id's prefix is written by the runtime itself at mint time and never changes, so it answers the
+ * question asked here for every build, old ones included.
+ */
+export const NATIVE_DEVICE_ID_PREFIX = 'tauri-';
+
+/** Whether `deviceId` was minted by the native app, the only client that registers a push token. */
+export function mintedByNativeApp(deviceId: string): boolean {
+  return deviceId.startsWith(NATIVE_DEVICE_ID_PREFIX);
+}
+
+/**
  * Per (platform, build): the native devices that ran inside the window, how many hold no row while
  * their registration did not reach the server (`withoutPush`), and how many hold none because the OS
  * gave them no push token (`noOsToken`: the last outcome they stated, migration 052). The second is
@@ -50,6 +70,7 @@ WITH launched AS (
          COALESCE(k."pushOutcome", 'unstated') AS "outcome"
     FROM key_package k
    WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+     AND k."deviceId" LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
      AND k."createdAt" > $1
      AND k."createdAt" <= $2
      AND NOT EXISTS (SELECT 1 FROM revoked_device r
@@ -206,7 +227,9 @@ function outcomeTerm(outcome: string): string {
 
 /**
  * The line `register-device` prints about the device's push registration, or null when there is
- * nothing to say (the row is held, or the device is not a phone).
+ * nothing to say (the row is held, the device is not a phone, or it is a phone's BROWSER - see
+ * {@link mintedByNativeApp}: a browser registers no push token by design, and accusing it printed a
+ * WARN at every unlock of every phone browser, 83 lines for 45 accounts on 2026-11-21).
  *
  * Said at `log`, never accused - the three EXPECTED states:
  * - `none`: nothing since the sign-in; the registration follows this very call;
@@ -230,6 +253,7 @@ export function pushPresenceLine(args: {
 }): { level: 'log' | 'warn'; line: string } | null {
   if (args.held) return null;
   if (!PUSH_PLATFORMS.includes(args.deviceOs as (typeof PUSH_PLATFORMS)[number])) return null;
+  if (!mintedByNativeApp(args.deviceId)) return null;
   const line =
     `[PUSH_MISSING] user=${args.userId} device=${args.deviceId} os=${args.deviceOs} ` +
     `build=${args.build ?? 'unstated'} last=${args.outcome}`;

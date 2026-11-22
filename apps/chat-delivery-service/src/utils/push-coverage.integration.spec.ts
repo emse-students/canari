@@ -125,6 +125,10 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     await phone('u9', 'tauri-u9', { session: 'expired' });
     // KEPT: the only live session naming its device id belongs to ANOTHER account.
     await phone('u10', 'tauri-u10', { session: 'other-account' });
+    // KEPT: a phone BROWSER - the user agent states the phone's OS, the runtime registers no push
+    // (production, 2026-11-22: the whole `1.7.2` line was these).
+    await phone('u11', 'web-u11', { os: 'android' });
+    await phone('u12', 'web-u12', { os: 'ios' });
   });
 
   afterAll(async () => {

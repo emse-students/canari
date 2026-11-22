@@ -2080,6 +2080,26 @@ PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
 the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
+**A phone BROWSER is not a phone, and the predicate counted it as one (production read-only,
+2026-11-22).** The daily line of 2026-11-21 read `android build=1.7.2 without=18/29` and
+`ios build=1.7.2 without=25/26`, all `last: unstated`, and looked like an 80 % regression of `1.7.2`.
+It was not: grouped by the device id's prefix, **all 43 were `web-` ids** - a browser on a phone,
+running the `1.7.2` web bundle - and every one of the 13 native `1.7.2` devices held its row (one
+stated `no-token`, counted apart). `deviceOs` answers "which OS": the web client fills it from the user
+agent (`detectRuntimeDeviceOs`), so a phone browser writes `android`/`ios`, and states no `pushOutcome`
+because the web registers no push - hence `unstated`. Across the whole table, no `web-` device has
+ever held a `push_token` row (365 phone-browser key packages; every one of the 366 rows is a `tauri-`
+id). The device id's prefix is the fact for "is this the app": a client mints its id once as
+`<platform>-<userId>-...` with its MLS runtime, `tauri` or `web` (`BaseMlsService.generateDeviceId`),
+and never changes it. So `PUSH_COVERAGE_SQL` and `pushPresenceLine` now ask about `tauri-` ids only
+(`NATIVE_DEVICE_ID_PREFIX`, `mintedByNativeApp`); a phone browser is never counted and never printed
+as `[PUSH_MISSING]` (83 WARN lines for 45 accounts on 2026-11-21, every one a browser). **The earlier
+readings carry the same error and are not re-measured here**: the `unstated` devices of the `1.7.0`
+line (2026-11-20) and the `1.6.12` populations above were very likely phone browsers too - the web
+bundle reports the version production serves - and `key_package` keeps only each device's latest row,
+so that cannot be checked any more. The `in-progress:*` and other STATED outcomes are native by
+construction (only the app states one).
+
 #### Push delivery records - daily totals and the last delivery per device (2026-11-21)
 
 **Why.** A read-only production diagnosis on 2026-11-21 could not answer "was member X's
