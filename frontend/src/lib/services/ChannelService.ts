@@ -451,8 +451,38 @@ export const COMMUNITY_BOOT_READS_MAX = 50;
 export interface CommunityBootReads {
   /** `workspaceId`'s salons: the answer this load held, handed out once; else the single route. */
   listChannels(workspaceId: string): Promise<ChannelDto[]>;
+  /**
+   * `workspaceId`'s key-group version ({@link KeyGroupVersion}), or null when none is known - an older
+   * server, a refused item, a failed request, a handle already released. Every community of the
+   * load is asked in one request (per {@link COMMUNITY_BOOT_READS_MAX}) the moment the load starts,
+   * beside the salon listings, so no pass waits a round trip for it - and a version read that early
+   * is still read before any roster pass of the load reads, which is all the record needs. Never
+   * throws.
+   */
+  keyGroupVersion(workspaceId: string): Promise<KeyGroupVersion | null>;
   /** Forgets what THIS load held and no read took. Touches nothing else. */
   release(): void;
+}
+
+/**
+ * One community's key-group version (`GET /api/channels/workspaces/key-group-versions`): a digest of
+ * the key-group reference and the roster a roster pass reads, and the three numbers the skip compares
+ * with this device's own tree (`utils/graine/keyGroupConvergence.ts`).
+ */
+export interface KeyGroupVersion {
+  version: string;
+  groupId: string;
+  activeEpoch: number;
+  baseEpoch: number | null;
+}
+
+/** One item of the key-group versions answer, as the server sends it (refused: version null). */
+interface KeyGroupVersionDto {
+  workspaceId: string;
+  version: string | null;
+  groupId: string | null;
+  activeEpoch: number | null;
+  baseEpoch: number | null;
 }
 
 export class ChannelService {
@@ -744,9 +774,10 @@ export class ChannelService {
    * were - the reference carries a roster of this user's devices that decides whether the device
    * forgets its tree, and read before MLS is ready it can be stale against an owed Welcome.
    *
-   * STARTS THE REQUEST AND RETURNS AT ONCE: the handle's `listChannels` waits for the pending batch,
-   * so the caller's other chains (the key-group join among them) start without waiting a round trip
-   * for it.
+   * STARTS THE REQUESTS AND RETURNS AT ONCE: the batched listings and the key-group versions
+   * ({@link readKeyGroupVersions}) leave together; the handle's `listChannels` and `keyGroupVersion`
+   * wait for their own answer, so the caller's other chains (the key-group join among them) start
+   * without waiting a round trip for either.
    *
    * NEVER THROWS, and the pending batch never rejects. A batch that fails (an older server answers
    * 404, the link drops) leaves the handle empty, every listing then reads its own route as it
@@ -790,7 +821,19 @@ export class ChannelService {
         }
       })
     );
+    // ASKED NOW, BESIDE THE LISTINGS (review of #3960): asked on the first pass's demand, it put a
+    // round trip in front of every key-group pass of a cold start. Read this early it is still read
+    // before any pass of the load reads, which is what the record needs (`keyGroupConvergence.ts`).
+    // Never rejects. Asked for one community too: one request against that community's two.
+    const versions: Promise<Map<string, KeyGroupVersion>> =
+      ids.length > 0 ? this.readKeyGroupVersions(ids, log) : Promise.resolve(new Map());
     return {
+      keyGroupVersion: async (workspaceId) => {
+        // A released handle answers nothing more: its load has ended, and no request starts here.
+        if (released) return null;
+        const known = await versions;
+        return released ? null : (known.get(workspaceId) ?? null);
+      },
       listChannels: async (workspaceId) => {
         await pending;
         const item = held.get(workspaceId);
@@ -808,6 +851,56 @@ export class ChannelService {
         for (const id of ids) held.delete(id);
       },
     };
+  }
+
+  /**
+   * The key-group versions of `workspaceIds`, one request per {@link COMMUNITY_BOOT_READS_MAX}.
+   *
+   * NEVER THROWS: a request that fails - an older server answering 404, a dropped link - leaves its
+   * communities out of the map, and each of them then runs its full roster pass, which is what every
+   * pass did before the route existed. Said once per failed request through `log`, at warn: a route
+   * that never answers is the visible end of a server this client outran. A refused item (a
+   * community just left, one with no key group) is left out too; its full pass meets the refusal on
+   * its own route and handles it there.
+   */
+  async readKeyGroupVersions(
+    workspaceIds: readonly string[],
+    log: (message: string) => void
+  ): Promise<Map<string, KeyGroupVersion>> {
+    const ids = [...new Set(workspaceIds)];
+    const known = new Map<string, KeyGroupVersion>();
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
+      const chunk = ids.slice(i, i + COMMUNITY_BOOT_READS_MAX);
+      try {
+        const res = await this.fetchWithAuth(
+          `${this.baseUrl}/api/channels/workspaces/key-group-versions?ids=${chunk.map(encodeURIComponent).join(',')}`
+        );
+        await this.handleError(res);
+        const body = (await readApiJson(res, 'GET key-group versions')) as {
+          items?: KeyGroupVersionDto[];
+        };
+        for (const item of body.items ?? []) {
+          if (
+            typeof item.version === 'string' &&
+            typeof item.groupId === 'string' &&
+            typeof item.activeEpoch === 'number'
+          ) {
+            known.set(item.workspaceId, {
+              version: item.version,
+              groupId: item.groupId,
+              activeEpoch: item.activeEpoch,
+              baseEpoch: typeof item.baseEpoch === 'number' ? item.baseEpoch : null,
+            });
+          }
+        }
+      } catch (e) {
+        log(
+          `[KEY_GROUP_VERSIONS] warn: the versions of ${chunk.length} communities could not be read - each runs its full roster pass: ${String(e)}`
+        );
+      }
+    }
+    Log.d('KEY_GROUP_VERSIONS', `${known.size}/${ids.length} community version(s) known`);
+    return known;
   }
 
   async listChannels(workspaceId: string) {
