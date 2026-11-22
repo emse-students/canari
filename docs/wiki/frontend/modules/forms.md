@@ -2453,27 +2453,38 @@ no other list of a member's own answers to carry it.
 
 **What may be resumed** (`payment-resume.ts`, one rule for the offer and the route): the caller's OWN
 answer, online (`paymentMethod` null), charged (`totalPaid > 0`), and `expired`, `pending` past its
-hold (its request died with D1; the five-minute job has not said so yet), or `cancelled` by anything
-but a manager or an issue of unknown outcome. The offer also needs the form open, a free seat, online
-payment accepted and nothing else answering for the person. A cash answer is the manager's
-(`validate-cash` / `cancel-cash`) and is never resumed.
+hold (its request died with D1; the five-minute job has not said so yet), or `cancelled` by an origin
+on the ALLOWLIST (`RESUMABLE_CANCEL_ORIGINS`: `member`, `provider`, `unissued`). A request the row
+names must be settleable (`oldRequestSettleable`: issued to a Business the row records, migration
+120, on a form with an association); one that cannot be is never offered, and the route answers
+`PAYMENT_NOT_RESUMABLE` rather than a `PREVIOUS_PAYMENT_OPEN` that would never clear. The offer also
+needs a form taking ONE answer (a form taking several is refused by the route as well), open, with a
+free seat, online payment accepted and nothing else answering for the person. A cash answer is the
+manager's (`validate-cash` / `cancel-cash`) and is never resumed.
 
 **Who cancelled is recorded** (`submissions.paymentCancelOrigin`, migration 179, `PaymentCancelOrigin`):
 `member` (the submitter's own cancel), `manager` (a form manager's cancel or delete - a DECISION, never
 offered back as a payment that failed), `provider` (Lydia read or reported the request declined,
 cancelled or expired), `unissued` (refused before Lydia created anything) and `issue-unknown` (below).
-A row cancelled before 179 carries NULL: its origin was never recorded, and it is treated as
-resumable rather than guessed.
+**A NULL origin fails closed** (re-review of #3949): a row cancelled before 179, or by an older image
+during the rolling deploy, may be a manager's decision, or an issue that timed out with its request
+still payable at Lydia and named nowhere - resuming that one would issue a second payable request for
+one answer. Nothing durable tells them apart, so a `cancelled` row with no origin is NOT resumable
+(not offered, `PAYMENT_NOT_RESUMABLE`); its member answers anew, as before this feature. An `expired`
+row needs no origin: only the expiry job writes that status.
 
 **A resume sells only what a fresh submit would** (review of #3949, superseding the first draft's "the
 stored amount, never repriced"): before anything is cancelled at Lydia, the stored answer is judged
 again for this person NOW (`assertResumeQuote`) - the audience rule (`assertMaySubmit`), then the
 submit's own whole price (`priceAnswer`, extracted from `submit`, one implementation). A combination
 closed since is the submit's `FORM_COMBINATION_UNAVAILABLE`, a required question added since is
-`FORM_ANSWER_MISSING`, and a total that differs from the `totalPaid` the answer was charged is
-`PAYMENT_PRICE_CHANGED` (409). The check runs the same judgement, so such an answer is not offered;
-a refusal the page meets anyway is worded and the page reads the offer again, leaving the empty form
-to fill. Equal totals mean the request charges exactly what the answer says it costs.
+`FORM_ANSWER_MISSING`, and a quote that differs from what the answer stored is
+`PAYMENT_PRICE_CHANGED` (409): the total (`totalPaid`), the grid lines (`lines`) and the questions
+that fix the price (`priceLockedItemIds` against `priceSnapshot(form)`), compared in one canonical
+spelling - so a price moved between lines at the same total is refused too, and a row with no snapshot
+(before migration 166) is refused rather than guessed. The check runs the same judgement, so such an
+answer is not offered; a refusal the page meets anyway is worded and the page reads the offer again,
+leaving the empty form to fill. An equal quote means the request sells exactly what the answer says.
 
 **An issue whose outcome is unknown is not resumed.** `issueOnlineRequest` records whether the
 issuing call was SENT: a failure before it, or a refusal ANSWERED by core (a 4xx), created nothing and
@@ -2532,10 +2543,11 @@ card from `check`, none from an older server, the hand-off to Lydia, a typed ref
 offer).
 
 **Old clients**: a build without the card ignores `resumable` and the route; its member re-fills the
-form as before. A new client on an older server reads no `resumable` and shows nothing.
+form as before. A new client on an older server reads no `resumable` and shows nothing. **Old rows**:
+a payment cancelled before 179 (no origin) is never resumed, an `expired` one is.
 
 **Not covered**: a guest (no account owns the answer), a form taking several answers (the check offers
-nothing there; the route works), and an answer whose request is still OPEN, which stays pending until
+nothing there, and the route refuses it `PAYMENT_NOT_RESUMABLE`), and an answer whose request is still OPEN, which stays pending until
 its hold ends - then it is resumable.
 
 ### A cash hold is announced once before it expires (owner decision of 2026-11-21)

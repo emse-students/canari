@@ -1,4 +1,4 @@
-import { In, IsNull, MoreThan, Not, Raw, type FindOptionsWhere } from 'typeorm';
+import { In, IsNull, MoreThan, Raw, type FindOptionsWhere } from 'typeorm';
 import type { Submission } from './entities/submission.entity';
 import { PENDING_HOLD_CUTOFF_SQL } from './seat-hold';
 
@@ -11,14 +11,6 @@ import { PENDING_HOLD_CUTOFF_SQL } from './seat-hold';
  * and its owner - so the page that offers the action (`GET forms/:id/check`, `resumable`) and the
  * route that performs it (`POST forms/submissions/:id/resume-payment`) read one rule.
  */
-
-/**
- * The statuses of an online answer whose payment ended without money: cancelled (by the payer, a
- * verified callback, or a release of a request that was never issued) or expired (its hold passed).
- * A `pending` row whose hold has passed is one too - its request died with the hold (D1) and only
- * the five-minute expiry job has not said so yet - so it is resumable as well (`staleResumableWhere`).
- */
-export const RESUMABLE_PAYMENT_STATUSES: readonly string[] = ['cancelled', 'expired'];
 
 /**
  * The `code` of the 409 a resume gets while the answer's payment is IN PROGRESS: a `pending` row
@@ -58,14 +50,22 @@ export type ResumeRowRefusal = typeof PAYMENT_IN_PROGRESS | typeof PAYMENT_NOT_R
  *   payable request for one answer, so it is not offered (the follow-up that settles it by its
  *   order_ref is in the backlog entry).
  *
- * NULL on a row cancelled before 179: its origin is unknown and it is treated as resumable.
+ * NULL on a row cancelled before 179, or by an older image during the rolling deploy: its origin is
+ * unknown - it may be a manager's decision, or an issue that timed out with a request still payable
+ * at Lydia and named nowhere - and nothing durable tells them apart, so it is NOT resumable (fail
+ * closed: the member answers anew, as before this feature).
  */
 export type PaymentCancelOrigin = 'member' | 'manager' | 'provider' | 'unissued' | 'issue-unknown';
 
-/** The cancel origins a resume never undoes (see {@link PaymentCancelOrigin}). */
-export const UNRESUMABLE_CANCEL_ORIGINS: readonly PaymentCancelOrigin[] = [
-  'manager',
-  'issue-unknown',
+/**
+ * The ONLY cancel origins a resume may undo - an allowlist, so an unknown or new origin is never
+ * resumed by default (see {@link PaymentCancelOrigin}): the payer's own cancel, Lydia's verdict, and a
+ * request refused before anything existed. Never `manager`, `issue-unknown` or NULL.
+ */
+export const RESUMABLE_CANCEL_ORIGINS: readonly PaymentCancelOrigin[] = [
+  'member',
+  'provider',
+  'unissued',
 ];
 
 /** What of a row the rule reads. */
@@ -75,31 +75,56 @@ export type ResumableRow = Pick<
 >;
 
 /**
- * Why this row cannot be resumed, judged on the row alone, or null when it may be.
+ * Whether the request a row names, if any, can be SETTLED before a new one is issued
+ * (`settleOpenRequest`): it is cancelled or read with the Business it was issued to
+ * (`lydiaVendorToken`, migration 120), on a form that has an association. A row naming a request
+ * without that Business (written before 120) can never be settled, so a resume of it would always be
+ * refused - it is not offered, and the route refuses it as not resumable.
+ */
+export function oldRequestSettleable(
+  row: Pick<Submission, 'paymentRequestId' | 'stripeSessionId' | 'lydiaVendorToken'>,
+  formHasAssociation: boolean
+): boolean {
+  if (!row.paymentRequestId && !row.stripeSessionId) return true;
+  return formHasAssociation && !!row.lydiaVendorToken;
+}
+
+/**
+ * Why this row cannot be resumed, judged on the row alone, or null when it may be. Resumable: an
+ * online, charged answer that is `expired` (its hold passed), `pending` past its hold (its request
+ * died with D1, the five-minute expiry job has not said so yet), or `cancelled` by an allowed origin.
  *
  * `holdLive` says whether a `pending` row still holds its seat (`livePendingWhere`, on the
- * database clock - read by the caller, under the row lock when it decides).
+ * database clock - read by the caller, under the row lock when it decides); `settleable` is
+ * {@link oldRequestSettleable}.
  */
-export function resumeRowRefusal(row: ResumableRow, holdLive: boolean): ResumeRowRefusal | null {
+export function resumeRowRefusal(
+  row: ResumableRow,
+  holdLive: boolean,
+  settleable: boolean
+): ResumeRowRefusal | null {
   // Only an ONLINE answer: `cash` is the manager's to validate or cancel, a Stripe-era row has no
   // request Lydia can read, and a free answer owes nothing.
   if (row.paymentMethod !== null || !(row.totalPaid > 0)) return PAYMENT_NOT_RESUMABLE;
-  if (row.paymentStatus === 'pending') return holdLive ? PAYMENT_IN_PROGRESS : null;
-  if (
-    row.paymentStatus === 'cancelled' &&
-    row.paymentCancelOrigin !== null &&
-    UNRESUMABLE_CANCEL_ORIGINS.includes(row.paymentCancelOrigin as PaymentCancelOrigin)
-  ) {
-    return PAYMENT_NOT_RESUMABLE;
+  if (row.paymentStatus === 'pending' && holdLive) return PAYMENT_IN_PROGRESS;
+  if (!settleable) return PAYMENT_NOT_RESUMABLE;
+  if (row.paymentStatus === 'pending') return null;
+  // Only the expiry job writes `expired`: its origin needs no record.
+  if (row.paymentStatus === 'expired') return null;
+  if (row.paymentStatus === 'cancelled') {
+    return RESUMABLE_CANCEL_ORIGINS.includes(row.paymentCancelOrigin as PaymentCancelOrigin)
+      ? null
+      : PAYMENT_NOT_RESUMABLE;
   }
-  return RESUMABLE_PAYMENT_STATUSES.includes(row.paymentStatus) ? null : PAYMENT_NOT_RESUMABLE;
+  return PAYMENT_NOT_RESUMABLE;
 }
 
 /**
  * The caller's answers on a form that `resumeRowRefusal` admits, as a TypeORM `where` (an OR):
- * online, charged, and expired, cancelled by anything but a manager or an issue of unknown outcome,
- * or pending past its hold. What `GET forms/:id/check`
- * reads to offer "Reprendre le paiement".
+ * online, charged, and expired, cancelled by an origin of {@link RESUMABLE_CANCEL_ORIGINS} (never
+ * NULL), or pending past its hold. What `GET forms/:id/check` reads to offer "Reprendre le paiement";
+ * the caller then applies {@link resumeRowRefusal} with {@link oldRequestSettleable}, which this
+ * `where` cannot express (`lydiaVendorToken` is never selected by default).
  */
 export function resumableWhere(formId: string, userId: string): FindOptionsWhere<Submission>[] {
   const base: FindOptionsWhere<Submission> = {
@@ -110,13 +135,7 @@ export function resumableWhere(formId: string, userId: string): FindOptionsWhere
   };
   return [
     { ...base, paymentStatus: 'expired' },
-    // A cancel whose origin is unknown (before 179) or one a resume may undo; never a manager's.
-    { ...base, paymentStatus: 'cancelled', paymentCancelOrigin: IsNull() },
-    {
-      ...base,
-      paymentStatus: 'cancelled',
-      paymentCancelOrigin: Not(In([...UNRESUMABLE_CANCEL_ORIGINS])),
-    },
+    { ...base, paymentStatus: 'cancelled', paymentCancelOrigin: In([...RESUMABLE_CANCEL_ORIGINS]) },
     {
       ...base,
       paymentStatus: 'pending',

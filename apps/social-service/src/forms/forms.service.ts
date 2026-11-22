@@ -83,6 +83,7 @@ import {
   PAYMENT_IN_PROGRESS,
   PAYMENT_NOT_RESUMABLE,
   PAYMENT_PRICE_CHANGED,
+  oldRequestSettleable,
   resumableWhere,
   resumeRowRefusal,
   type PaymentCancelOrigin,
@@ -2655,9 +2656,29 @@ export class FormsService {
     const row = await this.submissionRepo.findOne({
       where: resumableWhere(form.id, userId),
       order: { createdAt: 'DESC' },
-      select: { id: true, totalPaid: true, paymentStatus: true, answers: true },
+      select: {
+        id: true,
+        totalPaid: true,
+        paymentStatus: true,
+        paymentMethod: true,
+        paymentCancelOrigin: true,
+        paymentRequestId: true,
+        stripeSessionId: true,
+        lydiaVendorToken: true,
+        answers: true,
+        lines: true,
+        priceLockedItemIds: true,
+      },
     });
     if (!row) return null;
+    // The row's own rule, as the route reads it: a request it names must be settleable.
+    const refusal = resumeRowRefusal(row, false, oldRequestSettleable(row, !!form.associationId));
+    if (refusal) {
+      this.logger.debug(
+        `[Forms] check ${formTag(form)}: answer ${row.id} is not offered for a resume (${refusal})`
+      );
+      return null;
+    }
     try {
       await this.assertResumeQuote(form, row, userId);
     } catch (err: unknown) {
@@ -2684,7 +2705,7 @@ export class FormsService {
    */
   private async assertResumeQuote(
     form: Form,
-    row: Pick<Submission, 'id' | 'answers' | 'totalPaid'>,
+    row: Pick<Submission, 'id' | 'answers' | 'totalPaid' | 'lines' | 'priceLockedItemIds'>,
     userId: string
   ): Promise<void> {
     const items = form.items ?? [];
@@ -2697,13 +2718,23 @@ export class FormsService {
     for (const [questionId, value] of Object.entries(selections)) {
       if (visible.has(questionId)) visibleAnswers[questionId] = value;
     }
-    const { totalCents } = this.priceAnswer(form, facts, visible, visibleAnswers, answers, {
+    const { totalCents, lines } = this.priceAnswer(form, facts, visible, visibleAnswers, answers, {
       ...answers,
     });
-    if (totalCents !== row.totalPaid) {
+    // The WHOLE quote, not only its sum: a price moved from one line to another, or a question that
+    // fixes the price now and did not then, is another sale at the same total. A row with no stored
+    // snapshot (before migration 166) cannot be compared, and is refused rather than guessed.
+    const sameTotal = totalCents === row.totalPaid;
+    const sameLines = canonicalJson(lines ?? null) === canonicalJson(row.lines ?? null);
+    const sameLocks =
+      row.priceLockedItemIds !== null &&
+      row.priceLockedItemIds !== undefined &&
+      canonicalJson([...row.priceLockedItemIds].sort()) === canonicalJson(priceSnapshot(form));
+    if (!sameTotal || !sameLines || !sameLocks) {
       this.logger.log(
         `[Forms] resume of ${row.id} refused: the answer prices at ${totalCents} cents now, ` +
-          `${row.totalPaid} when it was given (${formTag(form)})`
+          `${row.totalPaid} when it was given (lines ${sameLines ? 'same' : 'differ'}, price ` +
+          `questions ${sameLocks ? 'same' : 'differ'}) ${formTag(form)}`
       );
       throw new ConflictException({
         code: PAYMENT_PRICE_CHANGED,
@@ -3193,16 +3224,29 @@ export class FormsService {
 
     // Whether a `pending` row still holds its seat: the one clock, the database's, read from the row.
     const holdLive = livePendingWhere(form.id, { id: submissionId });
-    const refusal = form.anonymous
-      ? PAYMENT_NOT_RESUMABLE
-      : resumeRowRefusal(row, (await this.submissionRepo.count({ where: holdLive })) > 0);
+    // Whether the request the row names can be settled: its Business is never read by default.
+    const business = await this.submissionRepo.findOne({
+      where: { id: submissionId },
+      select: { id: true, lydiaVendorToken: true },
+    });
+    const settleable = oldRequestSettleable(
+      { ...row, lydiaVendorToken: business?.lydiaVendorToken ?? null },
+      !!form.associationId
+    );
+    // An anonymous form keeps no payer, and a form taking several answers is never offered a resume
+    // (`check` offers nothing there): the route refuses what the page never shows.
+    const refusal =
+      form.anonymous || form.allowMultipleSubmissions
+        ? PAYMENT_NOT_RESUMABLE
+        : resumeRowRefusal(
+            row,
+            (await this.submissionRepo.count({ where: holdLive })) > 0,
+            settleable
+          );
     if (refusal) throw this.resumeRefused(submissionId, row.paymentStatus, refusal);
-    const oneAnswer = !form.allowMultipleSubmissions;
     // An answer given since (a fresh submit after this one was released) refuses BEFORE anything is
     // cancelled at Lydia. Repeated under the lock.
-    if (oneAnswer) {
-      await this.assertNoOtherAnswer(this.submissionRepo.manager, form.id, callerId, row.id);
-    }
+    await this.assertNoOtherAnswer(this.submissionRepo.manager, form.id, callerId, row.id);
     if (!acceptsOnline(form)) {
       this.logger.log(`[Forms] resume refused on ${formTag(form)}: online not offered`);
       throw new ConflictException({
@@ -3238,9 +3282,11 @@ export class FormsService {
       const changed =
         locked.paymentRequestId !== row.paymentRequestId ||
         locked.stripeSessionId !== row.stripeSessionId;
+      // The ids are checked unchanged just below, so the request's Business read above still holds.
       const lockedRefusal = resumeRowRefusal(
         locked,
-        (await manager.count(Submission, { where: holdLive })) > 0
+        (await manager.count(Submission, { where: holdLive })) > 0,
+        settleable
       );
       if (lockedRefusal || changed) {
         throw this.resumeRefused(
@@ -3249,7 +3295,7 @@ export class FormsService {
           lockedRefusal ?? PAYMENT_IN_PROGRESS
         );
       }
-      if (oneAnswer) await this.assertNoOtherAnswer(manager, form.id, callerId, submissionId);
+      await this.assertNoOtherAnswer(manager, form.id, callerId, submissionId);
       // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
       if (form.maxSubmissions) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
@@ -5363,4 +5409,19 @@ export class FormsService {
 function answeredWithRefusal(err: unknown): boolean {
   const status = axios.isAxiosError(err) ? err.response?.status : undefined;
   return status !== undefined && status >= 400 && status < 500;
+}
+
+/**
+ * A value in ONE spelling whatever the key order: what a `jsonb` column returns (its keys reordered)
+ * compared with what was just computed.
+ */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
 }

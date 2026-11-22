@@ -68,6 +68,9 @@ describe('FormsService - the seat a pending payment holds', () => {
     /** The Business the row's request was issued to (written with the request ids). */
     lydiaVendorToken?: string | null;
     answers?: Record<string, unknown>;
+    /** The priced grids' lines and the price questions, snapshotted at submit (137, 166). */
+    lines?: unknown[] | null;
+    priceLockedItemIds?: string[] | null;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
   /** What a payment resume writes when it reopens a released answer (`resumePayment`). */
@@ -2345,6 +2348,11 @@ describe('FormsService - the seat a pending payment holds', () => {
         paymentRequestedAt: ago(2 * HOLD_MS),
         paymentRequestId: '555',
         stripeSessionId: 'uuid-old',
+        // What `submit` stored with the answer: no grid, and no question fixing the price.
+        lines: null,
+        priceLockedItemIds: [],
+        // A cancel names its origin since 179; Lydia's verdict is the ordinary one.
+        paymentCancelOrigin: over.paymentStatus === 'cancelled' ? 'provider' : null,
         ...over,
       });
     const resume = (service: FormsService, caller = 'u1') =>
@@ -2556,10 +2564,48 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls).toEqual([]);
     });
 
+    it('refuses an answer whose price questions or lines changed at the same total', async () => {
+      const moved = lydia([released({ priceLockedItemIds: ['size'] })]);
+      await expect(resume(moved.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      const lined = lydia([released({ lines: [{ itemId: 'g', cents: 1500 }] })]);
+      await expect(resume(lined.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      // Before 166 nothing was snapshotted: refused rather than guessed.
+      const old = lydia([released({ priceLockedItemIds: null })]);
+      await expect(resume(old.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      expect([moved, lined, old].flatMap((st) => st.core.calls)).toEqual([]);
+    });
+
+    it('refuses on a form taking several answers, which check never offers', async () => {
+      const { service, core } = lydia([released()], { allowMultipleSubmissions: true });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    // A request named with no Business (before migration 120) can never be settled: not offered,
+    // and refused as not resumable rather than "try again in 30 minutes" forever.
+    it('refuses an answer whose old request records no Business', async () => {
+      const { service, core } = lydia([released({ lydiaVendorToken: null })]);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
     // A MANAGER'S CANCEL IS A DECISION: never offered back as a payment that failed.
+    // FAIL CLOSED: an origin nothing recorded (before 179, or an older image during the rolling
+    // deploy) may be a manager's decision or a timed-out issue still payable at Lydia.
     it.each([
       ['a manager', 'manager', PAYMENT_NOT_RESUMABLE],
       ['an issue whose outcome at Lydia is unknown', 'issue-unknown', PAYMENT_NOT_RESUMABLE],
+      ['nobody recorded (NULL)', null, PAYMENT_NOT_RESUMABLE],
     ])('refuses a payment cancelled by %s', async (_label, origin, code) => {
       const { service, core } = lydia([
         released({ paymentStatus: 'cancelled', paymentCancelOrigin: origin }),
@@ -2568,7 +2614,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls).toEqual([]);
     });
 
-    it.each(['member', 'provider', 'unissued', null])(
+    it.each(['member', 'provider', 'unissued'])(
       'resumes a payment cancelled by %s, and clears the origin',
       async (origin) => {
         const { service, rows } = lydia([
@@ -2688,6 +2734,13 @@ describe('FormsService - the seat a pending payment holds', () => {
           () => [released()],
           { submitCondition: { promo: [2024] } },
         ],
+        [
+          'a cancel whose origin nothing recorded',
+          () => [released({ paymentStatus: 'cancelled', paymentCancelOrigin: null })],
+          {},
+        ],
+        ['an old request with no Business', () => [released({ lydiaVendorToken: null })], {}],
+        ['a same-total price shift', () => [released({ priceLockedItemIds: ['size'] })], {}],
       ])('offers nothing for %s', async (_label, rowsOf, over) => {
         const { service } = lydia(rowsOf(), over);
         await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
