@@ -30,6 +30,8 @@
     getHeldAnswers,
     deleteForm,
     setFormClosed,
+    setFormClosingDate,
+    keepFormOpen,
     deleteSubmission,
     listPendingCashSubmissions,
     validateCashSubmission,
@@ -51,9 +53,12 @@
   import { refusalCode } from '$lib/utils/apiRefusal';
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
+  import FormStaleOpenCard from '$lib/components/forms/FormStaleOpenCard.svelte';
+  import { suggestClosingDate } from '$lib/forms/closingSuggestion';
+  import { formatLocalDateTime, fromDate } from '$lib/components/ui/dateTimeField';
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
-  import { isClosedForm, opensLater } from '$lib/forms/formWindow';
+  import { FORM_CLOSING_DATE_NOT_OPEN, isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
   import { markdownToPlainText } from '$lib/seo/text';
 
@@ -233,6 +238,70 @@
       closingId = null;
     }
   }
+
+  /**
+   * The three answers to the question put to a form left open. "Fermer" is `handleToggleClosed` (its
+   * confirmation included); the question leaves the row whichever way it is answered, since the server
+   * stops saying it is put (a close or a date sets `closedAt`, "keep open" stamps `staleKeptAt`).
+   */
+  async function handleKeepOpen(form: Form) {
+    if (closingId === form.id) return;
+    closingId = form.id;
+    try {
+      Log.d('FormsManagerList', `keeping form ${form.id.slice(0, 8)} open`);
+      await keepFormOpen(form.id);
+      setForms(forms.map((f) => (f.id === form.id ? { ...f, staleOpenAsk: false } : f)));
+      showToast(m.form_stale_open_kept_toast());
+    } catch (e) {
+      console.error(`[FORMS] keeping form ${form.id.slice(0, 8)} open failed:`, e);
+      showToast(formCodeMessage(refusalCode(e)) ?? m.form_stale_open_error());
+    } finally {
+      closingId = null;
+    }
+  }
+
+  async function handleSetClosingDate(form: Form, value: string) {
+    if (closingId === form.id) return;
+    closingId = form.id;
+    try {
+      Log.d('FormsManagerList', `dating the close of form ${form.id.slice(0, 8)}: ${value}`);
+      const { closedAt, windowState } = await setFormClosingDate(
+        form.id,
+        new Date(value).toISOString()
+      );
+      setForms(
+        forms.map((f) =>
+          f.id === form.id ? { ...f, closedAt, windowState, staleOpenAsk: false } : f
+        )
+      );
+      showToast(m.form_stale_open_dated_toast());
+    } catch (e) {
+      console.error(`[FORMS] dating the close of form ${form.id.slice(0, 8)} failed:`, e);
+      // The server says the form is not open any more (closed or unpublished elsewhere): the question
+      // is no longer put to it, so its card goes rather than staying to be answered again.
+      if (refusalCode(e) === FORM_CLOSING_DATE_NOT_OPEN) {
+        setForms(forms.map((f) => (f.id === form.id ? { ...f, staleOpenAsk: false } : f)));
+      }
+      showToast(formCodeMessage(refusalCode(e)) ?? m.form_stale_open_error());
+    } finally {
+      closingId = null;
+    }
+  }
+
+  /** The question's own "Fermer": the same close as the menu's, so it asks the same confirmation. */
+  async function handleCloseFromQuestion(form: Form) {
+    await handleToggleClosed(form);
+    // Closed by the answer above: the server no longer says the question is put.
+    if (isClosedForm(forms.find((f) => f.id === form.id) ?? form)) {
+      setForms(forms.map((f) => (f.id === form.id ? { ...f, staleOpenAsk: false } : f)));
+    }
+  }
+
+  /** The closing suggested for this form's nature (the date field starts on it). */
+  const closingSuggestionFor = (form: Form) =>
+    suggestClosingDate(form, { opensAt: '', closedAt: '' }, new Date())?.value ?? '';
+  /** The earliest date the picker allows: now. */
+  const nowLocal = () => formatLocalDateTime(fromDate(new Date()));
 
   /**
    * Re-reads one form's answers and pending cash after a payment action (cash marked paid, a
@@ -546,6 +615,17 @@
               />
             </div>
           </div>
+
+          {#if form.staleOpenAsk && !draft && !isClosedForm(form)}
+            <FormStaleOpenCard
+              suggestedDate={closingSuggestionFor(form)}
+              minDate={nowLocal()}
+              busy={closingId === form.id}
+              onClose={() => void handleCloseFromQuestion(form)}
+              onKeepOpen={() => void handleKeepOpen(form)}
+              onSetDate={(value) => void handleSetClosingDate(form, value)}
+            />
+          {/if}
 
           {#if scoped && pendingCash[form.id]?.length}
             <div class="border-cn-border space-y-2 border-t-2 px-4 py-3 @md:px-5">

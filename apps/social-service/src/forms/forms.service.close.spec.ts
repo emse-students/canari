@@ -5,6 +5,8 @@ import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
 import {
   FORM_CLOSE_BEFORE_OPEN,
   FORM_CLOSE_NOT_OPEN_YET,
+  FORM_CLOSING_DATE_NOT_OPEN,
+  FORM_CLOSING_DATE_PAST,
   assertMayCloseAt,
   assertWindowOrdered,
 } from './form-window';
@@ -249,6 +251,97 @@ describe('FormsService - closing and reopening a form', () => {
     it('refuses an end equal to or before the opening', () => {
       expect(() => assertWindowOrdered(d('2027-01-01'), d('2027-01-01'))).toThrow('closing date');
       expect(() => assertWindowOrdered(d('2027-01-02'), d('2027-01-01'))).toThrow('closing date');
+    });
+  });
+
+  describe('"Fixer une date" and "Garder ouvert" (the question put to a form left open)', () => {
+    const inAWeek = () => new Date(Date.now() + 7 * 86_400_000);
+
+    it('writes a closing date in the future, apart from the revision, and says the state', async () => {
+      const { service, row } = makeService();
+      const at = inAWeek();
+      const answer = await service.setClosingDate('f1', at, OWNER, false);
+      expect(row.closedAt).toEqual(at);
+      expect(answer).toMatchObject({ id: 'f1', closedAt: at, windowState: 'open' });
+    });
+
+    it('refuses, typed, a date that is not in the future: closing now has its own button', async () => {
+      const { service, formRepo } = makeService();
+      const past = new Date(Date.now() - 1000);
+      await expect(service.setClosingDate('f1', past, OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_CLOSING_DATE_PAST },
+      });
+      expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a missing or malformed date as a validation error, never as a past date', async () => {
+      const { service, formRepo } = makeService();
+      await expect(service.setClosingDate('f1', new Date(NaN), OWNER, false)).rejects.toMatchObject(
+        {
+          response: { message: 'closedAt must be a valid ISO 8601 date' },
+          status: 400,
+        }
+      );
+      expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('writes the date conditionally and refuses, typed, a form closed meanwhile', async () => {
+      const { service, formRepo } = makeService();
+      formRepo.update.mockImplementationOnce(() => Promise.resolve({ affected: 0 }));
+      await expect(service.setClosingDate('f1', inAWeek(), OWNER, false)).rejects.toMatchObject({
+        status: 409,
+        response: { code: FORM_CLOSING_DATE_NOT_OPEN },
+      });
+      const [where] = formRepo.update.mock.calls[0];
+      expect(where).toMatchObject({ id: 'f1', status: 'published' });
+      expect(Object.keys(where)).toEqual(expect.arrayContaining(['closedAt', 'deletedAt']));
+    });
+
+    it('clears the question put to a left-open form when it is closed, reopened or given a date', async () => {
+      const { service, formRepo } = makeService();
+      await service.setClosed('f1', true, OWNER, false);
+      await service.setClosed('f1', false, OWNER, false);
+      await service.setClosingDate('f1', inAWeek(), OWNER, false);
+      for (const [, values] of formRepo.update.mock.calls) {
+        expect(values).toMatchObject({ staleAskedAt: null, staleKeptAt: null });
+      }
+      expect(formRepo.update).toHaveBeenCalledTimes(3);
+    });
+
+    it('refuses a date that does not fall after the opening', async () => {
+      const opensAt = new Date(Date.now() + 30 * 86_400_000);
+      const { service, formRepo } = makeService({ opensAt });
+      await expect(service.setClosingDate('f1', inAWeek(), OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_CLOSE_BEFORE_OPEN },
+      });
+      expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('is the managers alone, on both routes, and a deleted form is a 404', async () => {
+      const { service, formRepo } = makeService({ associationId: 'a1' });
+      await expect(service.setClosingDate('f1', inAWeek(), OWNER, false)).rejects.toThrow(
+        ForbiddenException
+      );
+      await expect(service.keepOpen('f1', STRANGER, false)).rejects.toThrow(ForbiddenException);
+      expect(formRepo.update).not.toHaveBeenCalled();
+      const gone = makeService({ deletedAt: new Date() }).service;
+      await expect(gone.setClosingDate('f1', inAWeek(), OWNER, false)).rejects.toThrow(
+        NotFoundException
+      );
+      await expect(gone.keepOpen('f1', OWNER, false)).rejects.toThrow(NotFoundException);
+    });
+
+    it('stamps "keep open" only through the conditional statement, and changes nothing else', async () => {
+      const { service, formRepo } = makeService();
+      formRepo.manager.query.mockResolvedValueOnce([[{ id: 'f1' }], 1]);
+      expect(await service.keepOpen('f1', OWNER, false)).toEqual({ id: 'f1', changed: true });
+      const [sql] = formRepo.manager.query.mock.calls[0];
+      expect(sql).toContain('"staleKeptAt"');
+      expect(sql).toContain('"staleAskedAt" IS NOT NULL');
+      // A form nobody asked about matches nothing: the statement answers no row.
+      formRepo.manager.query.mockResolvedValueOnce([[], 0]);
+      expect(await service.keepOpen('f1', OWNER, false)).toEqual({ id: 'f1', changed: false });
+      expect(formRepo.update).not.toHaveBeenCalled();
     });
   });
 });

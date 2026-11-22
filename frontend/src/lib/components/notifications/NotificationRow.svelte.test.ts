@@ -553,6 +553,27 @@ describe('NotificationRow for a payment over capacity', () => {
   });
 });
 
+describe('NotificationRow for the question put to a form left open', () => {
+  const row: PostNotification = {
+    id: 'n-stale',
+    type: 'form_stale_open',
+    postId: 'f1',
+    actorId: 'system',
+    actorName: 'Canari',
+    text: 'Gala de printemps',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('asks whether the form should be closed, naming it, and is not the neutral row', () => {
+    const target = renderRow(row);
+    expect(target.textContent).toContain(m.notif_form_stale_open_text());
+    expect(target.textContent).toContain('Gala de printemps');
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
 /**
  * A MEMBER'S CASH ANSWER IS ABOUT TO EXPIRE (owner decision of 2026-11-21). The row stores the form's
  * title; the sentence is this build's, and the row opens the form.
@@ -717,6 +738,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'form_reminder',
   'form_paid_over_capacity',
   'form_cash_expiring',
+  'form_stale_open',
   'association_post',
   'followed_post',
   'association_repost',

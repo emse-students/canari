@@ -23,6 +23,7 @@
     VideoOff,
     TriangleAlert,
     Banknote,
+    Hourglass,
     CircleCheck,
     Undo2,
     CirclePause,
@@ -437,6 +438,7 @@
             ? 'bg-purple-500 text-white'
             : notif.type === 'form_paid_over_capacity' ||
                 notif.type === 'form_cash_expiring' ||
+                notif.type === 'form_stale_open' ||
                 notif.type === 'lydia_payments_paused' ||
                 notif.type === 'delegation_revoked' ||
                 notif.type === 'delegation_receiver_not_ready'
@@ -529,6 +531,8 @@
         <TriangleAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_cash_expiring'}
         <Banknote size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'form_stale_open'}
+        <Hourglass size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_active' || notif.type === 'delegation_resumed'}
         <CircleCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_payments_paused' || notif.type === 'delegation_revoked' || notif.type === 'delegation_receiver_not_ready'}
@@ -644,6 +648,11 @@
         <!-- The member's cash answer is about to expire: the sentence is this build's, the form's
              title the only data the row carries. -->
         {m.notif_form_cash_expiring_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if notif.type === 'form_stale_open'}
+        <!-- The question put to a form left open: the sentence is built here, from the type and the
+             form's title. The row opens the form's responses, where the three answers are. -->
+        {m.notif_form_stale_open_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isLydiaPaymentsNotif || isLydiaRefundNotif || isAdminQueueNotif}
         <!-- The whole sentence is the first span above; nothing follows it. -->

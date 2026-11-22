@@ -645,6 +645,12 @@ export class SubmitFormDto extends DeclaredIdentityDto {
   paymentMethod?: string;
 }
 
+/** The body of "Fixer une date": the closing instant, an ISO 8601 string. */
+export class SetClosingDateDto {
+  @IsDateString()
+  closedAt: string;
+}
+
 /**
  * A payment resume (`FormsService.resumePayment`): what the new Lydia request needs and nothing of
  * the answer, which is the row's own. The return URLs are the client's, checked against the same

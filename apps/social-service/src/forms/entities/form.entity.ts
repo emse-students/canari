@@ -218,6 +218,18 @@ export class Form {
   @Column({ type: 'varchar', length: 16, default: 'published' })
   status: FormStatus;
 
+  /**
+   * When the managers were last asked whether to close this form left open and unanswered
+   * (migration 180, `stale-open-forms.ts`). `select: false`: only the sweep and the list's own read
+   * of it use it - a respondent's read of the form never carries it.
+   */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  staleAskedAt: Date | null;
+
+  /** When a manager answered that question "Garder ouvert"; hides it, never read by the sweep. */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  staleKeptAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

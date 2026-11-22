@@ -71,6 +71,9 @@ export function notificationHref(
     // A payment landed on a full form (`postId` is the FORM): its manager is sent to that form's
     // responses, where the paid-over-capacity answer is, not to the page that answers the form.
     case 'form_paid_over_capacity':
+    // The question put to a form left open (`postId` is the FORM): the same page, whose row for
+    // that form carries the three answers (close, keep open, set a date).
+    case 'form_stale_open':
       return formResponsesRoute(notif.postId);
     // A calendar manager was told an event is waiting: send them where they can validate it, not to
     // the month view where a pending event is a grey square among thirty.
@@ -199,6 +202,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'form_reminder',
   'form_paid_over_capacity',
   'form_cash_expiring',
+  'form_stale_open',
   'association_post',
   'followed_post',
   'association_repost',

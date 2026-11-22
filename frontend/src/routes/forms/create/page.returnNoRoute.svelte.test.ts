@@ -155,6 +155,9 @@ async function saveReturningTo(returnTo: string, buttonLabel = m.form_publish_bu
     b.textContent?.includes(buttonLabel)
   )!;
   save.click();
+  // A publication with no closing date offers one first; an estate without drafts saves at once.
+  flushSync();
+  document.querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')?.click();
   await settle();
 }
 

@@ -49,6 +49,10 @@ describe('notificationHref', () => {
     );
   });
 
+  it("sends the managers of a form left open to that form's responses, where the three answers are", () => {
+    expect(notificationHref({ type: 'form_stale_open', postId: 'f1' })).toBe('/forms?responses=f1');
+  });
+
   it('sends a calendar manager to the queue, where the event can actually be validated', () => {
     // `postId` is the ASSOCIATION here, not an event, and a pending event has no page of its own.
     expect(notificationHref({ type: 'event_proposed', postId: 'assoc-1' })).toBe('/admin/agenda');
@@ -99,7 +103,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(53);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(54);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];
