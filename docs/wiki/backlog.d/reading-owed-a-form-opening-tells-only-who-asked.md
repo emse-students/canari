@@ -1,6 +1,8 @@
 ## Reading owed - a form tells only who asked, and an earlier opening asks first (2026-11-21)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built:** a form writes no follower row at its publication; moving a published form's
 opening earlier while people asked to be told is refused `409 FORM_OPENING_NOTIFIES` until the editor

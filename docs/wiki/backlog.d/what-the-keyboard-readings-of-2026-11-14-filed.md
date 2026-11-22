@@ -1,6 +1,8 @@
 ## P3 - what the keyboard readings of 2026-11-14 left open: the composer steps 12 CSS px down one frame before every close
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Read on the owner's Pixel 6a (Android 17, 60 Hz), Canari `1.6.12`, screen-recorded and read frame by
 frame ([the motion study](keyboard-motion-like-android-messages.md)). Of the four findings of that
