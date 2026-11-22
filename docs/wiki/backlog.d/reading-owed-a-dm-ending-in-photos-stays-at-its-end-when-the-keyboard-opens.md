@@ -1,6 +1,8 @@
 ## Reading owed - a DM ending in photos and a video stays at its last message when the keyboard opens (Pixel 6a)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built.** The photo DM of 2026-11-14 (`1.6.12`, Pixel 6a: ~50 ms after the keyboard settled
 the thread jumped to older messages and stayed there) was not reproduced on a phone. Its mechanism
