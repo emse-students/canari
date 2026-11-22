@@ -123,3 +123,61 @@ describe('monoRecordingStream', () => {
     expect(fake.context.close).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A STEREO INPUT LEAVES MONO WITH ITS HIGH BAND INTACT (reading `1.7.3-alpha.6`, voice row 3: the
+ * bench room was silent, so the 12 kHz cutoff of a real note was not read). The graph is the
+ * engine's own; this code's part is the configuration that picks the Web Audio spec's `speakers`
+ * stereo-to-mono rule, `(L + R) / 2`. Pinned together: the destination is configured so, and that
+ * rule applied to a synthetic 48 kHz stereo buffer (1 kHz and 14 kHz tones, in phase as the two
+ * capsules of one phone hear one source) keeps the 14 kHz tone at full level. A `discrete` interpretation
+ * would drop a channel; an anti-phase sum would cancel the tone - neither is what is configured.
+ */
+describe('the one-channel downmix keeps the high band', () => {
+  const RATE = 48_000;
+
+  /** Amplitude of `hz` in `plane`, by a single-bin Goertzel pass over whole cycles. */
+  function amplitudeAt(plane: Float32Array, hz: number): number {
+    let re = 0;
+    let im = 0;
+    for (let i = 0; i < plane.length; i++) {
+      const phase = (2 * Math.PI * hz * i) / RATE;
+      re += plane[i] * Math.cos(phase);
+      im += plane[i] * Math.sin(phase);
+    }
+    return (2 * Math.hypot(re, im)) / plane.length;
+  }
+
+  function stereoTones(): [Float32Array, Float32Array] {
+    const frames = RATE; // a whole number of cycles of both tones
+    const left = new Float32Array(frames);
+    const right = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) {
+      const v =
+        0.2 * Math.sin((2 * Math.PI * 1000 * i) / RATE) +
+        0.2 * Math.sin((2 * Math.PI * 14_000 * i) / RATE);
+      left[i] = v;
+      right[i] = v;
+    }
+    return [left, right];
+  }
+
+  it('configures the spec L/R average on a destination of exactly one channel', async () => {
+    const fake = fakeContext();
+    await monoRecordingStream(
+      microphone({ channelCount: 2, sampleRate: RATE }),
+      () => fake.context as unknown as AudioContext
+    );
+    expect(fake.sink.channelCount).toBe(1);
+    expect(fake.sink.channelCountMode).toBe('explicit');
+    expect(fake.sink.channelInterpretation).toBe('speakers');
+  });
+
+  it('a stereo buffer averaged to one channel keeps its 14 kHz tone (cutoff at or above 12 kHz)', () => {
+    const [left, right] = stereoTones();
+    const mono = left.map((l, i) => (l + right[i]) / 2);
+    expect(mono.length).toBe(left.length);
+    expect(amplitudeAt(mono, 1000)).toBeCloseTo(0.2, 3);
+    expect(amplitudeAt(mono, 14_000)).toBeCloseTo(0.2, 3);
+  });
+});

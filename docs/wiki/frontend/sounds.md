@@ -325,3 +325,12 @@ loudness target and no high-pass: the research of 2026-11-20 ranked them after t
 they are taken only if the readings below fail their acceptance. A Bluetooth headset in HFP stays
 narrowband whatever the note asks (cause 2 of the research), which the `device=bluetooth` class of
 the capture line names.
+
+**What a bench could not read, pinned by tests (2026-11-22, `1.7.3-alpha.6`).** The decrypted file of a real note is
+Opus, 48 kHz, ONE channel (read). The numbers: `recordingLoudness.test.ts` runs a synthetic 48 kHz buffer (1 kHz and
+14 kHz tones) through the recording tap and the one playback law, and **the law lands a note at -14 LUFS, raised by
+at most +6 dB, peak under -1 dBFS - so a note measured near -24 LUFS plays at -18, and a quiet one (tones at -30 dBFS,
+-34 LUFS) plays at -28**: the "-18 +/- 2" acceptance is not a property of the law. `monoRecording.test.ts` pins the
+destination's one-channel `speakers` average and that it keeps a 14 kHz tone. `recordingConstraints.test.ts` pins the
+pair: `incall` asks the call's own constraints, `none` asks `RECORDING_AUDIO_CONSTRAINTS`; the page never sets an OS
+audio mode (`CallSoundHoldTest.kt` holds the call's).
