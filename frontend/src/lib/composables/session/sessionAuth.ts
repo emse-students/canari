@@ -204,11 +204,7 @@ import { sessionPushAuth } from '$lib/services/sessionPushAuth';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
-import {
-  adoptOrphanedMirrorEntries,
-  dateBackgroundSentRow,
-  reconcileOutboxSent,
-} from '$lib/utils/chat/outboxMirror';
+import { dateBackgroundSentRow, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
 import { Log } from '$lib/utils/Log';
@@ -249,6 +245,7 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
+  adoptNativeOutboxEntries,
 } from '$lib/utils/chat/outbox';
 import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
@@ -2478,11 +2475,12 @@ export async function loginImpl(
     }
 
     // Adopt anything the native side queued on its own (an undelivered notification quick reply
-    // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
-    // the adopted message is written to the store, so the ordinary history load displays it and
-    // applyOutboxPendingStatuses below marks it pending.
-    await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
-      (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
+    // lives only in the mirror file). BEFORE the load: the adopted message is written to the store,
+    // so the ordinary history load displays it and applyOutboxPendingStatuses below marks it. THROUGH
+    // THE CONTROLLER registered above, which holds each entry before it is queued and claims it in
+    // the mirror - a flush must never send what a background drain may send too.
+    await adoptNativeOutboxEntries().catch((e) =>
+      cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
     );
     stopIfSignedOut('mirror-adoption');
 

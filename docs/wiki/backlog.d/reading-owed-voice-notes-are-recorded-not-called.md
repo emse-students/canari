@@ -13,16 +13,23 @@ measurement. Nothing native changed; the engines read the constraints, so a phon
 **The rows, on the Mi 9T AND the iPhone 12, on the pre-release:**
 
 1. **Capture line.** Record a voice note: the in-app log reads `capture as recording (call phase none)`
-   then `capture: echo=false noise=false agc=false ... ch=1`. Before the fix the Mi read
-   `echo=true noise=true agc=true`; the iPhone's line was never read.
+   then the `capture:` line. Mi 9T: `echo=false noise=false agc=false ... ch=1 rec=as-granted`. iPhone:
+   `echo=false noise=unsupported agc=unsupported rate=48000 size=16 ch=unsupported rec=mono-downmix`,
+   preceded by `recorded through a one-channel downmix at 48000 Hz, context running` and followed by no
+   `downmix context did not start` error. No field reads `undefined` any more. Before #3934 the Mi read
+   `echo=true noise=true agc=true`; on `1.7.3-alpha.4` the iPhone read `ch=? noise=undefined
+   agc=undefined`, which proved nothing (fixed: unsupported settings are named).
 2. **No call configuration.** Mi 9T: `adb shell dumpsys audio` WHILE recording shows mode `NORMAL`
    (not `IN_COMMUNICATION`) and the record client with source `CAMCORDER` or `MIC`/generic, not
-   `VOICE_COMMUNICATION`. iPhone: music from another app playing while recording is NOT ducked, and a
-   voice note played right after recording comes out of the loudspeaker.
+   `VOICE_COMMUNICATION`. iPhone: music from another app playing while recording STOPS - other audio is
+   interrupted on purpose, as WhatsApp does (owner, 2026-11-22,
+   [decision](owner-decisions-of-2026-11-22.md); this row used to say "NOT ducked") - and a voice note
+   played right after recording comes out of the loudspeaker.
 3. **The sound.** The same phrase, before (`1.7.2`) and after, built-in microphone, then a Bluetooth
    headset. Per file: `ffprobe` (codec, rate, channels, bitrate), `ffmpeg -af ebur128` (integrated
    loudness, true peak), `astats` (peak, clipped samples) and a spectrogram. **Acceptance:** spectral
-   cutoff at or above 12 kHz on the built-in microphone, no clipped sample, mono, and loudness within
+   cutoff at or above 12 kHz on the built-in microphone, no clipped sample, mono (`ffprobe` channels=1 on
+   BOTH phones: `1.7.3-alpha.4` gave the iPhone's AAC two channels, now downmixed), and loudness within
    -18 +/- 2 LUFS after the playback normalisation. A Bluetooth headset in HFP is narrowband whatever
    is asked; its line reads `device=bluetooth`. If a noisy room sounds worse, the A/B is a variant with
    noise suppression ON. If acceptance fails, the remaining levers of the research are, in order: an
@@ -35,6 +42,15 @@ measurement. Nothing native changed; the engines read the constraints, so a phon
    `audio session` log stays `play-and-record` until the call ends, then goes back to `ambient`.
 5. **A ring during a note.** Record a locked note, have the other phone call, answer: the call is heard
    both ways without echo; the note sends.
+6. **The first press, through the permission prompt (iPhone; the Mi 9T once too).** With the microphone
+   permission reset (reinstall), press and hold the microphone: the prompt appears; answer it. The
+   recorder must NOT stay in `holding` with its clock running (`1.7.3-alpha.4`: stuck until the app was
+   killed): the log reads `the press was interrupted while arming (window lost focus)` (or `pointer
+   capture lost`) and the bar is back. The second press records and sends normally.
+7. **A banner does not end a hold (Mi 9T).** Hold the microphone, have the other phone send a message
+   so a heads-up notification drops over the app while the finger is down: the hold must go on (a
+   `blur` from the banner would end it - `the hold was interrupted (window lost focus)` in the log is a
+   FAIL), and the release sends. Once on the iPhone too, with a banner.
 
 **Sources** (the research of 2026-11-20): Telegram `audio.c` (30 kb/s Opus, 48 kHz, mono, no
 effects); Signal `AudioCodec.java` (AAC 32 kb/s, 44.1 kHz, mono, `MIC` source); RFC 7587 s3.1.1; EBU

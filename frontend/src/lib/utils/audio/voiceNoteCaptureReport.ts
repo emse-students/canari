@@ -33,19 +33,55 @@ export interface RecorderFacts {
   audioBitsPerSecond: number;
 }
 
+/** What the recorder RECEIVES, beside what the microphone granted (`monoRecording.ts`). */
+export interface RecordedFacts {
+  /** Whether the recorder records the one-channel downmix rather than the microphone's own track. */
+  downmixed: boolean;
+}
+
+/** The track settings an engine may hold an identifier in: never printed. */
+const IDENTIFYING_SETTINGS = new Set(['deviceId', 'groupId']);
+
+/**
+ * One setting as the line prints it: its value when the engine reports it; `unsupported` when the
+ * engine does not implement that constraint at all (absent from `getSupportedConstraints()` - WebKit
+ * has no `noiseSuppression`, `autoGainControl` nor `channelCount`); `unreported` when it implements
+ * it and still reported nothing. A bare `undefined` proved nothing on the iPhone (`1.7.3-alpha.4`).
+ */
+function settingText(
+  settings: MediaTrackSettings,
+  supported: MediaTrackSupportedConstraints | undefined,
+  key: keyof MediaTrackSettings & keyof MediaTrackSupportedConstraints
+): string {
+  const value = settings[key];
+  if (value !== undefined) return String(value);
+  return supported && supported[key] !== true ? 'unsupported' : 'unreported';
+}
+
 /**
  * Builds the single report line for a recording that is starting. Pure, so a test pins the exact
- * wording; the caller logs it once per recording at info level.
+ * wording; the caller logs it once per recording at info level. `supported` is the engine's
+ * `navigator.mediaDevices.getSupportedConstraints()`, undefined when the engine has none. The line
+ * ends with every setting the engine DID expose (identifiers left out), so an engine reporting a
+ * setting this line does not name still shows it, and `rec=` says what the recorder receives.
  */
 export function describeVoiceNoteCapture(
   track: Pick<MediaStreamTrack, 'label' | 'getSettings'> | undefined,
-  recorder: RecorderFacts
+  recorder: RecorderFacts,
+  supported?: MediaTrackSupportedConstraints,
+  recorded?: RecordedFacts
 ): string {
-  const s = track?.getSettings() ?? {};
+  const s: MediaTrackSettings = track?.getSettings() ?? {};
   const device = classifyInputDevice(track?.label);
+  const text = (key: Parameters<typeof settingText>[2]) => settingText(s, supported, key);
+  const exposed = Object.keys(s)
+    .filter((k) => !IDENTIFYING_SETTINGS.has(k))
+    .sort();
+  const rec = recorded ? (recorded.downmixed ? 'mono-downmix' : 'as-granted') : '?';
   return (
-    `capture: echo=${String(s.echoCancellation)} noise=${String(s.noiseSuppression)} ` +
-    `agc=${String(s.autoGainControl)} rate=${s.sampleRate ?? '?'}Hz ch=${s.channelCount ?? '?'} ` +
-    `device=${device} mime=${recorder.mimeType || '?'} bps=${recorder.audioBitsPerSecond || '?'}`
+    `capture: echo=${text('echoCancellation')} noise=${text('noiseSuppression')} ` +
+    `agc=${text('autoGainControl')} rate=${text('sampleRate')} size=${text('sampleSize')} ` +
+    `ch=${text('channelCount')} rec=${rec} device=${device} mime=${recorder.mimeType || '?'} ` +
+    `bps=${recorder.audioBitsPerSecond || '?'} exposed=[${exposed.join(',')}]`
   );
 }

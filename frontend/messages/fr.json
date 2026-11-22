@@ -133,6 +133,18 @@
   "chat_search_placeholder": "Rechercher…",
   "chat_new_channel_title": "Nouveau canal",
   "chat_new_discussion_title": "Nouvelle discussion",
+  "chat_outbox_queue_unreadable": "Les messages en attente d'envoi ne peuvent pas être relus sur cet appareil pour l'instant : ils sont conservés et partiront dès qu'ils pourront être relus.",
+  "chat_outbox_native_queue_unreachable": "Les réponses envoyées depuis vos notifications ne peuvent pas être relues pour l'instant : elles sont retenues et affichées comme non envoyées, avec un bouton pour réessayer. Les messages envoyés depuis l'application partent normalement.",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message en attente d'envoi n'a pas pu être relu. Vérifiez vos derniers messages et retapez-le s'il manque.",
+        "countPlural=other": "{count} messages en attente d'envoi n'ont pas pu être relus. Vérifiez vos derniers messages et retapez-les s'ils manquent."
+      }
+    }
+  ],
   "chat_new_discussion_label": "Nouvelle discussion",
   "chat_new_channel_label": "Nouveau canal",
   "chat_manage_community_roles_label": "Gérer les communautés et rôles",
@@ -3098,7 +3110,7 @@
   "form_respondent_source_declared": "déclaré",
   "form_respondent_field_cursus_from_account": "Promo et formation lues sur le compte (certifiées)",
   "form_respondent_cursus_from_account_note": "Un membre ne répond pas à cette question : toutes ses promos et formations, lues sur son compte, accompagnent sa réponse (une personne qui en a plusieurs les révèle toutes) et il en est prévenu avant d'envoyer. Un invité la renseigne lui-même. Attention : dans un petit groupe, une promo et une formation peuvent suffire à reconnaître la personne.",
-  "form_respondent_cursus_from_account_needs_cursus": "Cochez aussi « Promo et formation » : un invité doit la renseigner, et sans cette case la lecture sur le compte est ignorée.",
+  "form_respondent_cursus_from_account_ticks_cursus": "Cette case coche aussi « Promo et formation » : un invité, sans compte, la renseigne lui-même. Décocher « Promo et formation » décoche aussi cette case.",
   "form_option_conflict_anonymous_account_fields": "Un formulaire anonyme ne peut lire sur le compte que la promo et la formation : un nom, un statut ou un campus lus sur le compte désigneraient la personne. Le statut et le campus peuvent être demandés ; le nom, jamais.",
   "form_respondent_declared_title": "À propos de vous",
   "form_respondent_declared_hint": "Demandé par l'organisateur, et conservé avec votre réponse.",
