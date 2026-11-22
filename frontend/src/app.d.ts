@@ -16,6 +16,8 @@ declare global {
 
   interface Window {
     __TAURI_INTERNALS__?: any;
+    /** The old-WebView guard of app.html; the root layout calls `mounted()` once it is up. */
+    __canariWebViewGuard?: { mounted(): void };
   }
 }
 
