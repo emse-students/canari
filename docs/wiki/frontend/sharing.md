@@ -225,7 +225,10 @@ preselection, never a destination by itself.
   suggestions (only the native record knows for certain; the setting's own clear may skip when the
   page knows it published nothing), resets the "last told" state so the next account publishes its
   own, and calls `clear_conversation_shortcuts`. The calls are queued, so they land after any
-  publish already in flight.
+  publish already in flight. That last erase is OWED ON DISK from before the sign-out strips the
+  push context (`notification_shortcuts_erase_owed`), settled once the native side answered, and
+  completed at the next launch or before the next session's context if the app did not live to
+  finish it ([mobile](mobile.md#communication-notifications-owner-2026-11-21)).
 - **The conversation shortcuts** (`chat_<group>`, long-lived, a name and a Person each): the
   messaging service pushes them only through `ConversationShortcuts.push` (in the plugin, which the
   app module depends on), which records the id before pushing - an unrecorded push is refused - and
@@ -297,8 +300,12 @@ and the picker still opens**. What differs is only what the platform holds.
   label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
 - **Erased at sign-out**, an account switch included (on one install, B signs in only after A
   signed out, [backlog](../plan.md#readings-owed)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
-  (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
-  notification extension donates no intent and publishes no shortcut, so there is no second set.
+  (`force`), and since 2026-11-21 `clear_conversation_shortcuts` too: the iOS notification
+  extension now donates an INCOMING `INSendMessageIntent` per message banner (a sender's name and
+  face, the conversation's id and name - [communication
+  notifications](mobile.md#communication-notifications-owner-2026-11-21)) in its own group,
+  `fr.emse.canari.message-notifications`, which that command deletes
+  (`ShareSuggestions.clearMessageNotifications`). It answers 0: the platform does not count a group.
 - **The pick comes back through the Share Extension.** Its `Info.plist` declares
   `IntentsSupported` = [`INSendMessageIntent`] under `NSExtensionAttributes` - without it the sheet
   offers none of the donations. When the member picks a suggestion, `extensionContext.intent` is

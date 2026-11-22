@@ -1165,6 +1165,12 @@ mark is handed over, moved or not, and a peer's is not), `nativeNotification.tes
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
+A form's `items` holds questions AND text or image blocks (`text_block`, `image_block`): a block is
+stored with a block's fields only, refused `FORM_BLOCK_INVALID` when it carries a question's setting,
+and any answer keyed by one is dropped at submit and edit (`forms/form-blocks.ts`). A booking space
+refuses them (`item-block`). Design and the consumers checked:
+[forms](../frontend/modules/forms.md#text-and-image-blocks-between-the-questions-owner-2026-11-21).
+
 ### Bookings (`/api/bookings`)
 
 Rooms and slots; every route, its rights and its refusal codes are in

@@ -20,8 +20,9 @@
 //!
 //! And the conversations the share sheet SUGGESTS (sharing lot S5), on both phones:
 //! `publish_share_targets` replaces them (Android sharing shortcuts, iOS `INSendMessageIntent`
-//! donations), `clear_share_targets` removes them at sign-out, and - Android only -
-//! `clear_conversation_shortcuts` removes the notifications' conversation shortcuts then too. See
+//! donations), `clear_share_targets` removes them at sign-out, and
+//! `clear_conversation_shortcuts` removes what the message notifications handed the system then too
+//! (Android conversation shortcuts, iOS communication-notification donations). See
 //! `docs/wiki/frontend/sharing.md`.
 #[cfg(mobile)]
 use tauri::Manager;
