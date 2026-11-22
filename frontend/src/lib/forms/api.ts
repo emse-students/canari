@@ -662,6 +662,76 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
 }
 
 /**
+ * One question's results, as the server aggregates them (`GET /forms/:id/results`, G-RESULTS;
+ * mirrors `apps/social-service/src/forms/form-results.ts`). `suppressed` is an ANONYMOUS form's
+ * question with too few answers to be detailed: it carries no figure at all.
+ */
+export type QuestionResult =
+  | { id: string; label: string; kind: ResultKind; suppressed: true }
+  | {
+      id: string;
+      label: string;
+      kind: 'choice';
+      suppressed: false;
+      multiple: boolean;
+      answered: number;
+      options: { id: string; label: string; count: number }[];
+      /** Picks that name no declared option (an "Autre" write-in, an answer older than a rename). */
+      unlisted: number;
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'scale';
+      suppressed: false;
+      answered: number;
+      min: number;
+      max: number;
+      distribution: { value: number; count: number }[];
+      mean: number | null;
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'matrix';
+      suppressed: false;
+      multiple: boolean;
+      answered: number;
+      columns: { id: string; label: string }[];
+      rows: { label: string; counts: number[] }[];
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'grid';
+      suppressed: false;
+      answered: number;
+      totalUnits: number;
+      columns: { id: string; label: string }[];
+      rows: { id: string; label: string; units: number[] }[];
+      closedCells: string[];
+    }
+  | { id: string; label: string; kind: 'text'; suppressed: false; answered: number };
+
+export type ResultKind = 'choice' | 'scale' | 'matrix' | 'grid' | 'text';
+
+/** A form's per-question results: the counted answers, the anonymity floor, one entry per question. */
+export interface FormResults {
+  totalAnswers: number;
+  anonymous: boolean;
+  /** The fewest answers an anonymous form's question needs before it is detailed; null otherwise. */
+  minAnswers: number | null;
+  questions: QuestionResult[];
+}
+
+/** The per-question results summary of a form, aggregated by the server (form manager only). */
+export async function getFormResults(formId: string): Promise<FormResults> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/results`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch the results');
+  return res.json();
+}
+
+/**
  * How many answers of an anonymous form wait for their batch, and the batch size (manager only). An
  * anonymous form's answers are stored in groups, all of them once the form is closed, so the
  * responses screen says why some are not listed yet.
