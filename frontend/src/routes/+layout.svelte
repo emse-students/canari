@@ -181,6 +181,9 @@
   });
 
   onMount(() => {
+    // The bundle parsed and the layout is up: tell the old-WebView guard of app.html: it stops watching and
+    // removes its update screen if one was drawn (mobile.md, the old Android System WebView section).
+    window.__canariWebViewGuard?.mounted();
     // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
     markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.

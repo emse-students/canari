@@ -26,6 +26,7 @@ make_project() {
   cp "$real_stub" "$work/android/ci/"
   cat > "$work/android/gradlew" <<GRADLEW
 #!/usr/bin/env bash
+case " \$* " in *" :app:help "*) echo "Type"; echo "     \${FAKE_TASKTYPE:-BuildTask} (\${FAKE_TASKTYPE:-BuildTask})"; exit 0 ;; esac
 for t in "\$@"; do
   case "\$t" in :app:*) ;; *) continue ;; esac
   if [ "\$t" = "$skip" ]; then
@@ -52,6 +53,7 @@ run_script() {
 }
 
 expect() { # <name> <wanted exit: 0|nonzero> <text the output must carry>
+  export FAKE_TASKTYPE
   local name="$1" want="$2" text="$3" rc=0
   run_script || rc=$?
   local got=nonzero; [ "$rc" -eq 0 ] && got=0
@@ -67,6 +69,7 @@ expect() { # <name> <wanted exit: 0|nonzero> <text the output must carry>
 echo "the happy path:"
 make_project
 expect "all four tasks ran" 0 "OK :app:checkArm64DebugAarMetadata"
+expect "the rust tasks are BuildTasks" 0 "are BuildTasks"
 if cmp -s "$real_stub" "$work/android/app/google-services.json"; then
   echo "  ok   the stub was copied where the Google Services plugin reads it"
 else
@@ -80,6 +83,11 @@ for t in :app:checkArm64DebugAarMetadata :app:processArm64DebugMainManifest :app
   make_project "$t" "UP-TO-DATE"
   expect "$t reported UP-TO-DATE" nonzero "$t did not execute"
 done
+
+echo "a rustBuild task that is not a BuildTask is refused:"
+make_project
+FAKE_TASKTYPE=DefaultTask expect "an empty DefaultTask" nonzero "is not a BuildTask"
+unset FAKE_TASKTYPE
 
 echo "a real google-services.json is never overwritten:"
 make_project
