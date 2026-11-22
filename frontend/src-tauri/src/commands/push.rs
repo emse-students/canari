@@ -2945,7 +2945,13 @@ pub(crate) fn write_push_context_file_then(
     json: &str,
     follow: impl FnOnce(&std::path::Path),
 ) -> Result<(), String> {
-    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json).map_err(|e| e.to_string())?;
+    // tmp + rename, as the App Group copy is: native readers in other processes (the extension's
+    // copy is made from this file, the Android service reads it) never see half a file - a half
+    // read as "no account" would blank a legitimate banner or skip its donation (review of #3938).
+    let tmp = data_dir.join(format!("{PUSH_CONTEXT_FILE}.tmp"));
+    std::fs::write(&tmp, json)
+        .and_then(|()| std::fs::rename(&tmp, data_dir.join(PUSH_CONTEXT_FILE)))
+        .map_err(|e| e.to_string())?;
     follow(data_dir);
     Ok(())
 }

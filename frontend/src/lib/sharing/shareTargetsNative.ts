@@ -224,24 +224,14 @@ export function clearShareTargets(
  */
 export function eraseAccountShortcuts(
   reason: string,
-  pushEnded: Promise<void> = Promise.resolve()
+  pushEnded: Promise<number | null> = Promise.resolve(null)
 ): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
   void clearShareTargets(reason, { force: true });
-  // Counted NOW, at the sign-out: a session context prepared after it is what makes a late erase
-  // with nothing owed the next account's loss (see `eraseNotificationShortcuts`).
-  const honouredAtSignOut = honoursStarted;
-  return Promise.resolve(pushEnded).then(() =>
-    eraseNotificationShortcuts(reason, 'always', honouredAtSignOut)
+  return Promise.resolve(pushEnded).then((ticket) =>
+    eraseNotificationShortcuts(reason, 'always', ticket)
   );
 }
-
-/**
- * How many {@link honourOwedNotificationErase} calls this process has started. A sign-out's erase
- * that finds nothing owed AND a honour started since it was asked knows that honour took its erase
- * - and that a donation made since is the NEXT account's (review of #3938).
- */
-let honoursStarted = 0;
 
 /**
  * Completes the notifications' erase a sign-out left OWED (`notification_shortcuts_erase_owed`):
@@ -251,8 +241,7 @@ let honoursStarted = 0;
  */
 export function honourOwedNotificationErase(reason: string): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
-  honoursStarted++;
-  return eraseNotificationShortcuts(reason, 'if-owed');
+  return eraseNotificationShortcuts(reason, 'if-owed', null);
 }
 
 /**
@@ -261,16 +250,16 @@ export function honourOwedNotificationErase(reason: string): Promise<void> {
  * BEFORE asking the native side and settles exactly that one after it answered, so an erase begun
  * for one sign-out never settles a later one's. An erase that failed stays owed.
  *
- * `honouredAtSignOut` (the sign-out's erase only): {@link honoursStarted} when the sign-out asked.
- * Nothing owed and a honour started since means that honour - run before the next session's context
- * was stored - already took this sign-out's erase, and erasing now would take the next account's
- * fresh donations: skipped. Nothing owed with no honour since still erases (the mark may never
- * have been written; the sign-out logged that).
+ * `ticket` (the sign-out's erase only): the count that sign-out wrote into the owed mark
+ * (`endPushRegistration`), a DURABLE fact. With a ticket, nothing owed means that mark was settled
+ * - by a honour run before the next session's context was stored - and erasing now would take the
+ * next account's fresh donations: skipped. With no ticket (the mark was never written) nothing
+ * proves this sign-out's erase was done, so it always erases (review of #3938).
  */
 function eraseNotificationShortcuts(
   reason: string,
   when: 'always' | 'if-owed',
-  honouredAtSignOut?: number
+  ticket: number | null
 ): Promise<void> {
   return enqueue(async () => {
     let owed: number | null = null;
@@ -290,10 +279,10 @@ function eraseNotificationShortcuts(
         Log.d('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
         return;
       }
-      if (honouredAtSignOut !== undefined && honoursStarted !== honouredAtSignOut) {
+      if (ticket !== null) {
         Log.i(
           'ShareTargets',
-          `conversation shortcuts erase skipped - a later session's honour already took it (${reason})`
+          `conversation shortcuts erase ${ticket} already settled - skipped (${reason})`
         );
         return;
       }

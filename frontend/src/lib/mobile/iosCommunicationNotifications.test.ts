@@ -187,7 +187,7 @@ describe('no donation outlives the account it named (review of #3938)', () => {
     expect(auth).toContain("void eraseAccountShortcuts('signed out', pushEnded);");
     const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
     expect(native).toMatch(
-      /return Promise\.resolve\(pushEnded\)\.then\(\(\) =>\s*eraseNotificationShortcuts\(reason, 'always', honouredAtSignOut\)/
+      /return Promise\.resolve\(pushEnded\)\.then\(\(ticket\) =>\s*eraseNotificationShortcuts\(reason, 'always', ticket\)/
     );
   });
 

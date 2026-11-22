@@ -355,11 +355,11 @@ describe('on iOS', () => {
     // The end strips the extension's proof of an account; erased before it, a push landing in
     // between would donate the leaving account's sender again.
     platform = 'ios';
-    const pushEnded = deferred<void>();
+    const pushEnded = deferred<number | null>();
     const erased = eraseAccountShortcuts('signed out', pushEnded.promise);
     await settle();
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR]);
-    pushEnded.resolve();
+    pushEnded.resolve(null);
     await erased;
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, OWED, CLEAR_CONVERSATIONS]);
   });
@@ -427,23 +427,24 @@ describe('the notifications erase is owed on disk until done (review of #3938)',
     error.mockRestore();
   });
 
-  it("a late sign-out erase with nothing owed skips once the next session's honour took it", async () => {
-    // A signs out; before A's erase runs (it waits for the FCM step), B's context is prepared,
-    // whose honour erases and settles A's mark. A's erase then finds nothing owed: B's donations stay.
+  it('a sign-out erase whose ticket was settled meanwhile skips: the next account keeps its donations', async () => {
+    // A signs out with ticket 3; before A's erase runs (it waits for the FCM step), B's context is
+    // prepared, whose honour erases and settles mark 3. A's erase then finds nothing owed.
     platform = 'ios';
     owing(null);
-    const pushEnded = deferred<void>();
-    const late = eraseAccountShortcuts('signed out', pushEnded.promise);
-    await honourOwedNotificationErase('before the push context');
-    pushEnded.resolve();
-    await late;
+    await eraseAccountShortcuts('signed out', Promise.resolve(3));
     expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(0);
   });
 
-  it('a sign-out erase with nothing owed and no honour since still erases', async () => {
+  it('a sign-out whose mark was never written always erases, whatever ran in between', async () => {
+    // No ticket: nothing proves this sign-out's erase was done, even after a honour found nothing.
     platform = 'ios';
     owing(null);
-    await eraseAccountShortcuts('signed out');
+    const pushEnded = deferred<number | null>();
+    const late = eraseAccountShortcuts('signed out', pushEnded.promise);
+    await honourOwedNotificationErase('before the push context');
+    pushEnded.resolve(null);
+    await late;
     expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
     expect(calls(SETTLE)).toHaveLength(0);
   });

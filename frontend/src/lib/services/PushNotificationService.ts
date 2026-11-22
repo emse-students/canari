@@ -934,7 +934,20 @@ async function reportPushUnavailable(
  * a store build forwards no WebView console to logcat, and a sign-out that says only that it
  * happened reads exactly like a session the server ended (Mi 9T, 2026-11-15, `SignOutCause`).
  */
-export async function endPushRegistration(cause: SignOutCause): Promise<void> {
+/** What `end_push_registration` answers (`PushRegistrationEnd` in `push_registration.rs`). */
+interface PushRegistrationEnd {
+  deleted: boolean;
+  /** The count the sign-out wrote into the notifications' owed-erase mark; null when not written. */
+  eraseTicket: number | null;
+  filesError: string | null;
+}
+
+/**
+ * Ends this device's push registration at a sign-out, and answers the sign-out's ERASE TICKET (the
+ * count it wrote into `notification_shortcuts_erase_owed`), or null when none was written or there
+ * is no push registration here. Never rejects.
+ */
+export async function endPushRegistration(cause: SignOutCause): Promise<number | null> {
   // The skip key describes the registration that just ended; left, the next sign-in in this tab
   // would compare a fresh token against it instead of registering.
   try {
@@ -960,10 +973,18 @@ export async function endPushRegistration(cause: SignOutCause): Promise<void> {
   const platform = pushPlatform();
   if (!platform) {
     console.info('[Push] endPushRegistration noop (no push registration on this platform)');
-    return;
+    return null;
   }
   try {
-    const deleted = await invoke<boolean>('end_push_registration', { cause });
+    const { deleted, eraseTicket, filesError } = await invoke<PushRegistrationEnd>(
+      'end_push_registration',
+      { cause }
+    );
+    if (filesError) {
+      console.error(
+        `[Push] sign-out did not end every part of the push registration - see the native log: ${filesError}`
+      );
+    }
     if (deleted) {
       console.info(`[Push] sign-out ended this device's push registration (${platform})`);
     } else {
@@ -971,11 +992,13 @@ export async function endPushRegistration(cause: SignOutCause): Promise<void> {
         `[Push] sign-out could not delete the ${platform} push token now - the deletion is OWED and completes before the next registration`
       );
     }
+    return eraseTicket ?? null;
   } catch (err) {
     console.error(
       '[Push] sign-out did not end every part of the push registration - see the native log',
       err
     );
+    return null;
   }
 }
 

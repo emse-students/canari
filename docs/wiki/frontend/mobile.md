@@ -1592,10 +1592,13 @@ donate the leaving account's sender again. So:
   proof of an account exists again. The wipe of a revoked device keeps the mark, as it keeps the
   other two. Same mark and same honouring on Android, for the `chat_<group>` shortcuts. A mark that
   cannot be READ is erased anyway (never settled) with an `error` that says so. And a sign-out's
-  own erase that finds nothing owed while a honour has started since it was asked skips: that
-  honour, run before the next session's context, already took it, and erasing now would take the
-  next account's fresh donations (with no honour since, it still erases - the mark may never have
-  been written).
+  own erase carries its TICKET - the count `end_push_registration` wrote into the mark, answered in
+  `PushRegistrationEnd.eraseTicket` - and finds nothing owed only once that mark was settled (by a
+  honour run before the next session's context): it skips, since erasing now would take the next
+  account's fresh donations. A sign-out whose mark could not be written has no ticket and always
+  erases - nothing durable proves its erase was done. Both `push_context.json` files (the app's
+  and the App Group copy) are written tmp + rename, so a reader never takes half a file for a
+  signed-out one.
 - **A donation the sign-out overtook withdraws itself.** Each interaction carries its own id; when
   its donation completes, the extension reads the context again (`signedInUserId`) and, if it no
   longer names the donor, deletes exactly that interaction. A donation that completed before the
