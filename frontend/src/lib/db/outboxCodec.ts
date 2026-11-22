@@ -1,5 +1,5 @@
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import type { NativeRefusal, OutboxBlobRef, OutboxEntry } from './types';
+import type { NativeRefusal, OutboxBlobRef, OutboxEntry, ParkedCause } from './types';
 
 // ---------------------------------------------------------------------------
 // Shared (de)serialization for persisted outbox rows.
@@ -121,6 +121,7 @@ export function encodeOutboxSensitive(
   if (entry.take) payload.take = entry.take;
   if (entry.adoptedFromMirror) payload.adoptedFromMirror = true;
   if (entry.nativeRefusal) payload.nativeRefusal = entry.nativeRefusal;
+  if (entry.parkedCause) payload.parkedCause = entry.parkedCause;
   return payload;
 }
 
@@ -142,6 +143,11 @@ export function asNativeRefusal(value: unknown): NativeRefusal | undefined {
 function nativeRefusalField(value: unknown): { nativeRefusal?: NativeRefusal } {
   const cause = asNativeRefusal(value);
   return cause ? { nativeRefusal: cause } : {};
+}
+
+/** `{ parkedCause }` when `value` is one of the causes, `{}` otherwise: an absent field stays absent. */
+function parkedCauseField(value: unknown): { parkedCause?: ParkedCause } {
+  return value === 'server_error' || value === 'not_now' ? { parkedCause: value } : {};
 }
 
 /**
@@ -182,6 +188,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
     ...(payload?.take && Array.isArray(payload.take.sends) ? { take: payload.take } : {}),
     ...(payload?.adoptedFromMirror === true ? { adoptedFromMirror: true as const } : {}),
     ...nativeRefusalField(payload?.nativeRefusal),
+    ...parkedCauseField(payload?.parkedCause),
   };
 }
 
