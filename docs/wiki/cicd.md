@@ -3915,6 +3915,11 @@ push `shellcheck`, `cargo`, `node` or `java` as the planned checks need them.
    a failure prints the last 40 lines of its log (`.git/canari-local-ci/<check>.log`, per worktree)
    and stops. `local-ci.sh push-plan <base>` prints that plan and runs nothing - how the self-test
    reads it; the self-test runs the push itself for real, against stub checks.
+   **The checks that use every core (`frontend-generated`, `frontend-lint`, `frontend-test`) take ONE
+   machine-wide slot** (`.github/scripts/machine-slot.mjs`), so concurrent pushes from several checkouts
+   queue instead of running several suites on the same cores - which is what failed tests that pass
+   alone (measured 2026-11-22: 23-25 timeouts with three at once, 1-7 one after another;
+   [test-suite-reform](test-suite-reform.md), the sixth reading). A waiting check says whom it waits for.
 4. On success it stamps the verified commit - the ONE writer of the stamp, never reached without
    the checks running. **If it merged, it refuses once**: git chose the
    pushed commits before the hook ran, so the merge cannot ride this push - *"Run the same git push

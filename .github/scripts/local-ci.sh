@@ -136,6 +136,41 @@ CHECK_TOTAL=0
 TIER=""
 MERGED_NOTE=""
 
+# THE CHECKS THAT USE EVERY CORE RUN ONE AT A TIME ON THIS MACHINE, whichever checkout runs them.
+# Several sessions push at once, and each vitest sizes its pool from the cores alone: on 2026-11-22
+# five pushes were verifying at once on 16 cores (run queue 69-92, paging), and tests costing 16 ms
+# of CPU failed vitest's 5 s wall-clock deadline - the victims random, the machine the cause. The
+# slot is a listening socket (`machine-slot.mjs`), so a holder that dies releases it with no stale
+# state, and a waiter wakes on the holder's close, not on a clock. The measurements:
+# docs/wiki/test-suite-reform.md, the sixth load reading.
+# The commit tier's checks are not here: they run the touched modules' few files, wait for nobody,
+# and a commit must not queue behind a push's suite.
+uses_every_core() { # <check name>
+  case "$1" in
+    frontend-generated | frontend-lint | frontend-test) return 0 ;;
+  esac
+  return 1
+}
+
+# Takes the slot for <name>, or refuses: a check that could not take it would run on the very
+# machine the slot exists to bound. Sets the caller's slot_in, slot_out and slot_holder.
+take_machine_slot() { # <check name>
+  local granted=""
+  coproc SLOT { exec bun "$ROOT/.github/scripts/machine-slot.mjs" "$1 in $(basename "$ROOT")"; }
+  slot_holder=$SLOT_PID
+  slot_in=${SLOT[0]}
+  slot_out=${SLOT[1]}
+  read -r granted <&"$slot_in" || true
+  [ "$granted" = granted ] ||
+    refuse "$1: the machine slot could not be taken (machine-slot.mjs said why, above). Running anyway would load the machine the slot bounds."
+}
+
+# Ends the slot's stdin, which is what releases it, and waits for the holder to be gone.
+release_machine_slot() {
+  exec {slot_out}>&- {slot_in}<&-
+  wait "$slot_holder" || say "local-ci: the machine slot holder exited with $? after its release"
+}
+
 # Runs one named check, its output into a log, a progress line before and after. Fails the run on
 # the first red check (a push waits for every check, and the next ones would cost minutes to say
 # nothing new), with the end of the log printed so the reason is on screen.
@@ -151,7 +186,17 @@ run_check() {
   log="$STATE_DIR/$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_').log"
   local start=$SECONDS
   say "[$TIER $CHECK_INDEX/$CHECK_TOTAL] $name ..."
-  if "$@" >"$log" 2>&1; then
+  local status=0 slot_in="" slot_out="" slot_holder=""
+  if uses_every_core "$name"; then
+    take_machine_slot "$name"
+    # The slot's pipe is closed for the check itself: a process the check leaves behind must not
+    # keep the slot once the check is over.
+    "$@" >"$log" 2>&1 {slot_in}<&- {slot_out}>&- || status=$?
+    release_machine_slot
+  else
+    "$@" >"$log" 2>&1 || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then
     say "[$TIER $CHECK_INDEX/$CHECK_TOTAL] $name ok ($((SECONDS - start))s)"
   else
     say "[$TIER $CHECK_INDEX/$CHECK_TOTAL] $name FAILED ($((SECONDS - start))s) - the end of $log:"

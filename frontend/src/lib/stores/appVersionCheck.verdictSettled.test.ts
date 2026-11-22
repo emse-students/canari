@@ -16,6 +16,13 @@ const SERVER_INFO = {
   maintenance: { enabled: false },
 };
 
+// Each test resets the module registry, so its `import()` evaluates the module again; the FIRST one
+// also fetches the graph from the runner's main process, which on a loaded machine outlasts the 5 s
+// test timeout. It is paid once here, outside any test (docs/wiki/test-suite-reform.md).
+beforeAll(async () => {
+  await import('./appVersionCheck.svelte');
+}, 60_000);
+
 describe('isVersionVerdictSettled', () => {
   beforeEach(() => {
     vi.resetModules();
