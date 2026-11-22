@@ -3818,9 +3818,9 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
 - **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a
   restored data set without its key read as a typed state. Excluded together with the data they
   describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
-- **The device reading** is owed on the iPhone 12
-  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md), and for the App Group store
-  [its own](../backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)).
+- **The device reading passed on `1.7.3-alpha.5` (iPhone 12, 2026-11-22):** `6/6` at three cold launches
+  and a `backup2` with no file in the app, the App Group or either extension domain; the per-file passes
+  it releases are deleted by [this entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md).
 
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
