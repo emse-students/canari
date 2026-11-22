@@ -19,3 +19,5 @@ baseline of that measurement (`observeThreadGrowth`'s `onPlaced`). Mechanism:
 3. Back: the keyboard leaves and the thread is still at its last message. Repeat three times.
 4. If it jumps anyway, export the in-app log at once: the cause is then NOT the one fixed here
    (it logs nothing at the flag, so note the screen recording and the exact frame).
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): the keyboard-open row was exercised on the Mi; no verdict was carried through a context reset, so it stays open and is not promoted to PASS.**

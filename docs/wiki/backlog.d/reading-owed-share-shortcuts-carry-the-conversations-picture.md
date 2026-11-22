@@ -28,3 +28,5 @@ share-target shortcuts, each with a `bitmapPath`; the log read `ShareTargets: pu
 0 removed`. **Still owed:** a real peer photo or group image (step 1 read only initials discs), the
 share sheet's direct row, the upgrade when the picture is cached later, the face not cropped, the
 picture in the notification header, and the clearing on sign-out.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. Launcher long-press shows the shortcuts with initials discs and dumpsys shortcut shows a bitmap on every Canari shortcut; the share-sheet direct row, the uncached-photo upgrade and the sign-out clearing are UNREAD (the chooser gave a stacked dialog with no direct row).**

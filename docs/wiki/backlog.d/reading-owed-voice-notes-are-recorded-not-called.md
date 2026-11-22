@@ -41,3 +41,5 @@ effects); Signal `AudioCodec.java` (AAC 32 kb/s, 44.1 kHz, mono, `MIC` source); 
 R128 s2 and AES TD1008 for speech loudness; WebKit bugs 192932, 257495, 234784, 274222.
 
 Charter: principle 2 (the essential is never lost - a voice note that cannot be understood is lost).
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. Capture was observed with dumpsys audio during a recording; the iPhone half and any remaining rows are UNREAD.**

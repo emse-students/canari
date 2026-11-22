@@ -31,3 +31,5 @@ the mirror holds an entry. Mechanism:
    `will not go from here - kept, marked, the member told`, the nudge shows, and the runs that follow
    read `can still go - retry` - never `the app must open`. DNS restored, A's reply leaves; opening the
    app shows the refused reply failed, with "Réessayer".
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. A Canari-only network block (not private DNS, which blocks the worker entirely) held one queued message; on unblock the worker ran, drained it and ended SUCCESS (one failed-then-success cycle, logcat CanariOutboxRetry/CanariFCM). UNREAD: more than one failed worker run before success.**

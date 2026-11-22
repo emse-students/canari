@@ -38,3 +38,5 @@ the banner answered. Mechanism:
    when it was neither sent nor queued, the banner then `non envoyé, réécrivez-le`. Never `envoi en
    cours` for good. Then the same, signing OUT instead of killing: the in-app log reads
    `[QuickReply] sign-out: the account's unsettled replies are settled`.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. The front reply and its settlement were exercised on the Mi; the row where the page dies holding an unsettled reply stays UNREAD (a forced crash flipped the route instead of reproducing it). The per-row verdicts of the sitting were not carried through a context reset, so none is promoted to PASS; re-read on the next alpha.**
