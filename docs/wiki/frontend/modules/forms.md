@@ -68,6 +68,13 @@ refused by the button. `isItemAnswered` and `firstMissingAnswer` now share one p
 (`fillAnswers.test.ts`). `FormQuestion.svelte.test.ts` mounts the card and asserts that each input
 type hands its answer back to the PARENT - the one thing moving it behind a `$bindable` could break.
 
+**A post's attached forms are read in batches, and an unknown state draws neutral (pinned 2026-11-22,
+`1.7.3-alpha.6`).** A feed of twelve attached forms asked `GET /api/forms/summaries?ids=` seven times (one per render
+flush) and no `/api/forms/:id` or `/check` (read on a phone). A stalled request cannot be made on a bench, so
+`FormCard.svelte.test.ts` runs the card over the real batcher: a fetcher that rejects leaves the card drawn with
+`submitted: null` - neither "Response sent" nor an error; one that resolves `[]` is an ANSWER (not readable by this
+reader), so no card is drawn and nothing claims an answer.
+
 ## Payment methods
 
 The form UI offers Lydia and cash since 2026-10-07; Stripe and saved cards are gone from it.

@@ -98,6 +98,7 @@ import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
   buildOutboxProto,
   createOutbox,
+  isServerFailureTerminal,
   type OutboxController,
 } from './outbox';
 import {
@@ -442,6 +443,36 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
       expect.objectContaining({ serverErrors: 0, nativeRefusal: undefined }),
       'key'
     );
+  });
+
+  // Reading `1.7.3-alpha.6`, warm-page row 4: a banner from a conversation this device was removed
+  // from cannot be produced on a bench without a dev write the sitting does not own. The line the
+  // native drain marked unsendable is adopted FAILED, with its Retry at once, and the page's own
+  // later outbox work - another message queued, a flush, the status pass - leaves it where it is.
+  it('an unsendable native line is adopted FAILED, stays failed under later outbox work, and Retry sends it', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('stuck', { unsendable: true })];
+    const storage = makeStorage();
+    const { outbox, conversations, sendMessage } = controllerOver(storage);
+    const statusOf = (id: string) =>
+      conversations.get('g1')!.messages.find((m) => m.id === id)?.status;
+
+    expect(await outbox.adoptNativeEntries()).toBe(1);
+    expect(statusOf('stuck')).toBe('error');
+    expect(isServerFailureTerminal(storage._queue.get('stuck'))).toBe(true);
+
+    // A following page mutation: another message is queued and flushed, the statuses are re-applied.
+    await storage.saveOutboxEntry(textEntry('after', { sentAt: 2_000, createdAt: 2_000 }));
+    await outbox.flush();
+    await outbox.applyPendingStatuses();
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(storage._queue.has('after')).toBe(false);
+    expect(storage._queue.has('stuck')).toBe(true);
+    expect(statusOf('stuck')).toBe('error');
+
+    // Its Retry is available at once, and sends it.
+    outbox.retryUpload('stuck');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
   });
 
   // Review of #3929: a failed claim leaves the line native in the mirror, where a background drain

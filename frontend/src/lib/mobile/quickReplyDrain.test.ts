@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 
+import { appendLog } from '$lib/utils/sessionLog';
+
 import { MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
 import {
   NATIVE_QUICK_REPLY_EVENT,
@@ -478,5 +480,74 @@ describe('a reply whose acknowledgement was lost is settled from what the page h
     await settleNativeQuickRepliesAtSignOut(ME, async () => null);
     expect(store.acks).toEqual([]);
     expect(session.told).toEqual([]);
+  });
+});
+
+/**
+ * A PAGE THAT DIED HOLDING A REPLY (reading `1.7.3-alpha.6`, inline reply row 5): the exact case
+ * "taken and never settled" needs a kill inside a 134 ms window that no shell can time, so the
+ * session after the death is staged directly - the native record names a reply taken by a page life
+ * that never acknowledged it, and the new session settles it from what ITS queue holds.
+ */
+describe('a reply taken by a session that died is settled by the next one', () => {
+  let store: ReturnType<typeof fakeStore>;
+  const said = () => vi.mocked(appendLog).mock.calls.map((c) => String(c[0]));
+  beforeEach(() => {
+    store = fakeStore();
+    resetQuickReplyDrainForTest(store);
+    vi.mocked(appendLog).mockClear();
+    store.unclaimed = vi.fn(async () => ['died-1']);
+  });
+
+  it('acknowledges it pending when the new queue HOLDS its id, and says so', async () => {
+    const session = as(
+      async () => 'sent',
+      async (id) => (id === 'died-1' ? 'pending' : null)
+    );
+    setNativeQuickReplySender(session);
+    await settle();
+
+    expect(store.acks).toEqual([['died-1', 'pending']]);
+    expect(said()).toContain(
+      '[QuickReply] session ready: reply died-1 is held by the page (pending) - settled so'
+    );
+    expect(said().some((l) => l.includes('LOST'))).toBe(false);
+    expect(session.told).toEqual([]);
+  });
+
+  it('acknowledges it lost when the new queue holds nothing, at the ERROR level that accuses', async () => {
+    const session = as(
+      async () => 'sent',
+      async () => null
+    );
+    setNativeQuickReplySender(session);
+    await settle();
+
+    expect(store.acks).toEqual([['died-1', 'lost']]);
+    expect(said()).toContain(
+      '[QuickReply] ERROR session ready: reply died-1 was taken and the page holds nothing of it - LOST'
+    );
+    expect(said()).toContain(
+      '[QuickReply] ERROR 1 reply(ies) an earlier page took and never sent - LOST'
+    );
+  });
+
+  it('a sign-out with one unsettled reply settles the account and says so', async () => {
+    const session = as(async () => 'sent');
+    setNativeQuickReplySender(session);
+    await settle();
+    vi.mocked(appendLog).mockClear();
+    store.acks.length = 0;
+    store.unclaimed = vi.fn(async () => ['unsettled-1']);
+
+    await settleNativeQuickRepliesAtSignOut(ME, async () => 'pending');
+
+    expect(store.acks).toEqual([['unsettled-1', 'pending']]);
+    expect(said()).toContain(
+      '[QuickReply] sign-out: reply unsettled-1 is held by the page (pending) - settled so'
+    );
+    expect(said()).toContain(
+      "[QuickReply] sign-out: the account's unsettled replies are settled (0 lost)"
+    );
   });
 });
