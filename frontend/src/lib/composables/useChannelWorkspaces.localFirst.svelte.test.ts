@@ -37,6 +37,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     listChannels = listChannels;
     startCommunityBootReads = vi.fn(() => ({
       listChannels: (id: string) => listChannels(id),
+      keyGroupVersion: async () => null,
       release: () => {},
     }));
     listUnreadCounts = listUnreadCounts;

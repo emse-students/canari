@@ -506,6 +506,18 @@ build reads those four headers in French.
 fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
 in `parseExportLabels`, delete the constant, its branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the choice comment - an export asked without the comment word (2026-11-22)
+
+**Site:** `FormsService.exportSubmissions` (`apps/social-service/src/forms/forms.service.ts`), where
+`labels.comment` is absent while a question takes a comment or an answer holds one, logged
+`[LEGACY] export of ... without the comment word`.
+**What it humours:** a store build older than the choice comment sends no word for the `Question -
+Commentaire` header. Refusing it would lock that organiser out of the export (lead, 2026-11-22).
+**The cost while it stands:** one branch; the export of such a form lacks the comment columns.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the choice
+comment, and the `[LEGACY]` line is absent for a week. Then make `comment` required where the column
+is written, delete the branch, its test and this entry.
+
 ### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
 
 **Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`
@@ -675,6 +687,22 @@ the field.
 **Removal condition:** `minClientVersion` covers the first release carrying 147 on BOTH stores. Then
 delete the controller, its `anonymous-surface` and `auth-request-coverage` lines, and this entry -
 together with the drop of the table ([backlog](backlog.d/drop-the-global-association-categories.md)).
+
+### No date yet - the full roster pass for a server without key-group versions (2026-11-22)
+
+**Site:** `ChannelService.readKeyGroupVersions` (`frontend/src/lib/services/ChannelService.ts`).
+**What it humours:** a client carrying the key-group versions asks `GET /api/channels/workspaces/key-group-versions`
+once per community listing; a server older than the route answers 404, the client logs
+`[KEY_GROUP_VERSIONS] warn: ... each runs its full roster pass` - it warns once per load (a cold start,
+every resume), not once - and every community
+runs the pass it always ran. An older CLIENT never asks the route and needs nothing: the
+per-community routes it reads are unchanged
+([offline-and-weak-network](frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
+**The cost while it stands:** none - the 404 branch IS the behaviour before the route, and the server ships
+before the stores take the client.
+**Removal condition:** none to remove. The 404 branch is the same code as a failed request (a
+dropped link), which the client must handle anyway; this entry exists so a `[KEY_GROUP_VERSIONS] warn`
+line on a 404 reads as an estate behind its client, never as a defect of the route.
 
 ### Revisit 2026-12-31 - a `DEVICE_REVOKED` refusal that does not say who revoked the device
 

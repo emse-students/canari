@@ -26,6 +26,11 @@
 export interface AnswerOption {
   id?: string;
   label: string;
+  /**
+   * The "Autre : precisez" option of a choice question: picking it lets the person type what they
+   * mean, kept beside the answer under {@link otherKey} and read here as `Autre: what they typed`.
+   */
+  other?: boolean;
 }
 
 /** The only part of a question this reader needs. */
@@ -37,6 +42,65 @@ export interface AnswerQuestion {
   type?: string;
   /** A priced grid's axes: its answer is keyed `rowId:colId`, and these name the ids. */
   productGrid?: { rows: AnswerOption[]; columns: AnswerOption[] };
+  /** A choice question that takes a free comment beside its answer (read under {@link commentKey}). */
+  allowComment?: boolean;
+}
+
+/**
+ * THE TWO FREE TEXTS A CHOICE ANSWER MAY CARRY, kept in the answer record beside it under a key
+ * derived from the question's id - never inside the choice's own value, which stays an option id
+ * (or a list of them) so every reader of a choice (pricing, conditions, results) is untouched.
+ *
+ * `<id>#other` is what was typed when the "Autre" option was picked; `<id>#comment` is the optional
+ * free comment of a question that allows one. Both are plain strings of at most the text bound.
+ * They are NOT questions: `answerSelections` (conditions) never sees them, and a reader that walks
+ * the form's items finds them only through these helpers.
+ */
+export const ANSWER_OTHER_SUFFIX = '#other';
+export const ANSWER_COMMENT_SUFFIX = '#comment';
+
+/** The record key holding the text typed beside the "Autre" option of question `itemId`. */
+export function otherKey(itemId: string): string {
+  return `${itemId}${ANSWER_OTHER_SUFFIX}`;
+}
+
+/** The record key holding the free comment of question `itemId`. */
+export function commentKey(itemId: string): string {
+  return `${itemId}${ANSWER_COMMENT_SUFFIX}`;
+}
+
+/** The question and the kind of text a record key stands for, or null for an ordinary key. */
+export function noteKeyOwner(key: string): { itemId: string; kind: 'other' | 'comment' } | null {
+  for (const [suffix, kind] of [
+    [ANSWER_OTHER_SUFFIX, 'other'],
+    [ANSWER_COMMENT_SUFFIX, 'comment'],
+  ] as const) {
+    if (key.length > suffix.length && key.endsWith(suffix)) {
+      return { itemId: key.slice(0, -suffix.length), kind };
+    }
+  }
+  return null;
+}
+
+/** A stored free text, trimmed: empty when it is absent or not a string. */
+function noteText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** The free comment of one question, as text - empty when none was given. */
+export function commentText(
+  answers: Record<string, unknown> | null | undefined,
+  itemId: string
+): string {
+  return noteText(answers?.[commentKey(itemId)]);
+}
+
+/** The text typed beside the "Autre" option of one question - empty when none was given. */
+export function otherText(
+  answers: Record<string, unknown> | null | undefined,
+  itemId: string
+): string {
+  return noteText(answers?.[otherKey(itemId)]);
 }
 
 /**
@@ -64,22 +128,31 @@ export interface AnswerWords {
   deletedFiles: ReadonlySet<string>;
 }
 
-/** Resolves a stored value to the option label it names, or returns it unchanged. */
-function optionLabel(value: string, options: AnswerOption[] | undefined): string {
+/**
+ * Resolves a stored value to the option label it names, or returns it unchanged. The "Autre" option
+ * reads `Autre: what was typed` when something was typed.
+ */
+function optionLabel(
+  value: string,
+  options: AnswerOption[] | undefined,
+  other: string | undefined
+): string {
   if (!options?.length) return value;
-  return options.find((option) => option.id === value)?.label ?? value;
+  const option = options.find((candidate) => candidate.id === value);
+  if (!option) return value;
+  return option.other && other ? `${option.label}: ${other}` : option.label;
 }
 
 /** One value of any question type: an option id, a free string, a scale number, or a list of them. */
-function oneValue(value: unknown, options: AnswerOption[] | undefined): string {
+function oneValue(value: unknown, options: AnswerOption[] | undefined, other?: string): string {
   if (value == null) return '';
   if (Array.isArray(value)) {
     return value
-      .map((entry) => oneValue(entry, options))
+      .map((entry) => oneValue(entry, options, other))
       .filter((entry) => entry !== '')
       .join(', ');
   }
-  return optionLabel(String(value), options);
+  return optionLabel(String(value), options, other);
 }
 
 /** One ordered cell: `Vert / M x2`. */
@@ -128,12 +201,17 @@ function gridText(
  *
  * A PRICED GRID (`product_grid`) reads `Vert / M x2; Noir / L x1`, from `lines` - what was charged -
  * when the caller has them, else from the grid's own labels.
+ *
+ * `other` is the text typed beside the "Autre" option ({@link otherText}): the option then reads
+ * `Autre: that text`. The free COMMENT is not part of this reading - it has a column or a line of
+ * its own ({@link commentText}).
  */
 export function answerText(
   answer: unknown,
   item: AnswerQuestion,
   words?: AnswerWords,
-  lines?: readonly AnswerGridLine[] | null
+  lines?: readonly AnswerGridLine[] | null,
+  other?: string
 ): string {
   if (answer == null || answer === '') return '';
 
@@ -154,5 +232,5 @@ export function answerText(
       .join('; ');
   }
 
-  return oneValue(answer, item.options);
+  return oneValue(answer, item.options, other);
 }

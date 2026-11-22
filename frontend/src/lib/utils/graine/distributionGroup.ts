@@ -9,7 +9,14 @@ import {
 import { ChannelApiError, type ChannelService } from '$lib/services/ChannelService';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repair';
-import { reconcileDistributionGroupRoster } from './rosterReconcile';
+import { reconcileDistributionGroupRosterReported } from './rosterReconcile';
+import {
+  convergedPassCanBeSkipped,
+  convergenceTicket,
+  forgetKeyGroupConvergence,
+  recordKeyGroupConvergence,
+} from './keyGroupConvergence';
+import type { KeyGroupVersion } from '$lib/services/ChannelService';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
@@ -76,17 +83,57 @@ export function ensureDistributionGroupFor(
   // it. Keyed on the scope, which is the durable identity of the thing being joined - not on a flag
   // saying it was done once, which would be a second bookkeeping layer able to lag the tree. The
   // entry is removed in `finally`, so nothing survives the call and a later join is unaffected.
+  return ensureDistributionGroupReported(mlsService, channelService, scope, log).outcome.then(
+    (outcome) => outcome.held
+  );
+}
+
+/**
+ * What one join pass came to: whether this device holds the group afterwards, and whether the pass
+ * CONVERGED - it found the group held, live and current, its base usable, and the tree agreeing
+ * with the roster, so a repetition on the same inputs would do nothing but read them again.
+ */
+interface JoinOutcome {
+  held: boolean;
+  converged: boolean;
+}
+
+/**
+ * {@link ensureDistributionGroupFor} with the pass's {@link JoinOutcome}, and whether the caller
+ * SHARED a pass already in flight. A shared pass started before this caller's own reads, so it says
+ * nothing about inputs this caller read first - which is why a load records a convergence only for
+ * a pass it started itself.
+ */
+function ensureDistributionGroupReported(
+  mlsService: IMlsService,
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void
+): { outcome: Promise<JoinOutcome>; shared: boolean } {
   const key = scopeLabel(scope);
   const running = inFlight.get(key);
   if (running) {
     log(`[GRAINE] ${key}: a join is already in flight for this scope - awaiting it`);
-    return running;
+    return { outcome: running, shared: true };
   }
-  const attempt = joinDistributionGroup(mlsService, channelService, scope, log).finally(() =>
-    inFlight.delete(key)
-  );
+  const attempt = joinDistributionGroup(mlsService, channelService, scope, log)
+    .then(
+      (outcome) => {
+        // A JOIN THAT DID NOT CONVERGE WITHDRAWS THE RECORD HERE, whoever asked for it (a load, a
+        // salon creation, the re-join of a group behind its server) - see `keyGroupConvergence.ts`.
+        if (scope.kind === 'workspace' && !outcome.converged) {
+          forgetKeyGroupConvergence(scope.workspaceId);
+        }
+        return outcome;
+      },
+      (error: unknown) => {
+        if (scope.kind === 'workspace') forgetKeyGroupConvergence(scope.workspaceId);
+        throw error;
+      }
+    )
+    .finally(() => inFlight.delete(key));
   inFlight.set(key, attempt);
-  return attempt;
+  return { outcome: attempt, shared: false };
 }
 
 /**
@@ -96,7 +143,7 @@ export function ensureDistributionGroupFor(
  * share nothing else. It holds a promise only for the duration of one call - `finally` deletes the
  * entry - so it is not state about the session and logging out leaves nothing behind.
  */
-const inFlight = new Map<string, Promise<boolean>>();
+const inFlight = new Map<string, Promise<JoinOutcome>>();
 
 /** {@link ensureDistributionGroupFor} without the in-flight sharing. Never called directly. */
 async function joinDistributionGroup(
@@ -104,7 +151,9 @@ async function joinDistributionGroup(
   channelService: ChannelService,
   scope: DistributionScope,
   log: (message: string) => void
-): Promise<boolean> {
+): Promise<JoinOutcome> {
+  const notHeld: JoinOutcome = { held: false, converged: false };
+  const heldNotConverged: JoinOutcome = { held: true, converged: false };
   // WHAT THIS DEVICE HOLDS, BEFORE ASKING. Only used to decide what a FAILED read may conclude; the
   // membership decision below is taken against the group the SERVER names, not this one.
   const known = mlsService.distributionGroupFor(scope);
@@ -138,7 +187,7 @@ async function joinDistributionGroup(
         refusal.code === 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP')
     ) {
       log(`[GRAINE] ${scopeLabel(scope)} has NO distribution group - it cannot carry seeds`);
-      return false;
+      return notHeld;
     }
 
     // 403 IS THIS ROUTE ANSWERING THE QUESTION THE JOIN IS ASKING. It authorizes on membership of
@@ -160,7 +209,7 @@ async function joinDistributionGroup(
       log(
         `[GRAINE] ${scopeLabel(scope)}: this user is NOT entitled to its distribution group (403) - no join is owed and no retry can help, but the channel that selected this scope said the access was there`
       );
-      return false;
+      return notHeld;
     }
 
     // A HELD GROUP SURVIVES A FAILED READ, and only from here down is the read actually failed. This
@@ -174,10 +223,10 @@ async function joinDistributionGroup(
       );
       await reconcileRoster(channelService, scope, log);
       askForHistory(scope, log);
-      return true;
+      return heldNotConverged;
     }
     log(`[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${String(e)}`);
-    return false;
+    return notHeld;
   }
 
   // THE PAIR IS RECORDED THE MOMENT IT IS LEARNED, on every branch below.
@@ -257,13 +306,22 @@ async function joinDistributionGroup(
     // missing commits may be in this device's own queue - so it is SCHEDULED, never awaited here,
     // and the community loop is not held behind a mailbox.
     void mlsService.verifyDistributionEpoch(ref.groupId, ref.activeEpoch);
+    // CURRENT AND USABLE, read before the repairs below act - the facts a skipped pass must find
+    // again (`convergedPassCanBeSkipped`). A repair that acts moves the server's epoch or base, and
+    // so the key-group version: the pass after it runs in full whatever this one records.
+    const currentAndUsable =
+      published &&
+      Array.isArray(roster) &&
+      mlsService.getEpoch(ref.groupId) === ref.activeEpoch &&
+      ref.baseEpoch !== null &&
+      ref.baseEpoch >= ref.activeEpoch;
     // Already in the group - but not necessarily holding anything. A device that joined while its
     // answerer was offline would never ask again if the ask lived only on the joining branch, and
     // the request is exactly what decides whether it is needed.
     await republishStaleBase(mlsService, ref, scope, log);
-    await reconcileRoster(channelService, scope, log);
+    const rosterAgrees = await reconcileRoster(channelService, scope, log);
     askForHistory(scope, log);
-    return true;
+    return { held: true, converged: currentAndUsable && rosterAgrees };
   }
 
   let staleForgotten = false;
@@ -312,13 +370,13 @@ async function joinDistributionGroup(
     log(
       `[GRAINE] ${scopeLabel(scope)}: a Welcome is owed to this device (${outcome.reading}) - not joining by external commit, the admitter's Welcome is the door`
     );
-    return false;
+    return notHeld;
   }
   if (!outcome.joined && outcome.reason === 'seat_unreadable') {
     log(
       `[GRAINE] ${scopeLabel(scope)}: whether a Welcome is owed to this device could not be read with the base - joining nothing this pass, so two doors are never opened at once`
     );
-    return false;
+    return notHeld;
   }
 
   if (!outcome.joined) {
@@ -340,12 +398,12 @@ async function joinDistributionGroup(
           ? ' - the stale tree is gone from disk too, so the next load asks again instead of restoring it'
           : '')
     );
-    return false;
+    return notHeld;
   }
 
   await reconcileRoster(channelService, scope, log);
   askForHistory(scope, log);
-  return true;
+  return heldNotConverged;
 }
 
 /**
@@ -541,13 +599,45 @@ export function distributionGapListener(
 }
 
 /** {@link ensureDistributionGroupFor} for a whole community. */
-export function ensureCommunityDistributionGroup(
+export async function ensureCommunityDistributionGroup(
   mlsService: IMlsService,
   channelService: ChannelService,
   workspaceId: string,
-  log: (message: string) => void = () => {}
+  log: (message: string) => void = () => {},
+  /**
+   * The community's key-group version, read by the caller BEFORE this pass (a load's
+   * `keyGroupVersion`). Given, an unchanged version on a converged tree skips the pass, and a pass
+   * that converges is recorded against it. Absent (every caller but a load, or a server without the
+   * route): the full pass, as always.
+   */
+  version: KeyGroupVersion | null = null
 ): Promise<boolean> {
-  return ensureDistributionGroupFor(mlsService, channelService, workspaceScope(workspaceId), log);
+  const scope = workspaceScope(workspaceId);
+  // TAKEN BEFORE ANYTHING ELSE: a pass of any caller that fails to converge from here on refuses
+  // this load's record (`recordKeyGroupConvergence`).
+  const ticket = convergenceTicket(workspaceId);
+  if (version && (await convergedPassCanBeSkipped(mlsService, workspaceId, version, log))) {
+    // NOTHING THE PASS READS HAS CHANGED, AND THE TREE IS WHERE IT LEFT IT. Registering is what the
+    // pass would have done first (idempotent); the history ask decides for itself, without a
+    // request, that it is not owed - so the skip keeps both and drops only the two reads.
+    mlsService.registerDistributionGroup(scope, version.groupId);
+    askForHistory(scope, log);
+    return true;
+  }
+  const { outcome, shared } = ensureDistributionGroupReported(
+    mlsService,
+    channelService,
+    scope,
+    log
+  );
+  const result = await outcome;
+  // A pass that did not converge has already withdrawn the record (in the join, and in the roster
+  // lane). A converged pass this caller only SHARED read before this caller's version, so it records
+  // nothing and leaves an earlier record standing.
+  if (version && result.converged && !shared) {
+    recordKeyGroupConvergence(workspaceId, version, ticket, log);
+  }
+  return result.held;
 }
 
 /**
@@ -611,11 +701,13 @@ async function reconcileRoster(
   channelService: ChannelService,
   scope: DistributionScope,
   log: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await reconcileDistributionGroupRoster(channelService, scope, log);
+    const report = await reconcileDistributionGroupRosterReported(channelService, scope, log);
+    return report.converged === true;
   } catch (e) {
     log(`[GRAINE] roster reconciliation failed for ${scopeLabel(scope)}: ${String(e)}`);
+    return false;
   }
 }
 
