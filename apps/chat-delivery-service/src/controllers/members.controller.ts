@@ -428,6 +428,10 @@ export class MembersController {
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
+      // `self` for "Mes notes" (migration 056): the client builds that row with no peer to resolve.
+      // An older client ignores the field and reads the row as a 1:1 whose peer it cannot resolve,
+      // which it skips (`peer-unresolved`) - never shown as a conversation with oneself.
+      kind: g.kind,
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
       createdAt: g.createdAt ?? null,

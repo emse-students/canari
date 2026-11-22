@@ -10,6 +10,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
+import type { ConversationType } from '$lib/types';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
 // display name resolves for it, are one fact. This file held a private second copy of it.
@@ -297,7 +298,7 @@ export function getUserDisplayNameSync(userId: string, fallback?: string, scope?
 export function notificationSenderName(
   senderId: string,
   conversationKey: string,
-  convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
+  convo: { name: string; contactName: string; conversationType?: ConversationType }
 ): string {
   const fallback =
     convo.contactName?.trim() || (convo.conversationType === 'direct' ? '' : convo.name?.trim());
@@ -318,7 +319,7 @@ export function notificationSenderName(
 export async function resolveNotificationSenderName(
   senderId: string,
   conversationKey: string,
-  convo: { name: string; contactName: string; conversationType?: 'direct' | 'group' | 'channel' }
+  convo: { name: string; contactName: string; conversationType?: ConversationType }
 ): Promise<string> {
   // A nickname in that conversation names the sender without any profile lookup.
   const scope = notificationNicknameScope(conversationKey, convo.conversationType);

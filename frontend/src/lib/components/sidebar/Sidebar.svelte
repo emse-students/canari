@@ -177,6 +177,11 @@
     onReorderChannels?: (workspaceSlug: string, newOrder: ChannelItem[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
     onSelectConversation: (name: string) => void;
+    /**
+     * Opens "Mes notes", creating it the first time (`openSelfConversation`). The pinned row calls it
+     * when this device holds no self conversation yet. Absent (a preview), the row is not drawn.
+     */
+    onOpenSelfConversation?: () => void | Promise<void>;
     /** Callback fired when the user selects a channel conversation. */
     onSelectChannelConversation?: (channelId: string) => void;
     /** Enters a private salon this admin can see but has not joined. See `joinPrivateChannel`. */
@@ -236,6 +241,7 @@
     onMarkCommunityRead,
     onReorderChannels,
     onSelectConversation,
+    onOpenSelfConversation,
     onSelectChannelConversation,
     onJoinPrivateChannel,
     onSelectCommunity,
@@ -418,8 +424,28 @@
       }))
   );
 
+  /**
+   * "MES NOTES", PINNED AT THE TOP of the discussions (owner, 2026-11-22): drawn whether or not this
+   * device holds it yet - the first tap creates it - and kept out of the recency-sorted list below,
+   * so it never moves. Matched by the search like any row, on the label it shows.
+   */
+  const selfRow = $derived(
+    conversationRows.find(
+      ({ convo }) => convo.conversationType === 'self' && convo.lifecycle !== 'removed'
+    ) ?? null
+  );
+  const selfRowShown = $derived(
+    Boolean(onOpenSelfConversation) &&
+      conversationMatchesQuery(
+        m.conversation_self_title(),
+        selfRow ? (previewContentOf(selfRow.convo.messages) ?? '') : '',
+        searchQuery
+      )
+  );
+
   let filteredConversationEntries = $derived.by(() =>
     conversationRows
+      .filter(({ convo }) => convo.conversationType !== 'self')
       .filter(({ convo, resolved }) =>
         conversationMatchesQuery(
           resolved.displayName,
@@ -740,6 +766,23 @@
       }}
     >
       {#if activeSidebarTab === 'discussions'}
+        {#if selfRowShown}
+          <div class="relative" data-self-conversation-row>
+            <ConversationTile
+              conversationId={selfRow?.convo.id ?? 'self'}
+              contactName=""
+              displayName={m.conversation_self_title()}
+              conversationType="self"
+              lastMessage={selfRow ? previewContentOf(selfRow.convo.messages) : undefined}
+              isReady={selfRow ? selfRow.convo.lifecycle === 'active' : true}
+              isSelected={selfRow !== null && selectedContact === selfRow.name}
+              unreadCount={selfRow?.convo.unreadCount ?? 0}
+              lastActivityAt={selfRow ? conversationRecency(selfRow.convo) : 0}
+              onClick={() =>
+                selfRow ? onSelectConversation(selfRow.name) : void onOpenSelfConversation?.()}
+            />
+          </div>
+        {/if}
         {#each filteredConversationEntries as { name, convo, resolved } (name)}
           <div class="relative">
             <ConversationTile

@@ -28,6 +28,8 @@
  */
 
 import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import type { ConversationType } from '$lib/types';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * What the native builder needs in order to render the same notification for both triggers.
@@ -276,13 +278,15 @@ export async function recordNativeReadElsewhere(
  * same conversation differently from the row it opens.
  */
 export function notificationGroupName(
-  conversationType: 'direct' | 'group' | 'channel' | undefined,
+  conversationType: ConversationType | undefined,
   contactName: string,
   name: string,
   groupTitle?: string | null
 ): string {
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
+  // "Mes notes" is titled in the reader's language; it has no name of its own.
+  if (conversationType === 'self') return m.conversation_self_title();
   return groupTitle || contactName || name;
 }
 
@@ -315,8 +319,9 @@ export function composePlainNotificationText(
  * to the name rule rather than inventing an answer.
  */
 export function notificationIsGroup(
-  conversationType: 'direct' | 'group' | 'channel' | undefined
+  conversationType: ConversationType | undefined
 ): boolean | null {
   if (conversationType === undefined) return null;
+  // "Mes notes" is titled by its own label like a group (`notificationGroupName`).
   return conversationType !== 'direct';
 }

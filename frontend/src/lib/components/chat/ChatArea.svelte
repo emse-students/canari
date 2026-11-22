@@ -1103,6 +1103,7 @@
       isReady: c.lifecycle === 'active',
       isGroup: convType === 'group',
       isDirect: convType === 'direct',
+      isSelf: convType === 'self',
     };
   });
 
@@ -1955,6 +1956,7 @@
         isReady={chatView?.isReady ?? false}
         {isChannel}
         isGroupConversation={chatView?.isGroup ?? false}
+        isSelfConversation={chatView?.isSelf ?? false}
         {imageMediaId}
         {onInviteMembers}
         {onBack}

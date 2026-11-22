@@ -5116,8 +5116,12 @@ export abstract class BaseMlsService implements IMlsService {
     this.addLockExpiryWakes.clear();
   }
 
-  async createRemoteGroup(name: string | null, isGroup = true): Promise<string> {
-    return this.delivery.createRemoteGroup(name, isGroup);
+  async createRemoteGroup(
+    name: string | null,
+    isGroup = true,
+    kind: 'conversation' | 'self' = 'conversation'
+  ): Promise<string> {
+    return this.delivery.createRemoteGroup(name, isGroup, kind);
   }
 
   async fetchHistory(

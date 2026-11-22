@@ -84,6 +84,7 @@ import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
+  createSelfConversation as createSelf,
   inviteMembersToGroup,
   replanLostInvitation,
   startNewConversation as startConversation,
@@ -101,6 +102,7 @@ import { hideUnopenable } from '$lib/utils/chat/noHolder.svelte';
 import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
+  findSelfConversation,
   loadExistingConversations,
   purgeConversation,
   retireConversation,
@@ -2504,6 +2506,36 @@ export function useConversations() {
   }
 
   /**
+   * Opens "Mes notes", creating it the first time (`createSelfConversation`). The row is pinned at
+   * the top of the list whether or not this device holds it yet, so this is the one gesture behind
+   * it. Forwards the outcome: `self-conversation-arriving` is said to the reader, not swallowed.
+   */
+  async function openSelfConversation(ctx: ConversationContext): Promise<ConversationOutcome> {
+    ctx.log('[SELF] open requested');
+    // A FOLLOWER TAB HANDS THE CREATION TO THE LEADER, which alone may commit (`tabCommitDelegation`).
+    // A row this tab already draws is simply opened: opening commits nothing.
+    const held = findSelfConversation(conversations);
+    if (held) {
+      selectConversationWithCtx(held[0], ctx);
+      return { ok: true, key: held[0] };
+    }
+    if (getTabLeadership() === 'follower') {
+      return createThroughLeader(() => delegateCommitToLeader({ kind: 'create-self' }), ctx, false);
+    }
+    return createSelf({
+      mlsService: ctx.ensureMls(),
+      storage: ctx.storage,
+      userId: ctx.userId,
+      deviceKeyB64: ctx.deviceKeyB64,
+      historyBaseUrl: ctx.historyBaseUrl,
+      conversations,
+      selectConversation: (name) => selectConversationWithCtx(name, ctx),
+      saveConversation: (name) => saveConversation(name, ctx),
+      log: ctx.log,
+    });
+  }
+
+  /**
    * A creation a FOLLOWER tab handed to the leader (`tabCommitDelegation.ts`): the leader created the
    * conversation in its own map and store, and this tab draws it from the store - which both tabs
    * share - then selects it unless `silent`. A refusal of the hand-over is a creation refusal like
@@ -2515,7 +2547,11 @@ export function useConversations() {
    * outbox) nor decrypts a group it does not hold ({@link loadHistoryForConversation}).
    */
   async function createThroughLeader(
-    delegate: () => Promise<DelegatedOutcome<'create-group'> | DelegatedOutcome<'start-direct'>>,
+    delegate: () => Promise<
+      | DelegatedOutcome<'create-group'>
+      | DelegatedOutcome<'create-self'>
+      | DelegatedOutcome<'start-direct'>
+    >,
     ctx: ConversationContext,
     silent: boolean
   ): Promise<ConversationOutcome> {
@@ -2580,7 +2616,10 @@ export function useConversations() {
    */
   function delegatedCommitExecutors(
     ctxOf: () => ConversationContext
-  ): Pick<DelegatedCommitExecutors, 'create-group' | 'start-direct' | 'invite' | 'remove'> {
+  ): Pick<
+    DelegatedCommitExecutors,
+    'create-group' | 'create-self' | 'start-direct' | 'invite' | 'remove'
+  > {
     /** A created conversation is in the STORE before the follower is told to read it from there. */
     const savedFirst = async (
       outcome: ConversationOutcome,
@@ -2604,6 +2643,10 @@ export function useConversations() {
       'create-group': async ({ name }) => {
         const ctx = ctxOf();
         return savedFirst(await createGroup(name, depsOf(ctx)), ctx);
+      },
+      'create-self': async () => {
+        const ctx = ctxOf();
+        return savedFirst(await createSelf(depsOf(ctx)), ctx);
       },
       'start-direct': async ({ contact }) => {
         const ctx = ctxOf();
@@ -3370,6 +3413,7 @@ export function useConversations() {
     verifyCurrentUserMembership,
     /** Creates a new named MLS group and selects it. */
     createNewGroup,
+    openSelfConversation,
     /** Invites one or more users to the currently selected group. */
     inviteMembersToCurrentGroup,
     createGroupWithMembers,

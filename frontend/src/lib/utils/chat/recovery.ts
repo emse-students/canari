@@ -741,7 +741,12 @@ export async function requestReAdd(
     return;
   }
   const routable = await ensureConversationForServerGroup(
-    { groupId, name: meta.name, isGroup: meta.isGroup },
+    {
+      groupId,
+      name: meta.name,
+      isGroup: meta.isGroup,
+      ...(meta.kind !== undefined ? { kind: meta.kind } : {}),
+    },
     {
       mlsService: deps.mlsService,
       userId: deps.userId,

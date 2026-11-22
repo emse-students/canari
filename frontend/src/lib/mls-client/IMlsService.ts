@@ -663,6 +663,12 @@ export type UserGroupRow = {
   groupId: string;
   name: string;
   isGroup: boolean;
+  /**
+   * `self` for "Mes notes" (server migration 056) - the one fact that tells it from a 1:1 whose
+   * peer is unresolved, since both are `isGroup: false` with no peer on the roster. Absent from a
+   * server that predates it.
+   */
+  kind?: string;
   /** Media-service id of the group avatar; null when the group has no custom photo. */
   imageMediaId?: string | null;
   deletedAt?: string | null;
@@ -762,6 +768,12 @@ export type GroupMeta = {
    * private salon's seed carrier on the first sweep that ran before the Graine layer registered it.
    */
   distributionChannelId?: string | null;
+  /**
+   * `self` when the group is "Mes notes", the account's conversation with itself (server migration
+   * 056): no peer to resolve, no one else to admit. Absent from a server that predates it, and
+   * `conversation` for every other group.
+   */
+  kind?: string;
   /**
    * The epoch the group's ratchet tree is really at, server-side.
    *
@@ -910,7 +922,15 @@ export interface IMlsService {
    */
   createGroup(groupId: string): Promise<void>;
   /** Creates a new group on the delivery server and returns its assigned group ID; `null` = unnamed. */
-  createRemoteGroup(name: string | null, isGroup?: boolean): Promise<string>;
+  /**
+   * Creates the server's group row and enrols this device. `kind: 'self'` creates "Mes notes"
+   * (one live per account, else a typed `SelfConversationExistsError`).
+   */
+  createRemoteGroup(
+    name: string | null,
+    isGroup?: boolean,
+    kind?: 'conversation' | 'self'
+  ): Promise<string>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
    * only call a checkpoint needs.

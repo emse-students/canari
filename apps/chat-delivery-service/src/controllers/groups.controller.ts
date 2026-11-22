@@ -8,6 +8,7 @@ import {
   Param,
   Inject,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   UseGuards,
   Logger,
@@ -17,7 +18,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, IsNull, Not, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
-import { Group } from '../entities/group.entity';
+import {
+  GROUP_KIND_CONVERSATION,
+  GROUP_KIND_SELF,
+  Group,
+  type GroupKind,
+} from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
@@ -203,12 +209,19 @@ export class GroupsController {
    */
   async createGroup(
     @Body()
-    body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string },
+    body: {
+      name: string;
+      createdBy: string;
+      isGroup?: boolean;
+      creatorDeviceId?: string;
+      kind?: string;
+    },
     @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('create-grp');
     const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const caller = header ? canonicalUserId(header) : null;
+    const kind = this.readCreationKind(body.kind, traceId);
     if (caller && body.createdBy && canonicalUserId(String(body.createdBy)) !== caller) {
       this.logger.warn(
         `[CREATE_GROUP][${traceId}] REFUSED createdBy=${cutUserId(String(body.createdBy))} caller=${cutUserId(caller)} - a group is created by its caller; no group row was written`
@@ -220,6 +233,16 @@ export class GroupsController {
     // A group with no creator device enrols nobody - there is no membership to gate, and the
     // creator reaches it through the ordinary invitation path like any other device.
     const enrolling = Boolean(body.createdBy && body.creatorDeviceId);
+    // A NOTES CONVERSATION IS ITS CREATOR'S DEVICE FROM THE FIRST INSTANT: it is created by an
+    // authenticated caller, enrolling the device that asked, or not at all - a self group nobody is
+    // enrolled in would hold the account's one live slot (the unique index) for a conversation no
+    // device can open.
+    if (kind === GROUP_KIND_SELF && (!caller || !enrolling)) {
+      this.logger.warn(
+        `[CREATE_GROUP][${traceId}] REFUSED kind=self caller=${caller ? cutUserId(caller) : 'none'} creatorDevice=${body.creatorDeviceId ? 'set' : 'none'} - a notes conversation enrols its authenticated creator's device; no group row was written`
+      );
+      throw new BadRequestException('A self conversation needs its creator and its device');
+    }
     const safeCreatorId = enrolling ? sanitizeIdentityValue(body.createdBy, 'createdBy') : '';
     const safeCreatorDeviceId = enrolling
       ? sanitizeIdentityValue(body.creatorDeviceId, 'creatorDeviceId')
@@ -247,15 +270,21 @@ export class GroupsController {
     // and is read by anyone with shell on the box. `[PUSH_SEND]` already reached this conclusion
     // for the identical value and prints `groupName=<n>B`; this is the same shape.
     this.logger.log(
-      `[CREATE_GROUP][${traceId}] nameBytes=${Buffer.byteLength(body.name ?? '', 'utf8')} createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
+      `[CREATE_GROUP][${traceId}] nameBytes=${Buffer.byteLength(body.name ?? '', 'utf8')} createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} kind=${kind} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
     );
-    const newGroup = this.groupRepo.create({
-      id: groupId,
-      name: body.name,
-      isGroup: body.isGroup ?? true,
-      createdBy: caller,
-    });
-    await this.groupRepo.save(newGroup);
+    let newGroup: Group;
+    if (kind === GROUP_KIND_SELF) {
+      // `caller` is set: refused above otherwise.
+      newGroup = await this.insertSelfGroup(groupId, caller!, traceId);
+    } else {
+      newGroup = this.groupRepo.create({
+        id: groupId,
+        name: body.name,
+        isGroup: body.isGroup ?? true,
+        createdBy: caller,
+      });
+      await this.groupRepo.save(newGroup);
+    }
 
     // The creator made the group locally, so no Welcome is owed - but the row and the routing set
     // are written by the ONE writer, so they cannot disagree with the other two doors again.
@@ -292,10 +321,71 @@ export class GroupsController {
     this.logger.log(`[CREATE_GROUP][${traceId}] DONE groupId=${groupId}`);
     return {
       groupId,
-      name: body.name,
+      name: newGroup.name ?? body.name,
       createdBy: body.createdBy,
       isGroup: newGroup.isGroup,
+      kind: newGroup.kind,
     };
+  }
+
+  /**
+   * The `kind` a creation asked for: absent or `conversation` is an ordinary group or 1:1, `self` is
+   * "Mes notes" (migration 056). Anything else is refused 400 before anything is written - a value the
+   * database CHECK would refuse anyway, answered here as the caller's error rather than a 500.
+   */
+  private readCreationKind(raw: unknown, traceId: string): GroupKind {
+    if (raw === undefined || raw === null || raw === GROUP_KIND_CONVERSATION) {
+      return GROUP_KIND_CONVERSATION;
+    }
+    if (raw === GROUP_KIND_SELF) return GROUP_KIND_SELF;
+    this.logger.warn(
+      `[CREATE_GROUP][${traceId}] REFUSED kind=${typeof raw === 'string' ? raw.slice(0, 16) : typeof raw} - not a group kind; no group row was written`
+    );
+    throw new BadRequestException('kind must be "conversation" or "self"');
+  }
+
+  /**
+   * Writes the account's notes conversation, or refuses because one is already live.
+   *
+   * **THE DATABASE DECIDES, NEVER A READ BEFORE THE WRITE.** The insert is `ON CONFLICT DO NOTHING`
+   * against the unique partial index on (`createdBy`) over live self rows (migration 056): two devices
+   * creating at the same instant both reach it, one row lands, and the other insert returns nothing.
+   * That device is answered 409 `SELF_CONVERSATION_EXISTS` naming the live group, and joins it by the
+   * ordinary own-device Welcome; nothing of its attempt is left behind.
+   *
+   * The row: `isGroup = false` (one person, never a group chat - the CHECK says so), no name (the
+   * client draws "Mes notes" itself; the server never composes a title for it, since a frame to one's
+   * own devices is always silent), the caller as `createdBy`.
+   */
+  private async insertSelfGroup(groupId: string, caller: string, traceId: string): Promise<Group> {
+    const inserted = await this.groupRepo
+      .createQueryBuilder()
+      .insert()
+      .into(Group)
+      .values({ id: groupId, isGroup: false, createdBy: caller, kind: GROUP_KIND_SELF })
+      .orIgnore()
+      .returning(['id'])
+      .execute();
+    if (((inserted.raw as unknown[] | undefined) ?? []).length > 0) {
+      this.logger.log(
+        `[CREATE_GROUP][${traceId}] self conversation written group=${groupId} owner=${cutUserId(caller)}`
+      );
+      return this.groupRepo.findOneOrFail({ where: { id: groupId } });
+    }
+    const live = await this.groupRepo.findOne({
+      where: { createdBy: caller, kind: GROUP_KIND_SELF, deletedAt: IsNull() },
+      select: { id: true },
+    });
+    this.logger.warn(
+      `[CREATE_GROUP][${traceId}] REFUSED kind=self owner=${cutUserId(caller)} - a live notes conversation exists (${live?.id ?? 'ended since the insert'}); no group row was written`
+    );
+    throw new ConflictException(
+      refusalBody(
+        RefusalCode.SELF_CONVERSATION_EXISTS,
+        'This account already holds a live self conversation.',
+        { groupId: live?.id ?? null }
+      )
+    );
   }
 
   @UseGuards(HeaderAuthGuard)

@@ -7170,3 +7170,41 @@ viewer moves to the previous or next image or video of THAT conversation, like a
 Tests: `viewerSequence.test.ts` (order, skips, bounds), `ConversationMediaViewer.svelte.test.ts`
 (keyboard, ends, video stop, known URL). **Owed: a reading on a phone** - swipe between a photo and
 a video in a conversation with both, rotate a video, then move on.
+
+## Mes notes - the conversation with oneself (2026-11-22)
+
+**What the owner decided** ([decisions](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+principles 1 then 2): the personal notepad moves into `/chat` as a conversation whose only members
+are the account's own devices, end-to-end like any other. The server side is
+[chat-delivery](../../services/chat-delivery.md#mes-notes---the-self-conversation).
+
+**The row.** `conversationType: 'self'`, built by `selfConversationIdentity()` and never with a
+`directPeerId`. Its name and roster cannot say what it is (a legacy malformed `u::u` 1:1 looks the
+same), so the server's `kind` is carried to every place a row is born - `ensureConversationForServerGroup`
+(listing and recovery) and `upsertConversation` (a Welcome) - and stored: `ConversationMeta.kind =
+'self'`, a `kind` column in SQLite (added on every open) and the same field in IndexedDB.
+`restoredConversationRow` reads it back before any name parsing.
+
+**The list.** `Sidebar` pins one row at the top, "Mes notes" / "My notes" with Lucide `Bookmark`
+and the subtitle "Visible uniquement sur vos appareils". It is drawn even before the group exists;
+a tap opens the held row or calls `openSelfConversation`.
+
+**Creation.** `createSelfConversation` (in `groupCreation.ts`, sharing `createOwnedGroup` with
+`createNewGroup`) creates the group with `kind: 'self'`. A follower tab delegates it to the leader
+(`create-self` in `tabCommitDelegation`). If another device of the account created it first, the
+server answers `SELF_CONVERSATION_EXISTS` (`SelfConversationExistsError`, typed at the throw): the
+refusal is `self-conversation-arriving`, nothing is deleted server-side, and the row arrives with
+that device's Welcome.
+
+**The header.** `ChatHeader` with `isSelfConversation`: no calls, no settings, the Bookmark avatar
+and the lock subtitle. Every `directPeerId` path (peer resolution, DM repair, blocking, nicknames,
+calls) skips a self row because it has no peer; notifications name it with the reader's own label.
+
+**Not yet here** ([the entry](../../backlog.d/mes-notes-notepad-migration-loss-notice-and-retention.md)):
+the move of existing notepads and the `410` on the old routes, the single-device loss notice, the
+90-day retention line, the removal of the notepad entry point, and a way to delete the
+conversation.
+
+Tests: `selfConversation.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
+`tabCommitDelegation.test.ts`. **Owed: a reading on both phones** - open "Mes notes" on one device,
+write, add a photo and a voice note, then read them on the account's second device.

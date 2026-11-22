@@ -80,6 +80,8 @@ describe.each([
     '049_report_accusations.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
   ],
+  // `dm_groups` again: the self kind's column, check and unique partial index.
+  ['056_dm_groups_self_kind.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

@@ -18,7 +18,9 @@ import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibili
 import {
   buildConversationRow,
   findDirectConversationByPeer,
+  findSelfConversation,
   isRawId,
+  selfConversationIdentity,
 } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { dropGroupState } from './dropGroupState';
@@ -39,6 +41,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
 import {
   MemberNotAdmittedError,
+  SelfConversationExistsError,
   type GroupRosterAtGeneration,
 } from '$lib/mls-client/mlsDeliveryApi';
 
@@ -103,6 +106,11 @@ export type ConversationRefusal =
    * ran nothing (`tabCommitDelegation.ts`, `leader-unavailable`).
    */
   | 'leader-unavailable'
+  /**
+   * "Mes notes" is already live on the server and not yet on this device: another device of the
+   * account created it, and its Welcome brings it here. Nothing was written.
+   */
+  | 'self-conversation-arriving'
   /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
   | 'creation-failed';
 
@@ -284,6 +292,57 @@ export async function createNewGroup(
   name: string,
   deps: GroupCreationDeps
 ): Promise<ConversationOutcome> {
+  const groupDisplayName = name.trim();
+  const duplicateGroup =
+    groupDisplayName &&
+    Array.from(deps.conversations.values()).find(
+      (c) =>
+        (c.conversationType ?? 'group') === 'group' &&
+        c.name.toLowerCase() === groupDisplayName.toLowerCase()
+    );
+  if (duplicateGroup) {
+    deps.log(`Group not created: one with this name already exists.`);
+    return { ok: false, reason: 'duplicate-group-name' };
+  }
+  return createOwnedGroup({ kind: 'group', name: groupDisplayName }, deps);
+}
+
+/**
+ * Creates "Mes notes", this account's conversation with itself (server `kind: 'self'`, migration
+ * 056), and opens it - the same creation as a named group, through the same encrypted path: the
+ * server row and this device's enrolment, the local MLS group, and every OTHER device of the
+ * account added in one commit with its Welcome. Only the server row and the identity differ: no
+ * name, `isGroup: false`, one live per account.
+ *
+ * A live one on this device is opened, never created twice. One the server already holds and this
+ * device does not (another device created it; the Welcome is on its way) is the typed refusal
+ * `self-conversation-arriving`: nothing is written, and the Welcome brings the row.
+ */
+export async function createSelfConversation(
+  deps: GroupCreationDeps
+): Promise<ConversationOutcome> {
+  const held = findSelfConversation(deps.conversations);
+  if (held) {
+    deps.log(`[SELF] self conversation ${held[0].slice(0, 8)}... already held - opened`);
+    deps.selectConversation(held[0]);
+    return { ok: true, key: held[0] };
+  }
+  deps.log('[SELF] no self conversation on this device - creating one');
+  return createOwnedGroup({ kind: 'self' }, deps);
+}
+
+/** What {@link createOwnedGroup} creates: a named (or unnamed) group chat, or "Mes notes". */
+type OwnedGroupSpec = { kind: 'group'; name: string } | { kind: 'self' };
+
+/**
+ * The one creation of a group this device owns from its first epoch - a group chat or "Mes notes":
+ * register, create locally, add the account's other devices, persist, present. See
+ * {@link createNewGroup} and {@link createSelfConversation}.
+ */
+async function createOwnedGroup(
+  spec: OwnedGroupSpec,
+  deps: GroupCreationDeps
+): Promise<ConversationOutcome> {
   const {
     mlsService,
     userId,
@@ -294,18 +353,7 @@ export async function createNewGroup(
     log,
   } = deps;
 
-  const groupDisplayName = name.trim();
-  const duplicateGroup =
-    groupDisplayName &&
-    Array.from(conversations.values()).find(
-      (c) =>
-        (c.conversationType ?? 'group') === 'group' &&
-        c.name.toLowerCase() === groupDisplayName.toLowerCase()
-    );
-  if (duplicateGroup) {
-    log(`Group not created: one with this name already exists.`);
-    return { ok: false, reason: 'duplicate-group-name' };
-  }
+  const groupDisplayName = spec.kind === 'group' ? spec.name : '';
 
   let groupId: string | undefined;
   let conversationKey: string | undefined;
@@ -313,7 +361,10 @@ export async function createNewGroup(
 
   try {
     // `null` for an unnamed group: the server is never told a name the members did not choose.
-    groupId = await mlsService.createRemoteGroup(groupDisplayName || null, true); // true = multi-user group
+    groupId =
+      spec.kind === 'self'
+        ? await mlsService.createRemoteGroup(null, false, 'self') // one person: never a group chat
+        : await mlsService.createRemoteGroup(groupDisplayName || null, true); // true = multi-user group
     conversationKey = groupId;
     // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
     // group deleted: the connection sweeps read this mark rather than take the listed, rowless group
@@ -423,11 +474,14 @@ export async function createNewGroup(
       buildConversationRow({
         id: groupId,
         lifecycle: 'active',
-        identity: {
-          conversationType: 'group',
-          contactName: groupDisplayName,
-          displayName: groupDisplayName, // preserve original casing for display
-        },
+        identity:
+          spec.kind === 'self'
+            ? selfConversationIdentity()
+            : {
+                conversationType: 'group',
+                contactName: groupDisplayName,
+                displayName: groupDisplayName, // preserve original casing for display
+              },
         // The creation moment seeds the ordering of a conversation that holds only notices; the
         // first real message replaces it (conversationRecency). Not `startedAt`: that is the
         // server's write-once fact and a local clock would pre-empt it.
@@ -471,6 +525,15 @@ export async function createNewGroup(
     });
     return { ok: true, key: conversationKey };
   } catch (e) {
+    // ANOTHER DEVICE OF THIS ACCOUNT ALREADY HOLDS "MES NOTES": the server wrote nothing for this
+    // attempt, so there is no orphan to delete - the Welcome that device sends brings the row.
+    if (e instanceof SelfConversationExistsError) {
+      log(
+        `[SELF] the server already holds a live self conversation (${e.groupId?.slice(0, 8) ?? 'ended since'}) - nothing created, its Welcome brings it here`
+      );
+      globalMessaging.resetMessageCatchupState();
+      return { ok: false, reason: 'self-conversation-arriving' };
+    }
     log(`Group creation error: ${String(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
     globalMessaging.resetMessageCatchupState();

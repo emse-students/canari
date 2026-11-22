@@ -37,7 +37,7 @@ import { getApps } from 'firebase-admin/app';
 import { getMessaging, type Message } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
-import { Group } from '../entities/group.entity';
+import { Group, isSelfConversation } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -4946,6 +4946,17 @@ export class MessagingService {
           `reason=${reason} committer=${cutUserId(committer)} - the commit is refused whole`
       );
     };
+    // "MES NOTES" ADMITS NOBODY BUT ITS OWNER (migration 056). This is the one writer that puts a NEW
+    // person on a roster (`ensureGroupMember` below), so the refusal lives here and covers every door
+    // an Add can come through; the owner's own devices are never candidates (`people` excludes the
+    // committer). The commit is refused whole, like any other refusal of this decision.
+    const kindRow = await m
+      .getRepository(Group)
+      .findOne({ where: { id: groupId }, select: { id: true, kind: true } });
+    if (isSelfConversation(kindRow)) {
+      for (const userId of candidates) refuse(userId, 'self_conversation');
+      return none;
+    }
     const committerSeat = await seats.findOne({
       where: { groupId, userId: committer, ...ADMITTED_SEAT },
       select: { id: true },

@@ -3174,6 +3174,49 @@ and then at its 10th, 100th... send (`utils/log-repeat.ts`), and both cut ids to
 be pushed is a population question, answered by `tools/cross-client-harness/devices.mjs
 --unpushable`, never by counting this line.
 
+## Mes notes - the self conversation
+
+**What it is** (owner, 2026-11-22, [decisions](../backlog.d/owner-decisions-of-2026-11-22.md)): an
+ordinary MLS group whose only members are the devices of ONE account. It carries text, photos,
+files and voice notes through the same encrypted paths as any conversation; the server stores
+ciphertexts and never a key. Charter principle 1 (*vos messages sont a vous*) decides the shape:
+end-to-end, so the server holds nothing it can read.
+
+**The row.** `dm_groups.kind` (migration `056_dm_groups_self_kind.sql`) is `'conversation'` for
+every existing row and `'self'` for this one. A CHECK pins the shape of a self row: `isGroup = false`
+and no workspace or channel. A unique partial index,
+`idx_dm_groups_one_live_self_per_account ON ("createdBy") WHERE kind = 'self' AND "deletedAt" IS
+NULL`, makes "one live self conversation per account" a fact of the database.
+
+**Creation is idempotent from that index, not from a read-then-write.** `POST /groups` with
+`kind: 'self'` inserts with `ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, another
+device already won: the answer is `409 SELF_CONVERSATION_EXISTS` carrying the live `groupId`, and
+the client waits for the Welcome from that device instead of making a second group. No error message
+is parsed.
+
+**What it refuses**, each typed at the throw ([refusal codes](../../../apps/chat-delivery-service/src/utils/refusal-codes.ts)):
+
+- **Another person.** `enrolAdmittedPeople`, the one writer that admits a person to a roster,
+  refuses every candidate of a self group (`admit_refused`); the account's own new devices are not
+  admissions and still join.
+- **Calls.** `CallsService.assertMembership` answers `403 SELF_CONVERSATION` for initiate,
+  room token, ICE, ring and ring end.
+- **Block and report.** Blocking oneself was already `BLOCK_SELF` (core-service); a report naming
+  the reporter's own account is now `400 REPORT_SELF` (social-service).
+
+**Push.** An own-device frame draws nothing (`recipientId === senderId` in `describeQueuedFrame`),
+so a note never rings the other devices of its author.
+
+**Erasure.** A roster of one with `isGroup = false` is tombstoned like a 1:1. The index skips
+tombstones, so an erased account's `[deleted]` rows never collide.
+
+**Old clients** list it as a 1:1 whose peer they cannot resolve and skip it (`peer-unresolved`). The
+listing is not filtered by version.
+
+Tests: `056_dm_groups_self_kind.integration.spec.ts` (PostgreSQL: the CHECK, the concurrent creation
+on two connections, the tombstone, the 400s), `admission.integration.spec.ts` (nobody else is
+admitted, the owner's own commit is), `calls.service.spec.ts`, `moderation.service.spec.ts`.
+
 ## Environment variables
 
 | Variable | Required | Description |

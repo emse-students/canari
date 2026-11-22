@@ -255,6 +255,10 @@ function recordingExecutors() {
       runs.push(`create-group:${name}`);
       return { ok: true, key: `g-${name}` };
     },
+    'create-self': async () => {
+      runs.push('create-self');
+      return { ok: true, key: 'g-self' };
+    },
     'start-direct': async ({ contact }) => {
       runs.push(`start-direct:${contact}`);
       return { ok: true, key: `dm-${contact}` };
@@ -307,6 +311,7 @@ describe('a follower tab hands its commits to the leader tab', () => {
       'create-group:club',
       { ok: true, key: 'g-club' },
     ],
+    [{ kind: 'create-self' } as const, 'create-self', { ok: true, key: 'g-self' }],
     [
       { kind: 'start-direct', contact: 'bob' } as const,
       'start-direct:bob',

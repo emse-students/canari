@@ -22,7 +22,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
-import type { Conversation, ConversationLifecycle } from '$lib/types';
+import type { Conversation, ConversationLifecycle, ConversationType } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { foldForSearch } from '$lib/utils/textFold';
 import { unnamedGroupLabelOf } from './groupTreeMembers';
@@ -110,7 +110,32 @@ export function toConversationMeta(
     ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
     imageMediaId: convo.imageMediaId ?? null,
     awaitingAdmission: convo.awaitingAdmission === true,
+    // "Mes notes" says what it is on its row: nothing else there could (no peer, no name).
+    ...(convo.conversationType === 'self' ? { kind: 'self' as const } : {}),
   };
+}
+
+/**
+ * The identity of "Mes notes", the account's conversation with itself (server `kind: 'self'`). No
+ * `directPeerId`, ever: every peer path keys on it and has nothing to find here. The label is the
+ * reader's own language, drawn at render (`resolveConversationListPresentation`), so the row keeps
+ * no name of its own.
+ */
+export function selfConversationIdentity(): ConversationIdentity {
+  return { conversationType: 'self', contactName: '', displayName: '' };
+}
+
+/**
+ * The live "Mes notes" row this device holds, as `[key, row]`, or `null`. A tombstone (`removed`)
+ * is not it: a deleted notes conversation is replaced by the next one, never revived.
+ */
+export function findSelfConversation(
+  conversations: ReadonlyMap<string, Conversation>
+): readonly [string, Conversation] | null {
+  for (const entry of conversations) {
+    if (entry[1].conversationType === 'self' && entry[1].lifecycle !== 'removed') return entry;
+  }
+  return null;
 }
 
 /**
@@ -458,7 +483,7 @@ export function deriveConversationIdentity(
 /** What a site KNOWS about who a conversation is with - the shape {@link deriveConversationIdentity} returns. */
 export interface ConversationIdentity {
   /** Omit when the site cannot tell; the builder then reads the id and falls back to `group`. */
-  conversationType?: 'direct' | 'group' | 'channel';
+  conversationType?: ConversationType;
   contactName: string;
   displayName: string;
   directPeerId?: string;
@@ -583,7 +608,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
 }
 
 export interface ConversationListPresentation {
-  conversationType: 'direct' | 'group';
+  conversationType: 'direct' | 'group' | 'self';
   contactId: string;
   displayName: string;
   /**
@@ -610,7 +635,7 @@ export function resolveConversationListPresentation(
     id: string;
     name: string;
     contactName: string;
-    conversationType?: 'direct' | 'group' | 'channel';
+    conversationType?: ConversationType;
     directPeerId?: string;
     /** Persisted IndexedDB name (often `userId::peerId` for DMs). */
     metaName?: string;
@@ -619,6 +644,15 @@ export function resolveConversationListPresentation(
   },
   userId: string
 ): ConversationListPresentation {
+  // "Mes notes" is drawn in the reader's language, never from a name: it has none.
+  if (input.conversationType === 'self') {
+    return {
+      conversationType: 'self',
+      contactId: input.id,
+      displayName: m.conversation_self_title(),
+      displayNameResolved: true,
+    };
+  }
   const metaName = input.metaName?.trim();
   const identity = deriveConversationIdentity(metaName || input.name, userId, input.id);
   const conversationType = input.conversationType ?? identity.conversationType;
@@ -1029,6 +1063,22 @@ export function restoredConversationRow(
   userId: string,
   prev?: Pick<Conversation, 'name' | 'imageMediaId' | 'conversationType' | 'directPeerId'>
 ): Conversation {
+  // "MES NOTES" IS READ FROM ITS ROW, NEVER FROM ITS NAME: it has none, and a legacy 1:1 with a
+  // malformed self-only name would parse the same way.
+  if (meta.kind === 'self') {
+    return buildConversationRow({
+      id: meta.id,
+      lifecycle: meta.lifecycle,
+      identity: selfConversationIdentity(),
+      imageMediaId: null,
+      lastMessageAt: meta.updatedAt,
+      readWatermarks: meta.readWatermarks,
+      serverReadWatermarks: meta.serverReadWatermarks,
+      historyFloor: meta.historyFloor,
+      startedAt: meta.startedAt,
+      localReadSeed: meta.localReadSeed,
+    });
+  }
   const identity = deriveConversationIdentity(meta.name, userId, meta.id);
   const resolvedName =
     prev?.name &&
@@ -1398,7 +1448,8 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           const existingConvo = ctx.conversations.get(meta.id);
           if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
             const row = serverGroupIndex.byGroupId.get(meta.id);
-            if (row?.isGroup === false) {
+            // "Mes notes" is `isGroup: false` with no peer by design: never a DM to repair.
+            if (row?.isGroup === false && row.kind !== 'self') {
               // Repair a DM whose peer identity is corrupted: either misclassified as a group,
               // or stored as direct but with a missing/self peer (legacy self-only group name).
               // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.

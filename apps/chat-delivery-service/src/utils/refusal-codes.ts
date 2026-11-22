@@ -103,6 +103,18 @@ export const RefusalCode = {
    * is gone, and re-sending the same bytes cannot make it exist.
    */
   WELCOME_TARGET_UNKNOWN: 'WELCOME_TARGET_UNKNOWN',
+  /**
+   * 403 - "Mes notes" (`dm_groups.kind = 'self'`, migration 056) is one account's conversation with
+   * itself: no other person is admitted into it, and no call is placed in it. Terminal: there is
+   * nobody to add and nobody to ring.
+   */
+  SELF_CONVERSATION: 'SELF_CONVERSATION',
+  /**
+   * 409 - `POST mls/groups` with `kind: 'self'` while the account already holds a live notes
+   * conversation (the unique partial index of migration 056). Nothing was written; the body names the
+   * live one (`groupId`), which this device joins by the ordinary own-device Welcome.
+   */
+  SELF_CONVERSATION_EXISTS: 'SELF_CONVERSATION_EXISTS',
 } as const;
 
 /** A stable refusal code of this service. */

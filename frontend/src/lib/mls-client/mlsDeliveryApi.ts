@@ -750,6 +750,20 @@ export class GroupDeletedError extends Error {
 }
 
 /**
+ * The server refused to create "Mes notes" because this account already holds a live one (409
+ * `SELF_CONVERSATION_EXISTS`, the unique partial index of server migration 056). Nothing was
+ * written; `groupId` is the live conversation, which this device joins by the ordinary own-device
+ * Welcome another device of the account sends. `null` when the live row ended between the refused
+ * insert and the server's read of it - creating again is then the answer.
+ */
+export class SelfConversationExistsError extends Error {
+  constructor(readonly groupId: string | null) {
+    super(`A self conversation is already live${groupId ? ` (${groupId})` : ''}`);
+    this.name = 'SelfConversationExistsError';
+  }
+}
+
+/**
  * The server refused a membership mutation because a BLOCK stands between the two people.
  *
  * Typed rather than message-matched, like every other refusal here: the neutral wording the server
@@ -2257,7 +2271,11 @@ export class MlsDeliveryApi {
    * Creates a new group row on the delivery service and returns the assigned `groupId`. A `null`
    * name (an unnamed group) sends no `name` at all, and the row's column stays NULL.
    */
-  async createRemoteGroup(name: string | null, isGroup: boolean): Promise<string> {
+  async createRemoteGroup(
+    name: string | null,
+    isGroup: boolean,
+    kind: 'conversation' | 'self' = 'conversation'
+  ): Promise<string> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
         method: 'POST',
@@ -2267,8 +2285,22 @@ export class MlsDeliveryApi {
           createdBy: this.userId,
           isGroup,
           creatorDeviceId: this.deviceId,
+          ...(kind === 'self' ? { kind } : {}),
         }),
       });
+      // A notes conversation already live for this account: typed at the throw, carrying the id
+      // the server named, so the caller waits for its Welcome instead of reading prose.
+      if (res.status === 409 && kind === 'self') {
+        const body = (await res.json().catch(() => null)) as {
+          code?: unknown;
+          groupId?: unknown;
+        } | null;
+        if (body?.code === 'SELF_CONVERSATION_EXISTS') {
+          throw new SelfConversationExistsError(
+            typeof body.groupId === 'string' ? body.groupId : null
+          );
+        }
+      }
       if (!res.ok) throw new Error('Failed to create remote group');
       const data = await res.json();
       return data.groupId as string;
@@ -3302,6 +3334,10 @@ export class MlsDeliveryApi {
           (g as { distributionWorkspaceId?: string | null }).distributionWorkspaceId ?? null,
         distributionChannelId:
           (g as { distributionChannelId?: string | null }).distributionChannelId ?? null,
+        // "Mes notes" (migration 056): the Welcome handler builds that row with no peer to resolve.
+        ...(typeof (g as { kind?: unknown }).kind === 'string'
+          ? { kind: (g as { kind: string }).kind }
+          : {}),
         activeEpoch:
           typeof (g as { activeEpoch?: number }).activeEpoch === 'number'
             ? (g as { activeEpoch: number }).activeEpoch

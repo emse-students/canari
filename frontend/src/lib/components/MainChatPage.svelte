@@ -608,6 +608,16 @@
         }
       },
       onSelectConversation: handleSelectConversation,
+      // "Mes notes", pinned at the top of the list: opened, or created the first time. A refusal
+      // (another device's copy still on its way, a follower tab the leader could not serve) is said.
+      onOpenSelfConversation: async () => {
+        const outcome = await convs.openSelfConversation(convCtx());
+        if (!outcome.ok) {
+          showToast(conversationRefusalMessage(outcome.reason));
+          return;
+        }
+        if (outcome.key) handleSelectConversation(outcome.key);
+      },
       onJoinPrivateChannel: (channelId: string, channelName: string) => {
         // Before the session there is nobody to join as: said, not attempted (F1 preview).
         if (!session.isLoggedIn) {

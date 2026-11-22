@@ -222,6 +222,18 @@ export class ModerationService {
       reportedUserId = await this.assertReportablePost(data.reporterId, data.contentId);
     }
     if (data.contentType === 'user') {
+      // ONE'S OWN ACCOUNT IS NOT A SUBJECT. The one conversation where the only other person is the
+      // reporter is "Mes notes" (a conversation with oneself, 2026-11-22), and no screen offers a report
+      // there; a report naming its own reporter would only put a self-mute in a moderator's queue.
+      if (data.contentId.trim().toLowerCase() === data.reporterId.trim().toLowerCase()) {
+        this.logger.warn(
+          `[REPORT] REFUSED reporter=${data.reporterId.slice(0, 8)} reported their own account (400 REPORT_SELF)`
+        );
+        throw new BadRequestException({
+          code: 'REPORT_SELF',
+          message: 'You cannot report your own account.',
+        });
+      }
       // A report on a person is about that person: the subject, not a second id a client names.
       reportedUserId = data.contentId;
     }

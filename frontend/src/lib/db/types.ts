@@ -59,6 +59,13 @@ export interface ConversationMeta {
   /** `Conversation.nameSync`: what this device still owes about a rename it made. Absent: none. */
   nameSync?: NameSync;
   /**
+   * `self` for "Mes notes", the account's conversation with itself (server `dm_groups.kind`,
+   * migration 056). Persisted because nothing else on the row can say it: a notes conversation has
+   * no peer and no name, and a legacy 1:1 with a malformed self-only name looks the same. Absent:
+   * an ordinary conversation, identified from its name as before.
+   */
+  kind?: 'self';
+  /**
    * The group photo's media id. Persisted so the sidebar draws the photo from the local row at first
    * render: it used to be learned only from the server's group list, after the connection came up,
    * so group photos appeared seconds after people's (which need no id). `null` = no photo.
