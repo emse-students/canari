@@ -590,7 +590,7 @@ case "$1 ${2:-}" in
     esac ;;
   "pr view") case " $* " in
       *mergeStateStatus*)
-        jq -n --arg p "$(nth state "${FAKE_PR_STATE:-OPEN}")" --arg s "$FAKE_STATE" --argjson d "${FAKE_DRAFT:-false}" --arg h "${FAKE_HEAD:-$HEAD_SHA}" \
+        jq -n --arg p "$(nth state "${FAKE_PR_STATE:-OPEN}")" --arg s "$(nth mstate "${FAKE_STATES:-$FAKE_STATE}")" --argjson d "${FAKE_DRAFT:-false}" --arg h "${FAKE_HEAD:-$HEAD_SHA}" \
           '{state: $p, mergeStateStatus: $s, isDraft: $d, headRefOid: $h}' | jq -r "$jqexpr" ;;
       *) echo false ;;
     esac ;;
@@ -626,9 +626,28 @@ for state in CLEAN UNSTABLE; do
   merge_case "$state" "$GREEN"
   if [ "$st" = 0 ] && merged_now; then pass "B33 a $state pull request with CI passed green on its head is merged now, on that head"; else fail "B33 $state was not merged now" "$out"; fi
 done
+# UNKNOWN is "not computed yet": under the same reads it is merged on, and GitHub answers a real conflict itself.
+merge_case UNKNOWN "$GREEN"
+if [ "$st" = 0 ] && merged_now; then pass "B33 an UNKNOWN pull request with CI passed green on its head is merged now, on that head"; else fail "B33 UNKNOWN was not merged now" "$out"; fi
+merge_case UNKNOWN '{"check_runs": []}'
+refused "B33 an UNKNOWN pull request with no CI passed on the head is not merged"
+merge_case UNKNOWN "$(check_run 7 'CI passed' github-actions "$M2" failure | runs)"
+refused "B33 an UNKNOWN pull request with a red CI passed is not merged"
+merge_case UNKNOWN "$(check_run 7 'CI passed' github-actions "$M2" null | runs)"
+refused "B33 an UNKNOWN pull request with CI passed still running is not merged"
+FAKE_DRAFT=true merge_case UNKNOWN "$GREEN"
+refused "B33 an UNKNOWN pull request that is a draft is not merged"
+FAKE_HEAD="$M1" merge_case UNKNOWN "$GREEN"
+refused "B33 an UNKNOWN pull request whose head moved is not merged"
+FAKE_NOW=refused merge_case UNKNOWN "$GREEN"
+if [ "$st" != 0 ] && grep -qF 'GitHub refused to merge it now' <<<"$out"; then
+  pass "B33 an UNKNOWN pull request GitHub refuses to merge (a real conflict) fails loudly, naming the refusal"
+else
+  fail "B33 a merge GitHub refused on an UNKNOWN pull request did not fail the step" "$out"
+fi
 merge_case UNSTABLE '{"check_runs": []}'
 refused "B33 an UNSTABLE pull request with no CI passed on the head is not merged, and fails"
-for state in BLOCKED BEHIND DIRTY UNKNOWN HAS_HOOKS; do
+for state in BLOCKED BEHIND DIRTY HAS_HOOKS; do
   merge_case "$state" "$GREEN"
   refused "B33 a $state pull request is not merged now, and the step fails loudly"
 done
@@ -667,6 +686,21 @@ if [ "$st" = 0 ] && [ "$(merges_now)" = 2 ]; then
   pass "B35 the base moved under the merge of an already-mergeable pull request: it is asked again, and merged"
 else
   fail "B35 a base that moved under the immediate merge did not get a second attempt" "$out"
+fi
+
+# THE SEQUENCE OF #3945: attempt 1 UNSTABLE, the merge refused (the base moved); attempt 2 refused to arm
+# again and the state read UNKNOWN (GitHub recomputing) - merged on, not failed.
+FAKE_STATES='UNSTABLE UNKNOWN' FAKE_BASES='b0 b1 b1' FAKE_NOW='refused merged' merge_case UNSTABLE "$GREEN"
+if [ "$st" = 0 ] && [ "$(armings)" = 2 ] && [ "$(merges_now)" = 2 ]; then
+  pass "B35 UNSTABLE then a moved base then UNKNOWN (#3945): merged on the second attempt"
+else
+  fail "B35 the #3945 sequence did not end merged" "$out"
+fi
+FAKE_STATES='UNSTABLE UNKNOWN' FAKE_BASES='b0 b1 b1' FAKE_NOW='refused merged' merge_case UNSTABLE "$(check_run 7 'CI passed' github-actions "$M2" failure | runs)"
+if [ "$st" != 0 ] && [ "$(merges_now)" = 0 ]; then
+  pass "B35 the #3945 sequence with CI passed not green merges nothing"
+else
+  fail "B35 UNKNOWN with a red CI passed was merged" "$out"
 fi
 
 # The immediate merge is the one the App makes past the ruleset: what it adds to its gate is pinned.
