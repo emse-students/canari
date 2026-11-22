@@ -96,7 +96,8 @@
   import {
     watchEndings,
     snapshotConversations,
-    takeEndingFacts,
+    currentEndingFacts,
+    settleEndingFacts,
   } from '$lib/utils/chat/endedConversations';
   import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
@@ -237,9 +238,10 @@
     const next = snapshotConversations(globalConvs.conversations.values());
     // Signed out (a lost session clears the map in the same tick), nothing ended: `watchEndings`.
     const watched = untrack(() =>
-      watchEndings(signedIn, knownConversations, next, takeEndingFacts())
+      watchEndings(signedIn, knownConversations, next, currentEndingFacts())
     );
     knownConversations = watched.known;
+    settleEndingFacts(signedIn, next);
     for (const id of watched.ended) {
       appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);
       void endNativeConversationNotifications(id);

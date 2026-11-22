@@ -1071,10 +1071,10 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   until it is swiped away (nothing reads it any more; the residual is
   [a P3 entry](../backlog.d/banners-of-a-conversation-gone-before-the-watcher-saw-it.md)).
   **A `removed` ROW ENDS BANNERS ONLY ON POSITIVE EVIDENCE, AND A RE-KEY ENDS NONE** (4th review):
-  the watcher is handed two facts, never infers them. `retireConversation({ confirmed: true })` is
+  the watcher is handed two facts, never infers them, and remembers which ids it ENDED (an unconfirmed `removed` row stays not-ended, so a later purge or confirmation still ends it; facts are dropped when used, or at sign-out). `retireConversation({ confirmed: true })` is
   passed by the writers holding a confirmed ending (a Remove commit, an announced exclusion, a
-  group deletion the server reported or a peer announced); a miss (a refused send, a failed
-  membership check) does not, because a Welcome can re-admit the row and a stale notice is the
+  group deletion the server reported or a peer announced); a miss (a send refused as evicted, a
+  delivery-service refusal; `EVICTION_EVIDENCE[...].missed`) does not, because a Welcome can re-admit the row and a stale notice is the
   safer error (principle 2). A Welcome folding a duplicate DM onto the joined group, and the boot
   merge, CHANGE the id: `recordRekey(oldId)` tells the watcher the thread continues, and the old
   id's banners stay (the native layer cannot re-tag them).

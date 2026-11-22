@@ -276,8 +276,14 @@ export async function retireConversation(params: {
 }): Promise<boolean> {
   const { conversations, key, groupId, saveConversation, patch, confirmed } = params;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === 'removed') return false;
-  if (confirmed) confirmEnding(convo.id);
+  if (!convo) return false;
+  // Confirmed BEFORE the already-removed return: discovery and the Remove commit race, and the
+  // outcome must not depend on which one wins. A patched id (recovery) is confirmed too.
+  if (confirmed) {
+    confirmEnding(convo.id);
+    if (patch?.id) confirmEnding(patch.id);
+  }
+  if (convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
   clearConversationControlRefusals(groupId);
@@ -371,7 +377,11 @@ export function markConversationDeletedRemotely(
   const key = findConversationKeyByGroupId(conversations, groupId);
   if (!key) return false;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === 'removed') return false;
+  if (!convo) return false;
+  if (convo.lifecycle === 'removed') {
+    confirmEnding(convo.id);
+    return false;
+  }
   void retireConversation({ conversations, key, groupId, saveConversation, confirmed: true });
   return true;
 }

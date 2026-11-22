@@ -16,12 +16,17 @@
  * the watcher as a FACT ({@link recordRekey}), never inferred, and the old id's banners stay.
  *
  * **A `removed` ROW ENDS BANNERS ONLY ON POSITIVE EVIDENCE.** A Welcome can re-admit a row that
- * was marked `removed` by a miss (a refused send, a failed membership check), so the lifecycle
+ * was marked `removed` by a miss (a refused send, a delivery-service refusal), so the lifecycle
  * alone is not proof. Under principle 2 a stale notice is the safer error: only the writers that
  * hold a confirmed ending (a Remove commit, an announced exclusion, a deletion the server
  * reported) say so, through {@link confirmEnding}. The absence of a row keeps ending banners
  * (purge, salon and community deletions), as it did. PURE once the facts are given, so the matrix
  * is asserted.
+ *
+ * **THE WATCHER REMEMBERS WHETHER AN ID'S BANNERS WERE ENDED, NOT ONLY ITS LIFECYCLE.** A row marked
+ * `removed` without confirmation is still "not ended": a later purge, or a later confirmation (the
+ * discovery pass and the Remove commit race), ends it. Only an id the watcher itself ended is
+ * marked {@link ENDED} and never ended twice.
  */
 
 /** Ids whose row was re-keyed onto another id, noted since the watcher last looked. */
@@ -47,16 +52,16 @@ export function confirmEnding(id: string): void {
   if (id) confirmedEndings.add(id);
 }
 
-/** Hands the noted facts to the watcher and forgets them: each look consumes what led up to it. */
-export function takeEndingFacts(): EndingFacts {
-  const facts = { rekeyed: new Set(rekeyedAway), confirmed: new Set(confirmedEndings) };
-  rekeyedAway.clear();
-  confirmedEndings.clear();
-  return facts;
+/** The facts noted so far, as a copy: they are dropped by {@link settleEndingFacts} once used. */
+export function currentEndingFacts(): EndingFacts {
+  return { rekeyed: new Set(rekeyedAway), confirmed: new Set(confirmedEndings) };
 }
 
-/** What the watcher remembers of a conversation: its lifecycle, by id. */
+/** What the watcher remembers of a conversation: its lifecycle, or {@link ENDED}, by id. */
 export type KnownConversations = ReadonlyMap<string, string>;
+
+/** The memory of an id whose banners the watcher already ended (its row may still be `removed`). */
+export const ENDED = 'ended';
 
 /** The minimal row the watcher reads. */
 export interface WatchedConversation {
@@ -74,9 +79,11 @@ export function snapshotConversations(rows: Iterable<WatchedConversation>): Map<
 }
 
 /**
- * The ids that ENDED between `previous` and `next`: present and not `removed` before; absent now
- * (unless re-keyed onto another id) or `removed` now WITH a confirmed ending. An id never seen
- * before is not an ending, nor one that was already `removed`.
+ * The ids that ENDED between `previous` and `next`, and whose banners were not ended yet:
+ * - absent now, unless re-keyed onto another id (a purge, a deletion - whatever the row was before,
+ *   `removed` without confirmation included);
+ * - `removed` now WITH a confirmed ending, whether the row was active or already `removed`.
+ * An id never seen before is not an ending, nor one already {@link ENDED}.
  */
 export function endedConversationIds(
   previous: KnownConversations,
@@ -85,7 +92,7 @@ export function endedConversationIds(
 ): string[] {
   const ended: string[] = [];
   for (const [id, lifecycle] of previous) {
-    if (lifecycle === 'removed') continue;
+    if (lifecycle === ENDED) continue;
     const now = next.get(id);
     if (now === undefined) {
       if (!facts.rekeyed.has(id)) ended.push(id);
@@ -113,5 +120,32 @@ export function watchEndings(
   facts: EndingFacts = { rekeyed: new Set(), confirmed: new Set() }
 ): { ended: string[]; known: KnownConversations } {
   if (!signedIn) return { ended: [], known: new Map() };
-  return { ended: endedConversationIds(previous, next, facts), known: next };
+  const ended = endedConversationIds(previous, next, facts);
+  const known = new Map(next);
+  for (const id of ended) if (known.has(id)) known.set(id, ENDED);
+  // An id ended earlier whose row is still `removed` stays ended; a re-admitted one is live again.
+  for (const [id, lifecycle] of previous) {
+    if (lifecycle === ENDED && next.get(id) === 'removed') known.set(id, ENDED);
+  }
+  return { ended, known };
+}
+
+/**
+ * The facts that outlive a look: a fact is dropped only once it has been USED - its id is absent or
+ * `removed` in `next` - never merely because a look happened (the boot merge records the re-key long
+ * before the loser leaves the map, after many awaits). Signed out, every fact is dropped.
+ */
+export function settleEndingFacts(signedIn: boolean, next: KnownConversations): void {
+  if (!signedIn) {
+    rekeyedAway.clear();
+    confirmedEndings.clear();
+    return;
+  }
+  for (const id of rekeyedAway) {
+    if (!next.has(id)) rekeyedAway.delete(id);
+  }
+  for (const id of confirmedEndings) {
+    const now = next.get(id);
+    if (now === undefined || now === 'removed') confirmedEndings.delete(id);
+  }
 }

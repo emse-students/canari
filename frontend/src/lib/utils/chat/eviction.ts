@@ -204,8 +204,8 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     key,
     groupId,
     saveConversation,
-    // Only the two evidences that ARE the ending; a miss may be undone by a Welcome.
-    confirmed: evidence === 'remove-commit' || evidence === 'system-event',
+    // Only evidence that is not a miss (`EVICTION_EVIDENCE`); a miss may be undone by a Welcome.
+    confirmed: !missed,
   });
 
   if (addMessageToChat) {

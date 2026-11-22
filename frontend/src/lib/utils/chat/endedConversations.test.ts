@@ -4,7 +4,8 @@ import {
   endedConversationIds,
   recordRekey,
   snapshotConversations,
-  takeEndingFacts,
+  currentEndingFacts,
+  settleEndingFacts,
   watchEndings,
 } from './endedConversations';
 
@@ -53,8 +54,12 @@ describe('endedConversationIds', () => {
     expect(endedConversationIds(snap(['g1']), snap(['g1']))).toEqual([]);
   });
 
-  it('an already removed conversation that then disappears is not an ending again', () => {
-    expect(endedConversationIds(snap(['g1', 'removed']), snap())).toEqual([]);
+  it('an unconfirmed removed row that is then purged ends: its banners were never taken down', () => {
+    expect(endedConversationIds(snap(['g1', 'removed']), snap())).toEqual(['g1']);
+  });
+
+  it('an id the watcher already ended is not ended again, purged or not', () => {
+    expect(endedConversationIds(snap(['g1', 'ended']), snap())).toEqual([]);
   });
 
   it('a conversation first seen now, or still active, ended nothing', () => {
@@ -67,15 +72,25 @@ describe('endedConversationIds', () => {
 });
 
 describe('ending facts', () => {
-  it('are handed over once and forgotten, so a later look starts clean', () => {
+  const drain = () => settleEndingFacts(false, new Map());
+
+  it('survive a look that did not use them, and are dropped once used or at sign-out', () => {
+    drain();
     recordRekey('old');
     confirmEnding('g1');
-    const first = takeEndingFacts();
-    expect([...first.rekeyed]).toEqual(['old']);
-    expect([...first.confirmed]).toEqual(['g1']);
-    const second = takeEndingFacts();
-    expect(second.rekeyed.size).toBe(0);
-    expect(second.confirmed.size).toBe(0);
+    // The boot merge records the re-key long before the loser leaves the map: still there.
+    settleEndingFacts(true, snap(['old'], ['g1', 'active']));
+    expect([...currentEndingFacts().rekeyed]).toEqual(['old']);
+    expect([...currentEndingFacts().confirmed]).toEqual(['g1']);
+    // Used: the id is absent (re-key) or removed (confirmation).
+    settleEndingFacts(true, snap(['g1', 'removed']));
+    expect(currentEndingFacts().rekeyed.size).toBe(0);
+    expect(currentEndingFacts().confirmed.size).toBe(0);
+    recordRekey('o2');
+    confirmEnding('g2');
+    drain();
+    expect(currentEndingFacts().rekeyed.size).toBe(0);
+    expect(currentEndingFacts().confirmed.size).toBe(0);
   });
 });
 
@@ -90,5 +105,28 @@ describe('watchEndings', () => {
     expect(lost.known.size).toBe(0);
     // The sign-in that follows restores the list: a first look, so nothing is compared to the old one.
     expect(watchEndings(true, lost.known, snap(['g1'])).ended).toEqual([]);
+  });
+
+  it('an unconfirmed removal, then a confirmation, ends the banners (once)', () => {
+    const first = watchEndings(true, snap(['g1']), snap(['g1', 'removed']));
+    expect(first.ended).toEqual([]);
+    const facts = { rekeyed: new Set<string>(), confirmed: new Set(['g1']) };
+    const second = watchEndings(true, first.known, snap(['g1', 'removed']), facts);
+    expect(second.ended).toEqual(['g1']);
+    // Remembered as ended while the row stays removed: a third look, or the purge, ends nothing more.
+    expect(watchEndings(true, second.known, snap(['g1', 'removed']), facts).ended).toEqual([]);
+    expect(watchEndings(true, second.known, snap()).ended).toEqual([]);
+  });
+
+  it('an unconfirmed removal that is then purged ends the banners', () => {
+    const first = watchEndings(true, snap(['g1']), snap(['g1', 'removed']));
+    expect(watchEndings(true, first.known, snap()).ended).toEqual(['g1']);
+  });
+
+  it('a false removal followed by a re-admission ends nothing, then a real ending still does', () => {
+    const removed = watchEndings(true, snap(['g1']), snap(['g1', 'removed']));
+    const readmitted = watchEndings(true, removed.known, snap(['g1', 'active']));
+    expect(readmitted.ended).toEqual([]);
+    expect(watchEndings(true, readmitted.known, snap()).ended).toEqual(['g1']);
   });
 });
