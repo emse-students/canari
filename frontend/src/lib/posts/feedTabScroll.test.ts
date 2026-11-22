@@ -30,6 +30,11 @@ describe('centredTabScrollLeft', () => {
     expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200, 32)).toBe(68);
   });
 
+  it('keeps a tab that fits, even a wide one, centred and whole (no lead applied)', () => {
+    // 290 px in a 300 px row: centred is 5 px each side; a lead would push it under the trailing fade.
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 290 }, 0, 200, 32)).toBe(95);
+  });
+
   it('leaves a row that does not overflow at 0', () => {
     expect(centredTabScrollLeft(row, { left: 200, width: 100 }, 0, 0)).toBe(0);
   });

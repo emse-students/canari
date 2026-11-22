@@ -114,6 +114,7 @@
     if (!observer)
       console.debug('[feed-tabs] no ResizeObserver - compact decided on mount and font load only');
     observer?.observe(row);
+    // The tabs are observed once, at effect time: FEED_TABS is static, so none is added later.
     row.querySelectorAll('[data-feed-tab]').forEach((tab) => observer?.observe(tab));
     void document.fonts?.ready.then(() => {
       if (live) decideCompact(row);
@@ -202,7 +203,7 @@
       tab.getBoundingClientRect(),
       row.scrollLeft,
       maxScroll,
-      // The fade's width (`scroll-px-8`): a tab scrolled to the leading edge keeps its first letters clear of it.
+      // The fade's width: the scroller's scroll padding IS `--scroll-fade` (`scroll-px-(--scroll-fade)`, the token `.scroll-fades` masks with): a tab scrolled to the leading edge keeps its first letters clear of it.
       parseFloat(getComputedStyle(row).scrollPaddingLeft) || 0
     );
     if (next === row.scrollLeft) return;
@@ -224,7 +225,7 @@
   >
     <div
       bind:this={tabs}
-      class="group/tabs no-scrollbar relative isolate flex min-w-0 flex-1 scroll-px-8 gap-1 overflow-x-auto"
+      class="group/tabs no-scrollbar relative isolate flex min-w-0 flex-1 scroll-px-(--scroll-fade) gap-1 overflow-x-auto"
       data-feed-tabs
       use:scrollFades
     >
