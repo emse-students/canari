@@ -36,9 +36,19 @@ export const FORM_ANSWER_MISSING = 'FORM_ANSWER_MISSING';
 export const FORM_ANSWER_TOO_LONG = 'FORM_ANSWER_TOO_LONG';
 export const FORM_ANSWER_TOO_MANY_SELECTIONS = 'FORM_ANSWER_TOO_MANY_SELECTIONS';
 export const FORM_ANSWER_NOT_AN_OPTION = 'FORM_ANSWER_NOT_AN_OPTION';
-/** A short answer does not fit its question's format (the page words it from its `problem`, `answerFormat.ts`). */
+/**
+ * A short answer does not fit its question's format (the page words it from its `problem`,
+ * `answerFormat.ts`).
+ *
+ * @public Read through the namespace import of `answerBounds.test.ts` (`bounds[code]`), which knip
+ * cannot follow (docs/wiki/dead-code.md).
+ */
 export const FORM_ANSWER_FORMAT_INVALID = 'FORM_ANSWER_FORMAT_INVALID';
-/** A number question's minimum is above its maximum, refused at save. */
+/**
+ * A number question's minimum is above its maximum, refused at save.
+ *
+ * @public Read through the namespace import of `answerBounds.test.ts`, like its siblings.
+ */
 export const FORM_FORMAT_RANGE_INVALID = 'FORM_FORMAT_RANGE_INVALID';
 export const FORM_GRID_ANSWER_INVALID = 'FORM_GRID_ANSWER_INVALID';
 export const FORM_COMBINATION_UNAVAILABLE = 'FORM_COMBINATION_UNAVAILABLE';

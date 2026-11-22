@@ -19,10 +19,10 @@
  */
 
 /** The formats a short text question may carry; absent (or `text`) is a free answer. */
-export const ANSWER_FORMATS = ['number', 'phone', 'email'] as const;
+const ANSWER_FORMATS = ['number', 'phone', 'email'] as const;
 
 /** One of {@link ANSWER_FORMATS}. */
-export type AnswerFormat = (typeof ANSWER_FORMATS)[number];
+type AnswerFormat = (typeof ANSWER_FORMATS)[number];
 
 /** The part of a question this judgement reads. */
 export interface AnswerFormatRule {
