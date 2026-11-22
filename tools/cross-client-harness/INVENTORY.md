@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-116 scripts.
+117 scripts.
 
 | script | what it is |
 |---|---|
@@ -46,6 +46,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `comm.mjs` | The vocabulary the COMM phase is written in: communities, channels, invitations, roles. |
 | `commitreport.mjs` | THE HOURLY COMMIT-LOG REPORT, READ ONCE PER CAMPAIGN RUN AND NEVER IN A ROW'S WINDOW. |
 | `consoleorigin.mjs` | WHICH ORIGIN EMITTED A CONSOLE LINE - so the browser report can call a foreign one foreign. |
+| `cookiejar.mjs` | WHAT A BROWSER KILL MAY TAKE FROM A PROFILE, AND HOW TO CHECK BEFORE AND AFTER - the helpers the KILL |
 | `debris.mjs` | THE ONE ALLOWLIST OF THROWAWAY GROUP NAMES, shared by every sweep that may delete one. |
 | `deploy.mjs` | WAS THE ESTATE REDEPLOYED OR RESTARTED WHILE THE CHECK WAS RUNNING? - the one cause of transport |
 | `deployed-wasm-check.mjs` | Asks a DEPLOYED estate whether the `mls-core` WebAssembly it serves can panic on the target it |
@@ -393,4 +394,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-332 scripts in total.
+333 scripts in total.
