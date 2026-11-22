@@ -85,6 +85,8 @@ import {
 import {
   getToken,
   clearAuth,
+  refreshAnswerHeldByCaller,
+  announceHeldVerdict,
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
@@ -198,6 +200,12 @@ import {
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { throwIfPinThrottled } from './pinThrottle';
+import {
+  PinSessionRefusedError,
+  settlePinSessionRefusal,
+  settleRevocationOfThisDevice,
+  throwIfPinSessionRefused,
+} from './pinSessionRefusal';
 import { notePinProven } from '$lib/utils/pinFirstSetup';
 import {
   revokedWipeScope,
@@ -256,6 +264,7 @@ import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  forgetCallRecordServerTime,
   patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
@@ -1702,11 +1711,31 @@ export async function loginImpl(
       // (`prefetchPinSaltImpl`); the check, the derivations and the order between them are
       // `unlockWithPin`'s, where they are exercised on their own (`pinUnlock.test.ts`).
       const userIdForPin = ctx.getUserId();
+      // A PIN ROUTE THAT REFUSES THE SESSION (401/403) IS AN ANSWER: the server is asked why, and the
+      // outcome is this device's removal (reset, shown as the gate's no-keypad state) or a sign-out -
+      // never "unreachable" (`pinSessionRefusal.ts`). The verdict is held for this login, so the
+      // app-wide session-expired redirect does not tear the gate down before it can say so.
+      const answeringPinSessionRefusal = <T>(call: () => Promise<T>): Promise<T> =>
+        answerPinSessionRefusal(
+          ctx,
+          cb,
+          userIdForPin,
+          {
+            stopIfSignedOut: () => stopIfSignedOut('pin-route-refused'),
+            startOwnWipe,
+            stillListening: () => !signedOutSinceStart() && !loginAbort.signal.aborted,
+            unreachable: m.auth_pin_check_unreachable(),
+          },
+          call
+        );
       deviceKeyB64 = await untilSignedOut(
         unlockWithPin({
           intent: ctx.getPinIntent?.() ?? 'unlock',
           saltAhead: takePinSaltAhead(userIdForPin),
-          fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
+          fetchSalt: () =>
+            answeringPinSessionRefusal(() =>
+              fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal)
+            ),
           computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
           // ON A HARDWARE-HELD PHONE THE PIN DERIVES NOTHING THAT OPENS DATA: the key is read from the
           // keystore, and `unlockWithPin` installs it only once the server accepted the PIN - the same
@@ -1724,25 +1753,27 @@ export async function loginImpl(
             }
           },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
-          checkPin: async ({ verifier, deviceId, salt, intent }) => {
-            const res = await pinServerRequest({
-              baseUrl: ctx.getHistoryBaseUrl(),
-              route: 'pin-check',
-              init: {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${accessToken}`,
+          checkPin: ({ verifier, deviceId, salt, intent }) =>
+            answeringPinSessionRefusal(async () => {
+              const res = await pinServerRequest({
+                baseUrl: ctx.getHistoryBaseUrl(),
+                route: 'pin-check',
+                init: {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${accessToken}`,
+                  },
+                  body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
+                  signal: loginAbort.signal,
                 },
-                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
-                signal: loginAbort.signal,
-              },
-              unreachable: m.auth_pin_check_unreachable(),
-            });
-            await throwIfPinThrottled(res, cb.log);
-            if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
-            return (await res.json()) as PinCheckAnswer;
-          },
+                unreachable: m.auth_pin_check_unreachable(),
+              });
+              await throwIfPinThrottled(res, cb.log);
+              await throwIfPinSessionRefused(res, 'pin-check', m.auth_pin_check_unreachable());
+              if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
+              return (await res.json()) as PinCheckAnswer;
+            }),
           // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
           // chains on this login's own end - a wipe started after one would wait on itself.
           wipeRevokedDevice: () => {
@@ -2287,7 +2318,8 @@ export async function loginImpl(
         callId: string,
         at: CallEndTime,
         outcome?: CallEndReason,
-        starterId?: string
+        starterId?: string,
+        failed?: boolean
       ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
@@ -2295,8 +2327,10 @@ export async function loginImpl(
           callId,
           at,
           outcome,
-          starterId ?? ctx.getUserId()
+          starterId ?? ctx.getUserId(),
+          failed === true
         ),
+      onCallEndUnsent: (callId: string) => forgetCallRecordServerTime(callId),
       onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
         patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
@@ -3241,6 +3275,55 @@ export async function biometricLoginImpl(
   }
 }
 
+/** The login (or recovery) a PIN route's refusal is settled for. */
+interface PinRefusalSeat {
+  /** Throws when the account signed out meanwhile. */
+  stopIfSignedOut: () => void;
+  /** Withdraws this flow from the abort the revocation wipe's own sign-out raises. */
+  startOwnWipe: () => void;
+  /** False once nobody is waiting for the outcome. */
+  stillListening: () => boolean;
+  /** The caller's own unreachable line. */
+  unreachable: string;
+}
+
+/**
+ * A PIN ROUTE THAT REFUSES THE SESSION (401/403) IS AN ANSWER: the server is asked why, and the
+ * outcome is this device's removal (reset, shown as the gate's no-keypad state), a sign-out, or
+ * "unreachable" when the question itself got no answer - never a bare "unreachable" for the refusal
+ * (`pinSessionRefusal.ts`). The verdict is held for this flow, so the app-wide session-expired
+ * redirect does not tear the gate down before it can say so; when the flow left meanwhile, it is
+ * announced after all (`announceHeldVerdict`).
+ */
+async function answerPinSessionRefusal<T>(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  userId: string,
+  seat: PinRefusalSeat,
+  call: () => Promise<T>
+): Promise<T> {
+  try {
+    return await call();
+  } catch (e) {
+    if (!(e instanceof PinSessionRefusedError)) throw e;
+    throw await settlePinSessionRefusal(e, {
+      askSession: () => refreshAnswerHeldByCaller('pin-route-refused'),
+      settleRevocation: (verdict) =>
+        settleRevocationOfThisDevice(verdict, {
+          userId,
+          storedDeviceId: () => storedDeviceIdOf(userId),
+          stopIfSignedOut: seat.stopIfSignedOut,
+          startOwnWipe: seat.startOwnWipe,
+          wipe: () => settleSessionEndByRevocationImpl(ctx, cb, userId),
+        }),
+      stillListening: seat.stillListening,
+      releaseVerdict: announceHeldVerdict,
+      unreachable: seat.unreachable,
+      log: cb.log,
+    });
+  }
+}
+
 /**
  * Fetches this user's PIN salt from the server. The salt is the shared input to BOTH the
  * account verifier ({@link computePinVerifier}) and this device's at-rest key
@@ -3260,6 +3343,7 @@ async function fetchPinSalt(
     unreachable: m.auth_pin_salt_unreachable(),
   });
   await throwIfPinThrottled(res, (msg) => console.info(msg));
+  await throwIfPinSessionRefused(res, 'pin-salt', m.auth_pin_salt_unreachable());
   // A 409 is an ANSWER (the row changed while its salt was minted), classified here, at the throw.
   if (res.status === 409) {
     console.info(
@@ -3459,7 +3543,13 @@ export async function recoverPinImpl(
       cb,
       oldPin,
       newPin,
-      { signal: recoveryAbort.signal, stillWanted },
+      {
+        signal: recoveryAbort.signal,
+        stillWanted,
+        startOwnWipe: () => {
+          if (loginInFlightAbort === recoveryAbort) loginInFlightAbort = null;
+        },
+      },
       onProgress
     );
   } finally {
@@ -3479,7 +3569,11 @@ async function recoverPinSteps(
   cb: ChatSessionCallbacks,
   oldPin: string,
   newPin: string,
-  stop: { signal: AbortSignal; stillWanted: (stage: string) => void },
+  stop: {
+    signal: AbortSignal;
+    stillWanted: (stage: string) => void;
+    startOwnWipe: () => void;
+  },
   onProgress?: PinProgressCallback
 ): Promise<void> {
   const { stillWanted } = stop;
@@ -3506,9 +3600,24 @@ async function recoverPinSteps(
   // cancels these waits; the cancellation is named as the stop it is, never as an unreachable server.
   let salt: string;
   let res: Response;
+  // The refusal of the session is settled here too: a removed device would otherwise be told
+  // "try again in a moment" for ever (the same outcomes as the login's gate).
+  const settled = <T>(call: () => Promise<T>): Promise<T> =>
+    answerPinSessionRefusal(
+      ctx,
+      cb,
+      userId,
+      {
+        stopIfSignedOut: () => stillWanted('the session question'),
+        startOwnWipe: stop.startOwnWipe,
+        stillListening: () => !stop.signal.aborted,
+        unreachable: m.auth_pin_verify_new_unreachable(),
+      },
+      call
+    );
   try {
     const token = await getToken();
-    salt = await fetchPinSalt(ctx, userId, token, stop.signal);
+    salt = await settled(() => fetchPinSalt(ctx, userId, token, stop.signal));
     const newVerifier = await computePinVerifier(userId, newPin, salt);
     // Under the request deadline, as the login's own check (`pinServerRequest`, row 11).
     res = await pinServerRequest({
@@ -3530,6 +3639,9 @@ async function recoverPinSteps(
     throw e;
   }
   await throwIfPinThrottled(res, cb.log);
+  await settled(() =>
+    throwIfPinSessionRefused(res, 'pin-check', m.auth_pin_verify_new_unreachable())
+  );
   if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   // `not-set` is not a wrong PIN: the account has none, so there is nothing to recover TO - the gate

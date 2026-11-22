@@ -140,6 +140,8 @@ export interface SystemEnvelope {
      * carries the duration). Written by the ONE call-record writer, never read back from `text`.
      */
     outcome?: CallEndReason;
+    /** A `not-connected` call whose end was a FAILURE on the device that wrote it (not a hangup). */
+    failed?: boolean;
   };
 }
 
@@ -331,6 +333,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 ...readStartClocks(ce.startClocks),
                 ...(typeof ce.endedAt === 'number' ? { endedAt: ce.endedAt } : {}),
                 ...(isCallEndReason(ce.outcome) ? { outcome: ce.outcome } : {}),
+                ...(ce.failed === true ? { failed: true } : {}),
               }
             : undefined;
         const notice = readNotice(obj.notice);
@@ -623,7 +626,13 @@ function readStartClocks(v: unknown): { startClocks: { server?: number; local: n
   };
 }
 
-const CALL_END_REASONS: readonly string[] = ['cancelled', 'declined', 'not-answered', 'busy'];
+const CALL_END_REASONS: readonly string[] = [
+  'cancelled',
+  'declined',
+  'not-answered',
+  'busy',
+  'not-connected',
+];
 
 function isCallEndReason(v: unknown): v is CallEndReason {
   return typeof v === 'string' && CALL_END_REASONS.includes(v);
@@ -638,9 +647,15 @@ function isCallEndReason(v: unknown): v is CallEndReason {
 export function buildCallOutcomeText(
   outcome: CallEndReason,
   isCaller: boolean,
-  callerName: string
+  callerName: string,
+  failed: boolean = false
 ): string {
   if (outcome === 'declined') return m.chat_system_call_declined();
+  // Both sides answered it: neither missed a call, both had one that did not go through. Only a
+  // FAILURE says the connection could not be made; a quick deliberate hangup is neutral.
+  if (outcome === 'not-connected') {
+    return failed ? m.chat_system_call_connection_failed() : m.chat_system_call_not_connected();
+  }
   if (!isCaller) return m.chat_system_call_missed({ caller: callerName });
   switch (outcome) {
     case 'cancelled':

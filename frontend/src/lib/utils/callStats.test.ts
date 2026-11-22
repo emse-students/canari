@@ -4,9 +4,14 @@ import {
   audioCodecOrder,
   buildCallReport,
   callReportEngine,
+  countCandidate,
   describeAudioCodecs,
+  describeCandidateCounts,
   describeSelectedPair,
   describeVideoStats,
+  emptyCandidateCounts,
+  iceCandidateKindOf,
+  iceServerHost,
   refusedCallReport,
   relayGapIsSuspect,
 } from './callStats';
@@ -278,6 +283,8 @@ const ctx = {
   e2e: workerReport(),
   ns: 'on',
   nsFallbacks: 0,
+  candsIn: { host: 2, srflx: 1, prflx: 0, relay: 0 },
+  candsOut: { host: 1, srflx: 1, prflx: 0, relay: 1 },
 };
 
 describe('buildCallReport', () => {
@@ -285,7 +292,7 @@ describe('buildCallReport', () => {
     const { line, snapshot } = buildCallReport(liveReading(1_000, 4_000, 8_000), ctx, null);
     expect(line).toBe(
       '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 ring_ms=6420 connect_ms=812 engine=Chrome/155 ice=connected ' +
-        'pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
+        'cands_in=h2/s1/r0 cands_out=h1/s1/r1 pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
         'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
         'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=- ' +
         'ns=on ns_fallbacks=0'
@@ -396,5 +403,59 @@ describe('callReportEngine', () => {
     expect(callReportEngine(chrome, null)).toBe('Chrome/140');
     expect(callReportEngine(chrome, 'android')).toBe('tauri-android/Chrome/140');
     expect(callReportEngine(iosWebview, 'ios')).toBe('tauri-ios/iOS/18');
+  });
+});
+
+describe('ICE candidate counts (2026-11-22: a callee whose ICE stayed new for 27 s)', () => {
+  it('reads the type and transport of a candidate line, never its address', () => {
+    const line =
+      'candidate:842163049 1 udp 1677729535 192.0.2.7 52314 typ srflx raddr 0.0.0.0 rport 0';
+    expect(iceCandidateKindOf(line)).toEqual({ type: 'srflx', protocol: 'udp' });
+    expect(JSON.stringify(iceCandidateKindOf(line))).not.toContain('192.0.2.7');
+    expect(iceCandidateKindOf('a=candidate:1 1 TCP 1 192.0.2.7 9 typ host tcptype active')).toEqual(
+      {
+        type: 'host',
+        protocol: 'tcp',
+      }
+    );
+    expect(iceCandidateKindOf('candidate:1 1 udp 1 192.0.2.7 9 typ relay')).toEqual({
+      type: 'relay',
+      protocol: 'udp',
+    });
+  });
+
+  it('is null for an end-of-candidates marker or a line naming no known type', () => {
+    expect(iceCandidateKindOf('')).toBeNull();
+    expect(iceCandidateKindOf(undefined)).toBeNull();
+    expect(iceCandidateKindOf('candidate:1 1 udp 1 192.0.2.7 9 typ bogus')).toBeNull();
+    expect(iceCandidateKindOf('not a candidate')).toBeNull();
+  });
+
+  it('says the first of each type once, and counts the rest', () => {
+    const counts = emptyCandidateCounts();
+    expect(countCandidate(counts, 'host')).toBe(true);
+    expect(countCandidate(counts, 'host')).toBe(false);
+    expect(countCandidate(counts, 'relay')).toBe(true);
+    expect(counts).toEqual({ host: 2, srflx: 0, prflx: 0, relay: 1 });
+  });
+
+  it('writes h/s/r, a prflx only when one was signalled, and - with no peer connection', () => {
+    expect(describeCandidateCounts(emptyCandidateCounts())).toBe('h0/s0/r0');
+    expect(describeCandidateCounts({ host: 3, srflx: 1, prflx: 2, relay: 1 })).toBe('h3/s1/r1/p2');
+    expect(describeCandidateCounts(null)).toBe('-');
+  });
+});
+
+describe('iceServerHost', () => {
+  it('keeps the host and port of a STUN or TURN URL, never the query or anything else', () => {
+    expect(iceServerHost('turn:turn.cloudflare.com:3478?transport=udp')).toBe(
+      'turn.cloudflare.com:3478'
+    );
+    expect(iceServerHost('turns:turn.cloudflare.com:5349?transport=tcp')).toBe(
+      'turn.cloudflare.com:5349'
+    );
+    expect(iceServerHost('stun:stun.cloudflare.com:3478')).toBe('stun.cloudflare.com:3478');
+    expect(iceServerHost('https://example.org')).toBeNull();
+    expect(iceServerHost(undefined)).toBeNull();
   });
 });

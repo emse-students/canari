@@ -384,7 +384,12 @@ applied (the replay row stored with the score), and the first viewer as a real g
 
 **Added 2026-11-18, after that reading (owner's three follow-ups):** specs for the button shown to a non-admin
 too, who may read a replay (a member: any visible player's, their own; not a banned player's; an admin: all),
-`fitCellSize`, and the cell's transition declaration. **NOT verified:** the cell's computed transition in a
-real browser (the test runner injects no component CSS, so the test reads the source); and the full-screen
-viewer, the fitted grid and the instant dig on a phone
-([reading owed](../../backlog.d/reading-owed-minesweeper-replay-on-a-phone.md)).
+`fitCellSize`, and the cell's transition declaration. The full-screen viewer and the fitted grid were read on a
+phone (2026-11-22, `1.7.3-alpha.6`); the computed transition is asserted with the component's own CSS injected (below).
+
+**Pinned without a phone (2026-11-22, `1.7.3-alpha.6`).** The dig's crossfade follows the animation setting: the
+mounted cell's computed `transition-duration` is 0 on "Aucune", 90 ms on "Rapide" and 180 ms normally
+(`MinesweeperCell.svelte.test.ts`; the engine under test resolves the custom property but leaves `calc()`, so the
+product is evaluated). A banned winner's game is the whole chain in `minesweeper.replay.spec.ts` (`a banned winner,
+from the win to the replay`): a win is submitted, the winner banned through `ban()`, a global admin gets the moves and a
+plain member a 404. The scrubber both ways and the refit on a stage change are `MinesweeperReplay.svelte.test.ts`.

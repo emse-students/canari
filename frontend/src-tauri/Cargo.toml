@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.7.3-alpha.6"
+version = "1.7.3-alpha.7"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -92,8 +92,11 @@ tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 # and alone drains (Play ANR f51255a5...) - and ABORT the process on a message for a destroyed
 # activity (Play crash e3697bc4...). The local patch makes the channel unbounded, its wake pipe's
 # write non-blocking, `get_webview` answer `None` for a gone activity, and a failed message log
-# instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/`;
-# everything else is the published crate. Why: docs/wiki/frontend/mobile.md#wry-main-pipe-patch.
+# instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/`. One more hunk is
+# PERMANENT: `src/android/kotlin/RustWebView.kt` hands the WebView's input connection to the app's
+# KeyboardMediaBridge (keyboard GIFs), an app hook upstream will never carry - so this fork is not
+# deleted when a release carries the main-pipe fixes; it stays as a re-applied template patch.
+# Everything else is the published crate. Why: docs/wiki/frontend/mobile.md#wry-main-pipe-patch.
 wry = { path = "patches/wry" }
 # tauri-plugin-dialog 2.8.3's iOS PHPicker copied every pick to `<caches>/<file name>` after deleting
 # whatever held that name, and appended the results from several threads at once: a pick of 11 gave
