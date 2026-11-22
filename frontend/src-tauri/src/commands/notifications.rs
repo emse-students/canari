@@ -342,6 +342,67 @@ pub(crate) fn cancel_conversation_notifications(group_id: String, reason: String
     }
 }
 
+/// What the page's ask of the announced-messages ledger answered (`mobile::announced`).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MessageAnnouncement {
+    /// Whether the page raises its banner: one message of it nobody announced is enough.
+    raise: bool,
+    fresh: usize,
+    by_extension: usize,
+    by_page: usize,
+    /// The keys the banner covers, stamped on it so the extension can replace it.
+    keys: Vec<String>,
+}
+
+/// One message a page banner covers: its sender and its instant, the two halves of its key in the
+/// announced-messages ledger with the conversation (`mobile::announced::announce_key`).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+// Read on iOS only, where the ledger is.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) struct AnnouncedMessageArg {
+    sender_id: String,
+    at: i64,
+}
+
+/// iOS: the page asks, BEFORE it raises the one banner covering `messages` of `conversation_id`,
+/// whether any of them is still unannounced - the notification extension draws every
+/// alert push and acknowledges nothing, so a cold launch or a resume redelivers what it already
+/// showed (`docs/wiki/frontend/ios-notification-ownership.md`). Every key is claimed in the same
+/// locked step, over the ledger sealed under the install's native cache key. An `Err` is a ledger
+/// that could not be read or written, a cache key that cannot be read, or a banner whose messages
+/// carry no sender or instant: the page says so at ERROR. Off iOS there is no extension to share
+/// with: `Err`.
+#[tauri::command]
+pub(crate) fn claim_message_announcement(
+    app: tauri::AppHandle,
+    conversation_id: String,
+    messages: Vec<AnnouncedMessageArg>,
+) -> Result<MessageAnnouncement, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let dir = crate::app_group::app_group_dir()?;
+        let key = crate::native_cache::app_cache_key(&app)?;
+        let messages: Vec<(String, i64)> =
+            messages.into_iter().map(|m| (m.sender_id, m.at)).collect();
+        let (claim, keys) =
+            crate::mobile::announced::page_claim_in(&dir, &key, &conversation_id, &messages)?;
+        Ok(MessageAnnouncement {
+            raise: claim.raise(),
+            fresh: claim.fresh,
+            by_extension: claim.by_extension,
+            by_page: claim.by_page,
+            keys,
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, conversation_id, messages);
+        Err("no notification extension shares this ledger off iOS".to_string())
+    }
+}
+
 /// Android: a conversation ENDED (deleted, left, excluded, its salon or community gone) - withdraws
 /// its message banner, its reaction notification and the summary's share of them, UNCONDITIONALLY and
 /// without recording any read mark (`endConversationFromWebSocket`).
