@@ -101,6 +101,7 @@ import {
   outboxServerErrorsStatement,
   outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
+import { announceConversationStored } from './conversationStored';
 import {
   compareStoredOrder,
   fromMessagePayload,
@@ -723,6 +724,8 @@ export class SqliteStorage implements IStorage {
         conv.kind === 'self' ? 'self' : null,
       ]
     );
+    // What waits for this row acts now (a native mirror line naming it, `conversationStored.ts`).
+    announceConversationStored(conv.id);
   }
 
   /**
@@ -1599,6 +1602,7 @@ export class SqliteStorage implements IStorage {
         conv.kind === 'self' ? 'self' : null,
       ]
     );
+    announceConversationStored(conv.id);
   }
 
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */

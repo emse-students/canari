@@ -2637,6 +2637,11 @@ was erased by the page's next outbox mutation, an `unsendable` one included (pri
   landed claim clearing the adopted mark), `outboxMirrorOwnership.test.ts` (the lock, the stamp, the journal doors and the `@try` in
   Kotlin, iOS and Rust).
 
+**An unsendable line, adopted (pinned 2026-11-22, `1.7.3-alpha.6`).** A banner from a conversation the device was
+removed from cannot be produced on a bench without a dev write, so the line the native drain marked `unsendable` is
+staged in `outboxMirror.ownership.test.ts`: adopted FAILED (`error` on screen, terminal in the queue), still failed
+after another message is queued and flushed and the statuses re-applied, and its Retry sends it.
+
 #### App-icon unread badge
 
 The launcher/home-screen badge mirrors the number of **distinct unread conversations** (not

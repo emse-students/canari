@@ -20,6 +20,7 @@ import { notificationPreferences } from '$lib/stores/notificationPreferences.sve
 import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { replaceMessageOrdered } from '$lib/utils/chat/messageOrder';
+import { callRecordOwnedHere } from '$lib/utils/chat/callRecordOwner';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -70,6 +71,12 @@ function callMessageId(callId: string): string {
  */
 export interface CallEndTime extends EventTime {
   ownAct?: boolean;
+  /**
+   * An own end whose hangup is SENT (`notify`), so the server's acceptance of it may be patched on
+   * later (`patchCallRecordServerTime`). An own end that sends nothing - the other party's hangup
+   * ending a call this device was in - is never patched, and is not waited for.
+   */
+  awaitsServerTime?: boolean;
 }
 
 function isCallInvite(callMsg: ICallMsg): boolean {
@@ -149,10 +156,13 @@ export async function recordCallEnded(
   callId: string,
   at: CallEndTime,
   outcome?: CallEndReason,
-  starterId?: string
+  starterId?: string,
+  failed: boolean = false
 ): Promise<void> {
   if (!ctx || !callId || endedCallIds.has(callId)) return;
   endedCallIds.add(callId);
+  // Only a `not-connected` record says whether its end was a failure.
+  const failure = outcome === 'not-connected' && failed;
 
   const convo = ctx.conversations.get(groupId);
   if (!convo) {
@@ -170,7 +180,7 @@ export async function recordCallEnded(
     // The timeline may have gained this very row during the await: never write a second one -
     // finalize the one that arrived.
     if (ctx.conversations.get(groupId)?.messages.some((x) => x.id === messageId)) {
-      await finalizeCallRow(ctx, groupId, callId, at, outcome);
+      await finalizeCallRow(ctx, groupId, callId, at, outcome, failure);
       return;
     }
     appendLog(`[CallRecord] ${callId} written as ${outcome} (no started row on this device)`);
@@ -178,17 +188,29 @@ export async function recordCallEnded(
       'system',
       serializeEnvelope({
         kind: 'system',
-        text: buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), getName(starter)),
-        callEvent: { callId, starterId: starter, startedAt: endedAt, endedAt, outcome },
+        text: buildCallOutcomeText(
+          outcome,
+          starter === ctx.userId.toLowerCase(),
+          getName(starter),
+          failure
+        ),
+        callEvent: {
+          callId,
+          starterId: starter,
+          startedAt: endedAt,
+          endedAt,
+          outcome,
+          ...(failure ? { failed: true } : {}),
+        },
       }),
       groupId,
       { isSystem: true, messageId, soleWriter: true, ...at }
     );
-    if (at.ownAct) rowsWrittenByTheEnd.add(callId);
+    if (at.ownAct && at.awaitsServerTime) rowsWrittenByTheEnd.add(callId);
     return;
   }
 
-  await finalizeCallRow(ctx, groupId, callId, at, outcome);
+  await finalizeCallRow(ctx, groupId, callId, at, outcome, failure);
 }
 
 /**
@@ -263,6 +285,17 @@ export async function patchCallRecordServerTime(
 }
 
 /**
+ * Drops the pending server-time patch of `callId`: its hangup was meant to be sent and answered no
+ * server time, so nothing will ever patch the row - it keeps the time of its own act.
+ */
+export function forgetCallRecordServerTime(callId: string): void {
+  if (!rowsWrittenByTheEnd.delete(callId)) return;
+  appendLog(
+    `[CallRecord] ${callId} hangup answered no server time - the row keeps its own act's time, no patch pending`
+  );
+}
+
+/**
  * Finalizes the EXISTING row of a call, read from the timeline as it is NOW (never a snapshot taken
  * before an await: writing back an old list would erase what arrived meanwhile).
  */
@@ -271,7 +304,8 @@ async function finalizeCallRow(
   groupId: string,
   callId: string,
   end: CallEndTime,
-  outcome: CallEndReason | undefined
+  outcome: CallEndReason | undefined,
+  failed: boolean
 ): Promise<void> {
   const endedAt = eventMs(end);
   const messageId = callMessageId(callId);
@@ -297,13 +331,18 @@ async function finalizeCallRow(
   }
   const curMsg = current.messages[curIdx];
   const nextText = outcome
-    ? buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), starterName)
+    ? buildCallOutcomeText(outcome, starter === ctx.userId.toLowerCase(), starterName, failed)
     : buildCallEndedText(starterName, callDurationMs(env.callEvent, end, callId));
   appendLog(`[CallRecord] ${callId} finalized as ${outcome ?? 'answered'}`);
   const nextContent = serializeEnvelope({
     ...env,
     text: nextText,
-    callEvent: { ...env.callEvent, endedAt, ...(outcome ? { outcome } : {}) },
+    callEvent: {
+      ...env.callEvent,
+      endedAt,
+      ...(outcome ? { outcome } : {}),
+      ...(failed ? { failed: true } : {}),
+    },
   });
 
   const msgs = [...current.messages];
@@ -357,10 +396,20 @@ export async function handleCallSignalForChat(
       );
       return;
     }
+    // A device that was IN this 1:1 call writes its own record, from its own facts
+    // (`CallService.endCall`): this frame, whatever order it arrived in, does not decide it.
+    if (!group && callRecordOwnedHere(callMsg.callId)) {
+      appendLog(
+        `[CallRecord] ${String(callMsg.callId).slice(0, 8)} hangup received - this device was in the call and writes its own record`
+      );
+      return;
+    }
     // A device with no "started" row for this call (it was busy, or never saw the invite) still
     // owes its owner a MISSED call when ANOTHER account gave up on it: the caller's own other
-    // devices and a ring this account refused elsewhere are not missed calls.
-    const missedHere = outcome && outcome !== 'declined' && senderNorm !== userNorm;
+    // devices and a ring this account refused elsewhere are not missed calls. A `not-connected`
+    // hangup was ANSWERED: its sender may be the callee, never a starter to write a row under.
+    const missedHere =
+      outcome && outcome !== 'declined' && outcome !== 'not-connected' && senderNorm !== userNorm;
     await recordCallEnded(
       ctx,
       groupId,

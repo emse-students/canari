@@ -122,7 +122,7 @@ describe('every PIN request of the login reads the 429 (wiring)', () => {
   it.each([
     [
       'the login PIN check',
-      'checkPin: async ({ verifier, deviceId, salt, intent }) => {',
+      'checkPin: ({ verifier, deviceId, salt, intent }) =>',
       'return (await res.json()) as PinCheckAnswer;',
     ],
     ['the salt', 'async function fetchPinSalt(', 'return salt;'],

@@ -53,3 +53,25 @@ a tap from a killed state nor after a background tap and a resume; a foreground 
 by the group; new messages still notify.
 
 **2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`): the defect is reproduced on this build** (two cold launches, one of them through the share notice; [details](p2-ios-opening-the-app-through-the-share-notice-reshowed-a-banner-for-a-delivered-message.md)): the notification of a message the extension showed is raised again at the launch (`[NOTIF] Inbound ... asking`), its row jumping to "now". The reading that closes this entry is a cold launch after a killed-app push with that row's time unchanged.
+
+**2026-11-22, `1.7.3-alpha.6` (iPhone 12): still FAILING, and a second defect beside it.** App killed,
+Notification Center clean, one DM from `delta`: the extension showed ONE row; a cold launch left TWO
+identical rows. A group message the extension had shown ended as THREE rows after a warm resume, the
+page's titled `Group: Sender: text`. Then the group was deleted while the app ran: the page logged
+`ended - taking its notifications down` and `cancelConversationNotification` removed 1 of the 5
+delivered - the extension's; the page's banners carried no `threadIdentifier`. Evidence outside the
+repository.
+
+**The fix (branch `fix/ios-one-banner-per-message`), decided as a ledger, not as a single owner:**
+whether a catch-up row was pushed is the server's fact, not the page's, so "the page never announces a
+catch-up" would be a belief. Both processes claim `<conversation>:<sender>:<instant>` in
+`announced_messages.json` (App Group, sealed, one `flock` held with background time, Rust
+`mobile::announced`; the extension claims only in the step that hands its content over, so an expiry
+never delivers a banner whose claim stands unstamped - review of #3968); the page asks before it
+raises (`claim_message_announcement`) and stands down for what the extension drew; an ACTIVE app's
+`willPresent`, the one place a push is answered `None`, gives the extension's claim back in the same
+locked step (or presents the push when the page already stood down). Every page banner carries
+`group: <conversation>` (the extension's thread), so the removal by conversation takes it too. PR
+#2844's queue gate and server half are NOT redone: the ledger makes the order of arrival decide
+nothing. Design and residuals: [ios-notification-ownership](../frontend/ios-notification-ownership.md).
+The readings above are still owed, plus: a group deleted while the app runs leaves none of its rows.

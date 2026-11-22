@@ -546,8 +546,24 @@ export interface OutboxEntry {
    * pass). Absent on everything the page queued itself.
    */
   adoptedFromMirror?: true;
+  /**
+   * WHY THE NATIVE DRAIN GAVE UP ON THIS ENTRY, on one adopted failed from a line it marked
+   * `unsendable` - the TYPED cause the line carried (`unsendableCause`), never read from a log. The
+   * entry is parked at `MAX_CONSECUTIVE_SERVER_ERRORS` like a text failed on 5xx, and this is
+   * what tells the two apart when the failure is said. Durable (encrypted payload); the member's
+   * Retry clears it.
+   */
+  nativeRefusal?: NativeRefusal;
   createdAt: number;
 }
+
+/**
+ * The native drain's verdict on a mirror line it marked unsendable (`UnsendableCause` in the
+ * Android service): `refused`, the server refused the frame for good (a final 4xx);
+ * `not_encryptable`, it could not be encrypted from the background for good (its group not held,
+ * this device removed, a malformed proto); `unrecorded`, a line marked by a build that wrote no cause.
+ */
+export type NativeRefusal = 'refused' | 'not_encryptable' | 'unrecorded';
 
 /**
  * A group exit this device has DECIDED but not yet had answered by the server.

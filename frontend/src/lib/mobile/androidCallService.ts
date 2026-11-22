@@ -252,6 +252,8 @@ export function ongoingCallSpec(
       return { ...base, text: m.call_ringing_label(), connectedAtMs: null };
     case 'connecting':
       return { ...base, text: m.call_connecting_label(), connectedAtMs: null };
+    case 'peer-lost':
+      return { ...base, text: m.call_peer_lost({ name: title }), connectedAtMs: null };
     case 'live':
       return { ...base, text: m.call_audio_only_label(), connectedAtMs };
     case 'reconnecting':

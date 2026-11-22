@@ -5701,10 +5701,47 @@ connection to advertise image MIME types and, on commit, reads the content URI a
 rebuilds a `File`, and routes it through the normal media pipeline (`handleFilesSelected`), so a
 keyboard GIF is encrypted and sent like any picked file, in DMs, groups, and channels.
 
-The single hook lives in the auto-generated `RustWebView.onCreateInputConnection` (marked
-`CANARI CUSTOM PATCH`); all logic is in the non-generated `KeyboardMediaBridge`, so re-applying the
-patch after a `tauri android` regeneration is one line. Reliable IME `commitContent` needs a recent
-Android WebView; on devices where it is unavailable the in-app GIF picker still works.
+**The one hook, `RustWebView.onCreateInputConnection`, lives in the vendored wry TEMPLATE**
+(`frontend/src-tauri/patches/wry/src/android/kotlin/RustWebView.kt`, a `CANARI PATCH`), never in
+`gen/android/.../generated/RustWebView.kt`: wry's `build.rs` rewrites every file of `generated/`
+from its templates on each Android build, so the tracked copy is an OUTPUT, refreshed by a build and
+committed with it. All logic stays in the non-generated `KeyboardMediaBridge`, in the same package,
+which is why the template can name it unqualified.
+
+**The hook was lost for four months (2026-07-25 to 2026-11-22).** It was first written into the
+generated copy (`ebdc943366`, 2026-07-02, with a comment asking to *"re-apply after `tauri android`
+regeneration"*), and the next regeneration, committed as `3614a79518` ("fix"), erased it. The bridge
+kept compiling with no caller, the WebView advertised no image MIME type, and Gboard answered
+*"GIF non disponibles ici avec cette appli"* on every Android build since. A comment
+asking a human to re-apply a hunk after a tool rewrites the file is not a mechanism: the hook moved
+to the template, which no build rewrites, and
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` (in `make test-ci-scripts`) fails if
+the template or the tracked generated copy loses the override, if the override stops returning the
+bridge's wrapper of `super`'s connection, or if the bridge stops offering `image/gif`; it proves each
+check against the upstream class and against an override that drops the wrapper. The bridge logs
+`KeyboardMedia: input connection wrapped` once per process - the line that says on a device that the
+hook is live.
+
+**One dispatcher routes it (2026-11-22), and nothing is dropped silently.** With the hook live,
+Android advertises image types on EVERY editor of the WebView, so Gboard offers its GIF tab in any
+field. Each composer used to listen for `canari-keyboard-media` on its own, which would have left
+every unwired field taking the GIF and losing it. `utils/keyboardMedia.ts` is now the one owner: the
+root layout installs one window listener, and a composer registers with the `keyboardMediaTarget`
+action. The event goes to the innermost registered element containing the focused element:
+
+| Surface | Registered on | What a keyboard GIF does |
+| --- | --- | --- |
+| `chat` | `ChatComposer`'s footer | attached through `onFilesSelected`, the picked-file path (DM, group, channel) |
+| `chat-edit` | the same footer, while a message is edited | refused: toast `keyboard_media_refused` |
+| `comment` | `CommentComposer`'s field | staged through `stageMediaFile` |
+| `post` | `CreatePostForm`'s root | added through `addFiles`, the picked-file path |
+| any other focused field (a channel poll, a reel caption, a profile field) | nothing | refused: toast `keyboard_media_refused`, and one `KeyboardMedia` line naming the surface (`data-media-surface` if an ancestor declares one, else the tag) |
+| no focused field | - | nothing attached, one line, **no toast**: no keyboard commits without an editor, so this is iOS seeing the app's own pasteboard write (an image copied in the app), and "GIFs cannot be added here" would be false |
+
+An unreadable payload toasts `keyboard_media_unreadable`, and so does a native ERROR event: both bridges, instead of only logging, send `{ error: 'too-large' | 'unreadable' }` with no data when they received an image they could not hand over (empty, over 12 MiB, a read that threw). The focus rule comes first for errors too, so a too-large image copied on iOS outside any composer shows nothing. Before this, the chat page sent ANY
+dispatched image into the open conversation whatever had focus - an image copied on iOS included.
+Tested in `utils/keyboardMedia.test.ts`. Reliable IME `commitContent` needs a recent Android
+WebView; on devices where it is unavailable the in-app GIF picker still works.
 
 ### The thread sticks to its own bottom, and ONE boolean says whether it should (2026-09-22)
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { keyboardMediaTarget } from '$lib/utils/keyboardMedia';
   import { showToast } from '$lib/stores/toast.svelte';
   import {
     POST_ATTACHMENTS_MAX,
@@ -762,6 +763,13 @@
   role="group"
   aria-label={m.post_create_message_placeholder()}
   use:composerDropZone={{ onFiles: addFiles, onActiveChange: (v) => (dropActive = v) }}
+  use:keyboardMediaTarget={{
+    surface: 'post',
+    accept: (file) => {
+      addFiles([file]);
+      return true;
+    },
+  }}
 >
   {#if dropActive}
     <div

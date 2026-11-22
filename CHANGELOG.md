@@ -14,6 +14,267 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-11-22
+
+### Fixed - a reply typed in an Android banner over the open app goes out at once
+
+It used to sit queued until the app was backgrounded, its banner reading `non envoyé`: the receiver
+now hands it to the page while the foreground guard holds, as iOS does, and its banner says
+answered only once the page holds it - and never "retype it" over a reply the page holds
+([mobile](docs/wiki/frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)).
+
+### Fixed - a GIF from the Android keyboard reaches the conversation again
+
+Gboard said "GIF non disponibles ici" because the WebView's input-connection hook, written into a generated file, was erased by a regeneration in July; it now lives in the vendored wry template and a gate test fails if it goes again. One dispatcher hands the GIF to the focused composer (chat, comment, post) and says out loud where it cannot go ([chat](docs/wiki/frontend/modules/chat.md#android-keyboard-media-commitcontent)).
+
+### Changed - Android: the pre-1.7.3 outbox nudge guard is gone, because an update already clears it
+
+Android cancels every notification of a package when it is updated, so no nudge posted under the
+worker's id before 1.7.3 can survive into it; the guard that cancelled one, and the minSdk-28 dead
+`SDK_INT >= 26` branches of the push service, are deleted ([mobile](docs/wiki/frontend/mobile.md#the-outbox-nudge)).
+
+### Fixed - Android: the "messages en attente" nudge leaves the shade once its reply is delivered
+
+Every native drain withdraws the nudge when the outbox mirror is empty, and the nudge has its own
+notification id instead of sharing the background worker's. The launcher badge no longer counts the
+new-device and worker-failure notices as unread conversations ([mobile](docs/wiki/frontend/mobile.md#the-outbox-nudge)).
+
+### Fixed - the Android background outbox retry no longer gives up after three minutes
+
+It ended after three failed drains, so a short backend outage left a reply waiting for the app to be
+opened; it now retries while a queued message can still go, and a message refused for good is kept,
+told and shown failed with its Retry, without holding the others back, and a refused push secret
+ends it once, with the nudge, leaving every message sendable ([mobile](docs/wiki/frontend/mobile.md#the-retry-ends-on-durable-state-never-on-a-count-173)).
+
+### Fixed - Android: how each visible message push ended is now in the exported log, with the OS state
+
+A cached push that drew nothing left no trace a member could export. Each end of a visible message push (app in front, level withholds it, yielded to the foreground, already read or dismissed, refused while the real banner is up, read on another device, posted) now records one `[PUSH_SHOW]` line with notifications on/off/paused, the channel importance, Do Not Disturb, the standby bucket and battery saver, in its own budget so it never evicts a warning - a WARN when the OS drops what the app posted. What a read elsewhere, a dismissal or a delivered reply did to a banner is recorded the same way. Silent frames leave no line, on purpose ([mobile](docs/wiki/frontend/mobile.md#the-push-services-lines-in-the-in-app-log-2026-11-04)).
+
+### Fixed - Android: a notification posted while the app was open now goes when the conversation is read on another device
+
+The WebView now hands every own read it learns over its socket to the native side, which records it (a late post of a read message is refused) and removes the banner once the read covers every line it holds; a salon's `channel_read` push acts while the app is in front ([social-service](docs/wiki/services/social-service.md)). On Android 15+ a banner answered inline shows the answer and is removed at the next read; the app never sends a cancel the platform would drop. The background resend runs only with a network, so an offline run no longer spends an attempt ([chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Fixed - the Android release carries the 32-bit library again
+
+`gen/android`'s `rustBuild<Arch>` Gradle tasks had been empty since April (the `BuildTask` that runs `tauri android android-studio-script --target` was deleted), so only the one target the CLI itself compiles, `aarch64`, ever reached the bundle, whatever `--target` said. The task is back, as the tauri-cli template has it (bun as the binary), a Gradle check on every pull request asserts the tasks are real, and `android.yml`'s ABI check proves both libraries ([cicd](docs/wiki/cicd.md#the-android-release-build-packages-both-abis-because-gradle-builds-them-2026-11-21)).
+
+### Fixed - 32-bit Android phones can install Canari again
+
+The Android build compiled `arm64-v8a` only, so Play refused every 32-bit device (a Galaxy A11, for
+one) and its APK said "not compatible". The build now names `aarch64` and `armv7`, and the pipeline
+fails when either ABI is missing from the AAB or the APK
+([mobile](docs/wiki/frontend/mobile.md#the-release-names-its-abis-and-a-32-bit-phone-was-lost-without-a-word-2026-11-21)).
+
+### Added - an anonymous form can read the respondent's promo and formation from the account, as an option the respondent is told about
+
+A box "Promo et formation lues sur le compte (certifiées)" in the editor of an anonymous form: a member no longer declares their promo and formation, the account certifies them, and the fill page names exactly what goes with the answer before sending. Never the name, the status or the campus; a guest still declares; the responses list and the export say, per row, whether a promo came from the account or was declared. A member is joined only to what their page announced: a form whose join changed since the page loaded is refused (`FORM_RESPONDENT_FIELDS_CHANGED`), read again and sent again, on named forms too ([forms](docs/wiki/frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).
+
+### Fixed - the MiConnect release self-test no longer fails when its random scratch directory name contains "up" or "stop"
+
+`authentik-release.test.sh` counted a recreate by matching those words anywhere in a compose call, host paths included, so about one run in 430 failed `CI passed` on nothing; the checks now match the subcommand token and the scratch path is stripped first ([cicd](docs/wiki/cicd.md)).
+
+### Changed - a pull request now compiles the Android app crate for 32-bit phones too
+
+Releases ship `armeabi-v7a` since #3932, but the pull-request check built `aarch64` only, so an
+armv7-only break would have surfaced at release. The `Compile Android app` job now also runs
+`cargo check` for `armv7-linux-androideabi`
+([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a private salon the viewer cannot enter is said once, not on every resume
+
+Nothing was re-asked (the listing already carried the answer); the line is now written the first time per salon and reason, and again if access is regained and lost.
+
+### Fixed - a feed page reads its attached forms in one request, and a stalled read is no longer "not answered"
+
+`GET /api/forms/summaries` replaces a form read and a check per attached form (125 + 88 requests in one log); when the state cannot be read the card is drawn with the state unknown instead of claiming the reader has not answered. Old clients keep their per-form routes ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - Feed tabs: "Organisations" no longer hyphenates on a large system font
+
+The tabs size from their labels, wrap between words only, step down one text size when crowded and scroll last, with the selected tab revealed whole ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - a form tells only the people who pressed its bell, and an earlier opening asks first
+
+A form's opening no longer notifies the association's followers, only the people who asked. Moving a published form's opening earlier while some asked now asks the organiser first, naming how many; a moved opening re-arms one that had already fired; the reminder names the association and the form ([engagement](docs/wiki/engagement.md)).
+
+### Added - a form can hold text and image blocks between its questions
+
+An organiser can place a heading and a paragraph, or a poster or a logo with a caption, anywhere among the questions; they take no answer and never reach the responses or the export. A question's help text now uses the same formatting as the form description ([forms](docs/wiki/frontend/modules/forms.md#text-and-image-blocks-between-the-questions-owner-2026-11-21)).
+
+### Changed - an anonymous form's answers are stored in batches
+
+An answer to an anonymous form now waits and is stored with others of its form, five at a time, and the last ones once the form stops taking answers; the responses screen says how many wait ([forms](docs/wiki/frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)).
+
+### Fixed - deleting a paid answer said it was deleted while it stayed
+
+A manager deleting a paid answer was told it was deleted, though the guard had kept it: the delete's result was misread. The 409 "refund or cancel it instead" now reaches the manager ([forms](docs/wiki/frontend/modules/forms.md#payment-methods)).
+
+### Fixed - a respondent sees their own answer, even when the form forbids changing it
+
+A named form draws every answer of the respondent read-only (pending cash and several answers
+included, the price-fixing questions marked); an anonymous form already answered says "Vous avez
+déjà répondu" instead of an empty form, and keeps no copy of the answer
+([forms](docs/wiki/frontend/modules/forms.md#a-respondent-sees-their-own-answer-owner-2026-11-21)).
+
+### Fixed - the Graine retention sweep keeps what its answered chunks proved and resumes
+
+A chunk the server never answered used to abandon the whole sweep, so a phone holding 1,100 seeds on a poor link never shrank: each answered chunk now drops its expired seeds at once, and the rest resumes on the next foreground or connection ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Fixed - the rig's APK bundle guard tells a CSP allowlist from a request target
+
+`a1apk.mjs` refused every dev build because the `connect-src` allowlist (a list of hosts, not a request target) names production origins; the guard now recognises a CSP source list by its shape, and keeps refusing a lone production literal ([harness README](tools/cross-client-harness/README.md)).
+
+### Changed - Test rig: TAB-3b no longer blames the product for a cookie jar a hard kill lost
+
+TAB-3b now waits out the cookie commit window before each kill, reads the jar file and the storage after it, and records only a rig casualty as INVALID (blocked on the rig); a signed-out seat with the jar intact stays a FAIL, sharing the KILL rows' helpers ([cookiejar.mjs](tools/cross-client-harness/cookiejar.mjs), [backlog](docs/wiki/backlog.d/p2-an-unclean-kill-of-a-browser-inside-30-s-of-a-rotation-signs-the-user-out.md)).
+
+### Fixed - CI: the image scan no longer fails when its advisory feed forgets a suppressed CVE
+
+The CVE-2026-97054 gosu entry was added, removed as dead, restored and dropped again by the scanner's data, failing every pull request each time (the entry stays; the earlier "removed" line above is superseded). An allowlist entry is now dead only when the package version it covers is in no scanned image; an advisory the feed merely stopped reporting is kept, with one log line naming the database version ([cicd](docs/wiki/cicd.md#a-suppression-is-dead-when-the-image-moved-not-when-the-feed-forgot-2026-11-21)).
+
+Every allowlist entry now carries the package version in `purls:`, which Trivy enforces itself, and the check matches `paths:` against where the package sits, so a package of the same name in another image no longer keeps an entry alive.
+
+### Fixed - CI: the image scan no longer fails on CVE-2026-97054 in the postgres images' gosu
+
+The advisory is in Go's net/http server code; gosu serves no HTTP and the newest upstream postgres image still ships gosu 1.20 on Go 1.24.6, so it is allowlisted with its reason ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - the image scan names an `apk upgrade` its base no longer needs
+
+For each image this repository builds, the scan now also reads the bare base and warns when a package the Dockerfile upgrades carries no fixable advisory there any more, so the line can go; the build context reader refuses the COPY forms it does not stage by name, and the release mapping and `no-cache` shape are asserted per image ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - iPhone: a voice note is mono, the first press through the permission prompt no longer sticks, the form editor no longer drops a box
+
+On the iPhone a voice note was recorded in two channels and is now downmixed to one; the capture line names the settings the engine does not support; a hold whose finger the permission prompt took ends instead of recording for ever; and on an anonymous form the "lues sur le compte" box ticks "Promo et formation" with it instead of being dropped at save ([sounds](docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20), [forms](docs/wiki/frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)). The photo DM that ends under the composer on the iPhone now reports the thread geometry that separates its two candidate causes ([chat](docs/wiki/frontend/modules/chat.md#the-flag-is-only-ever-the-readers-2026-11-21)).
+
+### Added - iPhone message banners become communication notifications
+
+A DM or group banner on the iPhone now shows the sender's face as its avatar and the group's name, and a Focus can let Canari or chosen senders through, as WhatsApp's do; what iOS is handed stays on the phone, holds no message, and is erased at sign-out ([mobile](docs/wiki/frontend/mobile.md#communication-notifications-owner-2026-11-21)).
+
+### Fixed - the feed tab row cancels the column's top padding with the token, so no band can come back under the header
+
+The 2026-11-22 report from an iPhone without Liquid Glass (a black band under the header, the first tab clipped) came from a `1.6.0`-`1.6.8` build, where both defects existed on every phone; the offset that removed the band is now written with `--page-column-top` instead of a raw number, and the no-glass fallback is asserted to change paint only ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - an iPhone announces a message once, and a conversation's banners all go with it
+
+A cold launch or a resume no longer raises the page's own banner for a message the notification extension already showed (two rows, then three, on `1.7.3-alpha.6`): both processes claim it in one shared ledger, and every banner the page raises is filed under its conversation's thread, so a deleted group takes all of them ([ios-notification-ownership](docs/wiki/frontend/ios-notification-ownership.md)).
+
+### Changed - opening the app no longer clears banners nobody read
+
+A message, mention or reaction banner now goes only with its conversation - opened here, read
+elsewhere, answered, or ended (deleted, left, excluded) - as in Messenger and Signal (owner,
+2026-11-21), on Android and on iOS. Call rings and the notices that ask to open the app still go
+when it opens; a sign-out takes the account's banners down ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - a history ask with no answer key is a typed refusal, said once per sender
+
+It stays at error (a below-floor build, a defect or a forgery cannot be told apart from the frame) but no longer repeats on every resume ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Added - a Lydia Responsable can hand the role to another member, behind a switch that ships off
+
+"Transférer le rôle" in the cashier section adds the new holder (a member managing the payout account, a cashier promoted in one step) with every right first, tells them by a bell row, then removes the old number through the verified removal; with the switch on, a Responsable cannot leave before handing over, except removed by a platform admin after a typed confirmation. Off until a homologation run and the owner's production trial ([payments](docs/wiki/frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)).
+
+### Fixed - CI: the order-key derivation tests no longer depend on who wins a race with the page read
+
+A page read starts a derivation nobody awaits, so a test calling `orderKeysDerived` afterwards joined it or, on a loaded runner, found it finished and read `derived: 0`. The cases now sum the keys over every run they caused; the product was correct ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Added - an Android phone whose System WebView is too old now says so, instead of showing a blank page
+
+A guard in `app.html` draws an "update Android System WebView" screen (Play button, version detected) below Chrome 111 (a bundle that fails to parse is only logged); the startup log names the WebView version ([mobile](docs/wiki/frontend/mobile.md#an-old-android-system-webview-shows-an-update-screen-not-a-blank-page-owner-2026-11-21)).
+
+### Fixed - a reply sent from the notifications is never queued without its message
+
+A reply typed in the notification shade, for a conversation this phone had not stored yet, could be queued with no message to show: never sent, impossible to see or delete, and reported as an error on every start. The message is now written before its queue entry, and one already stuck gets its message back, shown failed with Retry. A reply the server refused in the background is now reported as refused, not as five server errors ([outbox mirror](docs/wiki/frontend/mobile.md#outbox-mirror)).
+
+### Fixed - a reply queued from the notification shade is no longer erased by the open app
+
+A reply sent from the shade while the app was warm in the background, or one the background sender had given up on, was erased by the app's next outbox change: never sent, never shown failed. The app now writes only its own lines of the shared queue, under the lock the native side takes, and takes the shade's lines into its outbox whenever it returns to the front ([chat-delivery](docs/wiki/services/chat-delivery.md#the-outbox-mirror-has-two-writers)).
+
+### Fixed - a DM ending in photos no longer lands on older messages when the keyboard opens
+
+A thread that shrank in one frame and grew back in the next (photos under a changing height ceiling)
+made the scroll measurement read the thread's own move as the reader going up: the stick-to-bottom
+flag fell and the reader stayed screens above the newest rows. The pane's own placements are now the
+baseline of that measurement
+([chat](docs/wiki/frontend/modules/chat.md#the-flag-is-only-ever-the-readers-2026-11-21)).
+
+### Fixed - a device removed from the account, then its PIN typed at the gate, no longer reads "server unreachable"
+
+A 401/403 from the PIN salt or check is now a typed answer: the gate asks why the session was refused and shows "Cet appareil a ete retire de votre compte" with no keypad (or signs out for any other dead session). Only a transport failure reads as unreachable ([auth](docs/wiki/frontend/modules/auth.md#pin-and-device-key), [backlog](docs/wiki/backlog.d/reading-owed-pin-gate-audit-rows-of-2026-11-20.md)).
+
+### Fixed - a PIN is registered only once confirmed, and the PIN gate never guesses "returning" or shows a keypad to a removed device
+
+A first setup asks "Confirmez votre PIN", and the server registers a PIN only on that confirmed creation (an unlock on an account with no PIN is answered `not-set`, a PIN from before salts is kept); an unanswered `pin-status` shows "Reessayer" instead of an unlock keypad; a removed device sees "Cet appareil a ete retire de votre compte" and "Se deconnecter" ([auth](docs/wiki/frontend/modules/auth.md#pin-and-device-key)).
+
+### Fixed - the plan page no longer makes every open pull request conflict
+
+`docs/wiki/plan.md` is generated in every checkout by the git hooks and never committed: committed,
+every merge to `main` left the other open pull requests conflicting on it and their automatic merge
+stalled ([cicd](docs/wiki/cicd.md#the-plan-page-is-generated-where-it-is-read-2026-11-21)).
+
+### Fixed - concurrent pushes no longer time out each other's frontend tests
+
+The push hook's checks that use every core now take one machine-wide slot, so several checkouts pushing at once queue instead of overloading the machine (three concurrent runs: 23-25 timeouts; serialized: 1-7). Two tests also stop paying real sleeps and disk walks inside their deadline ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Fixed - a phone id of no known format is accused by the daily push-coverage line, not dropped
+
+The count already asks about the installed app's devices only; a phone-OS device whose id is neither
+`tauri-` nor `web-` is now accused at WARN, and a test ties the two prefixes to the client
+([chat-delivery](docs/wiki/services/chat-delivery.md#the-servers-row-decides-whether-a-registration-is-owed-2026-11-15)).
+
+### Added - push delivery records survive a deploy (migration 054)
+
+Daily push totals per path, platform and outcome (failures by provider code), and per device the last push a provider accepted and the last one its handler fetched - two dates, no content, erased with the device. They answer "was member X's notification sent, and did it arrive?" without container logs ([chat-delivery](docs/wiki/services/chat-delivery.md#push-delivery-records---daily-totals-and-the-last-delivery-per-device-2026-11-21)).
+
+### Added - a phone states what its OS lets notifications do, and the push-coverage alarm counts phones only
+
+`register-device` carries the real notification permission (Android: permission, app switch, channel
+importance; iOS: authorization and alerts), stored with the device (migration 055) and counted by the
+daily coverage as "registered but the OS will not show it". The coverage counts installed-app devices
+only: about 93 mobile-browser devices had made it mostly false, and browser-only members are now one
+information line. The page reads the state through one read-only command, `notification_delivery_state`
+([chat-delivery](docs/wiki/services/chat-delivery.md#registered-is-not-permitted-2026-11-21)).
+
+### Fixed - a reaction's alert raised while the app was open goes when you open its conversation
+
+An alert the frame trigger raised on Android for a conversation off screen stayed in the shade after
+you opened that conversation in the same session: no push and no read echo reaches the device that
+took the read. The reading is now handed to the native cancel once per reading, which removes the
+banner and the reaction unless a newer message is unread (iOS, desktop and web take down the ones the page raised)
+([mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
+
+### Changed - nine readings a bench could not take are automated tests, and the entries they closed are deleted
+
+The retention sweep's two log lines, a stalled or empty form summary, the keyless history ask of a pre-1.7.0 client, 25 failed outbox retries then a drain, the share shortcuts' late picture (the loop is now `ShareTargetsUpgrade`, tested on the JVM), the dig's computed transition, a banned winner's replay, a reply taken by a dead page, the voice note's constraints and downmix, and an unsendable adoption are each asserted ([readings](docs/wiki/device-verification.md)). One finding came out: the playback law does not land a quiet voice note at -18 LUFS ([sounds](docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)).
+
+### Fixed - a live replay's bar can be dragged backward
+
+A backward drag of the bar out of the buffered window landed on the window's start (the replay keeps ten seconds behind the playhead), so the playhead did not move. A replay re-fetches whatever a seek lands on, so its bar is no longer clamped to the buffer ([live-replays](docs/wiki/live-replays.md)).
+
+### Fixed - a salon keeps the order its texts were written in across a server outage
+
+Texts written while the server was down used to reach it in the order their retries ended (`T1 T6 T7 T8 T2 T3 T4 T5` on the iPhone). Each salon now sends through one ordered lane (texts, files, polls and forwards), so no later message overtakes an earlier one still waiting, and the repeat proof that made an unsent text step aside is retired ([chat](docs/wiki/frontend/modules/chat.md#a-salon-is-received-in-the-order-it-was-written-one-lane-per-salon-2026-11-22)).
+
+### Changed - a group invite link carries the group's name in its fragment, and its preview names no group
+
+The sharer's device writes the name after the `#` of the link, which no request carries; the cards
+read it there, and the head an unfurler reads names no group. Sealed names, step 3, part 1
+([sealed-names](docs/wiki/protocols/sealed-names.md#step-3-part-1---built-2026-11-21-a-group-invite-link-carries-the-name-in-its-fragment)).
+
+### Fixed - the unread pill no longer accuses a row swap of losing its anchor
+
+The anchor is an id and survives a swapped or deleted row; the warning ran before the re-measure it blames and fired on every swap, and now fires only if the id is still gone after it.
+
+### Fixed - `url` bumped to 2.5.9 in the three Rust lockfiles that resolve it (RUSTSEC-2026-0592)
+
+The advisory (stack overflow in `Url::origin()` on nested `blob:` URLs, published 2026-11-20) was turning the `cargo audit` job, and so `CI passed`, red. Lockfile-only bump in `apps/call-service`, `apps/chat-gateway` and `frontend/src-tauri`; see [cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17).
+
+### Fixed - a voice note is recorded, no longer captured as a phone call
+
+The recorder asked the microphone with echo cancellation, noise suppression and auto gain on, which made Android open it as a call and iOS put it through its voice-call processing; it now records like the reel camera, mono with no call processing, and keeps the call's own settings only while a call is live ([sounds](docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)).
+
+### Changed - the welcome-request-pending push can go content-free (switch off)
+
+With `push_mode = wake`, a device declaring version 2 now receives this push as a silent wake and fetches its ids from our server, so Google and Apple no longer see which person's device joins which conversation. No client declares version 2 yet ([content-free push](docs/wiki/protocols/content-free-push.md#2-the-target)). It is no longer sent to iPhones at all, which never acted on it.
+
 ## [1.7.2] - 2026-11-20
 
 ### Changed - the birthday ring is a thin flush ring with floating confetti

@@ -99,6 +99,7 @@
   } from '$lib/utils/swipeNavigation';
   import { onTouchGestureEnd } from '$lib/utils/touchGestureEnd';
   import { installPressedClickGuard } from '$lib/utils/pressedClickGuard';
+  import { installKeyboardMediaDispatcher } from '$lib/utils/keyboardMedia';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
@@ -188,6 +189,9 @@
     markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
+    // A GIF committed by the soft keyboard goes to the focused composer, or the member is told it
+    // cannot go there: one owner for the whole app (utils/keyboardMedia.ts).
+    const disposeKeyboardMedia = installKeyboardMediaDispatcher();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
     if (isAndroidTauriRuntime()) {
@@ -252,6 +256,7 @@
     return () => {
       cancelRestore(); // a restore left running would keep its document key listener
       disposePressedClickGuard();
+      disposeKeyboardMedia();
       stopOwedDmMarkDrain();
       stopDeletedAccountGuards();
       disposeDynamicType();

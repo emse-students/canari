@@ -387,17 +387,19 @@ export function mkCallInvite(
 }
 
 /**
- * Why a call ended WITHOUT having been answered, as a type. The side that ends the call knows
+ * Why a call ended WITHOUT having been answered - or, `not-connected`, answered with its media never
+ * connected (1:1 only: a call that did not happen) - as a type. The side that ends the call knows
  * which of these it is and says so on the wire; no reader infers it from a message or a clock.
- * Absent means an ordinary end after pickup.
+ * Absent means an ordinary end after the media connected.
  */
-export type CallEndReason = 'cancelled' | 'declined' | 'not-answered' | 'busy';
+export type CallEndReason = 'cancelled' | 'declined' | 'not-answered' | 'busy' | 'not-connected';
 
 const END_REASON_TO_WIRE: Record<CallEndReason, canari.CallEndReason> = {
   cancelled: canari.CallEndReason.CALL_END_REASON_CANCELLED,
   declined: canari.CallEndReason.CALL_END_REASON_DECLINED,
   'not-answered': canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED,
   busy: canari.CallEndReason.CALL_END_REASON_BUSY,
+  'not-connected': canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED,
 };
 
 /** The reason a hangup carries, or undefined for an unspecified one (an ordinary end, or an old build). */
@@ -416,7 +418,8 @@ export function callEndReasonFromWire(wire: number | null | undefined): CallEndR
  * only the CALLER's end carries one (cancelled, not answered): the call rang nobody into it.
  */
 export function groupHangupEndsRecord(outcome: CallEndReason | undefined): boolean {
-  return outcome !== undefined && outcome !== 'declined';
+  // `not-connected` is a 1:1 outcome; a member's own leg that never connected ends nothing here.
+  return outcome !== undefined && outcome !== 'declined' && outcome !== 'not-connected';
 }
 
 /** Builds an MLS call hangup message; `reason` is set when the call ended unanswered. */

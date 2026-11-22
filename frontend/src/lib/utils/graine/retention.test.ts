@@ -216,14 +216,29 @@ describe('sweepExpiredGraineSeeds', () => {
     liveGraineSessions
       .mockResolvedValueOnce({ live: [], retentionDays: 365 })
       .mockRejectedValueOnce(new Error('timeout'));
+    // The two lines a reader of the log sees (reading `1.7.3-alpha.6`, #3958 row 1: a sweep cut
+    // between two chunks needs a device holding 1000+ seeds, which no bench has).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     await expect(sweepExpiredGraineSeeds()).resolves.toBe(500);
     // The answered chunk was acted on; the unanswered ones were not touched.
     expect(rows).toHaveLength(600);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /retention sweep interrupted after 500 of 1100 session\(s\) \(500 dropped so far\)/
+      )
+    );
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining('retention sweep dropped'));
 
     liveGraineSessions.mockResolvedValue({ live: [], retentionDays: 365 });
     await resumeGraineSweepIfOwed();
     expect(rows).toHaveLength(0);
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('retention sweep dropped 600 seed(s)')
+    );
+    warn.mockRestore();
+    info.mockRestore();
 
     // Nothing owed any more: a further edge asks nothing.
     liveGraineSessions.mockClear();

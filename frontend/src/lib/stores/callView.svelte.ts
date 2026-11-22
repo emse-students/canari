@@ -74,6 +74,9 @@ export const callView = {
  * - `ringing`: we called, the other side has not answered.
  * - `connecting`: answered (or the relay paired us), no media path yet - the callee is `incall`
  *   from the tap, seconds before any sound, so `incall` alone is not "live".
+ * - `peer-lost`: answered (or paired), no media path yet, and the other party's signalling is gone
+ *   (`CallService.peerLost`) - its seat is held for a resume, so the call is not over, but nothing
+ *   will connect until it comes back. Said, never a silent `connecting`.
  * - `reconnecting`: the media path was up and dropped; it may come back.
  * - `live`: media flows - the timer runs.
  * - `ended`: the short summary before the surface goes away.
@@ -83,6 +86,7 @@ export type CallStatusKind =
   | 'incoming'
   | 'ringing'
   | 'connecting'
+  | 'peer-lost'
   | 'reconnecting'
   | 'live'
   | 'ended';
@@ -90,7 +94,8 @@ export type CallStatusKind =
 export function callStatusKind(
   state: CallState,
   connectedAt: number | null,
-  isReconnecting: boolean
+  isReconnecting: boolean,
+  peerLost: boolean
 ): CallStatusKind {
   switch (state) {
     case 'idle':
@@ -98,11 +103,13 @@ export function callStatusKind(
     case 'incoming':
       return 'incoming';
     case 'calling':
-      return 'ringing';
+      // The caller stays `calling` until its media connects: a callee that answered and went
+      // away before that is lost, not ringing.
+      return peerLost && connectedAt === null ? 'peer-lost' : 'ringing';
     case 'ended':
       return 'ended';
     case 'incall':
-      if (connectedAt === null) return 'connecting';
+      if (connectedAt === null) return peerLost ? 'peer-lost' : 'connecting';
       return isReconnecting ? 'reconnecting' : 'live';
   }
 }
