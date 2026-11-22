@@ -402,10 +402,28 @@ describe('a call record is dated by its frame, never by when this device drained
     }
   });
 
+  it('an own end that sends no hangup is never waited for: nothing is kept to patch', async () => {
+    const { ctx, conversations } = makeCtx();
+    // The other party's hangup ended a call this device was in: its own record, no send.
+    await recordCallEnded(ctx, G, 't8', { timestamp: AT.timestamp, ownAct: true }, 'busy', 'me');
+    await patchCallRecordServerTime(ctx, G, 't8', 1_700_000_000_999);
+    const row = conversations.get(G)!.messages.find((x) => x.id === 'call-t8') as {
+      serverTimestamp?: number;
+    };
+    expect(row.serverTimestamp).toBeUndefined();
+  });
+
   it("the own hangup's server time is patched onto a row its end created, never over a start", async () => {
     const { ctx, conversations, addMessageToChat } = makeCtx();
     // A missed call written by the end itself, with no server time yet.
-    await recordCallEnded(ctx, G, 't7', { timestamp: AT.timestamp, ownAct: true }, 'busy', 'me');
+    await recordCallEnded(
+      ctx,
+      G,
+      't7',
+      { timestamp: AT.timestamp, ownAct: true, awaitsServerTime: true },
+      'busy',
+      'me'
+    );
     expect(
       (addMessageToChat.mock.calls[0][3] as { serverTimestamp?: number }).serverTimestamp
     ).toBeUndefined();

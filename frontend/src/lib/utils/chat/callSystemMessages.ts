@@ -71,6 +71,12 @@ function callMessageId(callId: string): string {
  */
 export interface CallEndTime extends EventTime {
   ownAct?: boolean;
+  /**
+   * An own end whose hangup is SENT (`notify`), so the server's acceptance of it may be patched on
+   * later (`patchCallRecordServerTime`). An own end that sends nothing - the other party's hangup
+   * ending a call this device was in - is never patched, and is not waited for.
+   */
+  awaitsServerTime?: boolean;
 }
 
 function isCallInvite(callMsg: ICallMsg): boolean {
@@ -200,7 +206,7 @@ export async function recordCallEnded(
       groupId,
       { isSystem: true, messageId, soleWriter: true, ...at }
     );
-    if (at.ownAct) rowsWrittenByTheEnd.add(callId);
+    if (at.ownAct && at.awaitsServerTime) rowsWrittenByTheEnd.add(callId);
     return;
   }
 

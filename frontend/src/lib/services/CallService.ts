@@ -1331,7 +1331,7 @@ export class CallService {
       // Once the invite has left, the other party is ringing: hang up so it stops, rather than
       // leaving it to ring into a call that will never answer.
       // A setup that failed AFTER the invite left is a call nobody answered, not one the user cancelled.
-      this.endCall(this.inviteSent, 'not-answered');
+      this.endCall(this.inviteSent, 'not-answered', false, true);
       throw e;
     }
   }
@@ -1604,7 +1604,7 @@ export class CallService {
         notifier?.onCallEnded(
           groupId,
           callId,
-          { timestamp: new Date(endedAt), ownAct: true },
+          { timestamp: new Date(endedAt), ownAct: true, awaitsServerTime: notify },
           outcome,
           starterId,
           outcome === 'not-connected' && failed
